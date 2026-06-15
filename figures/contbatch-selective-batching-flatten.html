@@ -1,0 +1,204 @@
+<figure class="viz" id="fig-contbatch-selective-batching-flatten">
+<svg viewBox="0 0 820 465" role="img" aria-label="Selective batching data-flow diagram: four heterogeneous requests (reqA prefill 3 tokens, reqB decode 1, reqC decode 1, reqD prefill 5) are flattened into one tall matrix for QKV/MLP GEMMs, then split back per-request for attention using cu_seqlens offsets.">
+  <defs>
+    <marker id="sb2-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#6b7280)"/>
+    </marker>
+    <marker id="sb2-arrow-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-contbatch-selective-batching-flatten text { fill: var(--ink-soft,#374151); }
+    #fig-contbatch-selective-batching-flatten .tier-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .req-lbl  { font: 700 10px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .box-hdr  { font: 700 9px var(--sans,sans-serif); letter-spacing: -0.2px; }
+    #fig-contbatch-selective-batching-flatten .chip-lbl { font: 600 9px var(--mono,monospace); }
+    #fig-contbatch-selective-batching-flatten .arrow-lbl { font: 600 10px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .gemm-lbl  { font: 700 11px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-contbatch-selective-batching-flatten .mono-lbl  { font: 600 11px var(--mono,monospace); fill: var(--accent,#6366f1); }
+    #fig-contbatch-selective-batching-flatten .attn-lbl  { font: 500 9px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+    #fig-contbatch-selective-batching-flatten .cap-lbl   { font: 500 10px var(--sans,sans-serif); }
+    #fig-contbatch-selective-batching-flatten .muted-t   { fill: var(--muted,#9ca3af); }
+    #fig-contbatch-selective-batching-flatten .head-prefix { font: 700 9px var(--sans,sans-serif); }
+  </style>
+
+  
+  <text x="410" y="16" text-anchor="middle" class="tier-lbl">Heterogeneous requests in one iteration (mix prefill + decode)</text>
+
+  
+  <rect x="20" y="26" width="170" height="72" rx="5" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <rect x="20" y="26" width="170" height="18" rx="5" fill="var(--accent,#6366f1)"/>
+  <rect x="20" y="36" width="170" height="8" rx="0" fill="var(--accent,#6366f1)"/>
+  <text x="105" y="39" text-anchor="middle" class="box-hdr" fill="white">reqA: PREFILL 3 toks</text>
+  
+  <rect x="30" y="52" width="38" height="20" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="49" y="66" text-anchor="middle" class="chip-lbl" fill="white">a0</text>
+  <rect x="76" y="52" width="38" height="20" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="95" y="66" text-anchor="middle" class="chip-lbl" fill="white">a1</text>
+  <rect x="122" y="52" width="38" height="20" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+  <text x="141" y="66" text-anchor="middle" class="chip-lbl" fill="white">a2</text>
+
+  
+  <rect x="200" y="26" width="140" height="72" rx="5" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1.8"/>
+  <rect x="200" y="26" width="140" height="18" rx="5" fill="#14b8a6"/>
+  <rect x="200" y="36" width="140" height="8" rx="0" fill="#14b8a6"/>
+  <text x="270" y="39" text-anchor="middle" class="box-hdr" fill="white">reqB: DECODE 1</text>
+  <rect x="240" y="52" width="60" height="20" rx="3" fill="#14b8a6" fill-opacity="0.85"/>
+  <text x="270" y="66" text-anchor="middle" class="chip-lbl" fill="white">b0</text>
+
+  
+  <rect x="350" y="26" width="130" height="72" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.8"/>
+  <rect x="350" y="26" width="130" height="18" rx="5" fill="#f59e0b"/>
+  <rect x="350" y="36" width="130" height="8" rx="0" fill="#f59e0b"/>
+  <text x="415" y="39" text-anchor="middle" class="box-hdr" fill="white">reqC: DECODE 1</text>
+  <rect x="380" y="52" width="60" height="20" rx="3" fill="#f59e0b" fill-opacity="0.85"/>
+  <text x="410" y="66" text-anchor="middle" class="chip-lbl" fill="white">c0</text>
+
+  
+  <rect x="490" y="26" width="230" height="72" rx="5" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.8"/>
+  <rect x="490" y="26" width="230" height="18" rx="5" fill="#8b5cf6"/>
+  <rect x="490" y="36" width="230" height="8" rx="0" fill="#8b5cf6"/>
+  <text x="605" y="39" text-anchor="middle" class="box-hdr" fill="white">reqD: PREFILL 5 toks</text>
+  <rect x="498" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="516" y="66" text-anchor="middle" class="chip-lbl" fill="white">d0</text>
+  <rect x="540" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="558" y="66" text-anchor="middle" class="chip-lbl" fill="white">d1</text>
+  <rect x="582" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="600" y="66" text-anchor="middle" class="chip-lbl" fill="white">d2</text>
+  <rect x="624" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="642" y="66" text-anchor="middle" class="chip-lbl" fill="white">d3</text>
+  <rect x="666" y="52" width="36" height="20" rx="3" fill="#8b5cf6" fill-opacity="0.85"/>
+  <text x="684" y="66" text-anchor="middle" class="chip-lbl" fill="white">d4</text>
+
+  
+  
+  <text x="118" y="113" text-anchor="middle" class="arrow-lbl" fill="var(--ink-soft,#6b7280)">flatten -&gt; concat</text>
+  
+  <line x1="105" y1="98" x2="105" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="270" y1="98" x2="270" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="410" y1="98" x2="410" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="605" y1="98" x2="605" y2="128" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+
+  
+  
+  
+  
+  
+  
+  
+  
+
+  
+  <path d="M28,128 L28,122 L712,122 L712,128" fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="370" y="119" text-anchor="middle" class="arrow-lbl" fill="var(--accent,#6366f1)">one tall [total_tokens=10, d] matrix</text>
+
+  
+  <rect x="30"  y="132" width="60" height="30" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="60"  y="151" text-anchor="middle" class="chip-lbl" fill="white">a0</text>
+  <rect x="92"  y="132" width="60" height="30" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="122" y="151" text-anchor="middle" class="chip-lbl" fill="white">a1</text>
+  <rect x="154" y="132" width="60" height="30" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="184" y="151" text-anchor="middle" class="chip-lbl" fill="white">a2</text>
+  
+  <line x1="216" y1="128" x2="216" y2="164" stroke="var(--ink-soft,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+  
+  <rect x="218" y="132" width="60" height="30" rx="3" fill="#14b8a6" fill-opacity="0.8"/>
+  <text x="248" y="151" text-anchor="middle" class="chip-lbl" fill="white">b0</text>
+  
+  <line x1="280" y1="128" x2="280" y2="164" stroke="var(--ink-soft,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+  
+  <rect x="282" y="132" width="60" height="30" rx="3" fill="#f59e0b" fill-opacity="0.8"/>
+  <text x="312" y="151" text-anchor="middle" class="chip-lbl" fill="white">c0</text>
+  
+  <line x1="344" y1="128" x2="344" y2="164" stroke="var(--ink-soft,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+  
+  <rect x="346" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="376" y="151" text-anchor="middle" class="chip-lbl" fill="white">d0</text>
+  <rect x="408" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="438" y="151" text-anchor="middle" class="chip-lbl" fill="white">d1</text>
+  <rect x="470" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="500" y="151" text-anchor="middle" class="chip-lbl" fill="white">d2</text>
+  <rect x="532" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="562" y="151" text-anchor="middle" class="chip-lbl" fill="white">d3</text>
+  <rect x="594" y="132" width="60" height="30" rx="3" fill="#8b5cf6" fill-opacity="0.8"/>
+  <text x="624" y="151" text-anchor="middle" class="chip-lbl" fill="white">d4</text>
+
+  
+  <text x="370" y="178" text-anchor="middle" class="gemm-lbl">QKV projection + MLP + output projection: ONE big GEMM (no padding)</text>
+
+  
+  <text x="370" y="196" text-anchor="middle" class="mono-lbl" style="font-size:10px">cu_seqlens = [0, 3, 4, 5, 10]</text>
+  
+  
+  <line x1="30"  y1="200" x2="214" y2="200" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <line x1="30"  y1="196" x2="30"  y2="204" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <line x1="214" y1="196" x2="214" y2="204" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="122" y="212" text-anchor="middle" class="chip-lbl" fill="var(--accent,#6366f1)">A [0,3)</text>
+  <line x1="218" y1="200" x2="278" y2="200" stroke="#14b8a6" stroke-width="1"/>
+  <line x1="218" y1="196" x2="218" y2="204" stroke="#14b8a6" stroke-width="1"/>
+  <line x1="278" y1="196" x2="278" y2="204" stroke="#14b8a6" stroke-width="1"/>
+  <text x="248" y="212" text-anchor="middle" class="chip-lbl" fill="#14b8a6">B[3,4)</text>
+  <line x1="282" y1="200" x2="342" y2="200" stroke="#f59e0b" stroke-width="1"/>
+  <line x1="282" y1="196" x2="282" y2="204" stroke="#f59e0b" stroke-width="1"/>
+  <line x1="342" y1="196" x2="342" y2="204" stroke="#f59e0b" stroke-width="1"/>
+  <text x="312" y="212" text-anchor="middle" class="chip-lbl" fill="#f59e0b">C[4,5)</text>
+  <line x1="346" y1="200" x2="654" y2="200" stroke="#8b5cf6" stroke-width="1"/>
+  <line x1="346" y1="196" x2="346" y2="204" stroke="#8b5cf6" stroke-width="1"/>
+  <line x1="654" y1="196" x2="654" y2="204" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="500" y="212" text-anchor="middle" class="chip-lbl" fill="#8b5cf6">D [5,10)</text>
+
+  
+  <text x="370" y="236" text-anchor="middle" class="arrow-lbl" fill="var(--ink-soft,#6b7280)">split by request (cu_seqlens)</text>
+  <line x1="122" y1="222" x2="122" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="248" y1="222" x2="248" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="370" y1="222" x2="370" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+  <line x1="530" y1="222" x2="530" y2="288" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#sb2-arrow)"/>
+
+  
+  
+  
+
+  
+  <rect x="20" y="290" width="180" height="56" rx="5" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <rect x="20" y="290" width="180" height="16" rx="5" fill="var(--accent,#6366f1)"/>
+  <rect x="20" y="298" width="180" height="8" rx="0" fill="var(--accent,#6366f1)"/>
+  <text x="110" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(A)</text>
+  <text x="110" y="318" text-anchor="middle" class="attn-lbl">a-tokens attend</text>
+  <text x="110" y="330" text-anchor="middle" class="attn-lbl">over A's KV</text>
+  <text x="110" y="342" text-anchor="middle" class="attn-lbl">[FlashAttn varlen]</text>
+
+  
+  <rect x="210" y="290" width="130" height="56" rx="5" fill="#ccfbf1" stroke="#14b8a6" stroke-width="1.5"/>
+  <rect x="210" y="290" width="130" height="16" rx="5" fill="#14b8a6"/>
+  <rect x="210" y="298" width="130" height="8" rx="0" fill="#14b8a6"/>
+  <text x="275" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(B)</text>
+  <text x="275" y="318" text-anchor="middle" class="attn-lbl">b0 attends</text>
+  <text x="275" y="330" text-anchor="middle" class="attn-lbl">over B's KV</text>
+
+  
+  <rect x="352" y="290" width="130" height="56" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.5"/>
+  <rect x="352" y="290" width="130" height="16" rx="5" fill="#f59e0b"/>
+  <rect x="352" y="298" width="130" height="8" rx="0" fill="#f59e0b"/>
+  <text x="417" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(C)</text>
+  <text x="417" y="318" text-anchor="middle" class="attn-lbl">c0 attends</text>
+  <text x="417" y="330" text-anchor="middle" class="attn-lbl">over C's KV</text>
+
+  
+  <rect x="494" y="290" width="226" height="56" rx="5" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.5"/>
+  <rect x="494" y="290" width="226" height="16" rx="5" fill="#8b5cf6"/>
+  <rect x="494" y="298" width="226" height="8" rx="0" fill="#8b5cf6"/>
+  <text x="607" y="302" text-anchor="middle" class="req-lbl" fill="white">attn(D)</text>
+  <text x="607" y="318" text-anchor="middle" class="attn-lbl">d-tokens attend over D's KV</text>
+  <text x="607" y="330" text-anchor="middle" class="attn-lbl">[FlashAttention varlen]</text>
+
+  
+  <path d="M20,348 L20,354 L720,354 L720,348" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="370" y="367" text-anchor="middle" class="attn-lbl" style="font-size:9.5px; fill:var(--accent2,#3b82f6)">Attention is position-dependent &amp; per-sequence -&gt; FlashAttention varlen, one kernel launch via cu_seqlens offsets</text>
+
+  
+  <text x="410" y="392" text-anchor="middle" class="cap-lbl" fill="var(--ink-soft,#374151)">Flatten for GEMMs, split for attention: the trick that lets prefill and decode share one fused forward pass</text>
+  <text x="410" y="408" text-anchor="middle" class="cap-lbl" fill="var(--muted,#9ca3af)">(ancestor of chunked prefill)</text>
+</svg>
+<figcaption><b>Selective batching: flatten for GEMMs, split for attention.</b> All tokens from all requests — whether prefill or decode — are concatenated into a single tall matrix for the position-independent linear layers (QKV projection, MLP), giving one large GEMM with no padding. The <code>cu_seqlens</code> offsets then slice the result back by request so attention runs separately for each sequence's KV cache, using FlashAttention's varlen interface. Matching colors trace each request's tokens across all three tiers.</figcaption>
+</figure>

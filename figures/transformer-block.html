@@ -1,0 +1,114 @@
+<figure class="viz" id="fig-transformer-block">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 700 520" role="img" aria-label="A pre-norm transformer block: a vertical residual stream with two branches — Norm then Multi-Head Attention added back, then Norm then MLP added back.">
+  <defs>
+    <marker id="tb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-transformer-block text{ fill:var(--ink-soft); }
+    #fig-transformer-block .io{ font:700 13px var(--mono,monospace); }
+    #fig-transformer-block .box{ font:600 13px var(--sans,sans-serif); }
+    #fig-transformer-block .sub{ font:500 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-transformer-block .note{ font:500 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-transformer-block .plus{ font:700 17px var(--sans,sans-serif); }
+    #fig-transformer-block .tag{ font:600 11px var(--sans,sans-serif); }
+  </style>
+
+  
+  <g data-anim="1">
+    
+    <line x1="250" y1="46" x2="250" y2="474" class="viz-draw" style="--len:430"
+          stroke="var(--accent)" stroke-width="2.6" marker-end="url(#tb-arrow)" color="var(--accent)"/>
+    <text x="250" y="22" text-anchor="middle" class="io" fill="var(--accent)">x  ·  [B, T, d]</text>
+    <text x="250" y="38" text-anchor="middle" class="sub">input — residual stream</text>
+    <text x="250" y="500" text-anchor="middle" class="io" fill="var(--accent)">x″  ·  [B, T, d]</text>
+    <text x="250" y="516" text-anchor="middle" class="sub">output — same shape, ready to stack</text>
+  </g>
+
+  
+  <g data-anim="1">
+    <text x="262" y="120" class="tag" fill="var(--accent)">identity</text>
+    <text x="262" y="134" class="tag" fill="var(--accent)">skip path</text>
+  </g>
+
+  
+  <g data-anim="2">
+    
+    <path d="M250 70 H432" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    
+    <rect x="432" y="56" width="96" height="34" rx="7" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="480" y="74" text-anchor="middle" class="box" fill="var(--accent2,#3b82f6)">RMSNorm</text>
+    <text x="480" y="86" text-anchor="middle" class="sub">pre-norm</text>
+    
+    <path d="M528 73 H548" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    
+    <rect x="548" y="48" width="132" height="50" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.8"/>
+    <text x="614" y="70" text-anchor="middle" class="box" fill="var(--accent)">Multi-Head</text>
+    <text x="614" y="86" text-anchor="middle" class="box" fill="var(--accent)">Self-Attention</text>
+    
+    <path d="M614 98 V196 H268" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    <text x="600" y="150" text-anchor="middle" class="note">F(Norm(x))</text>
+    <text x="600" y="164" text-anchor="middle" class="sub">communication</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <circle cx="250" cy="196" r="14" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
+    <text x="250" y="202" text-anchor="middle" class="plus" fill="var(--accent)">+</text>
+    <text x="228" y="184" text-anchor="end" class="sub">x' = x + Attn(Norm(x))</text>
+  </g>
+
+  
+  <g data-anim="3">
+    
+    <path d="M250 300 H432" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    
+    <rect x="432" y="286" width="96" height="34" rx="7" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="480" y="304" text-anchor="middle" class="box" fill="var(--accent2,#3b82f6)">RMSNorm</text>
+    <text x="480" y="316" text-anchor="middle" class="sub">pre-norm</text>
+    
+    <path d="M528 303 H548" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    
+    <rect x="548" y="278" width="132" height="50" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="614" y="300" text-anchor="middle" class="box" fill="var(--good,#2f9e6e)">MLP / FFN</text>
+    <text x="614" y="316" text-anchor="middle" class="sub">SwiGLU, d_ff ~ 8d/3</text>
+    
+    <path d="M614 328 V426 H268" fill="none" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    <text x="600" y="380" text-anchor="middle" class="note">F(Norm(x'))</text>
+    <text x="600" y="394" text-anchor="middle" class="sub">computation</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <circle cx="250" cy="426" r="14" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
+    <text x="250" y="432" text-anchor="middle" class="plus" fill="var(--accent)">+</text>
+    <text x="228" y="414" text-anchor="end" class="sub">x″ = x' + MLP(Norm(x'))</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <text x="262" y="252" class="io" fill="var(--accent)">x'</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <path d="M44 70 v-2 a6 6 0 0 1 6 -6 h0 M50 62 v126 M44 196 v2 a6 6 0 0 0 6 6 h0"
+          fill="none" stroke="var(--accent)" stroke-width="1.3" opacity="0.75"/>
+    <text x="36" y="125" text-anchor="middle" class="tag" fill="var(--accent)" transform="rotate(-90 36 125)">attention sublayer</text>
+
+    <path d="M44 300 v-2 a6 6 0 0 1 6 -6 h0 M50 292 v126 M44 426 v2 a6 6 0 0 0 6 6 h0"
+          fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3" opacity="0.75"/>
+    <text x="36" y="357" text-anchor="middle" class="tag" fill="var(--good,#2f9e6e)" transform="rotate(-90 36 357)">FFN sublayer</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="92" y="246" width="120" height="44" rx="8" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="152" y="264" text-anchor="middle" class="tag">pattern repeats</text>
+    <text x="152" y="280" text-anchor="middle" class="sub">x = x + F(Norm(x))</text>
+  </g>
+</svg>
+<figcaption><b>The pre-norm transformer block: add a correction, never replace.</b> A single residual stream flows straight down the spine; each sublayer <b>reads</b> it through a <b>Norm</b>, transforms it (attention then MLP), and <b>adds a small update back</b>. Normalizing <em>before</em> each sublayer keeps the identity skip path an unbroken gradient highway — the reason deep transformers train stably without warmup.</figcaption>
+</figure>

@@ -1,0 +1,73 @@
+<figure class="viz" id="fig-kv-cache" >
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 300" role="img" aria-label="Prefill processes the whole prompt in one parallel pass; decode then generates one token per step, appending to a KV cache that grows linearly and is re-read every step.">
+  <style>
+    #fig-kv-cache text{ fill:var(--ink-soft); }
+    #fig-kv-cache .lbl{ font:600 12px var(--sans,sans-serif); }
+    #fig-kv-cache .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-kv-cache .mono{ font:500 10.5px var(--mono,monospace); }
+    #fig-kv-cache .tok{ font:500 11px var(--mono,monospace); fill:var(--ink-soft); }
+  </style>
+
+  
+  <path d="M40 50 v-8 h186 v8" fill="none" class="v-accent2" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <text x="133" y="34" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">Prefill — one parallel pass</text>
+  <path d="M236 50 v-8 h196 v8" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="1.3"/>
+  <text x="334" y="34" text-anchor="middle" class="lbl" fill="var(--accent)">Decode — one token per step</text>
+
+  
+  <g data-anim="1">
+    <g class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.3">
+      <rect x="40" y="58" width="34" height="28" rx="5"/><rect x="78" y="58" width="34" height="28" rx="5"/>
+      <rect x="116" y="58" width="34" height="28" rx="5"/><rect x="154" y="58" width="34" height="28" rx="5"/>
+      <rect x="192" y="58" width="34" height="28" rx="5"/>
+    </g>
+    <text x="133" y="100" text-anchor="middle" class="sm">prompt tokens (length L)</text>
+  </g>
+  <g class="v-fill" stroke="var(--accent)" stroke-width="1.3">
+    <rect data-anim="2" x="236" y="58" width="34" height="28" rx="5"/>
+    <rect data-anim="3" x="274" y="58" width="34" height="28" rx="5"/>
+    <rect data-anim="4" x="312" y="58" width="34" height="28" rx="5"/>
+    <rect data-anim="5" x="350" y="58" width="34" height="28" rx="5"/>
+  </g>
+  <text data-anim="2" x="253" y="78" text-anchor="middle" class="tok" fill="var(--accent)">▸</text>
+
+  
+  <text x="40" y="150" class="lbl">KV cache</text>
+  <g>
+    
+    <g data-anim="1" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-width="1">
+      <rect x="40" y="160" width="34" height="40" rx="4"/><rect x="78" y="160" width="34" height="40" rx="4"/>
+      <rect x="116" y="160" width="34" height="40" rx="4"/><rect x="154" y="160" width="34" height="40" rx="4"/>
+      <rect x="192" y="160" width="34" height="40" rx="4"/>
+    </g>
+    
+    <g fill="var(--accent)" fill-opacity="0.34" stroke="var(--accent)" stroke-width="1">
+      <rect data-anim="2" x="236" y="160" width="34" height="40" rx="4"/>
+      <rect data-anim="3" x="274" y="160" width="34" height="40" rx="4"/>
+      <rect data-anim="4" x="312" y="160" width="34" height="40" rx="4"/>
+      <rect data-anim="5" x="350" y="160" width="34" height="40" rx="4"/>
+    </g>
+  </g>
+
+  
+  <g data-anim="5">
+    <path d="M40 210 h344" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="4 3" class="viz-pulse"/>
+    <text x="212" y="226" text-anchor="middle" class="sm">every decode step re-reads the <tspan font-family="var(--mono,monospace)">entire</tspan> KV cache</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="430" y="108" width="270" height="150" rx="10" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="446" y="130" class="lbl" fill="var(--accent2,#3b82f6)">Prefill</text>
+    <text x="446" y="148" class="sm">compute-bound: big matmuls, high</text>
+    <text x="446" y="162" class="sm">arithmetic intensity, GPU saturated.</text>
+    <text x="446" y="188" class="lbl" fill="var(--accent)">Decode</text>
+    <text x="446" y="206" class="sm">memory-bandwidth-bound: 1 token,</text>
+    <text x="446" y="220" class="sm">tiny matmul, must stream all weights</text>
+    <text x="446" y="234" class="sm">+ the whole (growing) KV cache.</text>
+    <text x="446" y="250" class="mono v-accent" fill="var(--accent)">KV = 2·L·n_layer·n_kv·d_head·bytes</text>
+  </g>
+</svg>
+<figcaption><b>Two regimes, one bottleneck story.</b> Prefill ingests the entire prompt in a single parallel pass (compute-bound). Decode then emits one token at a time; each step appends a key/value to the <b>KV cache</b> and must re-read the whole cache, so decode is <b>memory-bandwidth-bound</b> and gets slower as the sequence grows. This is why KV-cache size and bandwidth — not raw FLOPs — dominate inference cost.</figcaption>
+</figure>

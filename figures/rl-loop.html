@@ -1,0 +1,123 @@
+<figure class="viz" id="fig-rl-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 470" role="img" aria-label="The LLM-RL system loop as a four-stage cycle: an inference engine generates rollouts, a reward verifier scores them, a training engine takes a policy-gradient step, then the updated weights are synced back into the inference engine — with generation and training co-located on the same GPUs.">
+  <defs>
+    <marker id="rl-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rl-loop text{ fill:var(--ink-soft); }
+    #fig-rl-loop .stage{ font:700 14px var(--sans,sans-serif); }
+    #fig-rl-loop .num{ font:700 11px var(--mono,monospace); fill:var(--muted); }
+    #fig-rl-loop .step{ font:500 11px var(--sans,sans-serif); }
+    #fig-rl-loop .sub{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rl-loop .mono{ font:600 11px var(--mono,monospace); }
+    #fig-rl-loop .edge{ font:600 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rl-loop .core{ font:700 12px var(--sans,sans-serif); }
+    #fig-rl-loop .pill{ font:600 9.5px var(--mono,monospace); }
+  </style>
+
+  
+  <g data-anim="5">
+    <rect x="288" y="178" width="184" height="116" rx="12" class="v-fill v-stroke" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="380" y="201" text-anchor="middle" class="core" fill="var(--accent)">ACTOR / POLICY  θ</text>
+    <text x="380" y="218" text-anchor="middle" class="sub">one set of weights, two roles</text>
+    
+    <rect x="300" y="230" width="76" height="48" rx="7" class="v-fill v-accent-s" stroke-width="1.3"/>
+    <text x="338" y="248" text-anchor="middle" class="pill" fill="var(--accent)">inference</text>
+    <text x="338" y="262" text-anchor="middle" class="sub">decode</text>
+    <text x="338" y="273" text-anchor="middle" class="sub">bw-bound</text>
+    <rect x="384" y="230" width="76" height="48" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="422" y="248" text-anchor="middle" class="pill" fill="var(--good,#2f9e6e)">training</text>
+    <text x="422" y="262" text-anchor="middle" class="sub">fwd+bwd</text>
+    <text x="422" y="273" text-anchor="middle" class="sub">compute-bound</text>
+    <text x="380" y="170" text-anchor="middle" class="sub">co-located on the same GPUs (time-sliced)</text>
+  </g>
+
+  
+  <g data-anim="1">
+    <rect x="40" y="48" width="234" height="96" rx="10" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="56" y="40" class="num">1</text>
+    <text x="157" y="74" text-anchor="middle" class="stage" fill="var(--accent)">GENERATION</text>
+    <text x="157" y="92" text-anchor="middle" class="step">inference engine samples rollouts</text>
+    <text x="157" y="110" text-anchor="middle" class="sub">vLLM / SGLang · autoregressive decode</text>
+    <text x="157" y="128" text-anchor="middle" class="sub">N×G responses + logπ_old</text>
+    
+    <rect x="40" y="48" width="234" height="14" rx="7" class="v-accent viz-pulse" fill="var(--accent)" fill-opacity="0.18"/>
+    <text x="157" y="59" text-anchor="middle" class="pill" fill="var(--accent)">≈ 60–80% of step wall-clock</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="486" y="48" width="234" height="96" rx="10" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="502" y="40" class="num">2</text>
+    <text x="603" y="74" text-anchor="middle" class="stage" fill="var(--accent)">REWARD / VERIFIER</text>
+    <text x="603" y="92" text-anchor="middle" class="step">score each response → R</text>
+    <text x="603" y="110" text-anchor="middle" class="sub">RM · rule check · code sandbox</text>
+    <text x="603" y="128" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">reward(prompt, response)</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="486" y="328" width="234" height="96" rx="10" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="502" y="320" class="num">3</text>
+    <text x="603" y="354" text-anchor="middle" class="stage" fill="var(--good,#2f9e6e)">TRAINING</text>
+    <text x="603" y="372" text-anchor="middle" class="step">policy-gradient update on θ</text>
+    <text x="603" y="390" text-anchor="middle" class="sub">FSDP / Megatron · advantage + clip</text>
+    <text x="603" y="408" text-anchor="middle" class="mono">ratio·Â  →  backward  →  step</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="40" y="328" width="234" height="96" rx="10" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="56" y="320" class="num">4</text>
+    <text x="157" y="354" text-anchor="middle" class="stage" fill="var(--warn,#e0a106)">WEIGHT SYNC</text>
+    <text x="157" y="372" text-anchor="middle" class="step">push fresh θ into the generator</text>
+    <text x="157" y="390" text-anchor="middle" class="sub">reshape train-layout → infer-layout</text>
+    <text x="157" y="408" text-anchor="middle" class="sub">the arrow with no SFT analogue</text>
+  </g>
+
+  
+  
+  <g data-anim="2">
+    <line x1="274" y1="86" x2="478" y2="86" stroke="var(--accent)" class="v-accent-s viz-draw" style="--len:204" stroke-width="1.8" marker-end="url(#rl-arrow)"/>
+    <text x="380" y="78" text-anchor="middle" class="edge" fill="var(--accent)">responses (tokens, logπ_old)</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="603" y1="144" x2="603" y2="322" stroke="currentColor" class="v-muted viz-draw" style="--len:178" stroke-width="1.8" marker-end="url(#rl-arrow)"/>
+    <text x="611" y="238" class="edge">rewards R</text>
+    <text x="611" y="252" class="sub">→ advantage Â</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="486" y1="386" x2="282" y2="386" stroke="var(--good,#2f9e6e)" class="viz-draw" style="--len:204" stroke-width="1.8" marker-end="url(#rl-arrow)"/>
+    <text x="384" y="406" text-anchor="middle" class="edge" fill="var(--good,#2f9e6e)">updated θ</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="157" y1="328" x2="157" y2="148" stroke="var(--warn,#e0a106)" class="viz-draw" style="--len:180" stroke-width="1.8" marker-end="url(#rl-arrow)" stroke-dasharray="6 4"/>
+    <text x="148" y="240" text-anchor="end" class="edge" fill="var(--warn,#e0a106)">stale → fresh</text>
+    <text x="148" y="254" text-anchor="end" class="sub">weights back to</text>
+    <text x="148" y="266" text-anchor="end" class="sub">the generator</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="200" y1="144" x2="300" y2="216" stroke="var(--accent)" class="v-accent-s" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" marker-end="url(#rl-arrow)"/>
+    <text x="232" y="166" text-anchor="middle" class="sub" fill="var(--accent)">reads θ</text>
+    <line x1="460" y1="216" x2="558" y2="324" stroke="var(--good,#2f9e6e)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" marker-end="url(#rl-arrow)"/>
+    <text x="528" y="262" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">writes θ</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <text x="380" y="452" text-anchor="middle" class="sub">one outer RL iteration — repeat: the data is manufactured, scored, and consumed in a single pass</text>
+  </g>
+</svg>
+<figcaption><b>RL for LLMs is a two-engine loop, not a one-engine job.</b> Each step cycles <b>generation</b> (an inference engine decodes rollouts — the 60–80% cost center) → <b>reward/verifier</b> (a model, rule, or sandbox scores them) → <b>training</b> (a policy-gradient step moves θ) → <b>weight sync</b> (the fresh θ is pushed back into the generator). The same policy θ wears two hats at once — bandwidth-bound decode and compute-bound training co-located on the same GPUs — which is exactly what makes RL infrastructure hard.</figcaption>
+</figure>

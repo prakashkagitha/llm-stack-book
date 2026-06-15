@@ -1,0 +1,214 @@
+<figure class="viz" id="fig-reward-signal-flow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 660 476" role="img" aria-label="Reward signal flow diagram: a prompt feeds into the Policy LLM to produce a completion, which fans out to three parallel verifiers (rule-based, LLM judge, reward model), then merges into a weighted combination, flows through advantage estimation, and feeds a policy loss that loops back via gradient update.">
+<defs>
+  <marker id="rsf-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="rsf-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-reward-signal-flow .lbl { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-reward-signal-flow .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-signal-flow .cap { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-signal-flow .header { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); letter-spacing: 0.08em; text-transform: uppercase; }
+  #fig-reward-signal-flow .math { font: 500 11px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+  #fig-reward-signal-flow .grad-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+  @keyframes rsf-tok1 {
+    0%   { transform: translateX(0);    opacity: 0; }
+    4%   { opacity: 1; }
+    28%  { transform: translateX(240px); opacity: 1; }
+    32%  { transform: translateX(240px); opacity: 0; }
+    100% { transform: translateX(240px); opacity: 0; }
+  }
+  @keyframes rsf-fanA {
+    0%,32%  { transform: translate(0,0);      opacity: 0; }
+    35%     { opacity: 1; }
+    52%     { transform: translate(-145px,95px); opacity: 1; }
+    57%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-fanB {
+    0%,37%  { transform: translate(0,0);    opacity: 0; }
+    40%     { opacity: 1; }
+    58%     { transform: translate(0,95px); opacity: 1; }
+    64%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-fanC {
+    0%,43%  { transform: translate(0,0);       opacity: 0; }
+    46%     { opacity: 1; }
+    66%     { transform: translate(138px,95px); opacity: 1; }
+    72%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-merge {
+    0%,68%  { transform: translateY(0);   opacity: 0; }
+    71%     { opacity: 1; }
+    82%     { transform: translateY(68px); opacity: 1; }
+    86%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-down {
+    0%,82%  { transform: translateX(0);    opacity: 0; }
+    85%     { opacity: 1; }
+    94%     { transform: translateX(88px); opacity: 1; }
+    97%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsf-fb {
+    0%,94%  { stroke-dashoffset: 400; opacity: 0; }
+    96%     { opacity: 0.7; }
+    100%    { stroke-dashoffset: 0; opacity: 0; }
+  }
+  #fig-reward-signal-flow .tok1   { animation: rsf-tok1  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokFA  { animation: rsf-fanA  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokFB  { animation: rsf-fanB  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokFC  { animation: rsf-fanC  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokMg  { animation: rsf-merge 5s ease-in-out infinite; }
+  #fig-reward-signal-flow .tokDn  { animation: rsf-down  5s ease-in-out infinite; }
+  #fig-reward-signal-flow .fb-anim{ animation: rsf-fb    5s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-reward-signal-flow .tok1,
+    #fig-reward-signal-flow .tokFA,
+    #fig-reward-signal-flow .tokFB,
+    #fig-reward-signal-flow .tokFC,
+    #fig-reward-signal-flow .tokMg,
+    #fig-reward-signal-flow .tokDn,
+    #fig-reward-signal-flow .fb-anim { animation: none; opacity: 0; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="644" height="460" rx="14"
+      fill="var(--surface,#f7f7fb)" stroke="var(--border-2,#d0d0da)" stroke-width="1.2"/>
+<text x="22" y="26" class="header">Training Process</text>
+
+
+
+<rect x="30"  y="50" width="120" height="44" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="90" y="76" text-anchor="middle" class="lbl">Prompt</text>
+
+<line x1="150" y1="72" x2="168" y2="72"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<rect x="170" y="50" width="140" height="44" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="240" y="76" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Policy (LLM)</text>
+
+<line x1="310" y1="72" x2="328" y2="72"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<rect x="330" y="50" width="130" height="44" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="395" y="76" text-anchor="middle" class="lbl">Completion</text>
+
+
+<circle class="tok1" cx="50" cy="72" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+
+<line x1="395" y1="94" x2="395" y2="128"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<line x1="180" y1="128" x2="580" y2="128"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<line x1="180" y1="128" x2="180" y2="158"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+<line x1="395" y1="128" x2="395" y2="158"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+<line x1="580" y1="128" x2="580" y2="158"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+
+<circle class="tokFA" cx="395" cy="108" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tokFB" cx="395" cy="108" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tokFC" cx="395" cy="108" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+
+<rect x="102" y="158" width="156" height="54" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="180" y="180" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Rule-Based Verifier</text>
+<text x="180" y="196" text-anchor="middle" class="sub">fast / deterministic</text>
+<text x="180" y="222" text-anchor="middle" class="cap">cheap, deterministic</text>
+
+
+<rect x="317" y="158" width="156" height="54" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="395" y="180" text-anchor="middle" class="lbl">LLM Judge</text>
+<text x="395" y="196" text-anchor="middle" class="sub">async API</text>
+<text x="395" y="222" text-anchor="middle" class="cap">expensive, noisy</text>
+
+
+<rect x="510" y="158" width="140" height="54" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="580" y="180" text-anchor="middle" class="lbl">Reward Model</text>
+<text x="580" y="196" text-anchor="middle" class="sub">GPU</text>
+<text x="580" y="222" text-anchor="middle" class="cap">GPU, smooth</text>
+
+
+<line x1="180" y1="212" x2="180" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="395" y1="212" x2="395" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="580" y1="212" x2="580" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="180" y1="248" x2="580" y2="248"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<line x1="395" y1="248" x2="395" y2="270"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<circle class="tokMg" cx="395" cy="248" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+<rect x="215" y="270" width="360" height="50" rx="8"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.4"/>
+<text x="395" y="292" text-anchor="middle" class="lbl">Weighted Combination  r_total</text>
+<text x="395" y="310" text-anchor="middle" class="math">r_total = sum(w_k * r_k)</text>
+
+
+<line x1="395" y1="320" x2="395" y2="348"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+
+<rect x="215" y="348" width="175" height="44" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="302" y="374" text-anchor="middle" class="lbl">Advantage Estimation</text>
+
+<line x1="390" y1="370" x2="418" y2="370"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+
+<circle class="tokDn" cx="225" cy="370" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+<rect x="420" y="348" width="130" height="44" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="485" y="374" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Policy Loss</text>
+
+
+
+<path d="M 485 392 Q 485 440 390 440 Q 160 440 160 72 Q 160 52 170 52"
+      fill="none"
+      stroke="var(--muted,#8a8a99)" stroke-width="1.2"
+      stroke-dasharray="6 4"
+      marker-end="url(#rsf-arr-muted)"/>
+
+<text x="330" y="454" text-anchor="middle" class="grad-lbl">gradient update</text>
+
+
+<path class="fb-anim"
+      d="M 485 392 Q 485 440 390 440 Q 160 440 160 72 Q 160 52 170 52"
+      fill="none"
+      stroke="var(--accent,#c15b39)" stroke-width="2"
+      stroke-dasharray="400" stroke-dashoffset="400"
+      opacity="0"/>
+
+</svg>
+<figcaption><b>Reward signal flow in the RLVR training loop.</b> Each training step generates a completion from the policy, fans it out to three parallel verifiers running at different latencies and costs, merges their outputs into a weighted scalar, computes advantages, and updates the policy via a gradient — closing the loop.</figcaption>
+</figure>

@@ -1,0 +1,142 @@
+<figure class="viz" id="fig-scalingrl-partial-rollout">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 960 410" role="img" aria-label="Two timeline comparisons: top panel shows a single 16k-token outlier stalling all other workers; bottom panel shows partial rollout splitting that trace into four 4k-token phases across consecutive RL steps, each phase connected by a KV-stash resume arrow.">
+  <defs>
+    <marker id="pr-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+    </marker>
+    <marker id="pr-eos-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-scalingrl-partial-rollout text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,currentColor); }
+    #fig-scalingrl-partial-rollout .panel-title { font: 700 13px var(--sans,sans-serif); }
+    #fig-scalingrl-partial-rollout .step-lbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-scalingrl-partial-rollout .blk-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-scalingrl-partial-rollout .annot { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+    #fig-scalingrl-partial-rollout .idle-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#c2410c); }
+    #fig-scalingrl-partial-rollout .note { font: 400 10px var(--sans,sans-serif); fill: var(--muted,currentColor); }
+    #fig-scalingrl-partial-rollout .eos-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+
+    /* Animation: chunks appear one by one, then arrows fire */
+    @keyframes pr-appear { 0%,var(--t0) { opacity:0; } calc(var(--t0) + 5%), 95% { opacity:1; } 100% { opacity:0; } }
+    @keyframes pr-arrow-draw {
+      0%, var(--t0) { stroke-dashoffset: 60; opacity:0; }
+      calc(var(--t0) + 3%) { opacity:1; }
+      calc(var(--t0) + 8%), 95% { stroke-dashoffset: 0; opacity:1; }
+      100% { opacity:0; stroke-dashoffset:60; }
+    }
+
+    #fig-scalingrl-partial-rollout .chunk-k  { --t0: 15%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .chunk-k1 { --t0: 30%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .chunk-k2 { --t0: 48%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .chunk-k3 { --t0: 63%; animation: pr-appear 7s ease-out infinite; }
+    #fig-scalingrl-partial-rollout .arr-k   { --t0: 25%; animation: pr-arrow-draw 7s ease-out infinite; stroke-dasharray:60; stroke-dashoffset:60; }
+    #fig-scalingrl-partial-rollout .arr-k1  { --t0: 43%; animation: pr-arrow-draw 7s ease-out infinite; stroke-dasharray:60; stroke-dashoffset:60; }
+    #fig-scalingrl-partial-rollout .arr-k2  { --t0: 58%; animation: pr-arrow-draw 7s ease-out infinite; stroke-dasharray:60; stroke-dashoffset:60; }
+  </style>
+
+  
+  
+  
+  <text x="120" y="22" class="panel-title">Without partial rollout (tail gates the step)</text>
+
+  
+  <text x="110" y="62" text-anchor="end" class="step-lbl">step k</text>
+
+  
+  <rect x="120" y="44" width="780" height="32" rx="3"
+        fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+  <rect x="120" y="44" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+  <text x="510" y="65" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">16k-token outlier</text>
+
+  
+  <line x1="230" y1="88" x2="895" y2="88" stroke="var(--warn,#c2410c)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <line x1="230" y1="82" x2="230" y2="94" stroke="var(--warn,#c2410c)" stroke-width="1.5"/>
+  <line x1="895" y1="82" x2="895" y2="94" stroke="var(--warn,#c2410c)" stroke-width="1.5"/>
+  <text x="562" y="104" text-anchor="middle" class="idle-lbl">all other workers idle for the last ~14k tokens</text>
+
+  
+  <line x1="40" y1="118" x2="920" y2="118" stroke="var(--border-2,#e2e8f0)" stroke-width="1"/>
+
+  
+  
+  
+  <text x="120" y="142" class="panel-title">With partial rollout (budget = 4k tokens/phase)</text>
+
+  
+
+  
+  <text x="110" y="192" text-anchor="end" class="step-lbl">step k</text>
+  <g class="chunk-k">
+    <rect x="120" y="172" width="170" height="32" rx="3"
+          fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+    <rect x="120" y="172" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+    <text x="205" y="193" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">4k</text>
+    <text x="300" y="187" class="annot">truncate, stash KV+text</text>
+  </g>
+
+  
+  <path d="M 290 204 C 290 218 120 218 120 222"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        marker-end="url(#pr-arrow)"
+        class="arr-k"/>
+
+  
+  <text x="110" y="242" text-anchor="end" class="step-lbl">step k+1</text>
+  <g class="chunk-k1">
+    <rect x="120" y="222" width="170" height="32" rx="3"
+          fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+    <rect x="120" y="222" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+    <text x="205" y="243" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">4k</text>
+    <text x="300" y="237" class="annot">resume, truncate again</text>
+  </g>
+
+  
+  <path d="M 290 254 C 290 268 120 268 120 272"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        marker-end="url(#pr-arrow)"
+        class="arr-k1"/>
+
+  
+  <text x="110" y="292" text-anchor="end" class="step-lbl">step k+2</text>
+  <g class="chunk-k2">
+    <rect x="120" y="272" width="170" height="32" rx="3"
+          fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.5"/>
+    <rect x="120" y="272" width="5" height="32" rx="0" fill="var(--accent,#2563eb)"/>
+    <text x="205" y="293" text-anchor="middle" class="blk-lbl" fill="var(--accent,#2563eb)">4k</text>
+    <text x="300" y="287" class="annot">resume</text>
+  </g>
+
+  
+  <path d="M 290 304 C 290 318 120 318 120 322"
+        fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.8"
+        marker-end="url(#pr-arrow)"
+        class="arr-k2"/>
+
+  
+  <text x="110" y="342" text-anchor="end" class="step-lbl">step k+3</text>
+  <g class="chunk-k3">
+    <rect x="120" y="322" width="170" height="32" rx="3"
+          fill="var(--surface-3,#f0fdf4)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+    <rect x="120" y="322" width="5" height="32" rx="0" fill="var(--good,#2f9e6e)"/>
+    <text x="205" y="343" text-anchor="middle" class="blk-lbl" fill="var(--good,#2f9e6e)">4k</text>
+    
+    <rect x="296" y="326" width="30" height="16" rx="3" fill="var(--good,#2f9e6e)" opacity="0.9"/>
+    <text x="311" y="338" text-anchor="middle" class="eos-lbl" fill="white">EOS</text>
+    <text x="338" y="337" class="annot">resume -&gt; EOS, reward computed, full trajectory trained</text>
+  </g>
+
+  
+  <text x="550" y="270" class="note">each resumed token tagged</text>
+  <text x="550" y="282" class="note">with behavior-policy logprob</text>
+  <text x="550" y="294" class="note">for IS correction</text>
+
+  
+  <text x="480" y="385" text-anchor="middle" class="note">
+    Truncated sequence = checkpoint; amortize one long trace across steps rather than blocking one step.
+  </text>
+</svg>
+<figcaption><b>Partial rollout amortizes a long trace across multiple RL steps instead of blocking one.</b> Without it (top), a 16k-token outlier stalls every other worker for ~14k tokens. With a 4k-token budget per phase (bottom), the trace is truncated, its KV state stashed, and resumed next step — each 4k chunk completes alongside fresh short sequences, until EOS is reached at step k+3 and the full trajectory is trained. Per-token behavior log-probs are stored at each phase for importance-sampling correction.</figcaption>
+</figure>

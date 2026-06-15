@@ -1,0 +1,356 @@
+<figure class="viz" id="fig-fp8mp-pertensor-vs-blockwise-scaling">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 920 440" role="img" aria-label="Side-by-side comparison: per-tensor FP8 scaling (one outlier poisons all cells) versus blockwise 128x128 FP8 scaling (outlier in tile s11 is contained; other 15 tiles keep full resolution).">
+<defs>
+  <marker id="pbs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--accent,#d9480f)"/>
+  </marker>
+  <marker id="pbs-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="pbs-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+</defs>
+<style>
+  #fig-fp8mp-pertensor-vs-blockwise-scaling text { fill: var(--ink-soft); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .ttl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .lbl  { font: 600 11px var(--sans,sans-serif); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .mono { font: 600 10px var(--mono,monospace); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .cap  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .dim  { fill: var(--muted,#888); }
+
+  /* Shockwave animation for left panel */
+  @keyframes pbs-pulse-outlier {
+    0%,100% { opacity:0.8; r:7; }
+    50%      { opacity:1;   r:11; }
+  }
+  @keyframes pbs-shockwave {
+    0%   { r:8;  opacity:0.9; }
+    100% { r:145; opacity:0; }
+  }
+  @keyframes pbs-crush {
+    0%,30%  { transform: translateY(0); opacity:0.7; }
+    100%    { transform: translateY(var(--crush-y,40px)); opacity:0.9; }
+  }
+  @keyframes pbs-wall-flash {
+    0%,100% { opacity:0; }
+    55%,75% { opacity:1; }
+  }
+  @keyframes pbs-contain-crush {
+    0%,30%  { transform: translateY(0); opacity:0.7; }
+    100%    { transform: translateY(30px); opacity:0.9; }
+  }
+
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .outlier-dot {
+    animation: pbs-pulse-outlier 1.2s ease-in-out 0s infinite;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .left-shock {
+    animation: pbs-shockwave 1.2s ease-out 1.2s 1 forwards;
+    opacity: 0;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .crush-dot {
+    animation: pbs-crush 1.2s ease-in 1.2s 1 forwards;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .wall-flash {
+    animation: pbs-wall-flash 1.2s ease-in-out 1.2s 1 forwards;
+  }
+  #fig-fp8mp-pertensor-vs-blockwise-scaling .contain-crush {
+    animation: pbs-contain-crush 1.2s ease-in 1.2s 1 forwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .outlier-dot,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .left-shock,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .crush-dot,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .wall-flash,
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .contain-crush {
+      animation: none;
+    }
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .crush-dot { transform: translateY(40px); opacity:0.9; }
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .contain-crush { transform: translateY(30px); opacity:0.9; }
+    #fig-fp8mp-pertensor-vs-blockwise-scaling .wall-flash { opacity:1; }
+  }
+</style>
+
+
+<line x1="460" y1="20" x2="460" y2="420" class="v-stroke" stroke-width="1" opacity="0.25"/>
+
+
+
+<text x="225" y="28" text-anchor="middle" class="ttl v-accent" fill="var(--accent,#d9480f)">PER-TENSOR SCALING</text>
+
+
+<rect x="42" y="42" width="326" height="234" rx="6" class="v-fill v-stroke" stroke-width="1.8" fill-opacity="0.5"/>
+
+
+<g class="v-grid" stroke-width="0.8" opacity="0.55">
+  <line x1="123" y1="42" x2="123" y2="276"/>
+  <line x1="204" y1="42" x2="204" y2="276"/>
+  <line x1="285" y1="42" x2="285" y2="276"/>
+  <line x1="42"  y1="100" x2="368" y2="100"/>
+  <line x1="42"  y1="159" x2="368" y2="159"/>
+  <line x1="42"  y1="218" x2="368" y2="218"/>
+</g>
+
+
+<text x="205" y="68" text-anchor="middle" class="lbl">one amax  -&gt;  one scale  s</text>
+<rect x="70" y="55" width="270" height="22" rx="4" class="v-stroke" stroke-width="0.8" fill="none" opacity="0.5"/>
+
+
+
+<g class="v-label" opacity="0.55">
+  
+  <circle cx="72"  cy="74"  r="3"/>
+  <circle cx="90"  cy="62"  r="3"/>
+  <circle cx="108" cy="84"  r="3"/>
+  <circle cx="152" cy="70"  r="3"/>
+  <circle cx="170" cy="58"  r="3"/>
+  <circle cx="188" cy="86"  r="3"/>
+  <circle cx="230" cy="68"  r="3"/>
+  <circle cx="252" cy="80"  r="3"/>
+  <circle cx="270" cy="56"  r="3"/>
+  <circle cx="315" cy="72"  r="3"/>
+  <circle cx="335" cy="86"  r="3"/>
+  <circle cx="352" cy="60"  r="3"/>
+  
+  <circle cx="72"  cy="128" r="3"/>
+  <circle cx="90"  cy="116" r="3"/>
+  <circle cx="108" cy="140" r="3"/>
+  
+  <circle cx="230" cy="122" r="3"/>
+  <circle cx="252" cy="138" r="3"/>
+  <circle cx="270" cy="114" r="3"/>
+  <circle cx="315" cy="126" r="3"/>
+  <circle cx="335" cy="142" r="3"/>
+  <circle cx="352" cy="110" r="3"/>
+  
+  <circle cx="72"  cy="186" r="3"/>
+  <circle cx="90"  cy="174" r="3"/>
+  <circle cx="108" cy="196" r="3"/>
+  <circle cx="152" cy="180" r="3"/>
+  <circle cx="170" cy="168" r="3"/>
+  <circle cx="188" cy="196" r="3"/>
+  <circle cx="230" cy="178" r="3"/>
+  <circle cx="252" cy="192" r="3"/>
+  <circle cx="270" cy="170" r="3"/>
+  <circle cx="315" cy="182" r="3"/>
+  <circle cx="335" cy="196" r="3"/>
+  <circle cx="352" cy="168" r="3"/>
+  
+  <circle cx="72"  cy="244" r="3"/>
+  <circle cx="90"  cy="232" r="3"/>
+  <circle cx="108" cy="252" r="3"/>
+  <circle cx="152" cy="238" r="3"/>
+  <circle cx="170" cy="226" r="3"/>
+  <circle cx="188" cy="258" r="3"/>
+  <circle cx="230" cy="236" r="3"/>
+  <circle cx="252" cy="250" r="3"/>
+  <circle cx="270" cy="228" r="3"/>
+  <circle cx="315" cy="240" r="3"/>
+  <circle cx="335" cy="254" r="3"/>
+  <circle cx="352" cy="226" r="3"/>
+</g>
+
+
+<g fill="var(--accent,#d9480f)" opacity="0">
+  
+  <circle class="crush-dot" cx="72"  cy="226" r="2.5" style="--crush-y:42px"/>
+  <circle class="crush-dot" cx="90"  cy="226" r="2.5" style="--crush-y:32px"/>
+  <circle class="crush-dot" cx="108" cy="226" r="2.5" style="--crush-y:52px"/>
+  <circle class="crush-dot" cx="152" cy="238" r="2.5" style="--crush-y:28px"/>
+  <circle class="crush-dot" cx="170" cy="238" r="2.5" style="--crush-y:35px"/>
+  <circle class="crush-dot" cx="188" cy="238" r="2.5" style="--crush-y:22px"/>
+  <circle class="crush-dot" cx="230" cy="228" r="2.5" style="--crush-y:45px"/>
+  <circle class="crush-dot" cx="252" cy="228" r="2.5" style="--crush-y:30px"/>
+  <circle class="crush-dot" cx="270" cy="228" r="2.5" style="--crush-y:38px"/>
+  <circle class="crush-dot" cx="315" cy="232" r="2.5" style="--crush-y:48px"/>
+  <circle class="crush-dot" cx="335" cy="232" r="2.5" style="--crush-y:33px"/>
+  <circle class="crush-dot" cx="352" cy="232" r="2.5" style="--crush-y:25px"/>
+</g>
+
+
+<rect x="124" y="101" width="79" height="57" rx="2" fill="var(--accent,#d9480f)" fill-opacity="0.82"/>
+<text x="163" y="124" text-anchor="middle" class="lbl" fill="white">outlier</text>
+<text x="163" y="140" text-anchor="middle" class="mono" fill="white">large val</text>
+
+
+<circle class="outlier-dot" cx="163" cy="130" r="7" fill="var(--accent,#d9480f)" fill-opacity="0" stroke="var(--accent,#d9480f)" stroke-width="2"/>
+
+
+<circle class="left-shock" cx="163" cy="130" r="8" fill="none" stroke="var(--accent,#d9480f)" stroke-width="2.5" opacity="0"/>
+
+
+<g>
+  
+  <line x1="400" y1="48" x2="400" y2="270" class="v-stroke" stroke-width="2"/>
+  
+  <g class="v-stroke" stroke-width="1.5">
+    <line x1="394" y1="48"  x2="406" y2="48"/>
+    <line x1="394" y1="80"  x2="406" y2="80"/>
+    <line x1="394" y1="111" x2="406" y2="111"/>
+    <line x1="394" y1="143" x2="406" y2="143"/>
+    <line x1="394" y1="175" x2="406" y2="175"/>
+    <line x1="394" y1="207" x2="406" y2="207"/>
+    <line x1="394" y1="238" x2="406" y2="238"/>
+    <line x1="394" y1="270" x2="406" y2="270"/>
+  </g>
+  <text x="400" y="42" text-anchor="middle" class="cap" font-size="8">max</text>
+  <text x="400" y="282" text-anchor="middle" class="cap" font-size="8">0</text>
+  
+  <circle cx="400" cy="262" r="3" fill="var(--accent,#d9480f)" opacity="0.9"/>
+  <circle cx="400" cy="258" r="3" fill="var(--accent,#d9480f)" opacity="0.7"/>
+  <circle cx="400" cy="266" r="2.5" fill="var(--accent,#d9480f)" opacity="0.8"/>
+  <circle cx="396" cy="262" r="2" fill="var(--accent,#d9480f)" opacity="0.6"/>
+  <circle cx="404" cy="258" r="2" fill="var(--accent,#d9480f)" opacity="0.5"/>
+  <circle cx="400" cy="238" r="2.5" fill="var(--accent,#d9480f)" opacity="0.35"/>
+  
+  <line x1="430" y1="262" x2="408" y2="262" stroke="var(--accent,#d9480f)" stroke-width="1.2" marker-end="url(#pbs-arrow)"/>
+  <text x="436" y="258" class="cap" font-size="8">all values</text>
+  <text x="436" y="268" class="cap" font-size="8">crushed here</text>
+  <text x="400" y="296" text-anchor="middle" class="cap" font-size="8">FP8 codes</text>
+</g>
+
+
+<text x="225" y="300" text-anchor="middle" class="cap" font-size="9">One outlier blows up amax</text>
+<text x="225" y="311" text-anchor="middle" class="cap" font-size="9">-&gt; tiny scale s = fp8_max / amax</text>
+<text x="225" y="322" text-anchor="middle" class="cap" font-size="9">-&gt; all normal values crushed into bottom codes.</text>
+
+
+
+
+<text x="690" y="28" text-anchor="middle" class="ttl" fill="var(--good,#2f9e6e)">BLOCKWISE (128×128) SCALING</text>
+
+
+
+
+
+
+<g>
+  
+  <rect x="491" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="583" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="675" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="767" y="43"  width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  
+  <rect x="491" y="101" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  
+  
+  <rect x="675" y="101" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  
+  <rect x="767" y="101" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  
+  <rect x="491" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="583" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="675" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="767" y="159" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  
+  <rect x="491" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="583" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="675" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+  <rect x="767" y="217" width="90" height="56" rx="3" class="v-fill v-stroke" stroke-width="1.4" fill-opacity="0.45"/>
+</g>
+
+
+<g class="mono dim">
+  
+  <text x="536" y="64"  text-anchor="middle">s₀₀</text>
+  <text x="628" y="64"  text-anchor="middle">s₀₁</text>
+  <text x="720" y="64"  text-anchor="middle">s₀₂</text>
+  <text x="812" y="64"  text-anchor="middle">s₀₃</text>
+  
+  <text x="536" y="122" text-anchor="middle">s₁₀</text>
+  
+  <text x="720" y="122" text-anchor="middle">s₁₂</text>
+  <text x="812" y="122" text-anchor="middle">s₁₃</text>
+  
+  <text x="536" y="180" text-anchor="middle">s₂₀</text>
+  <text x="628" y="180" text-anchor="middle">s₂₁</text>
+  <text x="720" y="180" text-anchor="middle">s₂₂</text>
+  <text x="812" y="180" text-anchor="middle">s₂₃</text>
+  
+  <text x="536" y="238" text-anchor="middle">s₃₀</text>
+  <text x="628" y="238" text-anchor="middle">s₃₁</text>
+  <text x="720" y="238" text-anchor="middle">s₃₂</text>
+  <text x="812" y="238" text-anchor="middle">s₃₃</text>
+</g>
+
+
+<g fill="var(--good,#2f9e6e)" opacity="0.6">
+  
+  <circle cx="505" cy="56" r="2.5"/><circle cx="520" cy="72" r="2.5"/><circle cx="540" cy="60" r="2.5"/><circle cx="558" cy="78" r="2.5"/><circle cx="572" cy="50" r="2.5"/>
+  
+  <circle cx="597" cy="58" r="2.5"/><circle cx="612" cy="74" r="2.5"/><circle cx="632" cy="56" r="2.5"/><circle cx="650" cy="70" r="2.5"/><circle cx="664" cy="48" r="2.5"/>
+  
+  <circle cx="689" cy="60" r="2.5"/><circle cx="704" cy="76" r="2.5"/><circle cx="724" cy="54" r="2.5"/><circle cx="742" cy="68" r="2.5"/><circle cx="756" cy="50" r="2.5"/>
+  
+  <circle cx="781" cy="56" r="2.5"/><circle cx="796" cy="72" r="2.5"/><circle cx="816" cy="58" r="2.5"/><circle cx="834" cy="74" r="2.5"/><circle cx="848" cy="46" r="2.5"/>
+  
+  <circle cx="505" cy="114" r="2.5"/><circle cx="520" cy="130" r="2.5"/><circle cx="540" cy="118" r="2.5"/><circle cx="558" cy="136" r="2.5"/><circle cx="572" cy="108" r="2.5"/>
+  
+  <circle cx="689" cy="116" r="2.5"/><circle cx="704" cy="132" r="2.5"/><circle cx="724" cy="112" r="2.5"/><circle cx="742" cy="126" r="2.5"/><circle cx="756" cy="108" r="2.5"/>
+  
+  <circle cx="781" cy="114" r="2.5"/><circle cx="796" cy="130" r="2.5"/><circle cx="816" cy="116" r="2.5"/><circle cx="834" cy="132" r="2.5"/><circle cx="848" cy="104" r="2.5"/>
+  
+  <circle cx="505" cy="172" r="2.5"/><circle cx="520" cy="188" r="2.5"/><circle cx="540" cy="176" r="2.5"/><circle cx="558" cy="192" r="2.5"/><circle cx="572" cy="166" r="2.5"/>
+  <circle cx="597" cy="174" r="2.5"/><circle cx="612" cy="190" r="2.5"/><circle cx="632" cy="172" r="2.5"/><circle cx="650" cy="186" r="2.5"/><circle cx="664" cy="164" r="2.5"/>
+  <circle cx="689" cy="170" r="2.5"/><circle cx="704" cy="186" r="2.5"/><circle cx="724" cy="174" r="2.5"/><circle cx="742" cy="190" r="2.5"/><circle cx="756" cy="162" r="2.5"/>
+  <circle cx="781" cy="172" r="2.5"/><circle cx="796" cy="188" r="2.5"/><circle cx="816" cy="174" r="2.5"/><circle cx="834" cy="190" r="2.5"/><circle cx="848" cy="160" r="2.5"/>
+  
+  <circle cx="505" cy="230" r="2.5"/><circle cx="520" cy="246" r="2.5"/><circle cx="540" cy="234" r="2.5"/><circle cx="558" cy="250" r="2.5"/><circle cx="572" cy="224" r="2.5"/>
+  <circle cx="597" cy="232" r="2.5"/><circle cx="612" cy="248" r="2.5"/><circle cx="632" cy="230" r="2.5"/><circle cx="650" cy="244" r="2.5"/><circle cx="664" cy="222" r="2.5"/>
+  <circle cx="689" cy="228" r="2.5"/><circle cx="704" cy="244" r="2.5"/><circle cx="724" cy="232" r="2.5"/><circle cx="742" cy="248" r="2.5"/><circle cx="756" cy="220" r="2.5"/>
+  <circle cx="781" cy="230" r="2.5"/><circle cx="796" cy="246" r="2.5"/><circle cx="816" cy="234" r="2.5"/><circle cx="834" cy="250" r="2.5"/><circle cx="848" cy="218" r="2.5"/>
+</g>
+
+
+<rect x="584" y="102" width="88" height="54" rx="3" fill="var(--accent,#d9480f)" fill-opacity="0.85"/>
+<text x="628" y="122" text-anchor="middle" class="lbl" fill="white">outlier</text>
+<text x="628" y="137" text-anchor="middle" class="mono" fill="white">s₁₁</text>
+
+
+<circle class="outlier-dot" cx="628" cy="129" r="7" fill="none" stroke="white" stroke-width="2" opacity="0.8"/>
+
+
+<rect class="wall-flash" x="582" y="100" width="92" height="58" rx="4" fill="none" stroke="var(--warn,#e0a106)" stroke-width="3" opacity="0"/>
+
+
+<g fill="var(--accent,#d9480f)">
+  <circle class="contain-crush" cx="600" cy="118" r="2.5" opacity="0"/>
+  <circle class="contain-crush" cx="614" cy="118" r="2.5" opacity="0" style="animation-delay:1.25s"/>
+  <circle class="contain-crush" cx="628" cy="118" r="2.5" opacity="0" style="animation-delay:1.3s"/>
+</g>
+
+
+
+
+
+<text x="685" y="300" text-anchor="middle" class="cap" font-size="9">Each tile has its own amax+scale.</text>
+<text x="685" y="311" text-anchor="middle" class="cap" font-size="9">Outlier in s11 only degrades s11;</text>
+<text x="685" y="322" text-anchor="middle" class="cap" font-size="9">other 15 tiles keep full FP8 resolution.</text>
+
+
+<g class="dim" font-size="9" font-family="var(--mono,monospace)">
+  
+  <text x="536" y="38" text-anchor="middle" fill="var(--muted,#888)">col 0</text>
+  <text x="628" y="38" text-anchor="middle" fill="var(--muted,#888)">col 1</text>
+  <text x="720" y="38" text-anchor="middle" fill="var(--muted,#888)">col 2</text>
+  <text x="812" y="38" text-anchor="middle" fill="var(--muted,#888)">col 3</text>
+</g>
+
+
+<rect x="20" y="335" width="430" height="50" rx="5" fill="var(--accent,#d9480f)" fill-opacity="0.08" class="v-stroke" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="235" y="356" text-anchor="middle" class="lbl" fill="var(--accent,#d9480f)">All 16 tiles degraded</text>
+<text x="235" y="374" text-anchor="middle" class="cap">Global precision loss from a single outlier</text>
+
+<rect x="490" y="335" width="418" height="50" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.08" stroke="var(--good,#2f9e6e)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="699" y="356" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Only s11 degraded (1 of 16)</text>
+<text x="699" y="374" text-anchor="middle" class="cap">Outlier contained within its tile boundary</text>
+
+
+<text x="205" y="415" text-anchor="middle" class="cap" font-style="italic">one scale for the whole tensor</text>
+<text x="685" y="415" text-anchor="middle" class="cap" font-style="italic">one scale per 128x128 tile (DeepSeek-V3 weight recipe)</text>
+
+</svg>
+<figcaption><b>Per-tensor vs. blockwise FP8 scaling: outlier containment.</b> Under per-tensor scaling (left), a single large value forces a tiny global scale that collapses all 16 tiles' values into the bottom two FP8 codes. Under DeepSeek-V3's 128×128 blockwise scaling (right), the same outlier is confined to tile s₁₁; the remaining 15 tiles retain their own amax and scale, preserving full FP8 resolution—the key reason fine-grained scaling made full-FP8 training of a 671B-parameter model feasible.</figcaption>
+</figure>

@@ -1,0 +1,186 @@
+<figure class="viz" id="fig-quant-bnb-linear-dataflow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 640 630" role="img" aria-label="Anatomy of a bitsandbytes quantized linear layer: FP16/BF16 activations flow in, weights are stored as INT8/NF4 in HBM, then on-chip dequantization to FP16 feeds a FP16/BF16 GEMM, and FP16/BF16 activations flow out.">
+<defs>
+  <marker id="bnb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+  <marker id="bnb-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-quant-bnb-linear-dataflow text { fill: var(--ink-soft, #0f172a); }
+  #fig-quant-bnb-linear-dataflow .lbl       { font: 600 13px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .lbl-sm    { font: 500 11px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .lbl-xs    { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+  #fig-quant-bnb-linear-dataflow .lbl-muted { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-bnb-linear-dataflow .step-lbl  { font: 500 12px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .title-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-quant-bnb-linear-dataflow .note-lbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-bnb-linear-dataflow .tag-lbl   { font: 600 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+  @keyframes bnb-token-move {
+    0%   { opacity:0; transform:translateY(-8px); }
+    8%   { opacity:1; transform:translateY(0); }
+    18%  { opacity:1; transform:translateY(0); }
+    26%  { opacity:0.35; transform:translateY(0); }
+    100% { opacity:0.35; transform:translateY(0); }
+  }
+  @keyframes bnb-storage-pulse {
+    0%,20%  { opacity:0.35; }
+    28%,44% { opacity:1; }
+    52%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-step1-pulse {
+    0%,30%  { opacity:0.35; }
+    38%,52% { opacity:1; }
+    60%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-step2-pulse {
+    0%,48%  { opacity:0.35; }
+    56%,70% { opacity:1; }
+    78%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-step3-pulse {
+    0%,64%  { opacity:0.35; }
+    72%,82% { opacity:1; }
+    90%     { opacity:0.35; }
+    100%    { opacity:0.35; }
+  }
+  @keyframes bnb-out-pulse {
+    0%,78%  { opacity:0.35; }
+    86%,96% { opacity:1; }
+    100%    { opacity:1; }
+  }
+  @keyframes bnb-unpack-dash {
+    0%,26%  { stroke-dashoffset:80; opacity:0; }
+    34%,50% { stroke-dashoffset:0;  opacity:1; }
+    58%     { stroke-dashoffset:0;  opacity:0; }
+    100%    { stroke-dashoffset:0;  opacity:0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-quant-bnb-linear-dataflow .anim-in,
+    #fig-quant-bnb-linear-dataflow .anim-storage,
+    #fig-quant-bnb-linear-dataflow .anim-step1,
+    #fig-quant-bnb-linear-dataflow .anim-step2,
+    #fig-quant-bnb-linear-dataflow .anim-step3,
+    #fig-quant-bnb-linear-dataflow .anim-out   { animation:none !important; opacity:1 !important; }
+    #fig-quant-bnb-linear-dataflow .anim-unpack { animation:none !important; opacity:1 !important; stroke-dashoffset:0 !important; }
+  }
+
+  #fig-quant-bnb-linear-dataflow .anim-in      { animation: bnb-token-move   4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-storage  { animation: bnb-storage-pulse 4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-step1    { animation: bnb-step1-pulse  4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-step2    { animation: bnb-step2-pulse  4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-step3    { animation: bnb-step3-pulse  4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-out      { animation: bnb-out-pulse    4s ease-in-out infinite 0.3s; }
+  #fig-quant-bnb-linear-dataflow .anim-unpack   {
+    animation: bnb-unpack-dash 4s ease-in-out infinite 0.3s;
+    stroke-dasharray: 6 4;
+    stroke-dashoffset: 80;
+  }
+</style>
+
+
+<g class="anim-in">
+  <rect x="120" y="18" width="310" height="42" rx="21" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" fill="var(--surface-3,#f1f5f9)"/>
+  <text x="275" y="34" text-anchor="middle" class="lbl">FP16/BF16 input activations</text>
+  <text x="275" y="51" text-anchor="middle" class="lbl-xs">x</text>
+</g>
+
+
+<line x1="275" y1="60" x2="275" y2="92" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<rect x="30" y="96" width="480" height="392" rx="12" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+
+<text x="270" y="120" text-anchor="middle" class="title-lbl">Linear8bitLt / Linear4bit</text>
+<text x="270" y="136" text-anchor="middle" class="lbl-muted">(weight-only module)</text>
+
+
+<rect x="50" y="148" width="440" height="114" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1" opacity="0.7"/>
+<text x="270" y="165" text-anchor="middle" class="tag-lbl">HBM STORAGE</text>
+
+
+<g class="anim-storage">
+  <rect x="64" y="172" width="194" height="56" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="161" y="191" text-anchor="middle" class="lbl-sm">Quantized weights W_q</text>
+  <text x="161" y="207" text-anchor="middle" class="lbl-xs">INT8 / NF4</text>
+  <text x="161" y="220" text-anchor="middle" class="lbl-xs">4-bit or 8-bit packed</text>
+</g>
+
+
+<g class="anim-storage">
+  <rect x="274" y="172" width="196" height="56" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.08" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="372" y="191" text-anchor="middle" class="lbl-sm">Scales + zero-points</text>
+  <text x="372" y="207" text-anchor="middle" class="lbl-xs">FP16 / FP8</text>
+  <text x="372" y="220" text-anchor="middle" class="lbl-xs">per group (64 elements)</text>
+</g>
+
+
+<text x="270" y="248" text-anchor="middle" class="lbl-muted">stored compactly in HBM -- fewer bytes to move</text>
+
+
+<text x="220" y="274" class="tag-lbl">forward() PIPELINE</text>
+
+
+<path d="M161 228 C161 258 186 272 218 284" fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5" class="anim-unpack" marker-end="url(#bnb-arrow-accent)"/>
+<text x="70" y="258" class="lbl-xs" style="fill:var(--accent,#6366f1);font:600 10px var(--sans,sans-serif)">unpack+scale</text>
+
+
+<g class="anim-step1">
+  <rect x="50" y="282" width="440" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.10" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="270" y="301" text-anchor="middle" class="step-lbl">1. Dequantize weights  W_q -&gt; FP16/BF16</text>
+  <text x="270" y="317" text-anchor="middle" class="lbl-xs">(on-chip, in L2/registers)</text>
+</g>
+
+
+<line x1="270" y1="326" x2="270" y2="341" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<g class="anim-step2">
+  <rect x="50" y="344" width="440" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.30" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="270" y="363" text-anchor="middle" class="step-lbl" style="font:700 13px var(--sans,sans-serif)">2. GEMM in FP16/BF16   y = x . W-hat^T</text>
+  <text x="270" y="379" text-anchor="middle" class="lbl-xs" style="fill:var(--accent,#6366f1)">compute-heavy -- arithmetic stays FP16/BF16 here</text>
+</g>
+
+
+<line x1="270" y1="388" x2="270" y2="403" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<g class="anim-step3">
+  <rect x="50" y="406" width="440" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.08" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="270" y="425" text-anchor="middle" class="step-lbl">3. Return FP16/BF16 output</text>
+  <text x="270" y="441" text-anchor="middle" class="lbl-xs">activations unchanged in precision</text>
+</g>
+
+
+<line x1="275" y1="488" x2="275" y2="518" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#bnb-arrow)"/>
+
+
+<g class="anim-out">
+  <rect x="120" y="522" width="310" height="42" rx="21" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" fill="var(--surface-3,#f1f5f9)"/>
+  <text x="275" y="538" text-anchor="middle" class="lbl">FP16/BF16 output activations</text>
+  <text x="275" y="555" text-anchor="middle" class="lbl-xs">y</text>
+</g>
+
+
+<rect x="504" y="325" width="122" height="92" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+
+<line x1="504" y1="370" x2="490" y2="370" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="565" y="340" text-anchor="middle" class="note-lbl">Weight-only:</text>
+<text x="565" y="353" text-anchor="middle" class="note-lbl">arithmetic stays</text>
+<text x="565" y="366" text-anchor="middle" class="note-lbl">FP16/BF16.</text>
+<text x="565" y="381" text-anchor="middle" class="note-lbl">Saving = fewer</text>
+<text x="565" y="394" text-anchor="middle" class="note-lbl">HBM bytes</text>
+<text x="565" y="407" text-anchor="middle" class="note-lbl">for weights.</text>
+
+</svg>
+<figcaption><b>Anatomy of a bitsandbytes weight-only quantized linear layer.</b> Weights are stored compactly as INT8 or NF4 in GPU HBM, cutting memory bandwidth. During <code>forward()</code>, they are dequantized to FP16/BF16 on-chip (Step 1) and the GEMM (Step 2) executes entirely in FP16/BF16 — the arithmetic precision is unchanged; only the storage format is compressed.</figcaption>
+</figure>

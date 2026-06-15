@@ -1,0 +1,208 @@
+<figure class="viz" id="fig-moe-serving-attn-dp-expert-ep-layout">
+<svg viewBox="0 0 860 550" role="img" aria-label="Hybrid MoE serving layout on 8 GPUs: each GPU row is split into a local attention/KV half (blue, data-parallel, no cross-GPU communication) and an expert shard half (orange, expert-parallel), joined by a central all-to-all bus. A per-layer step sequence on the right shows the order: attention local, router local, DISPATCH all-to-all, expert grouped GEMM, COMBINE all-to-all.">
+
+<style>
+  #fig-moe-serving-attn-dp-expert-ep-layout text { font-family: var(--sans,sans-serif); }
+</style>
+
+<defs>
+  <marker id="ep-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="ep-arr-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--accent2,#d9822b)"/>
+  </marker>
+  <marker id="ep-arr-cr" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M10 1.5 L1 5 L10 8.5 z" fill="var(--accent2,#d9822b)"/>
+  </marker>
+</defs>
+
+
+
+
+
+
+
+<rect x="14" y="40" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="40" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+
+<line x1="402" y1="40" x2="402" y2="86" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="58" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 0</text>
+<text x="60" y="58" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r0..r7}</text>
+<text x="20" y="73" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r0..r7) — LOCAL, no replication</text>
+<text x="406" y="60" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 0 – 31</text>
+<text x="406" y="75" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<rect x="14" y="94" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="94" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<line x1="402" y1="94" x2="402" y2="140" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="112" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 1</text>
+<text x="60" y="112" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r8..r15}</text>
+<text x="20" y="127" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r8..r15) — LOCAL, no replication</text>
+<text x="406" y="114" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 32 – 63</text>
+<text x="406" y="129" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<rect x="14" y="148" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="148" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<line x1="402" y1="148" x2="402" y2="194" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="166" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 2</text>
+<text x="60" y="166" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r16..r23}</text>
+<text x="20" y="181" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r16..r23) — LOCAL, no replication</text>
+<text x="406" y="168" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 64 – 95</text>
+<text x="406" y="183" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<rect x="14" y="202" width="388" height="34" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1" stroke-dasharray="5 3"/>
+<rect x="402" y="202" width="158" height="34" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1" stroke-dasharray="5 3"/>
+<text x="208" y="223" text-anchor="middle" font="400 9.5px var(--sans,sans-serif)" fill="var(--ink-soft,#555)">GPU 3 – 6  . . .</text>
+<text x="481" y="223" text-anchor="middle" font="400 9.5px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 96–191</text>
+
+
+<rect x="14" y="244" width="388" height="46" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<rect x="402" y="244" width="158" height="46" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<line x1="402" y1="244" x2="402" y2="290" stroke="var(--border-2,#bbb)" stroke-width="0.8"/>
+<text x="20" y="262" font="700 10px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">GPU 7</text>
+<text x="60" y="262" font="400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">requests {r56..r63}</text>
+<text x="20" y="277" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">KV(r56..r63) — LOCAL, no replication</text>
+<text x="406" y="264" font="600 10px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">experts 224 – 255</text>
+<text x="406" y="279" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">(32 of 256)</text>
+
+
+<text x="208" y="30" text-anchor="middle"
+      font="700 11px var(--sans,sans-serif)" fill="var(--accent,#2060cc)">Attention + KV  (DATA-PARALLEL · purely local)</text>
+<text x="481" y="30" text-anchor="middle"
+      font="700 11px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">Experts (EXPERT-PARALLEL)</text>
+
+
+<rect x="16" y="298" width="242" height="24" rx="5"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#bbb)" stroke-width="0.9"/>
+
+<line x1="24" y1="304" x2="32" y2="320" stroke="var(--accent,#4f8cff)" stroke-width="1.8"/>
+<line x1="32" y1="304" x2="24" y2="320" stroke="var(--accent,#4f8cff)" stroke-width="1.8"/>
+<text x="42" y="314" font="400 9.5px var(--sans,sans-serif)" fill="var(--muted,#777)">no cross-GPU comm · no KV replication</text>
+<line x1="140" y1="298" x2="140" y2="290" stroke="var(--accent,#4f8cff)" stroke-width="0.9" stroke-dasharray="3 2" marker-end="url(#ep-arr)"/>
+
+
+
+<rect x="572" y="40" width="42" height="250" rx="8"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.2"/>
+
+<text x="593" y="168" text-anchor="middle"
+      font="700 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)"
+      transform="rotate(-90 593 168)">ALL-TO-ALL  ·  tokens from ALL GPUs mix here</text>
+
+
+
+<line x1="560" y1="63" x2="572" y2="63"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="117" x2="572" y2="117"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="171" x2="572" y2="171"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="219" x2="572" y2="219"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.5"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+<line x1="560" y1="267" x2="572" y2="267"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.6"
+      marker-start="url(#ep-arr-cr)" marker-end="url(#ep-arr-c)"/>
+
+
+<text x="593" y="302" text-anchor="middle"
+      font="600 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">dispatch</text>
+<text x="593" y="313" text-anchor="middle"
+      font="600 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">&gt; GEMM &gt;</text>
+<text x="593" y="324" text-anchor="middle"
+      font="600 9px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">combine</text>
+
+
+<text x="730" y="30" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--ink)">Per MoE Layer</text>
+
+
+<rect x="636" y="40" width="188" height="36" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="730" y="56" text-anchor="middle"
+      font="600 10.5px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">1. attention (local)</text>
+<text x="730" y="69" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#777)">no collective</text>
+
+<line x1="730" y1="76" x2="730" y2="90" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="656" y="92" width="148" height="32" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="730" y="112" text-anchor="middle"
+      font="600 10.5px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">2. router (local)</text>
+
+<line x1="730" y1="124" x2="730" y2="138" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="636" y="140" width="188" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2"/>
+<text x="730" y="156" text-anchor="middle"
+      font="700 10.5px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">3. DISPATCH all-to-all</text>
+<text x="730" y="169" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">send to expert GPUs</text>
+
+<line x1="730" y1="176" x2="730" y2="190" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="646" y="192" width="168" height="36" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="730" y="208" text-anchor="middle"
+      font="600 10.5px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">4. expert grouped GEMM</text>
+<text x="730" y="221" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#777)">local per GPU</text>
+
+<line x1="730" y1="228" x2="730" y2="242" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#ep-arr)"/>
+
+
+<rect x="636" y="244" width="188" height="36" rx="6"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2"/>
+<text x="730" y="260" text-anchor="middle"
+      font="700 10.5px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">5. COMBINE all-to-all</text>
+<text x="730" y="273" text-anchor="middle"
+      font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">return to home GPUs</text>
+
+
+<path d="M 636 162 C 620 162 614 162 614 165"
+      stroke="var(--border-2,#bbb)" stroke-width="1" fill="none" stroke-dasharray="4 3"/>
+
+
+<text x="430" y="365" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Attention is data-parallel and local: each GPU keeps its own requests' KV cache with zero cross-GPU communication.</text>
+<text x="430" y="378" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">Only the MoE sublayer crosses GPUs via one all-to-all per direction (steps 3 and 5). Straggler risk: if one GPU holds longer</text>
+<text x="430" y="391" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">requests, everyone waits at the barrier — so the scheduler must balance tokens-in-flight across attention-DP ranks.</text>
+
+
+<rect x="14" y="408" width="14" height="14" rx="2"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.3"/>
+<text x="34" y="420" font="400 10px var(--sans,sans-serif)" fill="var(--muted,#777)">Attention / KV (blue — data-parallel, local, no collective)</text>
+<rect x="14" y="428" width="14" height="14" rx="2"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="1.3"/>
+<text x="34" y="440" font="400 10px var(--sans,sans-serif)" fill="var(--muted,#777)">Expert shards + all-to-all bus (orange — expert-parallel, collective required)</text>
+
+</svg>
+<figcaption><b>Hybrid layout: attention-DP (local KV, zero cross-GPU communication) + expert-EP (one all-to-all per direction per layer).</b> Each GPU's blue left half owns a disjoint shard of requests with their complete MLA KV caches — no replication, no attention collective. The orange right half holds 32 of 256 experts, joined each layer by a bidirectional all-to-all bus that mixes tokens from all 8 GPUs. Steps 3 and 5 in the per-layer sequence are the only cross-GPU collectives; all other computation is local. The key straggler risk: request-length imbalance across attention-DP ranks delays the all-to-all barrier for every GPU.</figcaption>
+</figure>

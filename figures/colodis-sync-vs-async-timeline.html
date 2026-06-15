@@ -1,0 +1,149 @@
+<figure class="viz" id="fig-colodis-sync-vs-async-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 460" role="img" aria-label="Two RL execution timelines: synchronous on-policy at top where generation and update blocks alternate with no overlap and idle gaps; asynchronous off-policy at bottom where rollout and train lanes run simultaneously with no gaps, but rollout data is one step stale.">
+  <defs>
+    <marker id="sv-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <style>
+      @keyframes sv-playhead {
+        0%   { transform: translateX(-10px); opacity: 1; }
+        92%  { transform: translateX(780px); opacity: 1; }
+        95%  { transform: translateX(780px); opacity: 0; }
+        100% { transform: translateX(-10px); opacity: 0; }
+      }
+      @keyframes sv-block-reveal {
+        0%, var(--t0) { opacity: 0.2; }
+        var(--t1)     { opacity: 1; }
+        100%          { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sv-playhead { display: none !important; }
+        .sv-block    { opacity: 1 !important; animation: none !important; }
+      }
+      #fig-colodis-sync-vs-async-timeline .title { font: 700 13px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .lane  { font: 600 11px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .blk   { font: 600 11px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .tiny  { font: 400 10px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline .ann   { font: 500 10px var(--sans,sans-serif); }
+      #fig-colodis-sync-vs-async-timeline text   { fill: var(--ink-soft,#333); }
+      #fig-colodis-sync-vs-async-timeline .v-muted { fill: var(--muted,#888); }
+    </style>
+  </defs>
+
+  
+  
+  <g stroke="var(--border-2,#ccc)" stroke-width="0.8" opacity="0.6">
+    <line x1="90"  y1="60" x2="90"  y2="430"/>
+    <line x1="220" y1="60" x2="220" y2="430"/>
+    <line x1="350" y1="60" x2="350" y2="430"/>
+    <line x1="480" y1="60" x2="480" y2="430"/>
+    <line x1="610" y1="60" x2="610" y2="430"/>
+    <line x1="740" y1="60" x2="740" y2="430"/>
+    <line x1="870" y1="60" x2="870" y2="430"/>
+  </g>
+
+  
+  
+  
+  <text x="14" y="50" class="title">SYNCHRONOUS (on-policy, no overlap)</text>
+
+  
+  <text x="14" y="84" class="lane v-muted">GPU</text>
+
+  
+  
+
+  
+  <rect class="sv-block" x="90" y="64" width="130" height="44" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="155" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ0</text>
+
+  
+  <rect class="sv-block" x="220" y="64" width="100" height="44" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="270" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">update</text>
+
+  
+  <rect class="sv-block" x="320" y="64" width="130" height="44" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="385" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ1</text>
+
+  
+  <rect class="sv-block" x="450" y="64" width="100" height="44" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="500" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">update</text>
+
+  
+  <rect class="sv-block" x="550" y="64" width="130" height="44" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="615" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ2</text>
+
+  
+  <rect class="sv-block" x="680" y="64" width="100" height="44" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="730" y="91" text-anchor="middle" class="blk" fill="var(--surface,#fff)">update</text>
+
+  
+  <text x="430" y="128" text-anchor="middle" class="ann v-muted">rollout idles during update; train idles during gen — no overlap</text>
+
+  
+  <line x1="14" y1="148" x2="886" y2="148" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="6 4"/>
+
+  
+  
+  
+  <text x="14" y="170" class="title">ASYNCHRONOUS (off-policy, overlap, staleness=1)</text>
+
+  
+  <text x="14" y="202" class="lane" fill="var(--accent,#0ea5e9)">rollout</text>
+
+  
+  <rect class="sv-block" x="90"  y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="187" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ0</text>
+
+  <rect class="sv-block" x="285" y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="382" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ1</text>
+
+  <rect class="sv-block" x="480" y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="577" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ2</text>
+
+  <rect class="sv-block" x="675" y="182" width="195" height="38" rx="4" fill="var(--accent,#0ea5e9)" fill-opacity="0.85" stroke="var(--accent,#0ea5e9)" stroke-width="1.2"/>
+  <text x="772" y="205" text-anchor="middle" class="blk" fill="var(--surface,#fff)">gen θ3</text>
+
+  <text x="880" y="202" text-anchor="end" class="tiny" fill="var(--accent,#0ea5e9)">never idle</text>
+
+  
+  <text x="14" y="258" class="lane" fill="var(--accent-2,#c2410c)">train</text>
+
+  <rect class="sv-block" x="285" y="238" width="195" height="38" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="382" y="261" text-anchor="middle" class="blk" fill="var(--surface,#fff)">upd θ1</text>
+
+  <rect class="sv-block" x="480" y="238" width="195" height="38" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="577" y="261" text-anchor="middle" class="blk" fill="var(--surface,#fff)">upd θ2</text>
+
+  <rect class="sv-block" x="675" y="238" width="195" height="38" rx="4" fill="var(--accent-2,#c2410c)" fill-opacity="0.85" stroke="var(--accent-2,#c2410c)" stroke-width="1.2"/>
+  <text x="772" y="261" text-anchor="middle" class="blk" fill="var(--surface,#fff)">upd θ3</text>
+
+  <text x="880" y="258" text-anchor="end" class="tiny" fill="var(--accent-2,#c2410c)">never idle</text>
+
+  
+  <line x1="187" y1="220" x2="382" y2="238" stroke="var(--muted,#999)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <line x1="382" y1="220" x2="577" y2="238" stroke="var(--muted,#999)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <line x1="577" y1="220" x2="772" y2="238" stroke="var(--muted,#999)" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+  
+  <text x="382" y="296" text-anchor="middle" class="tiny v-muted">uses θ0</text>
+  <text x="577" y="296" text-anchor="middle" class="tiny v-muted">uses θ1</text>
+  <text x="772" y="296" text-anchor="middle" class="tiny v-muted">uses θ2</text>
+  <text x="577" y="312" text-anchor="middle" class="ann v-muted">data is 1 step stale — corrected by PPO/GRPO importance ratio</text>
+
+  
+  <line x1="70" y1="430" x2="880" y2="430" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sv-arr)"/>
+  <text x="877" y="444" text-anchor="end" class="lane">time</text>
+
+  
+  
+  <g class="sv-playhead" style="animation: sv-playhead 5s ease-in-out 0.3s infinite;">
+    
+    <line x1="0" y1="58" x2="0" y2="422" stroke="var(--warn,#e0a106)" stroke-width="2" opacity="0.85"/>
+    <polygon points="-5,56 5,56 0,64" fill="var(--warn,#e0a106)" opacity="0.9"/>
+  </g>
+
+</svg>
+<figcaption><b>Synchronous RL serializes rollout and training; asynchronous RL overlaps them on separate pools at the cost of one step of staleness.</b> In the synchronous (top) lane, generation blocks (teal) and update blocks (orange) strictly alternate — one role idles while the other works. In the asynchronous (bottom) panel, both the rollout lane and the train lane run continuously with no gaps; the dashed connectors show that each update consumes experience produced by the <em>previous</em> generation step (staleness=1), which the PPO/GRPO importance ratio corrects.</figcaption>
+</figure>

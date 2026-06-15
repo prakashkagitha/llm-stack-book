@@ -1,0 +1,176 @@
+<figure class="viz" id="fig-cost-speculative-routing">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 1000 380" role="img" aria-label="Speculative routing: a query fans out to both a fast small model and a slow large model concurrently; if the small model passes a quality gate the large model is cancelled and the small result is returned; if the gate fails the large model result is used.">
+<defs>
+  <marker id="spr-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" class="v-stroke" fill="currentColor"/>
+  </marker>
+  <marker id="spr-arr-yes" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="spr-arr-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="spr-arr-cancel" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#c0473a)" opacity="0.85"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-cost-speculative-routing text { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-cost-speculative-routing .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-cost-speculative-routing .sub { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-speculative-routing .ann { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-speculative-routing .cancel-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#c0473a); }
+  #fig-cost-speculative-routing .yes-lbl { fill: var(--good,#2f9e6e); font-weight: 700; font-size: 11px; }
+  #fig-cost-speculative-routing .no-lbl { fill: var(--warn,#e0a106); font-weight: 700; font-size: 11px; }
+  @media (prefers-reduced-motion: reduce) {
+    #spr-dot-small, #spr-dot-large, #spr-dot-small2, #spr-dot-large2 { display: none; }
+  }
+</style>
+
+
+<g data-anim="1">
+  <rect x="30" y="150" width="110" height="60" rx="10" class="v-fill v-accent-s" stroke-width="1.5"/>
+  <text x="85" y="178" text-anchor="middle" class="lbl">Query</text>
+</g>
+
+
+<circle cx="175" cy="180" r="5" fill="var(--ink-soft,#45413a)" class="v-stroke" stroke-width="1.5"/>
+
+
+<line x1="140" y1="180" x2="170" y2="180" class="v-stroke" stroke="currentColor" stroke-width="1.5"/>
+
+
+<line x1="175" y1="180" x2="175" y2="95" class="v-stroke" stroke="currentColor" stroke-width="1.5"/>
+<line x1="175" y1="95" x2="294" y2="95" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<line x1="175" y1="180" x2="175" y2="285" class="v-stroke" stroke="currentColor" stroke-width="1.5"/>
+<line x1="175" y1="285" x2="294" y2="285" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<text x="80" y="140" text-anchor="middle" class="ann">concurrent</text>
+<text x="80" y="152" text-anchor="middle" class="ann">fan-out</text>
+
+
+<g data-anim="2">
+  <rect x="296" y="58" width="190" height="76" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  <text x="391" y="88" text-anchor="middle" class="lbl">Small model (fast)</text>
+  <text x="391" y="106" text-anchor="middle" class="sub">finishes first</text>
+  <text x="391" y="120" text-anchor="middle" class="sub">3-10x faster</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="296" y="248" width="190" height="76" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+  <text x="391" y="278" text-anchor="middle" class="lbl">Large model (slow)</text>
+  <text x="391" y="296" text-anchor="middle" class="sub">runs concurrently</text>
+  <text x="391" y="310" text-anchor="middle" class="sub">higher cost</text>
+</g>
+
+
+<line x1="486" y1="95" x2="566" y2="130" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<g data-anim="3">
+  <polygon points="620,115 690,175 620,235 550,175" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="620" y="168" text-anchor="middle" class="lbl" font-size="11">gate:</text>
+  <text x="620" y="184" text-anchor="middle" class="lbl" font-size="11">pass?</text>
+</g>
+
+
+<line x1="690" y1="175" x2="796" y2="95" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#spr-arr-yes)"/>
+<text x="748" y="120" text-anchor="middle" class="yes-lbl">yes</text>
+
+
+<g data-anim="4">
+  <rect x="798" y="58" width="178" height="76" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="887" y="85" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">return</text>
+  <text x="887" y="103" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">(small result)</text>
+  <text x="887" y="122" text-anchor="middle" class="ann">~small-model latency</text>
+</g>
+
+
+<path d="M 575,160 Q 510,200 472,250"
+      stroke="var(--warn,#c0473a)" stroke-width="1.6"
+      stroke-dasharray="7 4" fill="none" opacity="0.85"
+      marker-end="url(#spr-arr-cancel)"/>
+<text x="520" y="150" text-anchor="middle" class="cancel-lbl">cancel large</text>
+<text x="520" y="162" text-anchor="middle" class="cancel-lbl">(stop paying)</text>
+
+
+<line x1="620" y1="235" x2="620" y2="300" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+<line x1="620" y1="300" x2="798" y2="300" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#spr-arr-no)"/>
+<text x="636" y="258" class="no-lbl">no</text>
+
+
+<line x1="486" y1="278" x2="796" y2="278" class="v-stroke" stroke="currentColor" stroke-width="1.5" marker-end="url(#spr-arr)"/>
+
+
+<g data-anim="4">
+  <rect x="798" y="248" width="178" height="76" rx="10" stroke="var(--accent,#c15b39)" stroke-width="2" class="v-fill"/>
+  <text x="887" y="278" text-anchor="middle" class="lbl">use large result</text>
+  <text x="887" y="296" text-anchor="middle" class="ann">latency = large model</text>
+  <text x="887" y="312" text-anchor="middle" class="ann">(small gate failed)</text>
+</g>
+
+
+<line x1="30" y1="348" x2="970" y2="348" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+<text x="500" y="368" text-anchor="middle" class="ann">Best when small is 3-10x faster, gate is cheap, and cancellation saves long outputs.</text>
+
+
+<g id="spr-dot-small">
+  <circle r="6" fill="var(--good,#2f9e6e)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.04;0.72;0.82;1" values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.12;0.22;0.34;0.46;0.58;0.72;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,95 L 296,95 L 391,95 L 486,95 L 570,140 L 620,175 L 690,175 L 887,96"/>
+  </circle>
+</g>
+
+<g id="spr-dot-large">
+  
+  <circle r="6" fill="var(--warn,#c0473a)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.04;0.55;0.62;1" values="0;0.65;0.65;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.12;0.26;0.40;0.55;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,285 L 296,285 L 420,285 L 450,285"/>
+  </circle>
+</g>
+
+
+<polygon points="620,115 690,175 620,235 550,175" fill="none" stroke="var(--accent,#c15b39)" stroke-width="3" opacity="0">
+  <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+    keyTimes="0;0.54;0.56;0.62;0.64;1" values="0;0;0.8;0.8;0;0"/>
+</polygon>
+
+
+<g id="spr-dot-small2">
+  <circle r="6" fill="var(--warn,#e0a106)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.04;0.55;0.64;1" values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.12;0.26;0.40;0.52;0.55;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,95 L 391,95 L 486,95 L 570,140 L 620,175"/>
+  </circle>
+</g>
+<g id="spr-dot-large2">
+  <circle r="6" fill="var(--accent,#c15b39)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.04;0.78;0.88;1" values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.12;0.26;0.40;0.60;0.78;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 85,180 L 175,180 L 175,285 L 296,285 L 486,285 L 800,285 L 887,285"/>
+  </circle>
+</g>
+
+</svg>
+<figcaption><b>Speculative routing: parallel small and large models with cancellation.</b> Both models fire concurrently from the same query. If the small (fast) model passes the quality gate, the large model is cancelled immediately -- stopping token spend -- and the small result is returned at ~small-model latency. Only when the gate fails does the system fall through to the large model's result. The dashed red cancel arrow is the key economic lever: streaming cancellation prevents paying for tokens that will not be used.</figcaption>
+</figure>

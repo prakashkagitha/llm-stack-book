@@ -1,0 +1,283 @@
+<figure class="viz" id="fig-ppo-iteration-two-phase-loop">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 980 700" role="img" aria-label="One PPO iteration: a rollout phase (steps 1-6, torch.no_grad) produces a frozen experience buffer; an optimization phase (steps 7-10) then runs PPO_EPOCHS times over shuffled minibatches; finally theta_old is updated to theta for the next iteration.">
+<defs>
+  <marker id="ppo-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="ppo-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="ppo-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+</defs>
+<style>
+  #fig-ppo-iteration-two-phase-loop text { fill: var(--ink-soft, #0f172a); font-family: var(--sans, sans-serif); }
+  #fig-ppo-iteration-two-phase-loop .lbl-sm  { font: 500 10.5px var(--sans, sans-serif); }
+  #fig-ppo-iteration-two-phase-loop .lbl-md  { font: 600 12px var(--sans, sans-serif); }
+  #fig-ppo-iteration-two-phase-loop .lbl-ttl { font: 700 15px var(--sans, sans-serif); }
+  #fig-ppo-iteration-two-phase-loop .lbl-pill { font: 700 9.5px var(--sans, sans-serif); fill: #fff; }
+  #fig-ppo-iteration-two-phase-loop .lbl-mono { font: 500 10px var(--mono, monospace); }
+  #fig-ppo-iteration-two-phase-loop .lbl-arc  { font: 600 11px var(--sans, sans-serif); }
+  #fig-ppo-iteration-two-phase-loop .snum  { font: 700 11px var(--mono, monospace); fill: var(--accent, #6366f1); }
+  #fig-ppo-iteration-two-phase-loop .snum2 { font: 700 11px var(--mono, monospace); fill: var(--accent2, #3b82f6); }
+  #fig-ppo-iteration-two-phase-loop .muted { fill: var(--muted, #94a3b8); }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-ppo-iteration-two-phase-loop .anim-dot { display: none; }
+  }
+</style>
+
+
+<rect x="10" y="10" width="960" height="648" rx="12"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="490" y="36" text-anchor="middle" class="lbl-ttl">ONE PPO ITERATION</text>
+
+
+<rect x="26" y="48" width="928" height="296" rx="10"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07"
+      stroke="var(--accent,#6366f1)" stroke-opacity="0.3" stroke-width="1.5"/>
+
+
+<rect x="40" y="57" width="484" height="22" rx="11" fill="var(--accent,#6366f1)"/>
+<text x="282" y="72" text-anchor="middle" class="lbl-pill">ROLLOUT PHASE  —  torch.no_grad()  —  runs ONCE per iteration</text>
+
+
+
+
+<rect x="40" y="90" width="148" height="58" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="40" y="90" width="148" height="58" rx="7"
+      fill="var(--accent,#6366f1)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0.22;0;0;0;0;0;0;0;0" keyTimes="0;0.02;0.06;0.11;0.3;0.5;0.6;0.7;0.8;0.9;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="48" y="106" class="snum">1</text>
+<text x="114" y="108" text-anchor="middle" class="lbl-sm">Sample prompts</text>
+<text x="114" y="123" text-anchor="middle" class="lbl-mono">q ~ D</text>
+
+
+<line x1="190" y1="119" x2="210" y2="119" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="212" y="90" width="174" height="58" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="212" y="90" width="174" height="58" rx="7"
+      fill="var(--accent,#6366f1)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0.22;0;0;0;0;0;0;0" keyTimes="0;0.08;0.11;0.16;0.22;0.5;0.6;0.7;0.8;0.9;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="220" y="106" class="snum">2</text>
+<text x="299" y="106" text-anchor="middle" class="lbl-sm">Generate responses</text>
+<text x="299" y="120" text-anchor="middle" class="lbl-mono">o ~ pi_theta_old</text>
+<text x="299" y="135" text-anchor="middle" class="lbl-sm muted">(vLLM / SGLang)</text>
+
+
+<line x1="388" y1="119" x2="408" y2="119" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="410" y="90" width="170" height="58" rx="7"
+      fill="var(--warn,#e0a106)" fill-opacity="0.12"
+      stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+<rect x="410" y="90" width="170" height="58" rx="7"
+      fill="var(--warn,#e0a106)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0;0.28;0;0;0;0;0;0" keyTimes="0;0.18;0.20;0.22;0.27;0.34;0.5;0.6;0.8;0.9;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="418" y="106" class="snum" style="fill:var(--warn,#e0a106)">3</text>
+<text x="495" y="106" text-anchor="middle" class="lbl-sm">Score with</text>
+<text x="495" y="120" text-anchor="middle" class="lbl-md" style="fill:var(--warn,#e0a106)">REWARD MODEL</text>
+<text x="495" y="135" text-anchor="middle" class="lbl-mono">-&gt; R(q, o)</text>
+
+
+<line x1="582" y1="119" x2="602" y2="119" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="604" y="84" width="344" height="70" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="604" y="84" width="344" height="70" rx="7"
+      fill="var(--accent,#6366f1)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0;0;0.22;0;0;0;0;0" keyTimes="0;0.28;0.30;0.35;0.38;0.43;0.50;0.6;0.8;0.9;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="612" y="100" class="snum">4</text>
+<text x="776" y="100" text-anchor="middle" class="lbl-sm">Forward pi_theta_old, pi_ref, V_phi</text>
+<text x="776" y="115" text-anchor="middle" class="lbl-mono">-&gt; old_logprobs, ref_logprobs,</text>
+<text x="776" y="130" text-anchor="middle" class="lbl-mono">   values</text>
+
+
+<path d="M 776 154 L 776 172 L 470 172 L 470 192"
+      fill="none" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+
+
+<rect x="322" y="192" width="292" height="64" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="322" y="192" width="292" height="64" rx="7"
+      fill="var(--accent,#6366f1)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0;0;0;0.22;0;0;0;0" keyTimes="0;0.44;0.46;0.48;0.50;0.52;0.57;0.63;0.8;0.9;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="330" y="209" class="snum">5</text>
+<text x="468" y="207" text-anchor="middle" class="lbl-sm">token_rewards =</text>
+<text x="468" y="222" text-anchor="middle" class="lbl-mono">KL_penalty(pi_theta, pi_ref)</text>
+<text x="468" y="238" text-anchor="middle" class="lbl-mono">+ R at last token</text>
+
+
+<line x1="616" y1="224" x2="640" y2="224" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="642" y="192" width="278" height="64" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="642" y="192" width="278" height="64" rx="7"
+      fill="var(--accent,#6366f1)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0;0;0;0;0.22;0;0;0" keyTimes="0;0.54;0.56;0.58;0.60;0.62;0.64;0.67;0.72;0.9;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="650" y="209" class="snum">6</text>
+<text x="781" y="207" text-anchor="middle" class="lbl-sm">advantages, returns =</text>
+<text x="781" y="222" text-anchor="middle" class="lbl-mono">GAE(token_rewards, values)</text>
+
+
+<line x1="781" y1="258" x2="781" y2="328" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<line x1="26" y1="338" x2="954" y2="338"
+      stroke="var(--ink-soft,#64748b)" stroke-width="1.4"
+      stroke-dasharray="6 4" opacity="0.65"/>
+
+<line x1="26" y1="338" x2="954" y2="338"
+      stroke="var(--accent,#6366f1)" stroke-width="3" stroke-dasharray="6 4" opacity="0">
+  <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;0.7;0;0" keyTimes="0;0.58;0.60;0.62;0.64;0.65;0.66;0.67;0.69;0.73;1" dur="10s" repeatCount="indefinite"/>
+</line>
+<rect x="170" y="326" width="620" height="24" rx="5"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="480" y="342" text-anchor="middle" class="lbl-sm" style="font-style:italic;fill:var(--muted,#64748b)">
+  freeze experience buffer (input_ids, mask, old_lp, old_values, advantages, returns)
+</text>
+
+
+<rect x="26" y="358" width="928" height="238" rx="10"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.07"
+      stroke="var(--accent2,#3b82f6)" stroke-opacity="0.3" stroke-width="1.5"/>
+
+
+<rect x="40" y="366" width="530" height="22" rx="11" fill="var(--accent2,#3b82f6)"/>
+<text x="305" y="381" text-anchor="middle" class="lbl-pill">OPTIMIZATION PHASE  —  repeat PPO_EPOCHS x over shuffled minibatches</text>
+
+
+<rect x="40" y="398" width="196" height="70" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="40" y="398" width="196" height="70" rx="7"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0.22;0;0;0.22;0;0;0;0;0" keyTimes="0;0.69;0.72;0.76;0.92;0.95;0.975;0.98;0.99;0.995;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="48" y="415" class="snum2">7</text>
+<text x="138" y="413" text-anchor="middle" class="lbl-sm">Forward pi_theta</text>
+<text x="138" y="428" text-anchor="middle" class="lbl-mono">-&gt; new_logprobs</text>
+<text x="138" y="444" text-anchor="middle" class="lbl-sm">Forward V_phi -&gt; new_values</text>
+
+
+<line x1="238" y1="433" x2="260" y2="433" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="262" y="398" width="230" height="70" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="262" y="398" width="230" height="70" rx="7"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0.22;0;0;0.22;0;0;0;0" keyTimes="0;0.72;0.73;0.77;0.81;0.93;0.96;0.975;0.98;0.995;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="270" y="415" class="snum2">8</text>
+<text x="377" y="413" text-anchor="middle" class="lbl-sm">Compute loss</text>
+<text x="377" y="428" text-anchor="middle" class="lbl-mono">L = clip_policy_loss</text>
+<text x="377" y="443" text-anchor="middle" class="lbl-mono">+ c_v*val_loss - c_e*entropy</text>
+
+
+<line x1="494" y1="433" x2="516" y2="433" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="518" y="398" width="196" height="70" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.4"/>
+<rect x="518" y="398" width="196" height="70" rx="7"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0;0.22;0;0;0.22;0;0;0" keyTimes="0;0.76;0.78;0.80;0.84;0.88;0.94;0.97;0.975;0.995;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="526" y="415" class="snum2">9</text>
+<text x="616" y="420" text-anchor="middle" class="lbl-sm">backward()</text>
+<text x="616" y="436" text-anchor="middle" class="lbl-sm">clip grad-norm</text>
+<text x="616" y="452" text-anchor="middle" class="lbl-sm">optimizer.step()</text>
+
+
+<line x1="716" y1="433" x2="736" y2="433" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#ppo-arr)"/>
+
+
+<rect x="738" y="398" width="200" height="70" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"
+      stroke-dasharray="5 3"/>
+<rect x="738" y="398" width="200" height="70" rx="7"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0" pointer-events="none">
+  <animate attributeName="fill-opacity" values="0;0;0;0;0;0.18;0;0;0;0;0" keyTimes="0;0.83;0.85;0.87;0.88;0.91;0.94;0.97;0.98;0.995;1" dur="10s" repeatCount="indefinite"/>
+</rect>
+<text x="746" y="415" class="snum2">10</text>
+<text x="838" y="413" text-anchor="middle" class="lbl-sm" style="font-style:italic;">(optional)</text>
+<text x="838" y="428" text-anchor="middle" class="lbl-sm">early-stop epoch if</text>
+<text x="838" y="443" text-anchor="middle" class="lbl-mono">approx_kl(old||new)</text>
+<text x="838" y="459" text-anchor="middle" class="lbl-mono">&gt; target_kl</text>
+
+
+<path d="M 838 468 Q 838 540 490 540 Q 138 540 138 468"
+      fill="none"
+      stroke="var(--accent2,#3b82f6)" stroke-width="2" stroke-dasharray="6 3"
+      marker-end="url(#ppo-arr-acc2)"/>
+<text x="490" y="533" text-anchor="middle" class="lbl-arc" style="fill:var(--accent2,#3b82f6)">
+  x PPO_EPOCHS over MINIBATCHES
+</text>
+
+
+
+<path id="ppo-main-arc"
+      d="M 26 490 Q 8 560 8 450 Q 8 330 8 220 Q 8 140 40 119 L 210 119"
+      fill="none"
+      stroke="var(--accent,#6366f1)" stroke-width="2.5" stroke-dasharray="8 4"
+      marker-end="url(#ppo-arr-acc)"/>
+
+
+<text x="490" y="668" text-anchor="middle" class="lbl-arc" style="fill:var(--accent,#6366f1);">
+  theta_old &lt;- theta   (new policy becomes behavior policy for next rollout)
+</text>
+
+
+
+<circle class="anim-dot" cx="114" cy="119" r="6" fill="var(--accent,#6366f1)" opacity="0">
+  <animate attributeName="cx"
+    values="114;114;299;299;495;495;776;776;470;470;781;781;490"
+    keyTimes="0;0.04;0.11;0.16;0.23;0.29;0.36;0.41;0.48;0.53;0.59;0.63;0.66"
+    dur="10s" repeatCount="indefinite" calcMode="spline"
+    keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"/>
+  <animate attributeName="cy"
+    values="119;119;119;119;119;119;119;192;224;224;224;338;338"
+    keyTimes="0;0.04;0.11;0.16;0.23;0.29;0.36;0.41;0.48;0.53;0.59;0.63;0.66"
+    dur="10s" repeatCount="indefinite" calcMode="spline"
+    keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"/>
+  <animate attributeName="opacity"
+    values="0;1;1;1;1;1;1;1;1;1;1;1;0"
+    keyTimes="0;0.02;0.11;0.16;0.23;0.29;0.36;0.41;0.48;0.53;0.59;0.65;0.66"
+    dur="10s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="anim-dot" cx="138" cy="433" r="6" fill="var(--accent2,#3b82f6)" opacity="0">
+  <animate attributeName="cx"
+    values="138;138;377;377;616;616;838;838;490;138;138;377;616;26;8;210"
+    keyTimes="0;0.69;0.73;0.77;0.81;0.85;0.88;0.90;0.92;0.94;0.95;0.97;0.975;0.98;0.99;1.0"
+    dur="10s" repeatCount="indefinite" calcMode="spline"
+    keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"/>
+  <animate attributeName="cy"
+    values="433;433;433;433;433;433;433;540;540;540;433;433;433;490;340;119"
+    keyTimes="0;0.69;0.73;0.77;0.81;0.85;0.88;0.90;0.92;0.94;0.95;0.97;0.975;0.98;0.99;1.0"
+    dur="10s" repeatCount="indefinite" calcMode="spline"
+    keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"/>
+  <animate attributeName="opacity"
+    values="0;0;1;1;1;1;1;1;1;1;1;1;1;1;1;0"
+    keyTimes="0;0.68;0.69;0.73;0.77;0.81;0.85;0.88;0.90;0.92;0.94;0.95;0.97;0.975;0.99;1.0"
+    dur="10s" repeatCount="indefinite"/>
+</circle>
+
+</svg>
+<figcaption><b>The two-phase PPO training rhythm.</b> Each outer iteration runs the rollout phase (steps 1–6, no gradient) exactly once — collecting a frozen experience buffer — then enters the optimization phase (steps 7–10) for <em>PPO_EPOCHS</em> passes over shuffled minibatches (dashed repeat arc inside the bottom lane). Once all epochs complete, <code>theta_old &lt;- theta</code> so the updated policy becomes the behavior policy for the next rollout (left-margin arc).</figcaption>
+</figure>

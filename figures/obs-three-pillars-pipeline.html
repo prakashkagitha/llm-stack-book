@@ -1,0 +1,209 @@
+<figure class="viz" id="fig-obs-three-pillars-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 860 620" role="img" aria-label="Data-flow diagram showing a single incoming request entering an instrumented LLM service, passing through Retrieval, LLM Call, and Postproc spans, then exported via an OpenTelemetry collector that fans out into three pillar stores: Trace Store, Metrics Store, and Log Store.">
+<defs>
+  <marker id="tpp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#666)"/>
+  </marker>
+  <marker id="tpp-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+  <marker id="tpp-arrow-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-accent2,#3b82f6)"/>
+  </marker>
+  <marker id="tpp-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#999)"/>
+  </marker>
+</defs>
+<style>
+  #fig-obs-three-pillars-pipeline text { font-family: var(--sans, sans-serif); }
+  #fig-obs-three-pillars-pipeline .title { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-obs-three-pillars-pipeline .subtitle { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-three-pillars-pipeline .band-title { font: 700 12px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-three-pillars-pipeline .arrow-label { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+
+  /* Animated dot */
+  #fig-obs-three-pillars-pipeline .req-dot {
+    r: 6;
+    fill: var(--accent,#7c3aed);
+    opacity: 0;
+  }
+  #fig-obs-three-pillars-pipeline .particle-trace {
+    r: 5; fill: var(--accent,#7c3aed); opacity: 0;
+  }
+  #fig-obs-three-pillars-pipeline .particle-metric {
+    r: 5; fill: var(--v-accent2,#3b82f6); opacity: 0;
+  }
+  #fig-obs-three-pillars-pipeline .particle-log {
+    r: 5; fill: var(--muted,#888); opacity: 0;
+  }
+
+  @keyframes tpp-dot-travel {
+    0%   { opacity: 0; }
+    5%   { opacity: 1; }
+    12%  { opacity: 1; } /* at incoming req */
+    18%  { opacity: 1; } /* entering service */
+    28%  { opacity: 1; } /* span 1 lit */
+    35%  { opacity: 1; } /* span 2 lit */
+    42%  { opacity: 1; } /* span 3 lit */
+    50%  { opacity: 1; } /* at collector */
+    55%  { opacity: 0; } /* disappears — splits */
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-particle-trace {
+    0%   { opacity: 0; }
+    55%  { opacity: 0; }
+    58%  { opacity: 1; }
+    75%  { opacity: 1; }
+    82%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-particle-metric {
+    0%   { opacity: 0; }
+    58%  { opacity: 0; }
+    62%  { opacity: 1; }
+    78%  { opacity: 1; }
+    85%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-particle-log {
+    0%   { opacity: 0; }
+    62%  { opacity: 0; }
+    66%  { opacity: 1; }
+    82%  { opacity: 1; }
+    89%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes tpp-span-glow {
+    0%, 100% { opacity: 0; }
+    28%, 42%  { opacity: 0.5; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-obs-three-pillars-pipeline .req-dot,
+    #fig-obs-three-pillars-pipeline .particle-trace,
+    #fig-obs-three-pillars-pipeline .particle-metric,
+    #fig-obs-three-pillars-pipeline .particle-log { display: none; }
+  }
+</style>
+
+
+<g data-anim="1">
+  <rect x="230" y="18" width="400" height="48" rx="8" class="v-fill v-stroke" stroke="var(--ink-soft,#666)" stroke-width="1.5" fill="var(--surface,#f5f5f5)"/>
+  <text x="430" y="38" text-anchor="middle" class="title">Incoming Request</text>
+  <text x="430" y="54" text-anchor="middle" class="subtitle">HTTP / gRPC</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="430" y1="66" x2="430" y2="108" stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#tpp-arrow)"/>
+  <text x="447" y="92" class="arrow-label">request enters root span</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="80" y="110" width="700" height="130" rx="10" fill="var(--surface,#f8f8f8)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="430" y="128" text-anchor="middle" class="title">Instrumented LLM Service</text>
+
+  
+  
+  <rect x="110" y="136" width="160" height="52" rx="6" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.3"/>
+  <text x="190" y="157" text-anchor="middle" class="title" style="font-size:12px">Retrieval Span</text>
+  <text x="190" y="172" text-anchor="middle" class="subtitle">vector search</text>
+
+  
+  <rect x="350" y="136" width="160" height="52" rx="6" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.3"/>
+  <text x="430" y="157" text-anchor="middle" class="title" style="font-size:12px">LLM Call Span</text>
+  <text x="430" y="172" text-anchor="middle" class="subtitle">tokens, latency</text>
+
+  
+  <rect x="590" y="136" width="160" height="52" rx="6" fill="var(--accent-soft,rgba(124,58,237,0.12))" stroke="var(--accent,#7c3aed)" stroke-width="1.3"/>
+  <text x="670" y="157" text-anchor="middle" class="title" style="font-size:12px">Postproc Span</text>
+  <text x="670" y="172" text-anchor="middle" class="subtitle">rerank, format</text>
+
+  
+  <line x1="270" y1="162" x2="348" y2="162" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#tpp-arrow)"/>
+  <line x1="510" y1="162" x2="588" y2="162" stroke="var(--ink-soft,#666)" stroke-width="1.2" marker-end="url(#tpp-arrow)"/>
+</g>
+
+
+<g data-anim="3">
+  <line x1="190" y1="188" x2="240" y2="268" stroke="var(--ink-soft,#666)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#tpp-arrow)"/>
+  <line x1="430" y1="188" x2="430" y2="268" stroke="var(--ink-soft,#666)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#tpp-arrow)"/>
+  <line x1="670" y1="188" x2="620" y2="268" stroke="var(--ink-soft,#666)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#tpp-arrow)"/>
+  <text x="430" y="242" text-anchor="middle" class="arrow-label">spans + attributes (async batch)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="100" y="270" width="660" height="68" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--ink-soft,#666)" stroke-width="1.5"/>
+  <text x="430" y="293" text-anchor="middle" class="title">Collector / Exporter</text>
+  <text x="430" y="312" text-anchor="middle" class="subtitle">(OpenTelemetry SDK to OTLP gRPC exporter)</text>
+</g>
+
+
+<g data-anim="4">
+  
+  <line x1="280" y1="338" x2="200" y2="406" stroke="var(--accent,#7c3aed)" stroke-width="1.5" marker-end="url(#tpp-arrow-acc)"/>
+  <text x="212" y="388" text-anchor="middle" class="arrow-label" fill="var(--accent,#7c3aed)">traces</text>
+
+  
+  <line x1="430" y1="338" x2="430" y2="406" stroke="var(--v-accent2,#3b82f6)" stroke-width="1.5" marker-end="url(#tpp-arrow-acc2)"/>
+  <text x="456" y="382" text-anchor="start" class="arrow-label" fill="var(--v-accent2,#3b82f6)">metrics</text>
+
+  
+  <line x1="580" y1="338" x2="660" y2="406" stroke="var(--muted,#888)" stroke-width="1.5" marker-end="url(#tpp-arrow-muted)"/>
+  <text x="640" y="385" text-anchor="middle" class="arrow-label" fill="var(--muted,#888)">logs</text>
+</g>
+
+
+<g data-anim="4">
+  
+  <rect x="90" y="408" width="220" height="72" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="200" y="432" text-anchor="middle" class="title">Trace Store</text>
+  <text x="200" y="450" text-anchor="middle" class="subtitle">(Langfuse / Jaeger)</text>
+  <text x="200" y="466" text-anchor="middle" class="subtitle">spans, parent chains</text>
+
+  
+  <rect x="330" y="408" width="200" height="72" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--v-accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="430" y="432" text-anchor="middle" class="title">Metrics Store</text>
+  <text x="430" y="450" text-anchor="middle" class="subtitle">(Prometheus / Grafana)</text>
+  <text x="430" y="466" text-anchor="middle" class="subtitle">time-series aggregates</text>
+
+  
+  <rect x="545" y="408" width="225" height="72" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--muted,#888)" stroke-width="1.8"/>
+  <text x="657" y="432" text-anchor="middle" class="title">Log Store</text>
+  <text x="657" y="450" text-anchor="middle" class="subtitle">(S3 + Athena / BigQuery)</text>
+  <text x="657" y="466" text-anchor="middle" class="subtitle">prompt + response text</text>
+</g>
+
+
+<circle class="req-dot" cx="430" cy="42">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L0,24 L0,80 L-240,120 L-240,150 L0,170 L0,220 L0,260" begin="0s"/>
+  <animate attributeName="opacity" values="0;1;1;1;1;1;1;0;0" keyTimes="0;0.05;0.15;0.3;0.45;0.5;0.55;0.6;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="particle-trace" cx="430" cy="338">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L-150,30 L-230,62 L-230,62" begin="0s"/>
+  <animate attributeName="opacity" values="0;0;0;0;0;0;1;1;0;0" keyTimes="0;0.54;0.55;0.58;0.65;0.7;0.72;0.85;0.9;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="particle-metric" cx="430" cy="338">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L0,30 L0,62 L0,62" begin="0s"/>
+  <animate attributeName="opacity" values="0;0;0;0;0;0;0;1;1;0;0" keyTimes="0;0.54;0.56;0.6;0.66;0.72;0.74;0.78;0.88;0.94;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+
+<circle class="particle-log" cx="430" cy="338">
+  <animateMotion dur="4s" repeatCount="indefinite" calcMode="linear"
+    path="M0,0 L150,30 L230,62 L230,62" begin="0s"/>
+  <animate attributeName="opacity" values="0;0;0;0;0;0;0;0;1;1;0;0" keyTimes="0;0.54;0.57;0.62;0.68;0.74;0.76;0.8;0.82;0.91;0.96;1" dur="4s" repeatCount="indefinite"/>
+</circle>
+
+</svg>
+<figcaption><b>One request fans out into three observability pillars.</b> Each incoming request creates a root span in the instrumented service; child spans for retrieval, LLM call, and post-processing are emitted asynchronously via the OpenTelemetry SDK to a collector, which routes them into a trace store (structured span trees), a metrics store (time-series aggregates), and a log store (verbatim prompt/response records).</figcaption>
+</figure>

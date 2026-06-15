@@ -1,0 +1,185 @@
+<figure class="viz" id="fig-distill-compression-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 720 760" role="img" aria-label="Typical LLM compression pipeline: Full Pretrained Model 70B, then Knowledge Distillation to Distilled Student 7B, then Structured Pruning to Pruned Student 5B effective, then Quantization to Quantized Model 1.5GB on disk, then Speculative Decoding to Deployed System with target 7B plus draft quantized 1B.">
+<defs>
+  <marker id="cp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <radialGradient id="cp-pulse" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="var(--accent,#6366f1)" stop-opacity="0.95"/>
+    <stop offset="100%" stop-color="var(--accent,#6366f1)" stop-opacity="0"/>
+  </radialGradient>
+  
+  <linearGradient id="cp-meter-grad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="var(--accent,#6366f1)"/>
+    <stop offset="100%" stop-color="var(--good,#16a34a)"/>
+  </linearGradient>
+</defs>
+
+<style>
+  #fig-distill-compression-pipeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-distill-compression-pipeline .title  { font: 700 15px var(--sans,sans-serif); }
+  #fig-distill-compression-pipeline .node-n { font: 700 13px var(--sans,sans-serif); }
+  #fig-distill-compression-pipeline .node-s { font: 700 18px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-distill-compression-pipeline .node-s5 { font: 700 18px var(--sans,sans-serif); fill: var(--good,#16a34a); }
+  #fig-distill-compression-pipeline .op-n   { font: 700 11px var(--sans,sans-serif); }
+  #fig-distill-compression-pipeline .op-s   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-compression-pipeline .muted  { fill: var(--muted,#9ca3af); }
+  #fig-distill-compression-pipeline .meter-lbl { font: 500 9px var(--mono,monospace); fill: var(--muted,#9ca3af); }
+  #fig-distill-compression-pipeline .chip-n { font: 600 9px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+
+  /* Pulse travels top→bottom: total ~660px over 4.5s */
+  @keyframes cp-travel {
+    0%   { transform: translateY(0);    opacity: 1; }
+    85%  { transform: translateY(660px); opacity: 1; }
+    93%  { transform: translateY(660px); opacity: 0; }
+    100% { transform: translateY(660px); opacity: 0; }
+  }
+  /* Node glow on arrival: flash opacity */
+  @keyframes cp-glow2 { 0%,34%{opacity:0} 38%{opacity:1} 48%{opacity:0.3} 52%{opacity:1} 60%{opacity:0.3} 100%{opacity:0} }
+  @keyframes cp-glow3 { 0%,52%{opacity:0} 56%{opacity:1} 64%{opacity:0.3} 68%{opacity:1} 76%{opacity:0.3} 100%{opacity:0} }
+  @keyframes cp-glow4 { 0%,68%{opacity:0} 72%{opacity:1} 80%{opacity:0.3} 84%{opacity:1} 90%{opacity:0.3} 100%{opacity:0} }
+  @keyframes cp-glow5 { 0%,82%{opacity:0} 86%{opacity:1} 92%{opacity:0.3} 96%{opacity:1} 100%{opacity:0.3} }
+
+  #fig-distill-compression-pipeline .cp-p  { animation: cp-travel 4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn2   { animation: cp-glow2  4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn3   { animation: cp-glow3  4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn4   { animation: cp-glow4  4.5s ease-in-out infinite; }
+  #fig-distill-compression-pipeline .gn5   { animation: cp-glow5  4.5s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-distill-compression-pipeline .cp-p { animation:none; transform:translateY(660px); opacity:0.5; }
+    #fig-distill-compression-pipeline .gn2,.gn3,.gn4,.gn5 { animation:none; opacity:0.4; }
+  }
+</style>
+
+
+<rect x="18" y="10" width="684" height="36" rx="7"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="360" y="33" text-anchor="middle" class="title">Typical Compression Pipeline</text>
+
+
+
+
+<rect x="160" y="58" width="360" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="88"  text-anchor="middle" class="node-n">Full Pretrained Model</text>
+<text x="340" y="110" text-anchor="middle" class="node-s">70B</text>
+
+
+<rect x="160" y="58" width="360" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0.06" stroke="none"/>
+
+
+<line x1="340" y1="132" x2="340" y2="194"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+
+<rect x="358" y="144" width="192" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="158" text-anchor="middle" class="op-n">Knowledge Distillation</text>
+<text x="454" y="172" text-anchor="middle" class="op-s">SFT on teacher traces</text>
+
+
+<rect x="190" y="206" width="300" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="236" text-anchor="middle" class="node-n">Distilled Student</text>
+<text x="340" y="258" text-anchor="middle" class="node-s">7B</text>
+
+<rect x="190" y="206" width="300" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0" stroke="var(--accent,#6366f1)" stroke-width="2.5" class="gn2"/>
+
+
+<line x1="340" y1="280" x2="340" y2="336"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+<rect x="358" y="290" width="192" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="304" text-anchor="middle" class="op-n">Structured Pruning</text>
+<text x="454" y="318" text-anchor="middle" class="op-s">remove heads / layers</text>
+
+
+<rect x="215" y="348" width="250" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="378" text-anchor="middle" class="node-n">Pruned Student</text>
+<text x="340" y="400" text-anchor="middle" class="node-s">5B effective</text>
+<rect x="215" y="348" width="250" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0" stroke="var(--accent,#6366f1)" stroke-width="2.5" class="gn3"/>
+
+
+<line x1="340" y1="422" x2="340" y2="470"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+<rect x="352" y="432" width="204" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="446" text-anchor="middle" class="op-n">Quantization</text>
+<text x="454" y="460" text-anchor="middle" class="op-s">INT4 / INT8 (see Ch 4.7-4.8)</text>
+
+
+<rect x="235" y="482" width="210" height="72" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.8"/>
+<text x="340" y="512" text-anchor="middle" class="node-n">Quantized Model</text>
+<text x="340" y="534" text-anchor="middle" class="node-s">~1.5 GB on disk</text>
+<rect x="235" y="482" width="210" height="72" rx="8"
+  fill="var(--accent,#6366f1)" fill-opacity="0" stroke="var(--accent,#6366f1)" stroke-width="2.5" class="gn4"/>
+
+
+<line x1="340" y1="556" x2="340" y2="606"
+  stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#cp-arr)"/>
+<rect x="358" y="566" width="192" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="454" y="580" text-anchor="middle" class="op-n">Speculative Decoding</text>
+<text x="454" y="594" text-anchor="middle" class="op-s">use as draft model</text>
+
+
+<rect x="170" y="618" width="340" height="86" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--good,#16a34a)" stroke-width="2.2"/>
+<text x="340" y="640" text-anchor="middle" class="node-n">Deployed System</text>
+
+<rect x="188" y="648" width="118" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--good,#16a34a)" stroke-width="1.4"/>
+<text x="247" y="664" text-anchor="middle" class="chip-n">target 7B</text>
+<text x="247" y="678" text-anchor="middle" class="op-s">(verifier)</text>
+
+<rect x="318" y="648" width="174" height="38" rx="6"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="405" y="664" text-anchor="middle" class="chip-n">draft quantized 1B</text>
+<text x="405" y="678" text-anchor="middle" class="op-s">(speculative draft)</text>
+
+
+<rect x="170" y="618" width="340" height="86" rx="8"
+  fill="var(--good,#16a34a)" fill-opacity="0" stroke="var(--good,#16a34a)" stroke-width="3" class="gn5"/>
+
+
+<text x="680" y="56" text-anchor="middle" class="meter-lbl">size</text>
+
+
+<rect x="672" y="58" width="16" height="646" rx="4"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+
+
+<rect x="672" y="58" width="16" height="646" rx="4"
+  fill="url(#cp-meter-grad)" fill-opacity="0.9"/>
+
+
+
+<text x="668" y="96"  text-anchor="end" class="meter-lbl">70B</text>
+
+<line x1="670" y1="206" x2="690" y2="206" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="668" y="210" text-anchor="end" class="meter-lbl">7B</text>
+
+<line x1="670" y1="348" x2="690" y2="348" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="668" y="352" text-anchor="end" class="meter-lbl">5B</text>
+
+<line x1="670" y1="482" x2="690" y2="482" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="668" y="486" text-anchor="end" class="meter-lbl">1.5G</text>
+
+<line x1="670" y1="618" x2="690" y2="618" stroke="var(--good,#16a34a)" stroke-width="1"/>
+<text x="668" y="660" text-anchor="end" class="meter-lbl" fill="var(--good,#16a34a)">live</text>
+
+
+
+
+
+<circle cx="340" cy="94" r="10" fill="url(#cp-pulse)" class="cp-p"/>
+
+</svg>
+<figcaption><b>A typical LLM compression pipeline shrinks a 70B model to an on-device deployment in four stages.</b> Knowledge distillation produces a 7B student; structured pruning removes redundant heads and layers to reach 5B effective capacity; INT4/INT8 quantization compresses weights to ~1.5 GB on disk; finally the quantized model serves as a speculative draft alongside a full-precision 7B verifier. Each stage compounds the previous one's size reduction.</figcaption>
+</figure>

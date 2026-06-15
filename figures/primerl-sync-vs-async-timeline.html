@@ -1,0 +1,212 @@
+<figure class="viz" id="fig-primerl-sync-vs-async-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 460" role="img" aria-label="Two-panel Gantt chart: the synchronous panel shows gen and train lanes alternating busy and idle, with a straggler tail; the async panel shows both lanes continuously busy with no idle gaps. An animated playhead sweeps across both panels, highlighting the contrast.">
+<defs>
+  <marker id="psa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <marker id="psa-arrow-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#b00"/>
+  </marker>
+  <pattern id="psa-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-opacity="0.35"/>
+  </pattern>
+  
+  <clipPath id="psa-clip-sync">
+    <rect id="psa-sync-clip-rect" x="120" y="40" width="0" height="180"/>
+  </clipPath>
+  
+  <clipPath id="psa-clip-async">
+    <rect id="psa-async-clip-rect" x="120" y="245" width="0" height="180"/>
+  </clipPath>
+</defs>
+
+<style>
+  #fig-primerl-sync-vs-async-timeline text { fill: var(--ink-soft,#374151); }
+  #fig-primerl-sync-vs-async-timeline .panel-title { font: 700 13px var(--sans,sans-serif); }
+  #fig-primerl-sync-vs-async-timeline .lane-lbl { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-primerl-sync-vs-async-timeline .block-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--surface,#fff); }
+  #fig-primerl-sync-vs-async-timeline .idle-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-sync-vs-async-timeline .annot { font: 500 10px var(--sans,sans-serif); fill: #b00; }
+  #fig-primerl-sync-vs-async-timeline .axis-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-sync-vs-async-timeline .note-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+
+  /* playhead animation */
+  @keyframes psa-sweep {
+    0%   { x: 120; width: 0; }
+    85%  { x: 120; width: 740; }
+    100% { x: 120; width: 740; }
+  }
+  #fig-primerl-sync-vs-async-timeline #psa-sync-clip-rect,
+  #fig-primerl-sync-vs-async-timeline #psa-async-clip-rect {
+    animation: psa-sweep 5s ease-in-out 0.3s infinite;
+  }
+
+  /* highlight overlay inside playhead - just a moving vertical sliver on both panels */
+  @keyframes psa-playhead-move {
+    0%   { transform: translateX(120px); opacity:0; }
+    5%   { opacity:1; }
+    85%  { transform: translateX(856px); opacity:1; }
+    95%  { opacity:0; }
+    100% { transform: translateX(856px); opacity:0; }
+  }
+  #fig-primerl-sync-vs-async-timeline .psa-playhead {
+    animation: psa-playhead-move 5s ease-in-out 0.3s infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-primerl-sync-vs-async-timeline * {
+      animation: none !important;
+    }
+    #fig-primerl-sync-vs-async-timeline #psa-sync-clip-rect,
+    #fig-primerl-sync-vs-async-timeline #psa-async-clip-rect {
+      x: 120 !important; width: 740 !important;
+    }
+    #fig-primerl-sync-vs-async-timeline .psa-playhead { opacity:0 !important; }
+  }
+</style>
+
+
+<line x1="120" y1="440" x2="760" y2="440" stroke="var(--muted,#6b7280)" stroke-width="1.4" marker-end="url(#psa-arrow)"/>
+<text x="768" y="444" class="axis-lbl" text-anchor="start">wall-clock time</text>
+
+
+<text x="60" y="30" class="panel-title" fill="var(--ink-soft,#374151)">SYNCHRONOUS (lock-step)</text>
+
+
+<line x1="120" y1="90" x2="860" y2="90" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+<line x1="120" y1="150" x2="860" y2="150" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+
+
+<text x="108" y="94" class="lane-lbl" text-anchor="end">gen</text>
+<text x="108" y="154" class="lane-lbl" text-anchor="end">train</text>
+
+
+<rect x="120" y="72" width="210" height="36" rx="5" fill="var(--accent,#4f46e5)" opacity="0.90"/>
+<text x="225" y="95" class="block-lbl" text-anchor="middle">gen batch k</text>
+
+<rect x="320" y="78" width="22" height="24" rx="2" fill="var(--accent,#4f46e5)" opacity="0.55"/>
+<rect x="332" y="82" width="14" height="16" rx="2" fill="var(--accent,#4f46e5)" opacity="0.35"/>
+
+
+<rect x="342" y="72" width="128" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="406" y="94" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="470" y="72" width="210" height="36" rx="5" fill="var(--accent,#4f46e5)" opacity="0.90"/>
+<text x="575" y="95" class="block-lbl" text-anchor="middle">gen batch k+1</text>
+
+
+<rect x="680" y="72" width="140" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="750" y="94" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="120" y="132" width="222" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="231" y="154" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="342" y="132" width="108" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.90"/>
+<text x="396" y="155" class="block-lbl" text-anchor="middle">train k</text>
+
+
+<rect x="450" y="132" width="230" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+<text x="565" y="154" class="idle-lbl" text-anchor="middle">idle</text>
+
+
+<rect x="680" y="132" width="108" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.90"/>
+<text x="734" y="155" class="block-lbl" text-anchor="middle">train k+1</text>
+
+
+<rect x="788" y="132" width="32" height="36" rx="5" fill="url(#psa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3" opacity="0.9"/>
+
+
+
+<line x1="406" y1="120" x2="406" y2="110" stroke="#b00" stroke-width="1.2" marker-end="url(#psa-arrow-danger)"/>
+<text x="406" y="129" class="annot" text-anchor="middle" font-size="9">gen idle (waiting on weights θk)</text>
+
+
+<line x1="231" y1="170" x2="231" y2="190" stroke="#b00" stroke-width="1.2"/>
+<text x="231" y="204" class="annot" text-anchor="middle">train idle (waiting on gen)</text>
+
+
+<line x1="336" y1="65" x2="298" y2="52" stroke="#b00" stroke-width="1" marker-end="url(#psa-arrow-danger)"/>
+<text x="338" y="56" class="annot" text-anchor="start" font-size="9">straggler: waits on longest sample</text>
+
+
+<line x1="40" y1="222" x2="870" y2="222" stroke="var(--muted,#6b7280)" stroke-width="0.5" stroke-dasharray="5 4" opacity="0.35"/>
+
+
+<text x="60" y="243" class="panel-title" fill="var(--ink-soft,#374151)">ASYNCHRONOUS (decoupled — both always busy)</text>
+
+
+<line x1="120" y1="298" x2="860" y2="298" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+<line x1="120" y1="358" x2="860" y2="358" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="2 3" opacity="0.4"/>
+
+
+<text x="108" y="302" class="lane-lbl" text-anchor="end">gen</text>
+<text x="108" y="362" class="lane-lbl" text-anchor="end">train</text>
+
+
+<rect x="120" y="280" width="740" height="36" rx="5" fill="var(--accent,#4f46e5)" opacity="0.88"/>
+<text x="490" y="303" class="block-lbl" text-anchor="middle">continuous stream of rollouts</text>
+
+
+<rect x="120" y="340" width="120" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="180" y="362" class="block-lbl" text-anchor="middle">k</text>
+<line x1="240" y1="340" x2="240" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="241" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="301" y="362" class="block-lbl" text-anchor="middle">k+1</text>
+<line x1="361" y1="340" x2="361" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="362" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="422" y="362" class="block-lbl" text-anchor="middle">k+2</text>
+<line x1="482" y1="340" x2="482" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="483" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="543" y="362" class="block-lbl" text-anchor="middle">k+3</text>
+<line x1="603" y1="340" x2="603" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="604" y="340" width="120" height="36" rx="0" fill="var(--accent2,#0891b2)" opacity="0.88"/>
+<text x="664" y="362" class="block-lbl" text-anchor="middle">k+4</text>
+<line x1="724" y1="340" x2="724" y2="376" stroke="var(--surface,#fff)" stroke-width="1.5" opacity="0.6"/>
+
+<rect x="725" y="340" width="135" height="36" rx="5" fill="var(--accent2,#0891b2)" opacity="0.88" style="border-radius:0 5px 5px 0"/>
+<text x="792" y="362" class="block-lbl" text-anchor="middle">…</text>
+
+
+<text x="490" y="400" class="note-lbl" text-anchor="middle">rollouts flow over a queue; weights pushed every N steps</text>
+
+
+<line x1="200" y1="316" x2="200" y2="338" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2 2" marker-end="url(#psa-arrow)" opacity="0.7"/>
+<text x="205" y="328" class="note-lbl" text-anchor="start" font-size="9">rollout queue</text>
+
+
+
+<g class="psa-playhead">
+  <rect x="-1" y="60" width="2" height="170" fill="var(--warn,#e0a106)" opacity="0.85"/>
+</g>
+
+<g class="psa-playhead">
+  <rect x="-1" y="270" width="2" height="130" fill="var(--warn,#e0a106)" opacity="0.85"/>
+</g>
+
+
+<g clip-path="url(#psa-clip-sync)">
+  
+  <rect x="120" y="72" width="210" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+  <rect x="470" y="72" width="210" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+  
+  <rect x="342" y="132" width="108" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+  <rect x="680" y="132" width="108" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+</g>
+<g clip-path="url(#psa-clip-async)">
+  
+  <rect x="120" y="280" width="740" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+  
+  <rect x="120" y="340" width="740" height="36" rx="5" fill="var(--warn,#e0a106)" opacity="0.18"/>
+</g>
+
+</svg>
+<figcaption><b>Synchronous lock-step RL leaves half the fleet idle at all times; asynchronous decoupled RL keeps both lanes continuously busy.</b> In the top panel, gen and train alternate: when one is working the other is idle, and a straggler response stretches the gen block, delaying the trainer further. In the bottom panel, a rollout queue decouples the two — both lanes run without gaps, delivering 2–4× throughput improvement over matched-quality training.</figcaption>
+</figure>

@@ -1,0 +1,228 @@
+<figure class="viz" id="fig-moe-router-dispatch-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 720 780" role="img" aria-label="Router dispatch pipeline: a token vector passes through gate W_g to produce E logits, optional noise or bias perturbs them, top-k selects k expert indices, softmax over those k produces gate weights summing to 1, and only the k selected experts run and are summed to produce MoE output.">
+<defs>
+  <marker id="rd-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--ink-soft,#666)"/>
+  </marker>
+  <marker id="rd-arr-ac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1.5 L8.5 5 L0 8.5 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-moe-router-dispatch-pipeline .lbl   { font: 600 13px var(--sans,sans-serif); }
+  #fig-moe-router-dispatch-pipeline .sub   { font: 400 10px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .elbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .annot { font: 400 9px var(--sans,sans-serif);  fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .fml   { font: 400 10px var(--mono,monospace);  fill: var(--muted,#888); }
+  #fig-moe-router-dispatch-pipeline .elx   { font: 600 10px var(--sans,sans-serif); }
+  #fig-moe-router-dispatch-pipeline text   { fill: var(--ink-soft,#333); }
+</style>
+
+
+<g data-anim="1">
+  <rect x="260" y="14" width="160" height="40" rx="8"
+        class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="340" y="33" text-anchor="middle" class="lbl">token  x</text>
+  <text x="340" y="47" text-anchor="middle" class="sub">(d_model)</text>
+</g>
+
+
+<line x1="340" y1="54" x2="340" y2="80"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="2">
+  <rect x="240" y="84" width="200" height="46" rx="8"
+        fill="var(--accent,#6366f1)" fill-opacity="0.12"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="340" y="106" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">W_g  (router / gate)</text>
+  <text x="340" y="121" text-anchor="middle" class="sub">linear: R^d_model -&gt; R^E  (the only routing weight)</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="340" y1="130" x2="340" y2="156"
+        stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+  <text x="352" y="147" class="elbl">logits</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="240" y="160" width="200" height="40" rx="6"
+        class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="340" y="180" text-anchor="middle" class="lbl">logits  h(x)</text>
+  <text x="340" y="194" text-anchor="middle" class="sub">vector in R^E</text>
+
+  
+  
+  <rect x="460" y="181" width="10" height="19" rx="1" fill="var(--accent,#6366f1)"/>
+  <rect x="473" y="192" width="10" height="8"  rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <rect x="486" y="188" width="10" height="12" rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <rect x="499" y="195" width="10" height="5"  rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <rect x="512" y="174" width="10" height="26" rx="1" fill="var(--accent,#6366f1)"/>
+  <rect x="525" y="187" width="10" height="13" rx="1" fill="var(--border-2,#bbb)" fill-opacity="0.8"/>
+  <line x1="458" y1="200" x2="538" y2="200" stroke="var(--ink-soft,#666)" stroke-width="0.8"/>
+  <text x="498" y="211" text-anchor="middle" class="annot">per-expert logits</text>
+  
+  <line x1="440" y1="182" x2="456" y2="185"
+        stroke="var(--ink-soft,#666)" stroke-width="0.8" stroke-dasharray="3 2"/>
+</g>
+
+
+<line x1="340" y1="200" x2="340" y2="224"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="4">
+  <rect x="240" y="228" width="200" height="46" rx="8"
+        fill="var(--surface,#f5f5f5)" fill-opacity="0.5"
+        stroke="var(--ink-soft,#666)" stroke-width="1.4" stroke-dasharray="5 3"/>
+  <text x="340" y="247" text-anchor="middle" class="lbl" fill="var(--muted,#888)">(+ optional noise / bias)</text>
+  <text x="340" y="262" text-anchor="middle" class="sub">Shazeer noise  /  DSv3 bias</text>
+
+  
+  <text x="460" y="240" class="annot">noise: exploration</text>
+  <text x="460" y="253" class="annot">bias: load balance</text>
+  <text x="460" y="266" class="annot">(selection only)</text>
+</g>
+
+
+<line x1="340" y1="274" x2="340" y2="298"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="5">
+  
+  <polygon points="260,308 268,290 412,290 420,308 412,326 268,326"
+           fill="var(--accent,#6366f1)" fill-opacity="0.14"
+           stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="340" y="308" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">top-k  select</text>
+  <text x="340" y="322" text-anchor="middle" class="sub">non-differentiable step</text>
+
+  
+  <line x1="420" y1="308" x2="468" y2="308"
+        stroke="var(--accent,#6366f1)" stroke-width="1.3" marker-end="url(#rd-arr-ac)"/>
+  <text x="444" y="300" text-anchor="middle" class="elbl" fill="var(--accent,#6366f1)">k idx</text>
+
+  
+  <rect x="470" y="294" width="110" height="28" rx="6"
+        class="v-fill v-stroke" stroke-width="1.2"/>
+  <text x="525" y="308" text-anchor="middle" class="sub" style="font-size:10px">indices {e1..ek}</text>
+  <text x="525" y="320" text-anchor="middle" class="annot">e.g. E1, E5</text>
+</g>
+
+
+<line x1="340" y1="326" x2="340" y2="350"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+
+
+<g data-anim="6">
+  <rect x="240" y="354" width="200" height="46" rx="8"
+        fill="var(--accent,#6366f1)" fill-opacity="0.12"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+  <text x="340" y="375" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">softmax  over the  k</text>
+  <text x="340" y="390" text-anchor="middle" class="sub">rows sum to 1  (stable magnitude)</text>
+
+  
+  <line x1="440" y1="377" x2="468" y2="377"
+        stroke="var(--accent,#6366f1)" stroke-width="1.3" marker-end="url(#rd-arr-ac)"/>
+  <text x="454" y="369" text-anchor="middle" class="elbl" fill="var(--accent,#6366f1)">g_e</text>
+
+  
+  <rect x="470" y="364" width="110" height="26" rx="6"
+        class="v-fill v-stroke" stroke-width="1.2"/>
+  <text x="525" y="381" text-anchor="middle" class="sub" style="font-size:10px">gate weights g_e</text>
+</g>
+
+
+<line x1="340" y1="400" x2="340" y2="424"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+<text x="352" y="416" class="elbl">dispatch</text>
+
+
+<g data-anim="7">
+  
+  <rect x="22" y="428" width="586" height="128" rx="10"
+        class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="315" y="447" text-anchor="middle" class="lbl">run only experts {e1,...,ek}</text>
+
+  
+  <rect x="38" y="456" width="60" height="58" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.85"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="68"  y="482" text-anchor="middle" class="elx" fill="var(--surface,#fff)">E1</text>
+  <text x="68"  y="497" text-anchor="middle" class="annot" fill="var(--surface,#fff)">x g_e</text>
+
+  
+  <rect x="110" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="140" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E2</text>
+
+  
+  <rect x="182" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="212" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E3</text>
+
+  
+  <rect x="254" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="284" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E4</text>
+
+  
+  <rect x="326" y="456" width="60" height="58" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.85"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="356" y="482" text-anchor="middle" class="elx" fill="var(--surface,#fff)">E5</text>
+  <text x="356" y="497" text-anchor="middle" class="annot" fill="var(--surface,#fff)">x g_e</text>
+
+  
+  <rect x="398" y="456" width="60" height="58" rx="6"
+        fill="var(--surface-3,#e8e8e8)" fill-opacity="0.35"
+        stroke="var(--border-2,#ccc)" stroke-width="1.2" opacity="0.5"/>
+  <text x="428" y="490" text-anchor="middle" class="elx" fill="var(--muted,#aaa)">E6</text>
+
+  
+  <text x="428" y="527" text-anchor="middle" class="annot">no gradient this step</text>
+
+  
+  <path d="M598 308 L598 440 L72 440 L68 452"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4 2"
+        marker-end="url(#rd-arr-ac)" opacity="0.6"/>
+  <path d="M598 308 L598 440 L356 440 L356 452"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4 2"
+        marker-end="url(#rd-arr-ac)" opacity="0.6"/>
+  <text x="598" y="334" text-anchor="middle" class="annot" fill="var(--accent,#6366f1)">dispatch idx</text>
+
+  
+  <path d="M580 377 L662 377 L662 448 L92 448 L90 452"
+        fill="none" stroke="var(--ink-soft,#666)" stroke-width="0.9" stroke-dasharray="3 2"
+        marker-end="url(#rd-arr)" opacity="0.5"/>
+  <path d="M580 377 L662 377 L662 448 L378 448 L378 452"
+        fill="none" stroke="var(--ink-soft,#666)" stroke-width="0.9" stroke-dasharray="3 2"
+        marker-end="url(#rd-arr)" opacity="0.5"/>
+  <text x="662" y="368" text-anchor="middle" class="annot">weights g_e</text>
+</g>
+
+
+<line x1="340" y1="556" x2="340" y2="578"
+      stroke="var(--ink-soft,#666)" stroke-width="1.4" marker-end="url(#rd-arr)"/>
+<text x="352" y="572" class="elbl">weighted sum</text>
+
+
+<g data-anim="8">
+  <rect x="196" y="582" width="288" height="52" rx="8"
+        fill="var(--accent,#6366f1)" fill-opacity="0.18"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="340" y="606" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">scale by g_e,  SUM  --&gt;  MoE(x)</text>
+  <text x="340" y="623" text-anchor="middle" class="fml">MoE(x) = sum_e g_e * FFN_e(x)</text>
+</g>
+
+
+
+</svg>
+<figcaption><b>End-to-end router dispatch pipeline for a single token.</b> The token passes through learned gate <b>W_g</b> to produce E logits; an optional noise or bias term (dashed box) aids exploration or load balancing without polluting gate weights; <b>top-k</b> selects the k expert indices (the non-differentiable step); a <b>softmax over only those k</b> produces gate weights that sum to 1 (Mixtral style, stable magnitude); finally only the k selected experts (E1 and E5, highlighted) execute and are scaled by their gate weights before being summed — the remaining experts receive no gradient this step.</figcaption>
+</figure>

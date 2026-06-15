@@ -1,0 +1,292 @@
+<figure class="viz" id="fig-agentmem-session-persistence-flow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 490" role="img" aria-label="Session persistence flow: Session N-1 runs an agent then writes a shutdown summary down to the External Memory rail; a continuity hand-off arrow leads to Session N which does a bootstrap read (pulling state up from External Memory), runs the agent, writes a shutdown summary, and conditionally reflects if a threshold is reached.">
+<defs>
+  <marker id="sp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)" opacity="0.7"/>
+  </marker>
+  <marker id="sp-arr-write" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="sp-arr-read" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="sp-arr-handoff" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-agentmem-session-persistence-flow .step-box {
+    font: 600 12px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .step-sub {
+    font: 400 10px var(--mono,monospace);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-session-persistence-flow .lbl {
+    font: 500 11px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .annot {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-session-persistence-flow .lane-title {
+    font: 700 14px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .rail-title {
+    font: 700 13px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-session-persistence-flow .rail-sub {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+
+  /* ─── Animation tokens ─── */
+  #fig-agentmem-session-persistence-flow #sp-tok-write-n1 {
+    opacity: 0;
+    animation: sp-drop-n1 8s ease-in-out infinite;
+  }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n1-run { animation: sp-flash-step 8s ease-in-out infinite; animation-delay: 0s; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n1-shut { animation: sp-flash-step 8s ease-in-out infinite; animation-delay: -6.5s; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-handoff { animation: sp-flash-handoff 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-tok-read-n { opacity: 0; animation: sp-rise-n 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-boot { animation: sp-flash-step-n-boot 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-run { animation: sp-flash-step-n-run 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-shut { animation: sp-flash-step-n-shut 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-highlight-n-reflect { animation: sp-flash-step-n-ref 8s ease-in-out infinite; }
+  #fig-agentmem-session-persistence-flow #sp-tok-write-n {
+    opacity: 0;
+    animation: sp-drop-n 8s ease-in-out infinite;
+  }
+
+  @keyframes sp-drop-n1 {
+    0%   { opacity:0; transform:translateY(0); }
+    8%   { opacity:1; transform:translateY(0); }
+    22%  { opacity:1; transform:translateY(96px); }
+    27%  { opacity:0; transform:translateY(96px); }
+    100% { opacity:0; transform:translateY(96px); }
+  }
+  @keyframes sp-flash-step {
+    0%   { opacity:0; }
+    2%   { opacity:0.45; }
+    10%  { opacity:0.45; }
+    14%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-flash-handoff {
+    0%   { opacity:0; }
+    26%  { opacity:0; }
+    30%  { opacity:1; }
+    38%  { opacity:1; }
+    43%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-rise-n {
+    0%   { opacity:0; transform:translateY(0); }
+    42%  { opacity:0; transform:translateY(0); }
+    47%  { opacity:1; transform:translateY(0); }
+    60%  { opacity:1; transform:translateY(-96px); }
+    65%  { opacity:0; transform:translateY(-96px); }
+    100% { opacity:0; transform:translateY(-96px); }
+  }
+  @keyframes sp-flash-step-n-boot {
+    0%   { opacity:0; }
+    40%  { opacity:0; }
+    44%  { opacity:0.45; }
+    55%  { opacity:0.45; }
+    59%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-flash-step-n-run {
+    0%   { opacity:0; }
+    55%  { opacity:0; }
+    59%  { opacity:0.45; }
+    66%  { opacity:0.45; }
+    70%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-flash-step-n-shut {
+    0%   { opacity:0; }
+    67%  { opacity:0; }
+    71%  { opacity:0.45; }
+    78%  { opacity:0.45; }
+    82%  { opacity:0; }
+    100% { opacity:0; }
+  }
+  @keyframes sp-drop-n {
+    0%   { opacity:0; transform:translateY(0); }
+    70%  { opacity:0; transform:translateY(0); }
+    74%  { opacity:1; transform:translateY(0); }
+    84%  { opacity:1; transform:translateY(80px); }
+    89%  { opacity:0; transform:translateY(80px); }
+    100% { opacity:0; transform:translateY(80px); }
+  }
+  @keyframes sp-flash-step-n-ref {
+    0%   { opacity:0; }
+    82%  { opacity:0; }
+    86%  { opacity:0.45; }
+    95%  { opacity:0.45; }
+    99%  { opacity:0; }
+    100% { opacity:0; }
+  }
+</style>
+
+
+<text x="170" y="28" text-anchor="middle" class="lane-title">Session N-1</text>
+<text x="530" y="28" text-anchor="middle" class="lane-title">Session N</text>
+
+
+<rect x="60" y="36" width="218" height="280" rx="8"
+      fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2" stroke-dasharray="0"/>
+
+
+<rect x="440" y="36" width="236" height="352" rx="8"
+      fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+
+
+
+<rect x="88" y="60" width="164" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+<rect id="sp-highlight-n1-run" x="88" y="60" width="164" height="44" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="170" y="85" text-anchor="middle" class="step-box">[run agent]</text>
+
+
+<line x1="170" y1="104" x2="170" y2="152"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="88" y="154" width="164" height="54" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<rect id="sp-highlight-n1-shut" x="88" y="154" width="164" height="54" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="170" y="177" text-anchor="middle" class="step-box">[shutdown write]</text>
+<text x="170" y="198" text-anchor="middle" class="step-sub">[summary -&gt; store]</text>
+
+
+<line x1="170" y1="210" x2="170" y2="390"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.8" stroke-dasharray="5 3"
+      marker-end="url(#sp-arr-write)"/>
+<text x="156" y="302" text-anchor="end" class="annot" fill="var(--accent,#4f46e5)">write</text>
+<text x="156" y="314" text-anchor="end" class="annot" fill="var(--accent,#4f46e5)">summary</text>
+
+
+
+<g id="sp-tok-write-n1" transform="translate(148,208)">
+  <rect x="0" y="0" width="50" height="18" rx="4"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.85"/>
+  <text x="25" y="13" text-anchor="middle"
+        style="font:500 8.5px var(--mono,monospace);fill:#fff">summary</text>
+</g>
+
+
+<line x1="260" y1="82" x2="440" y2="82"
+      stroke="var(--good,#2f9e6e)" stroke-width="2.2"
+      marker-end="url(#sp-arr-handoff)"/>
+
+<rect id="sp-highlight-handoff" x="260" y="70" width="180" height="26" rx="4"
+      fill="var(--good,#2f9e6e)" fill-opacity="0"/>
+<text x="350" y="68" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">continuity</text>
+
+
+
+
+<rect x="466" y="60" width="184" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<rect id="sp-highlight-n-boot" x="466" y="60" width="184" height="44" rx="6"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0"/>
+<text x="558" y="83" text-anchor="middle" class="step-box">[bootstrap read]</text>
+
+
+<text x="656" y="108" text-anchor="end" class="annot" fill="var(--accent2,#3b82f6)">inject prior context</text>
+
+
+<line x1="558" y1="104" x2="558" y2="142"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="466" y="144" width="184" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect id="sp-highlight-n-run" x="466" y="144" width="184" height="44" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="558" y="170" text-anchor="middle" class="step-box">[run agent]</text>
+
+
+<line x1="558" y1="188" x2="558" y2="226"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="466" y="228" width="184" height="44" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<rect id="sp-highlight-n-shut" x="466" y="228" width="184" height="44" rx="6"
+      fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+<text x="558" y="251" text-anchor="middle" class="step-box">[shutdown write]</text>
+<text x="558" y="264" text-anchor="middle" class="step-sub">[summary -&gt; store]</text>
+
+
+<line x1="558" y1="272" x2="558" y2="314"
+      stroke="var(--ink-soft)" stroke-width="1.6" stroke-opacity="0.5"
+      marker-end="url(#sp-arr)"/>
+
+
+<rect x="466" y="316" width="184" height="52" rx="6"
+      fill="var(--surface-3,#ececf0)" stroke="var(--muted,#64748b)" stroke-width="1.5" stroke-dasharray="6 4"/>
+<rect id="sp-highlight-n-reflect" x="466" y="316" width="184" height="52" rx="6"
+      fill="var(--warn,#e0a106)" fill-opacity="0"/>
+<text x="558" y="339" text-anchor="middle" class="step-box">[reflect if threshold]</text>
+<text x="558" y="358" text-anchor="middle" class="step-sub">periodic / conditional</text>
+
+
+<line x1="554" y1="272" x2="554" y2="390"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.8" stroke-dasharray="5 3"
+      marker-end="url(#sp-arr-write)"/>
+
+
+<line x1="576" y1="388" x2="576" y2="108"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.8" stroke-dasharray="5 3"
+      marker-end="url(#sp-arr-read)"/>
+<text x="710" y="200" text-anchor="end" class="annot" fill="var(--accent2,#3b82f6)">session summary</text>
+<text x="710" y="213" text-anchor="end" class="annot" fill="var(--accent2,#3b82f6)">+ top-k memories</text>
+
+
+<g id="sp-tok-read-n" transform="translate(551,382)">
+  <rect x="0" y="0" width="50" height="18" rx="4"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <text x="25" y="13" text-anchor="middle"
+        style="font:500 8.5px var(--mono,monospace);fill:#fff">context</text>
+</g>
+
+
+<g id="sp-tok-write-n" transform="translate(529,270)">
+  <rect x="0" y="0" width="50" height="18" rx="4"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.85"/>
+  <text x="25" y="13" text-anchor="middle"
+        style="font:500 8.5px var(--mono,monospace);fill:#fff">summary</text>
+</g>
+
+
+<rect x="30" y="396" width="660" height="68" rx="8"
+      fill="var(--accent,#4f46e5)" fill-opacity="0.10"
+      stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+<text x="360" y="421" text-anchor="middle" class="rail-title">EXTERNAL MEMORY</text>
+<text x="360" y="438" text-anchor="middle" class="rail-sub">episodic log  ·  semantic facts  ·  open task state</text>
+<text x="30" y="456" text-anchor="start" class="rail-sub" fill="var(--muted,#64748b)">  persists across sessions  ·  shared across agents</text>
+
+
+<text x="68" y="420" text-anchor="middle" class="annot" fill="var(--accent,#4f46e5)">write</text>
+
+
+<text x="614" y="420" text-anchor="middle" class="annot" fill="var(--accent2,#3b82f6)">read</text>
+</svg>
+<figcaption><b>Session persistence bridges restarts through external memory, not in-memory state.</b> When Session N-1 ends, a shutdown write persists a summary and any updated facts to the external memory rail; when Session N starts, a bootstrap read pulls that state back up into context so the agent continues seamlessly. The conditional <em>reflect</em> step (dashed border) periodically distils accumulated episodes into compact semantic facts, consolidating knowledge across many sessions.</figcaption>
+</figure>

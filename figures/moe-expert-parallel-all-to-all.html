@@ -1,0 +1,217 @@
+<figure class="viz" id="fig-moe-expert-parallel-all-to-all">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 920 460" role="img" aria-label="Expert parallelism pipeline: tokens live on home GPUs, an all-to-all dispatch sends each token to its expert's GPU, experts run locally, then a second all-to-all combines results back to home GPUs for the residual.">
+<style>
+  #fig-moe-expert-parallel-all-to-all text { font: 12px var(--sans, sans-serif); fill: var(--ink-soft, #45413a); }
+  #fig-moe-expert-parallel-all-to-all .stg   { font: 700 11px var(--sans, sans-serif); }
+  #fig-moe-expert-parallel-all-to-all .gpu   { font: 700 12px var(--sans, sans-serif); }
+  #fig-moe-expert-parallel-all-to-all .tok   { font: 700 10px var(--mono, monospace); }
+  #fig-moe-expert-parallel-all-to-all .caption { font: 10.5px var(--sans, sans-serif); fill: var(--muted, #6d675d); }
+  #fig-moe-expert-parallel-all-to-all .warn  { font: 700 10px var(--sans, sans-serif); fill: var(--warn, #e0a106); }
+
+  /* Animation keyframes */
+  @keyframes fadeIn  { from { opacity:0 } to { opacity:1 } }
+  @keyframes moveD0  { 0%,20%{opacity:0} 30%{opacity:1} 70%{opacity:1} 80%{opacity:0} 100%{opacity:0} }
+  @keyframes moveD1  { 0%,25%{opacity:0} 35%{opacity:1} 70%{opacity:1} 80%{opacity:0} 100%{opacity:0} }
+  @keyframes moveD2  { 0%,22%{opacity:0} 33%{opacity:1} 70%{opacity:1} 80%{opacity:0} 100%{opacity:0} }
+  @keyframes pulsExp { 0%,54%{fill-opacity:0.1} 60%,75%{fill-opacity:0.45} 85%,100%{fill-opacity:0.1} }
+  @keyframes moveC0  { 0%,78%{opacity:0} 88%{opacity:1} 100%{opacity:1} }
+  @keyframes moveC1  { 0%,80%{opacity:0} 90%{opacity:1} 100%{opacity:1} }
+  @keyframes moveC2  { 0%,79%{opacity:0} 89%{opacity:1} 100%{opacity:1} }
+  @keyframes tokenHome { 0%,5%{opacity:1} 25%,75%{opacity:0} 90%,100%{opacity:1} }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-moe-expert-parallel-all-to-all .anim-dispatch,
+    #fig-moe-expert-parallel-all-to-all .anim-combine,
+    #fig-moe-expert-parallel-all-to-all .anim-token { animation: none !important; opacity: 1 !important; }
+    #fig-moe-expert-parallel-all-to-all .anim-exp { animation: none !important; fill-opacity: 0.25 !important; }
+  }
+</style>
+<defs>
+  <marker id="ep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke,#45413a)" stroke="none"/>
+  </marker>
+  <marker id="ep-arrow-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)" stroke="none"/>
+  </marker>
+  <marker id="ep-arrow-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)" stroke="none"/>
+  </marker>
+  <marker id="ep-arrow-w" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)" stroke="none"/>
+  </marker>
+</defs>
+
+
+<rect x="0" y="0" width="920" height="36" fill="var(--surface-3,#ece7da)" opacity="0.45"/>
+<text x="100" y="21" text-anchor="middle" class="stg">Home GPUs</text>
+<text x="310" y="21" text-anchor="middle" class="stg">all-to-all: DISPATCH</text>
+<text x="555" y="21" text-anchor="middle" class="stg">experts run locally</text>
+<text x="780" y="21" text-anchor="middle" class="stg">all-to-all: COMBINE</text>
+
+
+<line x1="200" y1="36" x2="200" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+<line x1="430" y1="36" x2="430" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+<line x1="680" y1="36" x2="680" y2="440" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.5"/>
+
+
+
+<rect x="4" y="50" width="912" height="92" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.05" stroke="var(--accent,#c15b39)" stroke-width="1" opacity="0.4"/>
+
+<rect x="4" y="160" width="912" height="92" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.05" stroke="var(--good,#2f9e6e)" stroke-width="1" opacity="0.4"/>
+
+<rect x="4" y="270" width="912" height="92" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.05" stroke="var(--warn,#e0a106)" stroke-width="1" opacity="0.4"/>
+
+
+<text x="14" y="100" class="gpu" fill="var(--accent,#c15b39)">GPU0</text>
+<text x="14" y="210" class="gpu" fill="var(--good,#2f9e6e)">GPU1</text>
+<text x="14" y="320" class="gpu" fill="var(--warn,#e0a106)">GPU2</text>
+
+
+
+
+
+
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.5s">
+  <rect x="58" y="72" width="26" height="18" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.3" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="71" y="85" text-anchor="middle" class="tok">t0</text>
+</g>
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.6s">
+  <rect x="88" y="72" width="26" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.3" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="101" y="85" text-anchor="middle" class="tok">t1</text>
+</g>
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.4s">
+  <rect x="118" y="72" width="26" height="18" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="131" y="85" text-anchor="middle" class="tok">t2</text>
+</g>
+
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.3s">
+  <rect x="58" y="182" width="26" height="18" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="71" y="195" text-anchor="middle" class="tok">t3</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.5s">
+  <rect x="88" y="182" width="26" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.3" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="101" y="195" text-anchor="middle" class="tok">t4</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.7s">
+  <rect x="118" y="182" width="26" height="18" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.3" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="131" y="195" text-anchor="middle" class="tok">t5</text>
+</g>
+
+
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.2s">
+  <rect x="58" y="292" width="26" height="18" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.3" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="71" y="305" text-anchor="middle" class="tok">t6</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.45s">
+  <rect x="88" y="292" width="26" height="18" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.3" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="101" y="305" text-anchor="middle" class="tok">t7</text>
+</g>
+<g class="anim-token" style="animation: tokenHome 4s ease-in-out infinite 0.6s">
+  <rect x="118" y="292" width="26" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.3" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="131" y="305" text-anchor="middle" class="tok">t8</text>
+</g>
+
+
+<text x="58" y="128" class="caption">chip color =</text>
+<text x="58" y="140" class="caption">dest. GPU</text>
+
+
+
+
+<g class="anim-dispatch" style="animation: moveD0 4s ease-in-out infinite">
+  <line x1="210" y1="86" x2="420" y2="196" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ep-arrow-g)" stroke-dasharray="5 3"/>
+  <rect x="292" y="125" width="24" height="16" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="304" y="137" text-anchor="middle" class="tok" fill="white">t1</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD1 4s ease-in-out infinite">
+  <line x1="210" y1="92" x2="420" y2="296" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#ep-arrow-w)" stroke-dasharray="5 3"/>
+  <rect x="290" y="184" width="24" height="16" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.8"/>
+  <text x="302" y="196" text-anchor="middle" class="tok" fill="white">t0</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD2 4s ease-in-out infinite">
+  <line x1="210" y1="196" x2="420" y2="96" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#ep-arrow-a)" stroke-dasharray="5 3"/>
+  <rect x="295" y="138" width="24" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.8"/>
+  <text x="307" y="150" text-anchor="middle" class="tok" fill="white">t3</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD0 4s ease-in-out infinite 0.15s">
+  <line x1="210" y1="302" x2="420" y2="102" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#ep-arrow-a)" stroke-dasharray="4 4" opacity="0.7"/>
+  <rect x="290" y="198" width="24" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.7"/>
+  <text x="302" y="210" text-anchor="middle" class="tok" fill="white">t6</text>
+</g>
+
+<g class="anim-dispatch" style="animation: moveD2 4s ease-in-out infinite 0.1s">
+  <line x1="210" y1="80" x2="420" y2="80" stroke="var(--accent,#c15b39)" stroke-width="1.5" marker-end="url(#ep-arrow-a)" stroke-dasharray="4 2" opacity="0.5"/>
+</g>
+
+<text x="315" y="360" text-anchor="middle" class="caption" fill="var(--ink-soft,#45413a)">every GPU talks to every other</text>
+
+
+
+<rect x="440" y="57" width="130" height="68" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.1" stroke="var(--accent,#c15b39)" stroke-width="1.5" class="anim-exp" style="animation: pulsExp 4s ease-in-out infinite"/>
+<text x="505" y="76" text-anchor="middle" class="gpu" fill="var(--accent,#c15b39)">Experts</text>
+<text x="505" y="92" text-anchor="middle" class="caption">experts 0-31</text>
+<text x="505" y="106" text-anchor="middle" class="caption">(GPU0's shard)</text>
+
+
+<rect x="440" y="167" width="130" height="78" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.1" stroke="var(--good,#2f9e6e)" stroke-width="1.5" class="anim-exp" style="animation: pulsExp 4s ease-in-out infinite 0.15s"/>
+<text x="505" y="186" text-anchor="middle" class="gpu" fill="var(--good,#2f9e6e)">Experts</text>
+<text x="505" y="202" text-anchor="middle" class="caption">experts 32-63</text>
+<text x="505" y="216" text-anchor="middle" class="caption">(GPU1's shard)</text>
+<text x="505" y="232" text-anchor="middle" class="warn">! more tokens</text>
+
+
+<rect x="440" y="277" width="130" height="68" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.1" stroke="var(--warn,#e0a106)" stroke-width="1.5" class="anim-exp" style="animation: pulsExp 4s ease-in-out infinite 0.3s"/>
+<text x="505" y="296" text-anchor="middle" class="gpu" fill="var(--warn,#e0a106)">Experts</text>
+<text x="505" y="312" text-anchor="middle" class="caption">experts 64-95</text>
+<text x="505" y="326" text-anchor="middle" class="caption">(GPU2's shard)</text>
+
+
+
+<g class="anim-combine" style="animation: moveC0 4s ease-in-out infinite">
+  <line x1="690" y1="190" x2="878" y2="96" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#ep-arrow-a)" stroke-dasharray="5 3"/>
+  <rect x="758" y="130" width="24" height="16" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.8"/>
+  <text x="770" y="142" text-anchor="middle" class="tok" fill="white">t3</text>
+</g>
+<g class="anim-combine" style="animation: moveC1 4s ease-in-out infinite">
+  <line x1="690" y1="96" x2="878" y2="196" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ep-arrow-g)" stroke-dasharray="5 3"/>
+  <rect x="756" y="140" width="24" height="16" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="768" y="152" text-anchor="middle" class="tok" fill="white">t1</text>
+</g>
+<g class="anim-combine" style="animation: moveC2 4s ease-in-out infinite">
+  <line x1="690" y1="296" x2="878" y2="96" stroke="var(--warn,#e0a106)" stroke-width="1.5" marker-end="url(#ep-arrow-w)" stroke-dasharray="4 4" opacity="0.7"/>
+  <rect x="756" y="186" width="24" height="16" rx="3" fill="var(--warn,#e0a106)" fill-opacity="0.7"/>
+  <text x="768" y="198" text-anchor="middle" class="tok" fill="white">t0</text>
+</g>
+
+
+<rect x="882" y="63" width="30" height="68" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+<text x="897" y="91" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">+</text>
+<text x="897" y="103" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">res</text>
+<text x="897" y="115" text-anchor="middle" class="caption" fill="var(--accent,#c15b39)">next</text>
+
+<rect x="882" y="173" width="30" height="68" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+<text x="897" y="201" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">+</text>
+<text x="897" y="213" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">res</text>
+<text x="897" y="225" text-anchor="middle" class="caption" fill="var(--good,#2f9e6e)">next</text>
+
+<rect x="882" y="283" width="30" height="68" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+<text x="897" y="311" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">+</text>
+<text x="897" y="323" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">res</text>
+<text x="897" y="335" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">next</text>
+
+
+<rect x="210" y="390" width="460" height="42" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.08" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="440" y="407" text-anchor="middle" class="warn">all-to-all is a BARRIER: every GPU waits for the slowest</text>
+<text x="440" y="422" text-anchor="middle" class="caption" fill="var(--warn,#e0a106)">load imbalance (e.g. GPU1 overloaded) idles the entire cluster</text>
+
+</svg>
+<figcaption><b>Expert parallelism: two all-to-all collectives wrap each MoE layer.</b> Tokens start on their home GPUs (left), an all-to-all dispatch sends each token to the GPU holding its chosen expert (crossing arrows show the all-to-all pattern), experts compute locally, then a second all-to-all returns results home for the residual add. The all-to-all is a synchronization barrier, so GPU1 processing more tokens (overloaded) stalls all other GPUs — making load balance a direct throughput concern.</figcaption>
+</figure>

@@ -1,0 +1,204 @@
+<figure class="viz" id="fig-fusion-dram-roundtrip-vs-fused">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 880 520" role="img" aria-label="Kernel fusion comparison: without fusion, data makes three round-trips through DRAM between matmul, bias_add, and relu; with fusion, data flows through a single fused kernel and writes to DRAM only once.">
+  <defs>
+    <marker id="fd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="fd-arrow-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#16a34a)"/>
+    </marker>
+    <style>
+      @media (prefers-reduced-motion: reduce) {
+        #fig-fusion-dram-roundtrip-vs-fused .data-dot { animation: none !important; opacity: 1; }
+        #fig-fusion-dram-roundtrip-vs-fused .dot-top-1 { cx: 660; cy: 120; }
+        #fig-fusion-dram-roundtrip-vs-fused .dot-top-2 { display: none; }
+        #fig-fusion-dram-roundtrip-vs-fused .dot-bottom { cx: 600; cy: 384; }
+      }
+    </style>
+  </defs>
+  <style>
+    #fig-fusion-dram-roundtrip-vs-fused text { fill: var(--ink-soft, #1a1a1a); }
+    #fig-fusion-dram-roundtrip-vs-fused .title { font: 600 14px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .lbl { font: 600 12px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap { font: 500 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap-ok { fill: var(--good,#16a34a); font: 600 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap-warn { fill: var(--warn,#e0a106); font: 600 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .cap-danger { fill: #dc2626; font: 600 11px var(--sans,sans-serif); }
+    #fig-fusion-dram-roundtrip-vs-fused .arrow-lbl { font: 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+    /* Animated data dot — top lane (unfused, 3 round trips) */
+    @keyframes fd-top-travel {
+      0%   { transform: translate(88px,  120px); opacity: 0; }
+      3%   { opacity: 1; }
+      /* matmul → DRAM1 */
+      12%  { transform: translate(200px, 120px); }
+      /* dive into DRAM1 */
+      17%  { transform: translate(200px, 148px); }
+      22%  { transform: translate(200px, 92px); }
+      /* DRAM1 → bias_add */
+      30%  { transform: translate(280px, 120px); }
+      /* bias_add → DRAM2 */
+      40%  { transform: translate(420px, 120px); }
+      /* dive into DRAM2 */
+      44%  { transform: translate(420px, 148px); }
+      48%  { transform: translate(420px, 92px); }
+      /* DRAM2 → relu */
+      56%  { transform: translate(520px, 120px); }
+      /* relu → DRAM3 */
+      68%  { transform: translate(660px, 120px); }
+      /* dive into DRAM3 */
+      72%  { transform: translate(660px, 148px); }
+      76%  { transform: translate(660px, 92px); }
+      /* rest */
+      82%  { transform: translate(660px, 120px); opacity: 1; }
+      90%  { opacity: 0; }
+      100% { transform: translate(660px, 120px); opacity: 0; }
+    }
+
+    /* Animated data dot — bottom lane (fused, 1 write) */
+    @keyframes fd-bottom-travel {
+      0%   { transform: translate(88px,  384px); opacity: 0; }
+      /* delayed start so it overlaps top lane's mid-journey */
+      3%   { opacity: 0; }
+      10%  { opacity: 1; transform: translate(88px, 384px); }
+      /* matmul tile → fused kernel entry */
+      24%  { transform: translate(192px, 384px); }
+      /* through fused kernel: bias_add sub-box → relu sub-box */
+      38%  { transform: translate(262px, 384px); }
+      48%  { transform: translate(392px, 384px); }
+      /* exit fused kernel → DRAM */
+      60%  { transform: translate(550px, 384px); }
+      /* arrive at DRAM (one write, no bounce) */
+      70%  { transform: translate(600px, 384px); opacity: 1; }
+      80%  { opacity: 0; }
+      100% { transform: translate(600px, 384px); opacity: 0; }
+    }
+
+    #fig-fusion-dram-roundtrip-vs-fused .dot-top {
+      animation: fd-top-travel 3s ease-in-out infinite;
+    }
+    #fig-fusion-dram-roundtrip-vs-fused .dot-bottom {
+      animation: fd-bottom-travel 3s ease-in-out infinite;
+    }
+  </style>
+
+  
+  <line x1="0" y1="258" x2="880" y2="258" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 4"/>
+
+  
+  
+  
+  <text x="24" y="30" class="title">Without fusion</text>
+
+  
+  <rect x="40" y="92" width="96" height="56" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="88" y="118" text-anchor="middle" class="lbl">matmul</text>
+  <text x="88" y="133" text-anchor="middle" class="sub">kernel 1</text>
+
+  
+  <line x1="136" y1="120" x2="168" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+  
+  <ellipse cx="205" cy="96" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <rect x="171" y="96" width="68" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <ellipse cx="205" cy="144" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="205" y="125" text-anchor="middle" class="lbl cap-warn">DRAM</text>
+
+  
+  <line x1="239" y1="120" x2="277" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+  
+  <rect x="278" y="92" width="96" height="56" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="326" y="118" text-anchor="middle" class="lbl">bias_add</text>
+  <text x="326" y="133" text-anchor="middle" class="sub">kernel 2</text>
+
+  
+  <line x1="374" y1="120" x2="407" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+  
+  <ellipse cx="443" cy="96" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <rect x="409" y="96" width="68" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <ellipse cx="443" cy="144" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="443" y="125" text-anchor="middle" class="lbl cap-warn">DRAM</text>
+
+  
+  <line x1="477" y1="120" x2="515" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+  
+  <rect x="516" y="92" width="96" height="56" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="564" y="118" text-anchor="middle" class="lbl">relu</text>
+  <text x="564" y="133" text-anchor="middle" class="sub">kernel 3</text>
+
+  
+  <line x1="612" y1="120" x2="644" y2="120" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+  
+  <ellipse cx="680" cy="96" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <rect x="646" y="96" width="68" height="48" fill="var(--warn,#e0a106)" fill-opacity="0.13" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <ellipse cx="680" cy="144" rx="34" ry="10" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+  <text x="680" y="125" text-anchor="middle" class="lbl cap-warn">DRAM</text>
+
+  
+  <line x1="171" y1="192" x2="714" y2="192" stroke="#dc2626" stroke-width="1.5"/>
+  <line x1="171" y1="192" x2="171" y2="182" stroke="#dc2626" stroke-width="1.5"/>
+  <line x1="714" y1="192" x2="714" y2="182" stroke="#dc2626" stroke-width="1.5"/>
+  
+  <line x1="205" y1="192" x2="205" y2="158" stroke="#dc2626" stroke-width="1.2" marker-end="url(#fd-arrow)"/>
+  <line x1="443" y1="192" x2="443" y2="158" stroke="#dc2626" stroke-width="1.2" marker-end="url(#fd-arrow)"/>
+  <line x1="680" y1="192" x2="680" y2="158" stroke="#dc2626" stroke-width="1.2" marker-end="url(#fd-arrow)"/>
+  
+  <text x="443" y="218" text-anchor="middle" class="cap-danger">3x memory traffic for intermediate activations</text>
+
+  
+  <circle class="data-dot dot-top" r="6" fill="var(--accent,#2563eb)" opacity="0" style="transform: translate(88px, 120px)"/>
+
+  
+  
+  
+  <text x="24" y="290" class="title">With fusion</text>
+
+  
+  <rect x="20" y="360" width="100" height="44" rx="6" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+  <text x="70" y="381" text-anchor="middle" class="lbl">matmul tile</text>
+  <text x="70" y="395" text-anchor="middle" class="sub">on-chip</text>
+
+  
+  <line x1="120" y1="382" x2="218" y2="382" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+  <text x="169" y="415" text-anchor="middle" class="arrow-lbl">shared mem</text>
+
+  
+  <rect x="224" y="338" width="336" height="92" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.08" stroke="var(--accent2,#3b82f6)" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="392" y="323" text-anchor="middle" class="lbl" style="fill:var(--accent2,#3b82f6)">Fused kernel</text>
+
+  
+  <rect x="240" y="360" width="100" height="44" rx="5" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="290" y="386" text-anchor="middle" class="lbl">bias_add</text>
+
+  
+  <line x1="340" y1="382" x2="368" y2="382" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#fd-arrow)"/>
+
+  
+  <rect x="370" y="360" width="100" height="44" rx="5" fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.2"/>
+  <text x="420" y="386" text-anchor="middle" class="lbl">relu</text>
+
+  
+  <line x1="560" y1="382" x2="588" y2="382" stroke="var(--border-2,#94a3b8)" stroke-width="1.8" marker-end="url(#fd-arrow)"/>
+
+  
+  <ellipse cx="625" cy="354" rx="34" ry="10" fill="var(--good,#16a34a)" fill-opacity="0.18" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <rect x="591" y="354" width="68" height="48" fill="var(--good,#16a34a)" fill-opacity="0.10" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <ellipse cx="625" cy="402" rx="34" ry="10" fill="var(--good,#16a34a)" fill-opacity="0.18" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <text x="625" y="383" text-anchor="middle" class="lbl cap-ok">DRAM</text>
+
+  
+  <line x1="625" y1="445" x2="625" y2="416" stroke="var(--good,#16a34a)" stroke-width="1.5" marker-end="url(#fd-arrow-ok)"/>
+  <text x="625" y="460" text-anchor="middle" class="cap-ok">1x write only</text>
+
+  
+  <circle class="data-dot dot-bottom" r="6" fill="var(--good,#16a34a)" opacity="0" style="transform: translate(88px, 384px)"/>
+
+</svg>
+<figcaption><b>Kernel fusion eliminates costly DRAM round-trips.</b> Without fusion (top), each operator writes its result to GPU global memory before the next kernel reads it back — three full DRAM round-trips for a simple matmul→bias_add→relu chain. With fusion (bottom), bias_add and relu execute inside the same kernel as the matmul tile, keeping intermediate values in registers or shared memory, and only the final output is written to DRAM — a 3x reduction in memory traffic for these activations.</figcaption>
+</figure>

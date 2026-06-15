@@ -1,0 +1,380 @@
+<figure class="viz" id="fig-rlanat-stepk-dataflow">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 980 640" role="img" aria-label="Animated pipeline of one synchronous on-policy RL step with seven stages a through g: sample prompts, rollout (inference, 60-80% of wall-clock), reward scoring, advantage computation, build experience buffer, learn with E gradient epochs, then weight sync back to rollout — closing the loop for step k+1.">
+  <defs>
+    <marker id="sk-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="sk-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#d6336c)"/>
+    </marker>
+    <marker id="sk-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rlanat-stepk-dataflow text {
+      font: 13px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-rlanat-stepk-dataflow .title-strip {
+      font: 700 15px var(--sans,sans-serif);
+      fill: var(--ink-soft,#222);
+    }
+    #fig-rlanat-stepk-dataflow .badge-circle {
+      fill: var(--surface-3,#dde3ea);
+      stroke: var(--border-2,#888);
+      stroke-width: 1.2;
+    }
+    #fig-rlanat-stepk-dataflow .badge-text {
+      font: 700 13px var(--mono,monospace);
+      fill: var(--ink-soft,#222);
+    }
+    #fig-rlanat-stepk-dataflow .row-title {
+      font: 700 13px var(--sans,sans-serif);
+      fill: var(--ink-soft,#222);
+    }
+    #fig-rlanat-stepk-dataflow .row-body {
+      font: 400 11px var(--sans,sans-serif);
+      fill: var(--muted,#555);
+    }
+    #fig-rlanat-stepk-dataflow .pill-text {
+      font: 600 10px var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-rlanat-stepk-dataflow .ann-side {
+      font: italic 10px var(--sans,sans-serif);
+      fill: var(--muted,#666);
+    }
+    #fig-rlanat-stepk-dataflow .callout-heavy {
+      font: 700 11px var(--sans,sans-serif);
+      fill: var(--accent,#d6336c);
+    }
+    #fig-rlanat-stepk-dataflow .fb-label {
+      font: 600 10px var(--sans,sans-serif);
+      fill: var(--accent,#d6336c);
+    }
+    /* Animation: packet travels through stages */
+    #fig-rlanat-stepk-dataflow .row-glow {
+      opacity: 0;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      /* Packet dot traveling down */
+      #fig-rlanat-stepk-dataflow #sk-packet {
+        animation: sk-travel 8s ease-in-out infinite;
+        opacity: 0;
+      }
+      #fig-rlanat-stepk-dataflow #sk-packet-fb {
+        animation: sk-travel-fb 8s ease-in-out infinite;
+        opacity: 0;
+      }
+      /* Row highlight glows */
+      #fig-rlanat-stepk-dataflow #sk-glow-a { animation: sk-glow 8s ease-in-out infinite; animation-delay: 0s; }
+      #fig-rlanat-stepk-dataflow #sk-glow-b { animation: sk-glow-b-special 8s ease-in-out infinite; animation-delay: 0s; }
+      #fig-rlanat-stepk-dataflow #sk-glow-c { animation: sk-glow-c 8s ease-in-out infinite; animation-delay: 0s; }
+      #fig-rlanat-stepk-dataflow #sk-glow-d { animation: sk-glow-d 8s ease-in-out infinite; animation-delay: 0s; }
+      #fig-rlanat-stepk-dataflow #sk-glow-e { animation: sk-glow-e 8s ease-in-out infinite; animation-delay: 0s; }
+      #fig-rlanat-stepk-dataflow #sk-glow-f { animation: sk-glow-f 8s ease-in-out infinite; animation-delay: 0s; }
+      #fig-rlanat-stepk-dataflow #sk-glow-g { animation: sk-glow-g 8s ease-in-out infinite; animation-delay: 0s; }
+
+      @keyframes sk-glow {
+        0%,100% { opacity: 0; }
+        3%,8% { opacity: 0.25; }
+        10% { opacity: 0; }
+      }
+      @keyframes sk-glow-b-special {
+        0%,100% { opacity: 0; }
+        12%,28% { opacity: 0.3; }
+        32% { opacity: 0; }
+      }
+      @keyframes sk-glow-c {
+        0%,100% { opacity: 0; }
+        34%,39% { opacity: 0.25; }
+        42% { opacity: 0; }
+      }
+      @keyframes sk-glow-d {
+        0%,100% { opacity: 0; }
+        44%,49% { opacity: 0.25; }
+        52% { opacity: 0; }
+      }
+      @keyframes sk-glow-e {
+        0%,100% { opacity: 0; }
+        54%,59% { opacity: 0.25; }
+        62% { opacity: 0; }
+      }
+      @keyframes sk-glow-f {
+        0%,100% { opacity: 0; }
+        63%,72% { opacity: 0.25; }
+        75% { opacity: 0; }
+      }
+      @keyframes sk-glow-g {
+        0%,100% { opacity: 0; }
+        77%,82% { opacity: 0.35; }
+        85% { opacity: 0; }
+      }
+
+      @keyframes sk-travel {
+        0% { opacity: 0; transform: translateY(0); }
+        2% { opacity: 1; }
+        /* a → enter */
+        5% { opacity: 1; transform: translateY(0px); }
+        /* b → travel down to row b */
+        10% { opacity: 1; transform: translateY(77px); }
+        /* linger on b (60-80% claim) */
+        30% { opacity: 1; transform: translateY(77px); }
+        /* c */
+        35% { opacity: 1; transform: translateY(153px); }
+        38% { opacity: 1; transform: translateY(153px); }
+        /* d */
+        43% { opacity: 1; transform: translateY(230px); }
+        46% { opacity: 1; transform: translateY(230px); }
+        /* e */
+        51% { opacity: 1; transform: translateY(307px); }
+        54% { opacity: 1; transform: translateY(307px); }
+        /* f */
+        60% { opacity: 1; transform: translateY(384px); }
+        70% { opacity: 1; transform: translateY(384px); }
+        /* g */
+        75% { opacity: 0.7; transform: translateY(461px); }
+        78% { opacity: 0; transform: translateY(461px); }
+        100% { opacity: 0; }
+      }
+
+      @keyframes sk-travel-fb {
+        0%,78% { opacity: 0; }
+        80% { opacity: 1; }
+        93% { opacity: 1; }
+        97% { opacity: 0; }
+        100% { opacity: 0; }
+      }
+
+      /* Feedback arc path animation */
+      #fig-rlanat-stepk-dataflow #sk-fb-arc {
+        stroke-dasharray: 600;
+        stroke-dashoffset: 600;
+        animation: sk-draw-fb 8s ease-in-out infinite;
+      }
+      @keyframes sk-draw-fb {
+        0%,78% { stroke-dashoffset: 600; opacity: 0.4; }
+        80% { stroke-dashoffset: 600; opacity: 0.8; }
+        93% { stroke-dashoffset: 0; opacity: 0.8; }
+        97% { stroke-dashoffset: 0; opacity: 0.4; }
+        100% { stroke-dashoffset: 0; opacity: 0.4; }
+      }
+    }
+  </style>
+
+  
+  <rect x="10" y="8" width="960" height="38" rx="4"
+        fill="var(--surface-3,#eef1f5)" stroke="none"/>
+  <text x="490" y="32" text-anchor="middle" class="title-strip">STEP k — one outer RL iteration</text>
+  <line x1="10" y1="48" x2="970" y2="48" stroke="var(--border-2,#aaa)" stroke-width="1"/>
+
+  
+
+  
+  <g id="sk-glow-a" class="row-glow">
+    <rect x="70" y="60" width="695" height="55" rx="8"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.5"/>
+  </g>
+  <rect x="70" y="60" width="695" height="55" rx="8"
+        fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <circle cx="95" cy="88" r="14" class="badge-circle"/>
+  <text x="95" y="93" text-anchor="middle" class="badge-text">a</text>
+  
+  <rect x="690" y="70" width="70" height="18" rx="9"
+        fill="var(--surface-3,#dde3ea)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="725" y="83" text-anchor="middle" class="pill-text">controller</text>
+  
+  <text x="118" y="82" class="row-title">SAMPLE PROMPTS</text>
+  <text x="118" y="102" class="row-body">controller pulls a batch of N prompts from the prompt dataset.</text>
+
+  
+  <line x1="410" y1="115" x2="410" y2="135"
+        stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sk-arrow)"/>
+
+  
+  <g id="sk-glow-b" class="row-glow">
+    <rect x="70" y="137" width="695" height="65" rx="8"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.5"/>
+  </g>
+  <rect x="70" y="137" width="695" height="65" rx="8"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.12"
+        stroke="var(--accent2,#3b82f6)" stroke-width="2.5"/>
+  
+  <rect x="70" y="137" width="6" height="65" rx="3"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.7"/>
+  <circle cx="95" cy="169" r="14" fill="var(--accent2,#3b82f6)" fill-opacity="0.3"
+          stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="95" y="174" text-anchor="middle" class="badge-text" fill="var(--accent2,#3b82f6)">b</text>
+  
+  <rect x="682" y="148" width="76" height="18" rx="9"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0.2"
+        stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="720" y="161" text-anchor="middle" class="pill-text" fill="var(--accent2,#3b82f6)">INFERENCE</text>
+  
+  <text x="118" y="160" class="row-title" fill="var(--accent2,#3b82f6)">ROLLOUT</text>
+  <text x="118" y="177" class="row-body">for each prompt, sample G responses under θ_old, giving N*G sequences + behavior log-probs logπ_old.</text>
+  
+  <path d="M 118 188 L 118 198 L 126 193 z" fill="var(--accent,#d6336c)"/>
+  <text x="132" y="196" class="callout-heavy">60–80% of step wall-clock</text>
+
+  
+  <line x1="410" y1="202" x2="410" y2="212"
+        stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sk-arrow)"/>
+
+  
+  <g id="sk-glow-c" class="row-glow">
+    <rect x="70" y="214" width="695" height="55" rx="8"
+          fill="var(--good,#2f9e6e)" fill-opacity="0.5"/>
+  </g>
+  <rect x="70" y="214" width="695" height="55" rx="8"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.10"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <circle cx="95" cy="241" r="14" fill="var(--good,#2f9e6e)" fill-opacity="0.25"
+          stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="95" y="246" text-anchor="middle" class="badge-text" fill="var(--good,#2f9e6e)">c</text>
+  <rect x="645" y="224" width="113" height="18" rx="9"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.2"
+        stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="702" y="237" text-anchor="middle" class="pill-text" fill="var(--good,#2f9e6e)">verifier / RM / sandbox</text>
+  <text x="118" y="236" class="row-title" fill="var(--good,#2f9e6e)">REWARD</text>
+  <text x="118" y="256" class="row-body">score each of the N*G responses, giving rewards R_{1..NG}.</text>
+
+  
+  <line x1="410" y1="269" x2="410" y2="289"
+        stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sk-arrow)"/>
+
+  
+  <g id="sk-glow-d" class="row-glow">
+    <rect x="70" y="291" width="695" height="55" rx="8"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.35"/>
+  </g>
+  <rect x="70" y="291" width="695" height="55" rx="8"
+        fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <circle cx="95" cy="318" r="14" class="badge-circle"/>
+  <text x="95" y="323" text-anchor="middle" class="badge-text">d</text>
+  <rect x="654" y="300" width="104" height="18" rx="9"
+        fill="var(--surface-3,#dde3ea)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="706" y="313" text-anchor="middle" class="pill-text">controller / learner</text>
+  <text x="118" y="312" class="row-title">ADVANTAGE</text>
+  <text x="118" y="330" class="row-body">group G per prompt; A-hat_i = (R_i - mean)/std (GRPO), or LOO (RLOO), or GAE (PPO+critic).</text>
+
+  
+  <line x1="410" y1="346" x2="410" y2="366"
+        stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sk-arrow)"/>
+
+  
+  <g id="sk-glow-e" class="row-glow">
+    <rect x="70" y="368" width="695" height="55" rx="8"
+          fill="var(--border-2,#888)" fill-opacity="0.35"/>
+  </g>
+  <rect x="70" y="368" width="695" height="55" rx="8"
+        fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#888)" stroke-width="1.5"/>
+  <circle cx="95" cy="395" r="14" class="badge-circle"/>
+  <text x="95" y="400" text-anchor="middle" class="badge-text">e</text>
+  <rect x="696" y="378" width="62" height="18" rx="9"
+        fill="var(--surface-3,#dde3ea)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="727" y="391" text-anchor="middle" class="pill-text">buffer</text>
+  <text x="118" y="390" class="row-title">BUILD EXPERIENCE BUFFER</text>
+  <text x="118" y="408" class="row-body">package (tokens, mask, logπ_old, A-hat) for all N*G responses.</text>
+
+  
+  <line x1="410" y1="423" x2="410" y2="443"
+        stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sk-arrow)"/>
+
+  
+  <g id="sk-glow-f" class="row-glow">
+    <rect x="70" y="445" width="695" height="65" rx="8"
+          fill="var(--accent,#d6336c)" fill-opacity="0.35"/>
+  </g>
+  <rect x="70" y="445" width="695" height="65" rx="8"
+        fill="var(--accent,#d6336c)" fill-opacity="0.08"
+        stroke="var(--accent,#d6336c)" stroke-width="2"/>
+  <rect x="70" y="445" width="6" height="65" rx="3"
+        fill="var(--accent,#d6336c)" fill-opacity="0.6"/>
+  <circle cx="95" cy="477" r="14" fill="var(--accent,#d6336c)" fill-opacity="0.2"
+          stroke="var(--accent,#d6336c)" stroke-width="1.5"/>
+  <text x="95" y="482" text-anchor="middle" class="badge-text" fill="var(--accent,#d6336c)">f</text>
+  <rect x="646" y="455" width="112" height="18" rx="9"
+        fill="var(--accent,#d6336c)" fill-opacity="0.15"
+        stroke="var(--accent,#d6336c)" stroke-width="1"/>
+  <text x="702" y="468" text-anchor="middle" class="pill-text" fill="var(--accent,#d6336c)">COMPUTE / training</text>
+  <text x="118" y="468" class="row-title" fill="var(--accent,#d6336c)">LEARN</text>
+  <text x="118" y="484" class="row-body">recompute logπ_θ (and logπ_ref if KL); ratio = exp(logπ_θ - logπ_old);</text>
+  <text x="118" y="499" class="row-body">clipped surrogate loss; backward; optimizer step. θ changes.</text>
+  
+  <path d="M 72 455 C 30 455 22 510 72 510"
+        fill="none" stroke="var(--accent,#d6336c)" stroke-width="1.5" stroke-dasharray="4 3"
+        marker-end="url(#sk-arrow-accent)"/>
+  <text x="14" y="488" text-anchor="middle" class="fb-label" transform="rotate(-90,14,488)">E epochs</text>
+
+  
+  <line x1="410" y1="510" x2="410" y2="520"
+        stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#sk-arrow)"/>
+
+  
+  <g id="sk-glow-g" class="row-glow">
+    <rect x="70" y="522" width="695" height="55" rx="8"
+          fill="var(--accent,#d6336c)" fill-opacity="0.5"/>
+  </g>
+  <rect x="70" y="522" width="695" height="55" rx="8"
+        fill="var(--accent,#d6336c)" fill-opacity="0.08"
+        stroke="var(--accent,#d6336c)" stroke-width="2.5" stroke-dasharray="8 4"/>
+  <circle cx="95" cy="549" r="14" fill="var(--accent,#d6336c)" fill-opacity="0.3"
+          stroke="var(--accent,#d6336c)" stroke-width="1.5"/>
+  <text x="95" y="554" text-anchor="middle" class="badge-text" fill="var(--accent,#d6336c)">g</text>
+  <rect x="632" y="532" width="126" height="18" rx="9"
+        fill="var(--accent,#d6336c)" fill-opacity="0.15"
+        stroke="var(--accent,#d6336c)" stroke-width="1"/>
+  <text x="695" y="545" text-anchor="middle" class="pill-text" fill="var(--accent,#d6336c)">the uniquely-RL step</text>
+  <text x="118" y="545" class="row-title" fill="var(--accent,#d6336c)">WEIGHT SYNC</text>
+  <text x="118" y="562" class="row-body">push updated θ into the generation engine so step k+1 samples from the fresh policy.</text>
+
+  
+  <path id="sk-fb-arc"
+        d="M 775 549 C 900 549 920 88 775 88"
+        fill="none" stroke="var(--accent,#d6336c)" stroke-width="2"
+        stroke-dasharray="600" stroke-dashoffset="0"
+        opacity="0.4"
+        marker-end="url(#sk-arrow-accent)"/>
+  <text x="940" y="340" text-anchor="middle" class="fb-label"
+        transform="rotate(90,940,340)">step k+1: sample from fresh θ</text>
+
+  
+  <circle id="sk-packet" cx="410" cy="88" r="7"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.9" opacity="0"/>
+  
+  <circle id="sk-packet-fb" r="7"
+          fill="var(--accent,#d6336c)" opacity="0">
+    <animateMotion dur="8s" repeatCount="indefinite" begin="0s"
+      calcMode="spline"
+      keyPoints="0;0;0;0;0;0;0;0.78;1;1;1"
+      keyTimes="0;0.78;0.80;0.82;0.88;0.93;0.96;0.97;0.99;1.0;1.0"
+      keySplines="0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1;0 0 1 1">
+      <mpath href="#sk-fb-arc"/>
+    </animateMotion>
+    <animate attributeName="opacity"
+      values="0;0;0;0;0;0;0;0;1;1;0;0"
+      keyTimes="0;0.78;0.79;0.8;0.82;0.88;0.93;0.96;0.97;0.99;1.0;1.0"
+      dur="8s" repeatCount="indefinite"/>
+  </circle>
+
+  
+  
+  <line x1="48" y1="137" x2="48" y2="510"
+        stroke="var(--muted,#999)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+  <line x1="44" y1="137" x2="52" y2="137"
+        stroke="var(--muted,#999)" stroke-width="1" opacity="0.6"/>
+  <line x1="44" y1="510" x2="52" y2="510"
+        stroke="var(--muted,#999)" stroke-width="1" opacity="0.6"/>
+  <text x="38" y="320" text-anchor="middle" class="ann-side"
+        transform="rotate(-90,38,320)">data manufactured, scored &amp; consumed in one pass — no dataset.parquet</text>
+
+  
+  <path d="M 70 607 L 78 607 L 74 600 z" fill="var(--muted,#888)" opacity="0.7"/>
+  <text x="84" y="615" text-anchor="start" class="ann-side">(g): inference engine held stale weights; sync crosses a parallelism-layout boundary</text>
+
+</svg>
+<figcaption><b>One synchronous on-policy RL step (GRPO-style) as a relay of seven serial stages.</b> Stage (b) — rollout — accounts for 60–80% of wall-clock because each response requires hundreds to thousands of memory-bandwidth-bound autoregressive decode steps. Stage (g) — weight sync — has no analogue in SFT and is the engineering challenge that motivates colocated and disaggregated RL architectures in later chapters.</figcaption>
+</figure>

@@ -1,0 +1,152 @@
+<figure class="viz" id="fig-primerl-decentralized-trust-pipeline">
+<svg viewBox="0 0 900 480" role="img" aria-label="Decentralized async RL trust architecture: a dashed vertical boundary separates the trusted left side (FSDP trainer plus verifier+TOPLOC trust gate) from the untrusted right side (permissionless inference GPUs scattered across clouds). Rollouts carrying TOPLOC proofs flow left through the trust gate before entering the trainer; weight broadcasts flow right from the trainer.">
+<defs>
+  <marker id="pdt-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="pdt-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#0891b2)"/>
+  </marker>
+  <marker id="pdt-arr-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <marker id="pdt-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-primerl-decentralized-trust-pipeline text { fill: var(--ink-soft,#374151); }
+  #fig-primerl-decentralized-trust-pipeline .box-title { font: 700 12px var(--sans,sans-serif); }
+  #fig-primerl-decentralized-trust-pipeline .box-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-decentralized-trust-pipeline .gate-row { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-primerl-decentralized-trust-pipeline .edge-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-primerl-decentralized-trust-pipeline .edge-lbl-sm { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-decentralized-trust-pipeline .zone-lbl { font: 600 11px var(--sans,sans-serif); }
+  #fig-primerl-decentralized-trust-pipeline .worker-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#4f46e5); }
+  #fig-primerl-decentralized-trust-pipeline .note { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-decentralized-trust-pipeline .danger { font: 700 11px var(--sans,sans-serif); fill: #b00; }
+</style>
+
+
+
+<rect x="18" y="30" width="400" height="430" rx="12" fill="var(--accent2,#0891b2)" fill-opacity="0.05" stroke="var(--accent2,#0891b2)" stroke-width="1.5" stroke-dasharray="6 3"/>
+
+<rect x="468" y="30" width="415" height="430" rx="12" fill="var(--accent,#4f46e5)" fill-opacity="0.04" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-dasharray="5 4"/>
+
+
+<text x="218" y="22" class="zone-lbl" text-anchor="middle" fill="var(--accent2,#0891b2)">reliable, owned hardware</text>
+<text x="675" y="22" class="zone-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">permissionless, untrusted GPUs</text>
+
+
+<line x1="448" y1="30" x2="448" y2="460" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-dasharray="8 5" opacity="0.6"/>
+<text x="448" y="471" class="note" text-anchor="middle">WAN boundary — only prompts out, rollouts in, weight broadcasts cross</text>
+
+
+<rect x="38" y="55" width="300" height="155" rx="10" fill="var(--surface,#f5f5f5)" stroke="var(--accent2,#0891b2)" stroke-width="2"/>
+
+<path d="M58 75 l8 0 l0 -6 l-16 0 l0 6 l8 0 l0 8 z" fill="var(--accent2,#0891b2)" fill-opacity="0.5"/>
+<text x="210" y="80" class="box-title" text-anchor="middle" fill="var(--accent2,#0891b2)">TRAINER (FSDP, central)</text>
+<line x1="52" y1="88" x2="324" y2="88" stroke="var(--accent2,#0891b2)" stroke-width="0.8" opacity="0.4"/>
+<text x="188" y="106" class="box-sub" text-anchor="middle">consumes accepted rollouts</text>
+<text x="188" y="122" class="box-sub" text-anchor="middle">steps optimizer (FSDP)</text>
+<text x="188" y="138" class="box-sub" text-anchor="middle">publishes θk every N steps</text>
+<text x="188" y="155" class="box-sub" text-anchor="middle" fill="var(--muted,#94a3b8)">trusted / stateful</text>
+<rect x="52" y="168" width="272" height="30" rx="4" fill="var(--accent2,#0891b2)" fill-opacity="0.10"/>
+<text x="188" y="187" class="box-sub" text-anchor="middle" fill="var(--accent2,#0891b2)">only verified rollouts enter training stream</text>
+
+
+<rect x="38" y="270" width="300" height="165" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+<text x="188" y="294" class="box-title" text-anchor="middle" fill="var(--accent,#4f46e5)">VERIFIER + TOPLOC</text>
+<text x="188" y="308" class="box-sub" text-anchor="middle">(trust gate)</text>
+<line x1="52" y1="315" x2="324" y2="315" stroke="var(--accent,#4f46e5)" stroke-width="0.8" opacity="0.4"/>
+
+
+<rect x="50" y="320" width="276" height="42" rx="5" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="188" y="336" class="gate-row" text-anchor="middle" font-weight="600">A: TOPLOC</text>
+<text x="188" y="352" class="box-sub" text-anchor="middle">proof completion came from THIS policy</text>
+<text x="188" y="363" class="box-sub" text-anchor="middle">(anti inference-forgery)</text>
+
+
+<rect x="50" y="368" width="276" height="42" rx="5" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="188" y="384" class="gate-row" text-anchor="middle" font-weight="600">B: VERIFIER</text>
+<text x="188" y="400" class="box-sub" text-anchor="middle">recompute reward from completion</text>
+<text x="188" y="411" class="box-sub" text-anchor="middle">(anti reward-forgery)</text>
+
+
+<text x="188" y="426" class="note" text-anchor="middle">verify proof + reward -&gt; accept / reject rollout</text>
+
+
+<line x1="188" y1="270" x2="188" y2="210" stroke="var(--good,#2f9e6e)" stroke-width="2" marker-end="url(#pdt-arr-good)"/>
+<text x="196" y="244" class="edge-lbl-sm" text-anchor="start" fill="var(--good,#2f9e6e)">accepted rollouts</text>
+<text x="196" y="255" class="edge-lbl-sm" text-anchor="start" fill="var(--good,#2f9e6e)">to training stream</text>
+
+
+<rect x="480" y="48" width="415" height="395" rx="10" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="5 3" opacity="0.6"/>
+
+
+
+<rect x="498" y="68" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="578" y="88" class="worker-lbl" text-anchor="middle">worker A: cloud X</text>
+<text x="578" y="103" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="710" y="68" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+<text x="790" y="88" class="worker-lbl" text-anchor="middle">worker B: home GPU</text>
+<text x="790" y="103" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="498" y="138" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+<text x="578" y="158" class="worker-lbl" text-anchor="middle">worker C: cloud Y</text>
+<text x="578" y="173" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="710" y="138" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+<text x="790" y="158" class="worker-lbl" text-anchor="middle">worker D: spot</text>
+<text x="790" y="173" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<rect x="604" y="208" width="160" height="44" rx="8" fill="var(--accent,#4f46e5)" fill-opacity="0.06" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="684" y="228" class="worker-lbl" text-anchor="middle">worker E: ...</text>
+<text x="684" y="243" class="box-sub" text-anchor="middle">inference GPU</text>
+
+
+<text x="504" y="82" class="danger" font-size="12">?</text>
+<text x="716" y="82" class="danger" font-size="12">?</text>
+<text x="504" y="152" class="danger" font-size="12">?</text>
+<text x="716" y="152" class="danger" font-size="12">?</text>
+<text x="610" y="222" class="danger" font-size="12">?</text>
+
+
+<rect x="492" y="280" width="396" height="70" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="690" y="299" class="box-sub" text-anchor="middle" font-weight="600">anyone can join — no trust assumed</text>
+<text x="690" y="315" class="box-sub" text-anchor="middle">stateless w.r.t. each other</text>
+<text x="690" y="331" class="box-sub" text-anchor="middle">one dropping offline = one lost rollout (fault-tolerant)</text>
+<text x="690" y="347" class="box-sub" text-anchor="middle">generation = parallel, replaceable, cheap</text>
+
+
+<rect x="492" y="365" width="396" height="58" rx="6" fill="var(--surface,#f5f5f5)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="690" y="385" class="box-sub" text-anchor="middle">weight broadcast: sharded / BitTorrent fan-out</text>
+<text x="690" y="401" class="box-sub" text-anchor="middle">infrequent, one-way, bandwidth not latency</text>
+<text x="690" y="414" class="box-sub" text-anchor="middle">no tight sync required</text>
+
+
+
+<line x1="498" y1="108" x2="340" y2="345" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#pdt-arr-acc)"/>
+<line x1="578" y1="252" x2="340" y2="345" stroke="var(--accent,#4f46e5)" stroke-width="1.8" marker-end="url(#pdt-arr-acc)"/>
+<line x1="710" y1="160" x2="340" y2="345" stroke="var(--accent,#4f46e5)" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#pdt-arr-acc)" opacity="0.7"/>
+
+
+<text x="430" y="246" class="edge-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">rollouts</text>
+<text x="430" y="258" class="edge-lbl" text-anchor="middle" fill="var(--accent,#4f46e5)">(+ TOPLOC proof)</text>
+
+
+<line x1="338" y1="120" x2="480" y2="90" stroke="var(--accent2,#0891b2)" stroke-width="2.5" marker-end="url(#pdt-arr-acc2)"/>
+<line x1="338" y1="120" x2="480" y2="158" stroke="var(--accent2,#0891b2)" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#pdt-arr-acc2)" opacity="0.7"/>
+<line x1="338" y1="120" x2="596" y2="210" stroke="var(--accent2,#0891b2)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#pdt-arr-acc2)" opacity="0.5"/>
+<text x="408" y="106" class="edge-lbl" text-anchor="middle" fill="var(--accent2,#0891b2)">θk broadcast</text>
+<text x="408" y="118" class="edge-lbl-sm" text-anchor="middle">(sharded / BitTorrent fan-out)</text>
+
+</svg>
+<figcaption><b>Decentralized async RL (prime-rl / INTELLECT-2) adds a trust boundary and two-check gate between untrusted workers and the central trainer.</b> Every rollout from the permissionless GPU pool must pass both a TOPLOC activation-fingerprint check (proving the correct model was used) and an independent reward recomputation before it enters the training stream. Weight broadcasts flow outward infrequently and one-way; no latency-critical cross-WAN synchronization is ever needed.</figcaption>
+</figure>

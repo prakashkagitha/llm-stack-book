@@ -1,0 +1,131 @@
+<figure class="viz" id="fig-ring-allreduce">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 430" role="img" aria-label="Ring all-reduce across four GPUs G0 to G3: a reduce-scatter phase passes and sums chunks around the ring, then an all-gather phase circulates the fully reduced chunks, giving a cost of about two times N minus one over N times M.">
+  <defs>
+    <marker id="ra-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="ra-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="ra-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-ring-allreduce text{ fill:var(--ink-soft); }
+    #fig-ring-allreduce .gpu{ font:700 15px var(--sans,sans-serif); }
+    #fig-ring-allreduce .lbl{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-ring-allreduce .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-ring-allreduce .mono{ font:600 11px var(--mono,monospace); }
+    #fig-ring-allreduce .phase{ font:700 13px var(--sans,sans-serif); }
+    #fig-ring-allreduce .cost{ font:600 13px var(--serif,serif); }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="190" y="26" text-anchor="middle" class="phase" fill="var(--accent)">Phase 1 · Reduce-Scatter</text>
+    <text x="190" y="43" text-anchor="middle" class="sm">n-1 steps · send a chunk, sum what you receive</text>
+  </g>
+
+  
+  
+  <g data-anim="2">
+    
+    <line x1="118" y1="92" x2="262" y2="92" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ra-arrow-acc)"/>
+    <line x1="300" y1="128" x2="300" y2="252" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ra-arrow-acc)"/>
+    <line x1="262" y1="288" x2="118" y2="288" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ra-arrow-acc)"/>
+    <line x1="80" y1="252" x2="80" y2="128" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ra-arrow-acc)"/>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="34" y="62" width="92" height="60" rx="9" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="80" y="90" text-anchor="middle" class="gpu" fill="var(--accent)">G0</text>
+    <text x="80" y="110" text-anchor="middle" class="mono">[A₀ A₁ A₂ A₃]</text>
+
+    <rect x="254" y="62" width="92" height="60" rx="9" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="300" y="90" text-anchor="middle" class="gpu" fill="var(--accent)">G1</text>
+    <text x="300" y="110" text-anchor="middle" class="mono">[B₀ B₁ B₂ B₃]</text>
+
+    <rect x="254" y="258" width="92" height="60" rx="9" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="300" y="286" text-anchor="middle" class="gpu" fill="var(--accent)">G2</text>
+    <text x="300" y="306" text-anchor="middle" class="mono">[C₀ C₁ C₂ C₃]</text>
+
+    <rect x="34" y="258" width="92" height="60" rx="9" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="80" y="286" text-anchor="middle" class="gpu" fill="var(--accent)">G3</text>
+    <text x="80" y="306" text-anchor="middle" class="mono">[D₀ D₁ D₂ D₃]</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <text x="190" y="84" text-anchor="middle" class="mono" fill="var(--accent)">send A₀</text>
+    <text x="328" y="194" text-anchor="middle" class="mono" fill="var(--accent)">send B₁</text>
+    <text x="190" y="307" text-anchor="middle" class="mono" fill="var(--accent)">send C₂</text>
+    <text x="52" y="194" text-anchor="middle" class="mono" fill="var(--accent)">send D₃</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <text x="190" y="346" text-anchor="middle" class="sm">after n-1 steps each GPU owns one</text>
+    <text x="190" y="361" text-anchor="middle" class="lbl" fill="var(--accent)">fully-summed chunk</text>
+    <text x="190" y="380" text-anchor="middle" class="mono">G0:S₃  G1:S₀  G2:S₁  G3:S₂</text>
+    <text x="190" y="396" text-anchor="middle" class="sm">Sᵢ = Aᵢ+Bᵢ+Cᵢ+Dᵢ</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="380" y1="190" x2="430" y2="190" stroke="currentColor" stroke-width="1.6" marker-end="url(#ra-arrow)"/>
+    <text x="405" y="180" text-anchor="middle" class="sm">then</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <text x="595" y="26" text-anchor="middle" class="phase" fill="var(--good,#2f9e6e)">Phase 2 · All-Gather</text>
+    <text x="595" y="43" text-anchor="middle" class="sm">n-1 steps · circulate the reduced chunks</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="523" y1="92" x2="667" y2="92" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ra-arrow-good)"/>
+    <line x1="705" y1="128" x2="705" y2="252" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ra-arrow-good)"/>
+    <line x1="667" y1="288" x2="523" y2="288" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ra-arrow-good)"/>
+    <line x1="485" y1="252" x2="485" y2="128" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#ra-arrow-good)"/>
+  </g>
+
+  <g data-anim="5">
+    <rect x="439" y="62" width="92" height="60" rx="9" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="485" y="90" text-anchor="middle" class="gpu" fill="var(--good,#2f9e6e)">G0</text>
+    <text x="485" y="110" text-anchor="middle" class="mono">[S₀ S₁ S₂ S₃]</text>
+
+    <rect x="659" y="62" width="92" height="60" rx="9" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="705" y="90" text-anchor="middle" class="gpu" fill="var(--good,#2f9e6e)">G1</text>
+    <text x="705" y="110" text-anchor="middle" class="mono">[S₀ S₁ S₂ S₃]</text>
+
+    <rect x="659" y="258" width="92" height="60" rx="9" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="705" y="286" text-anchor="middle" class="gpu" fill="var(--good,#2f9e6e)">G2</text>
+    <text x="705" y="306" text-anchor="middle" class="mono">[S₀ S₁ S₂ S₃]</text>
+
+    <rect x="439" y="258" width="92" height="60" rx="9" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="485" y="286" text-anchor="middle" class="gpu" fill="var(--good,#2f9e6e)">G3</text>
+    <text x="485" y="306" text-anchor="middle" class="mono">[S₀ S₁ S₂ S₃]</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <text x="595" y="346" text-anchor="middle" class="sm">every GPU now holds the complete</text>
+    <text x="595" y="361" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">reduced buffer</text>
+    <text x="595" y="380" text-anchor="middle" class="mono">identical on all n ranks</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="20" y="402" width="720" height="22" rx="6" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="34" y="417" class="sm">cost / rank</text>
+    <text x="410" y="417" text-anchor="middle" class="cost">
+      <tspan fill="var(--accent)">(n-1)/n·M</tspan><tspan>  +  </tspan><tspan fill="var(--good,#2f9e6e)">(n-1)/n·M</tspan><tspan>  =  </tspan><tspan class="v-accent" fill="var(--accent)">2(n-1)/n·M</tspan><tspan>  to  2M</tspan>
+    </text>
+  </g>
+</svg>
+<figcaption><b>Ring all-reduce = reduce-scatter, then all-gather.</b> Each GPU's buffer is split into <span class="mono">n</span> chunks; in <span class="mono">n−1</span> reduce-scatter steps a chunk hops around the ring and is summed at every hop, so each rank ends up owning one fully-reduced chunk. A second <span class="mono">n−1</span>-step all-gather circulates those reduced chunks until everyone holds the full result. Each phase moves only <span class="mono">(n−1)/n·M</span> bytes per rank, so the total is <span class="mono">2(n−1)/n·M → 2M</span> independent of <span class="mono">n</span> — the bandwidth-optimal lower bound.</figcaption>
+</figure>

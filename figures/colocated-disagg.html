@@ -1,0 +1,153 @@
+<figure class="viz" id="fig-colocated-disagg">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 790 412" role="img" aria-label="Colocated versus disaggregated RL placement: colocated time-slices one shared GPU pool between rollout and training, while disaggregated runs separate rollout and training pools connected by a weight-sync path and an experience path.">
+  <defs>
+    <marker id="cd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-colocated-disagg text{ fill:var(--ink-soft); }
+    #fig-colocated-disagg .ttl{ font:700 14px var(--sans,sans-serif); }
+    #fig-colocated-disagg .sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-colocated-disagg .role{ font:700 12px var(--sans,sans-serif); }
+    #fig-colocated-disagg .small{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-colocated-disagg .mono{ font:600 10px var(--mono,monospace); }
+    #fig-colocated-disagg .tag{ font:600 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-colocated-disagg .gen{ fill:var(--accent2,#3b82f6); }
+    #fig-colocated-disagg .trn{ fill:var(--accent); }
+  </style>
+
+  
+  <line x1="380" y1="34" x2="380" y2="396" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  
+  <g data-anim="1">
+    <rect x="232" y="12" width="13" height="13" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="251" y="22" class="small">rollout / generation (memory-bound)</text>
+    <rect x="488" y="12" width="13" height="13" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+    <text x="507" y="22" class="small">trainer / fwd+bwd (compute-bound)</text>
+  </g>
+
+  
+  
+  
+  <g data-anim="2">
+    <text x="30" y="50" class="ttl">COLOCATED</text>
+    <text x="30" y="66" class="sub">one GPU pool, time-sliced (hybrid engine)</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="30" y="78" width="320" height="58" rx="8" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="44" y="96" class="tag">8&#215; GPU &#183; shared</text>
+    <g class="mono" text-anchor="middle">
+      <rect x="186" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <rect x="228" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <rect x="270" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <rect x="312" y="104" width="36" height="22" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+      <text x="204" y="119">G</text><text x="246" y="119">G</text><text x="288" y="119">G</text><text x="330" y="119">G</text>
+    </g>
+  </g>
+
+  
+  <g data-anim="3">
+    <text x="30" y="170" class="role">HBM timeline (serial phases)</text>
+
+    
+    <rect x="30" y="180" width="206" height="50" rx="6" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.16" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+    <text x="133" y="199" text-anchor="middle" class="role gen" fill="var(--accent2,#3b82f6)">ROLLOUT</text>
+    <text x="133" y="214" text-anchor="middle" class="small">weights + KV cache; optimizer</text>
+    <text x="133" y="225" text-anchor="middle" class="small">state offloaded to CPU</text>
+
+    
+    <line x1="240" y1="205" x2="266" y2="205" class="v-muted" stroke="currentColor" stroke-width="1.4" marker-end="url(#cd-arrow)"/>
+
+    
+    <rect x="270" y="180" width="80" height="50" rx="6" class="trn" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="310" y="199" text-anchor="middle" class="role trn" fill="var(--accent)">TRAIN</text>
+    <text x="310" y="214" text-anchor="middle" class="small">grads +</text>
+    <text x="310" y="225" text-anchor="middle" class="small">Adam</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <path d="M310 230 C310 250 133 250 133 234" fill="none" class="trn" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#cd-arrow)"/>
+    <text x="222" y="262" text-anchor="middle" class="tag">weight sync: in-place / CUDA IPC (~0 ms)</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="30" y="282" width="320" height="98" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="44" y="302" class="role">No overlap &#8594; one capability idle</text>
+    <text x="44" y="320" class="small">Phases are strictly serial: training-grade GPUs</text>
+    <text x="44" y="333" class="small">spend the long rollout doing memory-bound decode.</text>
+    <text x="44" y="354" class="mono" fill="var(--warn,#e0a106)">U &#8776; T_train / T_iter  (small, rollout-bound)</text>
+    <text x="44" y="372" class="small">+ simplest to run &#183; 1:1 ratio forced &#183; on-policy</text>
+  </g>
+
+  
+  
+  
+  <g data-anim="2">
+    <text x="410" y="50" class="ttl">DISAGGREGATED</text>
+    <text x="410" y="66" class="sub">two pools, sized independently &amp; pipelined</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="410" y="80" width="200" height="64" rx="8" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="424" y="98" class="tag" fill="var(--accent2,#3b82f6)">ROLLOUT POOL</text>
+    <text x="424" y="111" class="small">12&#215; GPU &#183; vLLM TP=2 &#183; KV cache</text>
+    <g class="mono" text-anchor="middle" fill="var(--accent2,#3b82f6)">
+      <rect x="424" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="456" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="488" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="520" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="552" y="118" width="26" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <rect x="584" y="118" width="20" height="18" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+      <g fill="var(--surface,#fff)"><text x="437" y="131">G</text><text x="469" y="131">G</text><text x="501" y="131">G</text><text x="533" y="131">G</text><text x="565" y="131">G</text></g>
+    </g>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="410" y="232" width="200" height="60" rx="8" class="trn" fill="var(--accent)" fill-opacity="0.12" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="424" y="250" class="tag" fill="var(--accent)">TRAINING POOL</text>
+    <text x="424" y="263" class="small">4&#215; GPU &#183; FSDP / Megatron &#183; Adam</text>
+    <g class="mono" text-anchor="middle">
+      <rect x="424" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <rect x="460" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <rect x="496" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <rect x="532" y="270" width="30" height="16" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+      <g fill="var(--surface,#fff)"><text x="439" y="282">T</text><text x="475" y="282">T</text><text x="511" y="282">T</text><text x="547" y="282">T</text></g>
+    </g>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="460" y1="232" x2="460" y2="146" class="trn viz-draw" style="--len:86" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#cd-arrow)"/>
+    <text x="452" y="192" text-anchor="end" class="tag" fill="var(--accent)">weights</text>
+    <text x="452" y="204" text-anchor="end" class="small">NCCL bcast</text>
+    <text x="452" y="215" text-anchor="end" class="small">+ reshard</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="560" y1="146" x2="560" y2="230" class="gen viz-draw" style="--len:84" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" marker-end="url(#cd-arrow)"/>
+    <text x="568" y="192" class="tag" fill="var(--accent2,#3b82f6)">experience</text>
+    <text x="568" y="204" class="small">rollouts</text>
+    <text x="568" y="215" class="small">via Ray queue</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="410" y="306" width="320" height="74" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="424" y="326" class="role">Pools overlap &#8594; both stay busy</text>
+    <text x="424" y="344" class="small">Rollout generates the next batch while the trainer</text>
+    <text x="424" y="357" class="small">steps on the current one &#8212; at the cost of 1-step</text>
+    <text x="424" y="370" class="mono" fill="var(--good,#2f9e6e)">staleness, corrected by the PPO/GRPO ratio &#961;.</text>
+  </g>
+</svg>
+<figcaption><b>Where the bytes live: colocated time-slicing vs disaggregated pools.</b> <b>Colocated</b> runs rollout and training on one shared GPU pool in strictly serial phases (weights swapped in place via CUDA IPC), so the expensive training-grade GPUs spend most of a rollout-bound run idling at low utilization. <b>Disaggregated</b> splits generation and training onto independently-sized pools connected by a weight-sync path (NCCL broadcast + resharding) and an experience path; the two overlap to keep both busy, paying a one-step <b>staleness</b> that the importance ratio corrects.</figcaption>
+</figure>

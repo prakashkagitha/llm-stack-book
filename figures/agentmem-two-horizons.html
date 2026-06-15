@@ -1,0 +1,231 @@
+<figure class="viz" id="fig-agentmem-two-horizons">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 460" role="img" aria-label="Two memory horizons: the finite context window (top panel) holds system prompt, tool results, conversation history, injected memory snippets, and current plan; a write arrow carries compacted summaries down to unlimited external memory stores, while a read arrow carries retrieved snippets back up into the context window.">
+<defs>
+  <marker id="th-arr-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="th-arr-up" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="th-arr-down-tok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)" opacity="0.9"/>
+  </marker>
+  <marker id="th-arr-up-tok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)" opacity="0.9"/>
+  </marker>
+</defs>
+<style>
+  #fig-agentmem-two-horizons .panel-title {
+    font: 700 15px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-two-horizons .panel-sub {
+    font: 400 italic 12px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-two-horizons .chip-label {
+    font: 500 11px var(--sans,sans-serif);
+    fill: var(--ink-soft);
+  }
+  #fig-agentmem-two-horizons .arrow-label {
+    font: 600 12px var(--sans,sans-serif);
+  }
+  #fig-agentmem-two-horizons .annot {
+    font: 400 10px var(--sans,sans-serif);
+    fill: var(--muted,#64748b);
+  }
+  #fig-agentmem-two-horizons .tag {
+    font: 700 9px var(--sans,sans-serif);
+    letter-spacing: 0.06em;
+  }
+
+  /* Animated token that travels down the write path */
+  #fig-agentmem-two-horizons #th-token-down {
+    opacity: 0;
+    animation: th-travel-down 6s ease-in-out infinite;
+  }
+  #fig-agentmem-two-horizons #th-token-up {
+    opacity: 0;
+    animation: th-travel-up 6s ease-in-out infinite;
+  }
+  #fig-agentmem-two-horizons #th-highlight-store {
+    opacity: 0;
+    animation: th-flash-store 6s ease-in-out infinite;
+  }
+  #fig-agentmem-two-horizons #th-highlight-inject {
+    opacity: 0;
+    animation: th-flash-inject 6s ease-in-out infinite;
+  }
+
+  @keyframes th-travel-down {
+    0%   { opacity: 0; transform: translateY(0px); }
+    5%   { opacity: 1; transform: translateY(0px); }
+    35%  { opacity: 1; transform: translateY(130px); }
+    40%  { opacity: 0; transform: translateY(130px); }
+    100% { opacity: 0; transform: translateY(130px); }
+  }
+  @keyframes th-flash-store {
+    0%   { opacity: 0; }
+    38%  { opacity: 0; }
+    42%  { opacity: 0.55; }
+    52%  { opacity: 0.55; }
+    57%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes th-travel-up {
+    0%   { opacity: 0; transform: translateY(0px); }
+    50%  { opacity: 0; transform: translateY(0px); }
+    55%  { opacity: 1; transform: translateY(0px); }
+    85%  { opacity: 1; transform: translateY(-130px); }
+    90%  { opacity: 0; transform: translateY(-130px); }
+    100% { opacity: 0; transform: translateY(-130px); }
+  }
+  @keyframes th-flash-inject {
+    0%   { opacity: 0; }
+    83%  { opacity: 0; }
+    87%  { opacity: 0.55; }
+    96%  { opacity: 0.55; }
+    100% { opacity: 0; }
+  }
+</style>
+
+
+<g data-anim="1">
+  
+  <rect x="30" y="18" width="700" height="148" rx="10"
+        fill="var(--accent,#4f46e5)" fill-opacity="0.10"
+        stroke="var(--accent,#4f46e5)" stroke-width="1.8"/>
+
+  
+  <text x="380" y="44" text-anchor="middle" class="panel-title">CONTEXT WINDOW</text>
+  <text x="532" y="44" text-anchor="start" class="panel-sub">(finite)</text>
+
+  
+  <line x1="30" y1="52" x2="730" y2="52" stroke="var(--accent,#4f46e5)" stroke-width="0.8" stroke-opacity="0.35"/>
+
+  
+  
+  <rect x="46" y="64" width="118" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="105" y="82" text-anchor="middle" class="chip-label">system prompt</text>
+
+  
+  <rect x="176" y="64" width="100" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="226" y="82" text-anchor="middle" class="chip-label">tool results</text>
+
+  
+  <rect x="288" y="64" width="156" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="366" y="82" text-anchor="middle" class="chip-label">conversation history</text>
+
+  
+  
+  <rect x="44" y="102" width="188" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  
+  <rect id="th-highlight-inject" x="44" y="102" width="188" height="28" rx="6"
+        fill="var(--accent2,#3b82f6)" fill-opacity="0"/>
+  <text x="138" y="120" text-anchor="middle" class="chip-label">injected memory snippets</text>
+
+  
+  <rect x="242" y="102" width="196" height="28" rx="6"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="340" y="120" text-anchor="middle" class="chip-label">current plan / scratchpad</text>
+
+  
+  <text x="718" y="80" text-anchor="end" class="annot">available on every</text>
+  <text x="718" y="93" text-anchor="end" class="annot">token prediction</text>
+</g>
+
+
+<g data-anim="2">
+  
+  <line x1="220" y1="170" x2="220" y2="290"
+        stroke="var(--accent,#4f46e5)" stroke-width="2.4"
+        marker-end="url(#th-arr-down)"/>
+  <text x="214" y="233" text-anchor="end" class="arrow-label" fill="var(--accent,#4f46e5)">write</text>
+  <text x="214" y="249" text-anchor="end" class="annot">(compaction /</text>
+  <text x="214" y="263" text-anchor="end" class="annot">summarise)</text>
+
+  
+  <line x1="540" y1="296" x2="540" y2="174"
+        stroke="var(--accent2,#3b82f6)" stroke-width="2.4"
+        marker-end="url(#th-arr-up)"/>
+  <text x="546" y="233" text-anchor="start" class="arrow-label" fill="var(--accent2,#3b82f6)">read</text>
+  <text x="546" y="249" text-anchor="start" class="annot">(retrieve /</text>
+  <text x="546" y="263" text-anchor="start" class="annot">inject)</text>
+
+  
+  <g id="th-token-down" transform="translate(207,172)">
+    <rect x="0" y="0" width="54" height="20" rx="5"
+          fill="var(--accent,#4f46e5)" fill-opacity="0.85"/>
+    <text x="27" y="14" text-anchor="middle"
+          font="500 9px var(--mono,monospace)" fill="#fff" style="font:500 9px var(--mono,monospace)">summary</text>
+  </g>
+
+  
+  <g id="th-token-up" transform="translate(510,288)">
+    <rect x="0" y="0" width="54" height="20" rx="5"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="27" y="14" text-anchor="middle"
+          font="500 9px var(--mono,monospace)" fill="#fff" style="font:500 9px var(--mono,monospace)">snippet</text>
+  </g>
+</g>
+
+
+<g data-anim="3">
+  
+  <rect x="30" y="302" width="700" height="136" rx="10"
+        fill="var(--surface,#f5f5f7)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.8"/>
+
+  
+  <text x="380" y="328" text-anchor="middle" class="panel-title">EXTERNAL MEMORY</text>
+  <text x="568" y="328" text-anchor="start" class="panel-sub">(unlimited)</text>
+
+  
+  <line x1="30" y1="336" x2="730" y2="336" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+
+  
+  
+  <rect x="46" y="346" width="100" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <rect id="th-highlight-store" x="46" y="346" width="100" height="26" rx="6"
+        fill="var(--accent,#4f46e5)" fill-opacity="0"/>
+  <text x="96" y="364" text-anchor="middle" class="chip-label">vector store</text>
+
+  <rect x="158" y="346" width="106" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="211" y="364" text-anchor="middle" class="chip-label">key-value store</text>
+
+  <rect x="276" y="346" width="96" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="324" y="364" text-anchor="middle" class="chip-label">file system</text>
+
+  <rect x="384" y="346" width="56" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="412" y="364" text-anchor="middle" class="chip-label">SQL</text>
+
+  
+  <rect x="46" y="384" width="116" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="104" y="402" text-anchor="middle" class="chip-label">property graph</text>
+
+  <rect x="174" y="384" width="100" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="224" y="402" text-anchor="middle" class="chip-label">episodic log</text>
+
+  <rect x="286" y="384" width="96" height="26" rx="6"
+        fill="var(--surface-3,#ececf0)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+  <text x="334" y="402" text-anchor="middle" class="chip-label">user profile</text>
+
+  
+  <text x="718" y="358" text-anchor="end" class="annot">persists across sessions</text>
+  <text x="718" y="372" text-anchor="end" class="annot">shared across agents</text>
+  <text x="718" y="386" text-anchor="end" class="annot">not bounded by</text>
+  <text x="718" y="400" text-anchor="end" class="annot">context length</text>
+</g>
+</svg>
+<figcaption><b>The two memory horizons govern every agent memory design decision.</b> Information inside the context window is immediately available to every token prediction but capacity is finite; information in external stores is unlimited and durable but must be explicitly fetched. The <span style="color:var(--accent,#4f46e5)">write</span> operation compacts or summarises context into the store; the <span style="color:var(--accent2,#3b82f6)">read</span> operation retrieves relevant snippets back into the context window.</figcaption>
+</figure>

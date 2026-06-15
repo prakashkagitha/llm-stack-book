@@ -1,0 +1,257 @@
+<figure class="viz" id="fig-fsdp-unit-lifecycle">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 920 560" role="img" aria-label="FSDP unit lifecycle for one transformer block across forward, backward, and optimizer phases: all-gather reconstructs full params from shards, forward runs then frees params back to one shard; backward re-gathers, runs, reduce-scatters gradients to per-rank shards, frees; optimizer steps only this rank's shard.">
+  <defs>
+    <marker id="fl-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="fl-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="fl-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-fsdp-unit-lifecycle text  { fill: var(--ink-soft); }
+    #fig-fsdp-unit-lifecycle .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-fsdp-unit-lifecycle .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-fsdp-unit-lifecycle .mono { font: 600 11px var(--mono,monospace); }
+    #fig-fsdp-unit-lifecycle .hdr  { font: 700 12px var(--sans,sans-serif); }
+    #fig-fsdp-unit-lifecycle .phase { font: 700 12px var(--sans,sans-serif); }
+
+    /* Animation: data-anim groups */
+    #fig-fsdp-unit-lifecycle [data-anim] { opacity: 0; }
+    #fig-fsdp-unit-lifecycle [data-anim="1"]  { animation: fl-in 0.4s ease-out 0.2s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="2"]  { animation: fl-in 0.4s ease-out 0.9s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="3"]  { animation: fl-in 0.4s ease-out 1.5s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="4"]  { animation: fl-in 0.5s ease-out 2.1s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="5"]  { animation: fl-in 0.4s ease-out 2.9s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="6"]  { animation: fl-in 0.4s ease-out 3.5s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="7"]  { animation: fl-in 0.5s ease-out 4.1s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="8"]  { animation: fl-in 0.4s ease-out 4.8s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="9"]  { animation: fl-in 0.4s ease-out 5.3s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="10"] { animation: fl-in 0.4s ease-out 5.8s  forwards; }
+    #fig-fsdp-unit-lifecycle [data-anim="11"] { animation: fl-in 0.4s ease-out 6.2s  forwards; }
+
+    /* Pulse for full-params box (transient spike) */
+    #fig-fsdp-unit-lifecycle .fl-pulse {
+      animation: fl-pulse 0.6s ease-in-out infinite alternate;
+    }
+    @keyframes fl-in    { from { opacity:0; } to { opacity:1; } }
+    @keyframes fl-pulse { from { opacity:0.7; } to { opacity:1.0; } }
+  </style>
+
+  
+  
+  <rect x="8" y="28" width="905" height="178" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.04" stroke="var(--accent,#6366f1)" stroke-width="0.8" stroke-dasharray="4 3"/>
+  
+  <rect x="8" y="212" width="905" height="180" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.04" stroke="var(--accent2,#3b82f6)" stroke-width="0.8" stroke-dasharray="4 3"/>
+  
+  <rect x="8" y="402" width="905" height="110" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.04" stroke="var(--good,#2f9e6e)" stroke-width="0.8" stroke-dasharray="4 3"/>
+
+  
+  
+  <rect x="12" y="30" width="130" height="22" rx="11" fill="var(--accent,#6366f1)" fill-opacity="0.8"/>
+  <text x="77" y="45" text-anchor="middle" class="phase" fill="var(--surface,#fff)">FORWARD</text>
+  <text x="150" y="45" class="sm">entering block &#8594;</text>
+
+  
+  <rect x="12" y="214" width="136" height="22" rx="11" fill="var(--accent2,#3b82f6)" fill-opacity="0.8"/>
+  <text x="80" y="229" text-anchor="middle" class="phase" fill="var(--surface,#fff)">BACKWARD</text>
+  <text x="156" y="229" class="sm">entering block &#8594;</text>
+
+  
+  <rect x="12" y="404" width="120" height="22" rx="11" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="72" y="419" text-anchor="middle" class="phase" fill="var(--surface,#fff)">OPTIMIZER</text>
+
+  
+  
+  <g data-anim="1">
+    
+    <rect x="20" y="64" width="90" height="22" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="65" y="79" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">rank0 shard</text>
+    <rect x="20" y="89" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="101" text-anchor="middle" class="sm">rank1 shard</text>
+    <rect x="20" y="110" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="122" text-anchor="middle" class="sm">rank2 shard</text>
+    <rect x="20" y="131" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="143" text-anchor="middle" class="sm">rank3 shard</text>
+    <text x="65" y="162" text-anchor="middle" class="sm">FlatParam shards</text>
+    <text x="65" y="173" text-anchor="middle" class="sm">(1/N each)</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="110" y1="108" x2="168" y2="108" stroke="var(--accent,#6366f1)" stroke-width="1.8" marker-end="url(#fl-arr-acc)"/>
+    <text x="139" y="100" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">all-gather</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="172" y="66" width="160" height="92" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="1.6" class="fl-pulse"/>
+    <text x="252" y="88" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">full block params</text>
+    <text x="252" y="102" text-anchor="middle" class="sm">(materialized)</text>
+    
+    <g transform="translate(192,110)" fill="var(--accent,#6366f1)" fill-opacity="0.4" stroke="var(--accent,#6366f1)" stroke-width="0.6">
+      <rect width="120" height="8" rx="2"/>
+      <rect y="12" width="120" height="8" rx="2"/>
+      <rect y="24" width="120" height="8" rx="2"/>
+    </g>
+    <text x="252" y="156" text-anchor="middle" class="sm">peak mem spike</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="332" y1="108" x2="396" y2="108" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#fl-arr-acc)"/>
+    <text x="364" y="100" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">forward</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="400" y="76" width="140" height="64" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="470" y="101" text-anchor="middle" class="lbl">run block</text>
+    <text x="470" y="116" text-anchor="middle" class="lbl">forward</text>
+    <text x="470" y="130" text-anchor="middle" class="sm">compute output</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="540" y1="108" x2="598" y2="108" stroke="var(--ink-soft)" stroke-width="1.4" stroke-dasharray="3 2" marker-end="url(#fl-arr)"/>
+    <text x="569" y="100" text-anchor="middle" class="sm">free</text>
+  </g>
+
+  
+  <g data-anim="4">
+    
+    <rect x="604" y="70" width="100" height="22" rx="3" fill="var(--accent,#6366f1)" fill-opacity="0.8" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="654" y="84" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">rank0 shard</text>
+    
+    <rect x="604" y="96" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="108" text-anchor="middle" class="sm" opacity="0.5">freed</text>
+    <rect x="604" y="118" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="130" text-anchor="middle" class="sm" opacity="0.5">freed</text>
+    <rect x="604" y="140" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="152" text-anchor="middle" class="sm" opacity="0.5">freed</text>
+    <text x="654" y="172" text-anchor="middle" class="sm">keep only this</text>
+    <text x="654" y="183" text-anchor="middle" class="sm">rank's shard</text>
+    
+    <rect x="758" y="88" width="148" height="32" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+    <text x="832" y="104" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">peak param mem</text>
+    <text x="832" y="116" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">bounded here</text>
+  </g>
+
+  
+  
+  <g data-anim="5">
+    <rect x="20" y="248" width="90" height="22" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="65" y="263" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">rank0 shard</text>
+    <rect x="20" y="273" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="285" text-anchor="middle" class="sm">rank1</text>
+    <rect x="20" y="294" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="306" text-anchor="middle" class="sm">rank2</text>
+    <rect x="20" y="315" width="90" height="18" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.5"/>
+    <text x="65" y="327" text-anchor="middle" class="sm">rank3</text>
+    <text x="65" y="346" text-anchor="middle" class="sm">params freed &#8594;</text>
+    <text x="65" y="357" text-anchor="middle" class="sm">gather again</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="110" y1="292" x2="168" y2="292" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" marker-end="url(#fl-arr-acc)"/>
+    <text x="139" y="284" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">all-gather</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="172" y="250" width="160" height="80" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="252" y="270" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">full block params</text>
+    <g transform="translate(192,278)" fill="var(--accent2,#3b82f6)" fill-opacity="0.4" stroke="var(--accent2,#3b82f6)" stroke-width="0.6">
+      <rect width="120" height="7" rx="2"/>
+      <rect y="11" width="120" height="7" rx="2"/>
+      <rect y="22" width="120" height="7" rx="2"/>
+    </g>
+    <text x="252" y="338" text-anchor="middle" class="sm">re-materialized</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <line x1="332" y1="292" x2="396" y2="292" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" marker-end="url(#fl-arr-acc)"/>
+    <text x="364" y="284" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">backward</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <rect x="400" y="258" width="140" height="72" rx="6" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="470" y="283" text-anchor="middle" class="lbl">run block</text>
+    <text x="470" y="298" text-anchor="middle" class="lbl">backward</text>
+    
+    <rect x="412" y="308" width="116" height="16" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.3" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+    <text x="470" y="320" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">&#8594; full grads</text>
+  </g>
+
+  
+  <g data-anim="7">
+    <line x1="540" y1="292" x2="598" y2="292" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" stroke-dasharray="5 2" marker-end="url(#fl-arr-acc)"/>
+    <text x="569" y="283" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">reduce-</text>
+    <text x="569" y="294" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">scatter</text>
+  </g>
+
+  
+  <g data-anim="7">
+    <rect x="604" y="252" width="100" height="22" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="654" y="267" text-anchor="middle" class="mono" font-size="9" fill="var(--surface,#fff)">grad shard r0</text>
+    <rect x="604" y="278" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="290" text-anchor="middle" class="sm" opacity="0.5">grad r1 (gone)</text>
+    <rect x="604" y="300" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="312" text-anchor="middle" class="sm" opacity="0.5">grad r2 (gone)</text>
+    <rect x="604" y="322" width="100" height="18" rx="3" fill="none" stroke="currentColor" stroke-dasharray="3 2" class="v-stroke" stroke-width="1" opacity="0.4"/>
+    <text x="654" y="334" text-anchor="middle" class="sm" opacity="0.5">grad r3 (gone)</text>
+    <text x="654" y="353" text-anchor="middle" class="sm">each rank keeps</text>
+    <text x="654" y="364" text-anchor="middle" class="sm">only ITS grad shard</text>
+  </g>
+
+  
+  <g data-anim="8">
+    <rect x="758" y="270" width="148" height="40" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="832" y="286" text-anchor="middle" class="sm">free gathered params</text>
+    <text x="832" y="298" text-anchor="middle" class="sm">+ full grads</text>
+  </g>
+
+  
+  <g data-anim="9">
+    
+    <rect x="48" y="428" width="108" height="42" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.7" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="102" y="446" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">param shard</text>
+    <text x="102" y="460" text-anchor="middle" class="sm" fill="var(--surface,#ffffffaa)">this rank's 1/N</text>
+  </g>
+  <g data-anim="9">
+    
+    <rect x="186" y="428" width="152" height="42" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.4" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <text x="262" y="446" text-anchor="middle" class="lbl">optim-state shard</text>
+    <text x="262" y="460" text-anchor="middle" class="sm">fp32 master + m + v</text>
+  </g>
+  <g data-anim="10">
+    <line x1="338" y1="449" x2="398" y2="449" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#fl-arr-good)"/>
+    <text x="368" y="441" text-anchor="middle" class="sm" fill="var(--good,#2f9e6e)">step()</text>
+  </g>
+  <g data-anim="10">
+    
+    <rect x="402" y="428" width="138" height="42" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.7" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="471" y="446" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">updated param shard</text>
+    <text x="471" y="460" text-anchor="middle" class="sm" fill="var(--surface,#ffffffaa)">rank's 1/N slice</text>
+  </g>
+  <g data-anim="10">
+    <text x="560" y="445" text-anchor="start" class="sm">no cross-rank comm;</text>
+    <text x="560" y="458" text-anchor="start" class="sm">each rank steps only its 1/N</text>
+  </g>
+
+  
+  <g data-anim="11">
+    <rect x="8" y="526" width="905" height="28" rx="5" class="v-fill" fill-opacity="0.4"/>
+    <text x="454" y="536" text-anchor="middle" class="sm">Only one unit unsharded at a time &#8594; peak = one block's full params + this rank's 1/N of whole model.</text>
+    <text x="454" y="548" text-anchor="middle" class="sm">Smaller unit &#8594; lower peak but more, smaller all-gathers. Wrapping per transformer block is the standard tradeoff.</text>
+  </g>
+</svg>
+<figcaption><b>FSDP unit lifecycle: just-in-time gather, compute, and free bounds peak memory.</b> In both forward and backward, parameter shards are <b>all-gathered</b> into a full block only when needed, then immediately freed after the block's compute. Gradients are <b>reduce-scattered</b> so each rank keeps only its 1/N slice. The optimizer steps solely on each rank's own shard — no cross-rank communication. At most one block is ever fully materialized, keeping peak memory proportional to one block's size plus 1/N of the whole model.</figcaption>
+</figure>

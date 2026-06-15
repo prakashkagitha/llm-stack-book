@@ -1,0 +1,177 @@
+<figure class="viz" id="fig-gtloop-five-phases">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 820 610" role="img" aria-label="Anatomy of one RL outer step: five sequential phases — Rollout/Generation, Reward/Scoring, Experience Prep, Learn/Minibatch Updates, Weight Sync — connected by downward arrows with data labels, and a dashed wrap-around arrow from Phase 5 back to Phase 1 closing the loop.">
+  <defs>
+    <marker id="fp-arrow-dn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+    </marker>
+    <marker id="fp-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+    </marker>
+    <style>
+      #fig-gtloop-five-phases .outer-title { font: 700 13px var(--sans,sans-serif); letter-spacing:.07em; text-transform:uppercase; }
+      #fig-gtloop-five-phases .phase-title { font: 700 13px var(--sans,sans-serif); }
+      #fig-gtloop-five-phases .phase-sub   { font: 400 10.5px var(--sans,sans-serif); }
+      #fig-gtloop-five-phases .owner-lbl   { font: 600 10px var(--sans,sans-serif); }
+      #fig-gtloop-five-phases .edge-lbl    { font: 500 10px var(--mono,monospace); }
+      #fig-gtloop-five-phases .badge-num   { font: 800 13px var(--sans,sans-serif); }
+      #fig-gtloop-five-phases .wrap-lbl    { font: 500 10px var(--sans,sans-serif); font-style:italic; }
+      #fig-gtloop-five-phases text         { fill: var(--ink-soft,#45413a); }
+    </style>
+  </defs>
+
+  
+  <rect x="8" y="8" width="804" height="594" rx="12" fill="var(--accent,#4f46e5)" fill-opacity="0.07" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  
+  <rect x="8" y="8" width="804" height="34" rx="12" fill="var(--accent,#4f46e5)" fill-opacity="0.18" stroke="none"/>
+  <rect x="8" y="30" width="804" height="12" fill="var(--accent,#4f46e5)" fill-opacity="0.18" stroke="none"/>
+  <text x="410" y="30" text-anchor="middle" class="outer-title" fill="var(--accent,#4f46e5)">ONE RL OUTER STEP</text>
+
+  
+  <g data-anim="1">
+    <rect x="195" y="50" width="410" height="24" rx="12" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="400" y="66" text-anchor="middle" class="edge-lbl" fill="var(--accent,#4f46e5)">prompts in  (P prompts x G samples = B sequences)</text>
+    <line x1="400" y1="74" x2="400" y2="86" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#fp-arrow-dn)"/>
+  </g>
+
+  
+  <g data-anim="1">
+    <rect x="50" y="88" width="560" height="82" rx="8" class="v-fill" fill="var(--surface,#faf8f3)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <rect x="50" y="88" width="6" height="82" rx="3" fill="var(--accent,#4f46e5)"/>
+    <circle cx="82" cy="129" r="13" fill="var(--accent,#4f46e5)"/>
+    <text x="82" y="134" text-anchor="middle" class="badge-num" fill="var(--surface,#faf8f3)">1</text>
+    <text x="108" y="114" class="phase-title" fill="var(--ink-soft,#45413a)">ROLLOUT / GENERATION</text>
+    <text x="108" y="130" class="phase-sub v-muted" fill="var(--muted,#6d675d)">sample G completions/prompt, batched autoregressive decode</text>
+    <text x="108" y="146" class="phase-sub" fill="var(--accent,#4f46e5)" font-weight="600">dominates wall-clock: 60-80% of step (memory-bandwidth-bound)</text>
+    
+    <rect x="440" y="92" width="166" height="20" rx="10" fill="var(--accent,#4f46e5)" fill-opacity="0.15"/>
+    <text x="523" y="106" text-anchor="middle" class="owner-lbl" fill="var(--accent,#4f46e5)">inference engine (vLLM/SGLang)</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="320" y1="170" x2="320" y2="188" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#fp-arrow-dn)"/>
+    <text x="334" y="183" class="edge-lbl v-muted" fill="var(--muted,#6d675d)">token ids + sampling logprobs</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="50" y="190" width="560" height="68" rx="8" class="v-fill" fill="var(--surface,#faf8f3)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <rect x="50" y="190" width="6" height="68" rx="3" fill="var(--ink-soft,#45413a)" opacity="0.4"/>
+    <circle cx="82" cy="224" r="13" fill="var(--ink-soft,#45413a)" fill-opacity="0.6"/>
+    <text x="82" y="229" text-anchor="middle" class="badge-num" fill="var(--surface,#faf8f3)">2</text>
+    <text x="108" y="214" class="phase-title" fill="var(--ink-soft,#45413a)">REWARD / SCORING</text>
+    <text x="108" y="231" class="phase-sub v-muted" fill="var(--muted,#6d675d)">run each completion through reward fn(s), get scalar R per response</text>
+    <text x="108" y="248" class="phase-sub v-muted" fill="var(--muted,#6d675d)">sandbox / verifier / RM forward pass -- cheap unless rate-limited</text>
+    <rect x="440" y="196" width="166" height="20" rx="10" fill="var(--ink-soft,#45413a)" fill-opacity="0.1"/>
+    <text x="523" y="210" text-anchor="middle" class="owner-lbl v-muted" fill="var(--muted,#6d675d)">verifier / RM / sandbox</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="320" y1="258" x2="320" y2="276" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#fp-arrow-dn)"/>
+    <text x="334" y="271" class="edge-lbl v-muted" fill="var(--muted,#6d675d)">completions + scalar rewards R</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="50" y="278" width="560" height="80" rx="8" class="v-fill" fill="var(--surface,#faf8f3)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <rect x="50" y="278" width="6" height="80" rx="3" fill="var(--ink-soft,#45413a)" opacity="0.4"/>
+    <circle cx="82" cy="318" r="13" fill="var(--ink-soft,#45413a)" fill-opacity="0.6"/>
+    <text x="82" y="323" text-anchor="middle" class="badge-num" fill="var(--surface,#faf8f3)">3</text>
+    <text x="108" y="302" class="phase-title" fill="var(--ink-soft,#45413a)">EXPERIENCE PREP</text>
+    <text x="108" y="319" class="phase-sub v-muted" fill="var(--muted,#6d675d)">recompute logprobs (policy + reference); compute advantages</text>
+    <text x="108" y="336" class="phase-sub v-muted" fill="var(--muted,#6d675d)">(group baseline / GAE); build flat training batch</text>
+    <text x="108" y="351" class="phase-sub v-muted" fill="var(--muted,#6d675d)">2nd-largest cost: ~10-20% of step (no-grad forwards over B*Lg tokens)</text>
+    <rect x="440" y="284" width="166" height="20" rx="10" fill="var(--ink-soft,#45413a)" fill-opacity="0.1"/>
+    <text x="523" y="298" text-anchor="middle" class="owner-lbl v-muted" fill="var(--muted,#6d675d)">trainer-side fwd passes</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="320" y1="358" x2="320" y2="376" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#fp-arrow-dn)"/>
+    <text x="334" y="371" class="edge-lbl v-muted" fill="var(--muted,#6d675d)">(ids, resp_mask, old_lp, ref_lp, advantages)</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="50" y="378" width="560" height="68" rx="8" class="v-fill" fill="var(--surface,#faf8f3)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <rect x="50" y="378" width="6" height="68" rx="3" fill="var(--ink-soft,#45413a)" opacity="0.4"/>
+    <circle cx="82" cy="412" r="13" fill="var(--ink-soft,#45413a)" fill-opacity="0.6"/>
+    <text x="82" y="417" text-anchor="middle" class="badge-num" fill="var(--surface,#faf8f3)">4</text>
+    <text x="108" y="402" class="phase-title" fill="var(--ink-soft,#45413a)">LEARN / MINIBATCH UPDATES</text>
+    <text x="108" y="419" class="phase-sub v-muted" fill="var(--muted,#6d675d)">ppo_epochs x minibatches of the clipped surrogate loss</text>
+    <text x="108" y="436" class="phase-sub" fill="var(--good,#2f9e6e)">only grad-bearing phase -- often the fastest of the five</text>
+    <rect x="440" y="384" width="166" height="20" rx="10" fill="var(--ink-soft,#45413a)" fill-opacity="0.1"/>
+    <text x="523" y="398" text-anchor="middle" class="owner-lbl v-muted" fill="var(--muted,#6d675d)">FSDP / Megatron fwd+bwd</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="320" y1="446" x2="320" y2="464" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#fp-arrow-dn)"/>
+    <text x="334" y="459" class="edge-lbl v-muted" fill="var(--muted,#6d675d)">updated theta</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="50" y="466" width="560" height="60" rx="8" class="v-fill" fill="var(--surface,#faf8f3)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+    <rect x="50" y="466" width="6" height="60" rx="3" fill="var(--accent,#4f46e5)"/>
+    <circle cx="82" cy="496" r="13" fill="var(--accent,#4f46e5)"/>
+    <text x="82" y="501" text-anchor="middle" class="badge-num" fill="var(--surface,#faf8f3)">5</text>
+    <text x="108" y="489" class="phase-title" fill="var(--accent,#4f46e5)">WEIGHT SYNC</text>
+    <text x="108" y="506" class="phase-sub v-muted" fill="var(--muted,#6d675d)">push new theta into the generator for the next rollout</text>
+    <text x="108" y="521" class="phase-sub v-muted" fill="var(--muted,#6d675d)">~14 GB for 7B bf16 -- in-process copy (colocated) or NCCL broadcast</text>
+    <rect x="440" y="472" width="166" height="20" rx="10" fill="var(--accent,#4f46e5)" fill-opacity="0.15"/>
+    <text x="523" y="486" text-anchor="middle" class="owner-lbl" fill="var(--accent,#4f46e5)">theta -&gt; generator</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <path d="M50,496 L24,496 L24,129 L50,129" fill="none" stroke="var(--accent,#4f46e5)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#fp-arrow-accent)"/>
+    <text x="19" y="320" text-anchor="middle" class="wrap-lbl" fill="var(--accent,#4f46e5)" transform="rotate(-90,19,320)">next outer step -- generator samples from new theta</text>
+  </g>
+
+  
+  <circle r="6" fill="var(--accent,#4f46e5)" opacity="0">
+    <animateMotion dur="6s" repeatCount="indefinite" begin="0.5s" calcMode="linear">
+      <mpath href="#fp-p12"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0" keyTimes="0;0.04;0.13;0.2;0.4;0.8;1" dur="6s" repeatCount="indefinite" begin="0.5s"/>
+  </circle>
+  <path id="fp-p12" d="M320,170 L320,188" fill="none" stroke="none"/>
+
+  <circle r="6" fill="var(--ink-soft,#45413a)" opacity="0">
+    <animateMotion dur="6s" repeatCount="indefinite" begin="1.4s" calcMode="linear">
+      <mpath href="#fp-p23"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0" keyTimes="0;0.04;0.13;0.2;0.4;0.8;1" dur="6s" repeatCount="indefinite" begin="1.4s"/>
+  </circle>
+  <path id="fp-p23" d="M320,258 L320,276" fill="none" stroke="none"/>
+
+  <circle r="6" fill="var(--ink-soft,#45413a)" opacity="0">
+    <animateMotion dur="6s" repeatCount="indefinite" begin="2.3s" calcMode="linear">
+      <mpath href="#fp-p34"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0" keyTimes="0;0.04;0.13;0.2;0.4;0.8;1" dur="6s" repeatCount="indefinite" begin="2.3s"/>
+  </circle>
+  <path id="fp-p34" d="M320,358 L320,376" fill="none" stroke="none"/>
+
+  <circle r="6" fill="var(--ink-soft,#45413a)" opacity="0">
+    <animateMotion dur="6s" repeatCount="indefinite" begin="3.2s" calcMode="linear">
+      <mpath href="#fp-p45"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0" keyTimes="0;0.04;0.13;0.2;0.4;0.8;1" dur="6s" repeatCount="indefinite" begin="3.2s"/>
+  </circle>
+  <path id="fp-p45" d="M320,446 L320,464" fill="none" stroke="none"/>
+
+  <circle r="6" fill="var(--accent,#4f46e5)" opacity="0">
+    <animateMotion dur="6s" repeatCount="indefinite" begin="4.1s" calcMode="linear">
+      <mpath href="#fp-pwrap"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;1;0;0" keyTimes="0;0.03;0.4;0.75;0.85;1" dur="6s" repeatCount="indefinite" begin="4.1s"/>
+  </circle>
+  <path id="fp-pwrap" d="M50,496 L24,496 L24,129 L50,129" fill="none" stroke="none"/>
+
+</svg>
+<figcaption><b>Anatomy of one RL outer step: five sequential phases, each owned by a different system.</b> Phase 1 (Rollout) dominates wall-clock at 60-80% due to memory-bandwidth-bound autoregressive decoding — despite having fewer FLOPs than the backward pass. The dashed wrap-around arrow from Phase 5 back to Phase 1 closes the loop: every step ends by pushing fresh weights into the generator so the next rollout samples from the updated policy.</figcaption>
+</figure>

@@ -1,0 +1,236 @@
+<figure class="viz" id="fig-moe-serving-dense-tp-vs-moe-ep">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 860 570" role="img" aria-label="Side-by-side dataflow: Dense FFN under tensor parallelism uses one fixed-size all-reduce collective; MoE FFN under expert parallelism uses two irregular all-to-all collectives, dispatch and combine, with data-dependent sizes.">
+<defs>
+  <marker id="dtp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="dtp-arr-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1.5 L9 5 L0 8.5 z" fill="var(--accent2,#d9822b)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-moe-serving-dense-tp-vs-moe-ep text { font-family: var(--sans,sans-serif); }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-moe-serving-dense-tp-vs-moe-ep animate,
+    #fig-moe-serving-dense-tp-vs-moe-ep animateTransform { display: none; }
+  }
+</style>
+
+
+<rect x="12" y="10" width="390" height="535" rx="10"
+      fill="var(--surface,#f6f8fb)" stroke="var(--border-2,#d0d5dd)" stroke-width="1.2"/>
+<rect x="418" y="10" width="390" height="535" rx="10"
+      fill="var(--surface,#f6f8fb)" stroke="var(--border-2,#d0d5dd)" stroke-width="1.2"/>
+
+
+<line x1="408" y1="18" x2="408" y2="540"
+      stroke="var(--border-2,#d0d5dd)" stroke-width="1" stroke-dasharray="4 3"/>
+
+
+<text x="207" y="37" text-anchor="middle"
+      font="700 13px var(--sans,sans-serif)" fill="var(--ink-soft,#1a1a2e)">Dense FFN (Tensor Parallelism)</text>
+
+
+<rect x="107" y="50" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="207" y="75" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">x (input token)</text>
+
+
+<line x1="207" y1="90" x2="207" y2="108"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="97" y="110" width="220" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="207" y="135" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">up-proj (col-parallel)</text>
+
+<line x1="207" y1="150" x2="207" y2="168"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="107" y="170" width="200" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="207" y="195" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">activation</text>
+
+<line x1="207" y1="210" x2="207" y2="228"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="97" y="230" width="220" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="207" y="255" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">down-proj (row-parallel)</text>
+
+<line x1="207" y1="270" x2="207" y2="288"
+      stroke="var(--accent2,#d9822b)" stroke-width="2" marker-end="url(#dtp-arr-c)"/>
+
+
+<rect x="87" y="290" width="240" height="48" rx="7"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.4"/>
+<text x="207" y="319" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">ALL-REDUCE (sum)</text>
+
+<line x1="207" y1="338" x2="207" y2="356"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="107" y="358" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="207" y="383" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">y (output)</text>
+
+
+<text x="207" y="428" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">one collective · fixed size ~2·d_model bytes/token</text>
+<text x="207" y="441" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">well overlapped</text>
+
+
+<circle cx="207" cy="70" r="5" fill="var(--accent,#4f8cff)" opacity="0">
+  <animate attributeName="cy"
+    values="70;130;190;250;314;378"
+    keyTimes="0;0.15;0.30;0.45;0.62;0.80"
+    dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity"
+    values="0;1;1;1;1;1;0"
+    keyTimes="0;0.05;0.45;0.62;0.76;0.82;1"
+    dur="5s" repeatCount="indefinite"/>
+</circle>
+
+<circle cx="207" cy="314" r="14" fill="none"
+        stroke="var(--accent2,#d9822b)" stroke-width="1.8" opacity="0">
+  <animate attributeName="r" values="14;32" keyTimes="0;1" dur="0.7s"
+    begin="3.1s;8.1s;13.1s" fill="freeze"/>
+  <animate attributeName="opacity" values="0.8;0" keyTimes="0;1" dur="0.7s"
+    begin="3.1s;8.1s;13.1s" fill="freeze"/>
+</circle>
+
+
+<text x="613" y="37" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--ink-soft,#1a1a2e)">MoE FFN (Expert Parallelism) · top-2 of 8 experts</text>
+
+
+<rect x="513" y="50" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="613" y="75" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">x (input token)</text>
+
+<line x1="613" y1="90" x2="613" y2="108"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="563" y="110" width="100" height="40" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="613" y="135" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">router</text>
+
+<rect x="672" y="117" width="80" height="22" rx="11"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1"/>
+<text x="712" y="132" text-anchor="middle"
+      font="400 9.5px var(--mono,monospace)" fill="var(--muted,#777)">pick e_a, e_b</text>
+<line x1="663" y1="128" x2="672" y2="128"
+      stroke="var(--ink-soft,#777)" stroke-width="1" marker-end="url(#dtp-arr)"/>
+
+<line x1="613" y1="150" x2="613" y2="170"
+      stroke="var(--accent2,#d9822b)" stroke-width="2" marker-end="url(#dtp-arr-c)"/>
+
+
+<rect x="493" y="172" width="240" height="48" rx="7"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.4"/>
+<text x="613" y="201" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">DISPATCH — all-to-all #1</text>
+
+<text x="855" y="182" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">send to owner GPUs</text>
+<text x="855" y="194" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">&gt; irregular sizes</text>
+<line x1="733" y1="190" x2="742" y2="190"
+      stroke="var(--muted,#aaa)" stroke-width="0.9" stroke-dasharray="3 2" marker-end="url(#dtp-arr)"/>
+
+
+<line x1="576" y1="220" x2="548" y2="252"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      marker-end="url(#dtp-arr-c)" opacity="0.65"/>
+<line x1="613" y1="220" x2="613" y2="252"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      marker-end="url(#dtp-arr-c)" opacity="0.65"/>
+<line x1="650" y1="220" x2="678" y2="252"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      marker-end="url(#dtp-arr-c)" opacity="0.65"/>
+
+<line x1="613" y1="254" x2="613" y2="272"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="503" y="274" width="220" height="48" rx="6"
+      fill="var(--surface,#dce8fb)" stroke="var(--accent,#4f8cff)" stroke-width="1.4"/>
+<text x="613" y="298" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">expert compute locally</text>
+<text x="613" y="313" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#777)">(grouped GEMM)</text>
+
+
+<line x1="548" y1="322" x2="576" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      opacity="0.65"/>
+<line x1="613" y1="322" x2="613" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      opacity="0.65"/>
+<line x1="678" y1="322" x2="650" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="1.2" stroke-dasharray="3 2"
+      opacity="0.65"/>
+
+<line x1="613" y1="322" x2="613" y2="352"
+      stroke="var(--accent2,#d9822b)" stroke-width="2" marker-end="url(#dtp-arr-c)"/>
+
+
+<rect x="493" y="354" width="240" height="48" rx="7"
+      fill="var(--warn,#fef3c7)" stroke="var(--accent2,#d9822b)" stroke-width="2.4"/>
+<text x="613" y="383" text-anchor="middle"
+      font="700 12px var(--sans,sans-serif)" fill="var(--accent2,#b45309)">COMBINE — all-to-all #2</text>
+
+<text x="855" y="362" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">gather back &amp;</text>
+<text x="855" y="374" text-anchor="end" font="400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">gate-weighted sum</text>
+<line x1="733" y1="370" x2="742" y2="370"
+      stroke="var(--muted,#aaa)" stroke-width="0.9" stroke-dasharray="3 2" marker-end="url(#dtp-arr)"/>
+
+<line x1="613" y1="402" x2="613" y2="420"
+      stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#dtp-arr)"/>
+
+
+<rect x="513" y="422" width="200" height="40" rx="6"
+      fill="var(--surface-3,#e9ecef)" stroke="var(--border-2,#adb5bd)" stroke-width="1.4"/>
+<text x="613" y="447" text-anchor="middle"
+      font="600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">y (output)</text>
+
+
+<text x="613" y="490" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">two collectives · data-dependent sizes</text>
+<text x="613" y="503" text-anchor="middle"
+      font="400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">cost set by the busiest GPU</text>
+
+
+
+<circle cx="613" cy="70" r="5" fill="var(--accent,#4f8cff)" opacity="0">
+  <animate attributeName="cy" values="70;130" keyTimes="0;0.22" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.05;0.20;0.26" dur="5s" repeatCount="indefinite"/>
+</circle>
+
+<circle cx="613" cy="130" r="4" fill="var(--accent,#4f8cff)" opacity="0">
+  <animate attributeName="cx" values="613;578;548;548;576;613" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="cy" values="130;196;298;354;402;462" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;0;1;1;1;1;0" keyTimes="0;0.22;0.27;0.42;0.72;0.88;0.96" dur="5s" repeatCount="indefinite"/>
+</circle>
+
+<circle cx="613" cy="130" r="4" fill="var(--good,#2f9e6e)" opacity="0">
+  <animate attributeName="cx" values="613;648;678;678;650;613" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="cy" values="130;196;298;354;402;462" keyTimes="0;0.28;0.42;0.56;0.72;0.90" dur="5s" repeatCount="indefinite"/>
+  <animate attributeName="opacity" values="0;0;1;1;1;1;0" keyTimes="0;0.22;0.27;0.42;0.72;0.88;0.96" dur="5s" repeatCount="indefinite"/>
+</circle>
+
+</svg>
+<figcaption><b>Dense FFN (one all-reduce) vs. MoE FFN (two all-to-all collectives).</b> In tensor-parallel dense serving a single fixed-size all-reduce sums partial results — one barrier, predictable cost, easily overlapped. In expert-parallel MoE the token is routed to its chosen experts via DISPATCH (all-to-all #1), experts compute locally via grouped GEMM, and results return home via COMBINE (all-to-all #2). The orange collective boxes make the asymmetry concrete: MoE pays two barriers with irregular, data-dependent message sizes whose cost is set by the slowest, most-loaded GPU in the group.</figcaption>
+</figure>

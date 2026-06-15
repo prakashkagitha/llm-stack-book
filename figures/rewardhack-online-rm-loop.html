@@ -1,0 +1,205 @@
+<figure class="viz" id="fig-rewardhack-online-rm-loop">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 760 450" role="img" aria-label="Iterative RLHF: a fast inner RL loop cycles through policy rollout, reward model scoring, and policy gradient update every step; every N steps a slower outer branch sends outputs to human annotators, fine-tunes the reward model on fresh preferences, and re-injects the updated reward model back into the inner loop.">
+<defs>
+  <marker id="rh4-arr"    viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#211f1b)"/></marker>
+  <marker id="rh4-muted"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#94a3b8)"/></marker>
+  <marker id="rh4-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/></marker>
+  <marker id="rh4-green"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="var(--good,#2f9e6e)"/></marker>
+  <marker id="rh4-blue"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#3b82f6)"/></marker>
+</defs>
+<style>
+  #fig-rewardhack-online-rm-loop text  { fill: var(--ink-soft,#211f1b); }
+  #fig-rewardhack-online-rm-loop .ttl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-rewardhack-online-rm-loop .blbl { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-rewardhack-online-rm-loop .bsub { font: 500 9px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-rewardhack-online-rm-loop .elbl { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-rewardhack-online-rm-loop .note { font: 500 8.5px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-rewardhack-online-rm-loop .gate { font: 600 9px var(--sans,sans-serif); }
+
+  /* animated highlight ring on active box */
+  @keyframes rh4-ring {
+    0%,100% { stroke-opacity: 0.3; stroke-width: 2; }
+    50%     { stroke-opacity: 1;   stroke-width: 4; }
+  }
+  /* token along a path */
+  @keyframes rh4-tok {
+    0%   { offset-distance:0%;   opacity:1; }
+    72%  { offset-distance:100%; opacity:1; }
+    87%  { opacity:0; }
+    100% { offset-distance:100%; opacity:0; }
+  }
+  @keyframes rh4-slow {
+    0%,42%  { offset-distance:0%;   opacity:0; }
+    45%     { opacity:1; }
+    88%     { offset-distance:100%; opacity:1; }
+    94%     { opacity:0; }
+    100%    { offset-distance:100%; opacity:0; }
+  }
+  @keyframes rh4-flash {
+    0%,55%  { opacity:0; }
+    60%,88% { opacity:1; }
+    95%,100%{ opacity:0; }
+  }
+
+  #fig-rewardhack-online-rm-loop .ring-a { animation: rh4-ring 2.4s 0.1s  infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .ring-b { animation: rh4-ring 2.4s 0.95s infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .ring-c { animation: rh4-ring 2.4s 1.7s  infinite ease-in-out; }
+
+  #fig-rewardhack-online-rm-loop .tok-ab { offset-path:path("M 224 129 L 340 129"); animation: rh4-tok  2.4s 0s    infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .tok-bc { offset-path:path("M 397 158 L 333 212"); animation: rh4-tok  2.4s 0.85s infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .tok-ca { offset-path:path("M 214 250 C 106 288 68 244 96 170 L 108 146"); animation: rh4-tok 2.4s 1.6s infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .tok-out{ offset-path:path("M 599 250 L 599 302 L 599 354 L 599 400"); animation: rh4-slow 6.0s 0s    infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .tok-fb { offset-path:path("M 536 390 C 478 434 442 420 420 302 L 420 162"); animation: rh4-slow 6.0s 0.55s infinite ease-in-out; }
+  #fig-rewardhack-online-rm-loop .rf     { animation: rh4-flash 6.0s 0s infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-rewardhack-online-rm-loop .ring-a,
+    #fig-rewardhack-online-rm-loop .ring-b,
+    #fig-rewardhack-online-rm-loop .ring-c,
+    #fig-rewardhack-online-rm-loop .tok-ab,
+    #fig-rewardhack-online-rm-loop .tok-bc,
+    #fig-rewardhack-online-rm-loop .tok-ca,
+    #fig-rewardhack-online-rm-loop .tok-out,
+    #fig-rewardhack-online-rm-loop .tok-fb,
+    #fig-rewardhack-online-rm-loop .rf
+    { animation: none !important; opacity: 1 !important; }
+  }
+</style>
+
+
+<text x="365" y="20" text-anchor="middle" class="ttl">Iterative RLHF (Online Reward-Model Update)</text>
+
+
+
+
+
+
+
+
+<rect x="68" y="102" width="156" height="58" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+
+<rect class="ring-a" x="68" y="102" width="156" height="58" rx="8" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2" pointer-events="none"/>
+<text x="146" y="122" text-anchor="middle" class="blbl" fill="var(--accent2,#3b82f6)">A: Generate rollouts</text>
+<text x="146" y="135" text-anchor="middle" class="bsub">y ~ π_t(·|x)</text>
+<text x="146" y="148" text-anchor="middle" class="bsub">[policy π_t]</text>
+
+
+<rect x="340" y="102" width="156" height="58" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<rect class="ring-b" x="340" y="102" width="156" height="58" rx="8" fill="none" stroke="var(--accent,#f59e0b)" stroke-width="2" pointer-events="none"/>
+<text x="418" y="122" text-anchor="middle" class="blbl" fill="var(--accent,#f59e0b)">B: Score with RM</text>
+<text x="418" y="135" text-anchor="middle" class="bsub">r_θ(x, y)</text>
+<text x="418" y="148" text-anchor="middle" class="bsub">[reward model]</text>
+
+
+<rect x="210" y="212" width="156" height="58" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+<rect class="ring-c" x="210" y="212" width="156" height="58" rx="8" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2" pointer-events="none"/>
+<text x="288" y="232" text-anchor="middle" class="blbl" fill="var(--accent2,#3b82f6)">C: Policy update</text>
+<text x="288" y="245" text-anchor="middle" class="bsub">π_t → π_{t+1}</text>
+<text x="288" y="258" text-anchor="middle" class="bsub">[PPO step]</text>
+
+
+
+
+<line x1="224" y1="129" x2="338" y2="129" stroke="var(--accent2,#3b82f6)" stroke-width="2" marker-end="url(#rh4-blue)"/>
+<text x="281" y="122" text-anchor="middle" class="elbl">rollouts</text>
+
+<line x1="397" y1="160" x2="333" y2="212" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#rh4-orange)"/>
+<text x="386" y="192" text-anchor="start" class="elbl">rewards</text>
+
+<path d="M 214 250 C 106 288 68 244 96 170 L 108 146" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2" marker-end="url(#rh4-blue)"/>
+<text x="70" y="230" text-anchor="middle" class="elbl">next</text>
+<text x="70" y="242" text-anchor="middle" class="elbl">step t+1</text>
+
+
+<rect x="158" y="172" width="130" height="17" rx="4" fill="var(--surface,#f8fafc)" stroke="var(--muted,#94a3b8)" stroke-width="1" opacity="0.9"/>
+<text x="223" y="183" text-anchor="middle" class="note">fast inner loop (every step)</text>
+
+
+
+
+<circle class="tok-ab" r="5" fill="var(--accent2,#3b82f6)" opacity="0"/>
+<circle class="tok-bc" r="5" fill="var(--accent,#f59e0b)"  opacity="0"/>
+<circle class="tok-ca" r="5" fill="var(--accent2,#3b82f6)" opacity="0"/>
+
+
+
+
+<polygon points="482,213 510,236 482,259 454,236" fill="var(--surface,#f8fafc)" stroke="var(--muted,#94a3b8)" stroke-width="1.8"/>
+<text x="482" y="233" text-anchor="middle" class="gate">step%N</text>
+<text x="482" y="245" text-anchor="middle" class="gate">== 0?</text>
+
+
+<line x1="366" y1="241" x2="452" y2="236" stroke="var(--muted,#94a3b8)" stroke-width="1.4" stroke-dasharray="5,3" marker-end="url(#rh4-muted)"/>
+<text x="404" y="280" text-anchor="middle" class="elbl">every N steps</text>
+
+
+<line x1="510" y1="236" x2="532" y2="230" stroke="var(--muted,#94a3b8)" stroke-width="1.4" marker-end="url(#rh4-muted)"/>
+
+
+
+
+
+
+
+<rect x="534" y="208" width="164" height="42" rx="7" fill="var(--surface,#f8fafc)" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="616" y="227" text-anchor="middle" class="blbl">D1: Sample (x, y) pairs</text>
+<text x="616" y="240" text-anchor="middle" class="bsub">from current policy π_t</text>
+<line x1="616" y1="250" x2="616" y2="258" stroke="var(--ink-soft,#211f1b)" stroke-width="1.5" marker-end="url(#rh4-arr)"/>
+
+
+<rect x="534" y="260" width="164" height="42" rx="7" fill="var(--surface,#f8fafc)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+<text x="616" y="279" text-anchor="middle" class="blbl" fill="var(--good,#2f9e6e)">D2: Human annotators</text>
+<text x="616" y="292" text-anchor="middle" class="bsub">collect pairwise prefs</text>
+<line x1="616" y1="302" x2="616" y2="312" stroke="var(--ink-soft,#211f1b)" stroke-width="1.5" marker-end="url(#rh4-arr)"/>
+
+
+<rect x="534" y="314" width="164" height="42" rx="7" fill="var(--surface,#f8fafc)" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<text x="616" y="333" text-anchor="middle" class="blbl" fill="var(--accent,#f59e0b)">D3: Fine-tune RM</text>
+<text x="616" y="346" text-anchor="middle" class="bsub">r_θ → r_θ′</text>
+<line x1="616" y1="356" x2="616" y2="366" stroke="var(--ink-soft,#211f1b)" stroke-width="1.5" marker-end="url(#rh4-arr)"/>
+
+
+<rect x="534" y="368" width="164" height="42" rx="7" fill="var(--surface,#f8fafc)" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<text x="616" y="387" text-anchor="middle" class="blbl" fill="var(--accent,#f59e0b)">D4: Replace RM</text>
+<text x="616" y="400" text-anchor="middle" class="bsub">θ ← θ′</text>
+
+
+
+
+<circle class="tok-out" r="5" fill="var(--good,#2f9e6e)" opacity="0"/>
+<circle class="tok-fb"  r="5" fill="var(--good,#2f9e6e)" opacity="0"/>
+
+
+
+
+<path d="M 534 389 C 476 434 442 420 420 302 L 420 162"
+      fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"
+      stroke-dasharray="6,3" marker-end="url(#rh4-green)"/>
+
+
+<g class="rf">
+  <rect x="296" y="332" width="120" height="28" rx="4"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.12"
+        stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="356" y="346" text-anchor="middle" class="note" fill="var(--good,#2f9e6e)">updated RM θ′</text>
+  <text x="356" y="357" text-anchor="middle" class="note" fill="var(--good,#2f9e6e)">re-enters inner loop</text>
+</g>
+
+
+
+
+<rect x="10" y="314" width="156" height="34" rx="5"
+      fill="var(--surface,#f8fafc)" stroke="var(--muted,#94a3b8)" stroke-width="1"/>
+<text x="88" y="328" text-anchor="middle" class="note">RM stays in-distribution</text>
+<text x="88" y="340" text-anchor="middle" class="note">with drifting policy π_t</text>
+
+<rect x="10" y="360" width="156" height="48" rx="5"
+      fill="var(--surface,#f8fafc)" stroke="var(--muted,#94a3b8)"
+      stroke-width="1" stroke-dasharray="4,3"/>
+<text x="88" y="374" text-anchor="middle" class="note">automated variant:</text>
+<text x="88" y="386" text-anchor="middle" class="note">constitutional AI /</text>
+<text x="88" y="398" text-anchor="middle" class="note">meta-RM replaces D2</text>
+</svg>
+<figcaption><b>Iterative RLHF keeps the reward model in-distribution with the evolving policy.</b> The fast inner RL loop (boxes A-B-C) generates rollouts, scores them, and applies policy-gradient updates every step. Every N steps the slower outer branch samples fresh outputs, collects human pairwise preferences (D2), fine-tunes the reward model (D3-D4), and re-injects the updated model into the inner loop. The contrasting cadences — rapid policy updates vs. periodic RM refreshes — prevent the policy from drifting into unscored regions where proxy reward diverges from true reward.</figcaption>
+</figure>

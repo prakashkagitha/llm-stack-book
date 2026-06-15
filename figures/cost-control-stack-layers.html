@@ -1,0 +1,260 @@
+<figure class="viz" id="fig-cost-control-stack-layers">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-cost-control-stack-layers text { fill: currentColor; }
+  #fig-cost-control-stack-layers .ttl { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#e2e8f0); }
+  #fig-cost-control-stack-layers .sub { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-cost-control-stack-layers .lnum { font: 800 12px var(--sans,sans-serif); }
+  #fig-cost-control-stack-layers .tag  { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-cost-control-stack-layers .badge { font: 700 10px var(--sans,sans-serif); }
+  #fig-cost-control-stack-layers .lbl-muted { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-cost-control-stack-layers .hit-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-cost-control-stack-layers .miss-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+
+  /* Animated request dot */
+  #fig-cost-control-stack-layers .req-dot {
+    r: 8;
+    fill: var(--accent,#6366f1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-cost-control-stack-layers .req-dot { display: none; }
+    #fig-cost-control-stack-layers .hit-ghost { display: none; }
+  }
+
+  /* Layer fade-in order */
+  #fig-cost-control-stack-layers [data-anim] { opacity: 0; animation: ccs-fadein 0.5s ease forwards; }
+  #fig-cost-control-stack-layers [data-anim="1"] { animation-delay: 0.1s; }
+  #fig-cost-control-stack-layers [data-anim="2"] { animation-delay: 0.4s; }
+  #fig-cost-control-stack-layers [data-anim="3"] { animation-delay: 0.7s; }
+  #fig-cost-control-stack-layers [data-anim="4"] { animation-delay: 1.0s; }
+  #fig-cost-control-stack-layers [data-anim="5"] { animation-delay: 1.3s; }
+  #fig-cost-control-stack-layers [data-anim="6"] { animation-delay: 1.6s; }
+  #fig-cost-control-stack-layers [data-anim="7"] { animation-delay: 1.9s; }
+  @keyframes ccs-fadein { to { opacity:1; } }
+
+  /* Traveling dot animation */
+  #fig-cost-control-stack-layers .dot-travel {
+    animation: ccs-travel 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-travel {
+    0%   { cy:42; opacity:1; }
+    10%  { cy:100; opacity:1; }
+    18%  { cy:108; opacity:1; }
+    26%  { cy:205; opacity:1; }
+    34%  { cy:213; opacity:1; }
+    42%  { cy:310; opacity:1; }
+    55%  { cy:450; opacity:1; }
+    68%  { cy:560; opacity:1; }
+    82%  { cy:660; opacity:1; }
+    95%  { cy:700; opacity:0.7; }
+    100% { cy:700; opacity:0; }
+  }
+
+  /* Hit arrows ghost pulses */
+  #fig-cost-control-stack-layers .hit-pulse {
+    animation: ccs-hit-pulse 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-hit-pulse {
+    0%   { opacity: 0; }
+    18%  { opacity: 0; }
+    26%  { opacity: 0.9; }
+    34%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  #fig-cost-control-stack-layers .hit-pulse2 {
+    animation: ccs-hit-pulse2 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-hit-pulse2 {
+    0%   { opacity: 0; }
+    34%  { opacity: 0; }
+    42%  { opacity: 0.9; }
+    50%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* Feedback loop dashed arrow pulse */
+  #fig-cost-control-stack-layers .feedback-pulse {
+    animation: ccs-fb-pulse 5s 2.2s ease-in-out infinite;
+    opacity: 0;
+  }
+  @keyframes ccs-fb-pulse {
+    0%   { opacity: 0; }
+    82%  { opacity: 0; }
+    90%  { opacity: 0.6; }
+    100% { opacity: 0; }
+  }
+</style>
+<svg viewBox="0 0 820 760" role="img" aria-label="Layered production cost-control stack: incoming requests pass through exact cache, semantic cache, routing classifier, then fan out to cheap/medium/expensive model tiers, converge into async batch queue, and return to client while filling caches.">
+<defs>
+  <marker id="ccs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#94a3b8)"/>
+  </marker>
+  <marker id="ccs-arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="ccs-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+
+
+<g data-anim="1">
+  <rect x="320" y="14" width="180" height="34" rx="17" fill="var(--accent,#6366f1)"/>
+  <text x="410" y="36" text-anchor="middle" style="font:700 13px var(--sans,sans-serif); fill:#fff;">Incoming request</text>
+</g>
+
+
+<line x1="410" y1="48" x2="410" y2="78" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)" data-anim="1"/>
+
+
+<g data-anim="2">
+  <rect x="90" y="80" width="640" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="134" y="104" class="lnum" fill="var(--accent,#6366f1)">1.</text>
+  <text x="152" y="104" class="ttl">Exact cache (Redis, SHA-256)</text>
+  
+  <rect x="590" y="89" width="118" height="20" rx="10" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1"/>
+  <text x="649" y="103" text-anchor="middle" class="tag">~5 ms hit</text>
+  <text x="152" y="128" class="sub">-&gt; cache hit: return immediately</text>
+</g>
+
+
+<g data-anim="2">
+  <path d="M730,112 Q770,112 790,90" stroke="var(--good,#2f9e6e)" stroke-width="1.5" fill="none" stroke-dasharray="4 2" marker-end="url(#ccs-arrow-green)"/>
+  <text x="748" y="107" class="hit-lbl">hit</text>
+</g>
+
+<path d="M730,112 Q770,112 790,90" class="hit-pulse" stroke="var(--good,#2f9e6e)" stroke-width="3" fill="none" opacity="0"/>
+
+
+<g data-anim="2">
+  <line x1="410" y1="144" x2="410" y2="172" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <text x="418" y="163" class="miss-lbl">miss</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="90" y="174" width="640" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="134" y="198" class="lnum" fill="var(--accent,#6366f1)">2.</text>
+  <text x="152" y="198" class="ttl">Semantic cache (ANN, cosine &gt;= 0.93)</text>
+  <rect x="568" y="183" width="140" height="20" rx="10" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1"/>
+  <text x="638" y="197" text-anchor="middle" class="tag">~15 ms hit</text>
+  <text x="152" y="222" class="sub">-&gt; cache hit: return immediately</text>
+</g>
+
+
+<g data-anim="3">
+  <path d="M730,206 Q770,206 790,184" stroke="var(--good,#2f9e6e)" stroke-width="1.5" fill="none" stroke-dasharray="4 2" marker-end="url(#ccs-arrow-green)"/>
+  <text x="748" y="201" class="hit-lbl">hit</text>
+</g>
+
+<path d="M730,206 Q770,206 790,184" class="hit-pulse2" stroke="var(--good,#2f9e6e)" stroke-width="3" fill="none" opacity="0"/>
+
+
+<g data-anim="3">
+  <line x1="410" y1="238" x2="410" y2="268" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <text x="418" y="258" class="miss-lbl">miss</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="90" y="270" width="640" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+  <text x="134" y="294" class="lnum" fill="var(--accent,#6366f1)">3.</text>
+  <text x="152" y="294" class="ttl">Routing classifier (embed + LR)</text>
+  <rect x="604" y="279" width="104" height="20" rx="10" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="1"/>
+  <text x="656" y="293" text-anchor="middle" class="tag">~2 ms</text>
+  <text x="152" y="318" class="sub">-&gt; classify: simple / medium / complex</text>
+</g>
+
+
+<g data-anim="4">
+  
+  <line x1="410" y1="334" x2="410" y2="354" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="155" y1="354" x2="650" y2="354" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="155" y1="354" x2="155" y2="385" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <line x1="410" y1="354" x2="410" y2="385" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  <line x1="650" y1="354" x2="650" y2="385" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+  
+  <text x="155" y="371" text-anchor="middle" class="lbl-muted">[simple]</text>
+  <text x="410" y="371" text-anchor="middle" class="lbl-muted">[medium]</text>
+  <text x="650" y="371" text-anchor="middle" class="lbl-muted">[complex]</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="40" y="388" width="230" height="80" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="155" y="412" text-anchor="middle" class="ttl">Quantised INT4</text>
+  <text x="155" y="428" text-anchor="middle" class="sub">on spot GPUs</text>
+  
+  <rect x="80" y="440" width="150" height="20" rx="10" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="155" y="454" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">cheapest</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="293" y="388" width="234" height="80" rx="8" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="410" y="412" text-anchor="middle" class="ttl">Small API model</text>
+  <text x="410" y="428" text-anchor="middle" class="sub">7B FP16 API</text>
+  
+  <rect x="335" y="440" width="150" height="20" rx="10" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="410" y="454" text-anchor="middle" class="badge" fill="var(--accent,#6366f1)">mid tier</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="540" y="388" width="230" height="80" rx="8" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <text x="655" y="412" text-anchor="middle" class="ttl">Frontier model</text>
+  <text x="655" y="428" text-anchor="middle" class="sub">with prompt caching</text>
+  
+  <rect x="580" y="440" width="150" height="20" rx="10" fill="var(--warn,#e0a106)" fill-opacity="0.14" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="655" y="454" text-anchor="middle" class="badge" fill="var(--warn,#e0a106)">priciest</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="155" y1="468" x2="155" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="410" y1="468" x2="410" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="655" y1="468" x2="655" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="155" y1="514" x2="655" y2="514" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5"/>
+  <line x1="410" y1="514" x2="410" y2="528" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+</g>
+
+
+<g data-anim="6">
+  <rect x="200" y="530" width="420" height="64" rx="8" class="v-fill" stroke="var(--ink-soft,#64748b)" stroke-width="2"/>
+  <text x="244" y="555" class="lnum" fill="var(--accent,#6366f1)">4.</text>
+  <text x="262" y="555" class="ttl">Async batch queue</text>
+  <text x="262" y="579" class="sub">(if SLA permits)</text>
+</g>
+
+
+<g data-anim="6">
+  <line x1="410" y1="594" x2="410" y2="628" stroke="var(--ink-soft,#94a3b8)" stroke-width="1.5" marker-end="url(#ccs-arrow)"/>
+</g>
+
+
+<g data-anim="7">
+  <rect x="200" y="630" width="420" height="56" rx="8" class="v-fill" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="410" y="654" text-anchor="middle" class="ttl">Return to client</text>
+  <text x="410" y="674" text-anchor="middle" class="sub">+ fill exact/semantic cache</text>
+</g>
+
+
+<g data-anim="7">
+  <path d="M200,658 Q40,658 40,112 Q40,80 90,80" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="none" stroke-dasharray="5 4" opacity="0.5" marker-end="url(#ccs-arrow-muted)"/>
+  <text x="26" y="400" text-anchor="middle" class="lbl-muted" transform="rotate(-90,26,400)">fill caches</text>
+</g>
+
+
+<path d="M200,658 Q40,658 40,112 Q40,80 90,80" class="feedback-pulse" stroke="var(--good,#2f9e6e)" stroke-width="2.5" fill="none" stroke-dasharray="5 4" opacity="0"/>
+
+
+<circle class="dot-travel" cx="410" cy="42" r="8" fill="var(--accent,#6366f1)" opacity="0"/>
+
+</svg>
+<figcaption><b>Layered production cost-control stack where order matters.</b> Each incoming request first hits cheap exact and semantic caches (returning immediately on a hit), then a fast routing classifier dispatches it to the cheapest capable model tier, results optionally pass through an async batch queue, and the final response fills both caches for future reuse. Short-circuiting at the earliest possible layer is the key to 50-90% cost reduction.</figcaption>
+</figure>

@@ -1,0 +1,154 @@
+<figure class="viz" id="fig-guardrails-production-safety-stack-5stage">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 980" role="img" aria-label="Five-stage production safety stack: a request enters Stage 1 Pre-processing, then Stage 2 Input guardrail (which can block), then Stage 3 Main LLM inference, then Stage 4 Output guardrail (which can block), then Stage 5 Observability; a dashed feedback arrow from Stage 5 returns to earlier stages for policy tuning.">
+  <defs>
+    <marker id="pss-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="pss-arrow-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--danger,#dc2626)"/>
+    </marker>
+    <marker id="pss-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#aaa)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-guardrails-production-safety-stack-5stage .card-title { font: 700 14px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-guardrails-production-safety-stack-5stage .bullet { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#888); }
+    #fig-guardrails-production-safety-stack-5stage .badge-num { font: 700 13px var(--sans,sans-serif); fill: #fff; }
+    #fig-guardrails-production-safety-stack-5stage .req-lbl { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-guardrails-production-safety-stack-5stage .pass-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#888); }
+    #fig-guardrails-production-safety-stack-5stage .danger-lbl { font: 700 10px var(--sans,sans-serif); fill: var(--danger,#dc2626); }
+    #fig-guardrails-production-safety-stack-5stage .feedback-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#aaa); font-style: italic; }
+  </style>
+
+  
+  <g data-anim="1">
+    <rect x="280" y="14" width="160" height="40" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="360" y="39" text-anchor="middle" class="req-lbl">Request</text>
+  </g>
+
+  
+  <line x1="360" y1="54" x2="360" y2="74" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#pss-arrow)" data-anim="1"/>
+
+  
+  <g data-anim="1">
+    <rect x="80" y="78" width="560" height="150" rx="10" class="v-fill v-stroke" stroke-width="2"/>
+    
+    <circle cx="100" cy="153" r="16" fill="var(--accent,#4f46e5)"/>
+    <text x="100" y="158" text-anchor="middle" class="badge-num">1</text>
+    
+    <text x="360" y="102" text-anchor="middle" class="card-title">Pre-processing</text>
+    
+    <text x="130" y="122" class="bullet">&#x2022; Normalize encoding (strip zero-width chars)</text>
+    <text x="130" y="142" class="bullet">&#x2022; Detect &amp; redact PII in user message</text>
+    <text x="130" y="162" class="bullet">&#x2022; Length check (block &gt; 32k tokens, DoS prevention)</text>
+  </g>
+
+  
+  <line x1="360" y1="228" x2="360" y2="248" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#pss-arrow)" data-anim="2"/>
+
+  
+  <g data-anim="2">
+    <rect x="80" y="252" width="560" height="155" rx="10" class="v-fill v-stroke" stroke-width="2"/>
+    
+    <circle cx="100" cy="329" r="16" fill="var(--accent,#4f46e5)"/>
+    <text x="100" y="334" text-anchor="middle" class="badge-num">2</text>
+    
+    <text x="360" y="276" text-anchor="middle" class="card-title">Input Guardrail (fast path)</text>
+    
+    <text x="130" y="298" class="bullet">&#x2022; Jailbreak heuristics (&lt; 0.1 ms)</text>
+    <text x="130" y="318" class="bullet">&#x2022; Policy classifier / Llama Guard input-only</text>
+    <text x="130" y="338" class="bullet">&#x2022; Session-level signals (rate, drift)</text>
+    
+    <text x="130" y="362" class="danger-lbl">BLOCK</text>
+
+    
+    <line x1="178" y1="358" x2="550" y2="358" stroke="var(--danger,#dc2626)" stroke-width="1.5" marker-end="url(#pss-arrow-danger)"/>
+    <rect x="552" y="345" width="68" height="26" rx="5" fill="var(--danger,#dc2626)" fill-opacity="0.15" stroke="var(--danger,#dc2626)" stroke-width="1.3"/>
+    <text x="586" y="362" text-anchor="middle" class="danger-lbl">refusal</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="360" y1="407" x2="360" y2="427" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#pss-arrow)"/>
+    <text x="375" y="422" class="pass-lbl">PASS</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="80" y="431" width="560" height="150" rx="10" class="v-fill" stroke="var(--accent,#4f46e5)" stroke-width="2.5"/>
+    
+    <circle cx="100" cy="506" r="16" fill="var(--accent,#4f46e5)"/>
+    <text x="100" y="511" text-anchor="middle" class="badge-num">3</text>
+    
+    <text x="360" y="455" text-anchor="middle" class="card-title">Main LLM Inference</text>
+    
+    <text x="130" y="477" class="bullet">&#x2022; System prompt with policy reinforcement</text>
+    <text x="130" y="497" class="bullet">&#x2022; Canary token embedded in system prompt</text>
+    <text x="130" y="517" class="bullet">&#x2022; Constrained decoding if structured output needed</text>
+  </g>
+
+  
+  <line x1="360" y1="581" x2="360" y2="601" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#pss-arrow)" data-anim="4"/>
+
+  
+  <g data-anim="4">
+    <rect x="80" y="605" width="560" height="165" rx="10" class="v-fill v-stroke" stroke-width="2"/>
+    
+    <circle cx="100" cy="687" r="16" fill="var(--accent,#4f46e5)"/>
+    <text x="100" y="692" text-anchor="middle" class="badge-num">4</text>
+    
+    <text x="360" y="628" text-anchor="middle" class="card-title">Output Guardrail</text>
+    
+    <text x="130" y="650" class="bullet">&#x2022; Canary leak detector</text>
+    <text x="130" y="670" class="bullet">&#x2022; PII redaction on output text</text>
+    <text x="130" y="690" class="bullet">&#x2022; (prompt, response) harm classifier</text>
+    <text x="130" y="710" class="bullet">&#x2022; Optional: constitutional revision for borderline</text>
+    
+    <text x="130" y="733" class="danger-lbl">BLOCK</text>
+
+    
+    <line x1="178" y1="729" x2="518" y2="729" stroke="var(--danger,#dc2626)" stroke-width="1.5" marker-end="url(#pss-arrow-danger)"/>
+    <rect x="520" y="716" width="76" height="26" rx="5" fill="var(--danger,#dc2626)" fill-opacity="0.15" stroke="var(--danger,#dc2626)" stroke-width="1.3"/>
+    <text x="558" y="733" text-anchor="middle" class="danger-lbl">blocked</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="360" y1="770" x2="360" y2="790" stroke="var(--ink-soft,#555)" stroke-width="1.8" marker-end="url(#pss-arrow)"/>
+    <text x="375" y="785" class="pass-lbl">PASS: return response</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="80" y="794" width="560" height="150" rx="10" class="v-fill v-stroke" stroke-width="2" fill-opacity="0.5"/>
+    
+    <circle cx="100" cy="869" r="16" fill="var(--ink-soft,#666)"/>
+    <text x="100" y="874" text-anchor="middle" class="badge-num">5</text>
+    
+    <text x="360" y="817" text-anchor="middle" class="card-title">Observability</text>
+    
+    <text x="130" y="839" class="bullet">&#x2022; Log: request_id, user_id, guard decisions, scores</text>
+    <text x="130" y="860" class="bullet">&#x2022; Alert: spike in block rates, new jailbreak patterns, canary leaks</text>
+    <text x="130" y="880" class="bullet">&#x2022; Feed to human review queue for policy tuning</text>
+  </g>
+
+  
+  <g data-anim="5">
+    
+    <path d="M82,919 Q30,919 30,600 Q30,329 82,329" fill="none" stroke="var(--muted,#bbb)" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#pss-arrow-muted)"/>
+    
+    <text x="22" y="645" class="feedback-lbl" transform="rotate(-90,22,645)">policy tuning / retraining</text>
+  </g>
+
+  
+  <circle r="7" fill="var(--accent,#4f46e5)" opacity="0.85">
+    <animateMotion dur="4s" repeatCount="indefinite" keyTimes="0;0.1;0.28;0.46;0.62;0.78;0.9;1" calcMode="linear"
+      path="M360,34 L360,153 L360,329 L360,506 L360,687 L360,869 L360,944"/>
+    <animate attributeName="opacity" dur="4s" repeatCount="indefinite"
+      keyTimes="0;0.82;0.9;1" values="0.85;0.85;0;0"/>
+  </circle>
+</svg>
+<figcaption><b>The full production safety stack executes five sequential stages on every request.</b> Pre-processing (Stage 1) normalizes and deduplicates input; the Input Guardrail (Stage 2) runs cheap heuristics and classifiers before the model ever runs; Main LLM Inference (Stage 3) operates only on requests that passed Stage 2; the Output Guardrail (Stage 4) checks generated content for harm, PII, and canary leakage; and Observability (Stage 5) logs all guard decisions to feed ongoing policy tuning — the dashed arrow represents this living feedback loop back into earlier stages.</figcaption>
+</figure>

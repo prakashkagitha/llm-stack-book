@@ -1,0 +1,159 @@
+<figure class="viz" id="fig-gtloop-async-ladder-timelines">
+<button class="viz-replay" type="button">&#x21bb; replay</button>
+<svg viewBox="0 0 900 530" role="img" aria-label="Two-panel timeline comparison: top panel shows synchronous serial scheduling where generation and training alternate with no overlap; bottom panel shows pipelined one-step-stale scheduling where generation of batch k+1 overlaps with training on batch k.">
+  <defs>
+    <marker id="al-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+    </marker>
+    <marker id="al-arrow-dn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="90">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+    </marker>
+    <style>
+      #fig-gtloop-async-ladder-timelines .panel-title { font: 700 13px var(--sans,sans-serif); }
+      #fig-gtloop-async-ladder-timelines .panel-sub   { font: 400 10.5px var(--sans,sans-serif); font-style:italic; }
+      #fig-gtloop-async-ladder-timelines .track-lbl   { font: 700 11px var(--mono,monospace); }
+      #fig-gtloop-async-ladder-timelines .block-lbl   { font: 700 11px var(--sans,sans-serif); }
+      #fig-gtloop-async-ladder-timelines .cap-lbl     { font: 400 9.5px var(--sans,sans-serif); }
+      #fig-gtloop-async-ladder-timelines .annot       { font: 600 10px var(--sans,sans-serif); }
+      #fig-gtloop-async-ladder-timelines .stale-pill  { font: 700 11px var(--sans,sans-serif); }
+      #fig-gtloop-async-ladder-timelines .edge-lbl    { font: 500 10px var(--mono,monospace); }
+      #fig-gtloop-async-ladder-timelines text         { fill: var(--ink-soft,#45413a); }
+      /* Time cursor sweep animation */
+      @keyframes al-cursor-sweep {
+        0%   { transform: translateX(0px); opacity: 0.9; }
+        85%  { transform: translateX(620px); opacity: 0.9; }
+        90%  { transform: translateX(620px); opacity: 0; }
+        100% { transform: translateX(0px); opacity: 0; }
+      }
+      .al-cursor {
+        animation: al-cursor-sweep 6s ease-in-out infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .al-cursor { animation: none; opacity: 0; }
+      }
+    </style>
+  </defs>
+
+  
+  
+  <rect x="10" y="10" width="880" height="210" rx="8" fill="none" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  
+  <text x="30" y="32" class="panel-title" fill="var(--ink-soft,#45413a)">Rung 0 &#xb7; Synchronous, colocated, serial</text>
+  <text x="30" y="47" class="panel-sub v-muted" fill="var(--muted,#6d675d)">one GPU pool; phases strictly serial &#x2014; each idles the other</text>
+
+  
+  <text x="30" y="120" text-anchor="start" class="track-lbl v-muted" fill="var(--muted,#6d675d)">GPUs</text>
+
+  
+  
+  <rect x="80" y="98" width="130" height="38" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="145" y="121" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GENERATE</text>
+
+  
+  <rect x="218" y="98" width="55" height="38" rx="5" fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+  <text x="245" y="121" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#45413a)">train</text>
+
+  
+  <rect x="281" y="98" width="130" height="38" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="346" y="121" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GENERATE</text>
+
+  
+  <rect x="419" y="98" width="55" height="38" rx="5" fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+  <text x="446" y="121" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#45413a)">train</text>
+
+  
+  <rect x="482" y="98" width="130" height="38" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="547" y="121" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GENERATE</text>
+
+  
+  <rect x="620" y="98" width="55" height="38" rx="5" fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+  <text x="647" y="121" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#45413a)">train</text>
+
+  
+  <text x="700" y="121" class="annot v-muted" fill="var(--muted,#6d675d)">...</text>
+
+  
+  <text x="145" y="152" text-anchor="middle" class="cap-lbl v-muted" fill="var(--muted,#6d675d)">engine busy,</text>
+  <text x="145" y="163" text-anchor="middle" class="cap-lbl v-muted" fill="var(--muted,#6d675d)">trainer idle</text>
+  <text x="245" y="152" text-anchor="middle" class="cap-lbl v-muted" fill="var(--muted,#6d675d)">trainer busy,</text>
+  <text x="245" y="163" text-anchor="middle" class="cap-lbl v-muted" fill="var(--muted,#6d675d)">engine idle</text>
+
+  
+  <rect x="720" y="103" width="160" height="28" rx="14" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="800" y="121" text-anchor="middle" class="annot" fill="var(--ink-soft,#45413a)" font-size="9">strictly on-policy, lots of idle GPUs</text>
+
+  
+  <rect class="al-cursor" x="80" y="92" width="8" height="50" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.55"/>
+
+  
+  
+  <rect x="10" y="232" width="880" height="270" rx="8" fill="none" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  
+  <text x="30" y="254" class="panel-title" fill="var(--ink-soft,#45413a)">Rung 2 &#xb7; Pipelined / overlapped (one-step-stale)</text>
+  <text x="30" y="269" class="panel-sub v-muted" fill="var(--muted,#6d675d)">generation of batch k+1 overlaps training on batch k</text>
+
+  
+  <text x="30" y="312" text-anchor="start" class="track-lbl v-muted" fill="var(--muted,#6d675d)">gen</text>
+  <text x="30" y="378" text-anchor="start" class="track-lbl v-muted" fill="var(--muted,#6d675d)">train</text>
+
+  
+  
+  <rect x="80" y="294" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="145" y="315" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GEN k</text>
+  
+  <rect x="218" y="294" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="283" y="315" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GEN k+1</text>
+  
+  <rect x="356" y="294" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="421" y="315" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GEN k+2</text>
+  
+  <rect x="494" y="294" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)"/>
+  <text x="559" y="315" text-anchor="middle" class="block-lbl" fill="var(--surface,#fafafa)">GEN k+3</text>
+  <text x="648" y="315" class="annot v-muted" fill="var(--muted,#6d675d)">...</text>
+
+  
+  
+  <rect x="218" y="360" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+  <text x="283" y="381" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#45413a)">TR k</text>
+  
+  <rect x="356" y="360" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+  <text x="421" y="381" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#45413a)">TR k+1</text>
+  
+  <rect x="494" y="360" width="130" height="34" rx="5" fill="var(--accent,#4f46e5)" fill-opacity="0.35"/>
+  <text x="559" y="381" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#45413a)">TR k+2</text>
+  <text x="648" y="381" class="annot v-muted" fill="var(--muted,#6d675d)">...</text>
+
+  
+  <rect x="218" y="288" width="130" height="112" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="1" stroke-dasharray="4 2"/>
+
+  
+  <text x="283" y="420" text-anchor="middle" class="cap-lbl" fill="var(--accent,#4f46e5)" font-weight="600">overlap: train on k</text>
+  <text x="283" y="432" text-anchor="middle" class="cap-lbl" fill="var(--accent,#4f46e5)" font-weight="600">while gen produces k+1</text>
+  <line x1="218" y1="415" x2="348" y2="415" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+  <line x1="218" y1="410" x2="218" y2="420" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+  <line x1="348" y1="410" x2="348" y2="420" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+
+  
+  
+  <line x1="145" y1="328" x2="218" y2="360" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="4 2" marker-end="url(#al-arrow-dn)"/>
+  <text x="152" y="348" class="edge-lbl" fill="var(--accent,#4f46e5)" font-size="9">weights k-1</text>
+
+  
+  <line x1="283" y1="328" x2="356" y2="360" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="4 2" marker-end="url(#al-arrow-dn)"/>
+
+  
+  <line x1="421" y1="328" x2="494" y2="360" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="4 2" marker-end="url(#al-arrow-dn)"/>
+
+  
+  <rect x="490" y="406" width="220" height="24" rx="12" fill="var(--accent,#4f46e5)" fill-opacity="0.15"/>
+  <text x="600" y="422" text-anchor="middle" class="stale-pill" fill="var(--accent,#4f46e5)">staleness s = 1 (bounded, clip-absorbed)</text>
+
+  
+  <rect class="al-cursor" x="80" y="288" width="8" height="112" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.55"/>
+
+  
+  <line x1="60" y1="510" x2="860" y2="510" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#al-arrow)"/>
+  <text x="870" y="514" class="track-lbl v-muted" fill="var(--muted,#6d675d)">time</text>
+</svg>
+<figcaption><b>Synchronous-serial (Rung 0) vs pipelined one-step-stale (Rung 2): the time-cursor highlights the key difference.</b> In the top panel, the GPU pool alternates between generation and training with each idle while the other runs. In the bottom panel, generation of batch k+1 runs concurrently with training on batch k, eliminating idle time at the cost of exactly one step of staleness — which the PPO/GRPO importance-ratio clip is designed to absorb.</figcaption>
+</figure>

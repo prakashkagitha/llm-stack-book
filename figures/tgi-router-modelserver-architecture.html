@@ -1,0 +1,111 @@
+<figure class="viz" id="fig-tgi-router-modelserver-architecture">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 660 700" role="img" aria-label="TGI architecture: HTTP client sends requests to a Rust Router that queues and validates them, then passes them over a ZeroMQ socket (process boundary) to a Python model server containing Tokenizer, Model, custom FlashAttention kernel, and continuous batching loop.">
+<defs>
+  <marker id="tgi-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <style>
+    #fig-tgi-router-modelserver-architecture text { fill: var(--ink-soft,#45413a); }
+    #fig-tgi-router-modelserver-architecture .title  { font: 700 13px var(--sans,sans-serif); }
+    #fig-tgi-router-modelserver-architecture .sub    { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-tgi-router-modelserver-architecture .note   { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-tgi-router-modelserver-architecture .zmq-lbl{ font: 600 11px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tgi-router-modelserver-architecture .bnd-lbl{ font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-tgi-router-modelserver-architecture .rust-title { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tgi-router-modelserver-architecture .py-title   { font: 700 13px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tgi-router-modelserver-architecture .edge-lbl   { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+    @keyframes tgi-travel {
+      0%   { transform: translateY(0px); opacity: 0; }
+      5%   { opacity: 1; }
+      88%  { opacity: 1; }
+      95%  { transform: translateY(540px); opacity: 0; }
+      100% { transform: translateY(540px); opacity: 0; }
+    }
+    #fig-tgi-router-modelserver-architecture .tgi-dot {
+      animation: tgi-travel 3.4s ease-in-out infinite;
+      transform-origin: 330px 100px;
+    }
+    #fig-tgi-router-modelserver-architecture.paused .tgi-dot {
+      animation-play-state: paused;
+    }
+  </style>
+</defs>
+
+
+<rect x="190" y="20" width="280" height="50" rx="8"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<text x="330" y="43" text-anchor="middle" class="title">HTTP client</text>
+<text x="330" y="59" text-anchor="middle" class="sub">external caller</text>
+
+
+<line x1="330" y1="70" x2="330" y2="100"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tgi-arrow)"/>
+<text x="346" y="89" class="edge-lbl">request</text>
+
+
+<rect x="100" y="102" width="340" height="88" rx="8"
+      class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="2"/>
+<text x="270" y="126" text-anchor="middle" class="rust-title">TGI Router (Rust)</text>
+<text x="270" y="143" text-anchor="middle" class="sub">manages request queues, SSE streaming</text>
+<text x="270" y="158" text-anchor="middle" class="sub">validates inputs, enforces max_total_tokens</text>
+<text x="270" y="175" text-anchor="middle" class="note">HTTP/gRPC routing · low-latency queueing</text>
+
+
+
+
+
+<line x1="330" y1="190" x2="330" y2="252"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.8" marker-end="url(#tgi-arrow)"/>
+<text x="346" y="216" class="zmq-lbl">ZeroMQ socket</text>
+
+
+<line x1="60" y1="228" x2="600" y2="228"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="6,4" opacity="0.5"/>
+<text x="330" y="241" text-anchor="middle" class="bnd-lbl">process boundary (Rust | Python)</text>
+
+
+<rect x="80" y="248" width="500" height="336" rx="10"
+      class="v-fill v-stroke" fill="var(--surface-3,#ece7da)" stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+
+<rect x="80" y="248" width="500" height="32" rx="10"
+      fill="var(--accent,#c15b39)" opacity="0.15"/>
+<rect x="80" y="264" width="500" height="16"
+      fill="var(--accent,#c15b39)" opacity="0.15"/>
+<text x="330" y="270" text-anchor="middle" class="py-title">Python model server</text>
+
+
+<rect x="102" y="290" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+<text x="330" y="312" text-anchor="middle" class="title">Tokenizer</text>
+<text x="330" y="329" text-anchor="middle" class="sub">HF tokenizers (Rust binding)</text>
+
+
+<rect x="102" y="350" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+<text x="330" y="372" text-anchor="middle" class="title">Model</text>
+<text x="330" y="389" text-anchor="middle" class="sub">PyTorch, BF16/FP8, custom CUDA ops</text>
+
+
+<rect x="102" y="410" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="330" y="432" text-anchor="middle" class="rust-title">Custom FlashAttention kernel</text>
+<text x="330" y="449" text-anchor="middle" class="sub">paged or non-paged</text>
+
+
+<rect x="102" y="470" width="456" height="52" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+<text x="330" y="492" text-anchor="middle" class="rust-title">Continuous batching loop</text>
+<text x="330" y="509" text-anchor="middle" class="sub">schedules running batch each decode step</text>
+
+
+<text x="330" y="608" text-anchor="middle" class="note">response streamed back up the same path via SSE</text>
+
+
+<circle cx="330" cy="100" r="5" fill="var(--accent,#c15b39)" opacity="0.85" class="tgi-dot"/>
+
+</svg>
+<figcaption><b>TGI architecture: Rust router and Python model server.</b> The Rust front-end handles all HTTP/gRPC routing, request queuing, SSE streaming, and input validation at low latency, then hands requests to the Python model server over a ZeroMQ inter-process socket. The Python side runs the PyTorch model with a custom FlashAttention kernel and a continuous batching loop that schedules the active batch at each decode step.</figcaption>
+</figure>
+

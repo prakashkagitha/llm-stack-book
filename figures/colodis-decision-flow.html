@@ -1,0 +1,116 @@
+<figure class="viz" id="fig-colodis-decision-flow">
+<svg viewBox="0 0 900 720" role="img" aria-label="Decision tree for RL placement: three yes/no diamonds guide from rollout-bound? through multi-node hardware? and staleness-tolerant algo? to ASYNC DISAGGREGATED at the bottom, with three off-ramp terminals to the right.">
+<defs>
+  <marker id="df-arr-yes" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="df-arr-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+  <style>
+    #fig-colodis-decision-flow .ttl    { font: 700 14px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .dlbl   { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .dsub   { font: 400 9.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .yes-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .no-lbl  { font: 700 11px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .th     { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .tb     { font: 400 10px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .fh     { font: 800 14px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .fb     { font: 400 10.5px var(--sans,sans-serif); }
+    #fig-colodis-decision-flow .fi     { font: italic 400 10px var(--sans,sans-serif); }
+  </style>
+</defs>
+
+
+<text x="450" y="21" text-anchor="middle" class="ttl v-label">Placement Decision Framework</text>
+<line x1="130" y1="28" x2="770" y2="28" class="v-grid" stroke="currentColor" stroke-width="0.7" opacity="0.5"/>
+
+
+
+
+<polygon points="175,53 268,85 175,117 82,85"
+  class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.0"/>
+<text x="175" y="81" text-anchor="middle" class="dlbl v-label">rollout-bound?</text>
+<text x="175" y="95" text-anchor="middle" class="dsub v-muted">T_rollout &gt; T_train?</text>
+
+<line x1="175" y1="117" x2="175" y2="232" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#df-arr-yes)"/>
+<text x="162" y="176" text-anchor="end" class="yes-lbl" fill="var(--accent,#c15b39)">yes</text>
+
+
+<polygon points="175,232 268,257 175,282 82,257"
+  class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.0"/>
+<text x="175" y="253" text-anchor="middle" class="dlbl v-label">multi-node hardware?</text>
+<text x="175" y="267" text-anchor="middle" class="dsub v-muted">&gt;1 node / &gt;8 GPUs?</text>
+
+<line x1="175" y1="282" x2="175" y2="402" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#df-arr-yes)"/>
+<text x="162" y="344" text-anchor="end" class="yes-lbl" fill="var(--accent,#c15b39)">yes</text>
+
+
+<polygon points="175,402 268,427 175,452 82,427"
+  class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.0"/>
+<text x="175" y="423" text-anchor="middle" class="dlbl v-label">staleness-tolerant algo?</text>
+<text x="175" y="437" text-anchor="middle" class="dsub v-muted">PPO/GRPO + IS ratio?</text>
+
+<line x1="175" y1="452" x2="175" y2="534" stroke="var(--accent,#c15b39)" stroke-width="2.0" marker-end="url(#df-arr-yes)"/>
+<text x="162" y="495" text-anchor="end" class="yes-lbl" fill="var(--accent,#c15b39)">yes</text>
+
+
+<rect x="22" y="537" width="858" height="170" rx="10"
+  fill="var(--accent,#c15b39)" fill-opacity="0.12"
+  stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+<text x="450" y="561" text-anchor="middle" class="fh" fill="var(--accent,#c15b39)">ASYNC DISAGGREGATED</text>
+<line x1="270" y1="569" x2="630" y2="569" stroke="var(--accent,#c15b39)" stroke-width="1.2" opacity="0.5"/>
+<text x="450" y="588" text-anchor="middle" class="fb v-label">Independent pool sizing: allocate rollout GPUs so T_rollout is the sole critical-path stage.</text>
+<text x="450" y="606" text-anchor="middle" class="fb v-label">Pipelined overlap: rollout cluster generates the next batch while trainer computes gradient steps.</text>
+<text x="450" y="624" text-anchor="middle" class="fb v-label">Weight sync via NCCL broadcast every step with resharding (gather, fuse Q|K|V, re-split, scatter).</text>
+<text x="450" y="642" text-anchor="middle" class="fb v-label">Staleness = 1, corrected by PPO/GRPO importance ratio  rho = pi_theta / pi_theta_old.</text>
+<text x="450" y="660" text-anchor="middle" class="fi v-muted">Use when: rollout-bound + multi-node + staleness-tolerant algorithm (e.g. GRPO, PPO with clipping).</text>
+<text x="450" y="696" text-anchor="middle" class="fi v-muted">Frameworks: veRL (disaggregated mode), OpenRLHF (Ray+vLLM), Prime-RL (fully async decoupled).</text>
+
+
+
+
+<line x1="268" y1="85" x2="308" y2="85"
+  stroke="var(--ink-soft,#45413a)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#df-arr-no)"/>
+<text x="288" y="77" text-anchor="middle" class="no-lbl v-muted">no</text>
+
+
+<rect x="310" y="40" width="572" height="96" rx="8"
+  class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1.3"/>
+<text x="596" y="60" text-anchor="middle" class="th v-label">colocated time-slice + offload  (simple, ~1:1)</text>
+<text x="596" y="75" text-anchor="middle" class="tb v-muted">Trainer and rollout share GPUs; phases run serially via time-slicing.</text>
+<text x="596" y="89" text-anchor="middle" class="tb v-muted">Offload optimizer state (Adam m, v, fp32 master ~12P bytes) to host RAM.</text>
+<text x="596" y="103" text-anchor="middle" class="tb v-muted">Sync via CUDA IPC / aliased weight tensors (zero-copy, same-node).</text>
+<text x="596" y="117" text-anchor="middle" class="tb v-muted">Best for: single-node, short completions, strictly on-policy runs.</text>
+
+
+<polyline points="268,257 295,257 295,203 308,203"
+  fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#df-arr-no)"/>
+<text x="282" y="249" text-anchor="middle" class="no-lbl v-muted">no</text>
+
+
+<rect x="310" y="160" width="572" height="86" rx="8"
+  class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1.3"/>
+<text x="596" y="180" text-anchor="middle" class="th v-label">colocated; consider MPS / partition for small models</text>
+<text x="596" y="196" text-anchor="middle" class="tb v-muted">Small model or LoRA policy: simultaneous colocation via NVIDIA MPS or MIG.</text>
+<text x="596" y="211" text-anchor="middle" class="tb v-muted">Watch HBM bandwidth contention between the two co-resident workloads.</text>
+<text x="596" y="226" text-anchor="middle" class="tb v-muted">Sync via CUDA IPC. Confined to a single node; no network overhead.</text>
+
+
+<polyline points="268,427 295,427 295,384 308,384"
+  fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#df-arr-no)"/>
+<text x="282" y="419" text-anchor="middle" class="no-lbl v-muted">no</text>
+
+
+<rect x="310" y="310" width="572" height="120" rx="8"
+  class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1.3"/>
+<text x="596" y="330" text-anchor="middle" class="th v-label">synchronous disaggregated  (overlap off)</text>
+<text x="596" y="346" text-anchor="middle" class="tb v-muted">Separate training and rollout pools; no pipelining overlap between phases.</text>
+<text x="596" y="361" text-anchor="middle" class="tb v-muted">Rollout pool idles while trainer runs; trainer idles during rollout generation.</text>
+<text x="596" y="376" text-anchor="middle" class="tb v-muted">Sync via NCCL broadcast every step. Staleness = 0, strictly on-policy.</text>
+<text x="596" y="391" text-anchor="middle" class="tb v-muted">Cost: one pool always idle; pays disaggregation cost without the overlap win.</text>
+<text x="596" y="406" text-anchor="middle" class="tb v-muted">Use for: strictly on-policy algorithms or when off-policy data causes instability.</text>
+<text x="596" y="421" text-anchor="middle" class="tb v-muted">Sync mechanism: NCCL broadcast (not IPC — pools live on separate nodes).</text>
+</svg>
+<figcaption><b>Decision tree for colocated vs disaggregated RL placement.</b> Follow the spine downward: each "yes" advances toward the fully pipelined async disaggregated design (highlighted), while each "no" exits right to a simpler strategy. Long-chain reasoning runs on multi-node clusters with GRPO typically land at the ASYNC DISAGGREGATED terminal.</figcaption>
+</figure>

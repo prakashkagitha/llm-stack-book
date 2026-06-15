@@ -1,0 +1,139 @@
+<figure class="viz" id="fig-attn-sdpa-pipeline-masked">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 700 720" role="img" aria-label="Scaled dot-product attention pipeline: Q and K enter a matrix multiply to form the n-by-n score matrix, divided by sqrt d_k for variance-preserving scale, an optional mask sets forbidden positions to negative infinity, row-wise softmax produces attention weights A, and finally A times V blends the values to produce the output of shape n by d_v. V bypasses the early operations and enters only at the final blend.">
+<defs>
+  <marker id="sdpa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="currentColor"/>
+  </marker>
+  <marker id="sdpa-arrow-v" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+</defs>
+<style>
+  #fig-attn-sdpa-pipeline-masked text { fill: currentColor; }
+  #fig-attn-sdpa-pipeline-masked .inp-lbl  { font: 700 22px var(--sans,sans-serif); }
+  #fig-attn-sdpa-pipeline-masked .inp-sub  { font: 400 11px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .inp-role { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .op-lbl   { font: 600 13px var(--sans,sans-serif); }
+  #fig-attn-sdpa-pipeline-masked .op-cap   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .shape    { font: 400 10px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-attn-sdpa-pipeline-masked .out-lbl  { font: 700 16px var(--sans,sans-serif); }
+</style>
+
+
+
+
+<g data-anim="1">
+  <rect x="40" y="20" width="110" height="68" rx="8" fill="var(--accent,#f59e0b)" fill-opacity="0.18" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="95" y="52" text-anchor="middle" class="inp-lbl" fill="var(--accent,#f59e0b)">Q</text>
+  <text x="95" y="68" text-anchor="middle" class="inp-sub">(n × d_k)</text>
+  <text x="95" y="82" text-anchor="middle" class="inp-role">what I seek</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="240" y="20" width="110" height="68" rx="8" fill="var(--muted,#94a3b8)" fill-opacity="0.12" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+  <text x="295" y="52" text-anchor="middle" class="inp-lbl" fill="var(--muted,#94a3b8)">K</text>
+  <text x="295" y="68" text-anchor="middle" class="inp-sub">(n × d_k)</text>
+  <text x="295" y="82" text-anchor="middle" class="inp-role">the keys</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="490" y="20" width="110" height="68" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="545" y="52" text-anchor="middle" class="inp-lbl" fill="var(--accent2,#3b82f6)">V</text>
+  <text x="545" y="68" text-anchor="middle" class="inp-sub">(n × d_v)</text>
+  <text x="545" y="82" text-anchor="middle" class="inp-role">the values</text>
+</g>
+
+
+<line x1="95" y1="88" x2="190" y2="150" stroke="var(--accent,#f59e0b)" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<line x1="295" y1="88" x2="245" y2="150" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+
+
+<g data-anim="2">
+  <rect x="130" y="155" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="179" text-anchor="middle" class="op-lbl">Q K&#x1D40;</text>
+  <text x="222" y="196" text-anchor="middle" class="op-cap">matmul of queries and keys</text>
+  
+  <text x="338" y="179" text-anchor="start" class="shape">score matrix S</text>
+  <text x="338" y="193" text-anchor="start" class="shape">(n × n)</text>
+</g>
+
+
+<line x1="222" y1="213" x2="222" y2="248" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<text x="232" y="235" text-anchor="start" class="shape">(n×n)</text>
+
+
+<g data-anim="2">
+  <rect x="130" y="253" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="277" text-anchor="middle" class="op-lbl">/ sqrt(d_k)</text>
+  <text x="222" y="294" text-anchor="middle" class="op-cap">scale (variance -&gt; 1)</text>
+  
+  <text x="325" y="277" text-anchor="start" class="shape">variance-preserving</text>
+  <text x="325" y="291" text-anchor="start" class="shape">scale (Var-&gt;1)</text>
+</g>
+
+
+<line x1="222" y1="311" x2="222" y2="346" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+
+
+<g data-anim="3">
+  <rect x="130" y="351" width="185" height="58" rx="8" fill="var(--surface,#1e293b)" fill-opacity="0.3" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="222" y="375" text-anchor="middle" class="op-lbl">+ mask (optional)</text>
+  <text x="222" y="392" text-anchor="middle" class="op-cap">causal / padding</text>
+  
+  <text x="325" y="375" text-anchor="start" class="shape">forbidden -&gt; -inf</text>
+  <text x="325" y="389" text-anchor="start" class="shape">causal / padding</text>
+</g>
+
+
+<line x1="222" y1="409" x2="222" y2="444" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+
+
+<g data-anim="4">
+  <rect x="130" y="449" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="473" text-anchor="middle" class="op-lbl">softmax (row-wise)</text>
+  <text x="222" y="490" text-anchor="middle" class="op-cap">over key axis (dim = -1)</text>
+  
+  <text x="325" y="470" text-anchor="start" class="shape">A  (n × n)</text>
+  <text x="325" y="484" text-anchor="start" class="shape">rows sum to 1</text>
+</g>
+
+
+<line x1="222" y1="507" x2="222" y2="542" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<text x="232" y="529" text-anchor="start" class="shape">A (n×n)</text>
+
+
+<g data-anim="5">
+  <rect x="130" y="547" width="185" height="58" rx="8" class="v-fill" stroke="currentColor" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.5"/>
+  <text x="222" y="571" text-anchor="middle" class="op-lbl">A V</text>
+  <text x="222" y="588" text-anchor="middle" class="op-cap">blend values by weights</text>
+</g>
+
+
+<line x1="222" y1="605" x2="222" y2="642" stroke="currentColor" stroke-width="1.5" marker-end="url(#sdpa-arrow)"/>
+<text x="232" y="628" text-anchor="start" class="shape">(n×d_v)</text>
+
+
+<g data-anim="5">
+  <rect x="142" y="647" width="162" height="52" rx="10" fill="var(--accent,#f59e0b)" fill-opacity="0.22" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+  <text x="223" y="669" text-anchor="middle" class="out-lbl" fill="var(--accent,#f59e0b)">output</text>
+  <text x="223" y="688" text-anchor="middle" class="inp-sub">(n × d_v)</text>
+</g>
+
+
+<g data-anim="1">
+  
+  <line x1="545" y1="88" x2="545" y2="558" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  
+  <line x1="545" y1="558" x2="320" y2="576" stroke="var(--accent2,#3b82f6)" stroke-width="1.5" marker-end="url(#sdpa-arrow-v)"/>
+  
+  <text x="555" y="350" text-anchor="start" class="shape" fill="var(--accent2,#3b82f6)">V bypasses</text>
+  <text x="555" y="363" text-anchor="start" class="shape" fill="var(--accent2,#3b82f6)">score ops</text>
+  <text x="555" y="376" text-anchor="start" class="shape" fill="var(--accent2,#3b82f6)">enters here</text>
+</g>
+
+</svg>
+<figcaption><b>Scaled dot-product attention as a sequential pipeline.</b> Queries and keys enter a matrix multiply producing the n×n score matrix; a /sqrt(d_k) scale keeps variance at 1; an optional mask zeros out forbidden positions; row-wise softmax converts scores to attention weights A; and finally A multiplies V to blend the value vectors. Note that V bypasses the entire score computation and enters only at the final blend step.</figcaption>
+</figure>

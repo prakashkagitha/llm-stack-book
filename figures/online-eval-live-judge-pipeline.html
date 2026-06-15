@@ -1,0 +1,132 @@
+<figure class="viz" id="fig-online-eval-live-judge-pipeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 660 660" role="img" aria-label="Live judge pipeline: all production requests enter a sampler that filters to 0.5%, sampled pairs flow through an async queue to a judge dispatcher that routes most to LLM-as-judge (high coverage) and a trickle to human raters (high fidelity), both feeding a quality score DB and real-time dashboard.">
+  <defs>
+    <marker id="lj-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-online-eval-live-judge-pipeline text { fill: var(--ink-soft,#334155); font-family: var(--sans,sans-serif); }
+    #fig-online-eval-live-judge-pipeline .title { font: 600 13px var(--sans,sans-serif); }
+    #fig-online-eval-live-judge-pipeline .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-online-eval-live-judge-pipeline .edge-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+
+    /* request dots */
+    @media (prefers-reduced-motion: no-preference) {
+      /* dot 1 — passes sampler */
+      #fig-online-eval-live-judge-pipeline .pass1 {
+        animation: lj-pass 4s 0s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 330 202 L 330 258 L 330 322 L 215 402 L 215 456 L 215 506 L 330 560 L 330 618");
+        offset-distance: 0%;
+      }
+      /* dot 2 — passes sampler (human path) */
+      #fig-online-eval-live-judge-pipeline .pass2 {
+        animation: lj-pass 4s 0.4s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 330 202 L 330 258 L 330 322 L 445 402 L 445 456 L 445 506 L 330 560 L 330 618");
+        offset-distance: 0%;
+      }
+      /* dot A — filtered out left */
+      #fig-online-eval-live-judge-pipeline .drop1 {
+        animation: lj-drop 4s 0.1s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 240 200");
+        offset-distance: 0%;
+      }
+      /* dot B — filtered out right */
+      #fig-online-eval-live-judge-pipeline .drop2 {
+        animation: lj-drop 4s 0.6s ease-in-out infinite;
+        offset-path: path("M 330 84 L 330 148 L 420 200");
+        offset-distance: 0%;
+      }
+      @keyframes lj-pass {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        4%   { opacity: 1; }
+        82%  { offset-distance: 100%; opacity: 1; }
+        90%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+      @keyframes lj-drop {
+        0%   { offset-distance: 0%;   opacity: 0; }
+        4%   { opacity: 1; }
+        30%  { offset-distance: 100%; opacity: 0.7; }
+        45%  { offset-distance: 100%; opacity: 0; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+    }
+  </style>
+
+  
+  <rect x="180" y="18" width="300" height="44" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="330" y="45" text-anchor="middle" class="title">All production requests</text>
+
+  
+  <line x1="330" y1="62" x2="330" y2="106" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+  
+  <rect x="210" y="108" width="240" height="56" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="330" y="130" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Sampler</text>
+  <text x="330" y="147" text-anchor="middle" class="sub">0.5% uniform + oversampled edge cases</text>
+
+  
+  <line x1="214" y1="136" x2="165" y2="136" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="130" y="139" text-anchor="middle" class="edge-lbl" fill="var(--muted,#94a3b8)">filtered</text>
+  <line x1="446" y1="136" x2="495" y2="136" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="530" y="139" text-anchor="middle" class="edge-lbl" fill="var(--muted,#94a3b8)">filtered</text>
+
+  
+  <line x1="330" y1="164" x2="330" y2="204" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+  <text x="330" y="195" text-anchor="middle" class="edge-lbl">sampled (request, response) pairs</text>
+
+  
+  <rect x="210" y="206" width="240" height="44" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="330" y="233" text-anchor="middle" class="title">Async judging queue</text>
+
+  
+  <line x1="330" y1="250" x2="330" y2="294" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+  
+  <rect x="190" y="296" width="280" height="56" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="330" y="318" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Judge dispatcher</text>
+  <text x="330" y="334" text-anchor="middle" class="sub">round-robin or model-specific routing</text>
+
+  
+  <line x1="290" y1="352" x2="215" y2="400" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+  
+  <line x1="370" y1="352" x2="445" y2="400" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+  
+  <rect x="120" y="402" width="190" height="64" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="215" y="424" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">LLM-as-Judge</text>
+  <text x="215" y="440" text-anchor="middle" class="sub">high coverage</text>
+  <text x="215" y="454" text-anchor="middle" class="sub">low cost</text>
+
+  
+  <rect x="350" y="402" width="190" height="64" rx="8" fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="445" y="424" text-anchor="middle" class="title">Human raters</text>
+  <text x="445" y="440" text-anchor="middle" class="sub">high fidelity</text>
+  <text x="445" y="454" text-anchor="middle" class="sub">low coverage</text>
+
+  
+  <line x1="215" y1="466" x2="290" y2="514" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+  <line x1="445" y1="466" x2="370" y2="514" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+  
+  <rect x="220" y="516" width="220" height="46" rx="8" fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="330" y="544" text-anchor="middle" class="title">Quality score DB</text>
+
+  
+  <line x1="330" y1="562" x2="330" y2="596" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#lj-arrow)"/>
+
+  
+  <rect x="200" y="598" width="260" height="46" rx="8" fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="330" y="618" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Real-time dashboard</text>
+  <text x="330" y="634" text-anchor="middle" class="sub">rolling 24h window</text>
+
+  
+  <circle class="pass1" r="5" fill="var(--accent,#6366f1)" opacity="0"/>
+  <circle class="pass2" r="5" fill="var(--ink-soft,#475569)" opacity="0"/>
+  <circle class="drop1" r="4" fill="var(--muted,#94a3b8)" opacity="0"/>
+  <circle class="drop2" r="4" fill="var(--muted,#94a3b8)" opacity="0"/>
+</svg>
+<figcaption><b>Live judge pipeline: continuous quality measurement on sampled production traffic.</b> A stratified sampler passes roughly 0.5% of live requests downstream; most filtered requests are dropped. Surviving pairs are queued, then dispatched — most to the LLM judge for broad coverage, a small trickle to human raters for ground-truth calibration. Both feed a quality score database surfaced on a rolling 24-hour dashboard.</figcaption>
+</figure>

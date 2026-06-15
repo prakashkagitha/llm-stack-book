@@ -1,0 +1,139 @@
+<figure class="viz" id="fig-colodis-rl-iteration-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 360" role="img" aria-label="One RL iteration loop: Dataset sends prompts to Rollout inference engine, which sends completions to Reward verifier, which passes advantages to Trainer, and Trainer syncs updated weights back to Rollout, closing the cycle.">
+  <defs>
+    <marker id="rl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#666)"/>
+    </marker>
+    <marker id="rl-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#0ea5e9)"/>
+    </marker>
+    <style>
+      @keyframes rl-pulse-dot {
+        0%   { opacity: 0; }
+        5%   { opacity: 1; }
+        20%  { opacity: 1; }
+        30%  { opacity: 0; }
+        100% { opacity: 0; }
+      }
+      @keyframes rl-march {
+        0%   { stroke-dashoffset: 24; }
+        100% { stroke-dashoffset: 0; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .rl-dot, .rl-march-path { animation: none !important; opacity: 0.7; }
+        .rl-dot { display: block !important; }
+      }
+      #fig-colodis-rl-iteration-loop .lbl { font: 600 13px var(--sans,sans-serif); }
+      #fig-colodis-rl-iteration-loop .sub { font: 400 10px var(--sans,sans-serif); }
+      #fig-colodis-rl-iteration-loop .edge-lbl { font: 500 11px var(--sans,sans-serif); }
+      #fig-colodis-rl-iteration-loop text { fill: var(--ink-soft,#333); }
+      #fig-colodis-rl-iteration-loop .v-muted { fill: var(--muted,#888); }
+    </style>
+  </defs>
+
+  
+  <g data-anim="1">
+    <rect x="20" y="50" width="130" height="64" rx="8" class="v-fill v-stroke" stroke="var(--border-2,#aaa)" stroke-width="1.5" fill="var(--surface,#f8f9fa)"/>
+    <text x="85" y="78" text-anchor="middle" class="lbl">Dataset</text>
+    <text x="85" y="96" text-anchor="middle" class="sub v-muted">prompt source</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="240" y="30" width="170" height="94" rx="8" stroke="var(--accent,#0ea5e9)" stroke-width="2" fill="var(--surface,#f8f9fa)" class="v-fill"/>
+    <rect x="240" y="30" width="170" height="94" rx="8" fill="var(--accent,#0ea5e9)" fill-opacity="0.08" stroke="none"/>
+    <text x="325" y="62" text-anchor="middle" class="lbl" fill="var(--accent,#0ea5e9)">ROLLOUT</text>
+    <text x="325" y="78" text-anchor="middle" class="sub" fill="var(--accent,#0ea5e9)">(inference engine)</text>
+    <text x="325" y="96" text-anchor="middle" class="sub v-muted">autoregressive decode, KV cache</text>
+    <text x="325" y="112" text-anchor="middle" class="sub v-muted">memory-bandwidth bound</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="550" y="50" width="190" height="64" rx="8" class="v-fill v-stroke" stroke="var(--border-2,#aaa)" stroke-width="1.5" fill="var(--surface,#f8f9fa)"/>
+    <text x="645" y="78" text-anchor="middle" class="lbl">REWARD</text>
+    <text x="645" y="96" text-anchor="middle" class="sub v-muted">(verifier / sandbox)</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="500" y="230" width="220" height="95" rx="8" stroke="var(--accent-2,#c2410c)" stroke-width="2" fill="var(--surface,#f8f9fa)" class="v-fill"/>
+    <rect x="500" y="230" width="220" height="95" rx="8" fill="var(--accent-2,#c2410c)" fill-opacity="0.08" stroke="none"/>
+    <text x="610" y="263" text-anchor="middle" class="lbl" fill="var(--accent-2,#c2410c)">TRAINER</text>
+    <text x="610" y="280" text-anchor="middle" class="sub" fill="var(--accent-2,#c2410c)">(fwd + bwd)</text>
+    <text x="610" y="297" text-anchor="middle" class="sub v-muted">holds optimizer state,</text>
+    <text x="610" y="311" text-anchor="middle" class="sub v-muted">~16P bytes</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="150" y1="82" x2="238" y2="82" stroke="var(--ink-soft,#666)" stroke-width="1.5" marker-end="url(#rl-arrow)"/>
+    <text x="194" y="72" text-anchor="middle" class="edge-lbl">prompts</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="410" y1="78" x2="548" y2="78" stroke="var(--ink-soft,#666)" stroke-width="1.5" marker-end="url(#rl-arrow)"/>
+    <text x="479" y="68" text-anchor="middle" class="edge-lbl">completions</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="640" y1="114" x2="640" y2="228" stroke="var(--ink-soft,#666)" stroke-width="1.5" marker-end="url(#rl-arrow)"/>
+    <text x="695" y="178" text-anchor="middle" class="edge-lbl">advantages</text>
+  </g>
+
+  
+  <g data-anim="5">
+    
+    <path id="rl-sync-path" d="M500,277 L160,277 L160,124 L240,124" fill="none" stroke="var(--accent,#0ea5e9)" stroke-width="2.5" stroke-dasharray="8 4" marker-end="url(#rl-arrow-accent)" class="rl-march-path"/>
+    <text x="192" y="222" text-anchor="middle" class="edge-lbl" fill="var(--accent,#0ea5e9)">weights</text>
+    <text x="192" y="238" text-anchor="middle" class="edge-lbl" fill="var(--accent,#0ea5e9)">(sync)</text>
+  </g>
+
+  
+  <path d="M500,277 L160,277 L160,124 L240,124" fill="none" stroke="var(--accent,#0ea5e9)" stroke-width="2.5" stroke-dasharray="8 4" stroke-dashoffset="0" opacity="0.6"
+        style="animation: rl-march 1.2s linear infinite;"/>
+
+  
+  
+  <circle class="rl-dot" r="5" fill="var(--accent,#0ea5e9)"
+    style="animation: rl-pulse-dot 4s ease-in-out 0s infinite; offset-path: path('M150,82 L238,82');">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="0s">
+      <mpath href="#rl-path-ab"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.12;0.18;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="0s"/>
+  </circle>
+  <path id="rl-path-ab" d="M150,82 L238,82" fill="none" stroke="none"/>
+
+  
+  <circle r="5" fill="var(--accent,#0ea5e9)">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="0.8s">
+      <mpath href="#rl-path-bc"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.12;0.18;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="0.8s"/>
+  </circle>
+  <path id="rl-path-bc" d="M410,78 L548,78" fill="none" stroke="none"/>
+
+  
+  <circle r="5" fill="var(--ink-soft,#888)">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="1.6s">
+      <mpath href="#rl-path-cd"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.12;0.18;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="1.6s"/>
+  </circle>
+  <path id="rl-path-cd" d="M640,114 L640,228" fill="none" stroke="none"/>
+
+  
+  <circle r="6" fill="var(--accent,#0ea5e9)">
+    <animateMotion dur="4s" repeatCount="indefinite" begin="2.4s">
+      <mpath href="#rl-path-db"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;0;0;0;0;0" keyTimes="0;0.03;0.18;0.25;0.5;0.75;0.9;1" dur="4s" repeatCount="indefinite" begin="2.4s"/>
+  </circle>
+  <path id="rl-path-db" d="M500,277 L160,277 L160,124 L240,124" fill="none" stroke="none"/>
+
+</svg>
+<figcaption><b>One complete RL iteration: Dataset → Rollout → Reward → Trainer → weight sync → Rollout.</b> The rollout engine (inference-bound, teal) generates completions from prompts; the reward verifier scores them and computes advantages; the trainer (compute-bound, orange) runs forward+backward; and the updated weights flow back to the rollout engine via the emphasized sync arrow, closing the loop. The dashed animated return arrow is the architectural crux: weight synchronization after every optimizer step is what keeps the rollout policy fresh.</figcaption>
+</figure>

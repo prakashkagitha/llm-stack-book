@@ -1,0 +1,125 @@
+<figure class="viz" id="fig-redteam-llm-feedback-loop">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 540" role="img" aria-label="Automated red-teaming loop: a Red-team LLM attacker generates adversarial prompts fed to a Target LLM, whose responses are scored by a Judge classifier, which sends a harm signal feedback back to the attacker in a closed loop.">
+  <defs>
+    <marker id="rl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="rl-arrow-danger" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    
+    
+  </defs>
+  <style>
+    #fig-redteam-llm-feedback-loop text { fill: var(--ink-soft); }
+    #fig-redteam-llm-feedback-loop .node-lbl  { font: 700 14px var(--sans,sans-serif); }
+    #fig-redteam-llm-feedback-loop .node-sub  { font: 500 11px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-redteam-llm-feedback-loop .arrow-lbl { font: 500 11px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-redteam-llm-feedback-loop .fb-lbl    { font: 600 11px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+
+    /* Respect reduced motion: hide animated dot */
+    @media (prefers-reduced-motion: reduce) {
+      #fig-redteam-llm-feedback-loop .motion-dot { display: none; }
+      #fig-redteam-llm-feedback-loop .motion-pulse { animation: none !important; }
+    }
+
+    /* Node pulse on arrival */
+    @keyframes rl-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+
+  
+  <g data-anim="1" id="rl-node1">
+    <rect x="170" y="40" width="340" height="72" rx="10"
+          fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/>
+    <text x="340" y="71" text-anchor="middle" class="node-lbl" fill="var(--surface,#fff)">Red-team LLM</text>
+    <text x="340" y="91" text-anchor="middle" class="node-sub" fill="var(--surface,#fff)" opacity="0.85">(attacker)</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="340" y1="112" x2="340" y2="192"
+          stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+          marker-end="url(#rl-arrow)"/>
+    <text x="352" y="155" class="arrow-lbl">generates adversarial prompts</text>
+  </g>
+
+  
+  <g data-anim="2" id="rl-node2">
+    <rect x="170" y="196" width="340" height="72" rx="10"
+          fill="var(--accent)" fill-opacity="0.12"
+          stroke="var(--accent)" stroke-width="1.8"/>
+    <text x="340" y="227" text-anchor="middle" class="node-lbl">Target LLM</text>
+    <text x="340" y="247" text-anchor="middle" class="node-sub">(model under test)</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="340" y1="268" x2="340" y2="348"
+          stroke="var(--border-2,#94a3b8)" stroke-width="1.8"
+          marker-end="url(#rl-arrow)"/>
+    <text x="352" y="311" class="arrow-lbl">produces responses</text>
+  </g>
+
+  
+  <g data-anim="3" id="rl-node3">
+    <rect x="170" y="352" width="340" height="72" rx="10"
+          fill="var(--warn,#e0a106)" fill-opacity="0.13"
+          stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <text x="340" y="383" text-anchor="middle" class="node-lbl">Judge / Classifier</text>
+    <text x="340" y="403" text-anchor="middle" class="node-sub">scores harm (0–1)</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <text x="340" y="444" text-anchor="middle" class="arrow-lbl">scores harm</text>
+  </g>
+
+  
+  
+  <g data-anim="4">
+    <path d="M510 388 C570 388 620 350 620 280 C620 200 620 140 620 76 C620 76 580 76 510 76"
+          fill="none"
+          stroke="var(--warn,#e0a106)"
+          stroke-width="2"
+          stroke-dasharray="6 4"
+          marker-end="url(#rl-arrow-danger)"/>
+    
+    <text x="636" y="200" text-anchor="start" class="fb-lbl" transform="rotate(-90 636 200)">Feedback: harm signal</text>
+    <text x="648" y="200" text-anchor="start" class="fb-lbl" transform="rotate(-90 648 200)">steers attacker</text>
+  </g>
+
+  
+  
+  <g class="motion-dot">
+    
+    <circle r="7" cx="340" cy="112" fill="var(--accent)" opacity="0.9">
+      <animateMotion dur="4s" repeatCount="indefinite" rotate="auto"
+                     calcMode="linear">
+        <mpath href="#rl-forward-path"/>
+      </animateMotion>
+      
+      <animate attributeName="fill"
+               values="var(--accent);var(--accent);var(--warn,#e0a106);var(--warn,#e0a106);var(--accent)"
+               dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="r"
+               values="6;6;7;7;6"
+               dur="4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  
+  
+  
+  <path id="rl-forward-path"
+        d="M340 112 L340 196 L340 268 L340 352 L510 388 C570 388 620 350 620 280 C620 200 620 140 620 76 C620 76 580 76 510 76 L340 76 L340 112"
+        fill="none" stroke="none"/>
+
+  
+  <text x="360" y="518" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--muted)">Perez et al. (2022) — LLM-based red-teaming feedback loop</text>
+</svg>
+<figcaption><b>Automated red-teaming closes the loop between an attacker LLM, a target, and a harm judge.</b> The attacker generates adversarial prompts at scale; the target model responds; a classifier scores harm; and that score flows back as a training or steering signal to the attacker, so subsequent generations focus on more effective attacks. The dashed orange arc is the key ingredient: without it, the attacker produces random prompts — with it, the system self-improves toward maximally harmful inputs.</figcaption>
+</figure>

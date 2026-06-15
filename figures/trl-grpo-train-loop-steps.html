@@ -1,0 +1,212 @@
+<figure class="viz" id="fig-trl-grpo-train-loop-steps">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 770 800" role="img" aria-label="The 7-step GRPO per-batch training loop: Rollout, Reward, Advantage, Log Probs, KL, Loss, Backward plus Optimizer Step, with a loop-back arrow from step 7 to step 1.">
+<defs>
+  <marker id="gts-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="gts-arr-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-trl-grpo-train-loop-steps text { fill: currentColor; }
+  #fig-trl-grpo-train-loop-steps .hdr  { font: 700 13px var(--sans,sans-serif); }
+  #fig-trl-grpo-train-loop-steps .snum { font: 700 12px var(--sans,sans-serif); fill: var(--surface-3,#f1f5f9); }
+  #fig-trl-grpo-train-loop-steps .stitle{ font: 700 13px var(--sans,sans-serif); }
+  #fig-trl-grpo-train-loop-steps .stext{ font: 400 10.5px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-trl-grpo-train-loop-steps .elbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); font-style: italic; }
+  #fig-trl-grpo-train-loop-steps .btag { font: 500 9.5px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-trl-grpo-train-loop-steps .looplbl { font: 500 10.5px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+
+  /* Step highlight animation */
+  @keyframes gts-step1 {
+    0%,14%   { opacity:1; }
+    15%,100% { opacity:0; }
+  }
+  @keyframes gts-step2 {
+    0%,14%   { opacity:0; }
+    15%,28%  { opacity:1; }
+    29%,100% { opacity:0; }
+  }
+  @keyframes gts-step3 {
+    0%,28%   { opacity:0; }
+    29%,42%  { opacity:1; }
+    43%,100% { opacity:0; }
+  }
+  @keyframes gts-step4 {
+    0%,42%   { opacity:0; }
+    43%,56%  { opacity:1; }
+    57%,100% { opacity:0; }
+  }
+  @keyframes gts-step5 {
+    0%,56%   { opacity:0; }
+    57%,70%  { opacity:1; }
+    71%,100% { opacity:0; }
+  }
+  @keyframes gts-step6 {
+    0%,70%   { opacity:0; }
+    71%,84%  { opacity:1; }
+    85%,100% { opacity:0; }
+  }
+  @keyframes gts-step7 {
+    0%,84%   { opacity:0; }
+    85%,100% { opacity:1; }
+  }
+  @keyframes gts-loop-pulse {
+    0%,84%     { stroke-opacity:0.2; }
+    85%,94%    { stroke-opacity:1; }
+    95%,100%   { stroke-opacity:0.2; }
+  }
+
+  #fig-trl-grpo-train-loop-steps .hl-1 { animation: gts-step1 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-2 { animation: gts-step2 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-3 { animation: gts-step3 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-4 { animation: gts-step4 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-5 { animation: gts-step5 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-6 { animation: gts-step6 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .hl-7 { animation: gts-step7 7s ease-in-out infinite; }
+  #fig-trl-grpo-train-loop-steps .loop-anim { animation: gts-loop-pulse 7s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-trl-grpo-train-loop-steps .hl-1,
+    #fig-trl-grpo-train-loop-steps .hl-2,
+    #fig-trl-grpo-train-loop-steps .hl-3,
+    #fig-trl-grpo-train-loop-steps .hl-4,
+    #fig-trl-grpo-train-loop-steps .hl-5,
+    #fig-trl-grpo-train-loop-steps .hl-6,
+    #fig-trl-grpo-train-loop-steps .hl-7 { animation: none; opacity: 0; }
+    #fig-trl-grpo-train-loop-steps .loop-anim { animation: none; stroke-opacity:0.5; }
+  }
+</style>
+
+
+<rect x="60" y="18" width="500" height="36" rx="6"
+      fill="var(--surface-3,#e2e8f0)" stroke="var(--ink-soft,#64748b)" stroke-width="1.4"/>
+<text x="310" y="41" text-anchor="middle" class="hdr">For each batch of P prompts</text>
+<line x1="310" y1="54" x2="310" y2="76" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+
+
+<g>
+  
+  <rect x="90" y="76" width="460" height="72" rx="7"
+        fill="var(--warn,#e0a106)" fill-opacity="0.10"
+        stroke="var(--warn,#e0a106)" stroke-width="2.5"/>
+  
+  <rect class="hl-1" x="90" y="76" width="460" height="72" rx="7"
+        fill="var(--warn,#e0a106)" fill-opacity="0.25" pointer-events="none"/>
+  
+  <circle cx="114" cy="112" r="13" fill="var(--warn,#e0a106)"/>
+  <text x="114" y="117" text-anchor="middle" class="snum">1</text>
+  
+  <text x="134" y="96" class="stitle">ROLLOUT</text>
+  <text x="134" y="112" class="stext">model.generate() x G  ->  G completions per prompt</text>
+  <text x="134" y="126" class="stext">(total P x G sequences forward pass)</text>
+</g>
+
+<rect x="562" y="83" width="132" height="42" rx="5"
+      fill="var(--warn,#e0a106)" fill-opacity="0.15" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+<text x="628" y="100" text-anchor="middle" class="btag">bottleneck:</text>
+<text x="628" y="113" text-anchor="middle" class="btag">P x G generations</text>
+<text x="628" y="124" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--muted,#94a3b8)">(vLLM addresses this)</text>
+
+
+<line x1="310" y1="148" x2="310" y2="167" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="161" class="elbl">P x G sequences</text>
+
+
+<g>
+  <rect x="90" y="167" width="460" height="62" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-2" x="90" y="167" width="460" height="62" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="198" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="203" text-anchor="middle" class="snum">2</text>
+  <text x="134" y="187" class="stitle">REWARD</text>
+  <text x="134" y="204" class="stext">reward_fn(prompts x G, completions)  ->  rewards</text>
+</g>
+<line x1="310" y1="229" x2="310" y2="248" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="243" class="elbl">rewards: shape [P x G]</text>
+
+
+<g>
+  <rect x="90" y="248" width="460" height="74" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-3" x="90" y="248" width="460" height="74" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="285" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="290" text-anchor="middle" class="snum">3</text>
+  <text x="134" y="267" class="stitle">ADVANTAGE</text>
+  <text x="134" y="283" class="stext">A_i = r_i - mean(r_1..r_G)  (per group; no critic needed)</text>
+  <text x="134" y="298" class="stext">Optionally normalize: A_i = (A_i - mean) / (std + eps)</text>
+</g>
+<line x1="310" y1="322" x2="310" y2="341" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="336" class="elbl">advantages: shape [P x G]</text>
+
+
+<g>
+  <rect x="90" y="341" width="460" height="74" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-4" x="90" y="341" width="460" height="74" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="378" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="383" text-anchor="middle" class="snum">4</text>
+  <text x="134" y="360" class="stitle">LOG PROBS</text>
+  <text x="134" y="377" class="stext">policy forward on all P x G  ->  log pi_theta(y|x)</text>
+  <text x="134" y="393" class="stext">reference forward on all P x G  ->  log pi_ref(y|x)</text>
+</g>
+<line x1="310" y1="415" x2="310" y2="434" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="429" class="elbl">log pi_theta, log pi_ref</text>
+
+
+<g>
+  <rect x="90" y="434" width="460" height="62" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-5" x="90" y="434" width="460" height="62" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="465" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="470" text-anchor="middle" class="snum">5</text>
+  <text x="134" y="454" class="stitle">KL</text>
+  <text x="134" y="471" class="stext">per_token_kl = log pi_theta - log pi_ref  (clipped from below at 0)</text>
+</g>
+<line x1="310" y1="496" x2="310" y2="515" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+<text x="316" y="510" class="elbl">per-token KL</text>
+
+
+<g>
+  <rect x="90" y="515" width="460" height="62" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-6" x="90" y="515" width="460" height="62" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="546" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="551" text-anchor="middle" class="snum">6</text>
+  <text x="134" y="535" class="stitle">LOSS</text>
+  <text x="134" y="552" class="stext">clipped surrogate + beta x KL  (averaged over tokens and sequences)</text>
+</g>
+<line x1="310" y1="577" x2="310" y2="596" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#gts-arr)"/>
+
+
+<g>
+  <rect x="90" y="596" width="460" height="52" rx="7"
+        fill="var(--surface-3,#e2e8f0)" fill-opacity="0.5"
+        stroke="var(--accent,#f59e0b)" stroke-width="1.8"/>
+  <rect class="hl-7" x="90" y="596" width="460" height="52" rx="7"
+        fill="var(--accent,#f59e0b)" fill-opacity="0.22" pointer-events="none"/>
+  <circle cx="114" cy="622" r="13" fill="var(--accent,#f59e0b)"/>
+  <text x="114" y="627" text-anchor="middle" class="snum">7</text>
+  <text x="134" y="627" class="stitle">BACKWARD + OPTIMIZER STEP</text>
+</g>
+
+
+<path d="M 550 648 C 740 648 740 56 560 56"
+      fill="none" stroke="var(--accent,#f59e0b)" stroke-width="2"
+      stroke-dasharray="6,4" marker-end="url(#gts-arr-loop)" class="loop-anim"/>
+<text x="746" y="360" text-anchor="middle" class="looplbl" transform="rotate(90,746,360)">repeat: next batch of P prompts</text>
+</svg>
+<figcaption><b>TRL's GRPO training loop executes seven ordered steps per batch.</b> Step 1 (ROLLOUT) is the throughput bottleneck — generating P x G completions on training GPUs; the vLLM backend offloads this to dedicated inference GPUs. Steps 3–6 compute group-relative advantages, log-probabilities, per-token KL, and the clipped surrogate loss entirely on-device before the optimizer step closes the loop.</figcaption>
+</figure>

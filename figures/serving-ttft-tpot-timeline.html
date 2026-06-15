@@ -1,0 +1,133 @@
+<figure class="viz" id="fig-serving-ttft-tpot-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 920 280" role="img" aria-label="Horizontal timeline showing one LLM streaming request decomposed into TTFT (queue plus prefill) and TPOT (per-output-token inter-token latency) phases, with an animated playhead sweeping through each phase.">
+<defs>
+  <marker id="ttft-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="ttft-arrow-t" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+  <clipPath id="ttft-box-clip">
+    <rect x="90" y="116" width="272" height="68" rx="8"/>
+  </clipPath>
+  <clipPath id="tok-region-clip">
+    <rect x="366" y="116" width="538" height="68" rx="4"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-serving-ttft-tpot-timeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-ttft-tpot-timeline .lbl-sm { font: 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-serving-ttft-tpot-timeline .lbl-bold { font: 700 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-ttft-tpot-timeline .lbl-mono { font: 600 12px var(--mono,monospace); }
+  #fig-serving-ttft-tpot-timeline .brace-label { font: 700 12px var(--sans,sans-serif); }
+  #fig-serving-ttft-tpot-timeline .phase-label { font: 600 12px var(--sans,sans-serif); fill: white; }
+</style>
+
+
+<line x1="30" y1="222" x2="890" y2="222" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2" marker-end="url(#ttft-arrow-t)"/>
+<text x="898" y="226" class="lbl-sm" text-anchor="start">t</text>
+
+
+<circle cx="50" cy="222" r="7" fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="50" y="204" text-anchor="middle" class="lbl-bold">request</text>
+<text x="20" y="240" text-anchor="start" class="lbl-sm">t=0 / enqueue</text>
+
+
+<line x1="58" y1="222" x2="86" y2="222" stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#ttft-arrow)"/>
+
+
+<rect x="90" y="116" width="272" height="68" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+<rect id="ttft-sweep" x="90" y="116" width="0" height="68" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.35" clip-path="url(#ttft-box-clip)">
+  <animate attributeName="width" from="0" to="272" dur="1.6s" begin="0.3s" fill="freeze" calcMode="ease-in-out" id="ttft-anim"/>
+</rect>
+<text x="226" y="153" text-anchor="middle" class="phase-label" fill="var(--accent,#6366f1)" font-weight="700" font-size="13">queue + prefill compute</text>
+
+
+<path d="M90,104 L90,96 L362,96 L362,104" fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8"/>
+<text x="226" y="90" text-anchor="middle" class="brace-label" fill="var(--accent,#6366f1)">TTFT</text>
+
+
+<line x1="362" y1="108" x2="362" y2="236" stroke="var(--ink-soft,#475569)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="362" y="248" text-anchor="middle" class="lbl-sm">first token</text>
+
+<circle id="ft-marker" cx="362" cy="184" r="6" fill="var(--good,#2f9e6e)">
+  <animate attributeName="r" values="6;10;6" dur="0.5s" begin="ttft-anim.end" repeatCount="1"/>
+</circle>
+
+
+
+<path d="M366,104 L366,96 L876,96 L876,104" fill="none" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+<text x="621" y="90" text-anchor="middle" class="brace-label" fill="var(--ink-soft,#475569)">streaming (TPOT each)</text>
+
+
+
+<g id="tok-cells">
+  
+  <rect id="tok1" x="368" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="402" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  
+  <rect x="368" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+0.1s" repeatCount="1"/>
+  </rect>
+
+  
+  <text x="438" y="186" text-anchor="middle" class="lbl-sm">TPOT</text>
+  <line x1="438" y1="178" x2="438" y2="174" stroke="var(--muted,#94a3b8)" stroke-width="1"/>
+
+  
+  <rect id="tok2" x="448" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="482" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  <rect x="448" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+0.6s" repeatCount="1"/>
+  </rect>
+
+  
+  <rect id="tok3" x="528" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="562" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  <rect x="528" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+1.1s" repeatCount="1"/>
+  </rect>
+
+  
+  <rect id="tok4" x="608" y="130" width="68" height="44" rx="6" fill="var(--surface-3,#e5e7eb)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="642" y="157" text-anchor="middle" class="lbl-mono" fill="var(--ink-soft,#475569)">tok</text>
+  <rect x="608" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.4;0" dur="0.5s" begin="ttft-anim.end+1.6s" repeatCount="1"/>
+  </rect>
+
+  
+  <text x="706" y="157" text-anchor="middle" class="lbl-mono" fill="var(--muted,#94a3b8)">...</text>
+
+  
+  <rect id="tokeos" x="730" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="764" y="157" text-anchor="middle" class="lbl-mono" fill="var(--accent,#6366f1)" font-weight="700">EOS</text>
+  
+  <rect x="730" y="130" width="68" height="44" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0">
+    <animate attributeName="fill-opacity" values="0;0.45;0.12" dur="0.6s" begin="ttft-anim.end+2.4s" repeatCount="1"/>
+  </rect>
+</g>
+
+
+<text x="764" y="240" text-anchor="middle" class="lbl-sm">done</text>
+
+
+<circle id="playhead" cx="50" cy="184" r="5" fill="var(--warn,#e0a106)" opacity="0.9">
+  <animate attributeName="cx" from="50" to="362" dur="1.6s" begin="0.3s" fill="freeze" calcMode="ease-in-out" id="ph-anim"/>
+  <animate attributeName="opacity" from="0.9" to="0" dur="0.4s" begin="ttft-anim.end" fill="freeze"/>
+</circle>
+
+
+<text x="226" y="176" text-anchor="middle" fill="var(--accent,#6366f1)" font-size="11" font-style="italic" opacity="0">
+  waiting...<animate attributeName="opacity" values="0;0.8;0" dur="1.6s" begin="0.3s" fill="freeze"/>
+</text>
+
+
+<line x1="50" y1="219" x2="50" y2="225" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+<line x1="362" y1="219" x2="362" y2="225" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+<line x1="764" y1="219" x2="764" y2="225" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+
+</svg>
+<figcaption><b>Two distinct latency numbers govern every streaming LLM request.</b> TTFT (time to first token) is the one-time wait while the prompt is queued and prefilled — users feel this as "how long until words appear." TPOT (time per output token) is the repeated inter-token interval during streaming — users feel this as "how fast do words flow." Optimizing one often hurts the other, which is why a single latency SLO is insufficient.</figcaption>
+</figure>

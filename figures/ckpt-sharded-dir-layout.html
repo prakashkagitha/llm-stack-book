@@ -1,0 +1,148 @@
+<figure class="viz" id="fig-ckpt-sharded-dir-layout">
+<svg viewBox="0 0 880 590" role="img" aria-label="Anatomy of a topology-agnostic sharded checkpoint directory: root folder, metadata.json, per-rank RNG state files, model_optim subdirectory with DCP shard files, and a COMPLETE sentinel file written last.">
+  <defs>
+    <marker id="csd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#888)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-ckpt-sharded-dir-layout text { fill: var(--ink-soft, #374151); }
+    #fig-ckpt-sharded-dir-layout .mono { font: 600 12px var(--mono,monospace); }
+    #fig-ckpt-sharded-dir-layout .sans { font: 400 11px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .sans-sm { font: 400 10px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .label-bold { font: 600 12px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .legend-txt { font: 400 10px var(--sans,sans-serif); }
+    #fig-ckpt-sharded-dir-layout .muted-txt { fill: var(--muted,#9ca3af); }
+    #fig-ckpt-sharded-dir-layout .ok-txt { fill: var(--good,#16a34a); }
+    #fig-ckpt-sharded-dir-layout .accent-txt { fill: var(--accent,#6366f1); }
+  </style>
+
+  
+  <rect x="20" y="16" width="290" height="40" rx="6" class="v-fill v-accent-s" stroke="var(--accent,#6366f1)" stroke-width="1.8" fill="var(--surface,#f8f8fb)"/>
+  
+  <rect x="28" y="24" width="16" height="12" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.25" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <rect x="28" y="20" width="8" height="5" rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.4"/>
+  <text x="52" y="41" class="mono accent-txt">checkpoint_step_5000/</text>
+  
+  <text x="320" y="34" class="sans muted-txt">one directory per checkpoint</text>
+  <text x="320" y="47" class="sans muted-txt">(named by global step)</text>
+
+  
+  <line x1="44" y1="56" x2="44" y2="498" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+
+  
+  
+  <line x1="44" y1="88" x2="78" y2="88" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="68" width="200" height="38" rx="5" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" fill="var(--surface,#f8f8fb)"/>
+  <text x="178" y="92" text-anchor="middle" class="mono">metadata.json</text>
+  
+  <rect x="296" y="60" width="570" height="52" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.08" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="308" y="77" class="sans accent-txt">global step, LR-schedule state, data-loader cursor,</text>
+  <text x="308" y="91" class="sans accent-txt">topology hint. Written by rank 0 only.</text>
+  
+  <line x1="278" y1="88" x2="296" y2="88" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+  
+  <line x1="44" y1="160" x2="78" y2="160" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="140" width="200" height="38" rx="5" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" fill="var(--surface,#f8f8fb)"/>
+  <text x="178" y="164" text-anchor="middle" class="mono">rng_state_rank0.pt</text>
+
+  
+  <line x1="44" y1="210" x2="78" y2="210" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="190" width="200" height="38" rx="5" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" fill="var(--surface,#f8f8fb)"/>
+  <text x="178" y="214" text-anchor="middle" class="mono">rng_state_rank1.pt</text>
+
+  
+  <line x1="68" y1="144" x2="68" y2="256" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <line x1="68" y1="144" x2="76" y2="144" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <line x1="68" y1="256" x2="76" y2="256" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="24" y="205" class="sans-sm muted-txt" transform="rotate(-90,24,205)">one per rank</text>
+
+  
+  <line x1="44" y1="258" x2="78" y2="258" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="240" width="200" height="34" rx="5" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="178" y="263" text-anchor="middle" class="mono muted-txt">...</text>
+
+  
+  <rect x="296" y="136" width="570" height="62" rx="5" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="308" y="154" class="sans">per-rank RNG state (Python / NumPy / torch CPU / CUDA).</text>
+  <text x="308" y="168" class="sans">One file PER RANK. Tiny (~KB) but critical for</text>
+  <text x="308" y="182" class="sans">exact resumability.</text>
+  
+  <line x1="278" y1="160" x2="296" y2="160" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+  <line x1="278" y1="210" x2="296" y2="195" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+  
+  <line x1="44" y1="326" x2="78" y2="326" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="304" width="200" height="42" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  
+  <rect x="86" y="312" width="13" height="9" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.35" stroke="var(--accent,#6366f1)" stroke-width="0.8"/>
+  <rect x="86" y="309" width="6" height="4" rx="1" fill="var(--accent,#6366f1)" fill-opacity="0.5"/>
+  <text x="178" y="330" text-anchor="middle" class="mono accent-txt">model_optim/</text>
+  
+  <rect x="296" y="296" width="570" height="56" rx="5" fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="308" y="314" class="label-bold accent-txt">PyTorch DCP sharded model + optimizer state.</text>
+  <text x="308" y="330" class="sans accent-txt">All ranks write IN PARALLEL.</text>
+  <text x="308" y="344" class="sans-sm accent-txt">Topology-agnostic: loads onto ANY device layout.</text>
+  <line x1="278" y1="326" x2="296" y2="326" stroke="var(--accent,#6366f1)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+  
+  <line x1="110" y1="346" x2="110" y2="470" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+
+  
+  <line x1="110" y1="368" x2="144" y2="368" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="352" width="180" height="32" rx="4" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="234" y="372" text-anchor="middle" class="mono" style="font-size:11px">__0_0.distcp</text>
+
+  
+  <line x1="110" y1="402" x2="144" y2="402" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="386" width="180" height="32" rx="4" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="234" y="406" text-anchor="middle" class="mono" style="font-size:11px">__0_1.distcp</text>
+
+  
+  <line x1="110" y1="434" x2="144" y2="434" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="418" width="180" height="32" rx="4" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="234" y="438" text-anchor="middle" class="mono" style="font-size:11px">__1_0.distcp</text>
+
+  
+  <line x1="110" y1="466" x2="144" y2="466" stroke="var(--border-2,#d1d5db)" stroke-width="1.1"/>
+  <rect x="144" y="452" width="180" height="28" rx="4" fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="234" y="471" text-anchor="middle" class="mono muted-txt" style="font-size:11px">...</text>
+
+  
+  <rect x="340" y="352" width="526" height="120" rx="5" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="352" y="372" class="sans">Flat binary blobs of tensor chunk bytes,</text>
+  <text x="352" y="387" class="sans">named by chunk index. A companion index</text>
+  <text x="352" y="402" class="sans">file maps logical tensor names to physical</text>
+  <text x="352" y="417" class="sans">byte ranges, so chunks can be remapped</text>
+  <text x="352" y="432" class="sans">to ANY new device layout on load.</text>
+  <line x1="324" y1="390" x2="340" y2="390" stroke="var(--ink-soft,#9ca3af)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+  
+  <line x1="44" y1="514" x2="78" y2="514" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <rect x="78" y="496" width="200" height="38" rx="5" fill="var(--good,#16a34a)" fill-opacity="0.12" stroke="var(--good,#16a34a)" stroke-width="2"/>
+  
+  <path d="M88 514 l4 5 l8 -10" fill="none" stroke="var(--good,#16a34a)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="182" y="519" text-anchor="middle" class="mono ok-txt">COMPLETE</text>
+
+  
+  <rect x="296" y="488" width="570" height="60" rx="5" fill="var(--good,#16a34a)" fill-opacity="0.10" stroke="var(--good,#16a34a)" stroke-width="1.5"/>
+  <text x="308" y="505" class="label-bold ok-txt">Atomic sentinel written LAST, after dist.barrier().</text>
+  <text x="308" y="520" class="sans ok-txt">A checkpoint without it is treated as incomplete /</text>
+  <text x="308" y="535" class="sans ok-txt">corrupt and never loaded.</text>
+  <line x1="278" y1="514" x2="296" y2="514" stroke="var(--good,#16a34a)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+  
+  <rect x="20" y="558" width="290" height="22" rx="4" fill="var(--surface-3,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="0.8"/>
+  
+  <rect x="28" y="563" width="14" height="10" rx="2" class="v-fill v-stroke" stroke="var(--border-2,#d1d5db)" stroke-width="1" fill="var(--surface,#f8f8fb)"/>
+  <text x="46" y="572" class="legend-txt">file</text>
+  
+  <rect x="70" y="563" width="14" height="10" rx="2" fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+  <text x="88" y="572" class="legend-txt">directory</text>
+  
+  <rect x="150" y="563" width="14" height="10" rx="2" fill="var(--good,#16a34a)" fill-opacity="0.18" stroke="var(--good,#16a34a)" stroke-width="1.2"/>
+  <text x="168" y="572" class="legend-txt">sentinel (COMPLETE)</text>
+</svg>
+<figcaption><b>Anatomy of a topology-agnostic sharded checkpoint directory.</b> Four conceptual layers are stored: shared metadata (rank-0 only), per-rank RNG state (one tiny file each), DCP-sharded model and optimizer tensors (all ranks write in parallel), and a <code>COMPLETE</code> sentinel written atomically last. The sentinel enforces the all-or-nothing invariant: any checkpoint missing it is discarded on resume.</figcaption>
+</figure>

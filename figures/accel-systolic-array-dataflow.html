@@ -1,0 +1,399 @@
+<figure class="viz" id="fig-accel-systolic-array-dataflow">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 900 620" role="img" aria-label="Weight-stationary 4x4 systolic array: activations stream in from the left one column per clock, weights sit fixed in each cell, partial sums march downward, and output columns c0-c3 emerge at the bottom after the pipeline fills.">
+<defs>
+  <marker id="sa-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+  <marker id="sa-arr-ps" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#6366f1)"/>
+  </marker>
+  <marker id="sa-arr-out" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
+  </marker>
+  <marker id="sa-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-accel-systolic-array-dataflow text { fill: currentColor; }
+  #fig-accel-systolic-array-dataflow .ttl { font: 700 15px var(--sans,sans-serif); }
+  #fig-accel-systolic-array-dataflow .sub { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-systolic-array-dataflow .cell-w { font: 700 16px var(--sans,sans-serif); fill: var(--accent2,#6366f1); }
+  #fig-accel-systolic-array-dataflow .cell-plus { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-accel-systolic-array-dataflow .token { font: 700 9px var(--mono,monospace); fill: var(--accent,#f59e0b); }
+  #fig-accel-systolic-array-dataflow .lane-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+  #fig-accel-systolic-array-dataflow .out-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#f59e0b); }
+  #fig-accel-systolic-array-dataflow .legend-lbl { font: 500 11px var(--sans,sans-serif); }
+  #fig-accel-systolic-array-dataflow .callout-txt { font: 500 11px var(--sans,sans-serif); }
+  #fig-accel-systolic-array-dataflow .mac-eq { font: 600 9.5px var(--mono,monospace); fill: var(--muted,#94a3b8); }
+  #fig-accel-systolic-array-dataflow .weight-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+
+  /* Animation keyframes */
+  @keyframes sa-weight-load {
+    0%,100% { opacity:0.2; }
+    40%,60% { opacity:1; }
+  }
+  @keyframes sa-token-step {
+    0% { transform: translateX(0px); opacity:1; }
+    85% { transform: translateX(88px); opacity:1; }
+    100% { transform: translateX(88px); opacity:0.3; }
+  }
+  @keyframes sa-cell-flash {
+    0%,100% { opacity:0; }
+    50% { opacity:0.7; }
+  }
+  @keyframes sa-ps-flow {
+    0% { opacity:0; transform:translateY(0); }
+    20% { opacity:1; transform:translateY(0); }
+    80% { opacity:1; transform:translateY(20px); }
+    100% { opacity:0; transform:translateY(22px); }
+  }
+  @keyframes sa-out-light {
+    0%,70% { opacity:0; }
+    80%,95% { opacity:1; }
+    100% { opacity:0.6; }
+  }
+  @keyframes sa-tok-pulse { 0%,100%{opacity:0.5} 50%{opacity:1} }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-accel-systolic-array-dataflow .anim-weight-load,
+    #fig-accel-systolic-array-dataflow .anim-token,
+    #fig-accel-systolic-array-dataflow .anim-cell-flash,
+    #fig-accel-systolic-array-dataflow .anim-ps-flow,
+    #fig-accel-systolic-array-dataflow .anim-out-light {
+      animation: none !important;
+      opacity: 1 !important;
+    }
+  }
+</style>
+
+
+<text x="450" y="26" text-anchor="middle" class="ttl">Weight-stationary systolic array (4x4 MXU)</text>
+<text x="450" y="46" text-anchor="middle" class="sub">activations stream in from the left, one column per clock; partial sums march downward</text>
+
+
+
+<g class="anim-weight-load" style="animation: sa-weight-load 2s ease-in-out;">
+  <line x1="302" y1="96" x2="650" y2="96" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <line x1="302" y1="96" x2="302" y2="106" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <line x1="650" y1="96" x2="650" y2="106" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="5,3"/>
+  
+  <line x1="346" y1="96" x2="346" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <line x1="434" y1="96" x2="434" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <line x1="522" y1="96" x2="522" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <line x1="610" y1="96" x2="610" y2="103" stroke="var(--muted,#94a3b8)" stroke-width="1.2"/>
+  <text x="476" y="90" text-anchor="middle" class="weight-lbl">weights pre-loaded &amp; STATIONARY</text>
+</g>
+
+
+
+
+
+
+<rect x="302" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="110" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="153" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="168" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="172" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+<rect x="302" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="198" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="241" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="256" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="260" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+<rect x="302" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="286" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="329" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="344" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="348" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+<rect x="302" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="344" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="344" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="368" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="390" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="432" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="432" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="456" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="478" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="520" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="520" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="544" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+<rect x="566" y="374" width="84" height="84" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="608" y="417" text-anchor="middle" class="cell-w">w</text>
+<text x="608" y="432" text-anchor="middle" class="cell-plus">+MAC</text>
+<rect x="632" y="436" width="14" height="14" rx="2" fill="var(--surface-3,#1e293b)" stroke="var(--border-2,#475569)" stroke-width="1" opacity="0.7"/>
+
+
+
+
+<rect class="anim-cell-flash" x="303" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 1.2s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 1.8s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 2.4s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="111" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+
+<rect class="anim-cell-flash" x="303" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 1.8s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 2.4s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="199" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.6s infinite;"/>
+
+<rect class="anim-cell-flash" x="303" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 2.4s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.6s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="287" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 4.2s infinite;"/>
+
+<rect class="anim-cell-flash" x="303" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.0s infinite;"/>
+<rect class="anim-cell-flash" x="391" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 3.6s infinite;"/>
+<rect class="anim-cell-flash" x="479" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 4.2s infinite;"/>
+<rect class="anim-cell-flash" x="567" y="375" width="82" height="82" rx="5" fill="var(--accent,#f59e0b)" opacity="0"
+  style="animation: sa-cell-flash 3.2s 4.8s infinite;"/>
+
+
+
+<line x1="388" y1="152" x2="389" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="386" y1="152" x2="389" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<line x1="476" y1="152" x2="477" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="152" x2="477" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+<line x1="564" y1="152" x2="565" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="152" x2="565" y2="152" stroke="var(--accent,#f59e0b)" stroke-width="2"/>
+
+
+<line x1="386" y1="240" x2="389" y2="240" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="240" x2="477" y2="240" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="240" x2="565" y2="240" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<line x1="386" y1="328" x2="389" y2="328" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="328" x2="477" y2="328" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="328" x2="565" y2="328" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<line x1="386" y1="416" x2="389" y2="416" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="474" y1="416" x2="477" y2="416" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+<line x1="562" y1="416" x2="565" y2="416" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+
+<line x1="344" y1="196" x2="344" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="344" y1="194" x2="344" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2"/>
+<line x1="344" y1="284" x2="344" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="344" y1="282" x2="344" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2"/>
+<line x1="344" y1="372" x2="344" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="344" y1="370" x2="344" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2"/>
+
+
+<line x1="432" y1="194" x2="432" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="432" y1="282" x2="432" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="432" y1="370" x2="432" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+
+
+<line x1="520" y1="194" x2="520" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="520" y1="282" x2="520" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="520" y1="370" x2="520" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+
+
+<line x1="608" y1="194" x2="608" y2="197" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="608" y1="282" x2="608" y2="285" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+<line x1="608" y1="370" x2="608" y2="373" stroke="var(--accent2,#6366f1)" stroke-width="2" marker-end="url(#sa-arr-ps)"/>
+
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0s infinite;">
+  <rect x="72" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="152" text-anchor="middle" class="token">a30</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.2s infinite;">
+  <rect x="110" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="152" text-anchor="middle" class="token">a20</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.4s infinite;">
+  <rect x="148" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="152" text-anchor="middle" class="token">a10</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.6s infinite;">
+  <rect x="186" y="140" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="152" text-anchor="middle" class="token">a00</text>
+</g>
+<line x1="218" y1="148" x2="300" y2="148" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.6s infinite;">
+  <rect x="72" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="240" text-anchor="middle" class="token">a31</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 0.8s infinite;">
+  <rect x="110" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="240" text-anchor="middle" class="token">a21</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.0s infinite;">
+  <rect x="148" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="240" text-anchor="middle" class="token">a11</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.2s infinite;">
+  <rect x="186" y="228" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="240" text-anchor="middle" class="token">a01</text>
+</g>
+<line x1="218" y1="236" x2="300" y2="236" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.2s infinite;">
+  <rect x="72" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="328" text-anchor="middle" class="token">a32</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.4s infinite;">
+  <rect x="110" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="328" text-anchor="middle" class="token">a22</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.6s infinite;">
+  <rect x="148" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="328" text-anchor="middle" class="token">a12</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.8s infinite;">
+  <rect x="186" y="316" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="328" text-anchor="middle" class="token">a02</text>
+</g>
+<line x1="218" y1="324" x2="300" y2="324" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 1.8s infinite;">
+  <rect x="72" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="87" y="416" text-anchor="middle" class="token">a33</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 2.0s infinite;">
+  <rect x="110" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="125" y="416" text-anchor="middle" class="token">a23</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 2.2s infinite;">
+  <rect x="148" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.15" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+  <text x="163" y="416" text-anchor="middle" class="token">a13</text>
+</g>
+<g class="anim-token" style="animation: sa-tok-pulse 3.2s 2.4s infinite;">
+  <rect x="186" y="404" width="30" height="16" rx="4" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="201" y="416" text-anchor="middle" class="token">a03</text>
+</g>
+<line x1="218" y1="412" x2="300" y2="412" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<text x="44" y="158" text-anchor="end" class="lane-lbl">a_in</text>
+<line x1="48" y1="154" x2="62" y2="154" stroke="var(--accent,#f59e0b)" stroke-width="2" marker-end="url(#sa-arr-acc)"/>
+
+
+<line x1="344" y1="460" x2="344" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 3.2s infinite;">
+  <rect x="320" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="344" y="514" text-anchor="middle" class="out-lbl">c0</text>
+</g>
+
+<line x1="432" y1="460" x2="432" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 3.8s infinite;">
+  <rect x="408" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="432" y="514" text-anchor="middle" class="out-lbl">c1</text>
+</g>
+
+<line x1="520" y1="460" x2="520" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 4.4s infinite;">
+  <rect x="496" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="520" y="514" text-anchor="middle" class="out-lbl">c2</text>
+</g>
+
+<line x1="608" y1="460" x2="608" y2="498" stroke="var(--accent,#f59e0b)" stroke-width="2.5" marker-end="url(#sa-arr-out)"/>
+<g class="anim-out-light" style="animation: sa-out-light 3.2s 5.0s infinite;">
+  <rect x="584" y="500" width="48" height="20" rx="6" fill="var(--accent,#f59e0b)" opacity="0.25" stroke="var(--accent,#f59e0b)" stroke-width="1.5"/>
+  <text x="608" y="514" text-anchor="middle" class="out-lbl">c3</text>
+</g>
+
+<text x="476" y="546" text-anchor="middle" class="sub">output columns</text>
+
+
+<rect x="38" y="468" width="218" height="130" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<text x="147" y="487" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)">Legend</text>
+
+<line x1="52" y1="504" x2="80" y2="504" stroke="var(--accent,#f59e0b)" stroke-width="2.5"/>
+<rect x="54" y="498" width="24" height="12" rx="3" fill="var(--accent,#f59e0b)" opacity="0.2" stroke="var(--accent,#f59e0b)" stroke-width="1"/>
+<text x="88" y="508" class="legend-lbl">activation a_in (flows right)</text>
+
+<line x1="52" y1="528" x2="80" y2="528" stroke="var(--accent2,#6366f1)" stroke-width="2.5"/>
+<text x="88" y="532" class="legend-lbl">partial sum acc (flows down)</text>
+
+<rect x="52" y="544" width="24" height="14" rx="3" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1.5"/>
+<text x="56" y="552" style="font:700 10px var(--sans,sans-serif); fill:var(--accent2,#6366f1)">w</text>
+<text x="88" y="555" class="legend-lbl">stationary weight + MAC</text>
+
+<text x="52" y="576" class="mac-eq">each cell/cycle: acc += a_in * w</text>
+
+
+<rect x="668" y="258" width="192" height="76" rx="6" class="v-fill" stroke="var(--border-2,#475569)" stroke-width="1"/>
+<rect x="668" y="258" width="4" height="76" rx="2" fill="var(--accent,#f59e0b)"/>
+<text x="682" y="276" class="callout-txt">partial sums never leave</text>
+<text x="682" y="291" class="callout-txt">the array -&gt; almost no</text>
+<text x="682" y="306" class="callout-txt">SRAM/register traffic</text>
+<text x="682" y="323" style="font:600 9px var(--mono,monospace); fill:var(--muted,#94a3b8)">retire full tile every clock</text>
+
+</svg>
+<figcaption><b>Weight-stationary 4x4 systolic array (TPU/Trainium/Gaudi MXU model).</b> Weights are pre-loaded once and held fixed in each cell; activation tokens stream in from the left, staggered so a diagonal wavefront sweeps the array; partial sums march downward cell-to-cell without ever touching SRAM. After the pipeline fills, the array retires an entire tile of MACs every clock cycle, yielding near-peak utilization with almost no memory-system overhead.</figcaption>
+</figure>

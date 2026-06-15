@@ -1,0 +1,168 @@
+<figure class="viz" id="fig-dmp-tp-column-row-flow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 1000 420" role="img" aria-label="Megatron MLP data flow: X feeds Column-Parallel A, sharded intermediate Z flows through GeLU elementwise on shards, then Row-Parallel B produces partial outputs that merge in one all-reduce to give Y replicated.">
+  <defs>
+    <marker id="tp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="tp-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-dmp-tp-column-row-flow text { fill: var(--ink-soft); }
+    #fig-dmp-tp-column-row-flow .lbl  { font: 600 12px var(--sans,sans-serif); }
+    #fig-dmp-tp-column-row-flow .sm   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-dmp-tp-column-row-flow .ok   { font: 600 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+    #fig-dmp-tp-column-row-flow .warn { font: 700 10px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-dmp-tp-column-row-flow .hed  { font: 700 12px var(--sans,sans-serif); }
+    #fig-dmp-tp-column-row-flow .mono { font: 600 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-dmp-tp-column-row-flow .note { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+
+    /* Animation keyframes */
+    #fig-dmp-tp-column-row-flow [data-anim] { opacity: 0; }
+
+    @keyframes tp-fadein { from { opacity:0; } to { opacity:1; } }
+    @keyframes tp-pulse  { 0%,100%{opacity:.35;} 50%{opacity:1;} }
+    @keyframes tp-pulse2 { 0%,100%{opacity:.4;} 50%{opacity:.9;} }
+
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="1"] {
+      animation: tp-fadein .5s ease .1s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="2"] {
+      animation: tp-pulse 1.2s ease .7s 2, tp-fadein .5s ease .7s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="3"] {
+      animation: tp-fadein .5s ease 1.8s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="4"] {
+      animation: tp-pulse2 1.2s ease 2.2s 2, tp-fadein .5s ease 2.2s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="5"] {
+      animation: tp-fadein .5s ease 3.5s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="6"] {
+      animation: tp-pulse 1s ease 3.9s 2, tp-fadein .5s ease 3.9s forwards; }
+    #fig-dmp-tp-column-row-flow.anim-run [data-anim="7"] {
+      animation: tp-fadein .5s ease 5s forwards; }
+  </style>
+
+  
+  <text x="500" y="18" text-anchor="middle" class="note">
+    f = identity fwd / all-reduce bwd at input;  g = all-reduce fwd / identity bwd at output
+  </text>
+
+  
+  <g data-anim="1">
+    <rect x="14" y="130" width="110" height="60" rx="8" class="v-fill v-accent-s" stroke-width="1.5"/>
+    <text x="69" y="157" text-anchor="middle" class="hed" fill="var(--accent,#c15b39)">X</text>
+    <text x="69" y="172" text-anchor="middle" class="lbl">(replicated)</text>
+    <text x="69" y="202" text-anchor="middle" class="mono">shape s x h</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="124" y1="160" x2="178" y2="160" stroke="currentColor" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+    <text x="151" y="152" text-anchor="middle" class="note">broadcast</text>
+    <text x="151" y="177" text-anchor="middle" class="ok">no comm</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="182" y="108" width="130" height="104" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="247" y="130" text-anchor="middle" class="hed" fill="var(--accent2,#3b82f6)">Column-Par A</text>
+    <text x="247" y="143" text-anchor="middle" class="note">[A1 .. At]</text>
+    
+    <rect x="196" y="150" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+    <rect x="196" y="170" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+    <rect x="196" y="190" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25"/>
+    <text x="248" y="162" text-anchor="middle" class="mono" fill="var(--surface,#fff)">A1 (rank 0)</text>
+    <text x="248" y="182" text-anchor="middle" class="mono" fill="var(--surface,#fff)">A2 (rank 1)</text>
+    <text x="248" y="201" text-anchor="middle" class="mono" fill="var(--surface,#fff)">A3 (rank 2)</text>
+    <text x="247" y="226" text-anchor="middle" class="ok">no comm here</text>
+  </g>
+
+  
+  <g data-anim="3">
+    
+    <text x="350" y="85" text-anchor="middle" class="note">Z_i sharded on cols</text>
+    
+    <line x1="312" y1="158" x2="408" y2="158" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.75" marker-end="url(#tp-arr-acc)" stroke-dasharray="none"/>
+    <text x="360" y="150" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">Z1</text>
+    
+    <line x1="312" y1="178" x2="408" y2="178" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.5" marker-end="url(#tp-arr-acc)"/>
+    <text x="360" y="170" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">Z2</text>
+    
+    <line x1="312" y1="198" x2="408" y2="198" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.3" marker-end="url(#tp-arr-acc)"/>
+    <text x="360" y="215" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">Z3</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="412" y="108" width="130" height="104" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="477" y="130" text-anchor="middle" class="hed" fill="var(--accent2,#3b82f6)">GeLU(Z_i)</text>
+    <text x="477" y="143" text-anchor="middle" class="note">(elementwise)</text>
+    
+    <rect x="426" y="150" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+    <rect x="426" y="170" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+    <rect x="426" y="190" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25"/>
+    <text x="478" y="162" text-anchor="middle" class="mono" fill="var(--surface,#fff)">shard 0</text>
+    <text x="478" y="182" text-anchor="middle" class="mono" fill="var(--surface,#fff)">shard 1</text>
+    <text x="478" y="201" text-anchor="middle" class="mono" fill="var(--surface,#fff)">shard 2</text>
+    <text x="477" y="226" text-anchor="middle" class="ok">no comm here</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <text x="590" y="85" text-anchor="middle" class="note">partial Y (per rank)</text>
+    <line x1="542" y1="158" x2="636" y2="158" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.75" marker-end="url(#tp-arr-acc)"/>
+    <line x1="542" y1="178" x2="636" y2="178" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.5" marker-end="url(#tp-arr-acc)"/>
+    <line x1="542" y1="198" x2="636" y2="198" stroke="var(--accent2,#3b82f6)" stroke-width="3" opacity="0.3" marker-end="url(#tp-arr-acc)"/>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="640" y="108" width="130" height="104" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="705" y="130" text-anchor="middle" class="hed" fill="var(--accent2,#3b82f6)">Row-Par B</text>
+    <text x="705" y="143" text-anchor="middle" class="note">[B1 ; .. ; Bt]</text>
+    <rect x="654" y="150" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.6"/>
+    <rect x="654" y="170" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.4"/>
+    <rect x="654" y="190" width="104" height="15" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.25"/>
+    <text x="706" y="162" text-anchor="middle" class="mono" fill="var(--surface,#fff)">B1 (row)</text>
+    <text x="706" y="182" text-anchor="middle" class="mono" fill="var(--surface,#fff)">B2 (row)</text>
+    <text x="706" y="201" text-anchor="middle" class="mono" fill="var(--surface,#fff)">B3 (row)</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <line x1="770" y1="158" x2="814" y2="175" stroke="var(--accent2,#3b82f6)" stroke-width="2.5" opacity="0.75"/>
+    <line x1="770" y1="178" x2="814" y2="180" stroke="var(--accent2,#3b82f6)" stroke-width="2.5" opacity="0.5"/>
+    <line x1="770" y1="198" x2="814" y2="185" stroke="var(--accent2,#3b82f6)" stroke-width="2.5" opacity="0.3"/>
+  </g>
+
+  
+  <g data-anim="6">
+    <circle cx="840" cy="180" r="28" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+    
+    <path d="M824 172 A18 18 0 1 1 824 188" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="840" y="176" text-anchor="middle" class="warn">all-</text>
+    <text x="840" y="189" text-anchor="middle" class="warn">reduce</text>
+    <text x="840" y="228" text-anchor="middle" class="warn" font-size="10">ONE all-reduce (g)</text>
+  </g>
+
+  
+  <g data-anim="7">
+    <line x1="868" y1="180" x2="895" y2="180" stroke="currentColor" stroke-width="1.5" marker-end="url(#tp-arr)"/>
+  </g>
+
+  
+  <g data-anim="7">
+    <rect x="898" y="130" width="92" height="60" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="944" y="157" text-anchor="middle" class="hed" fill="var(--good,#2f9e6e)">Y</text>
+    <text x="944" y="172" text-anchor="middle" class="lbl">(replicated)</text>
+    <text x="944" y="202" text-anchor="middle" class="mono">full result</text>
+  </g>
+
+  
+  <text x="247" y="255" text-anchor="middle" class="ok" font-size="9.5">no comm</text>
+  <text x="477" y="255" text-anchor="middle" class="ok" font-size="9.5">no comm (nonlinearity on shards)</text>
+  <text x="840" y="248" text-anchor="middle" class="warn" font-size="9.5">one collective</text>
+</svg>
+<figcaption><b>Megatron MLP: one all-reduce for the whole forward pass.</b> A column-parallel layer leaves the intermediate Z sharded across ranks, so GeLU runs independently on each shard with zero communication. The row-parallel layer then produces a partial Y per rank; a single all-reduce (the "g" operator) sums them to produce the full replicated output. The backward adds one more all-reduce at the input (the "f" operator), giving exactly two all-reduces per MLP block total.</figcaption>
+</figure>
+

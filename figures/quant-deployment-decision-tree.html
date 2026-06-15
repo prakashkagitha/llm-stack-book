@@ -1,0 +1,91 @@
+<figure class="viz" id="fig-quant-deployment-decision-tree">
+<svg viewBox="0 0 860 470" role="img" aria-label="Decision tree for deploying a 70B model: four hardware branches from most VRAM (2x H100, use BF16/FP8) to least (CPU-only 64GB RAM, use GGUF Q4_K_S or Q3_K_M).">
+<defs>
+  <marker id="ddt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--border-2,#cbd5e1)"/>
+  </marker>
+  <linearGradient id="ddt-vram-grad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stop-color="var(--good,#2f9e6e)"/>
+    <stop offset="100%" stop-color="var(--warn,#e0a106)"/>
+  </linearGradient>
+</defs>
+<style>
+  #fig-quant-deployment-decision-tree text       { fill: var(--ink-soft,#0f172a); }
+  #fig-quant-deployment-decision-tree .lbl       { font: 600 12px var(--sans,sans-serif); }
+  #fig-quant-deployment-decision-tree .lbl-sm    { font: 500 11px var(--sans,sans-serif); }
+  #fig-quant-deployment-decision-tree .lbl-sub   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-quant-deployment-decision-tree .leaf-main { font: 700 12px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-quant-deployment-decision-tree .root-lbl  { font: 700 13px var(--sans,sans-serif); }
+  #fig-quant-deployment-decision-tree .vram-lbl  { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+
+
+<rect x="8" y="50" width="10" height="370" rx="4" fill="url(#ddt-vram-grad)" opacity="0.55"/>
+
+<text x="13" y="236" text-anchor="middle" transform="rotate(-90,13,236)" class="vram-lbl">more VRAM  /  less VRAM</text>
+
+
+<rect x="26" y="188" width="170" height="64" rx="10" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="111" y="210" text-anchor="middle" class="root-lbl">Goal: deploy</text>
+<text x="111" y="227" text-anchor="middle" class="root-lbl">a 70B model</text>
+<text x="111" y="243" text-anchor="middle" class="lbl-sub">choose by hardware</text>
+
+
+<line x1="196" y1="220" x2="228" y2="220" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+<line x1="228" y1="62" x2="228" y2="430" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+
+
+<line x1="228" y1="80" x2="250" y2="80" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+
+<rect x="252" y="58" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="58" width="5"   height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="352" y="77" text-anchor="middle" class="lbl-sm">Have 2x H100 80GB?</text>
+<text x="352" y="93" text-anchor="middle" class="lbl-sub">(160 GB total HBM)</text>
+
+<line x1="448" y1="80" x2="468" y2="80" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+
+<rect x="470" y="56" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="75"  text-anchor="middle" class="leaf-main">Use BF16 or FP8</text>
+<text x="659" y="90"  text-anchor="middle" class="lbl-sm">full precision or FP8 W+A</text>
+<text x="659" y="102" text-anchor="middle" class="lbl-sub">best quality</text>
+
+
+<line x1="228" y1="190" x2="250" y2="190" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="252" y="168" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="168" width="5"   height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="352" y="187" text-anchor="middle" class="lbl-sm">Have 1x H100/A100 80GB?</text>
+<text x="352" y="203" text-anchor="middle" class="lbl-sub">(80 GB HBM)</text>
+<line x1="448" y1="190" x2="468" y2="190" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="470" y="166" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="185" text-anchor="middle" class="leaf-main">INT8 W-only (bitsandbytes)</text>
+<text x="659" y="200" text-anchor="middle" class="lbl-sm">or  Q4_K_M (vLLM AWQ)</text>
+<text x="659" y="212" text-anchor="middle" class="lbl-sub">good quality, fits single GPU</text>
+
+
+<line x1="228" y1="300" x2="250" y2="300" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="252" y="278" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="278" width="5"   height="44" rx="2" fill="var(--accent,#6366f1)"/>
+<text x="352" y="297" text-anchor="middle" class="lbl-sm">Have 24 GB VRAM</text>
+<text x="352" y="313" text-anchor="middle" class="lbl-sub">+ 64 GB system RAM?</text>
+<line x1="448" y1="300" x2="468" y2="300" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="470" y="276" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="295" text-anchor="middle" class="leaf-main">GGUF Q4_K_M</text>
+<text x="659" y="310" text-anchor="middle" class="lbl-sm">with --n-gpu-layers</text>
+<text x="659" y="322" text-anchor="middle" class="lbl-sub">GPU+CPU split inference</text>
+
+
+<line x1="228" y1="410" x2="250" y2="410" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="252" y="388" width="196" height="44" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<rect x="252" y="388" width="5"   height="44" rx="2" fill="var(--warn,#e0a106)"/>
+<text x="352" y="407" text-anchor="middle" class="lbl-sm">CPU-only (64 GB RAM)?</text>
+<text x="352" y="423" text-anchor="middle" class="lbl-sub">no dedicated GPU</text>
+<line x1="448" y1="410" x2="468" y2="410" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" marker-end="url(#ddt-arrow)"/>
+<rect x="470" y="386" width="378" height="50" rx="8" fill="var(--surface,#f8fafc)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="659" y="405" text-anchor="middle" class="leaf-main">GGUF Q4_K_S / Q3_K_M</text>
+<text x="659" y="420" text-anchor="middle" class="lbl-sm">llama.cpp CPU inference</text>
+<text x="659" y="432" text-anchor="middle" class="lbl-sub">most aggressive compression</text>
+
+</svg>
+<figcaption><b>Practical decision tree for deploying a 70B model by available hardware.</b> The tree descends from most-capable (2x H100: use full BF16/FP8) to least-capable (CPU-only: use GGUF Q4_K_S or Q3_K_M). The GPU+CPU split path (24 GB VRAM + 64 GB RAM with <code>--n-gpu-layers</code>) is a practical middle ground for consumer hardware running the largest open-weight models.</figcaption>
+</figure>

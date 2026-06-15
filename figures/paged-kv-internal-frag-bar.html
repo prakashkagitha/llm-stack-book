@@ -1,0 +1,58 @@
+<figure class="viz" id="fig-paged-kv-internal-frag-bar">
+<svg viewBox="0 0 760 230" role="img" aria-label="Internal fragmentation diagram showing Request A with max_len=2048 but only 30 tokens used, leaving 2018 slots reserved-but-empty and unavailable to any other request.">
+  <defs>
+    <pattern id="ifb-hatch" x="0" y="0" width="8" height="8" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="8" x2="8" y2="0" stroke="var(--border-2,#94a3b8)" stroke-width="1" opacity="0.5"/>
+    </pattern>
+    <marker id="ifb-caret" viewBox="0 0 10 10" refX="5" refY="10" markerWidth="8" markerHeight="8" orient="auto">
+      <polygon points="0,10 5,0 10,10" fill="var(--ink-soft,#64748b)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-paged-kv-internal-frag-bar .title-lbl { font: 600 13px var(--sans,sans-serif); }
+    #fig-paged-kv-internal-frag-bar .seg-lbl   { font: 600 11px var(--sans,sans-serif); }
+    #fig-paged-kv-internal-frag-bar .annot-lbl { font: italic 11px var(--sans,sans-serif); }
+    #fig-paged-kv-internal-frag-bar .dim-lbl   { font: 400 10px var(--mono,monospace); }
+    #fig-paged-kv-internal-frag-bar text        { fill: var(--ink-soft,#374151); }
+  </style>
+
+  
+  <text x="380" y="22" text-anchor="middle" class="title-lbl" fill="var(--ink-soft,#374151)">Request A: max_len = 2048 reserved, only 30 tokens actually used</text>
+
+  
+  <line x1="40" y1="54" x2="720" y2="54" stroke="var(--ink-soft,#64748b)" stroke-width="1" opacity="0.5"/>
+  <line x1="40" y1="50" x2="40" y2="58" stroke="var(--ink-soft,#64748b)" stroke-width="1" opacity="0.5"/>
+  <line x1="720" y1="50" x2="720" y2="58" stroke="var(--ink-soft,#64748b)" stroke-width="1" opacity="0.5"/>
+  <text x="380" y="50" text-anchor="middle" class="dim-lbl" fill="var(--muted,#94a3b8)">contiguous max_seq_len allocation (2048 slots)</text>
+
+  
+  <rect x="40" y="68" width="680" height="70" rx="6" fill="none" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+
+  
+  <rect x="40" y="68" width="62" height="70" rx="0" fill="var(--accent,#4f7cff)" stroke="none"/>
+  <rect x="40" y="68" width="6" height="70" rx="6" fill="var(--accent,#4f7cff)" stroke="none"/>
+
+  
+  <rect x="102" y="68" width="618" height="70" rx="0" fill="url(#ifb-hatch)" stroke="none"/>
+  <rect x="714" y="68" width="6" height="70" rx="6" fill="url(#ifb-hatch)" stroke="none"/>
+
+  
+  <line x1="102" y1="68" x2="102" y2="138" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+
+  
+  <text x="71" y="99" text-anchor="middle" class="seg-lbl" fill="#ffffff">used</text>
+  <text x="71" y="113" text-anchor="middle" class="seg-lbl" fill="#ffffff">(30 tok)</text>
+
+  
+  <rect x="198" y="80" width="426" height="22" rx="3" fill="var(--surface,#ffffff)" fill-opacity="0.6"/>
+  <text x="411" y="97" text-anchor="middle" class="seg-lbl" fill="var(--ink-soft,#374151)">reserved-but-empty (2018 tokens) — WASTED</text>
+
+  
+  <line x1="411" y1="148" x2="411" y2="158" stroke="var(--ink-soft,#64748b)" stroke-width="1.2" marker-end="url(#ifb-caret)"/>
+  <text x="411" y="176" text-anchor="middle" class="annot-lbl" fill="var(--muted,#94a3b8)">No other request may touch this region for the request's entire lifetime</text>
+
+  
+  <text x="380" y="210" text-anchor="middle" class="dim-lbl" fill="var(--muted,#94a3b8)">2048 - 30 = 2018 slots stranded -- only ~1.5% of the reservation is useful</text>
+</svg>
+<figcaption><b>Internal fragmentation: worst-case reservation strands the vast majority of a contiguous allocation.</b> Request A reserves a 2048-slot contiguous slab but uses only 30 tokens; the remaining 2018 slots are allocated, untouched, and unavailable to any other request until the sequence completes. In real workloads with short, variable outputs this pattern repeats across every active request, consuming the bulk of the KV budget on empty space.</figcaption>
+</figure>

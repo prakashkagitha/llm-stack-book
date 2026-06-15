@@ -1,0 +1,194 @@
+<figure class="viz" id="fig-serving-e2e-request-trace">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 940 1080" role="img" aria-label="Vertical pipeline tracing one streaming LLM request through 10 layers: client, gateway, router, admit, replica, first token, decode, EOS, meter, and autoscaler. A token descends through steps 1 to 5, then streams back upward through steps 6 to 7.">
+<defs>
+  <marker id="e2e-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="e2e-arrow-up" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-serving-e2e-request-trace text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#475569); }
+  #fig-serving-e2e-request-trace .step-num { font: 700 14px var(--sans,sans-serif); fill: white; }
+  #fig-serving-e2e-request-trace .layer-tag { font: 700 11px var(--sans,sans-serif); }
+  #fig-serving-e2e-request-trace .action { font: 12px var(--mono,monospace); fill: var(--ink-soft,#475569); }
+  #fig-serving-e2e-request-trace .action-sm { font: 11px var(--mono,monospace); fill: var(--ink-soft,#475569); }
+  #fig-serving-e2e-request-trace .ret-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+</style>
+
+
+<line x1="58" y1="30" x2="58" y2="1048" stroke="var(--border-2,#cbd5e1)" stroke-width="2"/>
+
+
+
+
+<rect x="78" y="30" width="840" height="82" rx="8" fill="var(--surface-3,#f8fafc)" stroke="var(--border-2,#e2e8f0)" stroke-width="1.5" id="e2e-s1"/>
+
+<circle cx="58" cy="72" r="16" fill="var(--muted,#94a3b8)" id="e2e-b1"/>
+<text x="58" y="77" text-anchor="middle" class="step-num">1</text>
+<text x="106" y="58" class="layer-tag" fill="var(--muted,#94a3b8)">CLIENT</text>
+<text x="106" y="78" class="action">POST /v1/chat/completions  (stream=true)</text>
+<text x="106" y="96" class="action">--&gt; nearest gateway</text>
+
+
+<rect x="78" y="122" width="840" height="108" rx="8" fill="var(--surface,#eef2ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s2"/>
+<circle cx="58" cy="176" r="16" fill="var(--accent2,#3b82f6)" id="e2e-b2"/>
+<text x="58" y="181" text-anchor="middle" class="step-num">2</text>
+<text x="106" y="144" class="layer-tag" fill="var(--accent2,#3b82f6)">GATEWAY</text>
+<text x="106" y="164" class="action-sm">TLS terminate; validate API key;</text>
+<text x="106" y="181" class="action-sm">check token-bucket quota (reserve prompt_len + max_tokens);</text>
+<text x="106" y="198" class="action-sm">enforce max_tokens cap</text>
+
+
+<rect x="78" y="240" width="840" height="108" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2" id="e2e-s3"/>
+<circle cx="58" cy="294" r="16" fill="var(--accent,#6366f1)" id="e2e-b3"/>
+<text x="58" y="299" text-anchor="middle" class="step-num">3</text>
+<text x="106" y="262" class="layer-tag" fill="var(--accent,#6366f1)">ROUTER</text>
+<text x="106" y="282" class="action-sm" fill="var(--accent,#6366f1)">model="llama-3-8b" -> Pool B; hash prompt prefix blocks;</text>
+<text x="106" y="299" class="action-sm" fill="var(--accent,#6366f1)">power-of-2-choices over Pool B replicas with cache bonus</text>
+<text x="106" y="316" class="action-sm" fill="var(--accent,#6366f1)">-> rep1</text>
+
+
+<rect x="78" y="358" width="840" height="90" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.12" stroke="var(--accent,#6366f1)" stroke-width="2" id="e2e-s4"/>
+<circle cx="58" cy="403" r="16" fill="var(--accent,#6366f1)" id="e2e-b4"/>
+<text x="58" y="408" text-anchor="middle" class="step-num">4</text>
+<text x="106" y="378" class="layer-tag" fill="var(--accent,#6366f1)">ADMIT</text>
+<text x="106" y="398" class="action-sm" fill="var(--accent,#6366f1)">predicted TTFT on rep1 = (queued_tokens + prompt_len)/prefill_rate</text>
+<text x="106" y="416" class="action-sm" fill="var(--accent,#6366f1)">&lt;= SLO?  yes -&gt; admit; charge queued_tokens</text>
+
+
+<rect x="78" y="458" width="840" height="120" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s5"/>
+<circle cx="58" cy="518" r="16" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" id="e2e-b5"/>
+<text x="58" y="523" text-anchor="middle" class="step-num">5</text>
+<text x="106" y="478" class="layer-tag" fill="var(--accent2,#3b82f6)">REPLICA</text>
+<text x="106" y="498" class="action-sm">scheduler: chunked prefill interleaved with decode</text>
+<text x="106" y="515" class="action-sm">of other in-flight sequences (continuous batching);</text>
+<text x="106" y="532" class="action-sm">prefix cache HIT on 1.2k-token system prompt</text>
+<text x="106" y="549" class="action-sm">-&gt; skip its prefill</text>
+
+
+<rect x="78" y="588" width="840" height="82" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--good,#2f9e6e)" stroke-width="2.5" id="e2e-s6"/>
+<circle cx="58" cy="629" r="16" fill="var(--good,#2f9e6e)" id="e2e-b6"/>
+<text x="58" y="634" text-anchor="middle" class="step-num">6</text>
+<text x="106" y="610" class="layer-tag" fill="var(--good,#2f9e6e)">FIRST TOKEN</text>
+<text x="106" y="632" class="action-sm">streamed back: gateway forwards SSE chunk to client</text>
+<text x="106" y="650" class="action-sm" fill="var(--good,#2f9e6e)">(TTFT clock stops)</text>
+
+
+<rect x="78" y="680" width="840" height="82" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s7"/>
+<circle cx="58" cy="721" r="16" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" id="e2e-b7"/>
+<text x="58" y="726" text-anchor="middle" class="step-num">7</text>
+<text x="106" y="700" class="layer-tag" fill="var(--accent2,#3b82f6)">DECODE</text>
+<text x="106" y="720" class="action-sm">each step emits 1 token/seq; gateway streams</text>
+<text x="106" y="737" class="action-sm">each as an SSE event  (TPOT measured between events)</text>
+
+
+<rect x="78" y="772" width="840" height="82" rx="8" fill="var(--surface,#e0e7ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s8"/>
+<circle cx="58" cy="813" r="16" fill="var(--accent2,#3b82f6)" fill-opacity="0.8" id="e2e-b8"/>
+<text x="58" y="818" text-anchor="middle" class="step-num">8</text>
+<text x="106" y="792" class="layer-tag" fill="var(--accent2,#3b82f6)">EOS</text>
+<text x="106" y="812" class="action-sm">sequence finishes; KV blocks freed;</text>
+<text x="106" y="829" class="action-sm">slot handed to a waiting request</text>
+
+
+<rect x="78" y="864" width="840" height="82" rx="8" fill="var(--surface,#eef2ff)" stroke="var(--border-2,#c7d2fe)" stroke-width="1.5" id="e2e-s9"/>
+<circle cx="58" cy="905" r="16" fill="var(--accent2,#3b82f6)" id="e2e-b9"/>
+<text x="58" y="910" text-anchor="middle" class="step-num">9</text>
+<text x="106" y="884" class="layer-tag" fill="var(--accent2,#3b82f6)">METER</text>
+<text x="106" y="904" class="action-sm">gateway reconciles quota (refund unused reserved tokens),</text>
+<text x="106" y="921" class="action-sm">logs usage, emits prompt/completion token metrics -&gt; Prometheus</text>
+
+
+<rect x="78" y="956" width="840" height="84" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#e2e8f0)" stroke-width="1.5" id="e2e-s10"/>
+<circle cx="58" cy="998" r="16" fill="var(--ink-soft,#64748b)" id="e2e-b10"/>
+<text x="58" y="1003" text-anchor="middle" class="step-num">10</text>
+<text x="106" y="976" class="layer-tag" fill="var(--ink-soft,#64748b)">AUTOSCALER</text>
+<text x="106" y="996" class="action-sm">independently watches waiting_tokens across Pool B;</text>
+<text x="106" y="1013" class="action-sm">if queue trends up, raises desired_replicas; warm buffer absorbs the spike</text>
+
+
+<line x1="58" y1="115" x2="58" y2="118" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="234" x2="58" y2="237" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="352" x2="58" y2="355" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="452" x2="58" y2="455" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="582" x2="58" y2="585" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="674" x2="58" y2="677" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="766" x2="58" y2="769" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="858" x2="58" y2="861" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+<line x1="58" y1="950" x2="58" y2="953" stroke="var(--ink-soft,#475569)" stroke-width="2" marker-end="url(#e2e-arrow)"/>
+
+
+<line x1="924" y1="762" x2="924" y2="591" stroke="var(--good,#2f9e6e)" stroke-width="2.5" stroke-dasharray="7 4" marker-end="url(#e2e-arrow-up)"/>
+
+<line x1="918" y1="629" x2="922" y2="629" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+
+<line x1="918" y1="721" x2="922" y2="721" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+
+<text transform="rotate(-90,930,680)" x="930" y="680" text-anchor="middle" class="ret-lbl">tokens stream up to client</text>
+
+
+<circle cx="58" cy="72" r="9" fill="var(--warn,#e0a106)" opacity="0" id="e2e-ph">
+  
+  <animate attributeName="opacity" values="0;1" dur="0.2s" begin="0.5s" fill="freeze"/>
+  
+  <animate attributeName="cy" values="72;176" dur="0.6s" begin="0.7s" fill="freeze" id="ph-to-2"/>
+  
+  <animate attributeName="cy" values="176;294" dur="0.6s" begin="ph-to-2.end+0.3s" fill="freeze" id="ph-to-3"/>
+  
+  <animate attributeName="cy" values="294;403" dur="0.6s" begin="ph-to-3.end+0.3s" fill="freeze" id="ph-to-4"/>
+  
+  <animate attributeName="cy" values="403;518" dur="0.6s" begin="ph-to-4.end+0.3s" fill="freeze" id="ph-to-5"/>
+  
+  <animate attributeName="fill" values="var(--warn,#e0a106);var(--good,#2f9e6e)" dur="0.3s" begin="ph-to-5.end+0.3s" fill="freeze"/>
+  <animate attributeName="cy" values="518;629" dur="0.6s" begin="ph-to-5.end+0.3s" fill="freeze" id="ph-to-6"/>
+  
+  <animate attributeName="opacity" values="1;0" dur="0.3s" begin="ph-to-6.end+0.5s" fill="freeze"/>
+</circle>
+
+
+
+<rect x="78" y="30" width="840" height="82" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl1">
+  <animate attributeName="fill-opacity" values="0;0.12;0" dur="0.5s" begin="0.5s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="122" width="840" height="108" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl2">
+  <animate attributeName="fill-opacity" values="0;0.12;0" dur="0.5s" begin="ph-to-2.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="240" width="840" height="108" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl3">
+  <animate attributeName="fill-opacity" values="0;0.18;0" dur="0.5s" begin="ph-to-3.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="358" width="840" height="90" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl4">
+  <animate attributeName="fill-opacity" values="0;0.18;0" dur="0.5s" begin="ph-to-4.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="458" width="840" height="120" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0" id="e2e-hl5">
+  <animate attributeName="fill-opacity" values="0;0.15;0" dur="0.5s" begin="ph-to-5.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="588" width="840" height="82" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0" id="e2e-hl6">
+  <animate attributeName="fill-opacity" values="0;0.25;0.05" dur="0.8s" begin="ph-to-6.end" fill="freeze"/>
+</rect>
+
+<rect x="78" y="680" width="840" height="82" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0" id="e2e-hl7a">
+  <animate attributeName="fill-opacity" values="0;0.15;0;0.15;0;0.15;0" dur="2.4s" begin="ph-to-6.end+0.8s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="772" width="840" height="82" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0" id="e2e-hl8">
+  <animate attributeName="fill-opacity" values="0;0.2;0" dur="0.6s" begin="ph-to-6.end+3.4s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="864" width="840" height="82" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0" id="e2e-hl9">
+  <animate attributeName="fill-opacity" values="0;0.15;0" dur="0.6s" begin="ph-to-6.end+4.2s" fill="freeze"/>
+</rect>
+
+<rect x="78" y="956" width="840" height="84" rx="8" fill="var(--ink-soft,#64748b)" fill-opacity="0" id="e2e-hl10">
+  <animate attributeName="fill-opacity" values="0;0.12;0;0.12;0" dur="3s" begin="ph-to-3.end" fill="freeze"/>
+</rect>
+
+</svg>
+<figcaption><b>Every layer of the serving system touches one streaming chat request, in order.</b> The request descends through gateway (auth, quota), router (model + replica selection), admission control (SLO prediction), and the replica (continuous batching, prefix cache). At step 6, flow reverses: the first token streams back up (TTFT stops), followed by per-token SSE events (TPOT). Steps 9–10 run asynchronously to reconcile billing and adjust autoscaler state.</figcaption>
+</figure>

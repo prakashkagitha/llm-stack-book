@@ -1,0 +1,197 @@
+<figure class="viz" id="fig-reliability-degradation-ladder">
+<button class="viz-replay" type="button">↻ replay</button>
+<style>
+  #fig-reliability-degradation-ladder .bar-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-reliability-degradation-ladder .bar-desc { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-reliability-degradation-ladder .badge-lbl { font: 700 11px var(--sans,sans-serif); fill: #fff; }
+  #fig-reliability-degradation-ladder .axis-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-degradation-ladder .cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-degradation-ladder .side-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-reliability-degradation-ladder .time-chip { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#7c3aed); }
+
+  /* Token animation */
+  #fig-reliability-degradation-ladder #dl-token {
+    r: 10;
+    fill: var(--accent,#7c3aed);
+    filter: drop-shadow(0 0 5px var(--accent,#7c3aed));
+  }
+  /* Active bar flash */
+  #fig-reliability-degradation-ladder .bar-flash {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  #fig-reliability-degradation-ladder .bar-flash.active {
+    opacity: 0.25;
+  }
+
+  @keyframes dl-move {
+    /* Start at level 0 */
+    0%   { cy: 60px; opacity:1; }
+    /* Down to L1 */
+    8%   { cy: 60px; }
+    16%  { cy: 150px; }
+    /* Down to L2 */
+    24%  { cy: 150px; }
+    32%  { cy: 240px; }
+    /* Down to L3 */
+    40%  { cy: 240px; }
+    48%  { cy: 330px; }
+    /* Pause at L3 */
+    54%  { cy: 330px; }
+    /* Up to L2 */
+    60%  { cy: 240px; }
+    /* Up to L1 */
+    68%  { cy: 240px; }
+    76%  { cy: 150px; }
+    /* Up to L0 */
+    84%  { cy: 150px; }
+    92%  { cy: 60px; }
+    100% { cy: 60px; opacity:1; }
+  }
+
+  @keyframes dl-flash0 {
+    0%,7%   { opacity:0.25 }
+    8%,15%  { opacity:0 }
+    83%,91% { opacity:0 }
+    92%,100%{ opacity:0.25 }
+  }
+  @keyframes dl-flash1 {
+    0%,7%   { opacity:0 }
+    8%,15%  { opacity:0.25 }
+    16%,23% { opacity:0 }
+    59%,67% { opacity:0 }
+    68%,75% { opacity:0.25 }
+    76%,83% { opacity:0 }
+    100%    { opacity:0 }
+  }
+  @keyframes dl-flash2 {
+    0%,23%  { opacity:0 }
+    24%,31% { opacity:0.25 }
+    32%,55% { opacity:0 }
+    60%,67% { opacity:0.25 }
+    68%,100%{ opacity:0 }
+  }
+  @keyframes dl-flash3 {
+    0%,39%  { opacity:0 }
+    40%,59% { opacity:0.25 }
+    60%,100%{ opacity:0 }
+  }
+
+  #fig-reliability-degradation-ladder #dl-token {
+    animation: dl-move 9s ease-in-out infinite;
+    animation-fill-mode: both;
+  }
+  #fig-reliability-degradation-ladder #flash0 { animation: dl-flash0 9s ease-in-out infinite; }
+  #fig-reliability-degradation-ladder #flash1 { animation: dl-flash1 9s ease-in-out infinite; }
+  #fig-reliability-degradation-ladder #flash2 { animation: dl-flash2 9s ease-in-out infinite; }
+  #fig-reliability-degradation-ladder #flash3 { animation: dl-flash3 9s ease-in-out infinite; }
+</style>
+<svg viewBox="0 0 760 500" role="img" aria-label="The graceful degradation ladder: five levels from full RAG at the top to graceful error at the bottom, with an animated circuit-breaker token stepping down and recovering back up.">
+
+  
+  
+  <line x1="38" y1="90" x2="38" y2="410" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#dl-down)"/>
+  <defs>
+    <marker id="dl-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="dl-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M1 10 L5 1 L9 10 z" fill="var(--border-2,#94a3b8)"/>
+    </marker>
+    <marker id="dl-deg-arrow" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 0 L5 9 L9 0 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="dl-rec-arrow" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M1 10 L5 1 L9 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  
+  <line x1="38" y1="410" x2="38" y2="90" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#dl-up)"/>
+
+  
+  <text transform="translate(16,340) rotate(-90)" class="axis-lbl" text-anchor="middle">less value</text>
+  <text transform="translate(16,160) rotate(-90)" class="axis-lbl" text-anchor="middle">more reliability</text>
+
+  
+
+  
+  <rect x="72" y="25" width="560" height="70" rx="10"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.15"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  
+  <rect id="flash0" x="72" y="25" width="560" height="70" rx="10"
+        fill="var(--good,#2f9e6e)" fill-opacity="0" class="bar-flash"/>
+  
+  <rect x="72" y="33" width="128" height="52" rx="8" fill="var(--good,#2f9e6e)"/>
+  <text x="136" y="55" text-anchor="middle" class="badge-lbl">Level 0</text>
+  <text x="136" y="70" text-anchor="middle" class="badge-lbl" style="font-size:9px">NORMAL</text>
+  <text x="218" y="58" class="bar-desc">Full RAG + frontier model + streaming</text>
+
+  
+  <rect x="72" y="115" width="560" height="70" rx="10"
+        fill="var(--accent,#7c3aed)" fill-opacity="0.10"
+        stroke="var(--accent,#7c3aed)" stroke-width="1.5" stroke-opacity="0.5"/>
+  <rect id="flash1" x="72" y="115" width="560" height="70" rx="10"
+        fill="var(--accent,#7c3aed)" fill-opacity="0" class="bar-flash"/>
+  <rect x="72" y="123" width="128" height="52" rx="8" fill="var(--accent,#7c3aed)" fill-opacity="0.7"/>
+  <text x="136" y="145" text-anchor="middle" class="badge-lbl">Level 1</text>
+  <text x="136" y="160" text-anchor="middle" class="badge-lbl" style="font-size:9px">RETRIEVAL_OFF</text>
+  <text x="218" y="148" class="bar-desc">Static context only</text>
+  <text x="218" y="163" class="bar-desc">+ frontier model</text>
+
+  
+  <rect x="72" y="205" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0.12"
+        stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-opacity="0.6"/>
+  <rect id="flash2" x="72" y="205" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0" class="bar-flash"/>
+  <rect x="72" y="213" width="128" height="52" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.75"/>
+  <text x="136" y="235" text-anchor="middle" class="badge-lbl">Level 2</text>
+  <text x="136" y="250" text-anchor="middle" class="badge-lbl" style="font-size:9px">MODEL_FALLBACK</text>
+  <text x="218" y="238" class="bar-desc">Static context + smaller/cheaper model</text>
+  <text x="218" y="253" class="bar-desc">(lower quality)</text>
+
+  
+  <rect x="72" y="295" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0.22"
+        stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+  <rect id="flash3" x="72" y="295" width="560" height="70" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0" class="bar-flash"/>
+  <rect x="72" y="303" width="128" height="52" rx="8" fill="var(--warn,#e0a106)"/>
+  <text x="136" y="325" text-anchor="middle" class="badge-lbl">Level 3</text>
+  <text x="136" y="340" text-anchor="middle" class="badge-lbl" style="font-size:9px">CACHED_ONLY</text>
+  <text x="218" y="328" class="bar-desc">Return best cached response</text>
+  <text x="218" y="343" class="bar-desc">for similar queries</text>
+
+  
+  <rect x="72" y="385" width="560" height="70" rx="10"
+        fill="var(--accent-2,#3b82f6)" fill-opacity="0.08"
+        stroke="var(--accent-2,#3b82f6)" stroke-width="1.5" stroke-opacity="0.5"/>
+  <rect x="72" y="393" width="128" height="52" rx="8" fill="var(--accent-2,#3b82f6)" fill-opacity="0.5"/>
+  <text x="136" y="415" text-anchor="middle" class="badge-lbl">Level 4</text>
+  <text x="136" y="430" text-anchor="middle" class="badge-lbl" style="font-size:9px">GRACEFUL_ERROR</text>
+  <text x="218" y="416" class="bar-desc">Inform user: "Service temporarily</text>
+  <text x="218" y="431" class="bar-desc">limited, try again shortly"</text>
+
+  
+  
+  <path d="M 690 85 C 714 85 720 150 706 188" stroke="var(--warn,#e0a106)" stroke-width="2" fill="none" marker-end="url(#dl-deg-arrow)"/>
+  <text x="718" y="122" text-anchor="middle" class="side-lbl" style="fill:var(--warn,#e0a106);font-size:10px">degrade</text>
+  <text x="718" y="135" text-anchor="middle" class="side-lbl" style="fill:var(--warn,#e0a106);font-size:10px">(reason)</text>
+
+  
+  <path d="M 706 372 C 722 372 728 295 714 260" stroke="var(--good,#2f9e6e)" stroke-width="2" fill="none" marker-end="url(#dl-rec-arrow)"/>
+  <text x="718" y="316" text-anchor="middle" class="side-lbl" style="fill:var(--good,#2f9e6e);font-size:10px">recover()</text>
+  <text x="718" y="329" text-anchor="middle" class="side-lbl" style="fill:var(--good,#2f9e6e);font-size:10px">exp. backoff</text>
+  <text x="718" y="342" text-anchor="middle" class="side-lbl" style="fill:var(--good,#2f9e6e);font-size:10px">before retry</text>
+
+  
+  
+  <circle id="dl-token" cx="58" cy="60" r="9"/>
+
+  
+  <text x="352" y="478" text-anchor="middle" class="cap">Automatic, reversible transitions — each step trades value for reliability</text>
+
+</svg>
+<figcaption><b>The graceful degradation ladder trades value for reliability at each step down.</b> A circuit-breaker controller automatically steps the system down when SLI thresholds are breached (degrade) and back up after a dwell period with exponential backoff (recover). The animated token shows the system cycling down through levels 0–3 and recovering, mirroring how the <code>DegradationController</code> operates in production.</figcaption>
+</figure>

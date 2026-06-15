@@ -1,0 +1,196 @@
+<figure class="viz" id="fig-primerl-queue-async-architecture">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 880 460" role="img" aria-label="Cyclic data-flow diagram of queue-based async off-policy RL: inference workers push rollouts to a queue, the trainer pulls batches and publishes weights to a versioned store, which workers load periodically. Animated dots show fast rollout flow and slow weight broadcasts.">
+<defs>
+  <marker id="pqa-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="pqa-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#0891b2)"/>
+  </marker>
+  <marker id="pqa-arr-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-primerl-queue-async-architecture text { fill: var(--ink-soft,#374151); }
+  #fig-primerl-queue-async-architecture .box-title { font: 700 12px var(--sans,sans-serif); }
+  #fig-primerl-queue-async-architecture .box-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-queue-async-architecture .edge-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-primerl-queue-async-architecture .edge-lbl-sm { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-primerl-queue-async-architecture .callout { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#4f46e5); }
+  #fig-primerl-queue-async-architecture .source-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+
+  /* ---- rollout dot animations (workers -> queue) ---- */
+  @keyframes pqa-dot-workers-q-1 {
+    0%   { cx: 362; cy: 135; opacity: 0; }
+    5%   { opacity: 1; }
+    45%  { cx: 620; cy: 135; opacity: 1; }
+    50%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes pqa-dot-workers-q-2 {
+    0%   { opacity: 0; }
+    20%  { opacity: 0; }
+    25%  { cx: 362; cy: 135; opacity: 1; }
+    65%  { cx: 620; cy: 135; opacity: 1; }
+    70%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes pqa-dot-workers-q-3 {
+    0%   { opacity: 0; }
+    40%  { opacity: 0; }
+    45%  { cx: 362; cy: 135; opacity: 1; }
+    85%  { cx: 620; cy: 135; opacity: 1; }
+    90%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* ---- queue -> trainer dot ---- */
+  @keyframes pqa-dot-q-train-1 {
+    0%   { cy: 210; opacity: 0; }
+    10%  { cy: 210; opacity: 1; }
+    40%  { cy: 280; opacity: 1; }
+    45%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes pqa-dot-q-train-2 {
+    0%   { opacity: 0; }
+    35%  { cy: 210; opacity: 0; }
+    40%  { cy: 210; opacity: 1; }
+    70%  { cy: 280; opacity: 1; }
+    75%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* ---- trainer -> weight store (slow, every ~3s equiv) ---- */
+  @keyframes pqa-dot-train-store {
+    0%   { cx: 620; cy: 340; opacity: 0; }
+    55%  { cx: 620; cy: 340; opacity: 0; }
+    60%  { cx: 620; cy: 340; opacity: 1; }
+    85%  { cx: 360; cy: 340; opacity: 1; }
+    90%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* ---- store -> workers (slow) ---- */
+  @keyframes pqa-dot-store-workers {
+    0%   { cy: 280; opacity: 0; }
+    65%  { cy: 280; opacity: 0; }
+    70%  { cy: 280; opacity: 1; }
+    90%  { cy: 195; opacity: 1; }
+    95%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  #fig-primerl-queue-async-architecture .pqa-rdot1 { animation: pqa-dot-workers-q-1 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-rdot2 { animation: pqa-dot-workers-q-2 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-rdot3 { animation: pqa-dot-workers-q-3 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-qdot1 { animation: pqa-dot-q-train-1 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-qdot2 { animation: pqa-dot-q-train-2 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-wdot  { animation: pqa-dot-train-store 3s linear 0.2s infinite; }
+  #fig-primerl-queue-async-architecture .pqa-sdot  { animation: pqa-dot-store-workers 3s linear 0.2s infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-primerl-queue-async-architecture circle {
+      animation: none !important;
+      opacity: 0 !important;
+    }
+  }
+</style>
+
+
+<rect x="18" y="140" width="70" height="36" rx="8" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1.5"/>
+<text x="53" y="162" class="source-lbl" text-anchor="middle">prompts</text>
+
+<line x1="88" y1="158" x2="152" y2="158" stroke="var(--muted,#6b7280)" stroke-width="1.5" marker-end="url(#pqa-arr-muted)"/>
+
+
+<rect x="155" y="80" width="205" height="155" rx="10" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+<text x="257" y="103" class="box-title" text-anchor="middle" fill="var(--accent,#4f46e5)">inference workers</text>
+<text x="257" y="117" class="box-sub" text-anchor="middle">(generators)</text>
+
+<rect x="170" y="124" width="175" height="22" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.12" stroke="var(--accent,#4f46e5)" stroke-width="1"/>
+<text x="257" y="139" class="box-sub" text-anchor="middle">vLLM / SGLang</text>
+<rect x="170" y="150" width="175" height="22" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.08" stroke="var(--accent,#4f46e5)" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text x="257" y="165" class="box-sub" text-anchor="middle">vLLM / SGLang</text>
+<rect x="170" y="176" width="175" height="22" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.05" stroke="var(--accent,#4f46e5)" stroke-width="0.8" stroke-dasharray="3 2"/>
+<text x="257" y="191" class="box-sub" text-anchor="middle">vLLM / SGLang</text>
+
+<text x="257" y="213" class="box-sub" text-anchor="middle">θv held in memory</text>
+<text x="257" y="225" class="box-sub" text-anchor="middle">sample with current weights</text>
+
+
+<line x1="360" y1="135" x2="622" y2="135" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#pqa-arr-acc)"/>
+<text x="488" y="126" class="edge-lbl" text-anchor="middle">push finished rollouts(θv)</text>
+<text x="488" y="113" class="edge-lbl-sm" text-anchor="middle">(tagged with policy version v)</text>
+
+
+<rect x="622" y="70" width="190" height="155" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1.8"/>
+<text x="717" y="97" class="box-title" text-anchor="middle" fill="var(--ink-soft,#374151)">rollout queue</text>
+
+<rect x="638" y="106" width="158" height="22" rx="3" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="717" y="121" class="box-sub" text-anchor="middle">rollout (sample-level)</text>
+<rect x="638" y="132" width="158" height="22" rx="3" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1"/>
+<text x="717" y="147" class="box-sub" text-anchor="middle">rollout (sample-level)</text>
+<rect x="638" y="158" width="158" height="22" rx="3" fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3 2" fill-opacity="0.5"/>
+<text x="717" y="173" class="box-sub" text-anchor="middle">rollout (sample-level)</text>
+<text x="717" y="212" class="box-sub" text-anchor="middle">individual rollouts, not batches</text>
+
+
+<line x1="717" y1="225" x2="717" y2="278" stroke="var(--muted,#6b7280)" stroke-width="1.8" marker-end="url(#pqa-arr-muted)"/>
+<text x="724" y="255" class="edge-lbl-sm" text-anchor="start">sample / drain batch</text>
+
+
+<rect x="622" y="282" width="190" height="125" rx="10" fill="var(--surface,#f5f5f5)" stroke="var(--accent2,#0891b2)" stroke-width="2"/>
+<text x="717" y="305" class="box-title" text-anchor="middle" fill="var(--accent2,#0891b2)">trainer</text>
+<text x="717" y="322" class="box-sub" text-anchor="middle">pull batch, compute loss</text>
+<text x="717" y="336" class="box-sub" text-anchor="middle">optimizer step, emit k</text>
+<text x="717" y="354" class="box-sub" text-anchor="middle">publishes weights every N steps</text>
+<text x="717" y="368" class="box-sub" text-anchor="middle">(θk to weight store)</text>
+<text x="717" y="394" class="box-sub" text-anchor="middle" fill="var(--muted,#94a3b8)" font-size="9">stateful, reliable hardware</text>
+
+
+<line x1="622" y1="340" x2="362" y2="340" stroke="var(--accent2,#0891b2)" stroke-width="2" marker-end="url(#pqa-arr-acc2)"/>
+<text x="492" y="333" class="edge-lbl" text-anchor="middle" fill="var(--accent2,#0891b2)">publish θk</text>
+
+
+<rect x="155" y="282" width="205" height="125" rx="10" fill="var(--surface-3,#f1f5f9)" stroke="var(--muted,#6b7280)" stroke-width="1.8"/>
+<text x="257" y="305" class="box-title" text-anchor="middle" fill="var(--ink-soft,#374151)">weight store</text>
+<text x="257" y="319" class="box-sub" text-anchor="middle">(versioned)</text>
+
+<text x="257" y="342" class="box-sub" text-anchor="middle" font-family="var(--mono,monospace)">θ…, θk-2, θk-1, θk</text>
+<line x1="185" y1="350" x2="330" y2="350" stroke="var(--muted,#6b7280)" stroke-width="0.8" stroke-dasharray="3 3" opacity="0.5"/>
+<text x="257" y="368" class="box-sub" text-anchor="middle">tracks generation version</text>
+<text x="257" y="382" class="box-sub" text-anchor="middle">per rollout</text>
+
+
+<line x1="290" y1="282" x2="290" y2="240" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#pqa-arr-acc)"/>
+<text x="282" y="251" class="edge-lbl-sm" text-anchor="end" fill="var(--accent,#4f46e5)">load_weights(θk)</text>
+<text x="282" y="262" class="edge-lbl-sm" text-anchor="end" fill="var(--accent,#4f46e5)">(every N steps)</text>
+<text x="282" y="273" class="edge-lbl-sm" text-anchor="end" fill="var(--accent,#4f46e5)">hot-swap at boundary</text>
+
+
+<rect x="390" y="222" width="235" height="68" rx="8" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+<text x="507" y="242" class="callout" text-anchor="middle">key bookkeeping:</text>
+<text x="507" y="258" class="callout" text-anchor="middle">every rollout stamped with</text>
+<text x="507" y="274" class="callout" text-anchor="middle">policy version v;</text>
+<text x="507" y="287" class="callout" text-anchor="middle" font-size="9" fill="var(--muted,#6b7280)">staleness s = k - v</text>
+
+
+
+<circle class="pqa-rdot1" cx="362" cy="135" r="5" fill="var(--accent,#4f46e5)" opacity="0"/>
+<circle class="pqa-rdot2" cx="362" cy="135" r="5" fill="var(--accent,#4f46e5)" opacity="0"/>
+<circle class="pqa-rdot3" cx="362" cy="135" r="5" fill="var(--accent,#4f46e5)" opacity="0"/>
+
+<circle class="pqa-qdot1" cx="717" cy="210" r="5" fill="var(--muted,#6b7280)" opacity="0"/>
+<circle class="pqa-qdot2" cx="717" cy="210" r="5" fill="var(--muted,#6b7280)" opacity="0"/>
+
+<circle class="pqa-wdot" cx="620" cy="340" r="7" fill="var(--accent2,#0891b2)" opacity="0"/>
+
+<circle class="pqa-sdot" cx="290" cy="280" r="7" fill="var(--accent,#4f46e5)" opacity="0"/>
+
+</svg>
+<figcaption><b>Queue-based async off-policy RL decouples generation from training via a rollout queue and versioned weight store.</b> Inference workers continuously push completed rollouts (tagged with policy version θv) into the queue; the trainer drains batches and steps the optimizer; and only occasionally (every N steps) broadcasts new weights. The staleness s = k−v between generation version v and trainer step k is the central quantity that importance-sampling corrections must bound.</figcaption>
+</figure>

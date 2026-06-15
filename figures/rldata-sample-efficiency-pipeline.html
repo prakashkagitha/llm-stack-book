@@ -1,0 +1,125 @@
+<figure class="viz" id="fig-rldata-sample-efficiency-pipeline">
+<svg viewBox="0 0 820 980" role="img" aria-label="Vertical pipeline flowchart showing six data-side stages that each remove a category of wasted rollout, from raw prompt pool through to informative training batch and GRPO update, with a feedback loop back into stage 3.">
+<style>
+  #fig-rldata-sample-efficiency-pipeline text { font: 13px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-sample-efficiency-pipeline .node-text { font: 600 13px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-sample-efficiency-pipeline .node-text-inv { font: 700 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-rldata-sample-efficiency-pipeline .op-label { font: 600 11.5px var(--sans,sans-serif); fill: var(--ink-soft,#1e293b); }
+  #fig-rldata-sample-efficiency-pipeline .waste-tag { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-rldata-sample-efficiency-pipeline .loop-label { font: 600 11px var(--sans,sans-serif); fill: var(--accent,#4f7cff); }
+  #fig-rldata-sample-efficiency-pipeline .sidenote { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+</style>
+<defs>
+  <marker id="sep-arrow-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L5 9 L10 0 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+  <marker id="sep-arrow-hot" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L5 9 L10 0 z" fill="var(--warn,#f59e0b)"/>
+  </marker>
+  <marker id="sep-arrow-loop" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L5 9 L10 0 z" fill="var(--accent,#4f7cff)"/>
+  </marker>
+  <marker id="sep-arrow-right" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f7cff)"/>
+  </marker>
+</defs>
+
+
+
+
+
+
+<rect x="160" y="37" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="65" text-anchor="middle" class="node-text">raw prompt pool</text>
+
+
+<line x1="300" y1="83" x2="300" y2="147" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="107" class="op-label">(1) construction + QC + decontam + dedup</text>
+<text x="455" y="122" class="waste-tag">-&gt; remove garbage</text>
+
+
+<rect x="160" y="152" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="180" text-anchor="middle" class="node-text">verifiable corpus</text>
+
+
+<line x1="300" y1="198" x2="300" y2="262" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="222" class="op-label">(2) offline difficulty estimate, prune 0/k and k/k</text>
+<text x="455" y="237" class="waste-tag">-&gt; remove dead tails</text>
+
+
+<rect x="160" y="267" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="295" text-anchor="middle" class="node-text">usable corpus with priors</text>
+
+
+<line x1="300" y1="313" x2="300" y2="377" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="337" class="op-label">(3) difficulty-targeted online selection (band)</text>
+<text x="455" y="352" class="waste-tag">-&gt; raise survival rho</text>
+
+
+<rect x="160" y="382" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="410" text-anchor="middle" class="node-text">selected batch (mostly in-band)</text>
+
+
+<line x1="300" y1="428" x2="300" y2="487" stroke="var(--warn,#f59e0b)" stroke-width="3.5" marker-end="url(#sep-arrow-hot)"/>
+
+<text x="455" y="450" class="op-label" fill="var(--warn,#f59e0b)">(4) generate G per prompt</text>
+<text x="455" y="465" class="waste-tag" fill="var(--warn,#f59e0b)">-&gt; the expensive step</text>
+
+
+<rect x="160" y="492" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--muted,#94a3b8)" stroke-width="1.5"/>
+<text x="300" y="520" text-anchor="middle" class="node-text">raw groups</text>
+
+
+<line x1="300" y1="538" x2="300" y2="602" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="558" class="op-label">(5) dynamic sampling: drop zero-variance,</text>
+<text x="455" y="573" class="op-label">    oversample</text>
+<text x="455" y="588" class="waste-tag">-&gt; guarantee signal</text>
+
+
+<rect x="160" y="607" width="280" height="46" rx="8"
+      fill="var(--accent,#4f7cff)" stroke="var(--accent,#4f7cff)" stroke-width="2.5"/>
+<text x="300" y="635" text-anchor="middle" class="node-text-inv">informative training batch</text>
+
+
+<line x1="440" y1="630" x2="548" y2="630" stroke="var(--accent,#4f7cff)" stroke-width="2" marker-end="url(#sep-arrow-right)"/>
+
+<rect x="552" y="612" width="130" height="36" rx="18"
+      fill="var(--accent,#4f7cff)" stroke="none"/>
+<text x="617" y="634" text-anchor="middle" class="node-text-inv">GRPO update</text>
+
+
+<line x1="300" y1="653" x2="300" y2="715" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sep-arrow-down)"/>
+
+<text x="455" y="676" class="op-label">(6) update online difficulty (EMA/Beta)</text>
+<text x="455" y="691" class="waste-tag">-&gt; track moving p</text>
+
+
+<rect x="160" y="720" width="280" height="46" rx="8"
+      fill="var(--surface-3,rgba(79,124,255,0.10))" stroke="var(--accent,#4f7cff)" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="300" y="748" text-anchor="middle" class="node-text">prioritized prompt buffer</text>
+
+
+
+
+<path d="M 300,766 L 300,820 Q 300,840 280,840 L 80,840 Q 60,840 60,820 L 60,290 Q 60,268 80,268 L 160,268"
+      fill="none" stroke="var(--accent,#4f7cff)" stroke-width="2" stroke-dasharray="7 4"
+      marker-end="url(#sep-arrow-right)"/>
+
+
+<text transform="rotate(-90,32,560)" x="32" y="560" text-anchor="middle" class="loop-label">feeds back into (3) = emergent curriculum</text>
+
+
+<text x="410" y="888" text-anchor="middle" class="sidenote">(+ optional shallow staleness buffer for async overlap, success buffer for retention)</text>
+
+</svg>
+<figcaption><b>The data-side pipeline: six stages that each remove a category of wasted rollout.</b> Starting from a raw prompt pool, each numbered operation strips away a different class of inefficiency — garbage prompts, dead-tail prompts, out-of-band prompts, zero-variance groups — until only fully-informative groups reach the GRPO update. Stage 4 (generate G per prompt, in amber) is the dominant compute cost; every upstream stage exists to reduce how much of it gets wasted. The feedback loop from stage 6 back into stage 3 is the emergent curriculum: online difficulty estimates continuously re-steer selection as the policy improves.</figcaption>
+</figure>

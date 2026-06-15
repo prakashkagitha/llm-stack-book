@@ -1,0 +1,142 @@
+<figure class="viz" id="fig-rm-overoptimization-curve">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 520" role="img" aria-label="Reward-model over-optimization curve: true quality (gold reward) rises then falls as KL distance from the reference increases, while the proxy reward keeps rising monotonically. The peak marks the best policy; optimizing further causes reward hacking.">
+<defs>
+  <marker id="roc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <clipPath id="roc-clip">
+    <rect x="90" y="55" width="670" height="375"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-rm-overoptimization-curve text { fill: var(--ink-soft,#334155); }
+  #fig-rm-overoptimization-curve .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-rm-overoptimization-curve .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-rm-overoptimization-curve .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-rm-overoptimization-curve .accent { fill: var(--accent,#4f46e5); }
+  #fig-rm-overoptimization-curve .muted { fill: var(--muted,#94a3b8); }
+
+  /* Draw-on animation: start fully hidden, animate offset to 0 */
+  #fig-rm-overoptimization-curve .draw-true {
+    stroke-dasharray: 870;
+    stroke-dashoffset: 870;
+    animation: roc-draw-true 2.5s ease-out 0.1s forwards;
+  }
+  #fig-rm-overoptimization-curve .draw-proxy {
+    stroke-dasharray: 730;
+    stroke-dashoffset: 730;
+    animation: roc-draw-proxy 2.2s ease-out 0.4s forwards;
+  }
+  #fig-rm-overoptimization-curve .roc-peak-group {
+    opacity: 0;
+    animation: roc-fadein 0.5s ease 2.6s forwards;
+  }
+  #fig-rm-overoptimization-curve .roc-dot {
+    r: 0;
+    animation: roc-popin 0.35s ease 2.6s forwards;
+  }
+  @keyframes roc-draw-true {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes roc-draw-proxy {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes roc-fadein {
+    to { opacity: 1; }
+  }
+  @keyframes roc-popin {
+    to { r: 7px; }
+  }
+</style>
+
+
+<line x1="90" y1="430" x2="90" y2="55" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#roc-arr)"/>
+<line x1="90" y1="430" x2="762" y2="430" stroke="var(--ink-soft,#64748b)" stroke-width="1.8" marker-end="url(#roc-arr)"/>
+
+
+<text x="30" y="250" text-anchor="middle" class="lbl" transform="rotate(-90,30,250)">true quality (gold reward)</text>
+<text x="426" y="478" text-anchor="middle" class="lbl">KL(π_θ ‖ π_ref)</text>
+
+
+<rect x="380" y="55" width="380" height="375" fill="var(--accent,#4f46e5)" opacity="0.05" clip-path="url(#roc-clip)"/>
+<text x="570" y="82" text-anchor="middle" class="lbl-xs muted" opacity="0.8">over-optimization zone</text>
+
+
+<path
+  d="M 90 370
+     C 140 340, 200 220, 260 160
+     C 310 115, 350 108, 380 110
+     C 420 112, 460 145, 510 200
+     C 560 255, 620 305, 680 335
+     C 710 348, 740 354, 760 358"
+  fill="none"
+  stroke="var(--accent,#4f46e5)" stroke-width="3"
+  stroke-linecap="round"
+  class="draw-true"/>
+
+
+<path
+  d="M 90 395
+     C 150 370, 210 340, 280 300
+     C 340 265, 400 230, 460 195
+     C 530 155, 610 120, 680 95
+     C 720 82, 748 74, 760 70"
+  fill="none"
+  stroke="var(--ink-soft,#94a3b8)" stroke-width="2"
+  stroke-dasharray="730 8 4"
+  stroke-linecap="round"
+  class="draw-proxy"/>
+
+
+<g class="roc-peak-group">
+  
+  <line x1="90" y1="110" x2="380" y2="110" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  
+  <line x1="380" y1="110" x2="380" y2="430" stroke="var(--accent,#4f46e5)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  
+  <rect x="363" y="432" width="34" height="16" rx="4" fill="var(--accent,#4f46e5)" opacity="0.2"/>
+  <text x="380" y="444" text-anchor="middle" class="lbl-xs accent">opt. KL</text>
+</g>
+
+
+<circle cx="380" cy="110" r="0" fill="var(--accent,#4f46e5)" class="roc-dot"/>
+
+
+<g class="roc-peak-group">
+  <text x="392" y="100" class="lbl accent" style="font-size:12px">peak (best policy)</text>
+  <text x="392" y="116" class="lbl-sm accent">early stop here</text>
+</g>
+
+
+<text x="690" y="150" text-anchor="middle" class="lbl-sm muted">proxy reward</text>
+<text x="690" y="165" text-anchor="middle" class="lbl-sm muted">keeps rising</text>
+
+
+<text x="512" y="320" class="lbl-xs muted">over-optimization:</text>
+<text x="512" y="334" class="lbl-xs muted">proxy reward keeps rising,</text>
+<text x="512" y="348" class="lbl-xs muted">TRUE quality falls</text>
+
+
+<line x1="98" y1="196" x2="130" y2="196" stroke="var(--accent,#4f46e5)" stroke-width="3"/>
+<text x="138" y="200" class="lbl-xs accent">true / gold quality</text>
+<line x1="98" y1="214" x2="130" y2="214" stroke="var(--ink-soft,#94a3b8)" stroke-width="2" stroke-dasharray="6 3"/>
+<text x="138" y="218" class="lbl-xs muted">proxy RM reward</text>
+
+
+<text x="150" y="464" class="lbl-xs muted">small β (long leash): race rightward fast</text>
+<text x="470" y="464" class="lbl-xs muted">large β: stay near reference (safe, less gain)</text>
+
+
+<circle r="6" fill="var(--warn,#e0a106)" opacity="0">
+  <animateMotion
+    path="M 90 370 C 140 340, 200 220, 260 160 C 310 115, 350 108, 380 110 C 420 112, 460 145, 510 200 C 560 255, 620 305, 680 335 C 710 348, 740 354, 760 358"
+    dur="4.5s" begin="0.1s" fill="freeze"
+    calcMode="spline"
+    keyTimes="0; 0.44; 0.56; 1"
+    keySplines="0.3 0 0.7 1; 0.0 0.0 0.1 1.0; 0.3 0 0.7 1"/>
+  <animate attributeName="opacity" values="0;0;1;1;1" keyTimes="0;0.02;0.05;0.5;1" dur="4.5s" begin="0.1s" fill="freeze"/>
+</circle>
+</svg>
+<figcaption><b>Reward-model over-optimization: true quality peaks, then falls.</b> As the policy is optimized to maximize the proxy reward (dashed line), the true quality (solid purple) initially rises but turns over at the peak — the best policy. Continuing past this point is <em>reward hacking</em>: the proxy reward keeps climbing while genuine quality degrades. The KL budget β is a hyperparameter tuned to stay near the peak.</figcaption>
+</figure>

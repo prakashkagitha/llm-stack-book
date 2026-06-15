@@ -1,0 +1,228 @@
+<figure class="viz" id="fig-distill-selfspec-earlyexit">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 860 360" role="img" aria-label="Self-speculative decoding: the same transformer model runs two paths. Top lane passes all 32 layers to a final head for the accurate verifier distribution. Bottom lane exits after layer 15 via an early_head to produce a fast draft token. A dashed KD arrow from final head to early_head shows the training objective.">
+<defs>
+  <marker id="sse-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#374151)"/>
+  </marker>
+  <marker id="sse-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="sse-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="sse-arr-kd" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)" opacity="0.75"/>
+  </marker>
+  <radialGradient id="sse-pg1" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="var(--accent,#6366f1)" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="var(--accent,#6366f1)" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="sse-pg2" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="var(--accent2,#3b82f6)" stop-opacity="0.9"/>
+    <stop offset="100%" stop-color="var(--accent2,#3b82f6)" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+
+<style>
+  #fig-distill-selfspec-earlyexit text { font: 12px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-distill-selfspec-earlyexit .lane-lbl { font: 700 11px var(--sans,sans-serif); }
+  #fig-distill-selfspec-earlyexit .lyr-lbl  { font: 600 9px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-distill-selfspec-earlyexit .box-lbl  { font: 600 11px var(--sans,sans-serif); }
+  #fig-distill-selfspec-earlyexit .out-lbl  { font: 500 10px var(--sans,sans-serif); }
+  #fig-distill-selfspec-earlyexit .muted    { fill: var(--muted,#9ca3af); }
+  #fig-distill-selfspec-earlyexit .kd-lbl   { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-distill-selfspec-earlyexit .tag      { font: 600 9px var(--sans,sans-serif); fill: #fff; }
+  #fig-distill-selfspec-earlyexit .exit-cap { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+
+  @keyframes sse-draft  { 0%{transform:translateX(0);opacity:1} 75%{transform:translateX(300px);opacity:1} 90%{transform:translateX(300px);opacity:0} 100%{transform:translateX(300px);opacity:0} }
+  @keyframes sse-verify { 0%{transform:translateX(0);opacity:0} 12%{opacity:1} 88%{transform:translateX(430px);opacity:1} 100%{transform:translateX(430px);opacity:0} }
+  @keyframes sse-kd     { from{stroke-dashoffset:28} to{stroke-dashoffset:0} }
+
+  #fig-distill-selfspec-earlyexit .pd  { animation: sse-draft  2.6s ease-in-out infinite; }
+  #fig-distill-selfspec-earlyexit .pv  { animation: sse-verify 3.6s ease-in-out infinite; }
+  #fig-distill-selfspec-earlyexit .kda { animation: sse-kd 1.2s linear infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-distill-selfspec-earlyexit .pd  { animation:none; transform:translateX(300px); opacity:0.5; }
+    #fig-distill-selfspec-earlyexit .pv  { animation:none; transform:translateX(430px); opacity:0.5; }
+    #fig-distill-selfspec-earlyexit .kda { animation:none; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="844" height="344" rx="10"
+  fill="var(--surface-2,#f9fafb)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+
+
+
+<rect x="16" y="80" width="82" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="57" y="94"  text-anchor="middle" class="lane-lbl">Full forward</text>
+<text x="57" y="107" text-anchor="middle" class="lane-lbl">pass (slow)</text>
+
+
+<rect x="16" y="220" width="82" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+<text x="57" y="234" text-anchor="middle" class="lane-lbl">Early-exit</text>
+<text x="57" y="247" text-anchor="middle" class="lane-lbl">draft (fast)</text>
+
+
+<line x1="382" y1="44" x2="382" y2="320"
+  stroke="var(--border-2,#d1d5db)" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="382" y="40" text-anchor="middle" class="exit-cap">early-exit point (layer 16)</text>
+
+
+
+<rect x="106" y="82" width="46" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="129" y="98"  text-anchor="middle" class="out-lbl">Input</text>
+<text x="129" y="110" text-anchor="middle" class="out-lbl muted">h0</text>
+
+<line x1="154" y1="100" x2="184" y2="100"
+  stroke="var(--ink-soft,#374151)" stroke-width="1.2" marker-end="url(#sse-arr)"/>
+
+
+<rect x="186" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="203" y="104" text-anchor="middle" class="lyr-lbl">L0</text>
+
+<rect x="224" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="241" y="104" text-anchor="middle" class="lyr-lbl">L1</text>
+
+<rect x="262" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="279" y="104" text-anchor="middle" class="lyr-lbl">L2</text>
+
+<text x="313" y="104" text-anchor="middle" class="lyr-lbl muted">...</text>
+
+<rect x="326" y="87" width="46" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="349" y="104" text-anchor="middle" class="lyr-lbl">L15</text>
+
+
+
+<text x="394" y="104" text-anchor="middle" class="lyr-lbl muted">...</text>
+
+<rect x="404" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="421" y="104" text-anchor="middle" class="lyr-lbl">L29</text>
+
+<rect x="442" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="459" y="104" text-anchor="middle" class="lyr-lbl">L30</text>
+
+<rect x="480" y="87" width="34" height="26" rx="4"
+  fill="var(--accent,#6366f1)" fill-opacity="0.14" stroke="var(--accent,#6366f1)" stroke-width="1.4"/>
+<text x="497" y="104" text-anchor="middle" class="lyr-lbl">L31</text>
+
+
+<line x1="516" y1="100" x2="526" y2="100"
+  stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#sse-arr-acc)"/>
+
+
+<rect x="528" y="83" width="60" height="34" rx="5" fill="var(--accent,#6366f1)"/>
+<text x="558" y="97"  text-anchor="middle" class="box-lbl" fill="#fff">final</text>
+<text x="558" y="110" text-anchor="middle" class="box-lbl" fill="#fff">head</text>
+
+
+<line x1="590" y1="100" x2="600" y2="100"
+  stroke="var(--accent,#6366f1)" stroke-width="1.4" marker-end="url(#sse-arr-acc)"/>
+
+
+<rect x="602" y="80" width="148" height="40" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="676" y="97"  text-anchor="middle" class="out-lbl">token distribution</text>
+<text x="676" y="111" text-anchor="middle" class="out-lbl muted">(verifier)</text>
+
+
+<rect x="756" y="68" width="58" height="16" rx="4" fill="var(--accent,#6366f1)"/>
+<text x="785" y="79" text-anchor="middle" class="tag">accurate</text>
+
+
+
+
+<line x1="129" y1="120" x2="129" y2="210"
+  stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="135" y="169" class="exit-cap">same</text>
+<text x="135" y="179" class="exit-cap">model</text>
+
+
+<rect x="106" y="222" width="46" height="36" rx="5"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+<text x="129" y="238" text-anchor="middle" class="out-lbl">Input</text>
+<text x="129" y="250" text-anchor="middle" class="out-lbl muted">h0</text>
+
+<line x1="154" y1="240" x2="184" y2="240"
+  stroke="var(--ink-soft,#374151)" stroke-width="1.2" marker-end="url(#sse-arr)"/>
+
+
+<rect x="186" y="227" width="34" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="203" y="244" text-anchor="middle" class="lyr-lbl">L0</text>
+<rect x="224" y="227" width="34" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="241" y="244" text-anchor="middle" class="lyr-lbl">L1</text>
+<rect x="262" y="227" width="34" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="279" y="244" text-anchor="middle" class="lyr-lbl">L2</text>
+<text x="313" y="244" text-anchor="middle" class="lyr-lbl muted">...</text>
+<rect x="326" y="227" width="46" height="26" rx="4"
+  fill="var(--accent2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="349" y="244" text-anchor="middle" class="lyr-lbl">L15</text>
+
+
+<text x="394" y="244" text-anchor="middle" class="lyr-lbl muted">...</text>
+<rect x="404" y="227" width="34" height="26" rx="4"
+  fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="421" y="244" text-anchor="middle" class="lyr-lbl muted">L29</text>
+<rect x="442" y="227" width="34" height="26" rx="4"
+  fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="459" y="244" text-anchor="middle" class="lyr-lbl muted">L30</text>
+<rect x="480" y="227" width="34" height="26" rx="4"
+  fill="none" stroke="var(--muted,#9ca3af)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="497" y="244" text-anchor="middle" class="lyr-lbl muted">L31</text>
+<text x="452" y="264" text-anchor="middle" class="exit-cap">skipped on draft path</text>
+
+
+<line x1="349" y1="227" x2="349" y2="198"
+  stroke="var(--accent2,#3b82f6)" stroke-width="1.4" marker-end="url(#sse-arr-acc2)"/>
+
+
+<rect x="318" y="158" width="62" height="38" rx="5" fill="var(--accent2,#3b82f6)"/>
+<text x="349" y="173" text-anchor="middle" class="box-lbl" fill="#fff">early</text>
+<text x="349" y="187" text-anchor="middle" class="box-lbl" fill="#fff">head</text>
+
+
+<line x1="382" y1="177" x2="394" y2="177"
+  stroke="var(--accent2,#3b82f6)" stroke-width="1.4" marker-end="url(#sse-arr-acc2)"/>
+
+
+<rect x="396" y="158" width="116" height="38" rx="8"
+  fill="var(--surface-2,#f3f4f6)" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+<text x="454" y="173" text-anchor="middle" class="out-lbl">draft token</text>
+<text x="454" y="187" text-anchor="middle" class="out-lbl muted">(draft)</text>
+
+
+<rect x="518" y="160" width="34" height="16" rx="4" fill="var(--good,#16a34a)"/>
+<text x="535" y="171" text-anchor="middle" class="tag">fast</text>
+
+
+<path d="M 558,117 C 558,140 450,140 349,156"
+  fill="none"
+  stroke="var(--accent,#6366f1)"
+  stroke-width="1.8"
+  stroke-dasharray="7 4"
+  stroke-opacity="0.72"
+  marker-end="url(#sse-arr-kd)"
+  class="kda"/>
+<text x="460" y="148" text-anchor="middle" class="kd-lbl">KD: L_EE = KL(p_final || p_early)</text>
+
+
+<circle cx="186" cy="240" r="8" fill="url(#sse-pg2)" class="pd"/>
+<circle cx="186" cy="100" r="8" fill="url(#sse-pg1)" class="pv"/>
+
+</svg>
+<figcaption><b>Self-speculative decoding reuses the same model's early layers as a fast drafter.</b> The <em>full forward pass</em> (top lane) runs all 32 layers plus a final head to produce the accurate verifier distribution. The <em>early-exit draft</em> (bottom lane) exits after layer 15 through a lightweight <code>early_head</code>, skipping the remaining 16 layers. The <code>early_head</code> is trained by KD (dashed arrow) to match the final-layer distribution: <em>L<sub>EE</sub>&amp;nbsp;=&amp;nbsp;KL(p<sub>final</sub>&amp;thinsp;&#8741;&amp;thinsp;p<sub>early</sub>)</em>.</figcaption>
+</figure>

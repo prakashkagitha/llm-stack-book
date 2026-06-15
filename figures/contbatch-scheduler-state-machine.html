@@ -1,0 +1,99 @@
+<figure class="viz" id="fig-contbatch-scheduler-state-machine">
+<svg viewBox="0 0 780 390" role="img" aria-label="Continuous-batching scheduler state machine: WAITING queued pool admits to RUNNING (active forward pass) when KV-cache and token budget allow; RUNNING preempts back to WAITING under memory pressure; RUNNING retires to FINISHED on EOS.">
+  <defs>
+    <marker id="sm-ai" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#6b7280)"/>
+    </marker>
+    <marker id="sm-aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="sm-aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="sm-ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-contbatch-scheduler-state-machine text  { fill: var(--ink-soft,#374151); }
+    #fig-contbatch-scheduler-state-machine .ttl  { font: 800 14px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .bod  { font: 400 9px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .elbl { font: 700 10px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .esub { font: 400 8.5px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .note { font: 500 8.5px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .cap  { font: 500 9px var(--sans,sans-serif); }
+    #fig-contbatch-scheduler-state-machine .mu   { fill: var(--muted,#9ca3af); }
+    #fig-contbatch-scheduler-state-machine .ac   { fill: var(--accent,#6366f1); }
+    #fig-contbatch-scheduler-state-machine .wa   { fill: var(--warn,#e0a106); }
+    #fig-contbatch-scheduler-state-machine .go   { fill: var(--good,#2f9e6e); }
+  </style>
+
+  
+
+  
+  <text x="113" y="14" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)">arrivals</text>
+  <path d="M89,18 L137,18 L127,30 L99,30 Z" fill="var(--surface-3,#e0e7ff)" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3"/>
+  <line x1="113" y1="30" x2="113" y2="56" stroke="var(--ink-soft,#6b7280)" stroke-width="1.5" marker-end="url(#sm-ai)"/>
+
+  
+  <path d="M195,58 L195,26 L461,26 L461,58"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="2.2" marker-end="url(#sm-aa)"/>
+  <text x="328" y="18" text-anchor="middle" class="elbl ac">admit  (KV-cache room + token budget)</text>
+
+  
+  <path d="M450,58 L450,44 L208,44 L208,58"
+        fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8" stroke-dasharray="6 3" marker-end="url(#sm-aw)"/>
+  <text x="328" y="40" text-anchor="middle" class="elbl wa">preempt / swap-out  (memory pressure)</text>
+
+  
+  <rect x="8"   y="58" width="210" height="174" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--border-2,#c7d2fe)" stroke-width="2"/>
+  <rect x="8"   y="58" width="210" height="32"  rx="8" fill="var(--surface-3,#e0e7ff)"/>
+  <rect x="8"   y="78" width="210" height="12"  rx="0" fill="var(--surface-3,#e0e7ff)"/>
+  <text x="113" y="80" text-anchor="middle" class="ttl">WAITING</text>
+  <text x="113" y="105" text-anchor="middle" class="bod">queued; no KV pages yet</text>
+  <text x="113" y="119" text-anchor="middle" class="bod">ordered by scheduling policy</text>
+  <text x="113" y="132" text-anchor="middle" class="bod">(FCFS / priority / deadline)</text>
+  <line x1="24" y1="141" x2="210" y2="141" stroke="var(--border-2,#e5e7eb)" stroke-width="0.8"/>
+  <text x="113" y="156" text-anchor="middle" class="bod mu">admits when:</text>
+  <text x="113" y="170" text-anchor="middle" class="bod ac">(1) KV-cache blocks free</text>
+  <text x="113" y="184" text-anchor="middle" class="bod ac">(2) token budget available</text>
+  <text x="113" y="198" text-anchor="middle" class="bod mu">(max_num_batched_tokens)</text>
+  <text x="113" y="212" text-anchor="middle" class="bod mu">&amp; max_num_seqs cap</text>
+
+  
+  <rect x="436" y="58"  width="258" height="174" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+  <rect x="436" y="58"  width="258" height="32"  rx="8" fill="var(--accent,#6366f1)"/>
+  <rect x="436" y="78"  width="258" height="12"  rx="0" fill="var(--accent,#6366f1)"/>
+  <text x="565" y="80"  text-anchor="middle" class="ttl" fill="white">RUNNING</text>
+  <text x="565" y="106" text-anchor="middle" class="bod">in the current forward pass</text>
+  <text x="565" y="120" text-anchor="middle" class="bod">owns KV-cache pages for all</text>
+  <text x="565" y="133" text-anchor="middle" class="bod">tokens generated so far</text>
+  <line x1="454" y1="142" x2="686" y2="142" stroke="var(--border-2,#c7d2fe)" stroke-width="0.8"/>
+  <text x="565" y="157" text-anchor="middle" class="bod mu">(GPU work happens here)</text>
+  <rect x="448" y="169" width="234" height="38" rx="4" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+  <text x="565" y="184" text-anchor="middle" class="note ac" font-weight="700">running set RE-DERIVED every iteration</text>
+  <text x="565" y="198" text-anchor="middle" class="note ac">-&gt; finished slots backfilled within ~1 step</text>
+
+  
+  <rect x="436" y="256" width="258" height="82" rx="8" fill="var(--surface,#f9fafb)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <rect x="436" y="256" width="258" height="30" rx="8" fill="var(--good,#2f9e6e)"/>
+  <rect x="436" y="274" width="258" height="12" rx="0" fill="var(--good,#2f9e6e)"/>
+  <text x="565" y="276" text-anchor="middle" class="ttl" fill="white">FINISHED -&gt; client</text>
+  <text x="565" y="303" text-anchor="middle" class="bod">EOS or max_tokens hit</text>
+  <text x="565" y="317" text-anchor="middle" class="bod">result streamed; KV pages freed immediately</text>
+
+  
+  <line x1="565" y1="233" x2="565" y2="254" stroke="var(--good,#2f9e6e)" stroke-width="2.2" marker-end="url(#sm-ag)"/>
+  <text x="565" y="248" text-anchor="middle" class="elbl go">retire on EOS / max_len  (frees slot + KV NOW)</text>
+
+  
+  <rect x="24" y="244" width="210" height="34" rx="4" fill="var(--surface-3,#fef3c7)" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="129" y="258" text-anchor="middle" class="note wa">free or swap KV blocks;</text>
+  <text x="129" y="271" text-anchor="middle" class="note wa" style="font-size:8px">return to front of WAITING to resume</text>
+  <line x1="80" y1="233" x2="80" y2="243" stroke="var(--warn,#e0a106)" stroke-width="0.8" stroke-dasharray="3 2"/>
+
+  
+  <text x="390" y="362" text-anchor="middle" class="cap mu">Each iteration: retire finished reqs (frees KV now) -&gt; admit waiting (if room) -&gt; run one fused forward pass</text>
+</svg>
+<figcaption><b>Continuous-batching scheduler: three pools, three transitions.</b> Every forward pass the scheduler retires finished requests (freeing KV-cache pages immediately), admits waiting requests when KV-block and token-budget constraints allow, and may preempt a running request back to WAITING under memory pressure. Because the running set is re-derived from scratch each iteration, freed slots are backfilled within a single step — eliminating both tail idling and head-of-line blocking at admission.</figcaption>
+</figure>

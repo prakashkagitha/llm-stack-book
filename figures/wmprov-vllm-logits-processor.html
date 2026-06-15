@@ -1,0 +1,161 @@
+<figure class="viz" id="fig-wmprov-vllm-logits-processor">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 560" role="img" aria-label="Production watermark pipeline inside a vLLM-style inference server: requests are tokenized, prefilled, then enter a decode loop that emits a logit vector into a WatermarkLogitsProcessor (which hashes the key and previous tokens, builds a green set, and adds delta to green token logits), then sampling selects a token, the KV-cache is updated, and a dashed feedback arrow carries prev_tokens back into the decode loop for the next autoregressive step.">
+<defs>
+  <marker id="vlp-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="vlp-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#7c3aed)"/>
+  </marker>
+  <marker id="vlp-arr-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#7c3aed)" opacity="0.7"/>
+  </marker>
+</defs>
+<style>
+  #fig-wmprov-vllm-logits-processor text { fill: var(--ink-soft,#333); }
+  #fig-wmprov-vllm-logits-processor .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-wmprov-vllm-logits-processor .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-wmprov-vllm-logits-processor .edge-lbl { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-wmprov-vllm-logits-processor .container-lbl { font: 700 12px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-wmprov-vllm-logits-processor .acc-lbl { font: 600 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-wmprov-vllm-logits-processor .acc-step { font: 400 11px var(--mono,monospace); fill: rgba(255,255,255,0.9); }
+  #fig-wmprov-vllm-logits-processor .acc-step-n { font: 700 11px var(--sans,sans-serif); fill: rgba(255,255,255,0.7); }
+
+  /* Step highlight animation inside WatermarkLogitsProcessor */
+  @media (prefers-reduced-motion: no-preference) {
+    #fig-wmprov-vllm-logits-processor .step-hl-1 { animation: vlp-hl 3.5s ease-in-out infinite; }
+    #fig-wmprov-vllm-logits-processor .step-hl-2 { animation: vlp-hl 3.5s ease-in-out infinite; animation-delay: 0.5s; }
+    #fig-wmprov-vllm-logits-processor .step-hl-3 { animation: vlp-hl 3.5s ease-in-out infinite; animation-delay: 1s; }
+    #fig-wmprov-vllm-logits-processor .pkt { animation: vlp-pkt 3.5s ease-in-out infinite; }
+    #fig-wmprov-vllm-logits-processor .pkt-ret { animation: vlp-pkt-ret 3.5s ease-in-out infinite; animation-delay: 1.8s; }
+    @keyframes vlp-hl {
+      0%, 100% { opacity: 0; }
+      15%, 35% { opacity: 0.4; }
+    }
+    @keyframes vlp-pkt {
+      0%   { transform: translate(0,0); opacity: 0; }
+      5%   { opacity: 1; }
+      20%  { transform: translate(0, 120px); opacity: 1; }
+      40%  { transform: translate(0, 250px); opacity: 1; }
+      55%  { transform: translate(0, 340px); opacity: 1; }
+      65%  { transform: translate(0, 390px); opacity: 1; }
+      75%  { opacity: 1; }
+      80%  { transform: translate(0, 420px); opacity: 0; }
+      100% { transform: translate(0, 420px); opacity: 0; }
+    }
+    @keyframes vlp-pkt-ret {
+      0%   { stroke-dashoffset: 260; opacity: 0; }
+      5%   { opacity: 1; }
+      70%  { stroke-dashoffset: 0; opacity: 1; }
+      90%  { opacity: 1; }
+      100% { stroke-dashoffset: 260; opacity: 0; }
+    }
+  }
+</style>
+
+
+<rect x="18" y="18" width="784" height="500" rx="16" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="2"/>
+<text x="38" y="40" class="container-lbl">Inference serving (e.g., vLLM)</text>
+
+
+<g data-anim="1">
+  
+  <rect x="36" y="60" width="100" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="86" y="85" text-anchor="middle" class="lbl">Request</text>
+  
+  <line x1="136" y1="80" x2="164" y2="80" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+  
+  <rect x="166" y="60" width="100" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="216" y="85" text-anchor="middle" class="lbl">Tokenize</text>
+  
+  <line x1="266" y1="80" x2="294" y2="80" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+  
+  <rect x="296" y="60" width="100" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="346" y="85" text-anchor="middle" class="lbl">Prefill</text>
+  
+  <line x1="396" y1="80" x2="424" y2="80" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+  
+  <rect x="426" y="56" width="128" height="48" rx="8" fill="var(--surface-3,#ede9fe)" stroke="var(--accent,#7c3aed)" stroke-width="1.8"/>
+  <text x="490" y="78" text-anchor="middle" class="lbl" fill="var(--accent,#7c3aed)">Decode loop</text>
+  <text x="490" y="94" text-anchor="middle" class="sub">autoregressive</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="490" y1="104" x2="490" y2="148" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#vlp-arr-acc)"/>
+  <text x="520" y="133" class="edge-lbl">Logit vector (|V| floats)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="310" y="150" width="360" height="140" rx="12" fill="var(--accent,#7c3aed)" stroke="var(--accent,#7c3aed)" stroke-width="2"/>
+  <text x="490" y="175" text-anchor="middle" class="acc-lbl" style="font-size:14px">WatermarkLogitsProcessor</text>
+
+  
+  <rect class="step-hl-1" x="316" y="182" width="348" height="24" rx="4" fill="rgba(255,255,255,0.3)" opacity="0"/>
+  <rect class="step-hl-2" x="316" y="210" width="348" height="24" rx="4" fill="rgba(255,255,255,0.3)" opacity="0"/>
+  <rect class="step-hl-3" x="316" y="238" width="348" height="24" rx="4" fill="rgba(255,255,255,0.3)" opacity="0"/>
+
+  
+  <text x="330" y="199" class="acc-step-n">1.</text>
+  <text x="345" y="199" class="acc-step">hash(key, prev_tokens)</text>
+  
+  <text x="330" y="227" class="acc-step-n">2.</text>
+  <text x="345" y="227" class="acc-step">build green_set</text>
+  
+  <text x="330" y="255" class="acc-step-n">3.</text>
+  <text x="345" y="255" class="acc-step">add delta to green ids</text>
+  
+  <text x="490" y="278" text-anchor="middle" style="font:400 9px var(--sans,sans-serif); fill:rgba(255,255,255,0.6);">per-token, context-dependent green list</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="490" y1="290" x2="490" y2="336" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#vlp-arr)"/>
+
+  
+  <rect x="420" y="338" width="140" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="490" y="363" text-anchor="middle" class="lbl">Sampling</text>
+
+  
+  <line x1="560" y1="358" x2="612" y2="358" stroke="var(--ink-soft,#555)" stroke-width="1.4" marker-end="url(#vlp-arr)"/>
+
+  
+  <rect x="614" y="340" width="80" height="36" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="654" y="363" text-anchor="middle" class="lbl">token</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="490" y1="378" x2="490" y2="416" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#vlp-arr)"/>
+
+  
+  <rect x="390" y="418" width="200" height="40" rx="7" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="490" y="443" text-anchor="middle" class="lbl">KV-cache update</text>
+</g>
+
+
+<g data-anim="5">
+  
+  <path d="M390 438 L130 438 L130 122 L410 122 L410 90 L424 90"
+        fill="none" stroke="var(--accent,#7c3aed)" stroke-width="1.4"
+        stroke-dasharray="6 4" opacity="0.75" marker-end="url(#vlp-arr-dash)"/>
+  <text x="62" y="300" class="edge-lbl" fill="var(--accent,#7c3aed)" transform="rotate(-90,62,300)">next step / prev_tokens</text>
+</g>
+
+
+<g data-anim="5">
+  <circle class="pkt" cx="490" cy="104" r="5.5" fill="var(--accent,#7c3aed)" opacity="0"/>
+</g>
+
+
+<g data-anim="5">
+  <path class="pkt-ret"
+        d="M390 438 L130 438 L130 122 L410 122 L410 90 L424 90"
+        fill="none" stroke="var(--accent,#7c3aed)" stroke-width="2.5"
+        stroke-dasharray="260" stroke-dashoffset="260" opacity="0"/>
+</g>
+</svg>
+<figcaption><b>KGW watermark integrated into a vLLM-style autoregressive decode loop.</b> At each generation step the <code>WatermarkLogitsProcessor</code> hashes a secret key together with the previously generated tokens to deterministically build a "green" token set, then boosts those tokens' logits by a fixed delta before sampling. The dashed feedback arrow shows that the sampled token updates the KV-cache and feeds back as <em>prev_tokens</em> for the next step's hash, making every green-list context-dependent and statistically detectable by a paired scorer.</figcaption>
+</figure>

@@ -1,0 +1,82 @@
+<figure class="viz" id="fig-autodiff-pytorch-stack-layers">
+<svg viewBox="0 0 660 600" role="img" aria-label="PyTorch software stack cross-section: six horizontal layers from Python user code at top through the Python dispatch layer, Autograd layer, Dispatcher, ATen, and Actual computation at the bottom, with the Dispatcher highlighted as the routing hub.">
+<defs>
+  <marker id="psl-down" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M1 0 L9 0 L5 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+<style>
+  #fig-autodiff-pytorch-stack-layers text   { fill: currentColor; }
+  #fig-autodiff-pytorch-stack-layers .title { font: 700 13px var(--sans,sans-serif); }
+  #fig-autodiff-pytorch-stack-layers .sub   { font: 400 10px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-autodiff-pytorch-stack-layers .edge  { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#888); font-style: italic; }
+  #fig-autodiff-pytorch-stack-layers .bkt   { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#888); }
+</style>
+
+
+
+
+<rect x="100" y="28" width="470" height="60" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="53" text-anchor="middle" class="title">Python user code</text>
+<text x="335" y="72" text-anchor="middle" class="sub">e.g. torch.mm(a, b)</text>
+
+
+<line x1="335" y1="88" x2="335" y2="113" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+<text x="335" y="103" text-anchor="middle" class="edge">calls torch.mm(a, b)</text>
+
+
+<rect x="100" y="116" width="470" height="60" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="141" text-anchor="middle" class="title">Python dispatch layer</text>
+<text x="335" y="160" text-anchor="middle" class="sub">torch/_C/_VariableFunctions.pyi stubs</text>
+
+
+<line x1="335" y1="176" x2="335" y2="201" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+
+
+<rect x="100" y="204" width="470" height="60" rx="8" fill="var(--accent-2,#d9730d)" fill-opacity="0.10" stroke="var(--accent-2,#d9730d)" stroke-width="1.8"/>
+<text x="335" y="229" text-anchor="middle" class="title">Autograd layer</text>
+<text x="335" y="248" text-anchor="middle" class="sub">Variable / Tensor with grad_fn</text>
+
+
+<line x1="335" y1="264" x2="335" y2="289" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+<text x="335" y="279" text-anchor="middle" class="edge">records op for backward; strips Variable wrapper</text>
+
+
+<rect x="100" y="292" width="470" height="60" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.18" stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+<text x="335" y="317" text-anchor="middle" class="title" fill="var(--accent,#6366f1)">Dispatcher  (c10::Dispatcher)</text>
+<text x="335" y="336" text-anchor="middle" class="sub">routing table</text>
+
+
+<line x1="335" y1="352" x2="335" y2="377" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+<text x="335" y="367" text-anchor="middle" class="edge">selects backend by dispatch key (CPU, CUDA, XLA, …)</text>
+
+
+<rect x="100" y="380" width="470" height="60" rx="8" class="v-fill" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="405" text-anchor="middle" class="title">ATen  (A Tensor Library)</text>
+<text x="335" y="424" text-anchor="middle" class="sub">the "kernel" layer — e.g. at::mm_cpu / at::mm_cuda</text>
+
+
+<line x1="335" y1="440" x2="335" y2="465" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#psl-down)"/>
+
+
+<rect x="100" y="468" width="470" height="60" rx="8" fill="var(--surface-3,#eee)" fill-opacity="0.45" stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+<text x="335" y="493" text-anchor="middle" class="title">Actual computation</text>
+<text x="335" y="512" text-anchor="middle" class="sub">Eigen, cuBLAS, cuDNN, custom kernels …</text>
+
+
+
+
+<line x1="86" y1="28"  x2="86" y2="264" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="28"  x2="94" y2="28"  stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="264" x2="94" y2="264" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<text x="82" y="146" text-anchor="middle" class="bkt" transform="rotate(-90 82 146)">Python-facing</text>
+
+
+<line x1="86" y1="292" x2="86" y2="528" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="292" x2="94" y2="292" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<line x1="86" y1="528" x2="94" y2="528" stroke="var(--muted,#888)" stroke-width="1.2"/>
+<text x="82" y="410" text-anchor="middle" class="bkt" transform="rotate(-90 82 410)">C++ / native</text>
+
+</svg>
+<figcaption><b>The six-layer PyTorch software stack for a single operator call.</b> A Python call descends through the dispatch stub layer, the <b>Autograd layer</b> (orange tint, where grad_fn is attached), and the <b>Dispatcher</b> (blue, the routing hub) before reaching ATen and the hardware library. The clean Dispatcher boundary is what lets torch.compile, vmap, and custom hardware backends plug in without touching user code.</figcaption>
+</figure>

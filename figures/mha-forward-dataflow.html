@@ -1,0 +1,227 @@
+<figure class="viz" id="fig-mha-forward-dataflow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 670" role="img" aria-label="Multi-head attention forward pass: input x is projected to Q, K, V via one fused matrix each; each projection is reshaped into h=4 heads; all heads run scaled dot-product attention in parallel; outputs are concatenated back to d_model width; W_O mixes information across heads to produce the final output.">
+  <defs>
+    <marker id="mhaf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-mha-forward-dataflow text { fill: var(--ink-soft); }
+    #fig-mha-forward-dataflow .lbl  { font: 600 13px var(--sans,sans-serif); }
+    #fig-mha-forward-dataflow .sub  { font: 400 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-mha-forward-dataflow .ann  { font: italic 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-mha-forward-dataflow .cap  { font: 400 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-mha-forward-dataflow .hlbl { font: 500 8.5px var(--mono,monospace); fill: var(--ink-soft); }
+    #fig-mha-forward-dataflow .wo-note { font: italic 10px var(--sans,sans-serif); fill: var(--accent,#6c5ce7); }
+    #fig-mha-forward-dataflow .arr { stroke: var(--ink-soft); fill: none; stroke-width: 1.4; marker-end: url(#mhaf-arr); }
+
+    /* pulse dots */
+    #fig-mha-forward-dataflow .dot {
+      fill: var(--accent,#6c5ce7);
+      opacity: 0;
+    }
+    #fig-mha-forward-dataflow .d0 { animation: mhapulse 5s 0.3s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d1 { animation: mhapulse 5s 0.5s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d2 { animation: mhapulse 5s 0.7s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d3 { animation: mhapulse 5s 1.0s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d4 { animation: mhapulse 5s 1.2s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d5 { animation: mhapulse 5s 1.4s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d6 { animation: mhapulse 5s 1.9s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d7 { animation: mhapulse 5s 2.8s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d8 { animation: mhapulse 5s 3.5s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .d9 { animation: mhapulse 5s 4.1s ease-in-out infinite; }
+    @keyframes mhapulse {
+      0%,4%  { opacity: 0; }
+      8%     { opacity: 1; }
+      18%    { opacity: 1; }
+      26%    { opacity: 0; }
+      100%   { opacity: 0; }
+    }
+
+    /* head card highlight */
+    #fig-mha-forward-dataflow .hc0 { animation: hflash 5s 1.9s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .hc1 { animation: hflash 5s 2.1s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .hc2 { animation: hflash 5s 2.3s ease-in-out infinite; }
+    #fig-mha-forward-dataflow .hc3 { animation: hflash 5s 2.5s ease-in-out infinite; }
+    @keyframes hflash {
+      0%,2%  { stroke-opacity: 0.35; }
+      6%     { stroke-opacity: 1; }
+      16%    { stroke-opacity: 0.35; }
+      100%   { stroke-opacity: 0.35; }
+    }
+
+    /* W_O glow */
+    #fig-mha-forward-dataflow .woglow { animation: wog 5s 3.5s ease-in-out infinite; }
+    @keyframes wog {
+      0%,2%  { stroke-width: 2; }
+      6%     { stroke-width: 3.5; }
+      16%    { stroke-width: 2; }
+      100%   { stroke-width: 2; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-mha-forward-dataflow .dot,
+      #fig-mha-forward-dataflow .hc0,
+      #fig-mha-forward-dataflow .hc1,
+      #fig-mha-forward-dataflow .hc2,
+      #fig-mha-forward-dataflow .hc3,
+      #fig-mha-forward-dataflow .woglow { animation: none; }
+      #fig-mha-forward-dataflow .dot { display: none; }
+    }
+  </style>
+
+  
+  <g data-anim="1">
+    <rect x="280" y="16" width="200" height="42" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="42" text-anchor="middle" class="lbl">x  (B, L, d_model)</text>
+  </g>
+
+  
+  <text x="500" y="82" class="ann">project once per role,</text>
+  <text x="500" y="95" class="ann">each d_model -&gt; d_model</text>
+
+  
+  <line x1="332" y1="58" x2="200" y2="126" class="arr"/>
+  <line x1="380" y1="58" x2="380" y2="126" class="arr"/>
+  <line x1="428" y1="58" x2="560" y2="126" class="arr"/>
+
+  
+  <circle cx="332" cy="65" r="5" class="dot d0" opacity="0"/>
+  <circle cx="380" cy="65" r="5" class="dot d1" opacity="0"/>
+  <circle cx="428" cy="65" r="5" class="dot d2" opacity="0"/>
+
+  
+  <g data-anim="2">
+    <rect x="130" y="128" width="140" height="42" rx="8" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="200" y="154" text-anchor="middle" class="lbl">W_Q</text>
+    <text x="200" y="185" text-anchor="middle" class="sub">(d_model -&gt; d_model)</text>
+
+    <rect x="310" y="128" width="140" height="42" rx="8" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="380" y="154" text-anchor="middle" class="lbl">W_K</text>
+    <text x="380" y="185" text-anchor="middle" class="sub">(d_model -&gt; d_model)</text>
+
+    <rect x="490" y="128" width="140" height="42" rx="8" class="v-fill" stroke="var(--accent,#6c5ce7)" stroke-width="1.8"/>
+    <text x="560" y="154" text-anchor="middle" class="lbl">W_V</text>
+    <text x="560" y="185" text-anchor="middle" class="sub">(d_model -&gt; d_model)</text>
+  </g>
+
+  
+  <line x1="200" y1="170" x2="200" y2="210" class="arr"/>
+  <line x1="380" y1="170" x2="380" y2="210" class="arr"/>
+  <line x1="560" y1="170" x2="560" y2="210" class="arr"/>
+
+  
+  <circle cx="200" cy="155" r="5" class="dot d3" opacity="0"/>
+  <circle cx="380" cy="155" r="5" class="dot d3" opacity="0"/>
+  <circle cx="560" cy="155" r="5" class="dot d3" opacity="0"/>
+
+  
+  <text x="500" y="228" class="ann">split d_model axis</text>
+  <text x="500" y="241" class="ann">into h x d_h</text>
+
+  
+  <g data-anim="3">
+    <rect x="125" y="212" width="150" height="44" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="200" y="231" text-anchor="middle" class="cap">reshape -&gt;</text>
+    <text x="200" y="246" text-anchor="middle" class="cap">(B, h, L, d_h)</text>
+
+    <rect x="305" y="212" width="150" height="44" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="231" text-anchor="middle" class="cap">reshape -&gt;</text>
+    <text x="380" y="246" text-anchor="middle" class="cap">(B, h, L, d_h)</text>
+
+    <rect x="485" y="212" width="150" height="44" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="560" y="231" text-anchor="middle" class="cap">reshape -&gt;</text>
+    <text x="560" y="246" text-anchor="middle" class="cap">(B, h, L, d_h)</text>
+  </g>
+
+  
+  <circle cx="200" cy="235" r="5" class="dot d4" opacity="0"/>
+  <circle cx="380" cy="235" r="5" class="dot d4" opacity="0"/>
+  <circle cx="560" cy="235" r="5" class="dot d4" opacity="0"/>
+
+  
+  <line x1="200" y1="256" x2="254" y2="308" class="arr"/>
+  <line x1="380" y1="256" x2="380" y2="308" class="arr"/>
+  <line x1="560" y1="256" x2="506" y2="308" class="arr"/>
+
+  
+  <g data-anim="4">
+    <rect x="98" y="310" width="564" height="118" rx="10"
+          fill="var(--surface-3,rgba(108,92,231,0.05))"
+          stroke="var(--accent,#6c5ce7)" stroke-width="2"/>
+    <text x="380" y="329" text-anchor="middle" style="font:600 11px var(--sans,sans-serif); fill:var(--ink-soft)">scaled dot-product attention &#8212; per head, in parallel</text>
+
+    
+    
+    <rect x="110" y="338" width="122" height="54" rx="6" class="v-fill hc0" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="171" y="358" text-anchor="middle" class="hlbl">head 0</text>
+    <text x="171" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="171" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+
+    
+    <rect x="244" y="338" width="122" height="54" rx="6" class="v-fill hc1" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="305" y="358" text-anchor="middle" class="hlbl">head 1</text>
+    <text x="305" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="305" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+
+    
+    <rect x="378" y="338" width="122" height="54" rx="6" class="v-fill hc2" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="439" y="358" text-anchor="middle" class="hlbl">head 2</text>
+    <text x="439" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="439" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+
+    
+    <rect x="512" y="338" width="122" height="54" rx="6" class="v-fill hc3" stroke="var(--accent,#6c5ce7)" stroke-opacity="0.35" stroke-width="1.3"/>
+    <text x="573" y="358" text-anchor="middle" class="hlbl">head 3</text>
+    <text x="573" y="371" text-anchor="middle" class="hlbl">softmax(QKT/</text>
+    <text x="573" y="383" text-anchor="middle" class="hlbl">sqrt(d_h)) . V</text>
+  </g>
+
+  
+  <text x="380" y="444" text-anchor="middle" class="cap">output per head (B, h, L, d_h)</text>
+
+  
+  <circle cx="380" cy="316" r="5" class="dot d6" opacity="0"/>
+
+  
+  <line x1="380" y1="428" x2="380" y2="468" class="arr"/>
+
+  
+  <g data-anim="5">
+    <rect x="220" y="470" width="320" height="42" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="496" text-anchor="middle" class="lbl">concat heads -&gt; (B, L, d_model)</text>
+  </g>
+
+  
+  <circle cx="380" cy="491" r="5" class="dot d7" opacity="0"/>
+
+  
+  <line x1="380" y1="512" x2="380" y2="542" class="arr"/>
+
+  
+  <g data-anim="5">
+    <rect x="260" y="544" width="240" height="46" rx="8" class="v-fill woglow" stroke="var(--accent,#6c5ce7)" stroke-width="2"/>
+    <text x="380" y="572" text-anchor="middle" class="lbl">W_O  (d_model -&gt; d_model)</text>
+    <text x="512" y="561" class="wo-note">mixes information</text>
+    <text x="512" y="574" class="wo-note">across heads</text>
+  </g>
+
+  
+  <circle cx="380" cy="567" r="5" class="dot d8" opacity="0"/>
+
+  
+  <line x1="380" y1="590" x2="380" y2="618" class="arr"/>
+
+  
+  <g data-anim="5">
+    <rect x="270" y="620" width="220" height="36" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.5"/>
+    <text x="380" y="643" text-anchor="middle" class="lbl">output (B, L, d_model)</text>
+  </g>
+
+  
+  <circle cx="310" cy="638" r="5" class="dot d9" opacity="0"/>
+</svg>
+<figcaption><b>Multi-head attention as a single forward pass.</b> One fused matrix per role (W_Q, W_K, W_V) projects the residual stream; the result is reshaped &#8212; not split into separate matrices &#8212; into h=4 independent subspaces. All heads run scaled dot-product attention in parallel; their outputs are concatenated and mixed by W_O, the only point where information crosses head boundaries before re-entering the residual stream.</figcaption>
+
+</figure>

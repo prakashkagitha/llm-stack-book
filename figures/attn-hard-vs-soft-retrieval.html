@@ -1,0 +1,101 @@
+<figure class="viz" id="fig-attn-hard-vs-soft-retrieval">
+<svg viewBox="0 0 720 380" role="img" aria-label="Side-by-side comparison of hard dictionary lookup versus soft attention retrieval, showing how each hard step (exact equality, hard argmax, single value) is relaxed into a differentiable soft step (dot-product score, softmax weights, weighted blend).">
+<defs>
+  <marker id="hvs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="currentColor"/>
+  </marker>
+  <marker id="hvs-arrow-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M1 0 L5 9 L9 0 z" fill="currentColor"/>
+  </marker>
+  <marker id="hvs-arrow-dashed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+</defs>
+<style>
+  #fig-attn-hard-vs-soft-retrieval text { fill: currentColor; }
+  #fig-attn-hard-vs-soft-retrieval .hdr  { font: 700 14px var(--sans,sans-serif); }
+  #fig-attn-hard-vs-soft-retrieval .step-cap { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-hard-vs-soft-retrieval .mono  { font: 600 12px var(--mono,monospace); }
+  #fig-attn-hard-vs-soft-retrieval .relax { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-attn-hard-vs-soft-retrieval .badge { font: 600 10px var(--sans,sans-serif); }
+</style>
+
+
+<line x1="360" y1="20" x2="360" y2="360" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 4"/>
+
+
+<text x="185" y="46" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">HARD lookup (dict)</text>
+<line x1="40" y1="54" x2="330" y2="54" stroke="var(--muted,#94a3b8)" stroke-width="0.8"/>
+
+
+<text x="535" y="46" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">SOFT lookup (attention)</text>
+<line x1="390" y1="54" x2="680" y2="54" stroke="var(--muted,#94a3b8)" stroke-width="0.8"/>
+
+
+
+
+<rect x="44" y="92" width="282" height="56" rx="8" class="v-fill" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="185" y="114" text-anchor="middle" class="mono">query == key_i ?</text>
+<text x="185" y="132" text-anchor="middle" class="step-cap">compare (exact equality)</text>
+
+
+<rect x="44" y="172" width="282" height="56" rx="8" class="v-fill" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="185" y="194" text-anchor="middle" class="mono">pick the one match</text>
+<text x="185" y="212" text-anchor="middle" class="step-cap">hard arg-max select</text>
+
+
+<rect x="44" y="252" width="282" height="56" rx="8" class="v-fill" stroke="var(--muted,#94a3b8)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="185" y="274" text-anchor="middle" class="mono">return value_i</text>
+<text x="185" y="292" text-anchor="middle" class="step-cap">single payload</text>
+
+
+<rect x="100" y="324" width="172" height="22" rx="11" fill="var(--danger,#c0392b)" fill-opacity="0.18" stroke="var(--danger,#c0392b)" stroke-width="1"/>
+<text x="186" y="339" text-anchor="middle" class="badge" fill="var(--danger,#c0392b)">non-differentiable</text>
+
+
+
+
+<rect x="394" y="92" width="282" height="56" rx="8" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="535" y="114" text-anchor="middle" class="mono">score_i = q · k_i</text>
+<text x="535" y="132" text-anchor="middle" class="step-cap">dot-product similarity</text>
+
+
+<rect x="394" y="172" width="282" height="56" rx="8" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="535" y="194" text-anchor="middle" class="mono">weights = softmax(scores)</text>
+<text x="535" y="212" text-anchor="middle" class="step-cap">soft, normalized weights</text>
+
+
+<rect x="394" y="252" width="282" height="56" rx="8" class="v-fill" stroke="var(--accent,#f59e0b)" stroke-width="1.2" fill="var(--surface,#1e293b)" fill-opacity="0.35"/>
+<text x="535" y="270" text-anchor="middle" class="mono">return</text>
+<text x="535" y="286" text-anchor="middle" class="mono">&#x3A3;_i weights_i · value_i</text>
+<text x="535" y="301" text-anchor="middle" class="step-cap">weighted blend of all values</text>
+
+
+<rect x="448" y="324" width="172" height="22" rx="11" fill="var(--good,#2f9e6e)" fill-opacity="0.18" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="534" y="339" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">fully differentiable</text>
+
+
+<line x1="185" y1="148" x2="185" y2="168" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+<line x1="185" y1="228" x2="185" y2="248" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+
+
+<line x1="535" y1="148" x2="535" y2="168" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+<line x1="535" y1="228" x2="535" y2="248" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#hvs-arrow-down)" class="v-muted"/>
+
+
+
+
+<line x1="326" y1="120" x2="392" y2="120" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#hvs-arrow-dashed)"/>
+<text x="359" y="113" text-anchor="middle" class="relax">relax</text>
+
+
+<line x1="326" y1="200" x2="392" y2="200" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#hvs-arrow-dashed)"/>
+<text x="359" y="193" text-anchor="middle" class="relax">soften</text>
+
+
+<line x1="326" y1="280" x2="392" y2="280" stroke="var(--muted,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#hvs-arrow-dashed)"/>
+<text x="359" y="273" text-anchor="middle" class="relax">blend</text>
+
+</svg>
+<figcaption><b>Hard dictionary lookup versus soft (differentiable) attention retrieval.</b> Each rigid step in a Python dict lookup — exact equality comparison, hard argmax selection, and single-value return — has a differentiable relaxation: a dot-product similarity score, a softmax-normalized weight distribution, and a weighted blend of all values. The dashed arrows show how attention is literally a soft, trainable version of key–value retrieval.</figcaption>
+</figure>

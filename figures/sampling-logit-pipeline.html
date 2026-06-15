@@ -1,0 +1,214 @@
+<figure class="viz" id="fig-sampling-logit-pipeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 820 760" role="img" aria-label="The logit-processor pipeline: raw logits flow top-to-bottom through temperature, repetition penalty, frequency penalty, top-k, top-p, min-p filters, forced tokens, and finally softmax plus sampling to produce a token.">
+<defs>
+  <marker id="slp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" class="v-stroke" fill="var(--border-2,#94a3b8)"/>
+  </marker>
+  <marker id="slp-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+</defs>
+<style>
+  #fig-sampling-logit-pipeline .node-lbl { font: 600 13px var(--mono,monospace); }
+  #fig-sampling-logit-pipeline .node-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline .ann { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline .group-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#64748b); writing-mode: tb; }
+  #fig-sampling-logit-pipeline .step-lbl { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline .final-lbl { font: 700 13px var(--sans,sans-serif); fill: #fff; }
+  #fig-sampling-logit-pipeline .compose-ann { font: italic 9px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-sampling-logit-pipeline text { fill: var(--ink-soft,#334155); }
+  /* animated pill traveling down */
+  #fig-sampling-logit-pipeline .token-pill {
+    animation: slp-travel 4s ease-in-out infinite;
+    animation-delay: 0.5s;
+  }
+  @keyframes slp-travel {
+    0%   { transform: translateY(0px);   opacity: 1; }
+    85%  { transform: translateY(580px); opacity: 1; }
+    90%  { transform: translateY(580px); opacity: 0; }
+    100% { transform: translateY(0px);   opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-logit-pipeline .token-pill { animation: none; opacity: 0; }
+    #fig-sampling-logit-pipeline [data-anim] { opacity: 1 !important; }
+  }
+  /* stage pulse animations */
+  #fig-sampling-logit-pipeline .pulse-1 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 0.7s; }
+  #fig-sampling-logit-pipeline .pulse-2 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 1.1s; }
+  #fig-sampling-logit-pipeline .pulse-3 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 1.5s; }
+  #fig-sampling-logit-pipeline .pulse-4 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 1.9s; }
+  #fig-sampling-logit-pipeline .pulse-5 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 2.3s; }
+  #fig-sampling-logit-pipeline .pulse-6 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 2.7s; }
+  #fig-sampling-logit-pipeline .pulse-7 { animation: slp-pulse 4s ease-in-out infinite; animation-delay: 3.1s; }
+  @keyframes slp-pulse {
+    0%   { fill-opacity: 0; }
+    5%   { fill-opacity: 0.35; }
+    15%  { fill-opacity: 0; }
+    100% { fill-opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-logit-pipeline .pulse-1,
+    #fig-sampling-logit-pipeline .pulse-2,
+    #fig-sampling-logit-pipeline .pulse-3,
+    #fig-sampling-logit-pipeline .pulse-4,
+    #fig-sampling-logit-pipeline .pulse-5,
+    #fig-sampling-logit-pipeline .pulse-6,
+    #fig-sampling-logit-pipeline .pulse-7 { animation: none; fill-opacity: 0; }
+  }
+  /* drop tick fade-out for filter nodes */
+  #fig-sampling-logit-pipeline .drop-tick {
+    animation: slp-drop 4s ease-in-out infinite;
+  }
+  #fig-sampling-logit-pipeline .drop-tk4 { animation-delay: 1.9s; }
+  #fig-sampling-logit-pipeline .drop-tk5 { animation-delay: 2.3s; }
+  #fig-sampling-logit-pipeline .drop-tk6 { animation-delay: 2.7s; }
+  @keyframes slp-drop {
+    0%   { opacity: 0; transform: translateX(0); }
+    5%   { opacity: 0.7; transform: translateX(0); }
+    25%  { opacity: 0; transform: translateX(18px); }
+    100% { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-sampling-logit-pipeline .drop-tick { animation: none; opacity: 0; }
+  }
+</style>
+
+
+
+<rect x="52" y="118" width="378" height="188" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+
+<rect x="52" y="312" width="378" height="192" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+
+<rect x="52" y="510" width="378" height="66" rx="8"
+      fill="var(--accent,#6366f1)" fill-opacity="0.07" stroke="none"/>
+
+
+<text x="42" y="240" text-anchor="middle" class="group-lbl" transform="rotate(-90,42,220)">logit transforms</text>
+<text x="42" y="430" text-anchor="middle" class="group-lbl" transform="rotate(-90,42,408)">vocab truncation</text>
+<text x="42" y="555" text-anchor="middle" class="group-lbl" transform="rotate(-90,42,543)">constraints</text>
+
+
+
+
+<rect x="170" y="30" width="380" height="52" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="360" y="52" text-anchor="middle" class="node-lbl">raw logits  z in R^|V|</text>
+<text x="360" y="71" text-anchor="middle" class="node-sub">final transformer layer output</text>
+
+<rect x="170" y="30" width="380" height="52" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-1" stroke="none"/>
+
+
+<line x1="360" y1="82" x2="360" y2="115" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="118" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="118" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-1" stroke="none"/>
+<text x="360" y="143" text-anchor="middle" class="node-lbl">[temperature]  z / T</text>
+
+<text x="558" y="143" text-anchor="start" class="ann">scale all logits</text>
+
+
+<line x1="360" y1="164" x2="360" y2="182" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="185" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="185" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-2" stroke="none"/>
+<text x="360" y="210" text-anchor="middle" class="node-lbl">[repetition penalty]</text>
+<text x="558" y="203" text-anchor="start" class="ann">discount seen tokens</text>
+<text x="558" y="218" text-anchor="start" class="ann">(z/theta if z&gt;0, z*theta if z&lt;0)</text>
+
+
+<line x1="360" y1="231" x2="360" y2="249" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="252" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="252" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-3" stroke="none"/>
+<text x="360" y="277" text-anchor="middle" class="node-lbl">[frequency penalty]</text>
+<text x="558" y="277" text-anchor="start" class="ann">subtract alpha*count(t)</text>
+
+
+<line x1="360" y1="298" x2="360" y2="310" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="313" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="313" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-4" stroke="none"/>
+<text x="360" y="338" text-anchor="middle" class="node-lbl">[top-k filter]</text>
+<text x="558" y="338" text-anchor="start" class="ann">zero out below k-th largest logit</text>
+
+<g class="drop-tick drop-tk4">
+  <text x="556" y="355" style="font:10px var(--mono,monospace); fill:var(--muted,#64748b)">-inf x3</text>
+</g>
+
+
+<line x1="360" y1="359" x2="360" y2="377" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+<text x="374" y="371" text-anchor="start" class="compose-ann">(composes)</text>
+
+
+
+<rect x="170" y="380" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="380" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-5" stroke="none"/>
+<text x="360" y="405" text-anchor="middle" class="node-lbl">[top-p filter]</text>
+<text x="558" y="405" text-anchor="start" class="ann">zero out below cum. mass p</text>
+<g class="drop-tick drop-tk5">
+  <text x="556" y="422" style="font:10px var(--mono,monospace); fill:var(--muted,#64748b)">-inf x5</text>
+</g>
+
+
+<line x1="360" y1="426" x2="360" y2="444" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+<text x="374" y="438" text-anchor="start" class="compose-ann">(composes)</text>
+
+
+
+<rect x="170" y="447" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="447" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-6" stroke="none"/>
+<text x="360" y="472" text-anchor="middle" class="node-lbl">[min-p filter]</text>
+<text x="558" y="472" text-anchor="start" class="ann">zero out below p_min * p_max</text>
+<g class="drop-tick drop-tk6">
+  <text x="556" y="489" style="font:10px var(--mono,monospace); fill:var(--muted,#64748b)">-inf x2</text>
+</g>
+
+
+<line x1="360" y1="493" x2="360" y2="508" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="511" width="380" height="46" rx="7"
+      fill="var(--surface,#f8fafc)" stroke="var(--border-2,#94a3b8)" stroke-width="1.3"/>
+<rect x="170" y="511" width="380" height="46" rx="7" fill="var(--accent,#6366f1)" fill-opacity="0" class="pulse-7" stroke="none"/>
+<text x="360" y="536" text-anchor="middle" class="node-lbl">[forced tokens]</text>
+<text x="558" y="536" text-anchor="start" class="ann">lock positions to specific tokens</text>
+
+
+<line x1="360" y1="557" x2="360" y2="575" stroke="var(--border-2,#94a3b8)" stroke-width="1.5" marker-end="url(#slp-arrow)"/>
+
+
+
+<rect x="170" y="578" width="380" height="56" rx="8"
+      fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+<text x="360" y="601" text-anchor="middle" class="final-lbl">softmax + sample</text>
+<text x="360" y="622" text-anchor="middle" style="font:500 11px var(--sans,sans-serif); fill:#e0e7ff;">draw from multinomial  ->  token t</text>
+
+
+<g class="token-pill" style="transform-origin: 130px 56px;">
+  <rect x="107" y="46" width="34" height="20" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0.9" stroke="none"/>
+  <text x="124" y="60" text-anchor="middle"
+        style="font:700 10px var(--mono,monospace); fill:#fff;">z</text>
+</g>
+
+</svg>
+<figcaption><b>The logit-processor pipeline processes a single logit vector sequentially.</b> Raw logits enter at the top and are first scaled (temperature, repetition/frequency penalties), then vocabulary-truncated (top-k, top-p, min-p each composing on the already-masked vector), then optionally constrained (forced tokens), and finally converted to a probability distribution from which a single token is sampled. The order of operations matters: penalties run before truncation so that penalized tokens can still be trimmed.</figcaption>
+</figure>

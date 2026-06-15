@@ -1,0 +1,119 @@
+<figure class="viz" id="fig-rlhf-four-model-setup">
+<svg viewBox="0 0 980 600" role="img" aria-label="The four-model PPO setup: the Actor (trained) generates a response from the prompt; the response fans out to the Critic (trained, advantage baseline), the Reward model (frozen, terminal scalar), and the Reference model (frozen SFT copy, KL penalty).">
+<defs>
+  <marker id="fms-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="fms-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rlhf-four-model-setup text { fill: var(--ink-soft,#334155); }
+  #fig-rlhf-four-model-setup .lbl    { font: 600 13px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .lbl-sm { font: 400 11px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .lbl-xs { font: 400 10px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .bold   { font: 700 13px var(--sans,sans-serif); }
+  #fig-rlhf-four-model-setup .mono   { font: 600 12px var(--mono,monospace); }
+  #fig-rlhf-four-model-setup .accent { fill: var(--accent,#4f46e5); }
+  #fig-rlhf-four-model-setup .muted  { fill: var(--muted,#94a3b8); }
+  #fig-rlhf-four-model-setup .wht    { fill: #fff; }
+  #fig-rlhf-four-model-setup .num    { font: 700 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+</style>
+
+
+<rect x="210" y="12" width="560" height="42" rx="8" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+<text x="490" y="31" text-anchor="middle" class="lbl">prompt  x</text>
+<text x="490" y="47" text-anchor="middle" class="lbl-xs muted">input at each PPO step</text>
+
+
+<line x1="490" y1="54" x2="490" y2="88" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+
+
+<rect x="90" y="88" width="800" height="106" rx="10" fill="var(--accent,#4f46e5)" opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+
+<text x="106" y="106" class="num">(1)</text>
+
+<rect x="122" y="92" width="88" height="20" rx="5" fill="var(--accent,#4f46e5)"/>
+<text x="166" y="106" text-anchor="middle" class="lbl-xs wht">TRAINED</text>
+
+<text x="490" y="130" text-anchor="middle" class="bold accent">ACTOR  π_θ  — TRAINED</text>
+<text x="490" y="148" text-anchor="middle" class="lbl-sm">the policy we are aligning; initialized from SFT model</text>
+<text x="490" y="165" text-anchor="middle" class="lbl-sm">generates response y;  provides log π_θ(y|x) for per-token log-probs</text>
+<text x="490" y="181" text-anchor="middle" class="lbl-xs muted">weights updated every PPO step</text>
+
+
+<line x1="490" y1="194" x2="490" y2="236" stroke="var(--accent,#4f46e5)" stroke-width="2" marker-end="url(#fms-arr-acc)"/>
+<text x="508" y="218" class="lbl-sm accent">response y</text>
+
+
+<line x1="148" y1="236" x2="832" y2="236" stroke="var(--ink-soft,#64748b)" stroke-width="1.5"/>
+
+<line x1="188" y1="236" x2="188" y2="280" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+<line x1="490" y1="236" x2="490" y2="280" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+<line x1="792" y1="236" x2="792" y2="280" stroke="var(--ink-soft,#64748b)" stroke-width="1.5" marker-end="url(#fms-arr)"/>
+
+
+<rect x="18" y="280" width="340" height="168" rx="10" fill="var(--accent,#4f46e5)" opacity="0.10" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+<text x="34" y="298" class="num">(2)</text>
+<rect x="50" y="284" width="88" height="20" rx="5" fill="var(--accent,#4f46e5)"/>
+<text x="94" y="298" text-anchor="middle" class="lbl-xs wht">TRAINED</text>
+
+<text x="188" y="326" text-anchor="middle" class="bold accent">CRITIC  V_ψ</text>
+<text x="188" y="344" text-anchor="middle" class="lbl-sm accent">— TRAINED</text>
+<text x="188" y="362" text-anchor="middle" class="lbl-sm">value of each partial</text>
+<text x="188" y="378" text-anchor="middle" class="lbl-sm">sequence, for GAE</text>
+<text x="188" y="394" text-anchor="middle" class="lbl-xs muted">(advantage baseline)</text>
+<text x="188" y="410" text-anchor="middle" class="lbl-xs muted">init from RM or SFT</text>
+
+
+<rect x="320" y="280" width="340" height="168" rx="10" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.8"/>
+<text x="336" y="298" class="num">(3)</text>
+<rect x="352" y="284" width="88" height="20" rx="5" fill="var(--surface-3,#dde3ec)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="396" y="298" text-anchor="middle" class="lbl-xs muted">FROZEN</text>
+
+<text x="490" y="326" text-anchor="middle" class="bold">REWARD  r_φ</text>
+<text x="490" y="344" text-anchor="middle" class="lbl-sm muted">— FROZEN</text>
+<text x="490" y="362" text-anchor="middle" class="lbl-sm">scalar score for the</text>
+<text x="490" y="378" text-anchor="middle" class="lbl-sm">whole response</text>
+<text x="490" y="394" text-anchor="middle" class="lbl-xs muted">(terminal reward only)</text>
+<text x="490" y="410" text-anchor="middle" class="lbl-xs muted">from Stage 2 training</text>
+
+
+<rect x="622" y="280" width="340" height="168" rx="10" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.8"/>
+<text x="638" y="298" class="num">(4)</text>
+<rect x="654" y="284" width="88" height="20" rx="5" fill="var(--surface-3,#dde3ec)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="698" y="298" text-anchor="middle" class="lbl-xs muted">FROZEN</text>
+
+<text x="792" y="326" text-anchor="middle" class="bold">REFERENCE  π_ref</text>
+<text x="792" y="344" text-anchor="middle" class="lbl-sm muted">— FROZEN</text>
+<text x="792" y="362" text-anchor="middle" class="lbl-sm">= the SFT model;</text>
+<text x="792" y="378" text-anchor="middle" class="lbl-sm">gives log π_ref(y|x)</text>
+<text x="792" y="394" text-anchor="middle" class="lbl-xs muted">for the KL penalty</text>
+<text x="792" y="410" text-anchor="middle" class="lbl-xs muted">never updates — the fixed anchor</text>
+
+
+<rect x="18" y="460" width="340" height="38" rx="6" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="188" y="476" text-anchor="middle" class="lbl-xs muted">baseline gives advantage A_t (GAE)</text>
+<text x="188" y="491" text-anchor="middle" class="lbl-xs muted">reduces gradient variance</text>
+
+<rect x="320" y="460" width="340" height="38" rx="6" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="490" y="476" text-anchor="middle" class="lbl-xs muted">r_φ(x,y) at final token</text>
+<text x="490" y="491" text-anchor="middle" class="lbl-xs muted">terminal sparse reward signal</text>
+
+<rect x="622" y="460" width="340" height="38" rx="6" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="792" y="476" text-anchor="middle" class="lbl-xs muted">-β · KL(π_θ ‖ π_ref) per token</text>
+<text x="792" y="491" text-anchor="middle" class="lbl-xs muted">controls distribution drift</text>
+
+
+<rect x="18" y="514" width="112" height="20" rx="5" fill="var(--accent,#4f46e5)" opacity="0.15" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
+<text x="74" y="528" text-anchor="middle" class="lbl-xs accent">TRAINED</text>
+<rect x="140" y="514" width="112" height="20" rx="5" fill="var(--surface-3,#eef1f5)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+<text x="196" y="528" text-anchor="middle" class="lbl-xs muted">FROZEN</text>
+
+
+<text x="420" y="522" class="lbl-xs muted">(actor also supplies log π_θ for per-token KL —</text>
+<text x="420" y="536" class="lbl-xs muted">used in advantage computation alongside critic)</text>
+</svg>
+<figcaption><b>The four-model PPO setup — actor, critic, reward, reference.</b> The <em>actor</em> and <em>critic</em> (blue, TRAINED) have their weights updated each PPO step; the <em>reward model</em> and <em>reference</em> (grey, FROZEN) provide fixed signals. The reference is a frozen SFT copy whose log-probs anchor the KL penalty, preventing the actor from drifting into reward-hacking territory.</figcaption>
+</figure>

@@ -1,0 +1,249 @@
+<figure class="viz" id="fig-flash1-forward-dataflow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 960 490" role="img"
+     aria-label="FlashAttention forward pass: Q_i, K_j, V_j load from HBM into on-chip SRAM; the Br-by-Bc score tile S_ij is computed and discarded entirely in SRAM; running state m_i l_i O_i is updated in place across the inner j-loop; after the last j-block O_i and L_i are stored back to HBM.">
+<defs>
+  <marker id="fdf-acc" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+  </marker>
+  <marker id="fdf-good" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <style>
+    #fig-flash1-forward-dataflow text { fill: var(--ink-soft,#374151); }
+    #fig-flash1-forward-dataflow .hdr  { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-flash1-forward-dataflow .mono { font: 600 10.5px var(--mono,monospace); }
+    #fig-flash1-forward-dataflow .sm   { font: 500 10px var(--sans,sans-serif); }
+    #fig-flash1-forward-dataflow .xs   { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+    #fig-flash1-forward-dataflow .acc  { fill: var(--accent,#6366f1); }
+    #fig-flash1-forward-dataflow .good { fill: var(--good,#2f9e6e); }
+
+    @keyframes fdf-in    { from{opacity:0} to{opacity:1} }
+    @keyframes fdf-pulse { 0%,100%{opacity:.3} 50%{opacity:.9} }
+    @keyframes fdf-flash { 0%,100%{opacity:0} 20%,80%{opacity:1} }
+
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="1"]
+      { animation: fdf-in 0.6s 0.0s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="2"]
+      { animation: fdf-in 0.6s 0.9s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="3"]
+      { animation: fdf-in 0.6s 1.8s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="4a"]
+      { animation: fdf-flash 1.6s 2.7s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="4b"]
+      { animation: fdf-flash 1.6s 3.6s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="4c"]
+      { animation: fdf-flash 1.6s 4.5s ease both; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="pulse"]
+      { animation: fdf-pulse 1.4s 2.7s ease infinite; }
+    #fig-flash1-forward-dataflow[data-run="1"] [data-step="5"]
+      { animation: fdf-in 0.7s 5.4s ease both; }
+    @media (prefers-reduced-motion: reduce) {
+      #fig-flash1-forward-dataflow [data-step]
+        { animation: none !important; opacity: 1 !important; }
+    }
+  </style>
+</defs>
+
+
+
+
+<rect x="12"  y="20" width="206" height="380" rx="10"
+      fill="var(--surface,#ffffff)"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1.5" stroke-dasharray="7 3"/>
+<rect x="12"  y="20" width="206" height="380" rx="10"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.40" stroke="none"/>
+
+
+<rect x="228" y="20" width="440" height="380" rx="10"
+      fill="var(--surface,#ffffff)"
+      stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<rect x="228" y="20" width="440" height="380" rx="10"
+      fill="var(--accent,#6366f1)" fill-opacity="0.05" stroke="none"/>
+
+
+<rect x="678" y="20" width="270" height="380" rx="10"
+      fill="var(--surface,#ffffff)"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1.5" stroke-dasharray="7 3"/>
+<rect x="678" y="20" width="270" height="380" rx="10"
+      fill="var(--surface-3,#ece7da)" fill-opacity="0.40" stroke="none"/>
+
+
+<text x="115" y="40" text-anchor="middle" class="hdr">HBM (off-chip, slow)</text>
+<text x="448" y="40" text-anchor="middle" class="hdr acc">SRAM (on-chip, fast)</text>
+<text x="813" y="40" text-anchor="middle" class="hdr">HBM (output)</text>
+
+
+<line x1="226" y1="14" x2="226" y2="402"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+<line x1="676" y1="14" x2="676" y2="402"
+      stroke="var(--border-2,#d1d5db)" stroke-width="1" stroke-dasharray="5 3"/>
+
+
+<g data-step="1">
+  
+  <rect x="24" y="56" width="178" height="50" rx="5"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="113" y="79" text-anchor="middle" class="mono">Q_i  (Br x d)</text>
+  <text x="113" y="96" text-anchor="middle" class="xs">query block i</text>
+
+  
+  <rect x="24" y="124" width="178" height="50" rx="5"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="113" y="147" text-anchor="middle" class="mono">K_j  (Bc x d)</text>
+  <text x="113" y="164" text-anchor="middle" class="xs">key block j  (streamed)</text>
+
+  
+  <rect x="24" y="192" width="178" height="50" rx="5"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d1d5db)" stroke-width="1.2"/>
+  <text x="113" y="215" text-anchor="middle" class="mono">V_j  (Bc x d)</text>
+  <text x="113" y="232" text-anchor="middle" class="xs">value block j  (streamed)</text>
+</g>
+
+
+
+<g data-step="2">
+  <line x1="202" y1="81" x2="242" y2="192"
+        stroke="var(--accent,#6366f1)" stroke-width="2.5"
+        marker-end="url(#fdf-acc)"/>
+</g>
+
+<g data-step="3">
+  <line x1="202" y1="149" x2="242" y2="88"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        marker-end="url(#fdf-acc)"/>
+</g>
+
+<g data-step="3">
+  <line x1="202" y1="217" x2="242" y2="210"
+        stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        marker-end="url(#fdf-acc)"/>
+</g>
+
+<g data-step="2">
+  <text x="234" y="170" text-anchor="middle" class="sm acc">load</text>
+</g>
+
+
+<g data-step="2">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--accent,#6366f1)" stroke-width="1.6"/>
+  <text x="453" y="81" text-anchor="middle" class="mono acc">S_ij = Q_i K_j^T / sqrt(d)   (Br x Bc)</text>
+  <text x="453" y="99" text-anchor="middle" class="sm acc">transient score tile</text>
+  <text x="453" y="115" text-anchor="middle" class="xs">lives and dies in SRAM — NEVER written to HBM</text>
+</g>
+
+<g data-step="4a">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="none"/>
+</g>
+<g data-step="4b">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="none"/>
+</g>
+<g data-step="4c">
+  <rect x="244" y="56" width="418" height="82" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.22" stroke="none"/>
+</g>
+
+
+<g data-step="2">
+  <line x1="453" y1="138" x2="453" y2="156"
+        stroke="var(--accent,#6366f1)" stroke-width="1.5"
+        stroke-dasharray="4 2" marker-end="url(#fdf-acc)"/>
+  <text x="465" y="151" class="xs acc">update</text>
+</g>
+
+
+<g data-step="2">
+  <rect x="244" y="160" width="418" height="108" rx="6"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--accent,#6366f1)" stroke-width="2.5"/>
+  
+  <rect x="244" y="160" width="418" height="108" rx="6"
+        fill="var(--accent,#6366f1)" fill-opacity="0.10" stroke="none"
+        data-step="pulse"/>
+  <text x="453" y="184" text-anchor="middle" class="mono acc">m_i , l_i , O_i  updated in place</text>
+  <text x="453" y="201" text-anchor="middle" class="sm acc">online softmax state, persistent across j-blocks</text>
+  <text x="453" y="218" text-anchor="middle" class="xs">m_i: running row max  |  l_i: running denominator</text>
+  <text x="453" y="234" text-anchor="middle" class="xs">O_i: running unnorm. output (rescaled each new max)</text>
+  <text x="453" y="250" text-anchor="middle" class="xs">alpha = exp(m_old - m_new)  applied when max updates</text>
+</g>
+
+
+<g data-step="3">
+  <path d="M244 204 C214 204 214 248 244 248"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.5"
+        stroke-dasharray="5 3" marker-end="url(#fdf-acc)"/>
+  <text x="209" y="226" text-anchor="middle" class="xs acc"
+        transform="rotate(-90 209 226)">inner j-loop</text>
+</g>
+
+
+<g data-step="5">
+  
+  <line x1="453" y1="270" x2="453" y2="288"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"
+        marker-end="url(#fdf-good)"/>
+  
+  <rect x="306" y="292" width="294" height="34" rx="5"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.12"
+        stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="453" y="307" text-anchor="middle" class="sm good">after last j-block: O_i / l_i</text>
+  <text x="453" y="321" text-anchor="middle" class="xs">normalize once, then store to HBM</text>
+</g>
+
+
+<g data-step="5">
+  
+  <path d="M648 309 L660 309 L660 158"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3"
+        stroke-dasharray="4 2"/>
+  
+  <line x1="660" y1="158" x2="676" y2="158"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.8"
+        marker-end="url(#fdf-good)"/>
+  
+  <line x1="660" y1="230" x2="676" y2="230"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.8"
+        marker-end="url(#fdf-good)"/>
+  
+  <text x="648" y="151" text-anchor="end" class="xs good">store</text>
+  <text x="648" y="223" text-anchor="end" class="xs good">store</text>
+</g>
+
+
+<g data-step="5">
+  
+  <rect x="692" y="128" width="244" height="54" rx="5"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="814" y="153" text-anchor="middle" class="mono good">O_i  (Br x d)</text>
+  <text x="814" y="170" text-anchor="middle" class="xs">normalized output</text>
+
+  
+  <rect x="692" y="200" width="244" height="54" rx="5"
+        fill="var(--surface,#ffffff)"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="814" y="225" text-anchor="middle" class="mono good">L_i = m_i + log l_i</text>
+  <text x="814" y="242" text-anchor="middle" class="xs">logsumexp, saved for backward</text>
+</g>
+
+
+<text x="115" y="408" text-anchor="middle" class="xs">INPUT</text>
+<text x="448" y="408" text-anchor="middle" class="xs">COMPUTE (on-chip SRAM)</text>
+<text x="813" y="408" text-anchor="middle" class="xs">OUTPUT</text>
+
+<text x="480" y="428" text-anchor="middle" class="xs">Score tile S_ij lives and dies in SRAM — NEVER written to HBM.</text>
+<text x="480" y="444" text-anchor="middle" class="xs">HBM traffic: Q, K, V (each read once per outer block) + O(N) output O_i and stats L_i.</text>
+<text x="480" y="460" text-anchor="middle" class="xs">Q_i stays resident across all inner j-steps; K_j and V_j load fresh each j-step.</text>
+
+</svg>
+<figcaption><b>FlashAttention-1 forward pass: HBM-to-SRAM data flow for one query block i.</b>
+The B<sub>r</sub>&amp;times;B<sub>c</sub> score tile S<sub>ij</sub> is born and consumed entirely in on-chip SRAM — it is <em>never</em> written to HBM.
+Only Q, K, V (each streamed as tiles) and the O(N) normalized output O<sub>i</sub> plus logsumexp L<sub>i</sub> cross the slow HBM bus, reducing total HBM traffic from &amp;Theta;(N<sup>2</sup>) to &amp;Theta;(N).</figcaption>
+</figure>
+

@@ -1,0 +1,261 @@
+<figure class="viz" id="fig-ckpt-async-vs-sync-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 420" role="img" aria-label="Synchronous checkpointing blocks all GPUs for ~4 minutes while saving; asynchronous checkpointing only blocks for a ~30-second CPU snapshot then continues training while the disk write runs in the background.">
+<defs>
+  <marker id="cas-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <marker id="cas-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f46e5)"/>
+  </marker>
+  <marker id="cas-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+  <pattern id="cas-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--warn,#e0a106)" stroke-width="1.5" stroke-opacity="0.4"/>
+  </pattern>
+  <clipPath id="cas-clip-sync-save">
+    <rect id="cas-sync-save-clip-rect" x="152" y="60" width="0" height="56"/>
+  </clipPath>
+  <clipPath id="cas-clip-step-n1">
+    <rect id="cas-step-n1-clip-rect" x="622" y="60" width="0" height="56"/>
+  </clipPath>
+  <clipPath id="cas-clip-snapshot">
+    <rect id="cas-snapshot-clip-rect" x="152" y="248" width="0" height="44"/>
+  </clipPath>
+  <clipPath id="cas-clip-async-steps">
+    <rect id="cas-async-steps-clip-rect" x="252" y="248" width="0" height="44"/>
+  </clipPath>
+  <clipPath id="cas-clip-bg-write">
+    <rect id="cas-bg-write-clip-rect" x="252" y="325" width="0" height="44"/>
+  </clipPath>
+</defs>
+<style>
+  #fig-ckpt-async-vs-sync-timeline text { fill: var(--ink-soft, #374151); }
+  #fig-ckpt-async-vs-sync-timeline .lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-ckpt-async-vs-sync-timeline .lbl-sm { font: 500 10px var(--sans,sans-serif); }
+  #fig-ckpt-async-vs-sync-timeline .row-lbl { font: 700 13px var(--sans,sans-serif); }
+  #fig-ckpt-async-vs-sync-timeline .caption { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6b7280); }
+  #fig-ckpt-async-vs-sync-timeline .warn-caption { font: 600 10px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-ckpt-async-vs-sync-timeline .good-caption { font: 500 10px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+
+  @keyframes cas-widen {
+    from { width: 0; }
+  }
+  @keyframes cas-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes cas-pulse-warn {
+    0%, 100% { opacity: 0.18; }
+    50% { opacity: 0.38; }
+  }
+
+  /* Sync row: phase A */
+  #fig-ckpt-async-vs-sync-timeline .cas-phase-a-1 {
+    animation: cas-fade-in 0.4s ease 0.2s both;
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-sync-save-clip-rect {
+    animation: cas-widen 0.8s ease 0.8s both;
+    animation-fill-mode: both;
+  }
+  /* Override: fill to 470px wide */
+  #fig-ckpt-async-vs-sync-timeline #cas-sync-save-clip-rect {
+    animation: cas-sync-save-grow 0.8s ease 0.8s both;
+  }
+  @keyframes cas-sync-save-grow {
+    from { width: 0; }
+    to { width: 470; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-sync-save-g {
+    clip-path: url(#cas-clip-sync-save);
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-step-n1-clip-rect {
+    animation: cas-step-n1-grow 0.3s ease 1.8s both;
+  }
+  @keyframes cas-step-n1-grow {
+    from { width: 0; }
+    to { width: 80; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-sync-step-n1-g {
+    clip-path: url(#cas-clip-step-n1);
+  }
+  /* warn pulse on the save block */
+  #fig-ckpt-async-vs-sync-timeline .cas-warn-fill {
+    animation: cas-pulse-warn 1.5s ease 0.8s 4;
+  }
+
+  /* Async row: phase B */
+  #fig-ckpt-async-vs-sync-timeline .cas-phase-b-1 {
+    animation: cas-fade-in 0.4s ease 2.4s both;
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-snapshot-clip-rect {
+    animation: cas-snapshot-grow 0.25s ease 2.9s both;
+  }
+  @keyframes cas-snapshot-grow {
+    from { width: 0; }
+    to { width: 100; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-snapshot-g {
+    clip-path: url(#cas-clip-snapshot);
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-async-steps-clip-rect {
+    animation: cas-async-steps-grow 0.7s ease 3.3s both;
+  }
+  @keyframes cas-async-steps-grow {
+    from { width: 0; }
+    to { width: 390; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-async-steps-g {
+    clip-path: url(#cas-clip-async-steps);
+  }
+  #fig-ckpt-async-vs-sync-timeline #cas-bg-write-clip-rect {
+    animation: cas-bg-write-grow 0.7s ease 3.3s both;
+  }
+  @keyframes cas-bg-write-grow {
+    from { width: 0; }
+    to { width: 390; }
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-bg-write-g {
+    clip-path: url(#cas-clip-bg-write);
+  }
+  #fig-ckpt-async-vs-sync-timeline .cas-phase-b-labels {
+    animation: cas-fade-in 0.4s ease 4.2s both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-ckpt-async-vs-sync-timeline * {
+      animation: none !important;
+      clip-path: none !important;
+      opacity: 1 !important;
+    }
+    #fig-ckpt-async-vs-sync-timeline .cas-warn-fill {
+      opacity: 0.25 !important;
+    }
+  }
+</style>
+
+
+
+<text x="12" y="44" class="row-lbl" fill="var(--ink-soft,#374151)">Synchronous</text>
+
+
+<line x1="70" y1="135" x2="840" y2="135" stroke="var(--muted,#6b7280)" stroke-width="1" marker-end="url(#cas-arrow-muted)"/>
+<text x="845" y="139" class="caption" text-anchor="start">time</text>
+
+
+<g class="cas-phase-a-1">
+  <rect x="70" y="62" width="82" height="52" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--border-2,#d0d0d0)" stroke-width="1.5"/>
+  <text x="111" y="93" text-anchor="middle" class="lbl">step N</text>
+</g>
+
+
+<g class="cas-phase-a-1">
+  <line x1="152" y1="88" x2="160" y2="88" stroke="var(--muted,#6b7280)" stroke-width="1.4" marker-end="url(#cas-arrow-muted)"/>
+</g>
+
+
+<g class="cas-sync-save-g">
+  
+  <rect x="152" y="62" width="470" height="52" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+  
+  <rect x="152" y="62" width="470" height="52" rx="4" fill="url(#cas-hatch)" class="cas-warn-fill"/>
+  <text x="387" y="83" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">SAVE — all GPUs blocked</text>
+  <text x="387" y="101" text-anchor="middle" class="lbl-sm" fill="var(--warn,#e0a106)">~4 min</text>
+</g>
+
+
+<g class="cas-sync-save-g">
+  <text x="387" y="57" text-anchor="middle" class="warn-caption">dead compute time</text>
+</g>
+
+
+<g class="cas-sync-step-n1-g">
+  <line x1="622" y1="88" x2="630" y2="88" stroke="var(--muted,#6b7280)" stroke-width="1.4" marker-end="url(#cas-arrow-muted)"/>
+  <rect x="632" y="62" width="70" height="52" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--border-2,#d0d0d0)" stroke-width="1.5"/>
+  <text x="667" y="93" text-anchor="middle" class="lbl">step N+1</text>
+</g>
+
+
+
+<text x="12" y="230" class="row-lbl" fill="var(--ink-soft,#374151)">Asynchronous</text>
+
+
+<line x1="70" y1="400" x2="840" y2="400" stroke="var(--muted,#6b7280)" stroke-width="1" marker-end="url(#cas-arrow-muted)"/>
+<text x="845" y="404" class="caption" text-anchor="start">time</text>
+
+
+<text x="12" y="278" class="caption" text-anchor="start">training</text>
+<text x="12" y="349" class="caption" text-anchor="start">disk I/O</text>
+
+
+<g class="cas-phase-b-1">
+  <rect x="70" y="248" width="82" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="111" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N</text>
+</g>
+
+
+<g class="cas-phase-b-1">
+  <line x1="152" y1="270" x2="160" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+</g>
+
+
+<g class="cas-snapshot-g">
+  <rect x="152" y="248" width="100" height="44" rx="4" fill="var(--accent,#4f46e5)" fill-opacity="0.28" stroke="var(--accent,#4f46e5)" stroke-width="2"/>
+  <text x="202" y="265" text-anchor="middle" class="lbl-sm" fill="var(--accent,#4f46e5)">snapshot to</text>
+  <text x="202" y="277" text-anchor="middle" class="lbl-sm" fill="var(--accent,#4f46e5)">CPU RAM</text>
+  <text x="202" y="289" text-anchor="middle" class="lbl-sm" fill="var(--accent,#4f46e5)">(~30s, blocks)</text>
+</g>
+
+
+<g class="cas-snapshot-g">
+  <line x1="252" y1="270" x2="260" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+  
+  <line x1="202" y1="292" x2="202" y2="323" stroke="var(--muted,#6b7280)" stroke-width="1.2" stroke-dasharray="3 2" marker-end="url(#cas-arrow-muted)"/>
+  <text x="212" y="309" class="caption" text-anchor="start">hand off</text>
+  <text x="212" y="320" class="caption" text-anchor="start">CPU copy</text>
+</g>
+
+
+<g class="cas-async-steps-g">
+  
+  <rect x="252" y="248" width="86" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="295" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N+1</text>
+  <line x1="338" y1="270" x2="346" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+  
+  <rect x="348" y="248" width="86" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="391" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N+2</text>
+  <line x1="434" y1="270" x2="442" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+  
+  <rect x="444" y="248" width="86" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5"/>
+  <text x="487" y="275" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">step N+3</text>
+  <line x1="530" y1="270" x2="538" y2="270" stroke="var(--accent,#4f46e5)" stroke-width="1.4" marker-end="url(#cas-arrow-acc)"/>
+  
+  <rect x="540" y="248" width="100" height="44" rx="4" fill="var(--surface,#f5f5f5)" stroke="var(--accent,#4f46e5)" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="590" y="276" text-anchor="middle" class="lbl" fill="var(--accent,#4f46e5)">...</text>
+</g>
+
+
+<g class="cas-bg-write-g">
+  <rect x="252" y="325" width="390" height="44" rx="4" fill="var(--muted,#6b7280)" fill-opacity="0.14" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="447" y="345" text-anchor="middle" class="caption">background thread: serialize + write to disk</text>
+  <text x="447" y="360" text-anchor="middle" class="caption">(~4 min)</text>
+</g>
+
+
+<g class="cas-phase-b-labels">
+  <text x="447" y="385" text-anchor="middle" class="good-caption">overlaps with training — no GPUs idle</text>
+</g>
+
+
+<g class="cas-phase-b-labels" opacity="0.25">
+  <line x1="252" y1="292" x2="252" y2="325" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+  <line x1="642" y1="292" x2="642" y2="325" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2 2"/>
+</g>
+
+
+<line x1="40" y1="160" x2="860" y2="160" stroke="var(--muted,#6b7280)" stroke-width="0.5" stroke-dasharray="4 4" opacity="0.3"/>
+
+</svg>
+<figcaption><b>Synchronous checkpointing blocks all GPUs for the full ~4-minute save; asynchronous checkpointing only stalls for a fast ~30-second GPU→CPU snapshot, then resumes training immediately while a background thread writes to disk.</b> The key insight is that the slow disk write (bottom bar, ~4 min) runs concurrently with training steps N+1, N+2, N+3 — recovering nearly all the "dead compute" of the synchronous approach.</figcaption>
+</figure>

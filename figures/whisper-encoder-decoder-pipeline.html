@@ -1,0 +1,84 @@
+<figure class="viz" id="fig-whisper-encoder-decoder-pipeline">
+<svg viewBox="0 0 760 580" role="img" aria-label="Whisper ASR pipeline: waveform through STFT and Mel filterbank yields log-Mel spectrogram, two Conv1d layers compress 3000 frames to 1500, N encoder transformer blocks produce hidden states, cross-attention feeds M decoder transformer blocks that emit text token logits.">
+<defs>
+  <marker id="wh-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6aa9ff)"/>
+  </marker>
+  <marker id="wh-arrow-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#978f83)"/>
+  </marker>
+</defs>
+<style>
+  #fig-whisper-encoder-decoder-pipeline text { fill: var(--ink-soft,#45413a); font: 400 11px var(--sans,sans-serif); }
+  #fig-whisper-encoder-decoder-pipeline .lbl  { font: 600 11px var(--sans,sans-serif); }
+  #fig-whisper-encoder-decoder-pipeline .note { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+  #fig-whisper-encoder-decoder-pipeline .step { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#978f83); }
+</style>
+
+
+
+
+<rect x="44" y="16" width="312" height="42" rx="7" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.2"/>
+<text x="200" y="41" text-anchor="middle" class="lbl">Waveform — 16 kHz, up to 30 s</text>
+
+<text x="370" y="33" class="note">25 ms window,</text>
+<text x="370" y="46" class="note">10 ms hop</text>
+
+<line x1="200" y1="58" x2="200" y2="78" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="210" y="73" class="step">STFT + Mel filterbank</text>
+
+
+<rect x="44" y="80" width="312" height="42" rx="7" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="200" y="105" text-anchor="middle" class="lbl">Log-Mel — 80 bins × 3000 frames</text>
+
+<line x1="200" y1="122" x2="200" y2="142" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="210" y="137" class="step">2× Conv1d (stride 1, then stride 2)</text>
+
+
+<rect x="44" y="144" width="312" height="42" rx="7" class="v-fill" stroke="var(--accent,#6aa9ff)" stroke-width="1.5"/>
+<text x="200" y="169" text-anchor="middle" class="lbl">1500 frames — temporal res. halved</text>
+
+<text x="370" y="165" class="note">3000 to 1500</text>
+
+<line x1="200" y1="186" x2="200" y2="206" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="210" y="201" class="step">sinusoidal + learned positional enc.</text>
+
+
+<rect x="24" y="208" width="352" height="66" rx="8" fill="var(--accent,#6aa9ff)" fill-opacity="0.14" stroke="var(--accent,#6aa9ff)" stroke-width="2"/>
+<text x="200" y="235" text-anchor="middle" class="lbl">N × Transformer ENCODER blocks</text>
+<text x="200" y="252" text-anchor="middle" class="note">(self-attention over 1500 fixed positions)</text>
+
+<text x="390" y="222" class="note">fixed 30 s window;</text>
+<text x="390" y="235" class="note">silence padded/masked</text>
+
+
+
+<line x1="200" y1="274" x2="200" y2="316" stroke="var(--accent,#6aa9ff)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="200" y1="316" x2="490" y2="316" stroke="var(--accent,#6aa9ff)" stroke-width="2" stroke-dasharray="6 3"/>
+<line x1="490" y1="316" x2="490" y2="348" stroke="var(--accent,#6aa9ff)" stroke-width="2" marker-end="url(#wh-arrow)"/>
+<text x="340" y="308" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)" style="font:700 10px var(--sans,sans-serif)">Cross-attention: KV from encoder</text>
+
+
+
+
+<rect x="394" y="350" width="312" height="66" rx="8" fill="var(--accent-2,#ec9069)" fill-opacity="0.14" stroke="var(--accent-2,#ec9069)" stroke-width="2"/>
+<text x="550" y="378" text-anchor="middle" class="lbl">M × Transformer DECODER blocks</text>
+<text x="550" y="396" text-anchor="middle" class="note">(masked self-attn, autoregressive)</text>
+
+
+<line x1="550" y1="416" x2="550" y2="436" stroke="var(--accent,#6aa9ff)" stroke-width="1.5" marker-end="url(#wh-arrow)"/>
+<text x="560" y="430" class="step">project to vocab</text>
+
+
+<rect x="394" y="440" width="312" height="42" rx="7" class="v-fill" stroke="var(--muted,#978f83)" stroke-width="1.2"/>
+<text x="550" y="462" text-anchor="middle" class="lbl">Text token logits</text>
+<text x="550" y="478" text-anchor="middle" class="note">multilingual BPE — 51,865 tokens</text>
+<text x="400" y="498" class="note">prev tokens autoregressed as input each step</text>
+
+
+<text x="200" y="520" text-anchor="middle" class="note">Encoder: fixed 1500-frame context</text>
+<text x="550" y="520" text-anchor="middle" class="note">Decoder: autoregressive generation</text>
+
+</svg>
+<figcaption><b>Whisper encoder-decoder ASR pipeline.</b> A 30-second log-Mel spectrogram (80 bins × 3000 frames) is halved to 1500 frames by two strided Conv1d layers, then encoded by N transformer blocks. Those encoder hidden states supply keys and values for cross-attention in M transformer decoder blocks, which autoregressively generate a multilingual BPE transcript. The always-padded 30 s encoder context is the key simplicity/waste tradeoff in Whisper's design.</figcaption>
+</figure>

@@ -1,0 +1,206 @@
+<figure class="viz" id="fig-reward-server-arch">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 660 430" role="img" aria-label="Reward server internals: an incoming request queue feeds a router and LRU cache; the router fans out to three worker pools (Math Verifier x8, Code Runner sandbox x64, LLM Judge x32) based on task type; the LRU cache short-circuits duplicate requests via a dashed return arc.">
+<defs>
+  <marker id="rsa-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="rsa-arr-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-reward-server-arch .lbl     { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-reward-server-arch .sub     { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-reward-server-arch .sub-s   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-server-arch .header  { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); letter-spacing: 0.08em; text-transform: uppercase; }
+  #fig-reward-server-arch .badge   { font: 700 9px var(--sans,sans-serif); }
+  #fig-reward-server-arch .edge-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-server-arch .note    { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+  @keyframes rsa-req {
+    0%   { transform: translateX(0);     opacity: 0; }
+    4%   { opacity: 1; }
+    18%  { transform: translateX(112px); opacity: 1; }
+    22%  { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes rsa-route {
+    0%,20% { transform: translateX(0);    opacity: 0; }
+    23%    { opacity: 1; }
+    36%    { transform: translateX(102px); opacity: 1; }
+    40%    { opacity: 0; }
+    100%   { opacity: 0; }
+  }
+  @keyframes rsa-math {
+    0%,36%  { transform: translate(0,0);         opacity: 0; }
+    39%     { opacity: 1; }
+    54%     { transform: translate(-178px,126px); opacity: 1; }
+    58%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsa-code {
+    0%,55%  { transform: translate(0,0);      opacity: 0; }
+    58%     { opacity: 1; }
+    72%     { transform: translate(0,126px);   opacity: 1; }
+    76%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsa-judge {
+    0%,73%  { transform: translate(0,0);         opacity: 0; }
+    76%     { opacity: 1; }
+    88%     { transform: translate(178px,126px);  opacity: 1; }
+    92%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+  @keyframes rsa-cache-hit {
+    0%,40%  { opacity: 0; }
+    45%     { opacity: 0.9; }
+    55%     { opacity: 0; }
+    100%    { opacity: 0; }
+  }
+
+  #fig-reward-server-arch .tok-req    { animation: rsa-req   6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-route  { animation: rsa-route 6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-math   { animation: rsa-math  6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-code   { animation: rsa-code  6s ease-in-out infinite; }
+  #fig-reward-server-arch .tok-judge  { animation: rsa-judge 6s ease-in-out infinite; }
+  #fig-reward-server-arch .cache-flash{ animation: rsa-cache-hit 6s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #fig-reward-server-arch .tok-req,
+    #fig-reward-server-arch .tok-route,
+    #fig-reward-server-arch .tok-math,
+    #fig-reward-server-arch .tok-code,
+    #fig-reward-server-arch .tok-judge,
+    #fig-reward-server-arch .cache-flash { animation: none; opacity: 0; }
+  }
+</style>
+
+
+<rect x="8" y="8" width="644" height="414" rx="14"
+      fill="var(--surface,#f7f7fb)" stroke="var(--border-2,#d0d0da)" stroke-width="1.2"/>
+<text x="22" y="24" class="header">Reward Server (gRPC)</text>
+
+
+
+
+<rect x="28"  y="36" width="144" height="52" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="100" y="58" text-anchor="middle" class="lbl">Request Queue</text>
+<text x="100" y="74" text-anchor="middle" class="sub">(Redis)</text>
+
+<line x1="172" y1="62" x2="196" y2="62"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+
+
+<rect x="198" y="36" width="160" height="52" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="278" y="58" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Router</text>
+<text x="278" y="74" text-anchor="middle" class="sub-s">(task type)</text>
+
+<line x1="358" y1="62" x2="386" y2="62"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+
+
+<rect x="388" y="36" width="242" height="52" rx="7"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="509" y="55" text-anchor="middle" class="lbl">LRU Cache</text>
+<text x="509" y="72" text-anchor="middle" class="sub">SHA256(prompt + completion)</text>
+
+
+<rect class="cache-flash" x="388" y="36" width="242" height="52" rx="7"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.2" stroke="none" opacity="0"/>
+
+
+
+<path d="M 630 88 Q 630 110 329 110 Q 28 110 28 88"
+      fill="none"
+      stroke="var(--muted,#8a8a99)" stroke-width="1.2"
+      stroke-dasharray="5 3"
+      marker-end="url(#rsa-arr-m)"/>
+<text x="329" y="124" text-anchor="middle" class="note">cache hit -- return immediately (skip workers)</text>
+
+
+<circle class="tok-req"   cx="48"  cy="62" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tok-route" cx="198" cy="62" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+<line x1="278" y1="88" x2="278" y2="156"
+      stroke="var(--accent2,#3b6fd4)" stroke-width="1.5"/>
+<line x1="100" y1="156" x2="458" y2="156"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+<line x1="100"  y1="156" x2="100"  y2="188"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+<line x1="278"  y1="156" x2="278"  y2="188"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+<line x1="458"  y1="156" x2="458"  y2="188"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsa-arr)"/>
+<text x="100"  y="150" text-anchor="middle" class="edge-lbl">math</text>
+<text x="278"  y="150" text-anchor="middle" class="edge-lbl">code</text>
+<text x="458"  y="150" text-anchor="middle" class="edge-lbl">judge</text>
+
+
+<circle class="tok-math"  cx="278" cy="142" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tok-code"  cx="278" cy="142" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+<circle class="tok-judge" cx="278" cy="142" r="5" fill="var(--accent,#c15b39)" opacity="0"/>
+
+
+
+
+<rect x="28"  y="194" width="144" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="22"  y="190" width="144" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="16"  y="188" width="144" height="46" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="88"  y="208" text-anchor="middle" class="lbl">Math Verifier</text>
+<text x="88"  y="224" text-anchor="middle" class="sub-s">Workers</text>
+<rect x="138" y="188" width="24" height="16" rx="4" fill="var(--border-2,#cfcfdb)"/>
+<text x="150" y="200" text-anchor="middle" class="badge" fill="var(--ink-soft,#45413a)">x8</text>
+
+
+<rect x="214" y="194" width="128" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="208" y="190" width="128" height="46" rx="6"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1"/>
+<rect x="202" y="188" width="128" height="46" rx="6"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
+<text x="266" y="206" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Code Runner</text>
+<text x="266" y="222" text-anchor="middle" class="sub-s" fill="var(--accent2,#3b6fd4)">Sandbox Pool</text>
+<rect x="316" y="188" width="28" height="16" rx="4" fill="var(--accent2,#3b6fd4)"/>
+<text x="330" y="200" text-anchor="middle" class="badge" fill="#fff">x64</text>
+
+
+<rect x="394" y="194" width="128" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="388" y="190" width="128" height="46" rx="6"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#cfcfdb)" stroke-width="1"/>
+<rect x="382" y="188" width="128" height="46" rx="6"
+      fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
+<text x="446" y="206" text-anchor="middle" class="lbl">LLM Judge</text>
+<text x="446" y="222" text-anchor="middle" class="sub-s">async API calls</text>
+<rect x="496" y="188" width="28" height="16" rx="4" fill="var(--border-2,#cfcfdb)"/>
+<text x="510" y="200" text-anchor="middle" class="badge" fill="var(--ink-soft,#45413a)">x32</text>
+
+
+<text x="88"  y="250" text-anchor="middle" class="sub-s">cheap, fast</text>
+<text x="266" y="250" text-anchor="middle" class="sub-s">expensive; size pool</text>
+<text x="446" y="250" text-anchor="middle" class="sub-s">async; rate-limited</text>
+
+
+<rect x="16" y="264" width="628" height="148" rx="8"
+      fill="var(--surface-3,#eef0f6)" stroke="var(--border-2,#d0d0da)" stroke-width="1"/>
+<text x="330" y="282" text-anchor="middle" class="lbl">How a request flows</text>
+
+<text x="28" y="300" class="note">1. Request enters Redis queue; Router dequeues it and reads task_type.</text>
+<text x="28" y="316" class="note">2. Router hashes SHA256(prompt+completion) and looks up LRU Cache.</text>
+<text x="28" y="332" class="note">   Cache hit: stored scalar returned immediately, skipping all workers.</text>
+<text x="28" y="348" class="note">3. Cache miss: request dispatched to matching pool (math / code / judge).</text>
+<text x="28" y="364" class="note">4. Code Runner pool (x64) is the bottleneck; size = rollout_rate / worker_rps.</text>
+<text x="28" y="380" class="note">5. LLM Judge calls are async, hiding API latency behind the next rollout batch.</text>
+<text x="28" y="396" class="note">6. Worker results written to cache on return; training loop receives the scalar.</text>
+
+</svg>
+<figcaption><b>Internal architecture of the gRPC reward server showing request routing, caching, and parallel worker pools.</b> A Redis queue decouples ingress from computation; the Router checks an LRU cache (SHA256-keyed) before dispatching — a cache hit returns immediately and skips all workers. On a miss, requests route to one of three sized pools; the Code Runner sandbox pool (x64) is the throughput-critical path and must be sized to match rollout rate.</figcaption>
+</figure>

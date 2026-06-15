@@ -1,0 +1,195 @@
+<figure class="viz" id="fig-prob-info-unified-picture">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 820 660" role="img" aria-label="Data-flow diagram: the data distribution p-hat feeds into the cross-entropy loss which decomposes into a constant entropy term plus a KL term that gradient descent minimises; the resulting model distribution q-theta branches right to perplexity and continues down to the reverse-KL penalty used in RLHF and DPO.">
+<defs>
+  <marker id="piu-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="piu-arrow-muted" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#64748b)"/>
+  </marker>
+  <marker id="piu-arrow-warn" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-prob-info-unified-picture text { font: 400 13px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-prob-info-unified-picture .bold { font-weight: 700; }
+  #fig-prob-info-unified-picture .label-sm { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-prob-info-unified-picture .mono { font: 500 12px var(--mono,monospace); }
+  #fig-prob-info-unified-picture .mono-lg { font: 600 13px var(--mono,monospace); }
+  #fig-prob-info-unified-picture .accent-txt { fill: var(--accent,#6366f1); font-weight: 700; }
+  #fig-prob-info-unified-picture .good-txt { fill: var(--good,#2f9e6e); }
+  #fig-prob-info-unified-picture .warn-txt { fill: var(--warn,#e0a106); font-weight: 600; }
+  #fig-prob-info-unified-picture .muted { fill: var(--muted,#64748b); }
+
+  /* staged animation */
+  #fig-prob-info-unified-picture [data-anim] { opacity: 0; animation: piu-fade 0.5s ease forwards; }
+  #fig-prob-info-unified-picture [data-anim="1"] { animation-delay: 0.1s; }
+  #fig-prob-info-unified-picture [data-anim="2"] { animation-delay: 0.7s; }
+  #fig-prob-info-unified-picture [data-anim="3"] { animation-delay: 1.4s; }
+  #fig-prob-info-unified-picture [data-anim="4"] { animation-delay: 2.0s; }
+  #fig-prob-info-unified-picture [data-anim="5"] { animation-delay: 2.7s; }
+  @keyframes piu-fade { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
+
+  /* KL minimize-this pulse */
+  #fig-prob-info-unified-picture .kl-highlight { animation: piu-pulse 1.6s 2.2s ease-in-out 3 alternate; }
+  @keyframes piu-pulse { from { fill-opacity: 0.18; } to { fill-opacity: 0.55; } }
+
+  /* draw connectors */
+  #fig-prob-info-unified-picture .viz-draw {
+    stroke-dasharray: var(--len,300);
+    stroke-dashoffset: var(--len,300);
+    animation: piu-draw 0.6s ease forwards;
+  }
+  #fig-prob-info-unified-picture [data-anim="2"] .viz-draw { animation-delay: 0.7s; }
+  #fig-prob-info-unified-picture [data-anim="3"] .viz-draw { animation-delay: 1.4s; }
+  #fig-prob-info-unified-picture [data-anim="4"] .viz-draw { animation-delay: 2.0s; }
+  #fig-prob-info-unified-picture [data-anim="5"] .viz-draw { animation-delay: 2.7s; }
+  @keyframes piu-draw { to { stroke-dashoffset: 0; } }
+</style>
+
+
+<g data-anim="1">
+  <rect x="170" y="22" width="260" height="56" rx="28"
+        class="v-fill" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"
+        fill="var(--surface,#f5f7fa)"/>
+  <text x="300" y="45" text-anchor="middle" class="bold">Data distribution</text>
+  <text x="300" y="63" text-anchor="middle" class="mono muted" font-style="italic">p_data</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="300" y1="78" x2="300" y2="133"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:58"/>
+  
+  <text x="313" y="94" class="label-sm">observed samples</text>
+  <text x="313" y="108" class="label-sm">-&gt; empirical distribution p&#770;</text>
+</g>
+
+
+<g data-anim="2">
+  
+  <rect x="60" y="138" width="480" height="124" rx="10"
+        fill="var(--accent,#6366f1)" fill-opacity="0.08"
+        stroke="var(--accent,#6366f1)" stroke-width="2"/>
+
+  
+  <text x="300" y="163" text-anchor="middle"
+        class="bold" style="font-size:15px">Cross-entropy loss</text>
+
+  
+  <text x="300" y="188" text-anchor="middle" class="mono-lg">
+    H(p&#770;, q&#x03B8;) = H(p&#770;) + KL(p&#770; &#x2016; q&#x03B8;)
+  </text>
+
+  
+  
+  <rect x="389" y="192" width="137" height="4" rx="2"
+        fill="var(--accent,#6366f1)" class="kl-highlight" fill-opacity="0.30"/>
+
+  
+  
+  <text x="218" y="212" text-anchor="middle" class="label-sm muted">constant wrt &#x03B8;</text>
+  
+  <text x="457" y="212" text-anchor="middle" class="accent-txt" style="font-size:11px">minimize this</text>
+
+  
+  <line x1="362" y1="200" x2="362" y2="220"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1" opacity="0.5"/>
+
+  
+  <text x="300" y="247" text-anchor="middle" class="label-sm muted">
+    Training drives KL(p&#770; &#x2016; q&#x03B8;) -&gt; 0, so H(p&#770;, q&#x03B8;) -&gt; H(p&#770;)
+  </text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="300" y1="262" x2="300" y2="327"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:68"/>
+  <text x="313" y="283" class="label-sm">gradient descent</text>
+  <text x="313" y="297" class="label-sm">(see Ch. 1.3, 1.6)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="170" y="328" width="260" height="56" rx="28"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5"/>
+  <text x="300" y="351" text-anchor="middle" class="bold">Model distribution</text>
+  <text x="300" y="370" text-anchor="middle" class="mono muted" font-style="italic">q&#x03B8;</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="430" y1="356" x2="524" y2="356"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:97"/>
+  <text x="477" y="347" text-anchor="middle" class="label-sm good-txt">evaluate</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="528" y="326" width="264" height="60" rx="10"
+        fill="var(--good,#2f9e6e)" fill-opacity="0.10"
+        stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="660" y="350" text-anchor="middle" class="bold good-txt" style="font-size:12px">Perplexity</text>
+  <text x="660" y="369" text-anchor="middle" class="mono" style="font-size:11px; fill:var(--good,#2f9e6e)">
+    = exp( H(p&#770;, q&#x03B8;) )
+  </text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="300" y1="384" x2="300" y2="450"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6"
+        marker-end="url(#piu-arrow)" class="viz-draw" style="--len:68"/>
+  <text x="313" y="407" class="label-sm">diverges from reference?</text>
+</g>
+
+
+<g data-anim="5">
+  
+  <rect x="150" y="452" width="300" height="68" rx="10"
+        fill="var(--warn,#e0a106)" fill-opacity="0.10"
+        stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <text x="300" y="479" text-anchor="middle" class="warn-txt mono-lg">KL( q&#x03B8; &#x2016; q_ref )</text>
+  <text x="300" y="500" text-anchor="middle" class="label-sm muted">reversed argument order vs. training</text>
+
+  
+  
+  <line x1="576" y1="487" x2="453" y2="487"
+        stroke="var(--warn,#e0a106)" stroke-width="1.4"
+        marker-end="url(#piu-arrow-warn)" class="viz-draw" style="--len:125"/>
+
+  
+  <rect x="578" y="455" width="222" height="66" rx="6"
+        fill="var(--surface,#f5f7fa)" fill-opacity="0.7"
+        stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="4 2"/>
+  <text x="689" y="473" text-anchor="middle" class="label-sm warn-txt">used in RLHF / DPO</text>
+  <text x="689" y="487" text-anchor="middle" class="label-sm muted">as a penalty term</text>
+  <text x="689" y="501" text-anchor="middle" class="label-sm muted">(Ch. 5.5, 5.7)</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="60" y1="550" x2="760" y2="550"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="300" y="570" text-anchor="middle" class="label-sm muted">
+    Training: forward KL(p&#770; &#x2016; q&#x03B8;) -- mode-covering, minimised via CE loss
+  </text>
+  <text x="300" y="586" text-anchor="middle" class="label-sm muted">
+    RLHF: reverse KL(q&#x03B8; &#x2016; q_ref) -- mode-seeking, keeps policy near reference
+  </text>
+</g>
+
+
+</svg>
+<figcaption><b>From data distribution to loss, perplexity, and the RLHF KL penalty.</b> The cross-entropy loss decomposes into a fixed data-entropy term plus KL(p&#770;&amp;thinsp;&#x2016;&amp;thinsp;q&#x03B8;), so minimising the loss is equivalent to minimising that KL divergence; perplexity is the same quantity on an exponential scale. Crucially, post-training alignment re-uses KL in the <em>reversed</em> direction — KL(q&#x03B8;&amp;thinsp;&#x2016;&amp;thinsp;q_ref) — as a penalty that keeps the fine-tuned policy from drifting too far from the reference model.</figcaption>
+</figure>

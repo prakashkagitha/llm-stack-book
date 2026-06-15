@@ -1,0 +1,309 @@
+<figure class="viz" id="fig-fsindex-stack-dataflow">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 900 1000" role="img" aria-label="Full LLM stack data and gradient flow: raw text travels down the forward spine through BPE, Embeddings+RoPE, TransformerBlock, and GPT Head, then forks into a training branch (Autograd, LoRA, DPO/GRPO) and an inference branch (Sampler, Speculative Decoding, RAG, Final answer).">
+<defs>
+  <marker id="fsd-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="fsd-arr-tr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="fsd-arr-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-fsindex-stack-dataflow text { font: 400 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-fsindex-stack-dataflow .lbl  { font: 600 13px var(--sans,sans-serif); }
+  #fig-fsindex-stack-dataflow .sub  { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-fsindex-stack-dataflow .sec  { font: 700 11px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-fsindex-stack-dataflow .elab { font: italic 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-fsindex-stack-dataflow .eltr { font: italic 400 10px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+  #fig-fsindex-stack-dataflow .lane { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+
+  /* Flow animation on spine edges */
+  @media (prefers-reduced-motion: no-preference) {
+    #fig-fsindex-stack-dataflow .flow-fwd {
+      stroke-dasharray: 8 5; stroke-dashoffset: 0;
+      animation: fsd-flow 1.8s linear infinite;
+    }
+    #fig-fsindex-stack-dataflow .flow-tr {
+      stroke-dasharray: 8 5; stroke-dashoffset: 0;
+      animation: fsd-flow 1.8s linear infinite 3.8s;
+    }
+    @keyframes fsd-flow { from { stroke-dashoffset: 130; } to { stroke-dashoffset: 0; } }
+    #fig-fsindex-stack-dataflow .dot-fwd {
+      animation: fsd-dot-fwd 3.2s ease-in-out infinite 0.5s;
+    }
+    #fig-fsindex-stack-dataflow .dot-tr {
+      animation: fsd-dot-tr 3s ease-in-out infinite 3.8s;
+    }
+    #fig-fsindex-stack-dataflow .dot-inf {
+      animation: fsd-dot-inf 3.5s ease-in-out infinite 3.8s;
+    }
+    @keyframes fsd-dot-fwd {
+      0%   { cy: 50px; opacity: 0; }
+      5%   { opacity: 1; }
+      90%  { cy: 410px; opacity: 1; }
+      100% { cy: 410px; opacity: 0; }
+    }
+    @keyframes fsd-dot-tr {
+      0%   { opacity: 0; transform: translate(250px,391px); }
+      5%   { opacity: 1; }
+      90%  { opacity: 1; transform: translate(640px,700px); }
+      100% { opacity: 0; transform: translate(640px,700px); }
+    }
+    @keyframes fsd-dot-inf {
+      0%   { cy: 419px; opacity: 0; }
+      5%   { opacity: 1; }
+      90%  { cy: 878px; opacity: 1; }
+      100% { cy: 878px; opacity: 0; }
+    }
+  }
+</style>
+
+
+<text x="250" y="18" text-anchor="middle" class="lane">FORWARD SPINE</text>
+<text x="650" y="18" text-anchor="middle" style="font:600 10px var(--sans,sans-serif); fill:var(--accent2,#3b82f6);">TRAINING BRANCH (gradient flow)</text>
+
+
+<g data-anim="1">
+  <rect x="155" y="26" width="190" height="34" rx="17"
+        fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="48" text-anchor="middle" class="lbl">Raw Text</text>
+</g>
+
+
+<line x1="250" y1="60" x2="250" y2="96"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+
+
+<g data-anim="1">
+  <rect x="145" y="96" width="210" height="56" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="118" text-anchor="middle" class="lbl">BPE Tokenizer</text>
+  <text x="344" y="108" text-anchor="end" class="sec">§2</text>
+  <text x="250" y="136" text-anchor="middle" class="sub">train_bpe(), encode()</text>
+</g>
+<text x="260" y="91" class="elab">token IDs</text>
+
+
+<line x1="250" y1="152" x2="250" y2="181"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+
+
+<g data-anim="1">
+  <rect x="130" y="181" width="240" height="56" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="203" text-anchor="middle" class="lbl">Embeddings + RoPE</text>
+  <text x="358" y="193" text-anchor="end" class="sec">§3-4</text>
+  <text x="250" y="222" text-anchor="middle" class="sub">tok_emb, apply_rotary_emb()</text>
+</g>
+
+
+<line x1="250" y1="237" x2="250" y2="264"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+<text x="260" y="256" class="elab">(B, T, d_model)</text>
+
+
+<g data-anim="2">
+  <rect x="130" y="264" width="240" height="62" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="285" text-anchor="middle" class="lbl">TransformerBlock x N</text>
+  <text x="358" y="275" text-anchor="end" class="sec">§5</text>
+  <text x="250" y="310" text-anchor="middle" class="sub">MultiHeadAttention + FeedForward</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="416" y="264" width="208" height="52" rx="7"
+        fill="var(--surface,#ffffff)" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-dasharray="5 3"/>
+  <text x="426" y="282" style="font:600 10.5px var(--sans,sans-serif); fill:var(--warn,#e0a106);">FlashAttention replaces</text>
+  <text x="426" y="296" style="font:400 10px var(--sans,sans-serif);">the attn kernel</text>
+  <text x="610" y="296" style="font:700 10px var(--sans,sans-serif); fill:var(--warn,#e0a106);">§8</text>
+  <line x1="416" y1="290" x2="372" y2="295"
+        stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="5 3" fill="none"
+        marker-end="url(#fsd-arr-warn)"/>
+</g>
+
+
+<line x1="250" y1="326" x2="250" y2="358"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+<text x="260" y="342" class="elab">(B, T, d_model)</text>
+
+
+<g data-anim="2">
+  <rect x="130" y="358" width="240" height="56" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="380" text-anchor="middle" class="lbl">GPT Language Head</text>
+  <text x="358" y="370" text-anchor="end" class="sec">§5</text>
+  <text x="250" y="399" text-anchor="middle" class="sub">weight-tied unembedding</text>
+</g>
+
+
+<text x="260" y="423" class="elab">logits (B, T, V)</text>
+
+
+
+<g data-anim="3">
+  <path d="M 350 380 C 470 380 540 400 640 445"
+        stroke="var(--accent2,#3b82f6)" stroke-width="2" fill="none"
+        class="flow-tr" marker-end="url(#fsd-arr-tr)"/>
+  <text x="500" y="375" text-anchor="middle" class="eltr">cross-entropy loss (training)</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="250" y1="414" x2="250" y2="490"
+        stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+        class="flow-fwd" marker-end="url(#fsd-arr)"/>
+  <text x="260" y="460" class="elab">(B, V) logits — (inference)</text>
+</g>
+
+
+
+
+
+
+<g data-anim="3">
+  <rect x="534" y="445" width="220" height="58" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="644" y="468" text-anchor="middle" class="lbl">Autograd</text>
+  <text x="742" y="457" text-anchor="end" style="font:700 11px var(--sans,sans-serif); fill:var(--accent2,#3b82f6);">§1</text>
+  <text x="644" y="490" text-anchor="middle" class="sub">backward() via Value / torch.autograd</text>
+</g>
+
+
+<line x1="644" y1="503" x2="644" y2="538"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.8" fill="none"
+      class="flow-tr" marker-end="url(#fsd-arr-tr)"/>
+<text x="656" y="524" class="eltr">gradients</text>
+
+
+<g data-anim="4">
+  <rect x="534" y="538" width="220" height="58" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="644" y="561" text-anchor="middle" class="lbl">LoRA Adapters</text>
+  <text x="742" y="550" text-anchor="end" style="font:700 11px var(--sans,sans-serif); fill:var(--accent2,#3b82f6);">§6</text>
+  <text x="644" y="583" text-anchor="middle" class="sub">only B·A updated; W0 frozen</text>
+</g>
+
+
+<line x1="644" y1="596" x2="644" y2="636"
+      stroke="var(--accent2,#3b82f6)" stroke-width="1.8" fill="none"
+      class="flow-tr" marker-end="url(#fsd-arr-tr)"/>
+<text x="656" y="619" style="font:italic 400 9px var(--sans,sans-serif); fill:var(--accent2,#3b82f6);">deltaW = scaling * B@A merged into W0</text>
+
+
+<g data-anim="4">
+  <rect x="534" y="636" width="220" height="58" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="644" y="659" text-anchor="middle" class="lbl">DPO / GRPO</text>
+  <text x="742" y="648" text-anchor="end" style="font:700 11px var(--sans,sans-serif); fill:var(--accent2,#3b82f6);">§7</text>
+  <text x="644" y="681" text-anchor="middle" class="sub">post-training alignment on top of SFT</text>
+</g>
+
+<text x="644" y="712" text-anchor="middle"
+      style="font:italic 9px var(--sans,sans-serif); fill:var(--accent2,#3b82f6); opacity:0.7;">(gradient flow terminates here)</text>
+
+
+
+
+
+
+<g data-anim="3">
+  <rect x="128" y="490" width="244" height="66" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="513" text-anchor="middle" class="lbl">Sampler</text>
+  <text x="360" y="502" text-anchor="end" class="sec">§11</text>
+  <text x="250" y="534" text-anchor="middle" class="sub">temperature -&gt; top-k -&gt; top-p</text>
+  <text x="250" y="548" text-anchor="middle" class="sub">-&gt; multinomial</text>
+</g>
+
+
+<line x1="250" y1="556" x2="250" y2="602"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+<text x="260" y="583" class="elab">next token</text>
+
+
+<g data-anim="4">
+  <rect x="120" y="602" width="260" height="62" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="625" text-anchor="middle" class="lbl">Speculative Decoding</text>
+  <text x="368" y="614" text-anchor="end" class="sec">§9</text>
+  <text x="250" y="647" text-anchor="middle" class="sub">K draft tokens, one target</text>
+  <text x="250" y="659" text-anchor="middle" class="sub">verify pass</text>
+</g>
+
+
+<line x1="250" y1="664" x2="250" y2="712"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+<text x="260" y="692" class="elab">accepted tokens</text>
+
+
+<g data-anim="4">
+  <rect x="130" y="712" width="240" height="62" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5"/>
+  <text x="250" y="735" text-anchor="middle" class="lbl">RAG Pipeline</text>
+  <text x="358" y="724" text-anchor="end" class="sec">§10</text>
+  <text x="250" y="757" text-anchor="middle" class="sub">retrieve context, prepend,</text>
+  <text x="250" y="769" text-anchor="middle" class="sub">then generate</text>
+</g>
+
+
+<line x1="250" y1="774" x2="250" y2="816"
+      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" fill="none"
+      class="flow-fwd" marker-end="url(#fsd-arr)"/>
+
+
+<g data-anim="5">
+  <rect x="112" y="816" width="276" height="42" rx="21"
+        fill="var(--good,#2f9e6e)" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+  <text x="250" y="842" text-anchor="middle"
+        style="font:600 13px var(--sans,sans-serif); fill:#ffffff;">Final answer token stream</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="530" y="758" width="355" height="120" rx="8"
+        fill="var(--surface,#ffffff)" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="546" y="778" style="font:600 11px var(--sans,sans-serif);">Legend</text>
+  
+  <line x1="546" y1="793" x2="646" y2="793"
+        stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
+  <text x="656" y="797" style="font:400 10px var(--sans,sans-serif);">Data flow (forward / inference)</text>
+  
+  <line x1="546" y1="813" x2="646" y2="813"
+        stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <text x="656" y="817" style="font:400 10px var(--sans,sans-serif);">Gradient flow (training branch)</text>
+  
+  <line x1="546" y1="833" x2="646" y2="833"
+        stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="656" y="837" style="font:400 10px var(--sans,sans-serif);">Kernel swap (FlashAttention §8)</text>
+  
+  <rect x="546" y="846" width="100" height="16" rx="8"
+        fill="var(--good,#2f9e6e)"/>
+  <text x="656" y="858" style="font:400 10px var(--sans,sans-serif);">Output terminal node</text>
+</g>
+
+
+
+<circle cx="250" cy="50" r="5"
+        fill="var(--accent,#c15b39)" opacity="0" class="dot-fwd"/>
+
+<circle cx="250" cy="391" r="5"
+        fill="var(--accent2,#3b82f6)" opacity="0" class="dot-tr"/>
+
+<circle cx="250" cy="419" r="5"
+        fill="var(--good,#2f9e6e)" opacity="0" class="dot-inf"/>
+
+</svg>
+<figcaption><b>Data and gradient flow through the complete LLM stack.</b> A token travels the forward spine (Raw Text through BPE §2, Embeddings+RoPE §3-4, TransformerBlock §5, GPT Head §5) and then forks: the blue training branch carries cross-entropy loss backward through Autograd §1, LoRA adapters §6, and DPO/GRPO alignment §7, while the inference branch feeds logits through the Sampler §11, Speculative Decoding §9, and RAG Pipeline §10 to produce the final answer stream. FlashAttention (§8, dashed orange) is a drop-in kernel swap that replaces the attention computation without changing any other stage.</figcaption>
+</figure>

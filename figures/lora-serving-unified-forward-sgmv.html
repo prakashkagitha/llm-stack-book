@@ -1,0 +1,203 @@
+<figure class="viz" id="fig-lora-serving-unified-forward-sgmv">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 900 300" role="img"
+     aria-label="Unified forward pass for one adapted linear layer: X fans into two parallel paths — a dense base GEMM giving Y_base and an SGMV low-rank correction giving Y_lora — which sum to produce output Y.">
+  <defs>
+    <marker id="sf-ab" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#4f86c6)"/>
+    </marker>
+    <marker id="sf-ao" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#c6724f)"/>
+    </marker>
+    <marker id="sf-an" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+    </marker>
+    <marker id="sf-am" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#aaa)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-lora-serving-unified-forward-sgmv text {
+      font-family: var(--sans,sans-serif);
+      fill: var(--ink-soft,#333);
+    }
+    #fig-lora-serving-unified-forward-sgmv .lbl  { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-lora-serving-unified-forward-sgmv .sub  { font: 400 9px var(--mono,monospace); fill: var(--muted,#888); }
+    #fig-lora-serving-unified-forward-sgmv .nlbl { font: 700 13px var(--sans,sans-serif); }
+    #fig-lora-serving-unified-forward-sgmv .elbl { font: italic 9px var(--sans,sans-serif); fill: var(--muted,#999); }
+    #fig-lora-serving-unified-forward-sgmv .ptag { font: 600 9px var(--sans,sans-serif); }
+
+    @keyframes sf-pb {
+      0%,5%  { opacity:0; transform:translateX(0); }
+      10%    { opacity:1; }
+      46%    { opacity:1; transform:translateX(216px); }
+      60%    { opacity:1; transform:translateX(332px); }
+      82%    { opacity:1; transform:translateX(442px); }
+      90%    { opacity:0; }
+      100%   { opacity:0; transform:translateX(0); }
+    }
+    @keyframes sf-pl {
+      0%,5%  { opacity:0; transform:translateX(0); }
+      10%    { opacity:1; }
+      46%    { opacity:1; transform:translateX(248px); }
+      60%    { opacity:1; transform:translateX(368px); }
+      82%    { opacity:1; transform:translateX(480px); }
+      90%    { opacity:0; }
+      100%   { opacity:0; transform:translateX(0); }
+    }
+    @keyframes sf-mf {
+      0%,63%  { fill-opacity:0.06; }
+      73%     { fill-opacity:0.35; }
+      80%     { fill-opacity:0.1; }
+      87%     { fill-opacity:0.35; }
+      95%     { fill-opacity:0.06; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      .sf-pd, .sf-mr { animation:none!important; opacity:0!important; }
+    }
+    .sf-pdb { animation:sf-pb 3.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+    .sf-pdl { animation:sf-pl 3.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+    .sf-mr  { animation:sf-mf 3.6s ease-in-out infinite; transform-box:fill-box; transform-origin:center; }
+  </style>
+
+  
+
+  
+  <g data-anim="1">
+    
+    <rect x="10" y="116" width="120" height="64" rx="8"
+          fill="var(--surface,#f4f6fa)"
+          stroke="var(--border-2,#bbb)" stroke-width="1.5"/>
+    <text x="70" y="140" text-anchor="middle" class="nlbl">X</text>
+    <text x="70" y="155" text-anchor="middle" class="sub">[B, d_in]</text>
+    <text x="70" y="168" text-anchor="middle" class="sub">activations</text>
+
+    
+    <rect x="10" y="190" width="120" height="36" rx="4"
+          fill="none"
+          stroke="var(--muted,#ccc)" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="70" y="204" text-anchor="middle"
+          style="font:600 8px var(--mono,monospace); fill:var(--muted,#777)">adapter idx per token</text>
+    <text x="70" y="217" text-anchor="middle"
+          style="font:400 8px var(--mono,monospace); fill:var(--muted,#777)">[3,3,7,0,...]</text>
+  </g>
+
+  
+  <line x1="130" y1="136" x2="150" y2="100"
+        stroke="var(--accent,#4f86c6)" stroke-width="2"
+        marker-end="url(#sf-ab)"/>
+  <line x1="130" y1="162" x2="150" y2="210"
+        stroke="var(--accent-2,#c6724f)" stroke-width="2"
+        marker-end="url(#sf-ao)"/>
+
+  
+  <text x="138" y="92" text-anchor="middle" class="ptag" fill="var(--accent,#4f86c6)">base</text>
+  <text x="138" y="228" text-anchor="middle" class="ptag" fill="var(--accent-2,#c6724f)">LoRA</text>
+
+  
+  <g data-anim="2">
+    <rect x="152" y="58" width="248" height="64" rx="8"
+          fill="var(--accent,#4f86c6)" fill-opacity="0.18"
+          stroke="var(--accent,#4f86c6)" stroke-width="2"/>
+    <text x="276" y="83" text-anchor="middle"
+          class="lbl" fill="var(--accent,#4f86c6)">dense GEMM: X . W0^T</text>
+    <text x="276" y="97" text-anchor="middle" class="sub">fully batched, adapter-agnostic</text>
+    <text x="276" y="110" text-anchor="middle" class="sub">~99% of FLOPs</text>
+  </g>
+
+  
+  <line x1="400" y1="90" x2="410" y2="90"
+        stroke="var(--accent,#4f86c6)" stroke-width="2"
+        marker-end="url(#sf-ab)"/>
+
+  
+  <g data-anim="3">
+    <rect x="412" y="66" width="84" height="48" rx="6"
+          fill="var(--accent,#4f86c6)" fill-opacity="0.12"
+          stroke="var(--accent,#4f86c6)" stroke-width="1.5"/>
+    <text x="454" y="95" text-anchor="middle"
+          class="nlbl" fill="var(--accent,#4f86c6)">Y_base</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="152" y="182" width="268" height="68" rx="8"
+          fill="var(--accent-2,#c6724f)" fill-opacity="0.15"
+          stroke="var(--accent-2,#c6724f)" stroke-width="2"/>
+    <text x="286" y="206" text-anchor="middle"
+          class="lbl" fill="var(--accent-2,#c6724f)">SGMV: gather A_a, B_a</text>
+    <text x="286" y="221" text-anchor="middle" class="sub">(a/r)*X*A^T*B^T</text>
+    <text x="286" y="235" text-anchor="middle" class="sub">d_in -&gt; r -&gt; d_out  (~1 % FLOPs)</text>
+  </g>
+
+  
+  <path d="M70 226 L70 268 L150 248"
+        fill="none"
+        stroke="var(--muted,#bbb)" stroke-width="1.2"
+        stroke-dasharray="4 3"
+        marker-end="url(#sf-am)"/>
+  <text x="92" y="282" text-anchor="middle" class="elbl">gather A_a,B_a</text>
+
+  
+  <line x1="420" y1="216" x2="430" y2="216"
+        stroke="var(--accent-2,#c6724f)" stroke-width="2"
+        marker-end="url(#sf-ao)"/>
+
+  
+  <g data-anim="3">
+    <rect x="432" y="192" width="84" height="48" rx="6"
+          fill="var(--accent-2,#c6724f)" fill-opacity="0.12"
+          stroke="var(--accent-2,#c6724f)" stroke-width="1.5"/>
+    <text x="474" y="221" text-anchor="middle"
+          class="nlbl" fill="var(--accent-2,#c6724f)">Y_lora</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <circle cx="628" cy="148" r="28" class="sf-mr"
+            fill="var(--accent,#4f86c6)" fill-opacity="0.06"/>
+    <circle cx="628" cy="148" r="23"
+            fill="var(--surface,#f4f6fa)"
+            stroke="var(--border-2,#bbb)" stroke-width="2"/>
+    <text x="628" y="155" text-anchor="middle"
+          class="nlbl" style="font-size:20px">+</text>
+  </g>
+
+  
+  <line x1="496" y1="100" x2="610" y2="138"
+        stroke="var(--accent,#4f86c6)" stroke-width="1.8"
+        marker-end="url(#sf-ab)"/>
+  
+  <line x1="496" y1="214" x2="610" y2="160"
+        stroke="var(--accent-2,#c6724f)" stroke-width="1.8"
+        marker-end="url(#sf-ao)"/>
+
+  
+  <g data-anim="5">
+    <rect x="660" y="120" width="228" height="56" rx="8"
+          fill="var(--surface,#f4f6fa)"
+          stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+    <text x="774" y="146" text-anchor="middle"
+          class="nlbl" fill="var(--good,#2f9e6e)">Y</text>
+    <text x="774" y="162" text-anchor="middle"
+          class="sub" style="fill:var(--good,#2f9e6e)">Y_base + Y_lora</text>
+  </g>
+
+  
+  <line x1="651" y1="148" x2="658" y2="148"
+        stroke="var(--ink-soft,#555)" stroke-width="2"
+        marker-end="url(#sf-an)"/>
+
+  
+  <circle cx="134" cy="130" r="5" fill="var(--accent,#4f86c6)"
+          class="sf-pd sf-pdb" opacity="0"/>
+  <circle cx="134" cy="158" r="5" fill="var(--accent-2,#c6724f)"
+          class="sf-pd sf-pdl" opacity="0"/>
+
+</svg>
+<figcaption><b>The unified forward pass splits at each adapted linear layer: a dense base GEMM computes Y_base for the entire batch (blue, ~99 % of FLOPs), while SGMV gathers per-token adapter matrices and computes the low-rank correction Y_lora (orange, ~1 % of FLOPs).</b> The per-token adapter index drives which adapter weights SGMV gathers per row. The two results add in place to produce Y = Y_base + Y_lora before the activation flows on — the expensive base GEMM stays fully batched and adapter-independent while the small correction handles per-tenant specialisation.</figcaption>
+</figure>

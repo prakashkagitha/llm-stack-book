@@ -1,0 +1,100 @@
+<figure class="viz" id="fig-doremi-reference-proxy-loop">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-doremi-reference-proxy-loop text { fill: var(--ink-soft,#45413a); }
+  #fig-doremi-reference-proxy-loop .ttl { font: 700 12px var(--sans,sans-serif); }
+  #fig-doremi-reference-proxy-loop .sub { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-doremi-reference-proxy-loop .frm { font: 500 10.5px var(--mono,monospace); }
+  #fig-doremi-reference-proxy-loop .edlbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-doremi-reference-proxy-loop .wlbl  { font: 400 10px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+  #fig-doremi-reference-proxy-loop .wlbl2 { font: 400 10px var(--sans,sans-serif); fill: var(--warn,#d97706); }
+  #fig-doremi-reference-proxy-loop .white { fill: #ffffff; }
+
+  #fig-doremi-reference-proxy-loop .flow-fwd {
+    stroke-dasharray: 8 5;
+    animation: drl-fwd 2s linear infinite;
+  }
+  #fig-doremi-reference-proxy-loop .flow-rev {
+    stroke-dasharray: 8 5;
+    animation: drl-rev 2s linear infinite;
+  }
+  @keyframes drl-fwd { to { stroke-dashoffset: -52; } }
+  @keyframes drl-rev { to { stroke-dashoffset:  52; } }
+
+  #fig-doremi-reference-proxy-loop .pulse-box {
+    animation: drl-pulse 2.5s ease-in-out infinite;
+  }
+  @keyframes drl-pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+</style>
+<svg viewBox="0 0 860 500" role="img"
+     aria-label="DoReMi pipeline: reference model computes per-domain baseline losses; excess loss equals proxy loss minus reference loss, clamped at zero; proxy model and multiplicative-weights vector play an iterative min-max game; the averaged weights w-bar train the large target model.">
+<defs>
+  <marker id="drl-a"  viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1L8 5L0 9z" fill="var(--muted,#6d675d)"/></marker>
+  <marker id="drl-ab" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1L8 5L0 9z" fill="var(--accent,#6366f1)"/></marker>
+  <marker id="drl-aw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 1L8 5L0 9z" fill="var(--warn,#d97706)"/></marker>
+</defs>
+
+<rect x="20" y="34" width="232" height="86" rx="8"
+      fill="var(--surface-3,#eef2f7)" stroke="var(--border-2,#94a3b8)" stroke-width="1.5"/>
+<text x="136" y="58"  text-anchor="middle" class="ttl">reference model</text>
+<text x="136" y="74"  text-anchor="middle" class="frm">theta_ref</text>
+<text x="136" y="91"  text-anchor="middle" class="sub">trained once on natural mix w_nat</text>
+<text x="136" y="106" text-anchor="middle" class="sub">(supplies baseline losses only)</text>
+
+<line x1="252" y1="77" x2="488" y2="77"
+      stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#drl-a)"/>
+<text x="370" y="69" text-anchor="middle" class="edlbl">per-domain losses l_i(theta_ref)</text>
+
+<rect x="490" y="34" width="350" height="86" rx="8" class="pulse-box"
+      fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="var(--warn,#d97706)" stroke-width="2"/>
+<text x="665" y="58"  text-anchor="middle" class="ttl" fill="var(--warn,#d97706)">excess loss</text>
+<text x="665" y="76"  text-anchor="middle" class="frm">lambda_i = l_i(theta) - l_i(theta_ref)</text>
+<text x="665" y="93"  text-anchor="middle" class="sub">clamped at 0 (cannot beat reference for free)</text>
+<text x="665" y="108" text-anchor="middle" class="sub">measures closeable headroom per domain</text>
+
+<line x1="665" y1="120" x2="665" y2="205"
+      stroke="var(--warn,#d97706)" stroke-width="1.5" stroke-dasharray="5 3"
+      marker-end="url(#drl-aw)"/>
+<text x="677" y="167" class="wlbl2">drives max step</text>
+
+<rect x="20" y="210" width="232" height="94" rx="8"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="136" y="234" text-anchor="middle" class="ttl" fill="var(--accent,#6366f1)">proxy model  theta</text>
+<text x="136" y="252" text-anchor="middle" class="sub">(same small size as reference)</text>
+<text x="136" y="268" text-anchor="middle" class="sub">minimizes weighted loss</text>
+<text x="136" y="284" text-anchor="middle" class="sub">(the min player)</text>
+
+<rect x="490" y="210" width="350" height="94" rx="8"
+      fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="665" y="232" text-anchor="middle" class="ttl" fill="var(--accent,#6366f1)">multiplicative weights  (Hedge)</text>
+<text x="665" y="250" text-anchor="middle" class="frm">w_i := w_i * exp(eta * lambda_i)</text>
+<text x="665" y="267" text-anchor="middle" class="frm">renorm + uniform floor c</text>
+<text x="665" y="283" text-anchor="middle" class="sub">upweights domains where proxy lags ref</text>
+<text x="665" y="297" text-anchor="middle" class="sub">(the max player)</text>
+
+<path d="M252 230 Q371 192 490 230"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="2"
+      class="flow-fwd" marker-end="url(#drl-ab)"/>
+<text x="371" y="190" text-anchor="middle" class="wlbl">per-domain excess lambda_i</text>
+
+<path d="M490 284 Q371 322 252 284"
+      fill="none" stroke="var(--accent,#6366f1)" stroke-width="2"
+      class="flow-rev" marker-end="url(#drl-ab)"/>
+<text x="371" y="336" text-anchor="middle" class="wlbl">weighted batch ~ w^(t)</text>
+
+<line x1="136" y1="304" x2="136" y2="374"
+      stroke="var(--muted,#6d675d)" stroke-width="1.5" marker-end="url(#drl-a)"/>
+<text x="151" y="358" class="edlbl">average w over all steps --&gt; w-bar (frozen)</text>
+
+<rect x="127" y="376" width="430" height="80" rx="10"
+      fill="var(--accent,#6366f1)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+<text x="342" y="401" text-anchor="middle" class="ttl white">TARGET large model</text>
+<text x="342" y="419" text-anchor="middle" class="frm white">trained on FIXED mixture  w-bar</text>
+<text x="342" y="435" text-anchor="middle" class="sub white">expensive run -- all adaptivity happened cheaply in the proxy</text>
+<text x="342" y="449" text-anchor="middle" class="sub white">reference + proxy are both small; only target is large</text>
+
+<text x="430" y="484" text-anchor="middle" class="edlbl">Band 1: reference (once)  |  Band 2: proxy game (iterated, cheap)  |  Band 3: target run (static w-bar)</text>
+
+</svg>
+<figcaption><b>DoReMi: three-stage pipeline from natural mixture to optimised weights.</b> The reference model (Band 1) is trained once on the natural mixture and anchors the excess-loss signal; the proxy model and Hedge weight vector (Band 2) run an iterative min-max game — animated arrows show weighted-batch draws feeding the proxy and per-domain excess lambda_i updating the weights; the time-averaged w-bar is frozen for the large, expensive target run (Band 3), which never needs to adapt online.</figcaption>
+</figure>

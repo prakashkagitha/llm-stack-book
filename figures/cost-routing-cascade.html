@@ -1,0 +1,152 @@
+<figure class="viz" id="fig-cost-routing-cascade">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 1000 380" role="img" aria-label="Model routing cascade: a fast classifier routes simple queries directly, escalates to a small 7B model on failure, which escalates to a large 70B model if not confident enough, illustrating sequential cheapest-first routing.">
+<defs>
+  <marker id="crc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" class="v-stroke" fill="currentColor"/>
+  </marker>
+  <marker id="crc-arr-yes" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="crc-arr-no" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-cost-routing-cascade text { font: 500 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-cost-routing-cascade .lbl { font: 600 13px var(--sans,sans-serif); }
+  #fig-cost-routing-cascade .sub { font: 400 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-routing-cascade .ann { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-routing-cascade .gate { font: 600 10px var(--sans,sans-serif); }
+  #fig-cost-routing-cascade .yes-lbl { fill: var(--good,#2f9e6e); font-weight: 700; }
+  #fig-cost-routing-cascade .no-lbl { fill: var(--warn,#e0a106); font-weight: 700; }
+  @media (prefers-reduced-motion: reduce) {
+    #crc-dot { display: none; }
+  }
+</style>
+
+
+<text x="70" y="22" class="ann">cheaper</text>
+<line x1="115" y1="18" x2="900" y2="18" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="840" y="22" class="ann">more expensive</text>
+<polygon points="900,14 910,18 900,22" fill="var(--muted,#6d675d)" opacity="0.6"/>
+
+
+<g data-anim="1">
+  <rect x="40" y="50" width="160" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.5"/>
+  <text x="120" y="82" text-anchor="middle" class="lbl">Classifier</text>
+  <text x="120" y="100" text-anchor="middle" class="lbl">(fast)</text>
+  <text x="120" y="118" text-anchor="middle" class="sub">classify query</text>
+</g>
+
+
+<text x="310" y="45" text-anchor="middle" class="gate">simple?</text>
+
+
+<line x1="200" y1="75" x2="418" y2="75" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#crc-arr-no)"/>
+<text x="310" y="68" text-anchor="middle" class="no-lbl" font-size="10">no</text>
+
+
+<g data-anim="2">
+  <rect x="420" y="50" width="170" height="90" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.8" opacity="0.85"/>
+  <text x="505" y="82" text-anchor="middle" class="lbl">Small model</text>
+  <text x="505" y="100" text-anchor="middle" class="sub">7B / INT4</text>
+  <text x="505" y="118" text-anchor="middle" class="sub">cheap, fast</text>
+</g>
+
+
+<text x="715" y="45" text-anchor="middle" class="gate">confident?</text>
+
+
+<line x1="590" y1="75" x2="798" y2="75" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#crc-arr-no)"/>
+<text x="695" y="68" text-anchor="middle" class="no-lbl" font-size="10">no</text>
+
+
+<g data-anim="3">
+  <rect x="800" y="50" width="180" height="90" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent-2,#b04e2d)" stroke-width="2.5"/>
+  <text x="890" y="82" text-anchor="middle" class="lbl">Large model</text>
+  <text x="890" y="100" text-anchor="middle" class="sub">70B / FP16</text>
+  <text x="890" y="118" text-anchor="middle" class="sub">frontier quality</text>
+</g>
+
+
+<line x1="120" y1="140" x2="120" y2="238" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#crc-arr-yes)"/>
+<text x="138" y="196" class="yes-lbl" font-size="10">yes</text>
+
+
+<g data-anim="1">
+  <rect x="50" y="240" width="140" height="50" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="120" y="262" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return</text>
+  <text x="120" y="278" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">directly</text>
+</g>
+
+
+<line x1="505" y1="140" x2="505" y2="238" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#crc-arr-yes)"/>
+<text x="523" y="196" class="yes-lbl" font-size="10">yes</text>
+
+
+<g data-anim="2">
+  <rect x="432" y="240" width="146" height="50" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="505" y="262" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return</text>
+  <text x="505" y="278" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">directly</text>
+</g>
+
+
+<line x1="890" y1="140" x2="890" y2="238" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#crc-arr-yes)"/>
+<text x="910" y="196" class="yes-lbl" font-size="10">always</text>
+
+
+<g data-anim="3">
+  <rect x="822" y="240" width="136" height="50" rx="10" stroke="var(--good,#2f9e6e)" stroke-width="2" class="v-fill"/>
+  <text x="890" y="262" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Return</text>
+  <text x="890" y="278" text-anchor="middle" class="ann">(final tier, unconditional)</text>
+</g>
+
+
+<line x1="40" y1="340" x2="960" y2="340" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+<text x="500" y="360" text-anchor="middle" class="ann">E[cost] = c_s + (1-p_s)*c_l; at 70% hit rate: ~2.5x cheaper than always using the large model</text>
+
+
+<g id="crc-dot">
+  
+  <circle r="7" fill="var(--accent,#c15b39)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.04;0.72;0.82;1"
+      values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.14;0.22;0.40;0.52;0.70;0.80;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 40,95 L 120,95 L 200,75 L 420,75 L 590,75 L 800,75 L 890,140 L 890,265"/>
+  </circle>
+  
+  <rect x="40" y="50" width="160" height="90" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0">
+    <animate attributeName="fill-opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.06;0.12;0.14;1" values="0;0.15;0.15;0;0"/>
+  </rect>
+  <rect x="420" y="50" width="170" height="90" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0">
+    <animate attributeName="fill-opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.38;0.44;0.48;1" values="0;0.15;0.15;0;0"/>
+  </rect>
+  <rect x="800" y="50" width="180" height="90" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0">
+    <animate attributeName="fill-opacity" dur="5s" repeatCount="indefinite"
+      keyTimes="0;0.62;0.68;0.72;1" values="0;0.15;0.15;0;0"/>
+  </rect>
+</g>
+
+
+<g id="crc-dot2">
+  <circle r="7" fill="var(--good,#2f9e6e)" opacity="0">
+    <animate attributeName="opacity" dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.04;0.60;0.72;1"
+      values="0;0.85;0.85;0;0"/>
+    <animateMotion dur="5s" repeatCount="indefinite" begin="2.5s"
+      keyTimes="0;0.14;0.22;0.38;0.50;0.62;0.74;1" calcMode="spline"
+      keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1"
+      path="M 40,95 L 120,95 L 200,75 L 420,75 L 505,95 L 505,140 L 505,265"/>
+  </circle>
+</g>
+
+</svg>
+<figcaption><b>Model routing cascade with sequential escalation.</b> Each request is evaluated by the cheapest stage first: a fast classifier returns directly for simple queries; failures escalate to the small 7B model (which returns if confident); only the remainder reach the large 70B frontier model. At a 70% classifier hit rate the expected cost is approximately 2.5x lower than calling the large model for every request.</figcaption>
+</figure>

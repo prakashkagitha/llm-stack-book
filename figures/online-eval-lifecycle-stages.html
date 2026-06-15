@@ -1,0 +1,166 @@
+<figure class="viz" id="fig-online-eval-lifecycle-stages">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 720 850" role="img" aria-label="Full evaluation lifecycle as five sequential filter stages: Offline phase, Shadow phase, Canary rollout, Full A/B experiment, and Full rollout with live judge monitoring. Each stage is gated before the next begins.">
+  <defs>
+    <marker id="lc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    
+    <filter id="lc-glow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <style>
+    #fig-online-eval-lifecycle-stages text { fill: var(--ink-soft,#334155); font-family: var(--sans,sans-serif); }
+    #fig-online-eval-lifecycle-stages .stage-title { font: 700 15px var(--sans,sans-serif); }
+    #fig-online-eval-lifecycle-stages .item { font: 400 11.5px var(--sans,sans-serif); }
+    #fig-online-eval-lifecycle-stages .gate-txt { font: italic 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-online-eval-lifecycle-stages .passes { font: 600 10px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-online-eval-lifecycle-stages .dot-marker { r: 8; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      /* The feature dot descends stage by stage */
+      #fig-online-eval-lifecycle-stages .feat-dot {
+        animation: lc-descend 5.5s ease-in-out infinite;
+      }
+      @keyframes lc-descend {
+        0%   { cy: 60;  opacity: 0; }
+        4%   { cy: 60;  opacity: 1; }
+        10%  { cy: 100; opacity: 1; }
+        18%  { cy: 100; opacity: 1; }  /* pause in stage 1 */
+        25%  { cy: 240; opacity: 1; }  /* drop to stage 2 */
+        33%  { cy: 240; opacity: 1; }  /* pause */
+        40%  { cy: 400; opacity: 1; }  /* drop to stage 3 */
+        48%  { cy: 400; opacity: 1; }  /* pause */
+        55%  { cy: 560; opacity: 1; }  /* drop to stage 4 */
+        62%  { cy: 560; opacity: 1; }  /* pause */
+        70%  { cy: 730; opacity: 1; }  /* drop to stage 5 */
+        80%  { cy: 730; opacity: 1; }  /* pause */
+        90%  { cy: 730; opacity: 0; }
+        100% { cy: 730; opacity: 0; }
+      }
+
+      /* Card highlight — each fires once while dot is in it */
+      #fig-online-eval-lifecycle-stages .hl1 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 0.2s; }
+      #fig-online-eval-lifecycle-stages .hl2 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 1.32s; }
+      #fig-online-eval-lifecycle-stages .hl3 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 2.20s; }
+      #fig-online-eval-lifecycle-stages .hl4 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 3.0s; }
+      #fig-online-eval-lifecycle-stages .hl5 { animation: lc-hl 5.5s ease-in-out infinite; animation-delay: 3.85s; }
+      @keyframes lc-hl {
+        0%    { opacity: 0; }
+        1%    { opacity: 0.55; }
+        10%   { opacity: 0.0; }
+        100%  { opacity: 0; }
+      }
+
+      /* Gate pill lights up */
+      #fig-online-eval-lifecycle-stages .gate1 { animation: lc-gate 5.5s ease-in-out 1.1s infinite; }
+      #fig-online-eval-lifecycle-stages .gate2 { animation: lc-gate 5.5s ease-in-out 2.0s infinite; }
+      #fig-online-eval-lifecycle-stages .gate3 { animation: lc-gate 5.5s ease-in-out 2.8s infinite; }
+      #fig-online-eval-lifecycle-stages .gate4 { animation: lc-gate 5.5s ease-in-out 3.6s infinite; }
+      @keyframes lc-gate {
+        0%   { opacity: 0.4; }
+        1%   { opacity: 1.0; }
+        8%   { opacity: 0.4; }
+        100% { opacity: 0.4; }
+      }
+    }
+  </style>
+
+  
+  
+  <rect class="hl1" x="60" y="30" width="600" height="150" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  
+  <rect x="60" y="30" width="600" height="150" rx="10"
+    fill="var(--surface,#f1f5f9)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="360" y="56" text-anchor="middle" class="stage-title">Offline phase</text>
+  
+  <line x1="80" y1="64" x2="640" y2="64" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="90" y="83" class="item">1. Automated benchmark suite (MMLU, MT-Bench, domain evals)</text>
+  <text x="90" y="100" class="item">2. LLM-judge on held-out golden set</text>
+  <text x="90" y="117" class="item">3. Regression suite (top failure modes from past incidents)</text>
+  
+  <line x1="80" y1="128" x2="640" y2="128" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 3"/>
+  <text x="90" y="147" class="gate-txt">Gating: must pass all offline checks before deployment</text>
+
+  
+  <line x1="360" y1="180" x2="360" y2="204" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate1" x="320" y="188" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="201" text-anchor="middle" class="passes">passes</text>
+
+  
+  <rect class="hl2" x="60" y="208" width="600" height="140" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="208" width="600" height="140" rx="10"
+    fill="var(--surface-3,#eef2ff)" stroke="var(--ink-soft,#475569)" stroke-width="1.5"/>
+  <text x="360" y="234" text-anchor="middle" class="stage-title">Shadow phase (24-48 h)</text>
+  <line x1="80" y1="242" x2="640" y2="242" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="90" y="261" class="item">Judge scores on shadow outputs (0.5% sample)</text>
+  <text x="90" y="278" class="item">Latency / cost profiling at realistic load</text>
+  <text x="90" y="295" class="item">Infrastructure sanity check</text>
+  <line x1="80" y1="305" x2="640" y2="305" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8" stroke-dasharray="4 3"/>
+  <text x="90" y="324" class="gate-txt">Gating: judge score >= baseline, P99 latency within budget</text>
+
+  
+  <line x1="360" y1="348" x2="360" y2="372" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate2" x="320" y="356" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="369" text-anchor="middle" class="passes">passes</text>
+
+  
+  <rect class="hl3" x="60" y="376" width="600" height="130" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="376" width="600" height="130" rx="10"
+    fill="var(--accent,#e8eaff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="360" y="402" text-anchor="middle" class="stage-title" fill="var(--accent,#6366f1)">Canary rollout (1% -> 10% -> 50%)</text>
+  <line x1="80" y1="410" x2="640" y2="410" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3"/>
+  <text x="90" y="429" class="item">Guardrail metrics: auto-rollback on violation</text>
+  <text x="90" y="446" class="item">Interleaving: quick preference signal</text>
+  <line x1="80" y1="458" x2="640" y2="458" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3" stroke-dasharray="4 3"/>
+  <text x="90" y="477" class="gate-txt">Gating: no guardrail violations, positive or neutral preference</text>
+
+  
+  <line x1="360" y1="506" x2="360" y2="530" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate3" x="320" y="514" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="527" text-anchor="middle" class="passes">passes</text>
+
+  
+  <rect class="hl4" x="60" y="534" width="600" height="150" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="534" width="600" height="150" rx="10"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1.5"/>
+  <text x="360" y="560" text-anchor="middle" class="stage-title" fill="var(--accent,#6366f1)">Full A/B experiment (50/50 or 90/10)</text>
+  <line x1="80" y1="568" x2="640" y2="568" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3"/>
+  <text x="90" y="587" class="item">CUPED-adjusted primary metric</text>
+  <text x="90" y="604" class="item">Sequential test for anytime peeking</text>
+  <text x="90" y="621" class="item">Holdout cohort monitors long-run trajectory</text>
+  <line x1="80" y1="633" x2="640" y2="633" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.3" stroke-dasharray="4 3"/>
+  <text x="90" y="652" class="gate-txt">Gating: primary metric +, guardrails ok, novelty checked</text>
+
+  
+  <line x1="360" y1="684" x2="360" y2="708" stroke="var(--accent,#6366f1)" stroke-width="1.5" marker-end="url(#lc-arrow)"/>
+  <rect class="gate4" x="320" y="692" width="80" height="18" rx="9"
+    fill="var(--accent,#e0e7ff)" stroke="var(--accent,#6366f1)" stroke-width="1" opacity="0.4"/>
+  <text x="360" y="705" text-anchor="middle" class="passes">passes</text>
+
+  
+  <rect class="hl5" x="60" y="712" width="600" height="120" rx="10"
+    fill="var(--accent,#6366f1)" opacity="0" filter="url(#lc-glow)"/>
+  <rect x="60" y="712" width="600" height="120" rx="10"
+    fill="var(--accent,#d6dbff)" stroke="var(--accent,#6366f1)" stroke-width="2"/>
+  <text x="360" y="740" text-anchor="middle" class="stage-title" fill="var(--accent,#6366f1)">Full rollout + continuous live judge monitoring</text>
+  <line x1="80" y1="748" x2="640" y2="748" stroke="var(--accent,#6366f1)" stroke-width="0.8" opacity="0.4"/>
+  <text x="90" y="767" class="item">Live judge rolling window (24h) alerts on regression</text>
+  <text x="90" y="784" class="item">Holdout comparison validates long-run causal effect</text>
+  
+
+  
+  <circle class="feat-dot" cx="360" cy="60" r="8"
+    fill="var(--warn,#e0a106)" stroke="var(--surface,#fff)" stroke-width="2" opacity="0"/>
+</svg>
+<figcaption><b>Evaluation lifecycle as five sequential filters.</b> Every LLM feature must traverse offline benchmarks, shadow-mode profiling, graduated canary rollout, a full A/B experiment, and finally continuous live-judge monitoring. Each stage catches distinct failure modes; a gate between stages enforces the condition that must hold before traffic exposure can widen.</figcaption>
+</figure>

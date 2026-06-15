@@ -1,0 +1,209 @@
+<figure class="viz" id="fig-verl-colocated-rl-step">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 900 580" role="img" aria-label="Animated diagram of one colocated RL step: training layout holds FSDP params and Adam state permanently; 3D-HybridEngine reshards only the bf16 params into the rollout layout where vLLM generates (KV-cache memory peak 1); responses then flow through reward, advantage, and update_actor backward (training-activation memory peak 2); optimizer step loops back to the training layout. The two peaks are non-coincident.">
+  <defs>
+    <marker id="crl-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#475569)"/>
+    </marker>
+    <marker id="crl-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="crl-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#64748b)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-verl-colocated-rl-step .ttl    { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-verl-colocated-rl-step .body   { font: 400 10px var(--mono,monospace); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .ann    { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .ann-b  { font: 600 9.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .albl   { font: 600 9.5px var(--sans,sans-serif); fill: var(--accent,#6366f1); }
+    #fig-verl-colocated-rl-step .asub   { font: 400 8.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+    #fig-verl-colocated-rl-step .stglbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-verl-colocated-rl-step .peak   { font: 700 8.5px var(--sans,sans-serif); }
+    #fig-verl-colocated-rl-step text    { fill: var(--ink-soft,#1e293b); }
+
+    /* animated token travels down and across the pipeline */
+    #fig-verl-colocated-rl-step #crl-token {
+      offset-path: path('M 420 95 L 420 143 L 420 200 L 420 250 L 220 270 L 320 270 L 420 270 L 520 270 L 620 270 L 700 270 C 740 270 760 240 780 210 C 800 180 810 140 780 110 C 760 95 700 88 580 84 C 530 82 480 80 420 80');
+      animation: crl-travel 8s ease-in-out infinite;
+    }
+    @keyframes crl-travel {
+      0%   { offset-distance: 0%;   opacity: 1; }
+      12%  { offset-distance: 9%;   opacity: 1; }
+      22%  { offset-distance: 17%;  opacity: 1; }
+      35%  { offset-distance: 27%;  opacity: 1; }
+      45%  { offset-distance: 38%;  opacity: 1; }
+      55%  { offset-distance: 48%;  opacity: 1; }
+      65%  { offset-distance: 57%;  opacity: 1; }
+      75%  { offset-distance: 66%;  opacity: 1; }
+      88%  { offset-distance: 82%;  opacity: 1; }
+      96%  { offset-distance: 94%;  opacity: 0.6; }
+      100% { offset-distance: 100%; opacity: 0.2; }
+    }
+
+    /* KV cache peak: lights up during rollout */
+    #fig-verl-colocated-rl-step #peak-kv {
+      animation: crl-pkv 8s ease-in-out infinite;
+    }
+    @keyframes crl-pkv {
+      0%,  22% { opacity: 0.2; }
+      33%       { opacity: 1;   }
+      50%       { opacity: 1;   }
+      60%       { opacity: 0.2; }
+      100%      { opacity: 0.2; }
+    }
+
+    /* Training activation peak: lights up during update_actor */
+    #fig-verl-colocated-rl-step #peak-act {
+      animation: crl-pact 8s ease-in-out infinite;
+    }
+    @keyframes crl-pact {
+      0%,  60% { opacity: 0.2; }
+      72%       { opacity: 1;   }
+      88%       { opacity: 1;   }
+      96%       { opacity: 0.2; }
+      100%      { opacity: 0.2; }
+    }
+
+    /* Reshard arrow pulses on transit A→B */
+    #fig-verl-colocated-rl-step #reshard-seg {
+      animation: crl-reshard 8s ease-in-out infinite;
+    }
+    @keyframes crl-reshard {
+      0%,  8%  { stroke-width: 2;   opacity: 0.7; }
+      14%       { stroke-width: 3.5; opacity: 1;   }
+      24%       { stroke-width: 3.5; opacity: 1;   }
+      32%       { stroke-width: 2;   opacity: 0.7; }
+      100%      { stroke-width: 2;   opacity: 0.7; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-verl-colocated-rl-step #crl-token  { animation: none; opacity: 0; }
+      #fig-verl-colocated-rl-step #peak-kv    { animation: none; opacity: 1; }
+      #fig-verl-colocated-rl-step #peak-act   { animation: none; opacity: 1; }
+      #fig-verl-colocated-rl-step #reshard-seg{ animation: none; }
+      #fig-verl-colocated-rl-step .badge      { display: inline; }
+    }
+  </style>
+
+  
+  
+  <rect x="40" y="20" width="680" height="92" rx="8"
+        fill="var(--surface,#f5f7fa)" stroke="var(--accent,#6366f1)" stroke-width="2.2"/>
+  <text x="380" y="45" text-anchor="middle" class="ttl">[TRAIN LAYOUT]</text>
+  <text x="380" y="63" text-anchor="middle" class="body">FSDP / Megatron params + Adam optimizer state</text>
+  <text x="380" y="79" text-anchor="middle" class="body">optimizer state &amp; gradients NEVER move — only bf16 params are copied out</text>
+
+  
+  <text x="888" y="44" text-anchor="end" class="ann">lives the WHOLE step</text>
+
+  
+  <line id="reshard-seg" x1="380" y1="112" x2="380" y2="148"
+        stroke="var(--accent,#6366f1)" stroke-width="2" marker-end="url(#crl-arr-acc)" opacity="0.85"/>
+  <text x="390" y="126" text-anchor="start" class="albl">3D-HybridEngine: gather within TP group, re-split to rollout TP</text>
+  <text x="390" y="140" text-anchor="start" class="asub">bounded by one TP group of weights — intra-node, no disk</text>
+
+  
+  
+  <rect x="40" y="150" width="680" height="80" rx="8"
+        fill="var(--surface,#f5f7fa)" stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
+  <text x="380" y="175" text-anchor="middle" class="ttl">[ROLLOUT LAYOUT]</text>
+  <text x="380" y="193" text-anchor="middle" class="body">bf16 params injected into vLLM via update_weights (in place)</text>
+  <text x="380" y="209" text-anchor="middle" class="body">device-to-device copy — no checkpoint, no PCIe/network</text>
+
+  
+  <line x1="380" y1="230" x2="380" y2="256"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.6" marker-end="url(#crl-arr)"/>
+  <text x="390" y="248" text-anchor="start" class="ann">vLLM generates G samples/prompt with PagedAttention KV cache</text>
+
+  
+  <g id="peak-kv">
+    <circle cx="48" cy="244" r="9" fill="var(--warn,#e0a106)"/>
+    <text x="48" y="248" text-anchor="middle" class="peak" fill="white">!</text>
+    <text x="60" y="237" text-anchor="start" class="peak" fill="var(--warn,#e0a106)">peak 1: KV cache (tens of GB)</text>
+    
+    <text class="badge peak" x="60" y="250" text-anchor="start" fill="var(--warn,#e0a106)" display="none" font-size="8">[1st peak]</text>
+  </g>
+
+  
+  
+  
+  
+
+  
+  <rect x="25" y="260" width="148" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="99" y="284" text-anchor="middle" class="stglbl">responses</text>
+  <text x="99" y="299" text-anchor="middle" class="body">+ logprobs</text>
+  <text x="99" y="313" text-anchor="middle" class="body">(from vLLM)</text>
+
+  <line x1="173" y1="294" x2="185" y2="294"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#crl-arr)"/>
+
+  
+  <rect x="187" y="260" width="120" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="247" y="284" text-anchor="middle" class="stglbl">reward</text>
+  <text x="247" y="300" text-anchor="middle" class="body">rule-based</text>
+  <text x="247" y="314" text-anchor="middle" class="body">/ RM</text>
+
+  <line x1="307" y1="294" x2="319" y2="294"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#crl-arr)"/>
+
+  
+  <rect x="321" y="260" width="148" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="395" y="281" text-anchor="middle" class="stglbl">advantage</text>
+  <text x="395" y="297" text-anchor="middle" class="body">local on driver</text>
+  <text x="395" y="311" text-anchor="middle" class="body">tiny tensors</text>
+  <text x="395" y="324" text-anchor="middle" class="ann" font-size="8">[single-controller]</text>
+
+  <line x1="469" y1="294" x2="481" y2="294"
+        stroke="var(--ink-soft,#475569)" stroke-width="1.5" marker-end="url(#crl-arr)"/>
+
+  
+  <rect x="483" y="260" width="156" height="68" rx="6"
+        fill="var(--surface,#f5f7fa)" stroke="var(--border-2,#334155)" stroke-width="1.5"/>
+  <text x="561" y="281" text-anchor="middle" class="stglbl">update_actor</text>
+  <text x="561" y="297" text-anchor="middle" class="body">FSDP backward</text>
+  <text x="561" y="311" text-anchor="middle" class="body">all-reduces inside</text>
+
+  
+  <g id="peak-act">
+    <circle cx="561" cy="346" r="9" fill="var(--warn,#e0a106)"/>
+    <text x="561" y="350" text-anchor="middle" class="peak" fill="white">!</text>
+    <text x="575" y="341" text-anchor="start" class="peak" fill="var(--warn,#e0a106)">peak 2: training activations</text>
+    <text class="badge peak" x="575" y="354" fill="var(--warn,#e0a106)" display="none" font-size="8">[2nd peak]</text>
+  </g>
+
+  
+  
+  <path d="M 639 275 C 680 260 700 210 700 160 C 700 110 680 75 720 66"
+        fill="none" stroke="var(--accent,#6366f1)" stroke-width="1.8"
+        marker-end="url(#crl-arr-acc)"/>
+  
+  <text x="705" y="192" text-anchor="start" class="albl" font-size="9">optimizer step</text>
+  <text x="705" y="205" text-anchor="start" class="asub">mutates TRAIN-LAYOUT</text>
+  <text x="705" y="217" text-anchor="start" class="asub">state never moved</text>
+
+  
+  <path d="M 25 328 C 14 328 10 390 10 420 C 10 455 14 480 60 485 L 840 485 C 870 485 876 460 876 440 C 876 410 865 380 840 360 L 640 328"
+        fill="none" stroke="var(--muted,#64748b)" stroke-width="1.4"
+        stroke-dasharray="6 4" marker-end="url(#crl-arr-muted)"/>
+  <text x="440" y="482" text-anchor="middle" class="ann">next step</text>
+
+  
+  <rect x="10" y="502" width="880" height="66" rx="7"
+        fill="var(--muted,#64748b)" fill-opacity="0.08"
+        stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="450" y="522" text-anchor="middle" class="ann-b" fill="var(--ink-soft,#1e293b)">The two peaks happen at DIFFERENT times:</text>
+  <text x="450" y="538" text-anchor="middle" class="ann">rollout peak (KV cache) is released before the training peak (activations) — which is exactly why colocation fits.</text>
+  <text x="450" y="554" text-anchor="middle" class="ann">Optimizer state stays in TRAIN LAYOUT the entire step; only bf16 params flow into the rollout engine.</text>
+
+  
+  <circle id="crl-token" r="8" fill="var(--accent,#6366f1)" opacity="0.9"/>
+
+</svg>
+<figcaption><b>One colocated RL step: train layout, 3D-HybridEngine reshard, rollout, update.</b> The optimizer state and gradients stay in the FSDP training layout for the entire step and never move; only bf16 parameters are resharded (gathered within a TP group, re-split for vLLM's tensor-parallel layout) via the 3D-HybridEngine. The animated token traces the sequence: params flow into the rollout layout where vLLM generates with a PagedAttention KV cache (peak 1, shown in yellow), then responses travel through reward and advantage (driver-local, no collectives) to the FSDP backward pass (peak 2), and the optimizer step writes directly back into the training layout. The two memory peaks are non-coincident — that is the core colocation argument.</figcaption>
+</figure>
