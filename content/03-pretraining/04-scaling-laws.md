@@ -226,7 +226,16 @@ for C in [1e19, 1e21, 1e23, 1e25]:
           f"tok/param={r['tokens_per_param']:.1f}  L={r['loss']:.3f}")
 ```
 
-The `tokens_per_param` column comes out roughly constant across the four budgets (it drifts only because $\alpha \neq \beta$ exactly) — that constancy *is* the 20× rule, emerging from the math rather than asserted.
+Running this prints (note the ratio is *not* constant):
+
+```text
+C=1e+19  N=2.28e+08  D=7.31e+09  tok/param=32.1  L=2.986
+C=1e+21  N=1.82e+09  D=9.14e+10  tok/param=50.1  L=2.329
+C=1e+23  N=1.46e+10  D=1.14e+12  tok/param=78.2  L=2.005
+C=1e+25  N=1.17e+11  D=1.43e+13  tok/param=122.1  L=1.845
+```
+
+With these *Approach-3* constants alpha != beta (0.34 vs 0.28), so the ratio D/N scales as C^{(alpha-beta)/(alpha+beta)} = C^{0.097} -- it grows about 1.25x per decade of compute, drifting from ~32 to ~122 tokens/param across six decades and sitting well above the folk "20x" number at every frontier budget. The clean, *constant* ~20x rule is a property of the regime alpha ~ beta: Chinchilla's Approaches 1 and 2 fitted allocation exponents a ~ b ~ 0.5 (equivalently alpha ~ beta), which is exactly what makes tokens/param scale-invariant. Set alpha = beta = 0.34 in the call above and the tok/param column collapses to a single constant; the slow drift you see here is the honest signature of the Approach-3 parametric fit, not a contradiction of Chinchilla.
 
 ---
 
@@ -237,6 +246,7 @@ Reading about scaling laws is one thing; **fitting** one is the skill that actua
 ```python
 import numpy as np
 from scipy.optimize import minimize
+from scipy.special import logsumexp
 
 # ---------------------------------------------------------------------------
 # Step 0: synthesize a grid of (N, D, observed_loss) "experiments".
@@ -266,14 +276,15 @@ L_obs = true_loss(N_obs, D_obs) * (1.0 + 0.02 * rng.standard_normal(len(grid)))
 # ---------------------------------------------------------------------------
 def predict_log_loss(theta, N, D):
     e, a, b, alpha, beta = theta
-    # log-sum-exp form keeps it numerically stable across many orders of magnitude
+    # Build log L via log-sum-exp of the three log-terms (Chinchilla's Appendix
+    # trick): numerically stable across many orders of magnitude because it never
+    # forms the raw sum E + A*N^-alpha + B*D^-beta before taking the log.
     terms = np.stack([
-        np.full_like(N, e),                 # log E term -> contributes E
+        np.full_like(N, e),                 # log of E
         a - alpha * np.log(N),              # log of A*N^-alpha
         b - beta * np.log(D),               # log of B*D^-beta
     ])
-    L_pred = np.exp(terms[0]) + np.exp(terms[1]) + np.exp(terms[2])
-    return np.log(L_pred)
+    return logsumexp(terms, axis=0)         # = log(E + A*N^-alpha + B*D^-beta)
 
 def huber(r, delta=1e-3):
     a = np.abs(r)
@@ -323,11 +334,142 @@ for C in [1e23, 1e24, 1e25]:
     print(f"C={C:.0e} -> N*={N:.2e}  D*={D:.2e}  tok/param={D/N:.1f}  L*={L:.3f}")
 ```
 
+Before the engineering notes, it is worth being honest about what this seed actually recovers: for `rng = np.random.default_rng(0)` the fit above returns approximately $E=1.83$, $A=879$, $B=471$, $\alpha=0.390$, $\beta=0.290$ against ground truth $E=1.69$, $A=406$, $B=410$, $\alpha=0.34$, $\beta=0.28$. If your run lands there too, that is expected — not a bug. $E$, $A$, and $B$ are strongly correlated and only weakly constrained by the data: the additive power-law surface is nearly flat near the optimum, so many $(E, A, B)$ triples fit the observed grid almost equally well, which is why $A$ can come out $2\times$ off. The exponents $\alpha, \beta$ — and especially the *allocation* exponent $\beta/(\alpha+\beta)$, recovered here as $0.426$ against a true $0.452$ — recover far more tightly, because it is the *slope* of the surface, not its offset, that the spread of runs actually pins down. The right accuracy check is therefore not the raw constants but (i) the implied allocation exponent and (ii) the extrapolated compute-optimal loss. This fit exhibits a classic compensating-error pattern: because $E$, $A$, $B$ trade off against each other, it interpolates the grid well, yet the extrapolated loss at $C=10^{25}$ comes out around $1.94$ nats versus the true $1.85$ — about $0.1$ nats high — while the allocation $N^\star(C)$, which depends only on the well-identified exponent ratio, tracks the truth far better than the absolute loss *level* does. This is not a toy artifact: Epoch AI's replication (Besiroglu et al., 2024, *"Chinchilla Scaling: A replication attempt"*) found the original Chinchilla parametric estimates were fragile for exactly this reason.
+
+You can quantify the identifiability gap directly with a bootstrap over the fitting grid:
+
+```python
+import numpy as np
+
+def fit_once(Nx, Dx, Lx, n_starts=15, seed=0):
+    rng_local = np.random.default_rng(seed)
+    best, best_val = None, np.inf
+    for _ in range(n_starts):
+        x0 = np.array([rng_local.uniform(0.0, 1.0), rng_local.uniform(4.0, 8.0),
+                        rng_local.uniform(4.0, 8.0), rng_local.uniform(0.1, 0.6),
+                        rng_local.uniform(0.1, 0.6)])
+        res = minimize(lambda th: np.sum(huber(predict_log_loss(th, Nx, Dx) - np.log(Lx))),
+                        x0, method="L-BFGS-B",
+                        bounds=[(-2, 2), (0, 12), (0, 12), (0.01, 1.0), (0.01, 1.0)])
+        if res.fun < best_val:
+            best, best_val = res.x, res.fun
+    return best
+
+boot_rng = np.random.default_rng(2)
+n_boot, n_rows = 200, len(N_obs)
+records = []
+for _ in range(n_boot):
+    idx = boot_rng.integers(0, n_rows, n_rows)          # resample WITH replacement
+    e_b, a_b, b_b, alpha_b, beta_b = fit_once(N_obs[idx], D_obs[idx], L_obs[idx])
+    _, _, L25 = optimal_alloc(1e25, e_b, a_b, b_b, alpha_b, beta_b)
+    records.append((alpha_b, beta_b, beta_b / (alpha_b + beta_b), np.exp(a_b), L25))
+records = np.array(records)
+names = ["alpha", "beta", "alloc_exp (beta/(a+b))", "A", "L*(1e25)"]
+for j, name in enumerate(names):
+    lo, mid, hi = np.percentile(records[:, j], [2.5, 50, 97.5])
+    print(f"{name:>24}: [{lo:.3g}, {mid:.3g}, {hi:.3g}]  (2.5% / median / 97.5%)")
+# Expect: alpha ~ [0.30, 0.45], beta ~ [0.25, 0.34], alloc-exp ~ [0.38, 0.50] -- tight.
+# A spans roughly [230, 2300] and E ~ [1.57, 1.95] -- an order of magnitude wider,
+# visually confirming allocation is identifiable but the raw offsets are not.
+```
+
 A few engineering notes that separate a real fit from a toy one:
 
 - **Use enough points and enough spread.** Chinchilla's IsoFLOP method runs many models at each of several fixed compute budgets, then fits a parabola in $\log N$ to find the valley (the optimal $N$) at each budget, and finally fits a power law through those valleys. Our parametric fit above is the third of Chinchilla's three methods.
 - **Exclude under-converged runs.** A run whose LR schedule did not finish, or that hit a loss spike (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)), pollutes the fit. This is exactly the failure mode that biased Kaplan.
 - **Sanity-check extrapolation, not interpolation.** The whole value is predicting *outside* your grid. Hold out your largest run, fit on the rest, and verify the prediction lands within a percent or two.
+
+### The IsoFLOP Method (Chinchilla Approach 2)
+
+The parametric fit above is Chinchilla's Approach 3 — fit the full surface $L(N,D)$ and differentiate. Approach 2, the **IsoFLOP method**, is more robust to misspecification of that parametric form because it never commits to it directly. Instead, at each of several *fixed* compute budgets $C$ you sweep $N$ (forcing $D = C/(6N)$ so every run in the slice costs exactly $C$), fit a quadratic (parabola) in $\log N$ to the resulting losses, and read off the valley — the loss-minimizing $N_{\text{opt}}(C)$ — for that slice. Repeat across several budgets and fit a power law through the valleys to recover the allocation exponent $a$ directly. This is the isoFLOP-slice picture illustrated in {{fig:scaling-kaplan-vs-chinchilla}} above.
+
+Grid design matters: use 4–6 fixed-$C$ slices spaced roughly half a decade apart, and at least 6 models per slice spanning about an order of magnitude in $N$, centered on the expected optimum $\sqrt{C/120}$ — a parabola needs points bracketing the minimum on *both* arms, or the fitted vertex is biased.
+
+```python
+import numpy as np
+
+TRUE = dict(E=1.69, A=406.0, B=410.0, alpha=0.34, beta=0.28)
+def true_loss(N, D, p=TRUE):
+    return p['E'] + p['A']*N**(-p['alpha']) + p['B']*D**(-p['beta'])
+
+rng = np.random.default_rng(1)
+C_slices = np.array([1e18, 3e18, 1e19, 3e19, 1e20])   # 5 isoFLOP budgets
+N_opt = []
+for C in C_slices:
+    N_center = np.sqrt(C / 120.0)                     # ~20x-rule optimum for slice
+    Ns = N_center * np.logspace(-0.6, 0.6, 7)         # 7 models, span ~1.5 dex
+    Ds = C / (6.0 * Ns)                               # D fixed so 6*N*D == C
+    Ls = true_loss(Ns, Ds) * (1.0 + 0.01*rng.standard_normal(len(Ns)))
+    c2, c1, c0 = np.polyfit(np.log(Ns), Ls, 2)        # parabola in log N
+    logN_star = -c1 / (2.0 * c2)                      # vertex = valley
+    N_opt.append(np.exp(logN_star))
+N_opt = np.array(N_opt)
+D_opt = C_slices / (6.0 * N_opt)
+for C, N, D in zip(C_slices, N_opt, D_opt):
+    print(f'C={C:.0e}  N_opt={N:.3e}  D_opt={D:.3e}  tok/param={D/N:.0f}')
+
+a, _ = np.polyfit(np.log(C_slices), np.log(N_opt), 1)  # log N_opt = a*log C + k
+print(f'IsoFLOP exponent a (N_opt ~ C^a) = {a:.3f}')
+print(f'parametric beta/(alpha+beta)      = {TRUE["beta"]/(TRUE["alpha"]+TRUE["beta"]):.3f}')
+```
+
+The recovered exponent prints $a \approx 0.447$, agreeing to within about 0.005 of the analytic $\beta/(\alpha+\beta) = 0.452$ that the parametric fit targets — two independent methods landing on the same allocation slope. A caution: the extracted $N_{\text{opt}}$ is only as good as the parabola fit through it — too few points, or points sitting all on one arm of the valley, and the vertex estimate is badly biased, which is why you want at least 6 points bracketing the minimum in every slice.
+
+---
+
+## Designing the Sweep Under a Budget
+
+Before you can fit anything you must decide which runs to launch. A good sweep spends roughly 1–2% of the FLOPs of the final run it is meant to inform, and it brackets the compute-optimal valley at several scales rather than clustering around a single guess.
+
+Worked example: you have a $2\times10^{21}$-FLOP final run planned and a 1–2% experiment budget. The following generates a concrete run table (verified: it produces 24 runs totalling $2.64\times10^{19}$ FLOPs, i.e. 1.32% of the target):
+
+```python
+import numpy as np
+
+C_final = 2e21                          # the run the sweep is designed to inform
+slices = [1e17, 3e17, 1e18, 3e18]       # 4 isoFLOP budgets, ~0.5 dex apart
+models_per_slice = 6
+rows = []
+for Cs in slices:
+    N_star = np.sqrt(Cs / 120.0)                       # 20x-rule optimum for slice
+    Ns = N_star * np.logspace(-0.5, 0.5, models_per_slice)  # span ~1 dex in N
+    for N in Ns:
+        D = Cs / (6.0 * N)                             # tokens for this run
+        rows.append(dict(C=Cs, N=N, D=D, tpp=D/N, flops=Cs))  # per-run FLOPs == Cs
+total = sum(r['flops'] for r in rows)
+print(f'{len(rows)} runs, total = {total:.2e} FLOPs = {100*total/C_final:.2f}% of final')
+for r in rows[:6]:
+    print(f"  C={r['C']:.0e}  N={r['N']:.2e}  D={r['D']:.2e}  tok/param={r['tpp']:.0f}")
+```
+
+4 slices $\times$ 6 models = 24 runs. Every run inside a slice costs exactly that slice's budget $C$ (because $D = C/6N$ keeps $6ND = C$ fixed), so the whole sweep costs $6\sum_{\text{slices}} C_s = 2.64\times10^{19}$ FLOPs — 1.32% of the $2\times10^{21}$ target, comfortably inside the 1–2% envelope, and you verify it is by construction rather than by hoping. The $N$ grid spans tokens/param from roughly 200 down to 32 within each slice, deliberately bracketing the ~20–50 optimum so the IsoFLOP parabola has points on both arms of the valley.
+
+A per-run hyperparameter note: tune learning rate and batch size *once*, at the smallest width in the sweep, and transfer with $\mu$P (maximal-update parameterization makes the optimal peak LR approximately scale-invariant, so you can read it straight off the cheapest run) — or, failing that, fall back to the empirical rules from [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html): peak LR shrinking roughly as $1/\text{width}$, batch size set from the critical-batch-size heuristic and growing as the loss falls. Crucially, every run's cosine schedule must decay to *its own* token endpoint $D$, never a shared long schedule — that is the exact Kaplan confound from earlier, now a checklist item rather than a war story.
+
+**Designing your sweep — checklist:**
+
+1. At least 2 orders of magnitude of spread in $N$ across the whole sweep.
+2. At least 5–6 models per isoFLOP slice, bracketing the expected optimum on both sides.
+3. 4–6 slices, spaced roughly half a decade apart.
+4. Per-run cosine decay matched to that run's own token count — not a shared schedule.
+5. Fixed data distribution and tokenizer across *all* runs.
+6. A few extra seeds at the smallest scale, to estimate the noise floor (you need this to set the Huber delta and to know whether two runs really differ).
+7. Hold out your largest run(s) for extrapolation validation rather than folding them into the fit.
+
+Finally, checkpoint that last item against the fit from the previous section — refit with the largest-$N$ runs removed and see how well the held-out point is recovered:
+
+```python
+mask = N_obs != 3e9                      # hold out the largest-N runs
+# (continues the fitting-block variables N_obs, D_obs, L_obs, objective, minimize, huber)
+held_N, held_D, held_L = N_obs[~mask], D_obs[~mask], L_obs[~mask]
+theta_ho = fit_once(N_obs[mask], D_obs[mask], L_obs[mask])
+pred_L = np.exp(predict_log_loss(theta_ho, held_N, held_D))
+err_pct = 100 * np.abs(pred_L - held_L) / held_L
+print(f"held-out predicted vs observed: {list(zip(pred_L.round(3), held_L.round(3)))}")
+print(f"held-out error: {err_pct.round(2)}%")
+```
+
+Expect the held-out loss recovered within roughly 1–2% — that is the real success criterion for a scaling-law fit: extrapolation, not interpolation.
 
 ---
 
@@ -369,6 +511,15 @@ Let us plan an actual run end to end.
     **Takeaway.** A 21-day, 256-GPU run at 45% MFU buys you roughly a **42B-parameter Chinchilla-optimal model on ~840B tokens**. If instead you only had ~300B tokens of acceptable-quality data, you would be *data-limited*: you should train a smaller model (or repeat data, with care — see below) rather than a 42B model starved of tokens.
 
 This is the arithmetic that frontier labs run before every campaign. Notice it has exactly four inputs — GPU count, peak FLOP/s, wall-clock, and MFU — and the 20× rule. You can do it on a napkin.
+
+!!! note "Is my real run on-curve? Loss milestones"
+    The toy check -- first loss ~ ln(V) at init -- from [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) tells you training *started* correctly. To know a real BPE run is *on-curve*, anchor to these order-of-magnitude held-out targets at the Chinchilla-optimal point (English web text, GPT-2-style BPE at ~4 bytes/token; exact numbers depend on tokenizer and corpus, so treat as ballparks, not pass/fail):
+
+    - **125M params, ~2.5B tokens (~20 tok/param):** ~3.2-3.4 nats/token held-out, BPB ~1.0-1.2. For reference, a 124M GPT-2 pushed to ~300B tokens (heavily *over*-trained) reaches ~2.85 nats/token on OpenWebText -- the Chinchilla-optimal point is higher because it sees far fewer tokens.
+    - **1B params, ~20B tokens (~20 tok/param):** ~2.6-2.8 nats/token, BPB ~0.85-0.95.
+    - **125M *over-trained* to ~15B tokens (~120 tok/param):** ~3.0 nats/token -- a real but small gain over the 20x point, exactly the diminishing return the flat loss surface predicts.
+
+    Convert with BPB ~ (nats/token) / (ln 2 * bytes-per-token). If your run sits >0.3 nats above these at the same (N, D), suspect an LR-schedule (decay not matched to token count), data-pipeline, or tokenizer-mismatch bug before blaming the architecture.
 
 ---
 
@@ -446,7 +597,10 @@ import numpy as np
 
 def smooth_per_token_accuracy(N):
     """Per-token correctness improves SMOOTHLY (power-law) with scale."""
-    return 1.0 - 0.9 * (N / 1e9) ** (-0.12)   # creeps up from ~0.1 toward 1.0
+    # Clip to a valid probability: the raw power law goes negative below
+    # N ~ 4.2e8, so clamp to [0, 1]. Per-token correctness still improves
+    # SMOOTHLY (power-law) with scale.
+    return np.clip(1.0 - 0.9 * (N / 1e9) ** (-0.12), 0.0, 1.0)
 
 def exact_match(N, k_tokens):
     """All-or-nothing metric: need ALL k tokens correct simultaneously."""
@@ -480,6 +634,15 @@ Scaling laws are powerful but not omniscient. Keep these failure modes in mind:
 - **The data wall is real.** High-quality human text is finite. Past a few epochs, repetition stops helping, which is why synthetic data, multimodal data, and curation are now first-class scaling levers.
 
 The grand picture: scaling laws turned LLM development from alchemy into engineering. They are the reason a lab can commit hundreds of millions of dollars to a training run *before* it starts and be confident about the loss it will hit. But they predict *loss*, and loss is a proxy. The art that remains is choosing the right regime (compute-, inference-, or data-limited), refitting the constants for your own setup, and remembering that the cliff in your benchmark might be a feature of your ruler, not your model.
+
+---
+
+## Exercises
+
+1. **Extrapolation, not interpolation.** Take the synthetic grid from *Fitting a Scaling Law From Scratch*, hold out the single largest run ($N=3\times10^9$, $D=10^{11}$), refit on the remaining 41 rows, and predict that held-out loss. Verify the prediction lands within ~2% of the observed value. Then use the refit to predict the compute-optimal $(N^\star, D^\star)$ at $10\times$ the largest grid budget and report tokens/param.
+2. **Reproduce the Kaplan bias.** Deliberately include under-converged runs: multiply the loss of every run with $D \geq 10^{10}$ by 1.03 (simulating a cosine schedule that never finished decaying at high token counts), refit, and report how $\alpha$ and $\beta$ shift. Explain in one sentence why inflating the high-token losses biases the fitted allocation toward larger $N$ / fewer tokens — the exact confound Chinchilla diagnosed.
+3. **Loss penalty of a mis-sized model.** Fix a compute slice $C=10^{20}$. Using the ground-truth constants ($E=1.69$, $A=406$, $B=410$, $\alpha=0.34$, $\beta=0.28$), compute the optimal $N^\star$ (you should get $N^\star \approx 6.5\times10^8$, $D^\star \approx 2.6\times10^{10}$, ~40 tok/param) and the loss there, then the loss at $2\times$ and $0.5\times$ $N^\star$ (with $D=C/6N$ each). You should find a penalty of only ~0.02 nats in each direction, roughly symmetric in $\log N$ — the reason IsoFLOP valleys are shallow and $N^\star$ is only weakly identified.
+4. **Full loop (capstone).** Design a sweep for a $10^{21}$-FLOP target run under a ~1% experiment budget (choose your slices and models/slice, and verify the total), fit BOTH the IsoFLOP method and the parametric method on synthetic data generated from the constants above, and confirm the two recovered allocation exponents agree to within 0.03.
 
 ---
 

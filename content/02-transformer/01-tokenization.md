@@ -203,6 +203,15 @@ The key subtlety in `encode_word` is the **rank-based priority**: we do not just
 !!! warning "Common pitfall: greedy BPE is not optimal"
     BPE's merge selection is locally greedy: it maximizes the count of the *single* most frequent pair at each step, never reconsidering. This can produce segmentations that are not the shortest possible token sequence for a given vocabulary, and it makes BPE sensitive to merge order. It is fast and "good enough," but if you want a *probabilistic* objective that scores whole segmentations, that is exactly what Unigram (below) provides.
 
+!!! note "Aside: training BPE at scale"
+    The trainer shown recounts every adjacent pair from scratch on every merge, so with $M$ merges over a corpus segmented into $P$ symbols it is $O(P)$ per merge, $O(P \cdot M)$ overall — fine for a toy corpus, hopelessly slow for 32k merges on gigabytes of text. Real trainers (HuggingFace `tokenizers`, Rust; `tiktoken`'s training path; the CS336 assignment-1 reference) apply three optimizations:
+
+    1. **Unique-word compression.** Collapse the corpus to distinct pre-tokenized chunks with counts (the `Counter` step already does this), so work scales with the number of *distinct* words, not raw token occurrences. English is heavily Zipfian, so this alone is a large constant-factor win.
+    2. **Incremental pair counts.** Maintain a `pair -> count` map plus, for each pair, the set of word positions where it occurs. When you merge a pair, only the pairs *adjacent to each merge site* change — the pair to the left and right of the merge are destroyed, and (at most) two new pairs are created — so you update a handful of counts instead of rescanning the whole corpus. Pull the top pair with a max-heap or bucket structure keyed by count, in roughly $O(\log P)$, instead of a full linear `max` scan.
+    3. **Parallelize pre-tokenization** across corpus shards (embarrassingly parallel), then merge the per-shard word counters before the sequential merge loop.
+
+    Rough wall-clock: the naive pure-Python trainer above (and educational trainers like `minbpe`) would take many hours to days for 32k merges on ~1 GB of text. The incremental Rust implementation in HuggingFace `tokenizers` trains 32k merges on ~1 GB in well under a minute — roughly ~20 s/GB. Takeaway: the *algorithm* above is exactly right for understanding BPE, but do not run it on real corpora — reach for HF `tokenizers` or `tiktoken` and read their incremental-update loop if you need to train a production tokenizer.
+
 ## Byte-Level BPE: Guaranteeing No `<unk>`
 
 Character-level BPE has a quiet problem: what is your base alphabet? If you initialize from the characters seen in training, then a brand-new Unicode character at inference time — an emoji you never saw, a rare CJK glyph, a mathematical symbol — has no base token and becomes `<unk>`. For a frontier model that must ingest *anything*, that is unacceptable.
@@ -245,10 +254,222 @@ mapped = "".join(b2u[byte] for byte in text.encode("utf-8"))
 print(mapped)   # 'héllo' rendered via the byte map; 'é' -> two glyphs
 ```
 
-The payoff: a byte-level BPE tokenizer can encode *and decode* literally any byte sequence losslessly, including bytes that are not valid UTF-8 (corrupted data, binary blobs). Decoding maps the printable chars back to bytes, then UTF-8-decodes. This robustness is why GPT-2, GPT-3, GPT-4, Llama, Mistral, and most modern models use **byte-level** BPE.
+The payoff: a byte-level BPE tokenizer can encode *and decode* literally any byte sequence losslessly, including bytes that are not valid UTF-8 (corrupted data, binary blobs). Decoding maps the printable chars back to bytes, then UTF-8-decodes. This robustness is why GPT-2, GPT-3, GPT-4, and Llama-3 use **byte-level** BPE. Be precise about the lineage, though: Llama-1/2 and early Mistral (v0.x) do *not* use GPT-2-style byte-level BPE — they use **SentencePiece BPE** with byte-fallback, a 32k vocabulary, and a `▁` space marker (a related but distinct scheme, covered later). Llama-3 switched to a tiktoken-style byte-level BPE with a 128k vocabulary. So "byte-level BPE" specifically means the GPT-2/tiktoken family here, not every model in the BPE family.
 
 !!! note "Aside: pre-tokenization with a regex"
-    Before BPE runs, GPT-2/GPT-4 first split text with a hand-tuned regular expression (the "pre-tokenizer") that isolates words, leading spaces, numbers, and punctuation into chunks; BPE merges *only within* a chunk, never across. This prevents merges that span a space-plus-word boundary in unhelpful ways and is why `tiktoken`'s `cl100k_base` keeps digits in groups of at most three. The regex matters more than people expect — it is part of why GPT-4 tokenizes numbers and code better than GPT-2.
+    Before BPE runs, GPT-2/GPT-4 first split text with a hand-tuned regular expression (the "pre-tokenizer") that isolates words, leading spaces, numbers, and punctuation into chunks; BPE merges *only within* a chunk, never across. This prevents merges that span a space-plus-word boundary in unhelpful ways. GPT-2's pattern lets a run of digits merge freely, whereas `cl100k_base` adds a `\p{N}{1,3}` alternation that caps every digit chunk at three characters — which is why GPT-4 tokenizes numbers in groups of at most three. The exact patterns are printed and dissected in the next subsection. The regex matters more than people expect — it is part of why GPT-4 tokenizes numbers and code better than GPT-2.
+
+
+### Putting it together: a complete byte-level BPE tokenizer
+
+The char-level trainer above used an end-of-word marker `</w>` to keep word boundaries from blurring. Byte-level BPE drops `</w>` entirely: word boundaries are instead carried by the leading-space *byte* (`0x20`, which maps to the `Ġ` glyph) that the pre-tokenizer keeps attached to each word, so a merge can never accidentally span two words without a shared `Ġ`. One more thing to fix before writing code: integer IDs. This tokenizer uses the same convention `tiktoken` and `minbpe` use — IDs `0..255` are the 256 raw byte values (token = that byte's `b2u` glyph, id == byte value), then one ID per learned merge in the order it was learned (`256, 257, ...`), then special tokens on top.
+
+**The exact GPT-2 pre-tokenization regex.** This is verified against `tiktoken`'s `gpt2` encoding — it is the literal pattern GPT-2 and GPT-3 use to chop text into chunks *before* BPE ever runs:
+
+```python
+import regex as re   # the third-party `regex` package (pip install regex),
+                      # NOT stdlib `re` — stdlib `re` has no \p{L} support.
+
+GPT2_SPLIT = re.compile(
+    r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+)
+```
+
+One line per alternation, left to right:
+
+- `'s|'t|'re|'ve|'m|'ll|'d` — common English contraction suffixes are pulled out as their own chunks.
+- ` ?\p{L}+` — an optional leading space plus a run of letters. This is why `' hello'` is one chunk and ends up as a single `' hello'` token, distinct from bare `'hello'`.
+- ` ?\p{N}+` — optional leading space plus a run of digits.
+- ` ?[^\s\p{L}\p{N}]+` — optional leading space plus a run of punctuation/symbols.
+- `\s+(?!\S)` — trailing whitespace *not* followed by a non-space character, so a space that precedes a word attaches to that word rather than to the previous chunk.
+- `\s+` — any remaining whitespace run (e.g. a whitespace-only string, or trailing whitespace at end of text).
+
+`cl100k_base` (GPT-3.5/GPT-4) changes exactly two things in this pattern: it replaces ` ?\p{N}+` with `\p{N}{1,3}` — digits in groups of at most three — and it makes the contraction alternatives case-insensitive. The pre-tokenizer alone, before any BPE merge runs, is what forces GPT-4's 1–3-digit number grouping.
+
+**The tokenizer class.** This reuses `bytes_to_unicode`, `Counter`, `get_pair_counts`, and `merge_pair` defined earlier in this chapter — training is exactly the same greedy loop, just over byte-glyph symbols instead of characters, with no `</w>`:
+
+```python
+class ByteLevelBPETokenizer:
+    """A complete, from-scratch byte-level BPE tokenizer: train, encode, decode.
+
+    ID convention:
+      0 .. 255           -> the 256 raw byte values (id == byte value)
+      256 .. 256+M-1     -> the M learned merges, in the order they were learned
+      256+M ..           -> special tokens, in the order passed to train()
+    """
+
+    def __init__(self):
+        self.b2u = bytes_to_unicode()                     # byte value -> printable glyph
+        self.u2b = {v: k for k, v in self.b2u.items()}     # glyph -> byte value
+        self.pat = GPT2_SPLIT
+        self.merges: List[Tuple[str, str]] = []            # learned merges, in order
+        self.ranks: Dict[Tuple[str, str], int] = {}
+        self.vocab: Dict[str, int] = {}                    # token string -> id
+        self.inv_vocab: Dict[int, str] = {}                # id -> token string
+        self.special: Dict[str, int] = {}                  # special text -> id
+        self.inv_special: Dict[int, str] = {}               # id -> special text
+
+    def _pretokenize(self, text: str) -> List[Tuple[str, ...]]:
+        """Split into pre-tokenizer chunks, each as a tuple of byte-glyphs
+        (one glyph per UTF-8 byte of the chunk)."""
+        return [
+            tuple(self.b2u[b] for b in chunk.encode("utf-8"))
+            for chunk in self.pat.findall(text)
+        ]
+
+    def train(self, text: str, vocab_size: int, special_tokens: Tuple[str, ...] = ()):
+        word_freqs = Counter(self._pretokenize(text))
+        num_merges = vocab_size - 256 - len(special_tokens)
+
+        for _ in range(num_merges):
+            pair_counts = get_pair_counts(word_freqs)
+            if not pair_counts:
+                break
+            # Same deterministic tie-break as the char-level trainer.
+            best = max(pair_counts, key=lambda p: (pair_counts[p], p))
+            if pair_counts[best] < 2:          # nothing repeats; stop early
+                break
+            word_freqs = merge_pair(best, word_freqs)
+            self.merges.append(best)
+
+        # Assign IDs: bytes first, then merges in learned order, then specials.
+        next_id = 0
+        for b in range(256):
+            self.vocab[self.b2u[b]] = next_id
+            next_id += 1
+        for a, b in self.merges:
+            self.vocab[a + b] = next_id
+            next_id += 1
+        for tok in special_tokens:
+            self.special[tok] = next_id
+            next_id += 1
+
+        self.ranks = {pair: i for i, pair in enumerate(self.merges)}
+        self.inv_vocab = {i: t for t, i in self.vocab.items()}
+        self.inv_special = {i: t for t, i in self.special.items()}
+
+    def _apply_merges(self, symbols: Tuple[str, ...]) -> List[str]:
+        """Rank-priority merge loop, identical to encode_word() above --
+        except there is NO end-of-word marker (byte-level BPE has none)."""
+        symbols = list(symbols)
+        while len(symbols) >= 2:
+            candidate, best_rank = None, float("inf")
+            for a, b in zip(symbols, symbols[1:]):
+                r = self.ranks.get((a, b), float("inf"))
+                if r < best_rank:
+                    best_rank, candidate = r, (a, b)
+            if candidate is None:               # no learned pair applies
+                break
+            a, b = candidate
+            out, i = [], 0
+            while i < len(symbols):
+                if i < len(symbols) - 1 and symbols[i] == a and symbols[i + 1] == b:
+                    out.append(a + b); i += 2
+                else:
+                    out.append(symbols[i]); i += 1
+            symbols = out
+        return symbols
+
+    def encode(self, text: str, allowed_special: frozenset = frozenset()) -> List[int]:
+        if allowed_special:
+            pattern = "(" + "|".join(re.escape(s) for s in allowed_special) + ")"
+            segments = re.split(pattern, text)     # keeps the special literals
+        else:
+            segments = [text]
+
+        ids: List[int] = []
+        for seg in segments:
+            if seg in allowed_special:
+                ids.append(self.special[seg])
+                continue
+            for chunk in self.pat.findall(seg):
+                mapped = tuple(self.b2u[b] for b in chunk.encode("utf-8"))
+                ids.extend(self.vocab[s] for s in self._apply_merges(mapped))
+        return ids
+
+    def decode(self, ids: List[int]) -> str:
+        out = bytearray()
+        for i in ids:
+            if i in self.inv_special:
+                out += self.inv_special[i].encode("utf-8")
+            else:
+                out += bytes(self.u2b[ch] for ch in self.inv_vocab[i])
+        # errors="replace": invalid byte sequences never crash decode,
+        # they render as the U+FFFD replacement character.
+        return out.decode("utf-8", errors="replace")
+```
+
+**Adversarial round-trip test.** Train on a small mixed corpus, then verify `decode(encode(s)) == s` for strings that stress leading spaces, indentation, tabs/newlines, accented Latin, CJK, emoji, digits, and special-token literals:
+
+```python
+tok = ByteLevelBPETokenizer()
+corpus_text = """
+Tokenization turns text into integers. Byte-level BPE never fails on
+unseen input because it falls back to raw bytes.
+
+def encode(text):
+    return tokenizer.encode(text)
+
+café résumé naïve, 日本語のテキスト, emoji test 🤖🎉, numbers 1234567890.
+""" * 20   # repeat so pairs actually recur enough to merge
+
+tok.train(corpus_text, vocab_size=1000, special_tokens=["<|endoftext|>"])
+
+adversarial = [
+    "hello",
+    " hello",
+    "hello world",
+    "  indent",
+    "tab\tnl\n",
+    "café résumé naïve",
+    "日本語のテキスト",
+    "emoji 🤖🎉 test",
+    "1234567890",
+    "<|endoftext|>done",
+]
+for s in adversarial:
+    ids = tok.encode(s, allowed_special={"<|endoftext|>"})
+    assert tok.decode(ids) == s, s
+print("all round-trips OK")
+
+# Byte-level BPE never crashes, even decoding a lone invalid-UTF-8 byte:
+lone = tok.vocab[tok.b2u[0x80]]      # 0x80 is not valid UTF-8 on its own
+print(repr(tok.decode([lone])))      # -> the U+FFFD replacement character
+```
+
+**Reference cross-check against `tiktoken`.** The same "merge the lowest-rank adjacent pair" logic, fed GPT-2's *real* merge table, reproduces `tiktoken` token-for-token — this is the same algorithm `tiktoken` runs internally, byte-level, merge the lowest-rank pair, so a from-scratch encoder that loads GPT-2's `vocab.json`/`merges.txt` (or, equivalently, `enc._mergeable_ranks`, where the rank *is* the token id) must match exactly:
+
+```python
+import tiktoken
+
+def _bpe(piece: bytes, ranks: dict) -> List[int]:
+    """Same algorithm as ByteLevelBPETokenizer._apply_merges, operating
+    directly on raw bytes against tiktoken's rank table (rank == token id)."""
+    parts = [bytes([b]) for b in piece]
+    while len(parts) > 1:
+        best_i, best_rank = None, None
+        for i in range(len(parts) - 1):
+            r = ranks.get(parts[i] + parts[i + 1])
+            if r is not None and (best_rank is None or r < best_rank):
+                best_i, best_rank = i, r
+        if best_i is None:
+            break
+        parts[best_i:best_i + 2] = [parts[best_i] + parts[best_i + 1]]
+    return [ranks[p] for p in parts]   # every single byte is in the table
+
+def encode_ref(text: str, enc) -> List[int]:
+    ids: List[int] = []
+    for chunk in GPT2_SPLIT.findall(text):
+        ids += _bpe(chunk.encode("utf-8"), enc._mergeable_ranks)
+    return ids
+
+enc = tiktoken.get_encoding("gpt2")
+s = "Tokenization is sneaky, café 🤖 12345."
+assert encode_ref(s, enc) == enc.encode(s)
+print("matches tiktoken token-for-token:", enc.encode(s))
+```
+
+For a sense of scale: train ~50k merges on a few MB of English and you should see roughly **4.0–4.3 bytes per token** (about 1.3 tokens/word) — GPT-2's 50257-entry vocabulary lands right around there. That bytes-per-token number is your compression yardstick when comparing tokenizers or vocabulary sizes.
 
 ## WordPiece and Unigram: Two Other Objectives
 
@@ -372,7 +593,7 @@ Two properties make Unigram special. First, because it has an explicit probabili
     | Objective | most frequent pair | max likelihood gain | unigram LM likelihood (EM) |
     | Encode | apply merges in order | greedy longest-match | Viterbi best path |
     | Marker | `Ġ` (byte-level) | `##` continuation | `▁` (space) |
-    | Used by | GPT-*, Llama, Mistral | BERT, DistilBERT | T5, Gemma, ALBERT, XLNet |
+    | Used by | GPT-* (byte-level); Llama-3 (byte-level); Llama-1/2 & Mistral-v0.x (SentencePiece BPE) | BERT, DistilBERT | T5, Gemma, ALBERT, XLNet |
     | Sampling | BPE-dropout | — | subword regularization (native) |
 
 ## `tiktoken`, Vocabulary Size & The Cost Math
@@ -465,7 +686,7 @@ Consider `12345`. Depending on the tokenizer it might be one token, or `123` + `
 Fixes that work:
 
 - **Right-to-left digit grouping** so place value aligns to fixed-size chunks.
-- **Digit splitting**: force every digit to be its *own* token (`1`,`2`,`3`,`4`,`5`). Llama models split numbers into individual digits for exactly this reason; PaLM and several others do similar. It costs more tokens but makes arithmetic *learnable* because place value becomes positional and consistent.
+- **Digit splitting**: force every digit to be its *own* token (`1`,`2`,`3`,`4`,`5`). Llama-1 and Llama-2 (like PaLM) split every number into individual digits for exactly this reason. Llama-3 and GPT-4 take a middle path: their pre-tokenizer regex groups digits 1-3 at a time (the `\p{N}{1,3}` rule), which keeps place value consistent *within* each chunk while spending fewer tokens than full per-digit splitting. It costs more tokens but makes arithmetic *learnable* because place value becomes positional and consistent.
 - The infamous **"how many `r`s in strawberry"** failure is the same disease: `strawberry` is ~2–3 tokens, so the model never "sees" individual letters and cannot count them without spelling-level information it was never given cleanly.
 
 ```python
@@ -496,7 +717,7 @@ print(per_digit("6789"))        # ['6', '7', '8', '9']  -- same scheme every tim
     - **Models read integers, not text.** The tokenizer maps strings to a fixed vocabulary of subword IDs; that mapping is frozen for the model's life and silently governs cost, context, and capability.
     - **Subwords are the Goldilocks unit.** Words cause OOV and huge vocabularies; characters cause crippling sequence lengths. Subwords keep frequent strings whole, split rare ones into reusable pieces, and (with bytes) never go OOV.
     - **BPE merges the most frequent adjacent pair, greedily and repeatedly**, producing an ordered merge list. Encoding applies those merges *in learned order* (rank-priority), not by left-to-right scanning.
-    - **Byte-level BPE** starts from the 256 byte values, so any string in any language is representable with no `<unk>` — the reason GPT/Llama/Mistral use it. The `Ġ` you see is the byte-to-unicode map for a space.
+    - **Byte-level BPE** starts from the 256 byte values, so any string in any language is representable with no `<unk>` — the reason GPT-2/3/4 and Llama-3 use it (Llama-1/2 and early Mistral instead use SentencePiece BPE with byte-fallback, a related but distinct scheme). The `Ġ` you see is the byte-to-unicode map for a space.
     - **WordPiece** (BERT) merges by likelihood gain and marks continuations with `##`; **Unigram/SentencePiece** (T5, Llama, Gemma) prunes a large vocabulary via EM, decodes with Viterbi, marks spaces with `▁`, and natively supports subword-regularization sampling.
     - **Vocabulary size is a tradeoff:** larger $V$ compresses text (fewer tokens → cheaper inference, more context, more effective pretraining data) but grows the embedding/softmax matrices linearly and risks undertrained "glitch" tokens. The industry trend is toward larger vocabularies (32k → 256k).
     - **Special tokens** (EOS, BOS, pad, chat/role markers) are a trusted-code-only injection surface — never parse them from user input.

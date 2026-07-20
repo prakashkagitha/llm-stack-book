@@ -65,19 +65,25 @@ $$
 If the large gradient is *new* (not predicted by the historical $\hat{v}_t$), the denominator is small (accumulated from previous, smaller gradients), so the parameter update is disproportionately large. This is the primary amplification mechanism. After the spike, $\hat{v}_t$ quickly absorbs the new large value, damping future updates — which is why spikes are usually transient. But if the first large update throws the model into a region of high curvature, recovery may take hundreds of steps or fail entirely.
 
 !!! example "Worked example: spike magnitude with Adam"
-    Suppose a parameter has historical gradient RMS of $g_\text{rms} = 0.01$ (so $\hat{v} \approx 10^{-4}$ after bias correction). A bad batch produces gradient $g = 1.0$. The first-moment estimate $\hat{m} \approx (1-\beta_1) \cdot g = 0.1$ (assuming fresh warm-up). The effective update magnitude is:
+    Take AdamW with $\beta_1 = 0.9$ (so $1-\beta_1 = 0.1$), learning rate $\alpha = 3 \times 10^{-4}$, and $\epsilon = 10^{-8}$. Suppose a parameter has historical gradient RMS $g_\text{rms} = 0.01$, so the second-moment estimate is $\hat{v} \approx g_\text{rms}^2 = 10^{-4}$ and $\sqrt{\hat{v}} \approx 0.01$ (the $\epsilon$ term is negligible here). Crucially, $\hat{v}$ updates slowly ($\beta_2$ close to 1, e.g. $0.999$, so $1-\beta_2 \approx 10^{-3}$): on the step a spike arrives, $\sqrt{\hat{v}}$ still reflects the *historical* gradient scale, not the spike.
+
+    Model the first moment as tracking the current gradient with the fresh-moment factor $\hat{m} \approx (1-\beta_1)\,g$, and hold the stale denominator $\sqrt{\hat{v}} \approx 0.01$ fixed for the arriving step. The update magnitude is then $|\Delta\theta| \approx \alpha\,(1-\beta_1)\,g / \sqrt{\hat{v}}$.
+
+    A **normal** step with $g = g_\text{rms} = 0.01$:
 
     $$
-    |\Delta \theta| = \frac{\alpha \cdot |\hat{m}|}{\sqrt{\hat{v}} + \epsilon} \approx \frac{3 \times 10^{-4} \times 0.1}{\sqrt{10^{-4}} + 10^{-8}} = \frac{3 \times 10^{-5}}{0.01} = 3 \times 10^{-3}
+    |\Delta \theta|_\text{normal} \approx \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\hat{v}}} = \frac{3\times10^{-4} \times 0.1 \times 0.01}{0.01} = 3\times10^{-5}
     $$
 
-    A *normal* gradient of magnitude 0.01 with steady-state $\hat{v}$ gives:
+    A **spike** step where a bad batch produces $g = 1.0$ (100x the historical RMS), with the *same* stale $\sqrt{\hat{v}} = 0.01$:
 
     $$
-    |\Delta \theta|_\text{normal} = \frac{3 \times 10^{-4} \times 0.01 \times (1-\beta_1)}{\sqrt{10^{-4}}} \approx 3 \times 10^{-6}
+    |\Delta \theta|_\text{spike} \approx \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\hat{v}}} = \frac{3\times10^{-4} \times 0.1 \times 1.0}{0.01} = 3\times10^{-3}
     $$
 
-    The spike update is roughly **1000×** larger than a normal step — enough to blow the model out of a good basin. With gradient clipping at norm 1.0, the clipped gradient magnitude is at most $\alpha / \sqrt{\hat{v}} = 0.03$, limiting the damage to ~10× normal — survivable in most cases.
+    The spike update is **100x larger** than a normal step — exactly the ratio of the gradients ($1.0 / 0.01$), because the denominator $\sqrt{\hat{v}}$ has not yet absorbed the spike. That factor is enough to blow the model out of a good basin. Once $\hat{v}$ catches up over the next few hundred steps the denominator grows and the amplification fades, which is why spikes are usually transient.
+
+    **With gradient clipping** at global norm $\tau = 1.0$: during the spike the *global* gradient norm is large — say $\|g\| \approx 10$ — so clipping rescales every gradient by $\tau/\|g\| \approx 0.1$, dropping this parameter's gradient from $1.0$ to $\approx 0.1$. The update becomes $\alpha\,(1-\beta_1)\times 0.1 / \sqrt{\hat{v}} = 3\times10^{-4}$, i.e. **~10x normal** instead of 100x — an order of magnitude of damage removed, survivable in most cases.
 
 ---
 

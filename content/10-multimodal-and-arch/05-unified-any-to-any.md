@@ -274,29 +274,42 @@ def transfusion_attention_mask(token_types: list[str], seq_len: int) -> torch.Te
 
     for i, ti in enumerate(token_types):
         for j, tj in enumerate(token_types):
-            if j > i:
-                # No attending to future positions (causal boundary)
-                pass
-            elif ti == 'text':
-                # Text attends causally to everything before
-                mask[i, j] = True
+            if ti == 'text':
+                # Text attends causally to every position at or before it.
+                if j <= i:
+                    mask[i, j] = True
             elif ti == 'image':
-                # Image attends to same block bidirectionally ...
-                if tj == 'image' and image_block[j] == image_block[i]:
+                same_block = (tj == 'image'
+                              and image_block[j] == image_block[i])
+                if same_block:
+                    # Bidirectional WITHIN the image block: attend to every
+                    # position in the same block, INCLUDING j > i. This is the
+                    # whole point of Transfusion's block-causal mask.
                     mask[i, j] = True
-                # ... and causally to all earlier text tokens
-                elif tj == 'text':
-                    mask[i, j] = True
-                # ... and to earlier image blocks (already covered by j<=i)
-                elif tj == 'image' and image_block[j] < image_block[i]:
+                elif j <= i:
+                    # Causal to everything before the block: earlier text
+                    # tokens and earlier image blocks.
                     mask[i, j] = True
     return mask
 
 
-# Quick test: text-image-text sequence
+# Quick test: text-image-text sequence. Image block occupies positions 3,4,5,6.
 types = ['text'] * 3 + ['image'] * 4 + ['text'] * 2
 mask  = transfusion_attention_mask(types, len(types))
-print(mask.int())  # Verify bidirectional image block, causal elsewhere
+
+# Attention INSIDE the image block is bidirectional (attends both ways):
+assert mask[3, 6] and mask[6, 3], "image block must be bidirectional"
+assert mask[4, 6] and mask[6, 4], "image block must be bidirectional"
+# Image tokens still attend causally to earlier text (positions 0,1,2) ...
+assert mask[3, 0] and mask[6, 2], "image attends earlier text"
+# ... but NOT to text that comes AFTER the block (positions 7,8):
+assert not mask[3, 7] and not mask[6, 8], "image must not see future text"
+# Text stays purely causal: no attending to future image or future text.
+assert not mask[2, 3], "text must not attend to future image tokens"
+assert not mask[0, 1], "text is causal"
+assert mask[7, 3] and mask[8, 6], "later text attends earlier image (causal)"
+print("Transfusion mask OK: bidirectional image block, causal elsewhere")
+print(mask.int())
 ```
 
 ### Why Transfusion Outperforms Pure Discrete Tokenisation

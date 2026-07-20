@@ -352,18 +352,26 @@ def serve_step(seqs, block_mgr, k_pool, v_pool, model, block_size):
 
     `seqs`: dict seq_id -> {"tokens": [...], "len": int}
     Each step: (1) run the model to get this token's q,k,v per layer,
-    (2) write k,v into the paged pool at the right slot,
-    (3) attend over the sequence's blocks, (4) sample next token,
-    (5) grow the block table if we crossed a block boundary.
+    (2) grow the block table if this position starts a new block, then
+    write k,v into the paged pool at the right slot,
+    (3) attend over the sequence's blocks, (4) sample next token.
     Sequences that emit EOS are freed, returning their blocks to the pool.
     """
     finished = []
     for seq_id, s in seqs.items():
         cur_len = s["len"]
 
-        # --- 1 & 2: compute and write this token's K,V into its physical slot
-        # (in a real engine, q/k/v come from the model forward; mocked here)
+        # --- 1: compute this token's K,V (q/k/v come from the model forward; mocked)
         q, k, v = model.qkv(s["tokens"][-1])            # per-layer tensors elided
+
+        # --- 2: ensure a physical block exists for the slot we are about to
+        # write, THEN write. The token at position cur_len starts a fresh block
+        # exactly when cur_len % block_size == 0; growing the table HERE (rather
+        # than after the write) also covers the prefill boundary -- e.g. a prompt
+        # whose length is an exact multiple of block_size, where allocate() left
+        # the table one block short. Skip this and slot_index indexes
+        # table[cur_len // block_size] one past the last block -> IndexError.
+        block_mgr.append_token(seq_id, cur_len)         # grow on block boundary
         slot = block_mgr.slot_index(seq_id, cur_len)    # logical pos -> physical slot
         phys_block, off = divmod(slot, block_size)
         k_pool[phys_block, off] = k
@@ -380,9 +388,6 @@ def serve_step(seqs, block_mgr, k_pool, v_pool, model, block_size):
         s["tokens"].append(next_tok)
         s["len"] += 1
 
-        # --- 5: grow KV blocks on demand iff we just filled the last block
-        block_mgr.append_token(seq_id, s["len"])
-
         if next_tok == model.eos_id:
             finished.append(seq_id)
 
@@ -395,6 +400,32 @@ def serve_step(seqs, block_mgr, k_pool, v_pool, model, block_size):
 ```
 
 Notice the rhythm: the allocator is touched at most once per sequence per step (and usually *not at all* — only on a $B$-token boundary), the kernel always reads through the block table, and freed sequences return blocks to the pool instantly. That instant reclamation is what lets a scheduler admit a fresh request into the gap the same step a sequence finishes — the union of paging and continuous batching that defines modern high-throughput serving.
+
+**Verify the block-boundary edge case.** The subtlety worth testing explicitly is the prefill->decode boundary when the prompt length is an *exact multiple* of the block size. There `allocate()` fills the last block precisely, so the very first decode write lands at position `prompt_len`, which begins a brand-new logical block. Growing the table *before* `slot_index` is what keeps that write in range:
+
+```python
+def test_block_boundary():
+    B = 16
+    mgr = BlockManager(num_blocks=8, block_size=B)
+    prompt_len = 32                         # EXACT multiple of B -> the tricky case
+    mgr.allocate("s", prompt_len)           # reserves ceil(32/16) = 2 blocks (pos 0..31)
+    assert len(mgr.block_tables["s"]) == 2
+
+    # emulate serve_step's write ordering for three decode steps (pos 32, 33, 34)
+    for cur_len in range(prompt_len, prompt_len + 3):
+        mgr.append_token("s", cur_len)      # grow BEFORE the write (the fix)
+        slot = mgr.slot_index("s", cur_len) # would raise IndexError without the grow
+        phys, off = divmod(slot, B)
+        assert off == cur_len % B           # offset within the physical block
+
+    # writing positions 32..34 needed exactly one new block beyond prefill's two
+    assert len(mgr.block_tables["s"]) == 3
+    print("boundary case OK")
+
+test_block_boundary()                       # -> boundary case OK
+```
+
+With the old ordering (grow *after* the write, keyed on the post-increment length), `slot_index("s", 32)` evaluates `table[32 // 16] == table[2]` on a two-element table and raises `IndexError` on the very first decode step -- the bug this test pins down.
 
 !!! key "Key Takeaways"
 

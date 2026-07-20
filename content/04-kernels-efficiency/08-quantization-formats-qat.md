@@ -220,13 +220,13 @@ The available k-quant types and their approximate sizes per weight:
 | Q6_K     | 6.6 bits            | Essentially lossless for 7–13 B models |
 | Q8_0     | 8.0 bits            | INT8, simple scale-per-32-weights |
 
-**Q4_K_M internal structure:** Each super-block covers 256 weights. It stores 2 high-precision (6-bit) scales and mins, covering 8 sub-blocks of 32 weights each. Each sub-block has a 4-bit scale. Individual weights are stored as 4-bit unsigned integers. The dequantization formula per weight is:
+**Q4_K_M internal structure:** Each super-block covers 256 weights. It stores two fp16 super-block scales — `d` (applied to the sub-block scales) and `dmin` (applied to the sub-block mins) — plus 8 sub-block scales and 8 sub-block mins covering 8 sub-blocks of 32 weights each. Those 16 values (8 scales + 8 mins) are each quantized to 6 bits and packed into a 12-byte array. Individual weights are stored as 4-bit unsigned integers. This matches ggml's `block_q4_K` struct, which is the source of truth: `ggml_half d, dmin;` (the two fp16 super-block scales), `uint8_t scales[12];` (the sixteen 6-bit sub-block scales and mins), and `uint8_t qs[128];` (the 256 4-bit weights). The dequantization formula per weight is:
 
 $$
-\hat{w} = s_\text{super} \cdot s_\text{sub} \cdot q - (m_\text{super} \cdot m_\text{sub})
+\hat{w} = d \cdot s_j \cdot q \; - \; d_\text{min} \cdot m_j
 $$
 
-where $s_\text{super}$ and $m_\text{super}$ are the 6-bit super-block scale and min, $s_\text{sub}$ is the 4-bit sub-block scale, and $q \in [0, 15]$ is the stored weight.
+where $d$ and $d_\text{min}$ are the two fp16 super-block scales (for the sub-block scales and mins respectively), $s_j$ and $m_j$ are the 6-bit scale and min of the sub-block $j$ that weight $\hat{w}$ belongs to, and $q \in [0, 15]$ is the stored 4-bit weight.
 
 ```python
 # Convert a Hugging Face model to GGUF Q4_K_M using llama.cpp's converter

@@ -167,6 +167,69 @@ This is the defining constraint of tensor parallelism: **it must run over the fa
 !!! warning "GQA/MQA changes the K/V sharding"
     With Grouped-Query Attention or Multi-Query Attention (see [MHA, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)) there are fewer K/V heads than Q heads. If the number of KV heads is smaller than the TP degree $t$, you cannot give each rank a distinct KV head. Megatron handles this by *replicating* KV heads across the ranks that share them, or by requiring $t \le$ (number of KV groups). Forgetting this produces silent wrong results or shape errors — check your KV-head-to-TP divisibility before launching.
 
+### The Vocabulary: Parallel Embedding and Parallel Cross-Entropy
+
+The token embedding table and the (usually weight-tied) LM head are each a $V \times h$ matrix, with $V$ ranging from ~32k to 256k+ — for large $h$ this is routinely the single biggest matrix in the model, bigger than any individual attention or MLP weight. You cannot assemble an end-to-end TP transformer without sharding these along the **vocabulary** dimension across the $t$ TP ranks: a third partitioning strategy, distinct from both the column-parallel and row-parallel matmul patterns above.
+
+**Vocab-parallel embedding.** Rank $r$ owns rows $[r \cdot V_{\text{loc}} : (r+1) \cdot V_{\text{loc}})$ of the table, where $V_{\text{loc}} = V / t$. A lookup for a token id outside a rank's local range must resolve to zero on that rank; summing across ranks then recovers the correct row, since exactly one rank owns each id.
+
+```python
+import torch, torch.nn as nn, torch.nn.functional as F, torch.distributed as dist
+
+class VocabParallelEmbedding(nn.Module):
+    def __init__(self, V, h, tp, rank, tp_group):
+        super().__init__()
+        assert V % tp == 0
+        self.V_loc = V // tp
+        self.vocab_start = rank * self.V_loc
+        self.vocab_end = self.vocab_start + self.V_loc
+        self.tp_group = tp_group
+        self.weight = nn.Parameter(torch.empty(self.V_loc, h))   # [V_loc, h]
+
+    def forward(self, input_ids):                      # input_ids: [b, s], long
+        mask = (input_ids < self.vocab_start) | (input_ids >= self.vocab_end)
+        masked_ids = input_ids.clone() - self.vocab_start
+        masked_ids[mask] = 0                            # keep in-range for the local table
+        y = F.embedding(masked_ids, self.weight)         # [b, s, h]
+        y = y.masked_fill(mask.unsqueeze(-1), 0.0)        # zero rows this rank doesn't own
+        dist.all_reduce(y, group=self.tp_group)           # SUM: exactly one rank owns each row
+        return y                                           # [b, s, h]
+```
+
+The backward is the identity on the local rows — gradients flow only into the rows a rank actually owns — mirroring the $g$/$f$ forward-all-reduce, backward-identity (and vice versa) operator pairing used for the MLP/attention sharding above.
+
+**Vocab-parallel cross-entropy.** The mirror image on the output side: a column-parallel LM head (`ColumnParallelLinear` with `gather_output=False`) leaves logits sharded along vocab as `logits_local` of shape `[N, V_loc]` (with $N = b \cdot s$ flattened). Computing the loss *without ever gathering the full `[N, V]` logits* is the whole point — $V$ is exactly the dimension we sharded to avoid materializing.
+
+```python
+def vocab_parallel_cross_entropy(logits_local, target, tp_group, vocab_start, vocab_end):
+    # logits_local: [N, V_loc] fp32;  target: [N] global token ids
+    V_loc = logits_local.shape[-1]
+
+    # 1) global row-max via all-reduce MAX
+    m = logits_local.max(dim=-1).values                           # [N]
+    dist.all_reduce(m, op=dist.ReduceOp.MAX, group=tp_group)
+
+    # 2) global normalizer Z via all-reduce SUM of local exp-sums
+    exp_local = torch.exp(logits_local - m.unsqueeze(-1))         # [N, V_loc]
+    sum_exp = exp_local.sum(dim=-1)                                 # [N]
+    dist.all_reduce(sum_exp, op=dist.ReduceOp.SUM, group=tp_group)
+
+    # 3) the target logit: only the rank that owns `target` contributes a nonzero value
+    tmask = (target >= vocab_start) & (target < vocab_end)
+    local_target = (target - vocab_start).clamp(0, V_loc - 1)
+    pred = logits_local.gather(1, local_target.unsqueeze(-1)).squeeze(-1)   # [N]
+    pred = pred * tmask
+    dist.all_reduce(pred, op=dist.ReduceOp.SUM, group=tp_group)   # now the true target logit everywhere
+
+    # loss = logsumexp(z) - z_target = (m + log Z) - z_target
+    loss = torch.log(sum_exp) + m - pred                           # [N]
+    return loss.mean()
+```
+
+Three all-reduces of shape $[N]$ — trivial next to gathering $[N, V]$ logits. The backward is equally cheap: the gradient w.r.t. `logits_local` is `softmax_local - onehot_local`, already vocab-sharded, needing no extra collective.
+
+Megatron-LM implements exactly these primitives as `megatron.core.tensor_parallel.VocabParallelEmbedding` and `vocab_parallel_cross_entropy`, in `megatron/core/tensor_parallel/{layers.py, cross_entropy.py}` — the mask-and-all-reduce embedding trick and the max-then-sum parallel softmax above are the reference formulation, not a simplification of it. The LM head is typically a `ColumnParallelLinear(gather_output=False)` whose sharded output feeds directly into `vocab_parallel_cross_entropy`, and its weight is often tied to the embedding weight.
+
 ### Sequence Parallelism as TP's Free Companion
 
 Look again at the Megatron block: between the two TP regions sit the **LayerNorm/RMSNorm and the dropout/residual-add**, which Megatron *replicates* (every TP rank does the same redundant work on the full $s \times h$ tensor). That replication wastes both compute and, more importantly, **activation memory**: each rank stores the full LayerNorm activations.
@@ -275,7 +338,7 @@ The MLP and the projections are trivially sequence-parallel (they act per-token)
 
 **Ring Attention (Liu et al., 2023)** solves this by combining the [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) online-softmax trick with a communication ring. Each device starts with its own block of $Q$, $K$, $V$. It computes the local attention contribution, then the $K$/$V$ blocks are passed around a ring (device $i \to i+1$) so that, over $c$ steps, every device sees every other device's $K$/$V$ — and crucially, **the $K$/$V$ for the next step is being sent while the current step is being computed**, so communication hides under computation.
 
-The online-softmax running statistics (the running max $\ell$ and running sum $m$, from FlashAttention) let each device *incrementally* fold in each incoming K/V block without ever materializing the full $s \times s$ attention matrix:
+The online-softmax running statistics (the running max $m$ and running sum $\ell$, from FlashAttention) let each device *incrementally* fold in each incoming K/V block without ever materializing the full $s \times s$ attention matrix:
 
 ```python
 # Ring Attention: each of c devices owns a contiguous query/key/value block.
@@ -330,31 +393,64 @@ Because the router sends tokens to experts that live on *other* devices, EP's si
 # this rank owns experts [rank*E_local : (rank+1)*E_local].
 import torch, torch.distributed as dist, torch.nn.functional as F
 
-def moe_forward(x, gate, experts_local, E, e, k=1):
+def bucket_tokens_by_rank(x, dest_rank, e):
+    # x: [T, h] (for k>1, each token is expanded to k rows before this call);
+    # dest_rank: [T] long, the target EP rank per row.
+    order = torch.argsort(dest_rank)
+    send_buf = x[order]                                  # [T, h], grouped by dest rank
+    counts = torch.bincount(dest_rank, minlength=e)       # [e], tokens destined for each rank
+    return send_buf, counts, order                        # keep `order` to unsort after combine
+
+def run_local_experts(recv_buf, experts_local, recv_counts, E_local):
+    # recv_buf: [T_recv, h]. Production code re-buckets received tokens by which of the
+    # E_local local experts they hit (each row carries its expert id); this sketch keeps
+    # it simple and applies the single local expert when E_local == 1.
+    assert E_local == 1
+    return experts_local[0](recv_buf)                     # [T_recv, h]
+
+def moe_forward(x, gate, experts_local, E, e, ep_group, k=1):
     # x: [tokens, h];  gate: Linear(h, E);  experts_local: list of FFNs on this rank
     logits = gate(x)                                   # [tokens, E]
     topk = logits.topk(k, dim=-1)                      # choose k experts/token
-    probs = F.softmax(topk.values, dim=-1)             # routing weights
+    probs = F.softmax(topk.values, dim=-1)             # routing weights, [tokens, k]
     expert_ids = topk.indices                          # [tokens, k]
 
     # Build send buffers: bucket tokens by the DEVICE that owns their expert.
+    # (k=1 shown; for k>1, expand each token to k rows first, one per chosen expert.)
     E_local = E // e
-    dest_rank = expert_ids // E_local                  # which device per assignment
-    # (real code: sort tokens by dest_rank, compute per-rank counts, pad)
-    send_buf, counts = bucket_tokens_by_rank(x, dest_rank, e)
+    dest_rank = expert_ids[:, 0] // E_local             # [tokens], device owning this token (k=1)
+    send_buf, counts, order = bucket_tokens_by_rank(x, dest_rank, e)   # counts: [e]
 
-    # 1) DISPATCH: all-to-all sends each token to its expert's owner.
-    recv_buf = torch.empty_like(send_buf)
-    dist.all_to_all_single(recv_buf, send_buf, group=ep_group)
+    # 1) EXCHANGE COUNTS first: each rank must learn how many tokens it will receive
+    #    from every peer, since ranks receive different numbers of tokens (load imbalance)
+    #    — this is the part a fixed-size torch.empty_like recv buffer silently gets wrong.
+    recv_counts = torch.empty_like(counts)
+    dist.all_to_all_single(recv_counts, counts, group=ep_group)        # [e]
+    input_splits = counts.tolist()
+    output_splits = recv_counts.tolist()
 
-    # 2) Run the local experts on received tokens.
-    local_out = run_local_experts(recv_buf, experts_local, E_local)
+    # 2) DISPATCH: all-to-all with EXPLICIT variable split sizes, sized from the exchange.
+    recv_buf = send_buf.new_empty((int(recv_counts.sum()), x.shape[-1]))   # [T_recv, h]
+    dist.all_to_all_single(recv_buf, send_buf, output_splits, input_splits, group=ep_group)
 
-    # 3) COMBINE: all-to-all back to each token's original owner, then weight+sum.
-    out = torch.empty_like(local_out)
-    dist.all_to_all_single(out, local_out, group=ep_group)
-    return weighted_scatter_add(out, probs, counts)    # combine top-k, scale by probs
+    # 3) Run the local experts on received tokens.
+    local_out = run_local_experts(recv_buf, experts_local, recv_counts, E_local)  # [T_recv, h]
+
+    # 4) COMBINE: all-to-all back to each token's original owner — note the split sizes
+    #    are SWAPPED relative to dispatch (we're now sending back what we received).
+    combine_buf = local_out.new_empty((int(counts.sum()), x.shape[-1]))    # [T, h]
+    dist.all_to_all_single(combine_buf, local_out, input_splits, output_splits, group=ep_group)
+
+    # 5) Unsort back to original token order, then weight by router probs.
+    out = torch.empty_like(combine_buf)
+    out[order] = combine_buf                            # [T, h]
+    out = out * probs.squeeze(-1).unsqueeze(-1)          # k=1: scale by the single routing weight
+    # for k>1: repeat dispatch/combine per expert slot and torch.scatter_add_ the k
+    # weighted contributions back onto the T original token rows.
+    return out
 ```
+
+The exchanged-counts-then-variable-split-size handling above is the actual hard part of expert parallelism — it is exactly what Megatron's token dispatcher (`megatron.core.transformer.moe`) and DeepSpeed/Tutel implement, since a naive fixed-size recv buffer is only correct when every rank happens to receive the same number of tokens, which routing essentially never guarantees.
 
 The deciding factor for EP performance is **load balance**. If the router sends most tokens to a few popular experts, those devices become stragglers while others idle, and the all-to-all is dominated by the heaviest bucket. This is why MoE training relies on an **auxiliary load-balancing loss** (or DeepSeek-style auxiliary-loss-free bias correction) to spread tokens evenly, and on **expert capacity** limits that drop or reroute overflow tokens. EP is almost always combined with TP and DP, and the all-to-all collectives are extremely bandwidth-sensitive — keep the EP group on fast links, and overlap dispatch/combine with the attention compute of the next layer where possible.
 
@@ -398,6 +494,16 @@ A useful way to think about it: **TP and PP both reduce per-device memory and le
 
 !!! tip "Practitioner tip"
     Don't reach for model parallelism prematurely. The decision ladder is: (1) plain DDP if it fits; (2) ZeRO/FSDP to shard optimizer/grad/param state — this alone handles surprisingly large models with *no* model-parallel complexity (see [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)); (3) add TP once a single replica won't fit even sharded, keeping it intra-node; (4) add PP to cross node boundaries; (5) add CP only when context length (not parameters) is the binding constraint; (6) EP only for MoE. Every axis you add multiplies the debugging surface — add the *fewest* that make the run fit and run efficiently.
+
+!!! note "Verify before you scale"
+    Before scaling any of these axes to hundreds of GPUs, verify that the parallel implementation reproduces the single-GPU result — up to floating-point reduction-order differences. Fix every seed (`torch.manual_seed` on every rank, plus `torch.use_deterministic_algorithms(True)`), build a *tiny* model that fits on one GPU (e.g. $h=256$, $L=4$, $a=8$, vocab $=1024$, $s=128$), run one forward on a fixed input to get reference logits/loss at TP=1, then run the *same* input and weights at TP=2 (and separately PP=2, CP=2) on 2 GPUs and assert they match:
+
+    ```python
+    torch.testing.assert_close(loss_tp2, loss_ref, rtol=1e-3, atol=1e-3)
+    torch.testing.assert_close(logits_tp2, logits_ref, rtol=1e-3, atol=1e-3)
+    ```
+
+    The tolerance matters: bf16/fp16 accumulate reductions (all-reduce, all-to-all) in a different order across ranks, so use `rtol/atol ~ 1e-3` for bf16 — but do the initial bring-up in fp32 with `~1e-5`, where any mismatch is a real bug, not roundoff. Pair this with structural guard assertions: for GQA/TP, `assert num_kv_heads % tp == 0 or tp % num_kv_heads == 0`; for PP stage balance, `assert max(stage_params) / min(stage_params) < 1.1` so the embedding stage and the LM-head-plus-loss stage aren't stragglers. Megatron-LM ships exactly this single-vs-parallel equivalence testing in `tests/unit_tests/tensor_parallel`, and DeepSpeed/PyTorch DTensor use the same allclose-against-single-GPU pattern.
 
 ## Where the Communication Lives: A Summary Table
 
