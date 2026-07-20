@@ -1,0 +1,43 @@
+{
+  "unit_id": "L09-scaling-laws-1",
+  "grade": 4,
+  "chapters_examined": [
+    "03-pretraining/04-scaling-laws"
+  ],
+  "deficits": [
+    {
+      "severity": "major",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "correctness-bug",
+      "missing": "The text claims 'The tokens_per_param column comes out roughly constant across the four budgets (it drifts only because alpha != beta exactly)'. Running the chapter's own chinchilla_optimal code with the given constants (A=406.4, B=410.7, alpha=0.34, beta=0.28) prints tok/param = 32.1, 50.1, 78.2, 122.1 for C = 1e19..1e25 — a 4x drift that is never near 20. D/N scales as C^{(alpha-beta)/(alpha+beta)} = C^0.097, i.e. x1.25 per decade of compute, which is not 'roughly constant' over 6 decades.",
+      "fix": "Either (a) demonstrate constancy with alpha = beta (e.g. both 0.34), noting that Chinchilla's Approaches 1-2 fitted a ~ b ~ 0.5, and separately show the Approach-3 constants produce a slow C^0.1 drift; or (b) print the actual expected output in the text and rewrite the sentence to say the ratio drifts by ~25% per decade of compute and exceeds 20 tok/param at frontier budgets under the Approach-3 fit (a known property of that fit). Show the expected numeric output of the loop either way."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "code",
+      "missing": "IsoFLOP profiles are an explicit learning objective but receive only two sentences of prose ('runs many models at each of several fixed compute budgets, then fits a parabola in log N to find the valley... finally fits a power law through those valleys'). There is no implementation of Chinchilla Approach 2, no worked example of the parabola fit in log N, and no guidance on grid design (how many N values per budget, how wide a range). Only Approach 3 (parametric fit) is implemented.",
+      "fix": "Add a ~30-line code block implementing the IsoFLOP method on the same synthetic grid: for each of 4-5 fixed C budgets, sweep N (with D = C/6N), fit a quadratic in log N to the losses, extract the valley N*(C), then fit log N* vs log C to recover the exponent a; show it agrees with the parametric fit's beta/(alpha+beta). Populate the {{fig:scaling-kaplan-vs-chinchilla}} placeholder with an isoFLOP-valley illustration."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "verification",
+      "missing": "The fitting code's expected recovery quality is not stated. Running it as written recovers exponents well (alpha 0.390 vs true 0.340, beta 0.290 vs 0.280) but E and A poorly (E 1.826 vs 1.69, A 878.5 vs 406.0) due to ill-conditioning of the additive power-law fit at 2% noise. A reader who runs the code and sees A off by 2x has no way to know whether their run succeeded.",
+      "fix": "Print/state the expected recovered values for the fixed seed, and add a sentence explaining that E/A/B are weakly identified while the exponents (which determine the allocation) recover much more tightly — and that the right accuracy check is the implied allocation exponent beta/(alpha+beta) and the extrapolated loss, not the raw constants."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "Full Lagrange derivation with correct algebra: 'N_opt = [alpha A / (beta B)]^{1/(alpha+beta)} (C/6)^{beta/(alpha+beta)}' and 'a = beta/(alpha+beta), b = alpha/(alpha+beta), a+b=1' (03-pretraining/04-scaling-laws, verified by hand).",
+    "Chinchilla parametric form given exactly: 'L(N,D) = E + A/N^alpha + B/D^beta' with each term explained (irreducible entropy, finite-model penalty, finite-data penalty).",
+    "6ND rule derived from first principles ('2 forward MAC + 4 backward'), with runnable training_flops/inference_flops code and the MoE/attention caveats stated correctly.",
+    "Kaplan-vs-Chinchilla covered including the actual diagnosis: 'the learning-rate schedule was not matched to the token budget... shorter runs were evaluated mid-decay', with Kaplan N ~ C^0.73 vs Chinchilla a ~ b ~ 0.5, and Chinchilla-70B-beats-Gopher-280B evidence.",
+    "Runnable end-to-end scaling-law fit (scipy L-BFGS-B, Huber loss on log-loss residuals, multi-start) that I executed; it recovers alpha=0.390/beta=0.290 vs truth 0.340/0.280.",
+    "Worked budget example (256 GPUs x 21 days x MFU 0.45 -> C=2.1e23 -> N=42B, D=840B) with two independent self-consistency checks; arithmetic verified correct.",
+    "Failure modes and extensions covered: inference-aware over-training with a runnable lifetime_optimal solver, data-repetition law (~4 epochs nearly free, ~16 collapse), MoE active-param caveat, muP pointer, emergent-abilities/metric-artifact discussion with demo code.",
+    "CORRECTNESS ISSUE: text says tok/param 'comes out roughly constant' but the code's actual output is 32.1 -> 122.1 across the four budgets (verified by execution) and never near 20.",
+    "IsoFLOP profiles described in only two sentences (line 328) with no implementation, despite being a named learning objective."
+  ],
+  "summary": "Chapter 3.4 (03-pretraining/04-scaling-laws) is near-reference quality for this unit: the deliverable — deriving the compute-optimal N/D split for a fixed FLOP budget — is fully buildable, with a correct Lagrange derivation, exact closed forms, runnable allocation and fitting code (executed and verified), a self-consistent worked budget example with MFU-based resource accounting, and thorough failure-mode coverage (Kaplan's LR-schedule confound, over-training, data wall, MoE). Three deficits: the text's claim that tokens-per-param is 'roughly constant' is contradicted by its own code output (32 -> 122 across budgets, never ~20); the IsoFLOP method (a named objective) is sketched in two sentences but never implemented; and the fitting code's expected recovery tolerance is unstated, so readers cannot distinguish success (exponents tight, constants loose) from failure."
+}

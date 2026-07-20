@@ -1,0 +1,86 @@
+{
+  "unit_id": "L13-data-sources",
+  "grade": 3,
+  "chapters_examined": [
+    "03-pretraining/01-pretraining-data",
+    "03-pretraining/02-data-cleaning-dedup"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "correctness-bug",
+      "missing": "The parse_wet_records() code contaminates every extracted document: (a) the 'Content-Length: N' header line is appended to the body because in real WET records Content-Length follows Content-Type, and the parser sets in_body=True upon seeing Content-Type; (b) the NEXT record's 'WARC/1.0' and 'WARC-Type: conversion' header lines are appended to the PREVIOUS document's text because in_body is never reset until WARC-Target-URI is seen. Every yielded document carries a 'Content-Length:' prefix line and a 'WARC/1.0\\nWARC-Type: conversion' suffix.",
+      "fix": "Rewrite the parser to (1) split records on the 'WARC/1.0' record boundary, (2) parse headers until the first blank line, (3) read exactly Content-Length bytes for the body (or accumulate body lines until the next 'WARC/1.0'), and reset all per-record state when a new record starts. Add a unit test on a 2-record sample WET string with exact expected (url, text) output."
+    },
+    {
+      "severity": "major",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "correctness-bug",
+      "missing": "Chapter claims 'Common Crawl's crawlers already ran trafilatura or a similar extraction tool' to produce WET files. This is wrong: WET text comes from Common Crawl's own basic extractor (ia-web-commons/jsoup-based), and a central finding of RefinedWeb and FineWeb is that re-extracting from WARC HTML with trafilatura substantially outperforms WET text quality. The claim inverts the actual state of practice.",
+      "fix": "Correct the claim, and add a subsection on WARC-based extraction: reading WARC records with warcio, extracting main content with trafilatura/resiliparse, and note FineWeb's ablation that trafilatura-on-WARC beat WET-based extraction. Include a short warcio+trafilatura code example, since this is the extraction path used by RefinedWeb, FineWeb, and Dolma."
+    },
+    {
+      "severity": "major",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "code",
+      "missing": "No coverage at all of HTML-to-text extraction from raw WARC files (boilerplate removal, main-content extraction). The book's only extraction path is parsing pre-extracted WET plain text; a reader cannot reproduce the modern pipeline (RefinedWeb/FineWeb/Dolma all extract from WARC, not WET).",
+      "fix": "Add a 'From WARC to text' section with working code (warcio iterator over response records, trafilatura.extract on the HTML payload, charset handling) and a comparison table WET-text vs trafilatura-text on the same page."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "correctness-bug",
+      "missing": "C4 description says 'deduplicate at the 3-gram level'. C4's dedup removed duplicate three-SENTENCE spans (any span of 3 sentences occurring more than once), not 3-grams.",
+      "fix": "Change to 'deduplicated at the three-sentence-span level (any three-sentence span occurring more than once in the corpus was removed)'."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "explanation",
+      "missing": "RefinedWeb is named in the unit's learning objectives but has no case study in the 'Open Dataset Case Studies' section (Pile, C4, RedPajama, Dolma, FineWeb are covered); RefinedWeb appears only in passing in chapter 3.2's heuristics table and references, and its MacroData Refinement pipeline (URL filtering, trafilatura extraction, MassiveText-style filters, exact+fuzzy dedup) is never described.",
+      "fix": "Add a RefinedWeb case study paragraph to the Open Dataset Case Studies section describing the MDR pipeline stages and the 'web data alone can beat curated mixes' finding it established before FineWeb."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "resource-accounting",
+      "missing": "Inconsistent and inflated WET size figures: ch 3.1 says each monthly dump is '20-30 TB of WET files' and the interview answer says '~25 TB compressed'; ch 3.2 says 'one full CommonCrawl snapshot (roughly 80 TB of compressed WET files)'. Recent crawls are roughly 90-100 TB compressed WARC but only ~8-10 TB compressed WET.",
+      "fix": "Reconcile to one consistent, accurate set of numbers (e.g., ~90 TB WARC / ~9 TB WET per recent monthly crawl) across both chapters."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "correctness-bug",
+      "missing": "Suffix-array section claims a 100-billion-token corpus needs '400 GB of RAM (4 bytes per token index)'. A 32-bit index addresses only ~4.3 billion positions; 100B token positions require at least 5-byte (in practice 8-byte) indices, i.e. ~500-800 GB.",
+      "fix": "Correct the index-width arithmetic (int64 indices, ~800 GB for 100B tokens) — this actually strengthens the argument for sharded suffix arrays that follows."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "code",
+      "missing": "Writer/reader inconsistency: the practitioner tip says 'Write shards with context_len + 1 tokens per row', and ShardedTokenDataset reads rows of (context_len + 1), but TokenShard._flush_shard aligns shards to plain ctx_len boundaries — the tip is never implemented. It works only accidentally because tokens within a shard are contiguous. Also ShardedTokenDataset (IterableDataset) has no worker sharding: with DataLoader(num_workers>1) every worker yields the full dataset, duplicating data.",
+      "fix": "Make TokenShard pack rows of (ctx_len + 1) as the tip prescribes (or delete the alignment logic and explain the contiguous-stream reading), and add torch.utils.data.get_worker_info() shard-splitting to ShardedTokenDataset with a note about the multi-worker duplication pitfall."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "verification",
+      "missing": "The main pipeline has no verification artifacts: no sample WET fixture with expected document counts/retention, no expected token counts after tokenize+pack, no sanity check that a decoded shard row round-trips to text. (Ch 3.2's MinHash demo with known near-dup structure is good; ch 3.1 has nothing comparable.) Also the LSH worked example says P=0.954 for s=0.8; the correct value is 1-(0.832)^16 = 0.947.",
+      "fix": "Add a tiny inline test: a 3-record WET string constant, expected parsed output, expected filter pass/fail per record, and expected shard token count; fix 0.954 -> 0.947."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "Ch 3.1 gives the WARC/WET/WAT format table, a sample WET record, and a complete parse_wet_records() implementation — the only WET-format walkthrough in the book.",
+    "Ch 3.1 covers The Pile (825GB, 22 sources), C4 (heuristics listed), RedPajama (exact LLaMA mixture: CC 67%, C4 15%, GitHub 4.5%...), Dolma (taggers, license tags), FineWeb (15T tokens, 96 snapshots, FineWeb-Edu classifier) — but RefinedWeb gets no case study despite being in the unit objectives.",
+    "Ch 3.1 licensing section has a 5-tier license-risk taxonomy, EU AI Act transparency requirements, C2PA/opt-out discussion, and a provenance-tracking pitfall warning.",
+    "Ch 3.2 has runnable fastText LangID code with thresholds, a full heuristic-filter table with exact thresholds (alpha_frac>=0.60, digit_frac<=0.15, stop_word_frac>=0.10...), regex PII redaction code, and MinHash+LSH from scratch with correct math (P[m_j(A)=m_j(B)]=J(A,B), t*=(1/b)^(1/r)) and a worked b=16/r=8 parameter-selection example.",
+    "Tokenize+shard is fully implemented: TokenShard packer writing int32 .bin shards, memory-mapped ShardedTokenDataset with the context_len+1 label-shift trick, and a 7-stage end-to-end bash pipeline (S3 download -> filter -> dedup -> quality -> PII -> decontamination -> tokenize).",
+    "Library pointers are strong: datatrove, allenai/dolma, mlfoundations/dclm, deduplicate-text-datasets, RedPajama-Data all cited with descriptions.",
+    "BUG: the WET parser appends the 'Content-Length:' header line to every body and leaks the next record's 'WARC/1.0'/'WARC-Type: conversion' lines into the previous document — every extracted document is contaminated.",
+    "BUG: 'Common Crawl's crawlers already ran trafilatura or a similar extraction tool' is false; WET uses CC's basic extractor, and FineWeb/RefinedWeb specifically re-extract from WARC with trafilatura because WET text is worse.",
+    "Resource numbers conflict: '20-30 TB of WET files' (ch 3.1) vs '~25 TB' (interview) vs '80 TB of compressed WET files' (ch 3.2)."
+  ],
+  "summary": "Strong two-chapter coverage (3.1 sources/pipeline, 3.2 cleaning/dedup) that hits all four objectives: WET format with a parser, five open-corpus case studies with mixture math and epoch accounting, a real licensing/PII/decontamination treatment, and a complete tokenize-pack-shard implementation with a memmap dataloader. Grade 3, not 4: the reference WET parser has a real contamination bug, the book falsely claims CC WET files are trafilatura-extracted and never teaches WARC/HTML extraction (the actual RefinedWeb/FineWeb path), RefinedWeb lacks a case study, resource numbers are internally inconsistent, and the main pipeline ships without verification fixtures. The deliverable (raw CC dump to clean text) is achievable from the book alone via the WET path — the format is documented well enough for a competent reader to fix the parser — but the shipped code as written produces polluted documents."
+}

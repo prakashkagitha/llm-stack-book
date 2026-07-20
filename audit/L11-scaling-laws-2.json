@@ -1,0 +1,79 @@
+{
+  "unit_id": "L11-scaling-laws-2",
+  "grade": 3,
+  "chapters_examined": [
+    "03-pretraining/04-scaling-laws",
+    "03-pretraining/10-lr-schedules-hparams"
+  ],
+  "deficits": [
+    {
+      "severity": "major",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "verification",
+      "missing": "The 'Fitting a Scaling Law From Scratch' demo has no stated expected values or tolerance, and when actually run it recovers A=878 vs ground-truth 406 and E=1.83 vs 1.69 (from just 2% noise on 42 points), overpredicting extrapolated loss at C=1e25 by ~0.1 nats. The text never mentions this identifiability problem (E/A/alpha are strongly correlated), so a reader who runs the code sees a 2x parameter mismatch with no way to know whether it is a bug or expected behavior. There is also no quantitative uncertainty treatment (bootstrap/Hessian confidence intervals on alpha, beta, E; prediction intervals on extrapolated loss), despite 'fit diagnostics and confidence' being a core objective.",
+      "fix": "Add a paragraph after the fit acknowledging the parameter-correlation/identifiability issue with expected recovery ranges, then add ~20 lines of bootstrap resampling (refit on resampled grids, report percentile CIs on exponents and a fan of extrapolated-loss predictions). Note the compensating-error phenomenon the demo exhibits: the allocation N*(C) extrapolates far better than the loss L*(C) because the loss surface is flat near the optimum. Cite the Epoch AI Chinchilla replication ('Chinchilla Scaling: A replication attempt', Besiroglu et al. 2024) as the real-world case where the original fit's parametric estimates were contested."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "code",
+      "missing": "Chinchilla's IsoFLOP-profile method (method 2) is described in one prose bullet but never implemented, even though it is the most practical method for a small sweep and the most robust to misspecification of the parametric form.",
+      "fix": "Add ~30 lines: at each of several fixed compute budgets, fit a parabola to loss vs log(N), extract the valley N_opt(C), then fit log N_opt vs log C by least squares to get the exponent a directly. Show it agrees with the parametric fit's beta/(alpha+beta)."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "correctness-bug",
+      "missing": "Comment in predict_log_loss claims 'log-sum-exp form keeps it numerically stable', but the code simply exponentiates each term and sums (np.exp(terms[0]) + np.exp(terms[1]) + np.exp(terms[2])) — no max-subtraction, no scipy.special.logsumexp. It is not an LSE implementation and provides no stability benefit over computing the loss directly.",
+      "fix": "Either use scipy.special.logsumexp(terms, axis=0) as Chinchilla's Appendix actually does, or delete the misleading comment."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "explanation",
+      "missing": "Guidance on designing the real small-model sweep is thin: how many runs, what N/D spread (orders of magnitude needed), that each run needs its cosine decay matched to its own token endpoint (stated as Kaplan's bug but not turned into a sweep-design checklist), and how to hold out the largest run for extrapolation validation in code rather than prose.",
+      "fix": "Add a short 'designing your sweep' checklist (>=2 orders of magnitude in N, >=5 points per axis, per-run LR decay to endpoint, fixed data distribution and tokenizer across runs, several seeds at the smallest scale to estimate noise) and a 5-line code cell that refits with the largest-N runs held out and reports prediction error on them."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/10-lr-schedules-hparams",
+      "kind": "correctness-bug",
+      "missing": "build_mup_optimizer puts all MuPLinear parameters (weights AND biases) into the width-scaled LR group (lr = base_lr * proxy_width/actual_width). Under muP with Adam, bias-like (vector) parameters should get a width-invariant LR; scaling bias LR down by 1/width departs from the muP prescription.",
+      "fix": "Partition within each MuPLinear: matrix weight gets the 1/width-scaled LR, bias goes to the width-invariant group. One extra condition on param.ndim."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/10-lr-schedules-hparams",
+      "kind": "verification",
+      "missing": "The muP section gives no way to verify a muP implementation is correct. The standard check — the coordinate check (plot per-layer activation/update scale vs width; curves should be flat across widths under muP and blow up/shrink under SP) — is only alluded to via the microsoft/mup repo description.",
+      "fix": "Add a ~25-line coordinate-check: instantiate the model at widths 256/512/1024/2048, take a few Adam steps on fixed data, log mean |activation| per layer, and state the expected result (flat in width for muP, growing for SP). This is the test that catches the majority of real muP bugs."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/10-lr-schedules-hparams",
+      "kind": "explanation",
+      "missing": "Worked example states 'For a 7B model with hidden dim d=4096, muP-optimal LR scales as 1/d' — this conflates the two parameterizations. Under muP the tuned base LR is width-invariant (that is the entire point); it is the per-layer effective LR of hidden matrices that carries the 1/d factor, and under SP the optimal global LR shrinks roughly with width.",
+      "fix": "Reword to: 'under standard parameterization the optimal LR shrinks with width (roughly 1/d for hidden matrices); at d=4096 published peak LRs fall in 1e-4..3e-3', and reserve 'muP' for the width-invariant-base-LR claim."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/10-lr-schedules-hparams",
+      "kind": "explanation",
+      "missing": "muP transfer scope is not delimited: muP guarantees transfer across WIDTH only; transfer across depth, batch size, and training horizon is empirical and weaker (depth-muP / complete-P are separate lines of work). A reader could wrongly assume a width-256 sweep transfers to a model that is also 4x deeper and trained 100x longer.",
+      "fix": "Add a short caveat box: what muP does and does not guarantee (width: yes; depth: approximate, cite Yang et al. depth-muP; horizon and batch size: retune or use the batch-size scaling rules from this same chapter)."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "03-pretraining/04-scaling-laws has a complete ~90-line fitting pipeline: synthetic (N,D,loss) grid, log-space Huber objective, multi-start L-BFGS-B with bounds, recovery print vs ground truth, and optimal_alloc() projecting N*, D*, L* to budgets 100-1000x beyond the grid — exactly the unit's deliverable.",
+    "Fitting methodology matches Chinchilla practice: 'minimize the HUBER loss ... in LOG-loss space', multi-start 'because the objective is non-convex', and the three Chinchilla methods are named (fixed-model curves, IsoFLOP profiles, parametric fit).",
+    "Extrapolation risk is addressed qualitatively: 'Hold out your largest run, fit on the rest, and verify the prediction lands within a percent or two' and 'Exclude under-converged runs ... exactly the failure mode that biased Kaplan.'",
+    "Ran the book's fitting code verbatim: it executes, but recovers A=878.5 vs truth 406.0, E=1.826 vs 1.69, alpha=0.390 vs 0.34 — a substantial mismatch the text never acknowledges; fitted-law loss prediction at C=1e25 is 1.940 vs 1.845 under the true law (~0.1 nat extrapolation error), though the recommended allocation itself achieves 1.846 (flat optimum).",
+    "Resource accounting is exemplary: 6ND derivation (2 fwd + 4 bwd), MFU definition, and a fully self-consistent worked example (256 GPUs x 1 PFLOP/s x 21 days x 0.45 MFU -> C=2.1e23 -> 42B params / 840B tokens, cross-checked at 460k tok/s).",
+    "Decision-making coverage is strong: Lagrange derivation of a=beta/(alpha+beta), Kaplan-vs-Chinchilla LR-schedule confound, inference-aware over-training with runnable lifetime_optimal() (Llama-3-8B at ~1900 tok/param), Muennighoff data-repetition limits (~4 epochs cheap, ~16 collapse), and a regime-classification practitioner tip.",
+    "03-pretraining/10-lr-schedules-hparams covers muP with an SP-vs-muP table (init variances, per-layer LR multipliers, 1/d_k attention scaling), MuPLinear + build_mup_optimizer code, a 5-step proxy-sweep workflow, and pointers to microsoft/mup.",
+    "muP verification gap: no coordinate check anywhere; the code also scales bias LRs by 1/width, which muP does not prescribe.",
+    "Verification for the fit itself is print-only (no tolerance or expected values); the LR-schedule code by contrast has real asserts ('assert abs(lrs[50]/lrs[99] - 50/100) < 0.01')."
+  ],
+  "summary": "Coverage of scaling-law fitting and practice is strong and buildable: 03-pretraining/04-scaling-laws contains a complete, runnable Chinchilla-style fitting pipeline (log-space Huber, multi-start L-BFGS, extrapolated compute-optimal allocation), exemplary resource accounting (6ND, MFU, worked 256-GPU budget), inference-aware and data-constrained extensions with code, and 03-pretraining/10-lr-schedules-hparams gives a real muP treatment with an SP-vs-muP table, code, and workflow. The unit falls short of grade 4 on the 'fit diagnostics and confidence' objective: there is no quantitative uncertainty (bootstrap/CIs), and the book's own demo — when run — recovers A off by 2x and overpredicts extrapolated loss by ~0.1 nats without the text acknowledging the identifiability issue; the IsoFLOP method is prose-only; and the muP implementation lacks the standard coordinate-check verification plus has a minor bias-LR bug. A competent reader could still run a small sweep, fit, and project loss for a larger run from this book alone."
+}

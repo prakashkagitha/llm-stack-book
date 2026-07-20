@@ -1,0 +1,72 @@
+{
+  "unit_id": "L17-alignment-multimodality",
+  "grade": 4,
+  "chapters_examined": [
+    "10-multimodal-and-arch/01-vision-transformers",
+    "10-multimodal-and-arch/02-vision-language-models",
+    "10-multimodal-and-arch/03-audio-speech-multimodal",
+    "10-multimodal-and-arch/05-unified-any-to-any",
+    "05-posttraining-alignment/11-constitutional-rlaif",
+    "11-evaluation/05-redteaming-safety-eval"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "10-multimodal-and-arch/02-vision-language-models",
+      "kind": "correctness-bug",
+      "missing": "Projector parameter count is stated as ~40M/~42M three times (code comment 'Approx 4096*1024*2 + 4096*4096*2 ≈ 42M', comparison table '~40M', Key Takeaways 'Only ~40M new parameters'). The actual LLaVA-1.5 MLP connector (1024→4096, GELU, 4096→4096) has ~21M params (4.2M + 16.8M); the comment formula erroneously doubles both layers.",
+      "fix": "Correct the code comment to '1024*4096 + 4096*4096 ≈ 21M params' and change '~40M' to '~21M' in the Flamingo comparison table and Key Takeaways."
+    },
+    {
+      "severity": "critical",
+      "target": "10-multimodal-and-arch/02-vision-language-models",
+      "kind": "correctness-bug",
+      "missing": "In the KV-memory worked example, the sentence 'each token costs 2 × 4096 = 8192 bytes (bf16) in the KV cache per layer' is wrong: K + V at d=4096 in bf16 is 2 × 4096 × 2 = 16,384 bytes/token/layer. The displayed equation below it (which includes the ×2 bytes factor) is correct, so the prose contradicts the math it introduces.",
+      "fix": "Rewrite the sentence to 'each token costs 2 (K and V) × 4096 dims × 2 bytes = 16,384 bytes per layer' so prose and equation agree."
+    },
+    {
+      "severity": "critical",
+      "target": "10-multimodal-and-arch/05-unified-any-to-any",
+      "kind": "correctness-bug",
+      "missing": "transfusion_attention_mask() never grants attention for j > i, even within the same image block ('if j > i: pass'), so the produced mask is purely causal. This directly contradicts its own docstring ('all image positions in the same block (bidirectional within-image)') and Transfusion's defining design of bidirectional attention inside image blocks. A reader copying this code trains with the wrong mask.",
+      "fix": "Fix the loop so image position i also attends to j > i when image_block[j] == image_block[i], and make the 'Quick test' assert the bidirectional property (e.g., assert mask[3,6] and mask[6,3] for a 4-token image block) instead of just printing the mask."
+    },
+    {
+      "severity": "major",
+      "target": "05-posttraining-alignment/01-sft-instruction-tuning",
+      "kind": "explanation",
+      "missing": "Refusal training as a concrete post-training recipe is thin. The book measures refusal/over-refusal well (11.5: XSTest, ASR vs FPR operating points) and covers CAI/RLAIF pipelines (5.11), but nowhere explains how to construct safety SFT/preference data: how many safety examples in the mix, refusal-with-explanation response templates, pairing harmful prompts with borderline-benign contrast prompts to control over-refusal, or safety-specific preference pairs for the reward model. Only a single sentence ('safety refusals... underrepresented in organic data') gestures at it.",
+      "fix": "Add a 'Refusal training' section (in 5.1 or 5.11) giving a concrete safety data recipe: target proportion of safety examples in the SFT mix (~1-5%), refusal response format, contrast sets of benign look-alike prompts (XSTest-style) included as comply examples, safety preference-pair construction, and a note on evaluating the result with the 11.5 harness."
+    },
+    {
+      "severity": "minor",
+      "target": "10-multimodal-and-arch/02-vision-language-models",
+      "kind": "explanation",
+      "missing": "The early-fusion vs late-fusion taxonomy is never explicitly defined. The chapter teaches the three connection strategies (projector, cross-attention, unified tokenizer) and 10.5's SOTA box calls Chameleon 'early-fusion', but a reader is never told how these standard terms map onto the architectures.",
+      "fix": "Add a short paragraph in 'The Connection Problem' mapping the terminology: late fusion = separate encoder + connector into a frozen-ish LLM (LLaVA/Flamingo); early fusion = single model over a joint token stream from the first layer (Chameleon/Fuyu-style)."
+    },
+    {
+      "severity": "minor",
+      "target": "10-multimodal-and-arch/02-vision-language-models",
+      "kind": "code",
+      "missing": "MiniLLaVA always prepends all visual tokens before the text sequence; real LLaVA splices projected image tokens at the position of an <image> placeholder inside the chat template (system prompt precedes the image). The chapter never shows placeholder-based splicing or how labels/attention_mask are rebuilt around the spliced segment, and the caller is required to hand in an attention_mask of shape [B, N_patches+T] that the code never constructs.",
+      "fix": "Add ~15 lines implementing <image>-token splicing (find placeholder index, split text embeds, concatenate [pre | visual | post], build attention_mask and -100-padded labels in the same function), noting prepending is a functional simplification."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "10.2 gives a complete LLaVA-style implementation with exact shapes: MiniLLaVA forward pass with CLS-drop ('last_hidden_state[:, 1:, :]'), projector [B,576,1024]->[B,576,4096], -100 label masking over visual positions, and a runnable shape-check block with expected outputs '[2, 576, 1024] -> [2, 576, 4096]'.",
+    "Training stages are fully specified: Stage 1 projector-only on image-caption pairs ('~1 GPU-day'), Stage 2 with per-component LRs in code (lr_llm=2e-5, lr_vision=2e-6, lr_proj=1e-4); the internvl2-training-stages figure adds freeze states per stage and compute ('~3-7 d, 64 H100s').",
+    "Failure modes are covered: 'Common pitfall: Forgetting to mask visual token losses... set the label for every visual token position to -100', catastrophic forgetting via differential LRs, and modality collapse in MoE routing (10.5 warning box).",
+    "Resource accounting is real: KV-cache worked example (2880 visual tokens -> ~1.5 GB at LLaMA-2-7B), tile-token budgets (4x576=2304), audio token budget (600 tok/s, '200x more tokens than the transcript'), image-token FLOPs example in 10.5.",
+    "Library pointers throughout: haotian-liu/LLaVA, OpenGVLab/InternVL, VLMEvalKit, timm, open_clip, facebookresearch/audiocraft, kyutai-labs/moshi, facebookresearch/chameleon.",
+    "10.1 provides a complete from-scratch ViT (patchify via einops, PatchEmbed, pre-LN blocks, trunc_normal init, pos-embed bicubic interpolation code) plus CLIP InfoNCE and SigLIP losses with correct formulas.",
+    "10.3 covers audio end to end: mel-spectrogram code with exact params (n_fft=400, hop=160), a working RVQ implementation with straight-through estimator, Whisper as feature extractor, VALL-E AR/NAR decomposition, Moshi full-duplex hierarchy, and weighted multimodal cross-entropy code.",
+    "10.5 covers any-to-any: VQ-VAE loss with stop-gradient terms, Chameleon stabilization (QK-Norm code, modality z-loss code), Transfusion flow-matching objective x_t=(1-t)x0+t*eps with velocity target (eps-x0), data-mix ratios and staged curriculum.",
+    "Safety alignment objectives: 5.11 gives buildable CAI/RLAIF code (critique/revision/preference prompt builders, critique_revise_loop), and 11.5 quantifies refusal calibration (Over-Refusal Rate formula, XSTest, ASR/FPR tradeoff) - but constructing refusal-training data itself is only gestured at.",
+    "Confirmed bug: book claims projector is '~40M'/'42M' params; actual 1024*4096+4096*4096 (+biases) = 20,979,712 (~21M).",
+    "Confirmed bug: prose says KV cost is '2 x 4096 = 8192 bytes (bf16)' per token per layer; correct value is 16,384 bytes (the adjacent displayed equation uses the right x2-bytes factor).",
+    "Confirmed bug: transfusion_attention_mask skips all j > i, so the promised bidirectional within-image attention is never set, contradicting its own docstring and the Transfusion architecture it illustrates."
+  ],
+  "summary": "The multimodality half of this unit is reference-grade: 10.1 (ViT/CLIP/SigLIP from scratch), 10.2 (LLaVA projector VLM with exact shapes, loss masking, staged training with per-component LRs and compute budgets, KV/token resource accounting, real repo pointers), 10.3 (audio codecs, Whisper, speech LMs), and 10.5 (Chameleon/Transfusion unified models) together let a competent reader specify and implement a VLM and its training stages end to end - the unit's deliverable is clearly buildable. The safety-alignment half is weaker: CAI/RLAIF (5.11) and refusal/over-refusal evaluation (11.5) are strong, but refusal training as a data-construction recipe is only mentioned. Three verified correctness bugs need fixing: the projector param count (~40M claimed vs ~21M actual, stated three times), a KV-bytes-per-token sentence (8192 vs 16384), and a Transfusion attention-mask example that fails to implement the bidirectional within-image attention its docstring promises."
+}

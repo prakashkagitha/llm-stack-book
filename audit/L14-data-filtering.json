@@ -1,0 +1,78 @@
+{
+  "unit_id": "L14-data-filtering",
+  "grade": 4,
+  "chapters_examined": [
+    "03-pretraining/01-pretraining-data",
+    "03-pretraining/02-data-cleaning-dedup",
+    "03-pretraining/14-data-mixing-curriculum",
+    "03-pretraining/15-synthetic-data",
+    "13-interp-safety-gov/03-privacy-memorization-dp"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "correctness-bug",
+      "missing": "The 'Worked example: MinHash parameter selection' evaluates (1/16)^{1/8} as approx 0.794; the correct value is 0.707. It also states P(candidate | s=0.8) approx 1-0.046 = 0.954; the correct value is 1-0.053 = 0.947. The formula t* approx (1/b)^{1/r} is stated correctly, but the evaluated numbers are wrong, so a reader following the example believes b=16,r=8 targets threshold ~0.8 when it actually targets ~0.71 (more false-positive candidate pairs than the text implies).",
+      "fix": "Correct the arithmetic: t* = (1/16)^{1/8} = 16^{-0.125} approx 0.707, and P(candidate|s=0.8) approx 0.947. Either keep b=16,r=8 and note the effective threshold is ~0.71 (conservative, catches more candidates than the 0.8 target, filtered later by signature verification), or show the parameter choice that actually yields t* approx 0.8 (e.g. b=9,r=14 with k=126, or b=8,r=16 giving t* approx 0.878 with k=128 and discuss the trade-off)."
+    },
+    {
+      "severity": "major",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "explanation",
+      "missing": "Bloom filters as a dedup mechanism (the unit objective explicitly lists them, and Dolma's dedup is Bloom-filter based) are only name-dropped in tool listings ('Rust Bloom-filter dedup'). The mechanism -- bit array of m bits, k hash functions, false-positive rate p approx (1-e^{-kn/m})^k, optimal k = (m/n)ln2, no false negatives, and why that asymmetry is acceptable for dedup (a false positive drops a unique doc; tune p accordingly) -- is never explained. The pybloom_live usage in 13-interp-safety-gov/03 is a black-box library call in a different context.",
+      "fix": "Add a short 'Bloom-filter dedup' subsection to 3.2 between exact dedup and MinHash: derive the FP-rate formula, give the m/k sizing math for a concrete case (e.g. 1B documents at p=1e-6 needs ~28.8 bits/element approx 3.6 GB vs 32 GB of SHA-256 hashes), a ~30-line from-scratch implementation (bitarray + k mmh3/md5-derived hashes), and note this is exactly what allenai/dolma uses for both exact-doc and paragraph dedup."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "verification",
+      "missing": "The MinHash-LSH demo (doc1/doc2/doc5 near-dups) prints results but gives no expected output values or assertions, unlike the DoReMi toy (which prints expected numbers) and the LangID snippet (which has an assert). A reader cannot confirm their implementation is correct against the book.",
+      "fix": "Add the expected demo output (which pairs are found and approximate estimated Jaccard values, e.g. doc1<->doc2 approx 0.7-0.9) plus one assertion comparing jaccard_from_sigs against exact Jaccard computed on the shingle sets, with the expected estimation-error bound approx 1/sqrt(k)."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "code",
+      "missing": "minhash_signature initializes entries to float('inf') and calls int(v) at the end; an empty shingle set (empty/whitespace-only document, or document shorter than shingle length k) raises OverflowError at int(float('inf')). The pipeline never guards against short documents before shingling.",
+      "fix": "Guard the edge case: if not shingles, return a sentinel signature or skip the document (documents shorter than the shingle length should be dropped or exact-deduped only); mention this in the code comments."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "math",
+      "missing": "The KenLM quality-score formula score(d) = exp(-1/N sum log P)^{-1} is confusing: exp(-mean log P) is already perplexity, so the extra ^{-1} makes score the inverse perplexity, but the surrounding prose talks about 'lower perplexity' as if score were perplexity itself.",
+      "fix": "Either drop the ^{-1} and say 'keep documents with perplexity below a threshold', or keep the inverse and consistently call it a score where higher is better. One sentence tying the formula to the CCNet percentile-threshold practice would remove the ambiguity."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "kind": "code",
+      "missing": "The end-to-end quality classifier is described (fastText Wikipedia-vs-CommonCrawl, KenLM percentile) but the only trainable classifier code in the book is the FineWeb-Edu Ridge head in 3.15, which depends on an unspecified embed_fn and lives in the synthetic-data chapter where a reader auditing 'quality filtering' may not look.",
+      "fix": "Add to 3.2 a compact end-to-end trainable example: build labels (Wikipedia paragraphs = positive, raw CC = negative), train fasttext.train_supervised (or sklearn LogisticRegression on hashed n-gram features), pick the retention percentile on a held-out set, and cross-reference the FineWeb-Edu Ridge-head recipe in 3.15 (specifying a concrete embed_fn, e.g. a named sentence-transformers model)."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/01-pretraining-data",
+      "kind": "code",
+      "missing": "The WET parser appends subsequent header lines (e.g. 'Content-Length: 2048') to the document body: after 'Content-Type: text/plain' sets in_body=True, the following header lines match no branch except the final 'elif in_body' and are appended to body_lines; the blank-separator skip then also fails because body_lines is no longer empty.",
+      "fix": "Parse headers until the first blank line, then collect body lines until the next 'WARC/1.0' record delimiter; or explicitly skip lines matching '^[A-Za-z-]+:' while in the header block."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "3.2 contains a complete from-scratch MinHash-LSH implementation (shingling to 32-bit ints, universal hash family (a*x+b) mod 2^61-1, signature computation, banding, candidate verification) with a runnable 5-doc demo -- 'MinHash from scratch -- no external library required.'",
+    "3.2 gives the LSH S-curve math P(candidate|s) = 1-(1-s^r)^b and a worked parameter-selection example, but evaluates (1/16)^{1/8} as 0.794 when the correct value is 0.707 (verified numerically), and 0.954 where the correct value is 0.947.",
+    "3.2 heuristic filtering has a full threshold table (min tokens 50, mean word length 3-10, alpha_frac>=0.60, digit_frac<=0.15, stop-word frac>=0.10, top-bigram<=0.20) plus runnable compute_heuristics/passes_heuristic_filters code.",
+    "Quality classifiers covered at three levels: KenLM perplexity (CCNet), fastText Wikipedia-vs-CC percentile thresholds ('keep the top 30% by score'), and the FineWeb-Edu LLM-labeled 0-5 rubric distilled into a Ridge head with runnable code in 3.15.",
+    "Resource accounting is real: 32 GB for 1B SHA-256 hashes, N*b = 1.6e10 LSH bucket entries at 1e9 docs, ~400 GB RAM for a suffix array over 100B tokens, 24-72h on a 100-node Spark cluster per CC snapshot, and a stage-by-stage token-yield worked example (100B raw -> ~30B final).",
+    "Suffix-array substring dedup is explained (concatenate + SA + LCP, L=50 token spans, SA-IS O(n)) with pointers to google-research/deduplicate-text-datasets, but not implemented -- acceptable since the deliverable does not require it.",
+    "Bloom filters are never taught: grep across content/ finds only name-drops ('Rust Bloom-filter dedup' in tool listings) and a black-box pybloom_live call in the privacy chapter; no FP-rate math or sizing anywhere, despite the unit objective listing them.",
+    "3.14 covers DoReMi fully: Group-DRO minimax, excess-loss rationale, the exponentiated-gradient update w_i <- w_i*exp(eta*lambda_i) with uniform smoothing, and a runnable NumPy simulation with printed expected output showing web 0.80->0.36 and math upweighted ~17x.",
+    "3.14 covers curriculum and annealing with quantitative worked examples: epoch-budget mixture derivation (weights normalized to sum 1.0), WSD/MiniCPM annealing, and the 'more math in the final 15% than the entire first 85%' epoch-accounting example.",
+    "3.15 covers synthetic data with four recipes (WRAP, Cosmopedia/Phi, instruction-augmented pretraining, rejection-sampling distillation), the model-collapse variance-decay law E[sigma^2_t] = sigma^2(1-1/n)^t with a runnable replace-vs-accumulate simulation, a verification ladder, 13-gram decontamination code, and diversity monitoring (TTR, self-overlap).",
+    "Failure modes are consistently taught: toxicity-filter demographic bias, upsampling-before-dedup multiplication, curriculum non-replication at scale, benchmark contamination signatures, hallucinated textbook generation, distributional narrowing.",
+    "Library pointers are extensive and current: deduplicate-text-datasets, allenai/dolma, huggingface/datatrove, sangmichaelxie/doremi, sail-sg/regmix, huggingface/cosmopedia, mlfoundations/dclm."
+  ],
+  "summary": "This unit is one of the strongest in the book, spread across four substantial chapters (3.1, 3.2, 3.14, 3.15) that together exceed CS336's L14 coverage. The deliverable is buildable: 3.2 contains a complete from-scratch MinHash-LSH implementation (integer shingles, universal hash family mod 2^61-1, banding, candidate verification, runnable demo) plus S-curve parameter-selection math, and quality classifiers are covered from heuristic threshold tables through KenLM/fastText to a runnable FineWeb-Edu-style Ridge-head distillation recipe. DoReMi gets full math (Group-DRO, excess loss, exponentiated-gradient updates) with a runnable simulation and expected output; annealing/WSD and curriculum get quantitative worked examples; synthetic data gets four recipes, the model-collapse variance-decay law with a replace-vs-accumulate simulation, and decontamination code. Resource accounting, failure modes, and library pointers are consistently present, earning grade 4. Two real deficits: an arithmetic error in the central LSH worked example ((1/16)^{1/8} is 0.707, not 0.794 -- the taught b=16,r=8 choice actually targets threshold ~0.71, not ~0.8) and Bloom-filter dedup, explicitly named in the unit objectives and used by Dolma, is only name-dropped, never taught."
+}

@@ -1,0 +1,69 @@
+{
+  "unit_id": "L02-pytorch-resource-accounting",
+  "grade": 4,
+  "chapters_examined": [
+    "01-foundations/01-linear-algebra",
+    "01-foundations/04-numerics-precision",
+    "01-foundations/07-autodiff-pytorch",
+    "01-foundations/08-gpu-architecture",
+    "02-transformer/07-build-gpt-from-scratch",
+    "03-pretraining/04-scaling-laws",
+    "04-kernels-efficiency/01-roofline-performance",
+    "04-kernels-efficiency/10-memory-efficient-training"
+  ],
+  "deficits": [
+    {
+      "severity": "major",
+      "target": "04-kernels-efficiency/10-memory-efficient-training",
+      "kind": "correctness-bug",
+      "missing": "The activation-memory rule of thumb is stated as 'M_act ~ 12 x B x T x d x L bytes (fp16)' but the LLaMA-7B worked example then multiplies by an additional 2 bytes/element (12 x 1 x 2048 x 4096 x 32 x 2). The formula and the example disagree by exactly 2x on the deliverable quantity (the memory budget); a reader cannot tell whether 12BTdL is elements or bytes.",
+      "fix": "State the formula in ELEMENTS (M_act ~ 12*B*T*d*L elements) and multiply by bytes-per-element for the chosen dtype explicitly in both the formula and the example; note the coefficient's relation to the Megatron 34*s*b*h + 5*a*s^2*b bytes formula and when the T^2 score term is absent (FlashAttention)."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/10-memory-efficient-training",
+      "kind": "correctness-bug",
+      "missing": "Checkpointing worked example: 'sqrt(L) x (one layer's activations) ~ 0.2 GB' — with L=32 and ~0.2 GB/layer this is sqrt(32)*0.2 ~ 1.1 GB, not 0.2 GB (the answer 112.2 GB total is therefore ~113 GB).",
+      "fix": "Correct the arithmetic to ~1.1 GB (or state the store-only-layer-inputs variant, L*B*T*d*2B ~ 0.5 GB, and label which strategy is being computed)."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/10-memory-efficient-training",
+      "kind": "correctness-bug",
+      "missing": "QLoRA worked example: 'M_LoRA = 2 x 2 x 16 x 4096 x 32 ~ 0.27 GB' — the printed expression evaluates to ~8.4M (i.e., ~8.4 MB if bytes), not 0.27 GB; a realistic rank-16 adapter set over all linear layers of a 7B model is ~40M params ~ 80 MB bf16. The subsequent optimizer-state line inherits the wrong base.",
+      "fix": "Recompute with an explicit per-matrix formula r*(d_in+d_out) x (number of adapted matrices per layer) x L x bytes, and carry the corrected base into the optimizer-state estimate."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/01-roofline-performance",
+      "kind": "correctness-bug",
+      "missing": "Editing artifact left in the MFU worked example (line ~446): 'Peak: 64 x 990x10^12 = 6.3x10^16 x ... = 6.34x10^16? Recompute: ...' — a self-correction draft note published verbatim.",
+      "fix": "Delete the garbled sentence and keep only the correct computation: 64 x 990 TFLOP/s = 63.4 PFLOP/s."
+    },
+    {
+      "severity": "minor",
+      "target": "01-foundations/01-linear-algebra",
+      "kind": "explanation",
+      "missing": "The einops library itself (rearrange/reduce/repeat named-axis notation) is never taught anywhere in the book, despite being a named objective of this unit (and a CS336 lecture-2 staple). It appears exactly once, unexplained, in 10-multimodal-and-arch/01-vision-transformers ('einops.rearrange' for patchify). torch.einsum IS taught well, so the functional gap is small.",
+      "fix": "Add a short einops subsection next to the existing einsum section in 1.1 (or in 1.7): rearrange/reduce/repeat semantics, the named-axis pattern mini-language, equivalence to view/permute/reshape chains, and a multi-head-attention split/merge example (b s (h d) -> b h s d)."
+    }
+  ],
+  "buildable_verdict": true,
+  "buildable_reasoning": "A competent reader can produce a correct FLOP and memory budget and predict step time from the book alone. The FLOP side is buildable twice over: 4.1 gives runnable transformer_flops_per_token() with a real Llama-2-7B config plus the 6N derivation, and 3.4 independently re-derives 6ND and runs the complete napkin calculation (GPU count x peak FLOP/s x wall-clock x MFU -> N, D, tokens/s) with a self-consistency check. Step-time prediction follows directly from MFU inversion (expected_tokens_per_sec) for training and from the decode_roofline() bandwidth ceiling for inference, both given as working code with realistic MFU ranges (40-55%) to plug in. The memory side (4.10) gives the correct 16P static decomposition and a worked 7B budget; its activation rule of thumb has a 2x bytes-vs-elements inconsistency between formula and example, which could produce a 2x error in one component of the budget — annoying but not disqualifying, since the itemized per-layer activation list and the static accounting are correct and the text explicitly flags the coefficient as architecture-dependent. Verification tooling (torch.utils.flop_counter, profiler-measured MFU) is named so a reader can check their own numbers.",
+  "evidence": [
+    "04-kernels-efficiency/01: derives arithmetic intensity I = FLOPs/HBM-bytes, ridge point pi/beta (~156 FLOP/B A100, ~295 H100), and the roofline P(I)=min(pi, beta*I) with worked element-wise-add (0.17 FLOP/B) and GEMM (m/3) examples.",
+    "04-kernels-efficiency/01: full per-token FLOP decomposition '24d^2 + 4sd' (QKVO 8d^2, FFN 16d^2 or 6*d*d_ff gated, scores 4sd), runnable transformer_flops_per_token() with Llama-2-7B config, cross-checked against 6N: 'Two independent methods agreeing within ~10-20%'.",
+    "04-kernels-efficiency/01: 6N rule derived (2N fwd + 4N bwd), MFU = 6N*tok/s/(GPUs*pi) with mfu() code, worked 44% MFU example, decode_roofline() showing bandwidth-bound decode ceiling (~150 tok/s for 7B bf16 on A100) — the step-time-prediction deliverable in full.",
+    "04-kernels-efficiency/01: verification pathway is explicit — torch.profiler code with warmup/synchronize, kernel_verdict() mapping measured time to roofline position, nsys/ncu command lines, and pointers to torch.utils.flop_counter, DeepSpeed FLOPs profiler, and LLM-Viewer.",
+    "03-pretraining/04: re-derives 6ND per-parameter ('2 FLOPs fwd, 4 FLOPs bwd per parameter per token'), states non-embedding-N, attention-term, and MoE-active-params caveats, and runs the napkin budget: 256 GPUs x 21 days x 0.45 MFU -> 42B params on 840B tokens with a throughput self-consistency check.",
+    "02-transformer/07: exact parameter count worked example (n_layer=6, d=384): attention 4d^2, MLP 8d^2, block 12d^2 = 1,769,472; embeddings and weight tying accounted; general rule N ~ 12*n_layer*n_embd^2 stated and cross-referenced.",
+    "04-kernels-efficiency/10: static training memory derived as 16P bytes (2P bf16 weights + 4P fp32 master + 2P grads + 8P Adam m,v), LLaMA-7B worked budget (112 GB static + activations), plus checkpointing O(sqrt(L)) math and LoRA/QLoRA budget deltas.",
+    "01-foundations/07: tensor internals at depth — formal contiguity condition s_k = prod_{j>k} d_j, stride-0 broadcasting via expand with storage check, view-vs-copy data_ptr demos, silent-.contiguous() pitfall warning, in-place/version-counter failure mode.",
+    "01-foundations/01: torch.einsum taught with runnable examples (matmul, batched attention scores 'hsd,htd->hst', outer product, trace, Frobenius inner product) plus a contiguity section.",
+    "01-foundations/04: dtype zoo table (fp32/tf32/fp16/bf16/fp8) with bit layouts, ranges, machine epsilons; 01-foundations/08 introduces arithmetic intensity and dense-vs-sparse TFLOP/s honesty warning.",
+    "Bug (04/10 line 49 vs 62): formula printed as '12 x B x T x d x L bytes (fp16)' but example computes '12 x 1 x 2048 x 4096 x 32 x 2 bytes' — bytes vs elements inconsistency, 2x discrepancy.",
+    "Bug (04/01 line 446): 'Peak: 64 x 990x10^12 = 6.3x10^16 x ... = 6.34x10^16? Recompute:' — draft artifact in published text.",
+    "einops gap: grep shows 'einops' appears only in 10-multimodal-and-arch/01 (one unexplained rearrange call) and the appendix pip list; the notation itself is never taught."
+  ],
+  "summary": "This unit is one of the book's strongest. Every objective is covered at buildable-or-better depth: einsum with runnable contractions (1.1), strides/views/contiguity/broadcasting with the formal stride condition (1.7), dtypes (1.4), exact transformer parameter counting with a fully worked 10.74M example and the 12*L*d^2 rule (2.7), the 6ND rule derived twice from independent directions and cross-checked in code (4.1, 3.4), the 16P-bytes training memory budget with worked LLaMA-7B numbers (4.10), and a reference-quality arithmetic-intensity/roofline/MFU treatment including profiler-based verification, failure modes, and pointers to torch.utils.flop_counter, Nsight, and LLM-Viewer (4.1). The deliverable — FLOP + memory budget and step-time prediction from config + hardware — is demonstrated end-to-end (napkin budget: 256 GPUs x 21 days x 0.45 MFU -> 42B/840B tokens; decode bandwidth ceiling; MFU inversion to expected tokens/s). Grade 4 earned, with reservations: the memory chapter's worked examples contain real arithmetic bugs (a 2x bytes-vs-elements inconsistency in the activation formula, a ~5x checkpointing-residual error, a garbled QLoRA adapter-size figure), 4.1 has a published editing artifact, and the einops library proper (rearrange/reduce) is named in the unit but never taught — einsum stands in for it. All fixes are localized."
+}

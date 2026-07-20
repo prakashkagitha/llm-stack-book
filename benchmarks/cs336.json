@@ -1,0 +1,339 @@
+{
+  "_comment": "Machine-readable quality benchmark for The LLM Stack. Source: https://cs336.stanford.edu/ (Stanford CS336, Language Modeling from Scratch). Each unit is one audit item. Grading rubric lives in scripts/gen_audit_workflow.py.",
+  "rubric": {
+    "0": "ABSENT — topic not present in the book",
+    "1": "MENTIONED — named or gestured at, no working understanding conveyed",
+    "2": "EXPLAINED — concept correctly explained, but a reader could NOT implement it from the text alone",
+    "3": "BUILDABLE — a competent reader could implement a correct version from the book alone (complete algorithm, shapes, edge cases, hyperparameters)",
+    "4": "REFERENCE — buildable AND includes verification (tests/expected values), failure modes, resource accounting, and links to real library implementations"
+  },
+  "target": "Every unit at >= 3; all assignment units and core-path lectures at 4.",
+  "units": [
+    {
+      "id": "L01-tokenization",
+      "kind": "lecture",
+      "title": "Overview, tokenization",
+      "objectives": [
+        "Why tokenization exists; bytes vs characters vs subwords",
+        "BPE training algorithm end-to-end (pair counting, merge table construction)",
+        "BPE encoding/decoding with the merge table; byte-level BPE and the GPT-2 byte encoder",
+        "WordPiece and Unigram/SentencePiece contrasts",
+        "Pathologies: numbers, whitespace, code, multilingual, vocabulary size tradeoffs"
+      ],
+      "buildable_deliverable": "Train a byte-level BPE tokenizer from a raw text corpus and round-trip encode/decode correctly."
+    },
+    {
+      "id": "L02-pytorch-resource-accounting",
+      "kind": "lecture",
+      "title": "PyTorch (einops), resource accounting (FLOPs, memory, arithmetic intensity)",
+      "objectives": [
+        "einops/einsum notation for tensor manipulation",
+        "Counting parameters of a Transformer exactly",
+        "Counting training and inference FLOPs (the 6ND rule and where it comes from)",
+        "Memory accounting: params + grads + optimizer state + activations",
+        "Arithmetic intensity and the compute-vs-memory-bound distinction",
+        "torch tensor internals: strides, views, contiguity, dtype"
+      ],
+      "buildable_deliverable": "Given a model config and hardware, compute a correct FLOP and memory budget and predict step time."
+    },
+    {
+      "id": "L03-architectures-hyperparameters",
+      "kind": "lecture",
+      "title": "Architectures, hyperparameters",
+      "objectives": [
+        "Pre-norm vs post-norm, RMSNorm, residual stream",
+        "Activation functions and the SwiGLU family; FFN sizing",
+        "RoPE and positional scheme choices",
+        "Width/depth/head-count ratios and standard hyperparameter recipes",
+        "Initialization schemes and their justification"
+      ],
+      "buildable_deliverable": "Specify and justify every hyperparameter of a modern decoder-only LM."
+    },
+    {
+      "id": "L04-attention-alternatives-moe",
+      "kind": "lecture",
+      "title": "Attention alternatives and mixture of experts",
+      "objectives": [
+        "MQA/GQA/MLA and their KV-cache implications",
+        "Linear attention, SSMs, Mamba, sliding-window and sparse attention",
+        "MoE routing (top-k, expert choice), load balancing losses, capacity factor",
+        "MoE systems concerns: expert parallelism, all-to-all"
+      ],
+      "buildable_deliverable": "Implement a top-k routed MoE FFN layer with an auxiliary load-balancing loss."
+    },
+    {
+      "id": "L05-gpus-tpus",
+      "kind": "lecture",
+      "title": "GPUs, TPUs",
+      "objectives": [
+        "SM/warp/thread hierarchy, memory hierarchy (HBM/L2/SMEM/registers)",
+        "Tensor cores and supported dtypes",
+        "TPU systolic arrays and pods; contrast with GPUs",
+        "Interconnect: NVLink, PCIe, InfiniBand and their bandwidths",
+        "Roofline reasoning applied to real kernels"
+      ],
+      "buildable_deliverable": "Predict whether a given layer is compute- or memory-bound and explain the hardware reason."
+    },
+    {
+      "id": "L06-kernels-triton",
+      "kind": "lecture",
+      "title": "Kernels, Triton",
+      "objectives": [
+        "The Triton programming model: programs, blocks, masks, pointers",
+        "Writing and benchmarking a fused kernel",
+        "Tiling, occupancy, autotuning",
+        "The online softmax and FlashAttention derivation",
+        "Numerical correctness testing against a reference"
+      ],
+      "buildable_deliverable": "Write a working Triton FlashAttention-2 forward and backward kernel."
+    },
+    {
+      "id": "L07-parallelism-1",
+      "kind": "lecture",
+      "title": "Parallelism I",
+      "objectives": [
+        "Collectives: all-reduce, reduce-scatter, all-gather, all-to-all and their costs",
+        "Data parallelism, gradient synchronization, bucketing/overlap",
+        "ZeRO stages 1/2/3 and FSDP sharding semantics",
+        "Activation checkpointing interaction"
+      ],
+      "buildable_deliverable": "Implement distributed data-parallel training with overlapped gradient communication."
+    },
+    {
+      "id": "L08-parallelism-2",
+      "kind": "lecture",
+      "title": "Parallelism II",
+      "objectives": [
+        "Tensor parallelism: row/column partitioning and the required collectives",
+        "Pipeline parallelism: GPipe, 1F1B, interleaved schedules, bubble analysis",
+        "Sequence/context parallelism and ring attention",
+        "Composing 3D/4D parallelism; choosing a parallelism plan for a cluster"
+      ],
+      "buildable_deliverable": "Choose and justify a full parallelism plan for a given model size and cluster topology."
+    },
+    {
+      "id": "L09-scaling-laws-1",
+      "kind": "lecture",
+      "title": "Scaling laws I",
+      "objectives": [
+        "Power-law form; Kaplan vs Chinchilla",
+        "Compute-optimal allocation of parameters vs tokens",
+        "IsoFLOP profiles and the parametric loss fit"
+      ],
+      "buildable_deliverable": "Derive the compute-optimal N/D split for a fixed FLOP budget."
+    },
+    {
+      "id": "L11-scaling-laws-2",
+      "kind": "lecture",
+      "title": "Scaling laws II (fitting and practice)",
+      "objectives": [
+        "Empirically FITTING a scaling law from a sweep of small runs",
+        "Extrapolation risk, fit diagnostics, and confidence",
+        "Hyperparameter transfer (muP) across scales",
+        "Using scaling laws to make real training decisions"
+      ],
+      "buildable_deliverable": "Run a small-model sweep, fit a scaling law, and project the loss of a larger run."
+    },
+    {
+      "id": "L10-inference",
+      "kind": "lecture",
+      "title": "Inference",
+      "objectives": [
+        "Prefill vs decode; why decode is memory-bound",
+        "KV cache math and PagedAttention",
+        "Continuous batching and scheduling",
+        "Speculative decoding",
+        "Quantization for serving; latency/throughput tradeoffs and metrics"
+      ],
+      "buildable_deliverable": "Implement KV-cached autoregressive generation and reason about its throughput limits."
+    },
+    {
+      "id": "L12-evaluation",
+      "kind": "lecture",
+      "title": "Evaluation",
+      "objectives": [
+        "Perplexity and its limits",
+        "Benchmark families; few-shot prompting protocol sensitivity",
+        "Contamination detection",
+        "LLM-as-judge, human eval, and arena-style ranking",
+        "Statistical significance and error bars in eval"
+      ],
+      "buildable_deliverable": "Build a correct, contamination-aware evaluation harness for a model."
+    },
+    {
+      "id": "L13-data-sources",
+      "kind": "lecture",
+      "title": "Data (sources, datasets)",
+      "objectives": [
+        "Common Crawl: WARC/WET formats and the extraction pipeline",
+        "Major open corpora (C4, The Pile, RefinedWeb, Dolma, FineWeb) and how each was built",
+        "Licensing, copyright, PII considerations",
+        "Tokenizing and sharding a corpus for training"
+      ],
+      "buildable_deliverable": "Turn a raw Common Crawl dump into clean extracted text."
+    },
+    {
+      "id": "L14-data-filtering",
+      "kind": "lecture",
+      "title": "Data (filtering, deduplication, mixing, synthetic data)",
+      "objectives": [
+        "Quality filtering: heuristics and classifier-based",
+        "Exact and fuzzy dedup: MinHash/LSH, suffix arrays, Bloom filters",
+        "Data mixing and domain weighting (DoReMi-style)",
+        "Synthetic data generation and its risks",
+        "Curriculum and annealing / mid-training data"
+      ],
+      "buildable_deliverable": "Implement MinHash-LSH near-duplicate removal and a quality classifier over a corpus."
+    },
+    {
+      "id": "L15-midtraining-sft-rlhf",
+      "kind": "lecture",
+      "title": "Mid/post-training (SFT/RLHF)",
+      "objectives": [
+        "SFT data construction, chat templates, loss masking on prompts",
+        "Reward modeling from preference pairs (Bradley-Terry)",
+        "The full PPO-for-LM loop: rollouts, advantages, KL penalty, value head",
+        "DPO and its derivation from the RLHF objective"
+      ],
+      "buildable_deliverable": "Implement SFT with correct loss masking, and a DPO training step."
+    },
+    {
+      "id": "L16-rlvr",
+      "kind": "lecture",
+      "title": "Post-training — RLVR",
+      "objectives": [
+        "Verifiable rewards for math/code; grading and answer extraction",
+        "GRPO and critic-free estimators; group advantage normalization",
+        "The generation-training loop and rollout engines",
+        "Reward hacking and length bias in RLVR"
+      ],
+      "buildable_deliverable": "Implement GRPO for math reasoning with a verifiable reward function."
+    },
+    {
+      "id": "L17-alignment-multimodality",
+      "kind": "lecture",
+      "title": "Alignment — multimodality",
+      "objectives": [
+        "Safety alignment objectives and refusal training",
+        "Vision-language architectures: encoders, projectors, early vs late fusion",
+        "Multimodal data and training stages",
+        "Audio/speech and any-to-any models"
+      ],
+      "buildable_deliverable": "Specify a VLM architecture and its training stages end to end."
+    },
+    {
+      "id": "L18-guest-selsam",
+      "kind": "lecture",
+      "title": "Guest lecture: Daniel Selsam",
+      "objectives": ["Reasoning models, formal math, and frontier research directions"],
+      "buildable_deliverable": null
+    },
+    {
+      "id": "L19-guest-fu",
+      "kind": "lecture",
+      "title": "Guest lecture: Dan Fu",
+      "objectives": ["Efficient architectures, SSMs, and hardware-aware algorithm design"],
+      "buildable_deliverable": null
+    },
+
+    {
+      "id": "A1-basics",
+      "kind": "assignment",
+      "title": "Assignment 1: Basics",
+      "deliverables": [
+        "Byte-level BPE tokenizer: training and encode/decode",
+        "Transformer LM from scratch: embeddings, RoPE, RMSNorm, SwiGLU FFN, causal multi-head attention, weight tying",
+        "Cross-entropy loss and AdamW optimizer implemented from scratch",
+        "Cosine LR schedule with warmup, gradient clipping",
+        "Training loop with checkpointing, and a decoding/sampling function",
+        "Train a minimal LM to a target loss"
+      ],
+      "critical": true
+    },
+    {
+      "id": "A2-systems",
+      "kind": "assignment",
+      "title": "Assignment 2: Systems",
+      "deliverables": [
+        "Benchmark and profile model layers (timing, nsys/torch profiler, memory)",
+        "Triton FlashAttention-2 forward AND backward kernel",
+        "Correctness testing of kernels against a PyTorch reference",
+        "Distributed data-parallel training implementation with communication overlap",
+        "Optimizer state sharding (ZeRO-style) implementation"
+      ],
+      "critical": true
+    },
+    {
+      "id": "A3-scaling",
+      "kind": "assignment",
+      "title": "Assignment 3: Scaling",
+      "deliverables": [
+        "Reason about each Transformer component's contribution to loss and cost",
+        "Design a sweep under a constrained compute budget",
+        "Fit IsoFLOP / parametric scaling laws to observed runs",
+        "Project optimal model size and token count for a target budget"
+      ],
+      "critical": true
+    },
+    {
+      "id": "A4-data",
+      "kind": "assignment",
+      "title": "Assignment 4: Data",
+      "deliverables": [
+        "Extract text from raw Common Crawl WARC/WET dumps",
+        "Language ID, quality filtering, and harmful-content filtering",
+        "Exact and fuzzy (MinHash-LSH) deduplication",
+        "Measure the downstream effect of filtering choices on model quality"
+      ],
+      "critical": true
+    },
+    {
+      "id": "A5-alignment-rl",
+      "kind": "assignment",
+      "title": "Assignment 5: Alignment and Reasoning RL",
+      "deliverables": [
+        "Supervised finetuning for math reasoning with correct loss masking",
+        "Verifiable reward function and answer parsing for math",
+        "GRPO/policy-gradient training loop implementation",
+        "Optional: DPO and safety alignment methods"
+      ],
+      "critical": true
+    },
+
+    {
+      "id": "C1-end-to-end-pretrain",
+      "kind": "capability",
+      "title": "END-TO-END: train an LLM from scratch",
+      "objectives": [
+        "A single coherent path a reader can follow from raw text to a trained, sampled-from model",
+        "Every stage connected: data -> tokenizer -> model -> optimizer -> training loop -> checkpoint -> eval -> inference",
+        "Concrete configs and compute budgets at multiple scales (laptop / 1 GPU / 8 GPU / multi-node)",
+        "Explicit statement of what to expect: loss curves, timings, failure signatures"
+      ],
+      "buildable_deliverable": "A reader with GPUs can go from raw corpus to a working trained LM using only this book."
+    },
+    {
+      "id": "C2-debug-and-verify",
+      "kind": "capability",
+      "title": "Verification, testing and debugging discipline",
+      "objectives": [
+        "How to unit-test each component (tokenizer round-trip, attention vs reference, grad-check)",
+        "Expected numeric values and sanity checks at each stage",
+        "Diagnosing loss spikes, NaNs, divergence, dead experts, silent shape bugs",
+        "Profiling workflow to find the actual bottleneck"
+      ],
+      "buildable_deliverable": "A reader can independently verify each component they build is correct."
+    },
+    {
+      "id": "C3-open-source-stack",
+      "kind": "capability",
+      "title": "Open-source library coverage across the stack",
+      "objectives": [
+        "For each layer, the real libraries: PyTorch, Triton, HF transformers/datasets/tokenizers, Megatron-LM, DeepSpeed, FSDP, TRL, veRL, vLLM, SGLang, llama.cpp, FlashAttention, xformers, lm-eval-harness",
+        "How each library implements the concept just taught, and where to read its source",
+        "When to use the library vs write it yourself"
+      ],
+      "buildable_deliverable": "A reader knows which library to reach for and how it works internally."
+    }
+  ]
+}

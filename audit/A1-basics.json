@@ -1,0 +1,78 @@
+{
+  "unit_id": "A1-basics",
+  "grade": 3,
+  "chapters_examined": [
+    "02-transformer/01-tokenization",
+    "02-transformer/03-attention-from-scratch",
+    "02-transformer/05-positional-encoding",
+    "02-transformer/06-transformer-block",
+    "02-transformer/07-build-gpt-from-scratch",
+    "03-pretraining/03-pretraining-objective",
+    "03-pretraining/09-optimizers",
+    "03-pretraining/10-lr-schedules-hparams",
+    "03-pretraining/12-checkpointing-fault-tolerance",
+    "01-foundations/04-numerics-precision",
+    "01-foundations/06-neural-nets-from-scratch"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "02-transformer/06-transformer-block",
+      "kind": "correctness-bug",
+      "missing": "Claimed program output is wrong: the chapter states the sanity check with Llama-2-7B dims (d=4096, 32 heads) 'prints approximately 218M parameters per block, consistent with 7B/32 ~ 219M'. The actual code yields ~201.6M (attn 4d^2=67.1M + SwiGLU 3*d*10944=134.5M). Relatedly, the text claims 8*4096/3=10922.7 'rounded to a multiple of 64' gives 11,008, but the code's rounding produces 10,944; Llama-2's 11,008 comes from multiple_of=256. The '7B/32=219M' framing also ignores that 7B includes ~262M of embeddings.",
+      "fix": "Correct the printed number to ~202M, fix the rounding discussion (Llama uses multiple_of=256, giving 11,008; the code's 64-multiple gives 10,944), and note that per-block ~202M x 32 + 2x32000x4096 embeddings ~ 6.7B total."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/01-tokenization",
+      "kind": "code",
+      "missing": "No complete end-to-end byte-level BPE tokenizer. The trainer (train_bpe) is character-level with a '</w>' end-of-word marker; the bytes_to_unicode map is given separately, but they are never assembled: there is no vocab-to-integer-ID table, no encode(str)->List[int], no decode(List[int])->str implementation (decode is prose only), no special-token handling in encode/decode, and the GPT-2 pre-tokenization regex is described but never shown. The '</w>' convention conflicts with the byte-level 'Ġ' convention and the reader is not told to drop it when going byte-level.",
+      "fix": "Add a complete `ByteLevelBPETokenizer` class: train on raw text via regex pre-tokenization (print the actual GPT-2/cl100k regex) over byte-mapped symbols without '</w>', build merges + vocab->ID table, implement encode()->List[int] and decode()->str (inverting bytes_to_unicode, bytes.decode(errors='replace')), handle special tokens, and verify with a round-trip test on a unicode string plus a comparison against tiktoken('gpt2') or minbpe output on a fixed input."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/07-build-gpt-from-scratch",
+      "kind": "code",
+      "missing": "The capstone trains only the GPT-2-style variant (LayerNorm, GELU, learned absolute positions). The assignment's modern stack (RoPE + RMSNorm + SwiGLU causal MHA + weight tying) is never assembled into one trained model: 2.5 implements apply_rope, 2.6 implements RMSNorm/SwiGLU and a 'RoPE-ready' block, but 2.6's MinimalMHA never actually threads the cos/sin caches through its forward, and 2.7 uses wpe. The reader must do the RoPE-into-MHA integration (cache construction per layer, applying after the QKV reshape, handling positions during incremental generation) without a worked reference.",
+      "fix": "Add a 'Modern GPT' section (or appendix) to 2.7 that swaps in RMSNorm, SwiGLUFFN, and RoPE'd attention: build cos/sin once in the model, pass into each block, apply after the (B,nh,T,hd) reshape, keep weight tying, and show the same Tiny Shakespeare run reaching an equal-or-better loss so the reader can verify the integration."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/03-pretraining-objective",
+      "kind": "code",
+      "missing": "Cross-entropy in every training-context code path uses F.cross_entropy. The from-scratch numerically stable version exists only in foundations (1.4 stable log-softmax in torch; 1.6 fused softmax-CE with backward, in NumPy); the loss chapter never shows a from-scratch PyTorch cross_entropy over (B*T, V) logits.",
+      "fix": "Add a short from-scratch `cross_entropy(logits, targets)` (gather of log_softmax via the logsumexp shift trick, ignore_index support) with an allclose check against F.cross_entropy, cross-referencing 1.4."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/07-build-gpt-from-scratch",
+      "kind": "code",
+      "missing": "The training loop has no checkpoint save/resume; 3.12's code is FSDP/DCP-oriented and heavy for the single-GPU assignment scale. A reader building the A1 deliverable ('training loop with checkpointing') must invent the minimal torch.save/load pattern (model + optimizer + step + RNG state) themselves.",
+      "fix": "Add ~15 lines to the 2.7 loop: periodic torch.save of {model_state, optimizer_state, iter_num, config, rng_states} and a resume path that restores all four, with a note that 3.12 covers the distributed version; demonstrate loss continuity across a kill/resume."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/10-lr-schedules-hparams",
+      "kind": "code",
+      "missing": "Gradient clipping is given as the correct formula g <- g*min(1, c/||g||) but the code delegates to nn.utils.clip_grad_norm_; a from-scratch implementation (global norm across all params, then scale) is never shown, though CS336 A1 requires implementing it.",
+      "fix": "Add a 6-line from-scratch clip_grad_norm (sqrt of sum of per-param grad norm squares, in-place scale if above threshold) verified against the torch utility."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "2.1 has a complete runnable BPE trainer/encoder with rank-priority encode ('A naive implementation that scans left-to-right ... will produce different, wrong tokenizations') and GPT-2's exact bytes_to_unicode with asserts (b2u[32]=='Ġ').",
+    "2.1 stops short of an assembled byte-level tokenizer: decode is prose only ('Decoding maps the printable chars back to bytes, then UTF-8-decodes') and the pre-tokenizer regex is described, not printed.",
+    "2.7 is a full nanoGPT: GPTConfig, CausalSelfAttention with both SDPA and manual masked path, weight tying ('self.transformer.wte.weight = self.lm_head.weight'), scaled residual init std=0.02/sqrt(2*n_layer), complete training loop with warmup+cosine get_lr, clip_grad_norm_, weight-decay param groups, and generate() with temperature/top-k/top-p.",
+    "2.7 includes verification: 'the loss starts near ln(65) ~ 4.17 ... A working run drops below ~1.5 within a couple thousand steps' and the off-by-one/leaked-causal-mask pitfall box.",
+    "2.5 implements RoPE twice (rotate_half + interleaved reference), with a runnable numerical proof of the relative-position property (assert torch.allclose(lhs, rhs)).",
+    "2.6 implements RMSNorm and SwiGLUFFN exactly (F.silu(w_gate(x)) * w_up(x) -> w_down), with a worked LayerNorm-vs-RMSNorm numeric example.",
+    "2.6 correctness bug: claims its sanity check prints '~218M parameters per block' for d=4096; the code actually yields ~201.6M, and its 64-multiple rounding gives hidden=10944, not the 11,008 the text asserts.",
+    "3.9 implements AdamW from scratch as a torch Optimizer subclass with decoupled decay (p.mul_(1-lr*wd)), correct bias correction folding, and the claim it 'matches torch.optim.AdamW numerically'; also derives the (1-beta^t) bias factors.",
+    "3.9 gives full resource accounting: '16 bytes per parameter ... optimizer states alone are 84 GB' for 7B.",
+    "3.3 gives the loss/shift/masking machinery (targets=tokens[:,1:], ignore_index=-100, packing boundary masks, z-loss) but always via F.cross_entropy, never from scratch.",
+    "1.6 has fused softmax+CE gradient (p - y) with a central-difference gradient check reaching ~1e-7; 1.4 implements stable_log_softmax/logsumexp with the max-shift trick.",
+    "2.3 implements numerically stable softmax and causal/padding masks in NumPy, including the fully-masked-row NaN pitfall ('use a large negative number, not Python's -inf, in low precision').",
+    "3.10 implements cosine-with-warmup and WSD schedules from scratch, gradient accumulation, and hyperparameter recipes; 3.12 covers full checkpoint state (model, optimizer, scheduler, RNG, dataloader) with code, though FSDP/DCP-oriented."
+  ],
+  "summary": "Coverage of the CS336 A1 surface is strong and mostly buildable-to-reference grade: a runnable BPE trainer with the rank-priority encoding subtlety, a complete nanoGPT capstone (weight tying, scaled init, warmup+cosine, clipping, sampling, expected-loss sanity checks), RoPE with a numerical proof of its relative property, exact RMSNorm/SwiGLU implementations, and a from-scratch AdamW with bias-correction derivation and memory accounting. It falls short of grade 4 on three points: the byte-level BPE deliverable is never assembled end-to-end (no ID-based encode/decode round trip, no printed pre-tokenizer regex, no comparison tests), the modern RoPE+RMSNorm+SwiGLU model is never integrated and trained in one place (the reader must wire RoPE into attention themselves), and cross-entropy in the training context is always F.cross_entropy with the from-scratch version living only in a NumPy foundations chapter. One correctness bug found: chapter 2.6 claims its parameter-count sanity check prints ~218M per Llama-2-7B block when the code produces ~202M, alongside an inconsistent 11,008-vs-10,944 rounding claim. Verdict: a competent reader could produce correct working implementations of all deliverables from the book alone, with moderate assembly effort on the tokenizer and the modern-architecture integration."
+}
