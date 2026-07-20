@@ -34,7 +34,7 @@ Each monthly crawl is published in three complementary formats:
 | **WET** (WARC Encapsulated Text) | Extracted plain text only | Language model training |
 | **WAT** (Web Archive Transformation) | Metadata JSON only (links, language tags, etc.) | Filtering, graph analysis |
 
-For LLM pretraining, WET files are the natural starting point: Common Crawl's crawlers already ran `trafilatura` or a similar extraction tool to strip HTML and produce Unicode text. Each monthly dump produces roughly 20–30 TB of WET files compressed with gzip.
+For LLM pretraining, WET files are the convenient starting point — but with an important caveat. WET text is produced by Common Crawl's *own* basic built-in extractor (historically based on Apache Tika / jsoup, via the `ia-web-commons` library), **not** by a modern main-content extractor like `trafilatura`. That built-in extractor dumps nearly all visible text — including navigation menus, footers, cookie banners, and other boilerplate — and its quality is noticeably lower than modern extractors. This is exactly why the highest-quality pipelines (RefinedWeb, FineWeb, Dolma) *re-extract* text from the raw WARC HTML rather than trusting WET, as the *Extracting Text from WARC* section below shows. Each monthly dump produces roughly 9 TB of WET files compressed with gzip (the raw WARC set for the same crawl is about 90 TB).
 
 A WET record looks like this:
 
@@ -55,6 +55,74 @@ The quick brown fox jumps over the lazy dog. Lorem ipsum ...
 Common Crawl uses Apache Nutch and Heritrix to discover pages. The crawler follows links breadth-first from a seed list of highly-linked root domains. Because it respects `robots.txt` and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is *not* a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and large static-content sites (PDFs, images) are excluded.
 
 This non-uniformity is both a feature and a bug. English Wikipedia is crawled in its entirety every month. Some low-resource languages appear only in a handful of documents. Any downstream model will inherit these imbalances unless they are explicitly corrected through domain up/down-weighting.
+
+### Extracting Text from WARC
+
+WET is convenient, but as noted above its built-in extractor keeps boilerplate and is lower quality than modern tools. The modern pipelines — RefinedWeb, FineWeb, and Dolma — therefore skip WET and re-extract text straight from the raw **WARC** HTML. This is also the first stage of the CS336 data assignment. The recipe: iterate the WARC's HTTP *response* records, decode the HTML payload with the right charset, and run a main-content extractor (`trafilatura` or `resiliparse`) to drop navigation, sidebars, and footers.
+
+```python
+"""
+Extract main-content text from raw Common Crawl WARC files.
+    pip install warcio trafilatura        # portable; what we use here
+    # 10-50x faster alternative for cluster-scale runs:
+    #   pip install fastwarc resiliparse
+"""
+import trafilatura
+from warcio.archiveiterator import ArchiveIterator
+
+
+def extract_text_from_warc(warc_path: str):
+    """Yield (url, main_text) for each HTML response record in a WARC file."""
+    with open(warc_path, "rb") as fh:
+        for record in ArchiveIterator(fh):
+            if record.rec_type != "response":          # skip request/metadata
+                continue
+            ctype = record.http_headers.get_header("Content-Type", "") or ""
+            if "html" not in ctype.lower():             # skip PDFs, images, ...
+                continue
+
+            url = record.rec_headers.get_header("WARC-Target-URI")
+            raw = record.content_stream().read()        # raw HTTP response body
+            html = _decode_html(raw, ctype)
+            if html is None:
+                continue
+
+            # trafilatura strips boilerplate and returns clean main content.
+            text = trafilatura.extract(
+                html,
+                include_comments=False,
+                include_tables=True,
+                favor_precision=True,   # prefer clean text over recall
+            )
+            if text:
+                yield url, text
+
+
+def _decode_html(raw: bytes, content_type: str):
+    """Bytes -> str using the HTTP charset if given, then utf-8, then latin-1."""
+    charset = None
+    lc = content_type.lower()
+    if "charset=" in lc:
+        charset = lc.split("charset=", 1)[1].split(";")[0].strip()
+    for enc in (charset, "utf-8", "latin-1"):
+        if enc:
+            try:
+                return raw.decode(enc)
+            except (LookupError, UnicodeDecodeError):
+                continue
+    return None
+```
+
+**Why bother, if WET already gives you text?** Because the two disagree, and the difference shows up downstream. On the same page, the built-in WET extractor emits the article *plus* the nav menu, the "related stories" rail, and the cookie banner; `trafilatura` on the WARC HTML emits just the article body:
+
+| Extractor | What you get on a typical news page | Boilerplate |
+|-----------|-------------------------------------|-------------|
+| CC WET (built-in) | article body + nav + footer + "related" + cookie notice | High |
+| `trafilatura` on WARC | article body only | Low |
+
+FineWeb's ablations found that training on text re-extracted from WARC with `trafilatura` measurably beat training on the WET text for the same pages — which is why FineWeb (and RefinedWeb before it) never trains on WET at all.
+
+The cost is compute: reading WET is nearly free, whereas WARC re-extraction parses full HTML for every page. On a **laptop/CPU**, `warcio` + `trafilatura` handles roughly 50–200 pages/sec/core — fine for one WARC file (~1 GB, ~30–50k records) as a learning exercise. At **crawl scale** (one monthly snapshot is ~90k WARC files, ~90 TB compressed, ~2.4B pages), switch to `fastwarc` + `resiliparse` (10–50x faster C-backed parsing) and fan out across a cluster with a work queue, one WARC per task — the same embarrassingly parallel pattern used for WET below.
 
 ---
 
@@ -133,7 +201,7 @@ The Pile was one of the first carefully documented, publicly released pretrainin
 
 ### C4 (Raffel et al., T5, 2019)
 
-Colossal Clean Crawled Corpus (C4) is a 750 GB English-only filtered version of a single Common Crawl snapshot. The cleaning pipeline applied heuristic filters: remove lines without terminal punctuation, remove documents under 5 sentences, remove documents containing JavaScript warnings, deduplicate at the 3-gram level. C4 became the standard pretraining corpus for the T5 family and remains a useful ablation baseline.
+Colossal Clean Crawled Corpus (C4) is a 750 GB English-only filtered version of a single Common Crawl snapshot. The cleaning pipeline applied heuristic filters: remove lines without terminal punctuation, remove documents under 5 sentences, remove documents containing JavaScript warnings, and deduplicate at the three-sentence-span level (any span of three consecutive sentences occurring more than once in the corpus was removed). C4 became the standard pretraining corpus for the T5 family and remains a useful ablation baseline.
 
 ### RedPajama (Together AI, 2023)
 
@@ -147,6 +215,17 @@ Dolma is a 3 trillion token open corpus assembled by the Allen Institute for AI 
 - **Taggers**: Dolma attaches Gopher-quality signals, language identification scores, and toxicity scores to every document without removing them — allowing users to filter at different thresholds.
 
 The Dolma toolkit (a separate open-source tool) supports streaming processing of WARC/WET files, deduplication, and mixing — making it the most production-ready open data pipeline as of 2025.
+
+### RefinedWeb (TII, Penedo et al., 2023)
+
+RefinedWeb is the web corpus behind the Falcon models, and the dataset that first demonstrated the thesis FineWeb later scaled: *properly filtered and deduplicated web data alone can match or beat curated multi-source mixtures like The Pile*. It is produced by the **MacroData Refinement (MDR)** pipeline, whose stages are the modern template for web curation:
+
+1. **URL filtering** — a blocklist of adult/spam/low-quality domains plus a URL-word score, applied *before* any expensive processing.
+2. **Text extraction from WARC** — main-content extraction with `trafilatura` directly from the raw HTML (not WET), precisely to avoid the boilerplate that Common Crawl's built-in WET extractor leaves behind.
+3. **Quality filtering** — MassiveText/Gopher-style document heuristics (length, symbol-to-word ratio, repetition, stop-word presence) plus line-level heuristics that strip leftover navigation and boilerplate.
+4. **Deduplication** — both exact (suffix-array substring) and fuzzy (MinHash) dedup, applied aggressively; RefinedWeb found dedup to be one of the single largest quality levers.
+
+The public release is a 600B-token extract of a ~5-trillion-token internal corpus. Its headline result — a model trained on web-only RefinedWeb outperforming one trained on The Pile — reframed the field's assumption that curated corpora were indispensable, and set up FineWeb's 15T-token follow-through a year later.
 
 ### FineWeb (HuggingFace, Penedo et al., 2024)
 
@@ -222,41 +301,70 @@ from tokenizers import Tokenizer  # HuggingFace fast tokenizers
 
 # ── WET record parser ──────────────────────────────────────────────────────
 
+def _iter_wet_records(lines):
+    """
+    Core WET parser over any iterator of text lines.
+
+    Each WET record is a WARC/1.0 record:
+
+        WARC/1.0                     <- record boundary
+        WARC-Type: conversion
+        WARC-Target-URI: <url>
+        ... more headers (Content-Type, Content-Length, ...) ...
+                                     <- ONE blank line ends the header block
+        <body: the record's text payload>
+                                     <- blank line(s), then the next 'WARC/1.0'
+
+    The parser resets ALL per-record state at every 'WARC/1.0' boundary and
+    ignores every header line, so header text (e.g. 'Content-Length: 2048')
+    and the next record's boundary lines can never leak into a body. The
+    first record in a WET file is a 'warcinfo' record with no
+    WARC-Target-URI; it is skipped because it has no URL.
+
+    (Content-Length is ignored in this didactic version; see the production
+    note below for why real pipelines honor it instead.)
+    """
+    url = None
+    in_header = False        # inside the header block of the current record
+    body_lines = []
+    started = False          # have we seen the first 'WARC/1.0' yet?
+
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+
+        if line == "WARC/1.0":
+            # Record boundary: flush the record we just finished ...
+            if started:
+                text = "\n".join(body_lines).strip("\n")
+                if url is not None and text:
+                    yield url, text
+            # ... then reset ALL state for the new record.
+            url = None
+            in_header = True
+            body_lines = []
+            started = True
+            continue
+
+        if in_header:
+            if line == "":
+                in_header = False              # blank line ends the headers
+            elif line.startswith("WARC-Target-URI:"):
+                url = line.split(":", 1)[1].strip()
+            # All other header lines are ignored and never reach body_lines.
+        else:
+            body_lines.append(line)
+
+    # Flush the final record.
+    if started:
+        text = "\n".join(body_lines).strip("\n")
+        if url is not None and text:
+            yield url, text
+
+
 def parse_wet_records(filepath: str):
-    """
-    Yield (url, text) pairs from a gzipped WET file.
-    WET files use the WARC/1.0 record format.
-    """
+    """Yield (url, text) pairs from a gzipped WET file (WARC/1.0 format)."""
     with gzip.open(filepath, "rt", encoding="utf-8", errors="replace") as fh:
-        current_url = None
-        in_body = False
-        body_lines = []
-
-        for raw_line in fh:
-            line = raw_line.rstrip("\n")
-
-            if line.startswith("WARC-Target-URI:"):
-                # Starting a new record — flush the previous one
-                if current_url and body_lines:
-                    yield current_url, "\n".join(body_lines)
-                current_url = line.split(":", 1)[1].strip()
-                in_body = False
-                body_lines = []
-
-            elif line.startswith("Content-Type: text/plain"):
-                # The next blank line marks the start of the body
-                in_body = True
-
-            elif in_body and line == "" and not body_lines:
-                # Skip the blank separator between headers and body
-                pass
-
-            elif in_body:
-                body_lines.append(line)
-
-        # Don't forget the last record
-        if current_url and body_lines:
-            yield current_url, "\n".join(body_lines)
+        yield from _iter_wet_records(fh)
 
 
 # ── Quality heuristics ─────────────────────────────────────────────────────
@@ -304,17 +412,22 @@ def passes_quality_filter(text: str, min_chars: int = 200) -> bool:
 
 class TokenShard:
     """
-    Accumulates tokenized documents and flushes complete context windows
-    to a binary shard file.  Format: raw int32 token IDs, no padding.
-    The last incomplete context is dropped (never crosses document boundaries
-    in this simplified version — real pipelines often concatenate and then pack).
+    Accumulates tokenized documents and flushes complete rows to a binary
+    shard file. Each row is (ctx_len + 1) int32 tokens: ctx_len inputs plus
+    one extra token for the label shift (target = row[1:]). This matches the
+    reader in ShardedTokenDataset exactly — the practitioner tip below is
+    implemented here, so there is no off-by-one at read time. The final
+    partial row (< ctx_len + 1 tokens) is dropped.
     """
 
     def __init__(self, output_dir: str, shard_size: int, ctx_len: int):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.shard_size = shard_size  # tokens per shard file
         self.ctx_len = ctx_len
+        self.row_len = ctx_len + 1                       # tokens per training row
+        # Round the requested shard size down to a whole number of rows.
+        self.rows_per_shard = max(1, shard_size // self.row_len)
+        self.shard_tokens = self.rows_per_shard * self.row_len
         self._buffer = []
         self._shard_idx = 0
         self._total_tokens = 0
@@ -323,44 +436,31 @@ class TokenShard:
         """Append document tokens followed by an EOS separator."""
         self._buffer.extend(token_ids)
         self._buffer.append(eos_id)
+        while len(self._buffer) >= self.shard_tokens:
+            self._flush_shard(self.shard_tokens)
 
-        # Flush complete shard whenever buffer is large enough
-        while len(self._buffer) >= self.shard_size:
-            self._flush_shard()
-
-    def _flush_shard(self):
-        """Write one shard of exactly self.shard_size tokens."""
-        tokens = self._buffer[:self.shard_size]
-        self._buffer = self._buffer[self.shard_size:]
-
-        # Align to ctx_len boundaries so every row in the shard
-        # is a complete, non-padding context window
-        n_complete = (len(tokens) // self.ctx_len) * self.ctx_len
-        tokens = tokens[:n_complete]
+    def _flush_shard(self, n_tokens: int):
+        """Write one shard containing a whole number of (ctx_len + 1) rows."""
+        n_rows = n_tokens // self.row_len
+        n_keep = n_rows * self.row_len                   # carry remainder forward
+        tokens = self._buffer[:n_keep]
+        self._buffer = self._buffer[n_keep:]
         if not tokens:
             return
-
         arr = np.array(tokens, dtype=np.int32)
         shard_path = self.output_dir / f"shard_{self._shard_idx:05d}.bin"
         arr.tofile(shard_path)
         self._total_tokens += len(tokens)
         self._shard_idx += 1
         print(f"  Wrote {shard_path.name}: {len(tokens):,} tokens "
-              f"({len(tokens)//self.ctx_len:,} contexts)")
+              f"({n_rows:,} rows of {self.row_len})")
 
     def finalize(self):
-        """Flush any remaining full contexts from the buffer."""
-        while len(self._buffer) >= self.shard_size:
-            self._flush_shard()
-        # Write a partial shard if enough for at least one context
-        if len(self._buffer) >= self.ctx_len:
-            n_complete = (len(self._buffer) // self.ctx_len) * self.ctx_len
-            tokens = self._buffer[:n_complete]
-            arr = np.array(tokens, dtype=np.int32)
-            shard_path = self.output_dir / f"shard_{self._shard_idx:05d}.bin"
-            arr.tofile(shard_path)
-            self._total_tokens += len(tokens)
-            print(f"  Wrote final {shard_path.name}: {len(tokens):,} tokens")
+        """Flush any remaining full rows from the buffer."""
+        while len(self._buffer) >= self.shard_tokens:
+            self._flush_shard(self.shard_tokens)
+        if len(self._buffer) >= self.row_len:
+            self._flush_shard(len(self._buffer))
         print(f"\nTotal tokens written: {self._total_tokens:,}")
 
 
@@ -421,6 +521,10 @@ if __name__ == "__main__":
 
 In production, the outer loop over WET files is parallelized — each worker picks a file from an SQS queue or equivalent, processes it, and writes results to a shared output bucket. Workers are stateless, so they are trivially recoverable on node failure.
 
+!!! note "The WET parser above is didactic — use a real WARC reader in production"
+
+    `parse_wet_records` is a hand-rolled line scanner. It is correct for well-formed WET files, but it leans on string heuristics: a body line that happens to equal `WARC/1.0`, a truncated record, or unusual header casing could fool it. Production pipelines never parse WARC/WET by hand — they use `warcio`'s `ArchiveIterator` or the much faster `fastwarc`, both of which honor each record's `Content-Length` and read exactly that many payload bytes, so body content can never be mistaken for a header or a record boundary. To read WET this way, iterate exactly as in the *Extracting Text from WARC* section and keep records with `record.rec_type == "conversion"`.
+
 ### Shard Layout for Streaming Training
 
 Training reads shards in random order to approximate i.i.d. sampling. Each shard is a flat binary file of `int32` token IDs arranged in rows of `context_len` tokens. The training dataloader memory-maps these files:
@@ -453,9 +557,18 @@ class ShardedTokenDataset(IterableDataset):
 
     def __iter__(self):
         shard_order = list(self.shard_paths)
+
+        # Split shards across DataLoader workers. WITHOUT this, every worker
+        # (num_workers > 1) iterates the *entire* shard list, so the DataLoader
+        # yields each example once per worker — silently duplicating your data.
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            shard_order = shard_order[worker_info.id :: worker_info.num_workers]
+            # If num_workers > number of shards, some workers get nothing.
+
         if self.shuffle_shards:
             import random
-            random.shuffle(shard_order)
+            random.shuffle(shard_order)   # seed per (epoch, worker) in real code
 
         for shard_path in shard_order:
             # Memory-map: no data is loaded until a row is accessed
@@ -476,6 +589,83 @@ class ShardedTokenDataset(IterableDataset):
 !!! tip "Practitioner tip"
 
     Write shards with `context_len + 1` tokens per row so that every fetch yields a complete `(input, label)` pair with no off-by-one indexing at read time. This eliminates a common source of subtle bugs when labels wrap across rows.
+
+### Verifying the Pipeline
+
+Before running on real crawl data, sanity-check the three moving parts on tiny synthetic inputs — no tokenizer or network needed. These are deterministic and should print `All pipeline checks passed.`:
+
+```python
+# verify_pipeline.py
+# Deterministic, offline checks for the pipeline above.
+import tempfile
+from pathlib import Path
+
+import numpy as np
+from pipeline import _iter_wet_records, passes_quality_filter, TokenShard
+
+
+def test_parse_wet_records():
+    """2-record WET sample -> exact (url, text); warcinfo skipped, no leakage."""
+    sample = (
+        "WARC/1.0\nWARC-Type: warcinfo\n"
+        "Content-Type: application/warc-fields\nContent-Length: 26\n\n"
+        "isPartOf: CC-MAIN-2024-18\n\n"
+        "WARC/1.0\nWARC-Type: conversion\n"
+        "WARC-Target-URI: https://example.com/a\n"
+        "WARC-Date: 2024-04-15T12:34:56Z\nContent-Type: text/plain\n"
+        "Content-Length: 28\n\nHello world.\nThis is page A.\n\n"
+        "WARC/1.0\nWARC-Type: conversion\n"
+        "WARC-Target-URI: https://example.com/b\n"
+        "Content-Type: text/plain\nContent-Length: 12\n\nPage B only.\n\n"
+    )
+    got = list(_iter_wet_records(sample.splitlines(keepends=True)))
+    assert got == [
+        ("https://example.com/a", "Hello world.\nThis is page A."),
+        ("https://example.com/b", "Page B only."),
+    ], got
+    for _, text in got:                      # no header / boundary leakage
+        assert "Content-Length" not in text and "WARC/1.0" not in text
+    print("test_parse_wet_records: OK (2 docs, warcinfo skipped, no leakage)")
+
+
+def test_quality_filter():
+    good = "\n".join([
+        "The history of computing spans several centuries of innovation.",
+        "Early mechanical calculators gave way to electronic machines.",
+        "Modern processors execute billions of instructions each second.",
+        "Software links these machines into a global information network.",
+        "Researchers keep pushing the boundaries of what is possible.",
+    ])
+    assert passes_quality_filter(good) is True           # clean prose passes
+    assert passes_quality_filter("Hi there.") is False    # too short
+    assert passes_quality_filter("buy " * 300) is False   # repetition + no punct
+    print("test_quality_filter: OK")
+
+
+def test_token_shard():
+    # ctx_len=4 -> row_len=5; shard_size=15 -> 3 rows/shard.
+    # Feed 4+1, 4+1, 4+1 (flush 15), then 7+1; finalize keeps 1 row (5), drops 3.
+    with tempfile.TemporaryDirectory() as d:
+        shard = TokenShard(d, shard_size=15, ctx_len=4)
+        shard.add_tokens([1, 2, 3, 4], eos_id=0)                   # buffer 5
+        shard.add_tokens([5, 6, 7, 8], eos_id=0)                   # buffer 10
+        shard.add_tokens([9, 10, 11, 12], eos_id=0)               # 15 -> flush
+        shard.add_tokens([13, 14, 15, 16, 17, 18, 19], eos_id=0)  # buffer 8
+        shard.finalize()                                          # flush 5, drop 3
+        assert shard._total_tokens == 20, shard._total_tokens
+        rows = np.fromfile(sorted(Path(d).glob("*.bin"))[0], dtype=np.int32)
+        assert len(rows) % 5 == 0                                  # whole rows
+    print("test_token_shard: OK (20 tokens, 3 dropped, rows of ctx_len+1)")
+
+
+if __name__ == "__main__":
+    test_parse_wet_records()
+    test_quality_filter()
+    test_token_shard()
+    print("All pipeline checks passed.")
+```
+
+With a real tokenizer you can add one more round-trip check: take any written row, and confirm `tokenizer.decode(row[:-1].tolist())` reproduces readable text from your corpus — the fastest way to catch a dtype or endianness mismatch in the shard format.
 
 ---
 
@@ -529,7 +719,7 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
 
     **A:** I would structure the work in four phases:
 
-    1. **Source selection and acquisition**: Start with a recent Common Crawl WET snapshot (~25 TB compressed). Add curated high-quality corpora: Wikipedia (up-weight heavily), deduplicated GitHub code filtered for permissive licenses, arXiv LaTeX source, and a cleaned books corpus. Each source is tracked with a provenance record (URL, license tier, crawl date).
+    1. **Source selection and acquisition**: Start with a recent Common Crawl WET snapshot (~9 TB compressed). Add curated high-quality corpora: Wikipedia (up-weight heavily), deduplicated GitHub code filtered for permissive licenses, arXiv LaTeX source, and a cleaned books corpus. Each source is tracked with a provenance record (URL, license tier, crawl date).
 
     2. **Per-document filtering**: Stream each WET file through (a) language ID (fastText; keep only desired languages), (b) Gopher heuristics (word count, symbol ratio, line-ending punctuation, repetition rate), and (c) an optional perplexity filter against a small reference LM. Expect to retain roughly 30–50% of raw Common Crawl by document count but higher by quality-adjusted token value.
 

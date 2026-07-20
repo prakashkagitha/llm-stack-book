@@ -2,7 +2,7 @@
 
 The transformer has dominated language modeling since Vaswani et al. introduced it in 2017. Yet it carries a fundamental cost: the standard attention mechanism scales quadratically in both compute and memory with sequence length. For a 128 K-token context, a naive attention over a single head requires computing an $N \times N$ score matrix with $N = 131072$ — about 128 billion floating-point multiplications before the value aggregation step. At that scale, alternatives to attention stop being academic curiosities and start being engineering necessities.
 
-This chapter is about those alternatives. We will study what makes attention expensive, then tour the major architectural families that attempt to fix the scaling problem: linear attention, structured state space models (SSMs) like S4 and Mamba, recurrent language models like RWKV, and the Retention mechanism behind RetNet. We end by looking at hybrid architectures that mix attention and these alternatives — a pragmatic approach that is finding real adoption in production LLMs.
+This chapter is about those alternatives. We will study what makes attention expensive, then tour the major architectural families that attempt to fix the scaling problem: sparse and sliding-window attention, linear attention, structured state space models (SSMs) like S4 and Mamba, recurrent language models like RWKV, and the Retention mechanism behind RetNet. We end by looking at hybrid architectures that mix attention and these alternatives — a pragmatic approach that is finding real adoption in production LLMs.
 
 Before diving in, note that the upstream machinery these models plug into — tokenization, embeddings, residual-stream design, layer normalization — is shared with standard transformers, covered in [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html), [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html), and [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html). The KV-cache implications of inference are discussed in depth in [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).
 
@@ -29,14 +29,126 @@ At inference, the autoregressive KV cache grows as $O(N \cdot d)$ per layer, whi
 
     Consider a 7B-parameter GPT-style model: $d = 4096$, $H = 32$ heads, $d_k = 128$, 32 layers.
 
-    - At $N = 2048$ (typical pretraining): attention FLOPs per layer $\approx 2 \times 32 \times 2048^2 \times 128 \approx 34$ GFLOPs.
-      Feed-forward FLOPs per layer $\approx 2 \times 2048 \times 4096 \times 16384 \approx 275$ GFLOPs.
-      So attention is ~11% of compute at this length.
+    - At $N = 2048$ (typical pretraining): attention FLOPs per layer count *both* matmuls — $QK^\top$ ($\approx 2 \times 32 \times 2048^2 \times 128 \approx 34$ GFLOPs) and the $PV$ aggregation (another $\approx 34$ GFLOPs), for $\approx 69$ GFLOPs total.
+      Feed-forward FLOPs per layer likewise count both projections — up ($\approx 2 \times 2048 \times 4096 \times 16384 \approx 275$ GFLOPs) and down (another $\approx 275$ GFLOPs), for $\approx 550$ GFLOPs total.
+      So attention is ~11% of compute at this length ($69 / (69 + 550)$).
 
-    - At $N = 131072$ (128 K context): attention FLOPs per layer scale to $\approx 34 \times (131072/2048)^2 \approx 139$ TFLOPs per layer — more than **500×** larger while the MLP cost only grows linearly.
-      Now attention dominates by more than 500× over the MLP at 2048 length.
+    - At $N = 131072$ (128 K context): attention scales as $N^2$, reaching $\approx 69 \times (131072/2048)^2 \approx 281$ TFLOPs per layer, while the MLP grows only linearly to $\approx 550 \times (131072/2048) \approx 35$ TFLOPs per layer.
+      Compared *at the same 128 K length*, attention now costs about **8x** the MLP per layer — and that ratio keeps widening as $N$ grows.
 
     This is why long-context models and streaming applications motivate $O(N)$ alternatives.
+
+---
+
+## Sliding-Window and Sparse Attention
+
+Before abandoning attention entirely, it is worth asking a cheaper question: does every query really need every key? Most linguistic dependencies are local, and the ones that are not tend to be sparse. Two families exploit this — *sliding-window (local)* attention and *sparse* attention — keeping the softmax (and its exact-retrieval sharpness) while cutting the $O(N^2)$ cost to $O(N \cdot W)$ or $O(N \cdot k)$.
+
+### Sliding-Window (Local) Attention
+
+A sliding-window layer restricts each query at position $t$ to attend only to the last $W$ keys, positions $[t - W + 1,\ t]$. The score matrix becomes a *banded* lower-triangular matrix of bandwidth $W$ instead of a full triangle:
+
+- **FLOPs / memory per layer**: $O(N \cdot W \cdot d)$ instead of $O(N^2 d)$ — linear in $N$ for fixed $W$.
+- **KV cache**: bounded at $W$ tokens (a *rolling buffer*), so decode memory is $O(W)$ regardless of how long the sequence gets.
+
+Mistral 7B uses $W = 4096$; Gemma 2/3 and GPT-oss interleave sliding-window layers with occasional full-attention layers (below); Longformer's local branch is the same banded mask.
+
+```python
+import torch
+
+def sliding_window_causal_mask(seq_len: int, window: int, device="cpu") -> torch.Tensor:
+    """
+    Additive attention mask for causal sliding-window attention.
+    Query i may attend key j  iff  j <= i (causal)  AND  i - j < window (local).
+    Returns (seq_len, seq_len) with 0 where allowed and -inf where masked;
+    add it to QK^T / sqrt(d_k) before the softmax.
+    """
+    i = torch.arange(seq_len, device=device)[:, None]   # (N, 1)
+    j = torch.arange(seq_len, device=device)[None, :]    # (1, N)
+    allowed = (j <= i) & (i - j < window)                # banded lower-triangular
+    mask = torch.zeros(seq_len, seq_len, device=device)
+    mask.masked_fill_(~allowed, float("-inf"))
+    return mask
+```
+
+The key trick for real speedups is *block sparsity*: skip any $128 \times 128$ tile of the score matrix that is entirely masked. PyTorch's FlexAttention does this for you from a `mask_mod`:
+
+```python
+# PyTorch 2.5+: FlexAttention skips fully-masked 128x128 blocks for a real speedup.
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+
+def sliding_window_mod(window: int):
+    def mask_mod(b, h, q_idx, kv_idx):
+        causal = kv_idx <= q_idx
+        local  = q_idx - kv_idx < window
+        return causal & local
+    return mask_mod
+
+# Build the block mask once, reuse across the forward pass:
+block_mask = create_block_mask(
+    sliding_window_mod(window=1024),
+    B=None, H=None, Q_LEN=8192, KV_LEN=8192,
+)
+# out = flex_attention(q, k, v, block_mask=block_mask)   # q,k,v: (B, H, N, d_k)
+```
+
+**Rolling-buffer KV cache.** Because a query never looks back further than $W$, the cache only needs to hold the last $W$ keys/values. On each decode step the oldest entry is evicted:
+
+```python
+class RollingKVCache:
+    """
+    Fixed-size KV cache for sliding-window attention. Holds at most `window`
+    tokens, so decode memory is O(window) per layer regardless of sequence length.
+    (Production kernels use an in-place ring buffer; this slice version is clearer.)
+    """
+    def __init__(self, window: int):
+        self.W = window
+        self.k = None   # (B, n_kv_heads, <=W, head_dim)
+        self.v = None
+
+    def update(self, k_t: torch.Tensor, v_t: torch.Tensor):
+        # k_t, v_t: (B, n_kv_heads, 1, head_dim) -- RoPE already applied
+        self.k = k_t if self.k is None else torch.cat([self.k, k_t], dim=2)[:, :, -self.W:]
+        self.v = v_t if self.v is None else torch.cat([self.v, v_t], dim=2)[:, :, -self.W:]
+        return self.k, self.v   # attend the current query over just these
+```
+
+**Receptive field grows with depth.** A single sliding-window layer sees $W$ tokens, but stacking them compounds: layer 2 attends to positions that themselves summarized a window, so after $L$ layers a token's *effective* receptive field is $\sim L \cdot (W - 1)$. Mistral's 32 layers $\times$ 4096 window reach an effective context of $\sim$ 131 K tokens even though no single layer materializes more than a 4096-wide band — the same "information hops one window per layer" argument as a deep stack of convolutions.
+
+**Interleaving global and local layers.** A pure sliding-window stack still cannot do exact long-range retrieval in one hop, so modern models sprinkle in a few *global* (full-attention) layers: Gemma 2 alternates local/global 1:1 ($W = 4096$); Gemma 3 uses 5 local : 1 global ($W = 1024$); GPT-oss alternates banded and dense layers. The global layers restore precise long-range lookup at a small fraction of total attention cost — the same insight that motivates the attention/SSM hybrids later in this chapter.
+
+### Sparse Attention Patterns
+
+Sliding windows are one point in a larger design space of *sparse attention*, where the mask is any fixed or learned subset of key positions:
+
+- **Strided / block-sparse** (Sparse Transformer, Child et al. 2019): combine a local band with a strided pattern (every $s$-th position) so two stacked layers cover the whole sequence; blocks are sized to GPU tiles.
+- **Global + local (+ random)** (Longformer, Beltagy et al. 2020; BigBird, Zaheer et al. 2020): a local window, a handful of *global tokens* that every query attends to (and that attend to everything), plus — in BigBird — a few random keys for expander-graph connectivity. All are $O(N)$.
+- **Learned / trainable sparsity** (2025): DeepSeek **NSA** (Native Sparse Attention) runs three branches per query — a *compressed* branch over coarse block summaries, a *selected* branch over the top-$k$ most relevant fine blocks (chosen by the compressed scores), and a *sliding-window* branch for locality — all trainable end-to-end. **MoBA** (Mixture of Block Attention) routes each query to a small set of key-blocks with a top-$k$ gate, importing the MoE idea into attention.
+
+Why *blocks*? GPU tensor cores compute dense $128 \times 128$ (or larger) tiles efficiently; token-level sparsity wastes them, whereas block granularity keeps every computed tile dense. This is why production sparse attention is almost always block-sparse.
+
+```text
+Legend: X = attention computed,  . = masked/skipped,  G = global token
+
+  Full (causal)      Sliding window W=3     Block-sparse         Global + local
+  k:0 1 2 3 4 5 6    k:0 1 2 3 4 5 6        k:0 1 2 3 4 5 6      k:0 1 2 3 4 5 6
+q0  X . . . . . .    q0  X . . . . . .      q0  X . . . . . .    q0  G . . . . . .
+q1  X X . . . . .    q1  X X . . . . .      q1  X X . . . . .    q1  G X . . . . .
+q2  X X X . . . .    q2  X X X . . . .      q2  X X X . . . .    q2  G X X . . . .
+q3  X X X X . . .    q3  . X X X . . .      q3  X X X X . . .    q3  G X X X . . .
+q4  X X X X X . .    q4  . . X X X . .      q4  X . . X X . .    q4  G . . . X . .
+q5  X X X X X X .    q5  . . . X X X .      q5  X X . X X X .    q5  G . . . X X .
+q6  X X X X X X X    q6  . . . . X X X      q6  X . . X . X X    q6  G . . . X X X
+```
+
+| Pattern | Keys per query | Cost per layer |
+|---------|----------------|----------------|
+| Full (causal) | $\sim N$ | $O(N^2 d)$ |
+| Sliding window $W$ | $W$ | $O(N W d)$ |
+| Block-sparse / NSA (top-$k$ blocks of size $b$) | $\sim k b + W$ | $O(N (k b + W) d)$ |
+| Global $g$ + local $W$ | $g + W$ | $O(N (g + W) d)$ |
+
+Real implementations: FlashAttention ships a `block_mask`/varlen path, PyTorch FlexAttention compiles arbitrary `mask_mod`s into block-sparse kernels, and `state-spaces`/DeepSeek release fused NSA kernels. Citations: Child et al., *Generating Long Sequences with Sparse Transformers* (2019); Beltagy et al., *Longformer* (2020); Zaheer et al., *Big Bird* (2020); Jiang et al., *Mistral 7B* (2023); Yuan et al., *Native Sparse Attention* (2025); Lu et al., *MoBA* (2025).
 
 ---
 
@@ -149,6 +261,97 @@ def linear_attention_recurrent_step(
     return num / den, S, z
 ```
 
+### The Chunked (Causal) Form
+
+The parallel form above computes $\phi(K)^\top V$ once and shares it across all queries — but that is only valid *non-causally*, because a causal model must not let query $t$ see keys with index $> t$. Running the recurrent step token-by-token restores causality but is $O(N)$ *sequential* — a throughput disaster on a GPU. The standard fix, and the algorithmic core reused by GLA, RetNet, and Mamba-2 chunkwise kernels, is to split the sequence into chunks of length $C$: do exact quadratic masked attention *inside* each chunk (a parallel matmul), and carry a running outer-product state $S = \sum \phi(k)\, v^\top$ *between* chunks.
+
+```python
+def linear_attention_chunked(
+    Q: torch.Tensor,  # (B, H, N, d_k)  -- head-major here for clean einsums
+    K: torch.Tensor,  # (B, H, N, d_k)
+    V: torch.Tensor,  # (B, H, N, d_v)
+    chunk_size: int = 64,
+) -> torch.Tensor:
+    """
+    Chunked *causal* linear attention (unnormalized numerator).
+    Assumes N is divisible by chunk_size. Cost: O(N * C * d) intra-chunk
+    matmuls + O((N/C) * d_k * d_v) state carries -- fully parallel within a chunk.
+    Divide by the same scan run with V replaced by ones to get the normalizer.
+    """
+    B, H, N, d_k = Q.shape
+    d_v = V.shape[-1]
+    phi_Q = elu_feature_map(Q)
+    phi_K = elu_feature_map(K)
+    n_chunks = N // chunk_size
+    phi_Q = phi_Q.view(B, H, n_chunks, chunk_size, d_k)
+    phi_K = phi_K.view(B, H, n_chunks, chunk_size, d_k)
+    Vc    = V.view(B, H, n_chunks, chunk_size, d_v)
+
+    mask = torch.tril(torch.ones(chunk_size, chunk_size, device=Q.device))  # intra-chunk causal
+    S = torch.zeros(B, H, d_k, d_v, device=Q.device, dtype=Q.dtype)         # inter-chunk state
+    outs = []
+    for c in range(n_chunks):
+        q, k, v = phi_Q[:, :, c], phi_K[:, :, c], Vc[:, :, c]   # (B, H, C, *)
+        inter = torch.einsum('bhck,bhkv->bhcv', q, S)           # from all previous chunks
+        A     = torch.einsum('bhck,bhdk->bhcd', q, k) * mask    # masked within-chunk scores
+        intra = torch.einsum('bhcd,bhdv->bhcv', A, v)           # within-chunk contribution
+        outs.append(inter + intra)
+        S = S + torch.einsum('bhck,bhcv->bhkv', k, v)           # fold chunk into running state
+    return torch.cat(outs, dim=2)                                # (B, H, N, d_v)
+```
+
+Tuning $C$ trades intra-chunk quadratic work ($O(N C d)$) against the number of sequential state carries ($N / C$); $C \in [64, 256]$ is typical. Use the following checks to convince yourself the three forms agree (all pass):
+
+```python
+if __name__ == "__main__":
+    torch.manual_seed(0)
+
+    # (a) Non-causal parallel form matches an explicit softmax-free reference.
+    B, N, H, d_k, d_v = 2, 6, 2, 4, 5
+    Q = torch.randn(B, N, H, d_k); K = torch.randn(B, N, H, d_k); V = torch.randn(B, N, H, d_v)
+    pQ, pK = elu_feature_map(Q), elu_feature_map(K)
+    scores = torch.einsum('bnhk,bmhk->bhnm', pQ, pK)
+    scores = scores / scores.sum(-1, keepdim=True).clamp(min=1e-6)
+    ref = torch.einsum('bhnm,bmhv->bnhv', scores, V)
+    assert torch.allclose(linear_attention_parallel(Q, K, V, causal=False), ref, atol=1e-5)
+    print("non-causal parallel form matches reference: OK")
+
+    # (b) Recurrent step, rolled over t, reproduces the *causal* output.
+    Sr = torch.zeros(B, H, d_k, d_v); zr = torch.zeros(B, H, d_k); rec = []
+    for t in range(N):
+        y, Sr, zr = linear_attention_recurrent_step(Q[:, t], K[:, t], V[:, t], Sr, zr)
+        rec.append(y)
+    rec = torch.stack(rec, dim=1)   # (B, N, H, d_v)
+
+    def causal_reference(Q, K, V):
+        B, N, H, d_k = Q.shape; d_v = V.shape[-1]
+        pQ, pK = elu_feature_map(Q), elu_feature_map(K)
+        out = torch.zeros(B, N, H, d_v)
+        for t in range(N):
+            s = torch.einsum('bhk,bihk->bih', pQ[:, t], pK[:, :t + 1])   # (B, t+1, H)
+            num = torch.einsum('bih,bihv->bhv', s, V[:, :t + 1])
+            den = s.sum(1).clamp(min=1e-6)                               # (B, H)
+            out[:, t] = num / den.unsqueeze(-1)
+        return out
+    assert torch.allclose(rec, causal_reference(Q, K, V), atol=1e-5)
+    print("recurrent rollout reproduces causal output: OK")
+
+    # (c) Chunked numerator == recurrent (unnormalized) numerator.
+    B, N, H, d_k, d_v = 2, 32, 2, 4, 5
+    Q = torch.randn(B, N, H, d_k); K = torch.randn(B, N, H, d_k); V = torch.randn(B, N, H, d_v)
+    Qh, Kh, Vh = [t.permute(0, 2, 1, 3).contiguous() for t in (Q, K, V)]   # (B, H, N, *)
+    chk = linear_attention_chunked(Qh, Kh, Vh, chunk_size=8)
+    S = torch.zeros(B, H, d_k, d_v); num = []
+    for t in range(N):
+        pk = elu_feature_map(Kh[:, :, t]); pq = elu_feature_map(Qh[:, :, t])
+        S = S + torch.einsum('bhk,bhv->bhkv', pk, Vh[:, :, t])
+        num.append(torch.einsum('bhk,bhkv->bhv', pq, S))
+    assert torch.allclose(chk, torch.stack(num, dim=2), atol=1e-4)
+    print("chunked numerator matches recurrent numerator: OK")
+```
+
+The `fla-org/flash-linear-attention` library implements exactly this chunked recurrence as fused Triton kernels (`chunk_linear_attn`, `chunk_gla`), which is what makes causal linear-attention LMs train at transformer-like throughput.
+
 ---
 
 ## Structured State Space Models: S4
@@ -182,6 +385,20 @@ $$
 And the convolutional kernel is $\bar{K} = (\bar{C}\bar{B},\, \bar{C}\bar{A}\bar{B},\, \bar{C}\bar{A}^2\bar{B},\, \ldots)$, enabling $y = u * \bar{K}$ to be computed with an FFT in $O(N \log N)$.
 
 The HiPPO (High-order Polynomial Projection Operator) initialization of $A$ — specifically the LegS HiPPO matrix — is what makes S4 effective at remembering distant tokens. The eigenvalue structure of the HiPPO-LegS matrix means the state $x_t$ projects the history $u_{\leq t}$ onto Legendre polynomials, giving near-optimal compression of the signal over time.
+
+---
+
+## Convolutional Language Models: H3, Hyena & FlashFFTConv
+
+S4's convolutional view invites a different question than Mamba's: instead of learning a *recurrence*, what if we learn the *long convolution kernel* directly? A branch of the field — largely from Dan Fu, Chris Re, and collaborators — pursued exactly this, and its ideas fed straight into Mamba's design.
+
+- **H3** (Hungry Hungry Hippos; Fu et al., 2023): stacks two SSMs — a *shift* SSM that acts like a local memory and a *diagonal* SSM — with multiplicative gating between them, emulating the compare-then-recall motion that attention performs. H3 closed most of the associative-recall gap that plagued plain S4 and directly motivated Mamba's gated, selective block.
+- **Hyena** (Poli et al., 2023): replaces attention with a *data-controlled long convolution* — an implicit convolution filter parameterized by a small MLP over positional encodings, interleaved with elementwise gating. Because the filter spans the whole sequence, it is evaluated as an FFT convolution in $O(N \log N)$, and matches attention quality at sub-billion-parameter scale.
+- **FlashFFTConv** (Fu et al., 2023): the hardware-aware FFT convolution — the long-convolution counterpart of FlashAttention. It recasts the FFT as a **Monarch** (butterfly) matrix decomposition so the $O(N \log N)$ convolution runs as a short sequence of dense matmuls on tensor cores, kernel-fused to keep intermediates in SRAM. This turns Hyena/H3-style long convolutions from bandwidth-bound into compute-bound and yields large speedups for long filters.
+- **Monarch / butterfly matrices** (Dao et al., 2022): structured sub-quadratic matrices that factor a dense linear map into a few sparse block-diagonal factors. The DFT, Hadamard transform, and many structured mixers are Monarch-expressible, which is precisely what lets FlashFFTConv map the FFT onto tensor cores.
+- **Based** (Arora et al., 2024): a hybrid token mixer that combines a **Taylor-feature-map linear attention** (a 2nd-order Taylor approximation of the softmax, giving a large recurrent state for global recall) with a short **sliding-window attention** branch (for precise local shifting). Based recovers much of the associative-recall quality that pure linear attention loses, at a fraction of the KV-cache memory — an explicit bridge between the linear-attention and sliding-window sections of this chapter.
+
+Citations: Fu et al., *Hungry Hungry Hippos (H3)*, arXiv:2212.14052; Poli et al., *Hyena Hierarchy*, arXiv:2302.10866; Fu et al., *FlashFFTConv*, arXiv:2311.05908; Dao et al., *Monarch: Expressive Structured Matrices*, arXiv:2204.00595; Arora et al., *Based*, arXiv:2402.18668.
 
 ---
 
@@ -301,7 +518,7 @@ class SelectiveSSM(nn.Module):
             # x[:,t]: (B, D)
             h = dA[:, t] * h + dB[:, t] * x[:, t].unsqueeze(-1)
             # y: (B, D) via C projection
-            y = (h * C[:, t].unsqueeze(2)).sum(-1)  # (B, D)
+            y = (h * C[:, t].unsqueeze(1)).sum(-1)  # (B, D)
             ys.append(y)
 
         # Stack and add skip connection
@@ -366,6 +583,113 @@ class MambaBlock(nn.Module):
         return self.out_proj(y)                # (B, L, d_model)
 ```
 
+```python
+# Smoke test: run SelectiveSSM and the full MambaBlock end-to-end, then verify
+# the sequential selective scan against a cumulative-product closed form.
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    B, L, d_model = 2, 16, 32
+    x = torch.randn(B, L, d_model)
+
+    ssm = SelectiveSSM(d_model, d_state=8)       # note d_state != d_model on purpose
+    y = ssm(x)
+    print("SelectiveSSM:", tuple(x.shape), "->", tuple(y.shape))   # (2,16,32) -> (2,16,32)
+    assert y.shape == x.shape
+
+    block = MambaBlock(d_model, d_state=8)
+    y = block(x)
+    print("MambaBlock:  ", tuple(x.shape), "->", tuple(y.shape))    # (2,16,32) -> (2,16,32)
+    assert y.shape == x.shape
+
+    # Selective scan vs closed form:
+    #   h_t = sum_{i<=t} (prod_{j=i+1}^{t} dA_j) * dB_i * x_i,   y_t = sum_n C[t,n] * h[t,n]
+    torch.manual_seed(1)
+    B, L, D, N = 1, 5, 2, 3
+    dA = torch.rand(B, L, D, N) * 0.5 + 0.4      # per-step decays in (0.4, 0.9)
+    dB = torch.randn(B, L, D, N)
+    xin = torch.randn(B, L, D)
+    C = torch.randn(B, L, N)
+
+    # (i) sequential scan -- the exact loop used inside SelectiveSSM.forward
+    h = torch.zeros(B, D, N); seq = []
+    for t in range(L):
+        h = dA[:, t] * h + dB[:, t] * xin[:, t].unsqueeze(-1)
+        seq.append((h * C[:, t].unsqueeze(1)).sum(-1))
+    seq = torch.stack(seq, dim=1)
+
+    # (ii) cumulative-product closed form
+    clo = []
+    for t in range(L):
+        h = torch.zeros(B, D, N)
+        for i in range(t + 1):
+            prod = torch.ones(B, D, N)
+            for j in range(i + 1, t + 1):
+                prod = prod * dA[:, j]
+            h = h + prod * dB[:, i] * xin[:, i].unsqueeze(-1)
+        clo.append((h * C[:, t].unsqueeze(1)).sum(-1))
+    clo = torch.stack(clo, dim=1)
+
+    assert torch.allclose(seq, clo, atol=1e-5)
+    print("selective scan matches cumulative-product closed form: OK")
+```
+
+### Training at Speed: The Parallel (Chunked) Scan
+
+The sequential `for t in range(L)` loop above is *correct*, but it serializes the sequence and is memory-bandwidth-bound — it is to SSMs what naive attention is to transformers. Production kernels replace it with a hardware-aware scan, the SSM counterpart of the FlashAttention story. There are two routes.
+
+**Route 1: the associative (prefix) scan.** The linear recurrence $h_t = a_t\, h_{t-1} + b_t$ (with $a_t = \bar A_t$, $b_t = \bar B_t x_t$) is an *affine map* $h \mapsto a_t h + b_t$, and composition of affine maps is *associative*. Composing an earlier map $(a_e, b_e)$ then a later map $(a_l, b_l)$ gives
+
+$$
+(a_l, b_l) \bullet (a_e, b_e) = (a_l a_e,\ a_l b_e + b_l).
+$$
+
+Because the operator is associative, a work-efficient parallel prefix scan computes *all* prefix states $h_0, \ldots, h_{L-1}$ in $O(\log L)$ sequential steps instead of $O(L)$ — this is exactly what `torch.associative_scan` and Mamba's CUDA `selective_scan` do under the hood.
+
+```python
+import torch
+
+def associative_scan(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    Parallel (Hillis-Steele) inclusive scan of the affine recurrence
+        h_t = a_t * h_{t-1} + b_t,   h_{-1} = 0
+    a, b: (L, ...) with matching trailing shape, e.g. (L, D, N).
+    Runs in O(log L) doubling steps; returns h stacked along dim 0.
+    Combine (earlier=(a_e,b_e) then later=(a_l,b_l)) -> (a_l*a_e, a_l*b_e + b_l).
+    """
+    L = a.shape[0]
+    a = a.clone(); b = b.clone()
+    d = 1
+    while d < L:
+        a_prev, b_prev = a[:-d], b[:-d]        # partials ending d steps earlier
+        a_new, b_new = a.clone(), b.clone()
+        a_new[d:] = a[d:] * a_prev
+        b_new[d:] = a[d:] * b_prev + b[d:]
+        a, b = a_new, b_new
+        d *= 2
+    return b   # h_t == accumulated b_t because h_{-1} = 0
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    L, D, N = 128, 4, 3
+    a = torch.rand(L, D, N) * 0.9              # per-step decays in (0, 0.9)
+    b = torch.randn(L, D, N)
+
+    par = associative_scan(a, b)
+
+    h = torch.zeros(D, N); ref = []            # ground-truth sequential loop
+    for t in range(L):
+        h = a[t] * h + b[t]
+        ref.append(h.clone())
+    ref = torch.stack(ref, dim=0)
+
+    assert torch.allclose(par, ref, atol=1e-4)
+    print("parallel associative scan matches sequential loop: OK")
+```
+
+To drive the selective SSM with it, set `a = dA` and `b = dB * x[..., None]` (both shaped `(L, B, D, N)`), call `associative_scan` over the time axis to get every `h_t` at once, then read out `y_t = (h_t * C_t).sum(-1)`.
+
+**Route 2: the chunkwise (intra-chunk parallel + inter-chunk recurrent) algorithm.** This is what Mamba-2 (SSD) and GLA actually ship, because it maps onto tensor-core matmuls rather than a scalar scan. Split the sequence into chunks of length $C$. *Within* a chunk, materialize the $C \times C$ decay-weighted score matrix and multiply by the chunk's values — a dense masked matmul, identical in shape to `linear_attention_chunked` above but with the data-dependent decay mask $L_{ij} = \prod_{k=j+1}^{i} a_k$ in place of the plain causal mask. *Between* chunks, carry the low-rank state $S \in \mathbb{R}^{d \times N}$ and pass it forward. Intra-chunk work is $O((N/C) \cdot C^2 \cdot d) = O(N C d)$ of tensor-core matmul; inter-chunk work is $O((N/C) \cdot d N)$ of state passing. See `state-spaces/mamba` (`mamba_chunk_scan_combined`) and `fla-org/flash-linear-attention` (`chunk_gla`, `chunk_simple_gla`) for the fused Triton/CUDA implementations.
+
 ### Mamba-2 and the State Space Duality
 
 Mamba-2 (Dao & Gu, 2024) reframes the selective SSM as a special case of **structured matrix multiplication**, revealing a duality between SSMs and linear attention. Specifically, with a scalar $A_t$ (instead of a diagonal matrix), the Mamba-2 selective scan is mathematically equivalent to linear attention with a specific data-dependent decay mask. This insight leads to a cleaner algorithm, better hardware utilization (tiled matrix multiplications instead of a sequential scan), and strong theoretical grounding.
@@ -373,10 +697,10 @@ Mamba-2 (Dao & Gu, 2024) reframes the selective SSM as a special case of **struc
 The key operation in Mamba-2 is the **SSD (State Space Duality) layer**, which computes:
 
 $$
-Y = (L \circ M) V, \quad L_{ij} = C_i^\top h_j \text{ (if using state expansion)}
+Y = \big(L \circ (C B^\top)\big)\, V, \qquad L_{ij} = \begin{cases} \prod_{k=j+1}^{i} a_k & i \geq j \\ 0 & i < j \end{cases}
 $$
 
-where $M$ is a lower-triangular mask with elements $M_{ij} = \prod_{k=j+1}^{i} a_k$ (the cumulative product of scalar decays). This can be computed efficiently using block-diagonal structured matrix multiplications.
+Here $C B^\top$ is the linear-attention score matrix (entry $C_i^\top B_j$), and $L$ is the **1-semiseparable causal decay mask** built from the scalar decays $a_k = \exp(\Delta_k A)$. In words: the SSD layer is *exactly linear attention with a data-dependent multiplicative causal mask* — swap the softmax's normalization for the cumulative-product decays $L_{ij}$ and you recover the selective SSM. In practice $Y$ is computed by a block decomposition of $L$: diagonal blocks are handled by masked intra-chunk matmuls, off-diagonal blocks by low-rank inter-chunk state passing, which is what lets Mamba-2 run on tensor cores.
 
 ---
 
@@ -487,9 +811,12 @@ class RWKVTimeMixing(nn.Module):
             vt = v[:, t]  # (B, C)
 
             # Numerically stable WKV update using log-space
-            qq = torch.maximum(pp + w, kt + u)     # (B, C)
-            a  = torch.exp(pp + w - qq) * aa + torch.exp(kt + u - qq) * vt
-            b  = torch.exp(pp + w - qq) * bb + torch.exp(kt + u - qq)
+            # Output uses the *undecayed* running state a_{t-1}, b_{t-1};
+            # the decay w is applied only in the state update below.
+            # (Matches the displayed WKV recurrence and the official RWKV-4 kernel.)
+            qq = torch.maximum(pp, kt + u)         # (B, C)
+            a  = torch.exp(pp - qq) * aa + torch.exp(kt + u - qq) * vt
+            b  = torch.exp(pp - qq) * bb + torch.exp(kt + u - qq)
             wkv_outputs.append(a / b.clamp(min=1e-8))
 
             # Update state
@@ -512,7 +839,7 @@ RetNet (Sun et al., 2023) proposes **Retention** — a recurrence-free, attentio
 The retention score between query $q_i$ and key $k_j$ is:
 
 $$
-\text{Retention}(Q, K, V) = \left(\sum_{m,n} (Q_m K_n^\top) \gamma^{m-n} \cdot \mathbf{1}_{m \geq n}\right) V
+\text{Retention}(Q, K, V) = \big(Q K^\top \odot D\big)\, V, \qquad D_{mn} = \begin{cases} \gamma^{\,m-n} & m \geq n \\ 0 & m < n \end{cases}
 $$
 
 where $\gamma \in (0, 1)$ is a per-head decay constant (not learned — fixed at training time based on head index). This can equivalently be written in a parallel (training) form as a lower-triangular masked matrix or in a recurrent (inference) form as an $O(d_k \times d_v)$ state matrix updated at each step.
@@ -748,6 +1075,7 @@ As of mid-2026, the field has reached some pragmatic conclusions:
 
     - Standard softmax attention is $O(N^2)$ in both FLOPs and memory, making it a bottleneck for sequences beyond tens of thousands of tokens.
     - Linear attention rewrites the attention computation using a kernel feature map, enabling $O(N)$ parallel training and $O(1)$ per-step inference, at the cost of reduced "focusing" ability.
+    - Sliding-window (local) attention bounds cost at $O(N \cdot W)$ and its KV cache at $W$ tokens; stacking $L$ such layers grows the effective receptive field to $\sim L \cdot W$, and interleaving a few global/full-attention layers (Gemma 2/3, GPT-oss) restores exact long-range retrieval. Block-sparse and learned-sparse patterns (NSA, MoBA) push this further while staying tensor-core friendly.
     - S4 introduced the HiPPO matrix for stable long-range memory via an SSM; Mamba extended this with input-dependent (selective) parameters, allowing the model to filter irrelevant inputs.
     - RWKV achieves RNN-like inference cost with transformer-like training by expressing attention as an exponentially-decayed weighted sum, trainable in parallel via log-space prefix scans.
     - RetNet uses a fixed decay $\gamma$ per head, enabling three equivalent computation forms: parallel (training), recurrent (inference), and chunkwise (balanced).

@@ -437,16 +437,16 @@ Notice that *every* branch maps to a roofline regime: compute-bound (raise the c
 
 !!! example "Worked example: MFU of a concrete training step"
 
-    A 7B model ($N = 6.7\times10^9$) trains on 64 H100s (bf16 peak $\approx 990$ TFLOP/s each). We measure one global step processing a batch of $4{,}096$ sequences $\times\,4{,}096$ tokens $= 1.68\times10^{7}$ tokens in $2.4$ seconds.
+    A 7B model ($N = 6.7\times10^9$) trains on 64 H100s (bf16 peak $\approx 990$ TFLOP/s each). We measure one global step processing a batch of $4{,}096$ sequences $\times\,4{,}096$ tokens $= 1.68\times10^{7}$ tokens in $24$ seconds.
 
-    Throughput: $1.68\times10^{7} / 2.4 \approx 7.0\times10^{6}$ tokens/s.
+    Throughput: $1.68\times10^{7} / 24 \approx 7.0\times10^{5}$ tokens/s.
 
-    Model FLOP/s: $6N \times \text{tok/s} = 6 \times 6.7\times10^{9} \times 7.0\times10^{6} \approx 2.8\times10^{17}$ FLOP/s $= 281$ PFLOP/s.
+    Model FLOP/s: $6N \times \text{tok/s} = 6 \times 6.7\times10^{9} \times 7.0\times10^{5} \approx 2.8\times10^{16}$ FLOP/s $= 28$ PFLOP/s.
 
-    Peak: $64 \times 990\times10^{12} = 6.3\times10^{16}\times ... = 6.34\times10^{16}$? Recompute: $64 \times 990 = 63{,}360$ TFLOP/s $= 6.34\times10^{16}$ FLOP/s $= 63.4$ PFLOP/s.
+    Peak: $64 \times 990$ TFLOP/s $= 63{,}360$ TFLOP/s $= 6.34\times10^{16}$ FLOP/s $= 63.4$ PFLOP/s.
 
     $$
-    \text{MFU} = \frac{281\ \text{PFLOP/s}}{63.4\ \text{PFLOP/s}} \approx 0.44 = 44\%.
+    \text{MFU} = \frac{28\ \text{PFLOP/s}}{63.4\ \text{PFLOP/s}} \approx 0.44 = 44\%.
     $$
 
     A 44% MFU is solidly in the healthy band for a large bf16 run. If we'd measured 22%, the playbook says profile: likely a comms bubble (try better overlap or a different parallelism split, see [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html)) or a memory-bound activation path begging for fusion.

@@ -23,7 +23,9 @@ def load_langid_model(local_path="lid.176.bin"):
     if not pathlib.Path(local_path).exists():
         print(f"Downloading LangID model to {local_path} ...")
         urllib.request.urlretrieve(MODEL_URL, local_path)
-    # IMPORTANT: suppress_stdou=True silences fastText's noisy banner.
+    # fasttext.load_model takes no quiet/suppress argument; silence its noisy
+    # C++ banner by monkeypatching the eprint hook before loading instead.
+    fasttext.FastText.eprint = lambda *args, **kwargs: None
     model = fasttext.load_model(local_path)
     return model
 
@@ -152,16 +154,55 @@ Heuristics filter the worst tail, but they cannot distinguish a mediocre product
 The simplest approach, popularized by the GPT-3 data pipeline, trains a binary classifier to distinguish Wikipedia/Books (positive class) from random CommonCrawl text (negative class), then retains only documents above some score threshold. In practice, n-gram language models (using `KenLM`, for example) work surprisingly well for this: compute the perplexity of a document under a model trained on Wikipedia, and keep only low-perplexity documents.
 
 $$
-\text{score}(d) = \exp\!\left(-\frac{1}{N}\sum_{i=1}^{N}\log P_\theta(w_i \mid w_{<i})\right)^{-1}
+\text{PPL}(d) = \exp\!\left(-\frac{1}{N}\sum_{i=1}^{N}\log P_\theta(w_i \mid w_{<i})\right)
 $$
 
-A lower perplexity means the document resembles Wikipedia-quality text.
+A lower perplexity means the document resembles Wikipedia-quality text, so CCNet-style pipelines keep the documents whose per-language perplexity falls below a percentile threshold (for example, the lowest-perplexity 30%). If you prefer a score where higher is better, use the reciprocal $1/\text{PPL}(d)$ and keep the top percentile instead -- just state the direction explicitly so it matches the threshold logic.
 
 ### Fasttext and Linear Classifiers
 
 For speed at billion-document scale, fastText classifiers (with TF-IDF or hashing bag-of-words features) are common. They run in microseconds per document, enabling an entire CommonCrawl WET dump (on the order of a billion URLs, several hundred GB) to be classified in hours on a single machine.
 
 The `CCNet` pipeline and its successors train a per-language classifier using Wikipedia as the positive signal, then keep documents above a chosen percentile threshold (e.g., keep the top 30% by score). The ROOTS corpus (used for BLOOM) went further, adding domain experts to annotate quality labels.
+
+Here is a compact but complete trainable classifier: Wikipedia paragraphs are the positive class, raw CommonCrawl paragraphs the negative class, and we keep the top percentile by predicted quality on a held-out split (the CCNet recipe). It uses `HashingVectorizer` so there is no vocabulary to store -- fixed memory regardless of corpus size -- with a `LogisticRegression` head; the commented block shows the faster `fasttext.train_supervised` alternative used at billion-document scale.
+
+```python
+from sklearn.feature_extraction.text import HashingVectorizer
+from sklearn.linear_model import LogisticRegression
+import numpy as np
+
+def train_quality_classifier(wiki_docs, crawl_docs, n_features=2**20):
+    # Hashed word 1+2-grams -> no stored vocab, constant memory.
+    vec = HashingVectorizer(n_features=n_features, ngram_range=(1, 2),
+                            alternate_sign=False, norm="l2")
+    X = vec.transform(wiki_docs + crawl_docs)
+    y = np.array([1] * len(wiki_docs) + [0] * len(crawl_docs))
+    clf = LogisticRegression(max_iter=1000, C=1.0).fit(X, y)
+    return vec, clf
+
+def quality_scores(vec, clf, docs):
+    return clf.predict_proba(vec.transform(docs))[:, 1]    # P(quality) in [0, 1]
+
+def pick_threshold(heldout_scores, keep_frac=0.30):
+    # Keep the top `keep_frac` by score: threshold = the (1 - keep_frac) quantile.
+    return float(np.quantile(heldout_scores, 1.0 - keep_frac))
+
+# ---- usage ----
+# vec, clf = train_quality_classifier(wiki_paragraphs, raw_cc_paragraphs)
+# thr = pick_threshold(quality_scores(vec, clf, heldout_docs), keep_frac=0.30)
+# keep = [d for d in corpus if quality_scores(vec, clf, [d])[0] >= thr]  # top 30%
+#
+# fastText alternative (microseconds/doc at billion-doc scale):
+#   with open("train.txt", "w") as f:
+#       for d in wiki_docs:  f.write("__label__hq " + d.replace("\n", " ") + "\n")
+#       for d in crawl_docs: f.write("__label__lq " + d.replace("\n", " ") + "\n")
+#   m = fasttext.train_supervised("train.txt", epoch=5, wordNgrams=2, dim=100)
+#   labels, probs = m.predict(doc, k=2)          # score = P(__label__hq)
+#   p_hq = dict(zip(labels, probs)).get("__label__hq", 0.0)
+```
+
+For an embedding-based classifier -- the FineWeb-Edu recipe, where a strong LLM labels a seed set and a light head learns to reproduce the scores -- see the Ridge-head implementation in [Synthetic Data for Pretraining](../03-pretraining/15-synthetic-data.html). There the `embed_fn` is left abstract; a concrete choice is `sentence-transformers/all-MiniLM-L6-v2` (call `SentenceTransformer("all-MiniLM-L6-v2").encode(list_of_texts)` to get the embedding matrix), while FineWeb-Edu itself embedded with `Snowflake/snowflake-arctic-embed-m` before the Ridge head.
 
 ### Instruction-Following / Reward Model Classifiers
 
@@ -261,6 +302,83 @@ def exact_dedup_sha256(documents: list[str]) -> list[str]:
 
 For billion-document corpora, exact dedup is done with a distributed hash map (e.g., using Apache Spark with `groupByKey` on the hash, then dropping all but one per group) or with a sorted file of `(hash, doc_id)` pairs. The memory overhead is approximately 32 bytes per document for SHA-256 hashes, so 1 billion documents cost about 32 GB of memory — manageable with distributed tools.
 
+## Bloom-Filter Deduplication
+
+SHA-256 exact dedup needs a hash *set* in memory -- 32 bytes per document, so a billion documents cost about 32 GB (above). A **Bloom filter** does the same membership test probabilistically in a fraction of the space. It is a bit array of $m$ bits with $k$ independent hash functions: to insert an item, set the $k$ bits it hashes to; to test membership, check whether all $k$ bits are already set.
+
+The filter has **no false negatives** -- a set bit is never cleared, so a true duplicate is always reported as "seen" -- but a tunable **false-positive** rate. After inserting $n$ items into $m$ bits with $k$ hashes, the probability that a fresh item collides on all $k$ bits is
+
+$$
+p \approx \left(1 - e^{-kn/m}\right)^{k}.
+$$
+
+Minimizing over $k$ gives the optimal sizing
+
+$$
+\frac{m}{n} = -\frac{\ln p}{(\ln 2)^2}, \qquad k = \frac{m}{n}\ln 2.
+$$
+
+For a target $p = 10^{-6}$ this is $m/n = -\ln(10^{-6})/(\ln 2)^2 \approx 28.8$ bits per element and $k \approx 20$ hash functions. For $n = 10^9$ documents that is $2.88 \times 10^{10}$ bits $\approx 3.6$ GB -- versus 32 GB for the full SHA-256 set, roughly a 9x saving. The asymmetry is exactly what dedup wants: a false positive wrongly drops a *unique* document (you lose about 1 in $10^{6}$ unique docs at $p = 10^{-6}$), while a true duplicate is *never* kept. Choose $p$ to bound the unique-document loss you can tolerate.
+
+```python
+import hashlib, math
+
+class BloomFilter:
+    def __init__(self, n_items: int, fp_rate: float = 1e-6):
+        # Optimal sizing (Bloom, 1970):
+        #   m = -n ln p / (ln 2)^2  bits ;  k = (m/n) ln 2  hash functions
+        self.m = max(1, math.ceil(-n_items * math.log(fp_rate) / (math.log(2) ** 2)))
+        self.k = max(1, round((self.m / max(n_items, 1)) * math.log(2)))
+        self.bits = bytearray((self.m + 7) // 8)
+
+    def _indices(self, item: str):
+        # Kirsch-Mitzenmacher double hashing: derive k indices from two 64-bit
+        # halves of one SHA-256 digest. No false negatives are possible.
+        d = hashlib.sha256(item.encode("utf-8")).digest()
+        h1 = int.from_bytes(d[:8], "big")
+        h2 = int.from_bytes(d[8:16], "big") | 1        # keep h2 odd
+        for i in range(self.k):
+            yield (h1 + i * h2) % self.m
+
+    def add(self, item: str) -> None:
+        for idx in self._indices(item):
+            self.bits[idx >> 3] |= (1 << (idx & 7))
+
+    def __contains__(self, item: str) -> bool:
+        return all(self.bits[idx >> 3] & (1 << (idx & 7))
+                   for idx in self._indices(item))
+
+
+def bloom_dedup(documents: list[str]) -> list[str]:
+    """Single-pass streaming dedup in O(m) memory, independent of doc size.
+    No false negatives => a true duplicate is never emitted twice; a false
+    positive (rate ~fp_rate) drops a unique doc. Uses the same whitespace
+    normalization as exact_dedup_sha256 so the two agree on exact duplicates."""
+    bf = BloomFilter(n_items=len(documents), fp_rate=1e-6)
+    out = []
+    for doc in documents:
+        key = " ".join(doc.split())
+        if key in bf:            # almost certainly a duplicate -> skip
+            continue
+        bf.add(key)
+        out.append(doc)
+    return out
+
+
+# Verification: zero false negatives, and empirical FP rate near the target.
+if __name__ == "__main__":
+    bf = BloomFilter(n_items=100_000, fp_rate=1e-3)
+    inserted = {f"doc-{i}" for i in range(100_000)}
+    for s in inserted:
+        bf.add(s)
+    assert all(s in bf for s in inserted)                 # zero false negatives
+    fp = sum((f"absent-{i}" in bf) for i in range(100_000)) / 100_000
+    print(f"k={bf.k}  bits/elt={bf.m/100_000:.2f}  empirical FP={fp:.4f}")
+    # Prints: k=10  bits/elt=14.38  empirical FP=0.0010  (target 0.0010)
+```
+
+This is exactly the mechanism `allenai/dolma` uses (a Rust Bloom filter) for both exact-document and paragraph-level dedup: it streams the corpus once, keeping only a bit array in memory rather than a growing hash set, which is what makes single-machine dedup of trillion-token corpora feasible. The trade-off versus MinHash is that a Bloom filter tests *exact* (normalized) equality -- it replaces the SHA-256 set, not the fuzzy near-dedup that follows.
+
 ## Fuzzy Deduplication: MinHash and LSH
 
 Exact deduplication misses documents that are "almost" the same — two scraped copies of the same news article with slightly different HTML rendering, two forum threads with a shared boilerplate header, or a Wikipedia article and its mirror. For these we need *fuzzy* near-deduplication.
@@ -302,16 +420,20 @@ $$
 This is an S-shaped function: pairs with similarity below a threshold $t^* \approx (1/b)^{1/r}$ rarely become candidates; pairs above rarely miss each other. By choosing $b$ and $r$ you tune the threshold.
 
 !!! example "Worked example: MinHash parameter selection"
-    Suppose we want a near-dedup threshold of $t^* = 0.8$ Jaccard with $k = 128$ hashes.
+    Suppose we want to catch near-duplicates around $0.8$ Jaccard with $k = 128$ hashes, and we will size the bands to sit just under that target.
 
-    Try $b = 16$ bands, $r = 8$ rows each. Then:
+    Try $b = 16$ bands, $r = 8$ rows each ($b \times r = 128$). Then:
 
     $$
-    t^* \approx \left(\frac{1}{b}\right)^{1/r} = \left(\frac{1}{16}\right)^{1/8} = 16^{-0.125} \approx 0.794
+    t^* \approx \left(\frac{1}{b}\right)^{1/r} = \left(\frac{1}{16}\right)^{1/8} = 16^{-1/8} = 2^{-1/2} \approx 0.707
     $$
 
-    - For a pair with $s = 0.80$: $P(\text{candidate}) = 1 - (1 - 0.80^8)^{16} = 1 - (1 - 0.168)^{16} \approx 1 - 0.046 = 0.954$. Nearly all such pairs are detected.
-    - For a pair with $s = 0.50$: $P(\text{candidate}) = 1 - (1 - 0.50^8)^{16} = 1 - (1 - 0.0039)^{16} \approx 0.060$. Only 6% of these become candidates, limiting false-positive work.
+    So $b = 16, r = 8$ actually places the S-curve inflection near $0.71$ Jaccard -- slightly *below* the 0.8 target, not at it. That is a deliberately conservative choice: it turns pairs down to about $0.71$ into candidates, and the exact signature-match verification step (the `est_j >= threshold` check with `threshold = 0.8` in the code below) then discards those that fall short of 0.8. Sizing the bands so the LSH threshold sits just under your true target is standard practice -- you would rather pay to verify a few extra candidates than miss a genuine duplicate.
+
+    - For a pair with $s = 0.80$: $P(\text{candidate}) = 1 - (1 - 0.80^8)^{16} = 1 - (1 - 0.168)^{16} \approx 1 - 0.053 = 0.947$. Nearly all such pairs become candidates.
+    - For a pair with $s = 0.50$: $P(\text{candidate}) = 1 - (1 - 0.50^8)^{16} = 1 - (1 - 0.0039)^{16} \approx 1 - 0.939 = 0.061$. Only ~6% of these reach the verification step, limiting false-positive work.
+
+    If you instead wanted the inflection right at 0.8, pick fewer, longer bands -- e.g. $b = 8, r = 16$ gives $t^* = 8^{-1/16} = 2^{-3/16} \approx 0.878$, catching only very close duplicates. The $(b, r)$ split is the knob that trades recall against verification cost.
 
     With $N = 10^9$ documents, the number of (band, hash-bucket) entries is $N \times b = 1.6 \times 10^{10}$. Collisions in a bucket trigger the expensive Jaccard verification step — but because the threshold is high, the number of buckets with more than one document is small.
 
@@ -369,6 +491,12 @@ def minhash_signature(
     Time: O(|shingles| * num_hashes).  Can be vectorized with NumPy.
     """
     LARGE_PRIME = (1 << 61) - 1
+    # Edge case: a document shorter than the shingle length k (or an empty /
+    # whitespace-only document) produces no shingles. The int(float('inf'))
+    # conversion below would then raise OverflowError, so return a sentinel
+    # signature and let the caller route such docs to exact dedup only.
+    if not shingles:
+        return [-1] * len(hash_params)
     MAX_VAL = float("inf")
     sig = [MAX_VAL] * len(hash_params)
 
@@ -425,6 +553,13 @@ def find_near_duplicates(
     print(f"[1/4] Computing shingles for {len(documents)} documents...")
     shingles_map = {doc_id: get_shingles(text, k=shingle_k)
                     for doc_id, text in documents.items()}
+    # Drop docs too short to yield any shingle (len(text) < shingle_k): they
+    # cannot be fuzzy-deduped and would otherwise crash minhash_signature.
+    # Handle these via exact dedup only.
+    short = [d for d, s in shingles_map.items() if not s]
+    if short:
+        print(f"      skipping {len(short)} doc(s) shorter than k={shingle_k}")
+    shingles_map = {d: s for d, s in shingles_map.items() if s}
 
     print(f"[2/4] Computing MinHash signatures ({num_hashes} hashes)...")
     hash_params = make_hash_functions(num_hashes)
@@ -465,9 +600,34 @@ if __name__ == "__main__":
         "doc5": "The quick brown fox jumps over a lazy dog close to the river bank.",  # near-dup of doc1/doc2
     }
 
-    pairs = find_near_duplicates(docs, num_hashes=64, num_bands=8, threshold=0.5)
+    # r = num_hashes / num_bands = 64 / 16 = 4, so the LSH threshold is
+    # t* = (1/16)^(1/4) = 0.5 -- low enough to also surface doc5 (J ~ 0.6).
+    # With num_bands=8 the threshold is ~0.77 and doc5 would be missed.
+    pairs = find_near_duplicates(docs, num_hashes=64, num_bands=16, threshold=0.5)
     for a, b, j in sorted(pairs, key=lambda x: -x[2]):
         print(f"  {a} <-> {b}  estimated Jaccard = {j:.3f}")
+
+    # ---- Expected output (deterministic: make_hash_functions uses seed=42) ----
+    #   doc1 <-> doc2  estimated Jaccard = 0.938
+    #   doc1 <-> doc5  estimated Jaccard = 0.594
+    #   doc2 <-> doc5  estimated Jaccard = 0.547
+    # doc3 and doc4 share no near-duplicate, so they never appear.
+
+    # ---- Verification: MinHash is an unbiased Jaccard estimator whose standard
+    # error is ~1/sqrt(num_hashes) = 1/sqrt(64) = 0.125. Check the signature
+    # estimate against the exact set Jaccard for the closest pair. ----
+    def exact_jaccard(a: str, b: str, k: int = 5) -> float:
+        sa, sb = get_shingles(a, k), get_shingles(b, k)
+        return len(sa & sb) / len(sa | sb)
+
+    hp = make_hash_functions(64)
+    s1 = minhash_signature(get_shingles(docs["doc1"]), hp)
+    s2 = minhash_signature(get_shingles(docs["doc2"]), hp)
+    est = jaccard_from_sigs(s1, s2)
+    exact = exact_jaccard(docs["doc1"], docs["doc2"])
+    print(f"doc1<->doc2 check: est={est:.3f} exact={exact:.3f} err={abs(est-exact):.3f}")
+    assert abs(est - exact) <= 3 / (64 ** 0.5), "estimate outside 3 standard errors"
+    # Prints: doc1<->doc2 check: est=0.938 exact=0.950 err=0.012
 ```
 
 ## Suffix Arrays for Exact Substring Deduplication
@@ -481,7 +641,7 @@ The canonical tool is the **suffix array** approach used by Lee et al. (2022) in
 3. Use the longest common prefix (LCP) array to identify runs of suffixes sharing a long prefix — these correspond to repeated sequences.
 4. Mark and remove repeated spans.
 
-Building a suffix array over tens of billions of tokens is non-trivial. The SA-IS algorithm runs in $O(n)$ time and $O(n)$ space, but with a large constant. For a 100-billion-token corpus, this requires on the order of 400 GB of RAM (4 bytes per token index). In practice, sharded suffix arrays (one per 10-billion-token shard, then cross-shard matching) are used.
+Building a suffix array over tens of billions of tokens is non-trivial. The SA-IS algorithm runs in $O(n)$ time and $O(n)$ space, but with a large constant. For a 100-billion-token corpus a 32-bit index is not enough: it can address only $2^{32} \approx 4.3$ billion positions, far short of $10^{11}$. You need 8-byte (int64) indices, so the suffix array alone is about $8 \times 10^{11}$ bytes $\approx 800$ GB of RAM -- plus the token stream itself. This is exactly why sharded suffix arrays (one per 10-billion-token shard, then cross-shard matching) are used.
 
 ```text
 Example:
@@ -589,6 +749,124 @@ Deduplication is not just about storage efficiency — it has measurable effects
 
     Final yield: roughly 30% of raw tokens, with substantially higher diversity, lower memorization risk, and honest benchmark evaluations. The yield ratio will vary — older crawls (2014–2018) tend to have more boilerplate; newer crawls have more unique content.
 
+### Measuring the effect: a runnable ablation
+
+The numbers above are quoted from the literature. To *measure* the effect yourself, train two identical small models -- one on raw data, one on filtered+deduped data -- for the **same token budget**, then compare held-out perplexity and a zero-shot benchmark. The harness below reuses the filtering and dedup functions from this chapter to build the two corpora, trains a GPT-2-small (~124M) twice, and reports the deltas.
+
+```python
+# pip install torch transformers datasets
+import math, torch
+from transformers import (GPT2Config, GPT2LMHeadModel, GPT2TokenizerFast,
+                          get_cosine_schedule_with_warmup)
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+tok = GPT2TokenizerFast.from_pretrained("gpt2")
+tok.pad_token = tok.eos_token
+
+def build_model(n_layer=12, n_embd=768, n_head=12):
+    # ~124M GPT-2 small. Shrink (n_layer=4, n_embd=256, n_head=4 -> ~11M)
+    # for a CPU/laptop toy run.
+    cfg = GPT2Config(vocab_size=len(tok), n_positions=1024, n_ctx=1024,
+                     n_embd=n_embd, n_layer=n_layer, n_head=n_head)
+    return GPT2LMHeadModel(cfg).to(DEVICE)
+
+def pack_tokens(docs, block=1024):
+    ids = []
+    for d in docs:
+        ids.extend(tok(d)["input_ids"] + [tok.eos_token_id])
+    n = (len(ids) // block) * block
+    return torch.tensor(ids[:n], dtype=torch.long).view(-1, block)
+
+def train(model, blocks, steps, bs=8, lr=3e-4):
+    model.train()
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.1,
+                            betas=(0.9, 0.95))
+    sched = get_cosine_schedule_with_warmup(opt, int(0.03 * steps), steps)
+    for step in range(steps):
+        idx = torch.randint(0, blocks.size(0), (bs,))
+        batch = blocks[idx].to(DEVICE)
+        loss = model(input_ids=batch, labels=batch).loss   # HF shifts internally
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step(); sched.step(); opt.zero_grad()
+        if step % 500 == 0:
+            print(f"  step {step:6d}  train loss {loss.item():.3f}")
+    return model
+
+@torch.no_grad()
+def heldout_ppl(model, blocks, bs=8):
+    model.eval(); tot, ntok = 0.0, 0
+    for i in range(0, blocks.size(0), bs):
+        batch = blocks[i:i + bs].to(DEVICE)
+        loss = model(input_ids=batch, labels=batch).loss   # mean NLL/token
+        tot += loss.item() * batch.numel(); ntok += batch.numel()
+    return math.exp(tot / ntok)
+
+@torch.no_grad()
+def loglikelihood(model, context, continuation):
+    # sum log P(continuation | context) over continuation tokens
+    ctx = tok(context)["input_ids"]
+    cont = tok(continuation)["input_ids"]
+    ids = torch.tensor([ctx + cont], device=DEVICE)
+    logp = torch.log_softmax(model(ids).logits[0], dim=-1)  # (T, V)
+    total = 0.0
+    for i, tid in enumerate(cont):
+        total += logp[len(ctx) + i - 1, tid].item()        # predicted from prev pos
+    return total, len(cont)
+
+def eval_multiple_choice(model, examples):
+    # examples: [{"ctx": str, "endings": [str, ...], "label": int}, ...]
+    # length-normalized log-likelihood == lm-eval-harness `acc_norm`.
+    correct = 0
+    for ex in examples:
+        best_j, best_norm = -1, -1e30
+        for j, end in enumerate(ex["endings"]):
+            ll, n = loglikelihood(model, ex["ctx"], " " + end)
+            norm = ll / max(n, 1)
+            if norm > best_norm:
+                best_norm, best_j = norm, j
+        correct += (best_j == ex["label"])
+    return correct / len(examples)
+
+def run_ablation(raw_docs, clean_docs, heldout_docs, mc_examples,
+                 steps=4000, bs=8, block=1024):
+    results = {}
+    for name, docs in [("raw", raw_docs), ("filtered+deduped", clean_docs)]:
+        print(f"=== training on {name} ({len(docs)} docs) ===")
+        blocks = pack_tokens(docs, block)
+        model = train(build_model(), blocks, steps=steps, bs=bs)
+        ppl = heldout_ppl(model, pack_tokens(heldout_docs, block), bs=bs)
+        acc = eval_multiple_choice(model, mc_examples)
+        results[name] = (ppl, acc)
+        print(f"  {name}: held-out PPL={ppl:.2f}  acc_norm={acc:.3f}")
+    (p_raw, a_raw), (p_cl, a_cl) = results["raw"], results["filtered+deduped"]
+    print(f"\nDELTA held-out PPL: {p_raw:.2f} -> {p_cl:.2f} "
+          f"({100 * (p_raw - p_cl) / p_raw:+.1f}%)")
+    print(f"DELTA benchmark acc: {a_raw:.3f} -> {a_cl:.3f} "
+          f"({100 * (a_cl - a_raw):+.1f} pts)")
+    return results
+
+# raw_docs   = list of raw crawl strings
+# clean_docs = [d for d in raw_docs if passes_heuristic_filters(d)]
+#              then exact_dedup_sha256(...) then MinHash near-dedup (this chapter)
+# heldout_docs = a clean, deduped, held-out slice NOT in either training set
+# mc_examples: load real benchmarks, e.g.
+#   from datasets import load_dataset
+#   hs = load_dataset("hellaswag", split="validation").select(range(500))
+#   mc = [{"ctx": e["ctx"], "endings": e["endings"], "label": int(e["label"])}
+#         for e in hs]
+# run_ablation(raw_docs, clean_docs, heldout_docs, mc, steps=4000)
+```
+
+**Hardware spectrum and expected magnitudes.**
+
+- *Laptop / CPU toy* (~11M model via `build_model(4, 256, 4)`, `block=256`, `steps=500`, a few tens of MB of text): runs in minutes. The held-out PPL delta is directionally correct but noisy; benchmark accuracy sits at chance (HellaSwag `acc_norm` ~25%, PIQA ~50%) -- too small to move the benchmark, so read the PPL delta only.
+- *Single GPU* (A100/4090, 124M model, `bs=8`, `block=1024`, `steps=122000` ~ 1B tokens, ~7 hours): expect a held-out PPL improvement of roughly **5-15%** for filtered+deduped vs raw; the benchmark move is small and often within noise at this scale, so average over 3 seeds.
+- *8-GPU node* (DDP, 160M model, effective `bs=64`, 5-10B tokens, a few hours): the PPL gap is clear and HellaSwag/PIQA `acc_norm` typically moves **+1-3 points**.
+- *Multi-node* (1B params, 30B+ tokens): this is the DCLM/FineWeb regime where good filtering vs raw CommonCrawl moves an aggregate benchmark suite by **several points** reliably -- the scale at which the published 1.5-2x sample-efficiency and downstream gains show up cleanly.
+
+**Verification -- establish a noise floor first.** Before trusting a raw-vs-clean delta, train two models on the *same* corpus with different seeds; the PPL gap between them is your noise floor. Only a raw-vs-clean delta that exceeds that floor is real. This same-data control is why single-GPU ablations should report a 3-seed mean rather than a single number. The multiple-choice scorer above is the length-normalized log-likelihood metric implemented by [`EleutherAI/lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) (`acc_norm`); for publishable numbers run that harness rather than the toy scorer, which omits its request-batching and prompt templates.
+
 ## Putting It All Together: A Production Pipeline
 
 A production data-cleaning pipeline for pretraining typically runs in several distributed stages. The following pseudocode shows the logical order and the typical tool choices:
@@ -647,7 +925,7 @@ python data_pipeline/07_tokenize.py \
   --shard-size-gb 10
 ```
 
-The total wall-clock time for this pipeline on one full CommonCrawl snapshot (roughly 80 TB of compressed WET files) is on the order of 24–72 hours on a 100-node Spark cluster, with the MinHash dedup stage being the most expensive due to the large number of (band, bucket) groupings.
+The total wall-clock time for this pipeline on one full CommonCrawl snapshot (roughly 9 TB of compressed WET text extracts -- the full WARC set for the same monthly crawl is about 90 TB) is on the order of 24–72 hours on a 100-node Spark cluster, with the MinHash dedup stage being the most expensive due to the large number of (band, bucket) groupings.
 
 For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, arXiv, etc.), each source runs through its own adapted pipeline (e.g., GitHub needs a different toxicity model and no stop-word heuristics), and then cross-source deduplication removes documents that appear in multiple sources before merging.
 

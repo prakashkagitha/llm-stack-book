@@ -210,9 +210,104 @@ if __name__ == "__main__":
 
 The production DDP differs from this toy in important ways — it rebuilds bucket order after the first iteration based on the *observed* backward order, handles unused parameters (the `find_unused_parameters` flag), uses a dedicated CUDA stream for communication, and overlaps the bucket *copy-out* too — but the essence is exactly what's above: hooks fire as grads are produced; full buckets are all-reduced asynchronously; one final wait synchronizes everything.
 
+### Verifying the Toy Against Single-Process Training
+
+A data-parallel loop that runs and prints a falling loss can still be silently wrong — a forgotten parameter that never gets all-reduced drifts independently on each rank and no error is raised. The canonical correctness check is that the implementation reproduces **single-process training on the concatenated batch**: same seed, same data, same result. Because `TinyDDP` uses only generic collectives, we can verify it on a CPU-only laptop with the `gloo` backend — spawn `N` ranks, run them against a single-process reference, and assert two things: every replica stays bit-identical, and the shared result matches the single-process run to floating-point tolerance.
+
+```python
+# verify_tiny_ddp.py -- check TinyDDP == single-process training.
+# Run: python verify_tiny_ddp.py   (spawns 4 gloo ranks on CPU; no GPU needed)
+import os
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from tiny_ddp import TinyDDP           # the class defined above
+
+WORLD, LOCAL_B, STEPS, LR = 4, 8, 5, 0.1
+
+def make_model():
+    torch.manual_seed(0)               # identical init on every rank
+    return nn.Sequential(nn.Linear(32, 64), nn.GELU(), nn.Linear(64, 32))
+
+def make_data():                       # one deterministic global batch per step
+    g = torch.Generator().manual_seed(1234)
+    return torch.randn(STEPS, WORLD * LOCAL_B, 32, generator=g)
+
+def worker(rank):
+    dist.init_process_group("gloo", rank=rank, world_size=WORLD)
+    ddp = TinyDDP(make_model(), bucket_cap_mb=1.0)
+    opt = torch.optim.SGD(ddp.parameters(), lr=LR)   # SGD: linear, exact
+    X = make_data()
+    for step in range(STEPS):
+        shard = X[step, rank * LOCAL_B:(rank + 1) * LOCAL_B]  # this rank's slice
+        loss = ddp(shard).pow(2).mean()
+        opt.zero_grad(set_to_none=True)
+        loss.backward()                              # hooks fire, buckets reduce
+        ddp.finish_gradient_synchronization()        # wait + average
+        if step == 0 and rank == 0:                  # save post-sync grad once
+            torch.save(torch.cat([p.grad.reshape(-1) for p in ddp.parameters()]),
+                       "ddp_grad0.pt")
+        opt.step()
+    # (Invariant 2) every replica must be bit-identical after each step.
+    flat = torch.cat([p.detach().reshape(-1) for p in ddp.parameters()])
+    gathered = [torch.empty_like(flat) for _ in range(WORLD)]
+    dist.all_gather(gathered, flat)
+    for other in gathered:
+        assert torch.equal(flat, other), "replicas diverged -- a grad is unsynced"
+    if rank == 0:
+        torch.save(flat, "ddp_params.pt")
+    dist.destroy_process_group()
+
+def reference():                       # single process, FULL batch = ground truth
+    model = make_model()
+    opt = torch.optim.SGD(model.parameters(), lr=LR)
+    X = make_data()
+    grad0 = None
+    for step in range(STEPS):
+        loss = model(X[step]).pow(2).mean()          # mean over the WHOLE batch
+        opt.zero_grad(set_to_none=True); loss.backward()
+        if step == 0:
+            grad0 = torch.cat([p.grad.reshape(-1) for p in model.parameters()])
+        opt.step()
+    params = torch.cat([p.detach().reshape(-1) for p in model.parameters()])
+    return grad0, params
+
+if __name__ == "__main__":
+    os.environ["MASTER_ADDR"] = "127.0.0.1"; os.environ["MASTER_PORT"] = "29501"
+    mp.spawn(worker, nprocs=WORLD, join=True)
+    ref_grad0, ref_params = reference()
+    ddp_grad0 = torch.load("ddp_grad0.pt")
+    ddp_params = torch.load("ddp_params.pt")
+    dg = (ref_grad0 - ddp_grad0).abs().max().item()
+    dp = (ref_params - ddp_params).abs().max().item()
+    print(f"max grad diff (step 0) = {dg:.2e} | max param diff ({STEPS} steps) = {dp:.2e}")
+    assert torch.allclose(ref_grad0, ddp_grad0, atol=1e-6), "post-sync grads differ"
+    assert torch.allclose(ref_params, ddp_params, atol=1e-5, rtol=1e-4), "DDP != single-process"
+    print("OK: TinyDDP reproduces single-process training on the concatenated batch.")
+```
+
+The two asserts encode the two invariants from earlier. The `all_gather` + `torch.equal` check is **exact** (`atol=0`): all replicas apply the same averaged gradient and the same SGD step, so their parameters must agree bit-for-bit — any drift means a gradient escaped the buckets. The reference comparison uses a small tolerance (`atol=1e-5`): the toy's per-rank mean gradients are all-reduced (summed across ranks in NCCL/gloo ring order) whereas the reference sums the full batch in one pass, and fp32 addition is not associative, so the two agree only up to rounding — this residual is *summation order*, not a logic error. With SGD the trajectory is linear and the difference stays at the `1e-5` floor; had we used Adam the tiny gradient differences would be amplified by the adaptive denominator, so SGD is the right choice for an exactness check. Swap the loss for cross-entropy on token ids and the same harness validates a real training step.
+
 !!! tip "Practitioner tip: the no_sync() context for gradient accumulation"
 
     When doing gradient accumulation (several micro-batches per optimizer step), you do **not** want an all-reduce after every micro-batch — only after the last one. Real DDP provides `model.no_sync()`, a context manager that suppresses the hooks' communication, letting `.grad` accumulate locally. Run the first $k-1$ micro-batches under `no_sync()` and the last one normally. This cuts communication volume by a factor of $k$ at the cost of holding the accumulated gradient locally. Forgetting it is a classic "why is my 4-step accumulation 4× slower than expected" bug.
+
+!!! warning "The toy communicates on every backward (no gradient accumulation)"
+
+    Our `TinyDDP` all-reduces a bucket the instant its gradients are ready, so under gradient accumulation it fires communication on *every* micro-batch — and worse, `_ready_counts` keeps climbing across micro-batches instead of resetting per optimizer step, so a bucket "completes" on micro-batch 1 and its counter then over-increments. Production DDP's `no_sync()` (above) exists precisely to suppress this. The toy equivalent is two lines: add a `self.require_sync = True` flag in `__init__`, and early-return from the hook when it is off so gradients merely accumulate in `.grad`:
+
+    ```python
+    def hook(p):
+        if not self.require_sync:      # accumulate locally, skip all-reduce
+            return
+        bidx = self._param_to_bucket[p]
+        self._ready_counts[bidx] += 1
+        if self._ready_counts[bidx] == len(self._buckets[bidx]):
+            self._all_reduce_bucket(bidx)
+    ```
+
+    Set `ddp.require_sync = False` for the first `k-1` micro-batches of an accumulation window, then set it back to `True` and call `finish_gradient_synchronization()` on the last one. Guarding the whole hook body (not just the communication) is what keeps the counters at zero during the skipped micro-batches so the bucket fires cleanly on the final one. This mirrors `no_sync()` and cuts communication by a factor of `k`.
 
 !!! warning "Common pitfall: DDP with unused parameters"
 
@@ -275,6 +370,149 @@ The step proceeds:
 4. **All-gather** the updated bf16 parameters so every GPU again has the full model for the next forward pass.
 
 Memory per GPU: $2\Psi + 2\Psi + 12\Psi/N$. Communication volume is essentially the same as DDP ($2\Psi$ worth: a reduce-scatter plus an all-gather), so **ZeRO-1 gives a large memory saving for free**.
+
+### A From-Scratch ZeRO-1: Sharding the Optimizer State
+
+DDP earned a from-scratch reimplementation; ZeRO-1 deserves the same. It is only a small step from the DDP loop: keep full parameters and full gradients on every rank, but give each rank the *optimizer state* for only the parameters it owns, and after the step broadcast each owner's freshly-updated parameters back to everyone. The one design choice is how to assign parameters to owners. We use **greedy per-parameter assignment** (largest parameter to the currently least-loaded rank), which balances owned bytes and — unlike slicing one flat buffer at fixed `1/N` boundaries — needs no divisibility between the parameter count and the world size, and gracefully allows a rank to own nothing.
+
+```python
+# tiny_sharded_optim.py -- from-scratch ZeRO-1 (optimizer-state sharding).
+# Run: torchrun --nproc_per_node=4 tiny_sharded_optim.py
+# (uses the gloo backend so it also runs on a CPU-only laptop)
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+
+
+class TinyShardedOptimizer:
+    """
+    ZeRO-1 from scratch. Every rank keeps FULL params and FULL gradients, but
+    stores AdamW optimizer state (exp_avg m + exp_avg_sq v, and -- in a bf16
+    recipe -- an fp32 master weight) for ONLY the parameters it owns. After the
+    step, each owner broadcasts its updated parameters back to all ranks so the
+    replicas are bit-identical again for the next forward pass.
+
+    Ownership is greedy-by-size, so per-rank optimizer-state bytes are balanced
+    even when the parameter count is NOT divisible by the world size (and some
+    rank may legitimately own zero parameters).
+    """
+
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.95), eps=1e-8,
+                 weight_decay=0.0):
+        self.rank = dist.get_rank()
+        self.world_size = dist.get_world_size()
+        self.params = [p for p in params if p.requires_grad]
+
+        # -- Greedy assignment: biggest params first, each to the least-loaded
+        #    rank. Balances owned element counts without any divisibility. -----
+        order = sorted(range(len(self.params)),
+                       key=lambda i: self.params[i].numel(), reverse=True)
+        load = [0] * self.world_size
+        self.owner = [0] * len(self.params)          # owner rank per parameter
+        for i in order:
+            r = min(range(self.world_size), key=lambda r: load[r])
+            self.owner[i] = r
+            load[r] += self.params[i].numel()
+
+        # Build a LOCAL AdamW over just this rank's owned params. A rank that
+        # owns nothing gets no optimizer (guarded in step()).
+        self.owned_idx = [i for i, r in enumerate(self.owner) if r == self.rank]
+        owned = [self.params[i] for i in self.owned_idx]
+        self.local_opt = (torch.optim.AdamW(owned, lr=lr, betas=betas, eps=eps,
+                                            weight_decay=weight_decay)
+                          if owned else None)
+
+    @torch.no_grad()
+    def step(self):
+        # 1. Average gradients across ranks (SUM -> MEAN). ZeRO-1 keeps full
+        #    gradients resident on every rank; only the optimizer STATE is
+        #    sharded. (ZeRO-2 is what additionally frees the non-owned grads.)
+        for p in self.params:
+            if p.grad is None:
+                p.grad = torch.zeros_like(p)
+            dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
+            p.grad /= self.world_size
+
+        # 2. Each rank updates ONLY its owned parameters, touching ONLY its
+        #    shard of optimizer state -- this is the 12*Psi/N memory saving.
+        if self.local_opt is not None:
+            self.local_opt.step()
+
+        # 3. Broadcast each updated parameter from its owner to all ranks so
+        #    every replica is bit-identical again. The canonical ZeRO-1 fuses
+        #    this into one all-gather over a flat buffer; per-owner broadcasts
+        #    are the readable equivalent.
+        for i, p in enumerate(self.params):
+            dist.broadcast(p.data, src=self.owner[i])
+
+    def zero_grad(self, set_to_none=True):
+        for p in self.params:
+            if set_to_none:
+                p.grad = None
+            elif p.grad is not None:
+                p.grad.zero_()
+
+    def owned_state_bytes(self):
+        """Measured bytes of THIS rank's optimizer state (m + v [+ step])."""
+        if self.local_opt is None:
+            return 0
+        total = 0
+        for st in self.local_opt.state.values():
+            for v in st.values():
+                if torch.is_tensor(v):
+                    total += v.numel() * v.element_size()
+        return total
+
+
+# -- Verification: bit-identical to unsharded AdamW, and a memory measurement --
+if __name__ == "__main__":
+    dist.init_process_group(backend="gloo")     # CPU-friendly; use nccl on GPUs
+    rank, world = dist.get_rank(), dist.get_world_size()
+
+    def build():
+        torch.manual_seed(0)                    # identical init on every rank
+        # 3 Linears -> 6 parameter tensors; 6 is NOT divisible by world=4.
+        # dim=257 is deliberately not a multiple of the world size either.
+        return nn.Sequential(nn.Linear(257, 512), nn.GELU(),
+                             nn.Linear(512, 512), nn.GELU(),
+                             nn.Linear(512, 257))
+    m_shard, m_ref = build(), build()           # two identical copies
+
+    sharded = TinyShardedOptimizer(m_shard.parameters(), lr=1e-3,
+                                   betas=(0.9, 0.95), weight_decay=0.0)
+    ref = torch.optim.AdamW(m_ref.parameters(), lr=1e-3,
+                            betas=(0.9, 0.95), weight_decay=0.0)  # explicit wd!
+
+    torch.manual_seed(100 + rank)               # different data per rank
+    for step in range(20):
+        x = torch.randn(16, 257)
+        m_shard(x).pow(2).mean().backward()
+        sharded.step(); sharded.zero_grad()     # ZeRO-1 update + re-broadcast
+        # Unsharded reference: same data, manual all-reduce(mean), full AdamW.
+        loss = m_ref(x).pow(2).mean()
+        ref.zero_grad(set_to_none=True); loss.backward()
+        for p in m_ref.parameters():
+            dist.all_reduce(p.grad, op=dist.ReduceOp.SUM); p.grad /= world
+        ref.step()
+
+    # Bit-identical trajectories: the per-parameter AdamW update is elementwise
+    # and both paths feed it the identical all-reduced gradient, so sharding
+    # WHERE the update runs cannot change the result -- expect exact 0.0.
+    max_diff = max((a - b).abs().max().item()
+                   for a, b in zip(m_shard.parameters(), m_ref.parameters()))
+    if rank == 0:
+        print(f"max|param_sharded - param_unsharded| = {max_diff:.3e}")
+        assert max_diff == 0.0, "ZeRO-1 must match unsharded AdamW exactly"
+
+    # Per-rank memory: optimizer state for OWNED params only.
+    owned = sharded.owned_state_bytes()
+    full = sum(8 * p.numel() for p in m_ref.parameters())   # m + v, fp32
+    print(f"rank {rank}: owns {owned/1e6:.3f} MB optim state vs "
+          f"{full/1e6:.3f} MB unsharded (~{world}x less across the group)")
+    dist.destroy_process_group()
+```
+
+Running this prints `max|...| = 0.000e+00` on rank 0 (the sharded and unsharded parameter trajectories are **bit-identical** after 20 steps) and, per rank, roughly `full / N` bytes of optimizer state. Two accounting notes. First, the assertion is *exact*, not `allclose`: AdamW's update is elementwise per parameter and both paths consume the identical all-reduced gradient, so moving *where* a parameter's update executes changes nothing about the bits it produces (contrast the DDP verification below, where different summation orders force a tolerance). Second, this fp32 toy measures 8 bytes/param of state (`exp_avg` + `exp_avg_sq`, both fp32) because the parameters are already fp32 and torch keeps no separate master copy. The chapter's **12 bytes/param** is the production **bf16-param + fp32-master** recipe: 4 (fp32 master) + 4 (m) + 4 (v). ZeRO-1 shards all of it; only the resident 2 (bf16 param) + 2 (bf16 grad) stay replicated. PyTorch ships this exact idea as `torch.distributed.optim.ZeroRedundancyOptimizer` (`ZeRO`), which wraps any `torch.optim` class and partitions its state across the DP group; DeepSpeed's `zero_optimization: {stage: 1}` is the production reference.
 
 ### ZeRO-2: Also Shard Gradients
 
@@ -464,6 +702,177 @@ A few load-bearing details in that script:
 ### FSDP2: Per-Parameter Sharding with DTensor
 
 The newer **FSDP2** redesigns sharding around per-parameter `DTensor` (distributed tensor) representations instead of the monolithic FlatParameter. Each parameter is individually a sharded `DTensor`, which composes cleanly with tensor parallelism (you can have a parameter that is both TP-sharded along one mesh dimension and FSDP-sharded along another), removes FlatParameter's awkward edge cases around mixed dtypes and frozen parameters, and integrates better with `torch.compile`. The mental model — all-gather a unit's params before compute, free after, reduce-scatter grads — is unchanged; FSDP2 mostly makes the *composition* with other parallelism dimensions (the "$N$-D parallelism" of Chapter 3.6 and 3.7) far cleaner via a unified `DeviceMesh`.
+
+### Putting It Together: A Runnable Distributed `train.py`
+
+The pieces so far live in separate scripts — the DDP mechanics, the FSDP wrap, the checkpoint dance. A real pretraining run wires them into one file that `torchrun` launches identically on 1 GPU, an 8-GPU node, or many nodes. Here is that file: a compact causal GPT, a shard-aware dataloader over pre-tokenized `uint16` `.bin` files (the nanoGPT-style format used throughout Part III), AdamW, a cosine schedule with warmup, gradient clipping, a `--parallel {ddp,fsdp}` switch, and periodic full-state-dict checkpointing. It is the 8-GPU path made buildable without hand-integrating five chapters.
+
+```python
+# train.py -- one torchrun-launchable pretraining loop.
+# 1 GPU:   torchrun --nproc_per_node=1 train.py --data ./tokens --parallel ddp
+# 8 GPUs:  torchrun --nproc_per_node=8 train.py --data ./tokens --parallel fsdp
+# 2 nodes: torchrun --nnodes=2 --node_rank=$RANK --nproc_per_node=8 \
+#                   --rdzv_endpoint=$HEAD:29500 train.py --data ./tokens --parallel fsdp
+import argparse, functools, glob, math, os, time
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.fsdp import (FullyShardedDataParallel as FSDP,
+    MixedPrecision, ShardingStrategy, StateDictType, FullStateDictConfig)
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+
+class Block(nn.Module):                         # one Block == one FSDP unit
+    def __init__(self, d, h):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(d)
+        self.attn = nn.MultiheadAttention(d, h, batch_first=True)
+        self.ln2 = nn.LayerNorm(d)
+        self.mlp = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(), nn.Linear(4 * d, d))
+
+    def forward(self, x, mask):
+        a, _ = self.attn(self.ln1(x), self.ln1(x), self.ln1(x),
+                         attn_mask=mask, need_weights=False)   # causal mask
+        x = x + a
+        return x + self.mlp(self.ln2(x))
+
+
+class GPT(nn.Module):
+    def __init__(self, vocab=50304, d=768, h=12, n_layers=12, ctx=1024):
+        super().__init__()
+        self.ctx = ctx
+        self.tok = nn.Embedding(vocab, d)
+        self.pos = nn.Embedding(ctx, d)
+        self.blocks = nn.ModuleList([Block(d, h) for _ in range(n_layers)])
+        self.lnf = nn.LayerNorm(d)
+        self.head = nn.Linear(d, vocab, bias=False)
+
+    def forward(self, idx):
+        B, T = idx.shape
+        x = self.tok(idx) + self.pos(torch.arange(T, device=idx.device))[None]
+        mask = torch.triu(torch.full((T, T), float("-inf"), device=idx.device), 1)
+        for blk in self.blocks:
+            x = blk(x, mask)
+        return self.head(self.lnf(x))
+
+
+class ShardedTokenLoader:
+    """Reads (ctx+1)-token windows from uint16 .bin shards. All ranks share one
+    RNG stream, then rank r strides its window start by r*(ctx+1), so the global
+    batch is a partition -- no two ranks train on the same token span."""
+    def __init__(self, data_dir, ctx, local_bsz, rank, world, split="train"):
+        self.files = sorted(glob.glob(os.path.join(data_dir, f"{split}_*.bin")))
+        assert self.files, f"no {split}_*.bin shards in {data_dir}"
+        self.ctx, self.bsz, self.rank, self.world = ctx, local_bsz, rank, world
+        self.mm = [np.memmap(f, dtype=np.uint16, mode="r") for f in self.files]
+        self.sizes = [len(m) - (ctx + 1) for m in self.mm]
+        self.g = torch.Generator().manual_seed(1234)     # identical on all ranks
+
+    def batch(self, device):
+        xs, ys = [], []
+        for _ in range(self.bsz):
+            fi = int(torch.randint(len(self.mm), (1,), generator=self.g))
+            base = int(torch.randint(self.sizes[fi], (1,), generator=self.g))
+            off = (base + self.rank * (self.ctx + 1)) % self.sizes[fi]   # disjoint
+            w = torch.from_numpy(self.mm[fi][off:off + self.ctx + 1].astype(np.int64))
+            xs.append(w[:-1]); ys.append(w[1:])
+        x = torch.stack(xs).to(device, non_blocking=True)
+        y = torch.stack(ys).to(device, non_blocking=True)
+        return x, y
+
+
+def lr_at(step, warmup, total, base_lr, min_lr):    # linear warmup + cosine decay
+    if step < warmup:
+        return base_lr * (step + 1) / warmup
+    if step >= total:
+        return min_lr
+    r = (step - warmup) / max(1, total - warmup)
+    return min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * r))
+
+
+def save_checkpoint(model, step, ckpt_dir, rank):
+    """Full (unsharded) state dict gathered on rank 0. For big models prefer a
+    SHARDED_STATE_DICT + torch.distributed.checkpoint (see chapter 3.12)."""
+    path = os.path.join(ckpt_dir, f"step_{step}.pt")
+    if isinstance(model, FSDP):
+        cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
+            sd = model.state_dict()             # all-gathers params to rank 0
+            if rank == 0:
+                torch.save({"model": sd, "step": step}, path)
+    elif rank == 0:                             # DDP: rank 0 holds the full model
+        torch.save({"model": model.module.state_dict(), "step": step}, path)
+    dist.barrier()                              # no rank races ahead of the write
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", required=True)
+    ap.add_argument("--parallel", choices=["ddp", "fsdp"], default="fsdp")
+    ap.add_argument("--steps", type=int, default=2000)
+    ap.add_argument("--warmup", type=int, default=100)
+    ap.add_argument("--local-bsz", type=int, default=8)
+    ap.add_argument("--ctx", type=int, default=1024)
+    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--ckpt-every", type=int, default=500)
+    ap.add_argument("--ckpt-dir", default="./ckpt")
+    args = ap.parse_args()
+
+    dist.init_process_group(backend="nccl")
+    rank, world = dist.get_rank(), dist.get_world_size()
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f"cuda:{local_rank}")
+    torch.manual_seed(0)                        # identical init on every rank
+
+    model = GPT(ctx=args.ctx).to(device)
+    if args.parallel == "ddp":
+        model = DDP(model, device_ids=[local_rank])
+        clip = lambda: nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    else:
+        mp = MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32,
+                            buffer_dtype=torch.bfloat16)
+        model = FSDP(model,
+            auto_wrap_policy=functools.partial(
+                transformer_auto_wrap_policy, transformer_layer_cls={Block}),
+            mixed_precision=mp, sharding_strategy=ShardingStrategy.FULL_SHARD,
+            device_id=device, use_orig_params=True)
+        clip = lambda: model.clip_grad_norm_(1.0)    # sharded-aware global norm
+
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
+                            betas=(0.9, 0.95), weight_decay=0.1)
+    loader = ShardedTokenLoader(args.data, args.ctx, args.local_bsz, rank, world)
+    os.makedirs(args.ckpt_dir, exist_ok=True)
+
+    model.train(); t0 = time.time()
+    for step in range(args.steps):
+        for grp in opt.param_groups:
+            grp["lr"] = lr_at(step, args.warmup, args.steps, args.lr, args.lr * 0.1)
+        x, y = loader.batch(device)
+        loss = nn.functional.cross_entropy(
+            model(x).view(-1, 50304), y.view(-1))
+        opt.zero_grad(set_to_none=True)
+        loss.backward()                         # DDP/FSDP collectives, overlapped
+        clip()
+        opt.step()
+        if rank == 0 and step % 20 == 0:
+            ms = (time.time() - t0) / (step + 1) * 1e3
+            print(f"step {step:5d} | loss {loss.item():.4f} "
+                  f"| lr {opt.param_groups[0]['lr']:.2e} | {ms:.0f} ms/step")
+        if step > 0 and step % args.ckpt_every == 0:
+            save_checkpoint(model, step, args.ckpt_dir, rank)
+
+    save_checkpoint(model, args.steps, args.ckpt_dir, rank)
+    dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+What to expect across hardware. On a **single GPU** (`--parallel ddp`, 124M-param default GPT) this is ordinary training — DDP with `world_size=1` just skips the all-reduce; loss falls from ~11 (ln of vocab) toward ~4-5 on real tokens in a few hundred steps. On an **8-GPU node**, `--parallel fsdp` shards the model across the eight ranks; per-step time is dominated by compute with FSDP's all-gathers hidden behind it on NVLink, and the effective batch is `8 x local_bsz`. Across **2+ nodes**, launch with `--nnodes` and a shared `--rdzv_endpoint`; if you become communication-bound on the inter-node link, switch `ShardingStrategy.FULL_SHARD` to `HYBRID_SHARD` (per the decision guide below). Common failure signatures: a hang at the first backward usually means mismatched world size / an unused parameter (DDP) or an auto-wrap policy that left a parameter unsharded; an immediate OOM on the FSDP path means the *activations* (not the now-sharded model state) overflow — add activation checkpointing as in the FSDP example above. For production-grade checkpointing that also saves optimizer state and writes sharded (no rank-0 memory spike), use `FSDP.optim_state_dict` and `torch.distributed.checkpoint`, developed in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
 ## Choosing and Combining Strategies
 

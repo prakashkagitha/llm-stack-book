@@ -114,10 +114,10 @@ The three ZeRO stages correspond to increasingly aggressive sharding across DP r
 For a model with $P$ parameters stored in fp16 (2 bytes) and Adam optimizer states in fp32:
 
 $$
-\text{Memory per GPU (ZeRO-3)} = \frac{2P + 12P}{\text{DP}} = \frac{14P}{\text{DP}}
+\text{Memory per GPU (ZeRO-3)} = \frac{2P + 2P + 12P}{\text{DP}} = \frac{16P}{\text{DP}}
 $$
 
-The $12P$ comes from fp32 master weights (4), Adam first moment (4), and second moment (4). ZeRO-3 shards all 14 bytes; each DP rank holds $14P / \text{DP}$ bytes of "owned" state plus the activations for its pipeline stage.
+The first $2P$ is the fp16 parameters, the second $2P$ the fp16 gradients, and the $12P$ comes from the fp32 master weights (4), Adam first moment (4), and second moment (4) — the same 16 bytes per parameter tallied in Step 1 below. ZeRO-3 shards all 16 bytes; each DP rank holds $16P / \text{DP}$ bytes of "owned" state plus the activations for its pipeline stage.
 
 ### ZeRO-Offload and ZeRO-Infinity
 
@@ -270,7 +270,7 @@ For PP=4 this means $m \geq 57$ micro-batches, which is achievable with large gl
 Interleaved pipeline schedules (Megatron's virtual pipeline parallelism) split each stage into $v$ chunks, reducing the bubble to:
 
 $$
-\text{bubble fraction (interleaved)} \approx \frac{PP - 1}{PP - 1 + v \cdot m} \approx \frac{1}{v \cdot m}
+\text{bubble fraction (interleaved)} \approx \frac{1}{v} \cdot \frac{PP - 1}{PP - 1 + m} \approx \frac{PP - 1}{v \cdot m}
 $$
 
 at the cost of additional pipeline communication per micro-batch.
@@ -285,13 +285,7 @@ DP is "free" communication if you use ZeRO-1 or ZeRO-2 (the reduce-scatter / all
 
 ### Step 5 — Tune global batch size and gradient accumulation
 
-Global batch size (GBS) drives convergence. Scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)) suggest a rough GBS for Chinchilla-optimal training:
-
-$$
-\text{GBS} \approx \frac{C_{\text{critical}} \times S}{T}
-$$
-
-where $S$ is sequence length and $T$ is vocabulary size — but in practice, GBS values on the order of 1M–4M tokens per step are common for runs above 10B parameters.
+Global batch size (GBS) drives convergence. There is a *critical batch size* $B_{\text{crit}}$ — well approximated by the *gradient noise scale* of McCandlish et al. ([*An Empirical Model of Large-Batch Training*, 2018](https://arxiv.org/abs/1812.06162)) — below which increasing the batch size buys a near-linear reduction in the number of optimizer steps, and above which the returns diminish sharply. $B_{\text{crit}}$ is *not* a function of vocabulary size and has no simple closed form; it grows over the course of training as the loss falls. Rather than a formula, practitioners target empirical global batch sizes on the order of 1M–4M tokens per step for runs above 10B parameters, then tune the learning rate against batch size as described in [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
 
 Given a fixed GBS and a per-GPU micro-batch size (MBS), the number of gradient accumulation steps (GAS) is:
 
@@ -310,7 +304,7 @@ MFU measures what fraction of the GPU's peak throughput is being used for *forwa
 The number of FLOPs per token for a standard decoder-only Transformer is approximately:
 
 $$
-\text{FLOPs/token} \approx 6P + \frac{12 \cdot n_\text{layers} \cdot d_\text{model} \cdot S}{1}
+\text{FLOPs/token} \approx 6P + 12 \cdot n_\text{layers} \cdot d_\text{model} \cdot S
 $$
 
 where the $6P$ term comes from $\sim 2P$ for the forward pass (each parameter participates in roughly 2 multiply-adds) times 3 for the full backward pass, and the second term is the attention quadratic cost (often secondary for moderate sequence lengths).
@@ -337,7 +331,7 @@ $$
 \text{HFU} = \text{MFU} \times \frac{\text{total FLOPs issued}}{\text{model FLOPs}}
 $$
 
-With full activation recomputation, total FLOPs are approximately $4P$ per token (forward × 2 + backward × 2 after recompute), so:
+With full activation recomputation, you pay for an extra forward pass just before each backward, giving forward $2P$ + recomputed forward $2P$ + backward $4P$ = $8P$ per token, so:
 
 $$
 \text{FLOPs/token (with full recompute)} \approx \frac{4}{3} \times 6P = 8P
@@ -349,7 +343,7 @@ HFU ≥ MFU. A good cluster should see HFU of 55–70% on H100s with modern fram
 def compute_mfu(
     model_params: int,        # number of parameters
     tokens_per_second: float, # observed training throughput
-    peak_flops_per_sec: float, # e.g., 3.35e15 for bf16 on H100 SXM5 x 512 GPUs
+    peak_flops_per_sec: float, # e.g., 5.06e17 for dense bf16 on 512 H100 SXM5 GPUs
     n_layers: int = None,
     d_model: int = None,
     seq_len: int = None,
@@ -362,10 +356,11 @@ def compute_mfu(
     """
     flops_per_token = 6 * model_params
 
-    # Attention cost: 4 * n_layers * d_model * seq_len per token
-    # (QK^T and AV matmuls, each 2 * d * S ops per token, times n_layers)
+    # Attention cost (forward + backward): 12 * n_layers * d_model * seq_len per token.
+    # Forward is 4 * d * S per layer (QK^T and AV, each 2 * d * S); x3 for the
+    # backward pass, matching the fwd+bwd convention of the 6P base term.
     if all(v is not None for v in [n_layers, d_model, seq_len]):
-        attn_flops = 4 * n_layers * d_model * seq_len
+        attn_flops = 12 * n_layers * d_model * seq_len
         flops_per_token += attn_flops
 
     achieved_flops = flops_per_token * tokens_per_second
@@ -374,13 +369,15 @@ def compute_mfu(
 
 
 # Example: 70B model, 512 H100 SXM5 GPUs
-# H100 SXM5 bf16 peak: ~1979 TFLOP/s = 1.979e15 FLOP/s per GPU
-H100_BF16_TFLOPS = 1.979e15
+# H100 SXM5 dense bf16 peak: ~989 TFLOP/s = 9.89e14 FLOP/s per GPU.
+# (The 1979 TFLOP/s figure NVIDIA quotes is the 2:4-sparse rate; dense
+#  training runs against half of it.)
+H100_BF16_TFLOPS = 9.89e14
 n_gpus = 512
-peak_cluster_flops = H100_BF16_TFLOPS * n_gpus  # ~1.01e18 FLOP/s
+peak_cluster_flops = H100_BF16_TFLOPS * n_gpus  # ~5.06e17 FLOP/s
 
-# Observed: 7000 tokens/second per GPU = 3.58M tokens/second total
-tokens_per_sec = 7000 * n_gpus
+# Observed: 1200 tokens/second per GPU = 614.4K tokens/second total
+tokens_per_sec = 1200 * n_gpus
 
 mfu = compute_mfu(
     model_params=70e9,
@@ -390,7 +387,7 @@ mfu = compute_mfu(
     d_model=8192,
     seq_len=4096,
 )
-print(f"MFU: {mfu:.2%}")  # typically prints ~42% for a well-configured run
+print(f"MFU: {mfu:.2%}")  # prints ~54.9% (~55%) for a well-configured run, incl. attention term
 ```
 
 !!! example "Worked Example: Memory Budget for a 70B Run"
@@ -415,9 +412,9 @@ print(f"MFU: {mfu:.2%}")  # typically prints ~42% for a well-configured run
 
     **MFU check**:
     - FLOPs per token: $6 \times 70 \times 10^9 = 4.2 \times 10^{11}$
-    - Peak cluster: $1.979 \times 10^{15} \times 512 \approx 1.013 \times 10^{18}$ FLOP/s
-    - Need $\geq 2.4 \times 10^6$ tokens/s for 50% MFU: $2.4 \times 10^6 / 512 \approx 4{,}688$ tokens/s per GPU
-    - A well-tuned 70B run on H100s achieves roughly 5,000–7,000 tokens/s per GPU, corresponding to MFU of 49–66%.
+    - Peak cluster (dense bf16): $9.89 \times 10^{14} \times 512 \approx 5.06 \times 10^{17}$ FLOP/s
+    - Need $\geq 6.0 \times 10^5$ tokens/s cluster-wide for 50% MFU: $6.0 \times 10^5 / 512 \approx 1{,}180$ tokens/s per GPU
+    - A well-tuned 70B run on H100s achieves roughly 850–1,300 tokens/s per GPU, corresponding to MFU of 36–55% against the dense bf16 peak.
 
 ## A Complete Worked Configuration: 70B Pretraining Run
 
@@ -572,7 +569,7 @@ LOG_LINE_RE = re.compile(
     re.DOTALL,
 )
 
-H100_BF16_PEAK_TFLOPS = 1979.0  # bf16 Tensor Core, per GPU
+H100_BF16_PEAK_TFLOPS = 989.0  # dense bf16 Tensor Core, per GPU (1979 is the 2:4-sparse rate)
 MODEL_PARAMS = 70e9
 
 def toks_per_sec_to_mfu(tps_per_gpu: float) -> float:
