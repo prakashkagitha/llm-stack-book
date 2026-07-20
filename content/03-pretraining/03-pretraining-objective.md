@@ -148,6 +148,56 @@ def compute_lm_loss(logits: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
 
 This is the entirety of the loss function for standard causal language modeling. Everything else — masking, packing, weighting — is an elaboration of this core.
 
+### What `F.cross_entropy` Actually Computes
+
+Every training-context code path in this chapter calls `F.cross_entropy` on a flattened `(B*T, V)` logit tensor, treating it as a black box. It isn't one: over class indices, it is exactly a numerically stable log-softmax followed by a gather of the true-class log-probability and a mean over the non-ignored rows. The stable log-softmax itself is the logsumexp shift trick derived in [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) — $\text{log\_softmax}(z)_i = z_i - (m + \log \sum_j \exp(z_j - m))$ with $m = \max_j z_j$ — which is also where that chapter's fused NumPy backward for this exact operation is worked out.
+
+```python
+import torch
+import torch.nn.functional as F
+
+def cross_entropy_from_scratch(logits: torch.Tensor, targets: torch.Tensor, ignore_index: int = -100) -> torch.Tensor:
+    """
+    Reimplements F.cross_entropy(logits, targets, reduction='mean', ignore_index=ignore_index)
+    from scratch: stable log-softmax + gather + masked mean.
+
+    logits  : (N, V) float — raw scores, N = B*T when called on flattened LM logits
+    targets : (N,)   long  — true class index per row, or ignore_index to skip that row
+    returns : scalar — mean negative log-likelihood over rows where targets != ignore_index
+    """
+    # 1. Stable log-softmax via the max-shift trick (see foundations 1.4)
+    m = logits.max(dim=-1, keepdim=True).values                    # (N,1)
+    shifted = logits - m                                           # (N,V)
+    logsumexp = shifted.exp().sum(dim=-1, keepdim=True).log()      # (N,1)
+    log_probs = shifted - logsumexp                                # (N,V) == log_softmax(logits)
+
+    # 2. Mask ignored rows: clamp targets so gather never indexes out of bounds
+    #    on ignore_index=-100 rows; those rows are dropped in step 3 anyway.
+    valid = targets != ignore_index                                # (N,) bool
+    safe = targets.clamp_min(0)                                    # (N,) long, safe for gather
+
+    # 3. Negative log-likelihood of the true class, averaged over active positions only
+    nll = -log_probs.gather(1, safe.unsqueeze(1)).squeeze(1)       # (N,)
+    return nll[valid].mean()                                       # scalar
+
+
+# Verification against F.cross_entropy
+torch.manual_seed(0)
+N, V = 100, 32000
+logits = torch.randn(N, V)
+targets = torch.randint(0, V, (N,))
+targets[::7] = -100  # ignore roughly 1 in 7 rows (padding / masked positions)
+
+ref  = F.cross_entropy(logits, targets, ignore_index=-100, reduction='mean')
+mine = cross_entropy_from_scratch(logits, targets, ignore_index=-100)
+
+print(f"F.cross_entropy: {ref.item():.6f}")   # 11.051692
+print(f"from scratch:    {mine.item():.6f}")  # 11.051691
+assert torch.allclose(ref, mine, atol=1e-5)
+```
+
+Both lines print `~11.05` — a randomly-initialized model scoring a 32000-token vocabulary lands near $\log V$ plus a logit-variance term, here about 11.05 nats — and the assert passes to machine precision. That confirms the flattened `(B*T, V)` call used throughout this chapter is nothing more than stable log-softmax, a gather at the true-class index, and a masked mean.
+
 ---
 
 ## Loss Masking

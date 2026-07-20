@@ -158,7 +158,10 @@ def train_bpe(corpus: str, num_merges: int) -> list[tuple[str, str]]:
         pairs = get_stats(vocab)
         if not pairs:
             break
-        best_pair = max(pairs, key=pairs.get)   # greedy: pick most frequent
+        # Greedy: pick the most frequent pair. Tie-break on the pair itself so the
+        # output is *deterministic* across runs/machines (reproducibility) — this
+        # matches the char-level trainer in the Tokenization chapter.
+        best_pair = max(pairs, key=lambda p: (pairs[p], p))
         vocab = merge_vocab(best_pair, vocab)
         merges.append(best_pair)
         print(f"Merge {i+1:3d}: {best_pair}  (freq={pairs[best_pair]})")
@@ -168,23 +171,35 @@ def train_bpe(corpus: str, num_merges: int) -> list[tuple[str, str]]:
 if __name__ == "__main__":
     corpus = "low lower newest widest"
     merges = train_bpe(corpus, num_merges=10)
-    # Expected first merge: ('e', 's') or ('s', 't') depending on corpus stats
+    # Six pairs tie at freq 2 on this corpus; the deterministic tie-break picks the
+    # lexicographically largest, ('w', 'e'), as the first merge.
 ```
 
 !!! example "Worked example: BPE on a toy corpus"
-    Starting corpus: `"low lower newest widest"` (4 words, 22 characters).
+    Starting corpus: `"low lower newest widest"` (4 words, 20 characters).
 
     Initial vocabulary (character level + `</w>`):
     `l o w </w>`, `l o w e r </w>`, `n e w e s t </w>`, `w i d e s t </w>`
 
-    Step 1 — most frequent pair: `('e', 's')` appears in "newest" and "widest" → freq 2.
-    After merge: `es` is a single symbol. Vocabulary shrinks by 2 entries.
+    Step 1 — count all adjacent pairs. **Six** pairs tie for most frequent, each at freq 2:
+    `('l','o')`, `('o','w')`, `('w','e')`, `('e','s')`, `('s','t')`, `('t','</w>')`. The
+    deterministic tie-break (`key=lambda p: (count, p)`) picks the lexicographically largest
+    pair, `('w','e')`, and merges it into the single symbol `we` (e.g. `n e w e s t </w>`
+    becomes `n e we s t </w>`). Note what does — and does not — change: the word-frequency
+    dict still holds the same 4 word entries. A merge never adds or removes words; it only
+    shortens each affected word's symbol sequence by one and adds one new symbol (`we`) to
+    the token inventory.
 
-    Step 2 — most frequent pair: `('es', 't')` → freq 2. Merge to `est`.
+    Step 2 — with `we` merged, three pairs now tie at freq 2: `('l','o')`, `('s','t')`,
+    `('t','</w>')`. The tie-break again takes the lexicographically largest, `('t','</w>')`,
+    merging it to `t</w>`.
 
-    After 10 merges the vocabulary contains tokens like `low`, `est`, `new`, `widest` —
-    subword units that capture morphological structure. A 50k-merge run on a large corpus
-    produces the GPT-2 tokenizer.
+    Running all 10 steps yields the ordered merge list `('w','e'), ('t','</w>'), ('s','t</w>'),
+    ('l','o'), ('we','st</w>'), ('we','r'), ('wer','</w>'), ('w','i'), ('wi','d'), ('wid','e')`,
+    leaving segmentations such as `lo w </w>`, `lo wer</w>`, `n e west</w>`, `wide st</w>`.
+    Even on this tiny corpus the merges begin recovering subword units (`lo`, `west</w>`,
+    `wide`); on a real corpus of millions of words the same greedy procedure recovers
+    morphologically meaningful pieces, and a 50k-merge run produces the GPT-2 tokenizer.
 
 ---
 

@@ -581,6 +581,43 @@ Autograd inherits the numerical properties of the operations it differentiates. 
 !!! warning "In-place operations and autograd"
     In-place ops (those ending in `_`, like `relu_`, `add_`) can corrupt the computation graph because they overwrite a tensor that a backward function holds a reference to. PyTorch tracks version counters and raises a `RuntimeError: one of the variables needed for gradient computation has been modified by an inplace operation` if you trigger this. The rule of thumb: avoid in-place ops on tensors that `requires_grad=True`. If you need them for memory reasons, ensure they happen outside the part of the graph that needs to be differentiated.
 
+### Localizing NaNs in the Backward Pass: `set_detect_anomaly`
+
+The hardest autograd bug to diagnose is a loss or gradient that becomes NaN or Inf during the *backward* pass while the *forward* pass looked perfectly finite — e.g. an operation whose value is well-defined at a point but whose derivative is not. The backward NaN surfaces far from its cause (in `optimizer.step()`, or as a NaN grad norm in a logging call), so the offending forward op is hidden several layers upstream.
+
+`torch.autograd.set_detect_anomaly(True)` (or the scoped context manager `with torch.autograd.detect_anomaly():`) turns on anomaly detection, which does two things: it checks every op's output for **NaN** (note: it flags NaN, *not* Inf), and — crucially — it records the *forward*-pass Python stack trace for each `Function` node, so that when a backward computes a NaN it raises a `RuntimeError` whose traceback points at the exact forward line that created the offending op.
+
+```python
+import torch
+
+# A forward that is finite at x = 0 but whose *gradient* is not:
+#   d/dx sqrt(x) = 0.5 / sqrt(x)  ->  inf at x = 0; the product rule below then
+#   multiplies that inf by x = 0, so the backward pass hits 0 * inf = nan.
+# (Plain x.sqrt() alone gives an inf grad, which anomaly mode does NOT flag --
+#  it only checks for NaN -- so the product is what triggers the RuntimeError.)
+x = torch.zeros(3, requires_grad=True)
+
+# Without anomaly detection you only see a NaN grad, not WHERE it came from:
+y = (x * x.sqrt()).sum()   # forward: tensor(0.) -- looks fine
+y.backward()
+print(x.grad)              # tensor([nan, nan, nan]) -- silent, no traceback
+
+# With anomaly detection, backward raises AT the offending forward op:
+x = torch.zeros(3, requires_grad=True)
+with torch.autograd.detect_anomaly():
+    y = (x * x.sqrt()).sum()  # anomaly mode stores this line's stack trace
+    y.backward()
+# RuntimeError: Function 'SqrtBackward0' returned nan values in its 0th output.
+# The traceback includes:  "y = (x * x.sqrt()).sum()"  <- the forward line to fix
+```
+
+The fix is typically an epsilon or a clamp on the input to the unstable op — e.g. `x.clamp_min(1e-12).sqrt()`, or adding `eps` inside the op — after which re-running under `detect_anomaly()` no longer raises. The same mechanism catches the more common real-world cause in LLM training: a `log`, `sqrt`, division, or `pow` fed a zero or negative value from an upstream overflow. `set_detect_anomaly(True)` is the global switch you flip once at the top of a debug run; `with torch.autograd.detect_anomaly():` scopes it to a single step.
+
+!!! warning "Anomaly detection is debug-only"
+    Enabling anomaly detection stores a Python stack trace for every op in the forward graph and NaN-checks every intermediate, which can slow training by 10x or more and greatly increases memory and host overhead. Never leave it on in a production or full training run — wrap only the single reproducing step, or gate it behind a `--debug-anomaly` flag, and turn it off (`torch.autograd.set_detect_anomaly(False)`) once the offending op is found.
+
+In a large pretraining run, reach for this at STEP 3 ("isolate the step") of the loss-spike playbook in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html): after rolling back to the pre-spike checkpoint and replaying the exact batch, wrapping that single forward+backward in `detect_anomaly()` pinpoints the op, complementing the forward-hook activation probe used there to find which layer's activations blew up first.
+
 ---
 
 ## Key Takeaways

@@ -113,10 +113,13 @@ def demo_collectives(rank, world_size, device):
     # ── 4. Reduce-Scatter ─────────────────────────────────────────────────────
     # Each rank contributes a buffer of size world_size;
     # rank i receives the sum of element i from all ranks.
-    input_tensor = torch.full((world_size,), float(rank), device=device)
+    input_tensor = torch.arange(world_size, dtype=torch.float32, device=device) + rank
     output_tensor = torch.zeros(1, device=device)
     dist.reduce_scatter(output_tensor, list(input_tensor.split(1)), op=dist.ReduceOp.SUM)
-    # Rank i's output = sum of input[i] from all ranks = rank * world_size
+    # Element i on rank r equals (i + r), so element i summed across all ranks is
+    #   sum over r of (i + r) = world_size*i + world_size*(world_size-1)/2.
+    # Rank i receives element i, so the outputs differ per rank (illustrating the scatter).
+    # For world_size=4: rank 0 -> 6.0, rank 1 -> 10.0, rank 2 -> 14.0, rank 3 -> 18.0.
 
     # ── 5. All-Gather ─────────────────────────────────────────────────────────
     my_chunk = torch.tensor([float(rank)], device=device)
@@ -497,7 +500,7 @@ with profile(
 
     **A:** Gradient buffer size = $70 \times 10^9 \times 2$ bytes $= 140$ GB. For a ring all-reduce across $n = 64$ ranks, the bandwidth term is approximately $\frac{2(n-1)}{n} M \approx 2 \times 140 = 280$ GB of data per rank moved through the slowest link (IB). At 400 Gb/s = 50 GB/s effective, that's $\frac{280}{50} \approx 5.6$ seconds of communication — more than 5× the compute time, so yes, badly communication-bound.
 
-    Remedies in priority order: (1) switch to **ZeRO Stage 1 or 2** (reduce-scatter then all-gather), which reduces peak communication by the same $\sim 2\times$ factor but avoids materializing the full gradient sum everywhere; (2) adopt **tensor parallelism** (TP-4 within node) to shrink the data-parallel world to 16 GPUs, cutting the all-reduce volume by 4×; (3) use **gradient compression** (PowerSGD, Top-K sparsification) if convergence is acceptable; (4) **increase batch size** to reduce the number of all-reduces per unit time.
+    Remedies in priority order — the goal is to cut communication *volume* on the slow inter-node hop, not just memory: (1) adopt **tensor parallelism** (TP-4 within node, over fast NVLink): each data-parallel rank then holds only 1/4 of the parameters, so its gradient buffer shrinks from 140 GB to ~35 GB and the inter-node all-reduce moves ~4x less data per rank (~70 GB instead of ~280 GB), while TP's own all-reduces stay on-node where bandwidth is 10-50x higher; (2) use **hierarchical / hybrid sharding** (e.g., FSDP `HYBRID_SHARD` / HSDP): shard within a node and replicate across nodes, keeping the heavy reduce-scatter and all-gather on NVLink and sending only reduced gradient shards over InfiniBand; (3) apply **gradient compression** (PowerSGD, Top-K sparsification) if convergence is acceptable; (4) **increase per-GPU batch size or use gradient accumulation** to raise the compute-to-communication ratio (more compute per all-reduce). Note that plain **ZeRO Stage 1/2** does *not* fix this bottleneck: its reduce-scatter + all-gather sums to essentially the same total volume as DDP's all-reduce (see [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)) — it removes the memory redundancy of replicated optimizer and gradient state, not the communication.
 
 ## All-to-All and Expert Parallelism
 

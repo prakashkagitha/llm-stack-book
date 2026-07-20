@@ -396,6 +396,17 @@ It is worth stepping back to place these kernels against each other and against 
 
 A few important clarifications:
 
+**xFormers and the lineage of `memory_efficient_attention`.** xFormers is Meta's library of composable attention/kernel building blocks, and its `memory_efficient_attention` was one of the first widely-used fused, tiled attention kernels: it never materializes the full $N \times N$ score matrix, using the same online-softmax-plus-tiling idea as FlashAttention. Its lineage traces to Rabe & Staats's "Self-Attention Does Not Need $O(N^2)$ Memory" (2021) combined with FlashAttention-style IO-aware tiling, and its fast path is a set of CUTLASS-based CUDA C++ kernels (with a fallback Triton/flash path). The API differs from SDPA's layout — `q`/`k`/`v` are shaped `(batch, seqlen, num_heads, head_dim)` rather than `(B, H, N, d)`, and causal masking is passed as a bias object rather than a boolean flag:
+
+```python
+from xformers.ops import memory_efficient_attention, LowerTriangularMask
+
+# q, k, v: (batch, seqlen, num_heads, head_dim)
+out = memory_efficient_attention(q, k, v, attn_bias=LowerTriangularMask())
+```
+
+The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION` backend (`torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION`) descends directly from these xFormers CUTLASS kernels, so when SDPA does not select the `FLASH_ATTENTION` backend, this is often the path it falls back to. Today `memory_efficient_attention` is mostly worth reaching for directly in two cases: on older GPUs where prebuilt `flash-attn` wheels are unavailable or unsupported — e.g., Turing/Volta (sm < 80) — since it has broader architecture/head-dim coverage, and in diffusion stacks, where Hugging Face `diffusers` exposes `pipe.enable_xformers_memory_efficient_attention()` and it long predated SDPA becoming the default. On modern Ampere/Hopper training and LLM inference, prefer `scaled_dot_product_attention` or `flash-attn` directly, which dispatch to the FA2/FA3 kernels documented above.
+
 **Forward vs backward.** All the FA2/FA3 ideas apply to the *forward* pass cleanly. The backward pass is harder: it has more matmuls (five vs two), more intermediate quantities, and a different optimal parallelization (over keys, as noted). FA3's FP8 backward in particular is delicate; many production setups run the forward in FP8 but keep the backward in bf16.
 
 **Decode is a different regime.** During autoregressive *inference decode* the query is a single token ($B_r = 1$), so the $QK^\top$ matmul is a matrix-vector product — memory-bound, not compute-bound. FA2's seqlen parallelism over queries does nothing when there is one query. The right tool is **FlashDecoding**, which parallelizes over the *KV* sequence (split the long KV cache across SMs, each computes a partial softmax, then combine) to keep all SMs busy. This is the same online-softmax combine logic, applied along a different axis. See [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html) and [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).

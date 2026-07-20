@@ -37,7 +37,7 @@ What is the capital of France?<|im_end|>
 Paris.<|im_end|>
 ```
 
-The special tokens `<|im_start|>` and `<|im_end|>` (short for *image marker* in the original GPT-4-V vocabulary, though the name is now purely historical) are added to the base vocabulary during fine-tuning. The role string (`system`, `user`, `assistant`) is ordinary text immediately followed by a newline; it is not itself a special token.
+The special tokens `<|im_start|>` and `<|im_end|>` are added to the base vocabulary during fine-tuning. ChatML — short for *Chat Markup Language* — was introduced by OpenAI alongside the `gpt-3.5-turbo` API in March 2023; the `im` in these tokens stands for *instant message*, i.e. a single chat turn, and has nothing to do with images. The role string (`system`, `user`, `assistant`) is ordinary text immediately followed by a newline; it is not itself a special token.
 
 During generation, the server appends `<|im_start|>assistant\n` after the last user turn and lets the model decode until it emits `<|im_end|>`.
 
@@ -375,6 +375,9 @@ class PackedSample(NamedTuple):
     # position_ids tracks the per-document position so RoPE is applied
     # correctly within each packed document.
     position_ids: torch.Tensor  # (max_length,)
+    # seqlens holds the length of each real (non-pad) document in this bin,
+    # so the collator can build cu_seqlens for Flash Attention's varlen path.
+    seqlens: torch.Tensor  # (num_docs,) int32
 
 PAD_ID = 0   # tokenizer.pad_token_id — used only to fill the last bin
 
@@ -433,7 +436,12 @@ def pack_sequences(
             all_labs = torch.cat([all_labs, torch.full((pad_len,), -100)])
             position_ids = torch.cat([position_ids, torch.zeros(pad_len, dtype=torch.long)])
 
-        packed.append(PackedSample(all_ids, all_labs, position_ids))
+        # Per-document lengths within this bin (real docs only; the trailing
+        # pad region is handled by the collator via max_length - content_len).
+        doc_lens = torch.tensor(
+            [ids.shape[0] for ids, _ in bin_contents], dtype=torch.int32
+        )
+        packed.append(PackedSample(all_ids, all_labs, position_ids, doc_lens))
 
     return packed
 ```
@@ -644,9 +652,30 @@ class ChatMLCollator:
                 max_length=self.max_length,
                 pad_id=self.tokenizer.pad_token_id or 0,
             )
-            batch_ids   = torch.stack([p.input_ids   for p in packed])
-            batch_labs  = torch.stack([p.labels      for p in packed])
-            batch_pos   = torch.stack([p.position_ids for p in packed])
+            batch_ids  = torch.stack([p.input_ids    for p in packed])
+            batch_labs = torch.stack([p.labels       for p in packed])
+            batch_pos  = torch.stack([p.position_ids for p in packed])
+
+            # Build a length-based attention_mask and cu_seqlens over the
+            # flattened (B * max_length,) batch. The trailing pad region of
+            # each row becomes its own segment so offsets sum to max_length.
+            attention_mask = torch.zeros_like(batch_ids)
+            row_seqlens: list[torch.Tensor] = []
+            for r, p in enumerate(packed):
+                content_len = int(p.seqlens.sum())          # real (non-pad) tokens
+                attention_mask[r, :content_len] = 1
+                lens = p.seqlens
+                pad_len = self.max_length - content_len
+                if pad_len > 0:
+                    lens = torch.cat(
+                        [lens, torch.tensor([pad_len], dtype=torch.int32)]
+                    )
+                row_seqlens.append(lens)
+
+            flat_seqlens = torch.cat(row_seqlens)           # (num_segments_total,)
+            cu_seqlens = torch.zeros(flat_seqlens.numel() + 1, dtype=torch.int32)
+            torch.cumsum(flat_seqlens, dim=0, out=cu_seqlens[1:])
+            max_seqlen = int(flat_seqlens.max())
         else:
             # Simple right-padding without packing
             max_len = max(ids.shape[0] for ids, _ in examples)
@@ -661,15 +690,59 @@ class ChatMLCollator:
             # Standard sequential positions (no packing, so no reset needed)
             batch_pos  = torch.arange(max_len).unsqueeze(0).expand(len(examples), -1)
 
-        attention_mask = (batch_ids != (self.tokenizer.pad_token_id or 0)).long()
+            # Length-based attention_mask. Do NOT use (batch_ids != pad_token_id):
+            # when pad_token == eos_token (the Llama-style config from 5.1) that
+            # would also zero out every real EOS / <|im_end|> token.
+            attention_mask = torch.zeros_like(batch_ids)
+            for r, (ids, _) in enumerate(examples):
+                attention_mask[r, : ids.shape[0]] = 1
+            cu_seqlens = None
+            max_seqlen = None
 
-        return {
+        batch = {
             "input_ids":      batch_ids,
             "labels":         batch_labs,
             "attention_mask": attention_mask,
             "position_ids":   batch_pos,
         }
+        # cu_seqlens / max_seqlen drive the flash-attn varlen path (see below)
+        # that keeps attention inside document boundaries. A stock HF model does
+        # not accept these kwargs, so consume them in a patched attention forward
+        # (or a custom Trainer) and pop them before calling model().
+        if self.pack:
+            batch["cu_seqlens"] = cu_seqlens
+            batch["max_seqlen"] = max_seqlen
+        return batch
 ```
+
+!!! warning "A packed `attention_mask` does not stop cross-document leakage; and watch `pad_token == eos_token`"
+    Two easy-to-miss bugs hide in a collator like this one:
+
+    1. **A 2D `attention_mask` cannot enforce block-diagonal attention.** With `pack=True` several documents share one row. A row-level mask (1 for content, 0 for pad) only marks *padding* positions — it still lets document 2's first token attend to document 1's last token. To actually prevent the cross-document leakage described earlier you must feed the `cu_seqlens` built above to Flash Attention's varlen kernel, or materialise a `make_block_diagonal_mask` and pass it as a 4D additive mask. The row-level `attention_mask` and the per-document `position_ids` reset are necessary but **not sufficient** on their own.
+
+    2. **Never derive the mask from `input_ids != pad_token_id`.** Chapter 5.1 sets `tokenizer.pad_token = tokenizer.eos_token` for Llama-style models that ship without a pad token. When `pad_token_id == eos_token_id`, the comparison `(batch_ids != pad_token_id)` also zeroes every *real* end-of-turn token (`<|im_end|>`, `<|eot_id|>`, EOS) — exactly the tokens the model must attend to and learn to emit. Build the mask from known sequence lengths, as done above.
+
+Wire the packed batch into Flash Attention's variable-length kernel inside your (patched) attention forward:
+
+```python
+# q, k, v : (B, L, n_heads, head_dim) for the packed batch. Flatten the (B, L)
+# dims and hand Flash Attention the cu_seqlens the collator computed.
+import flash_attn
+
+B, L, H, D = q.shape
+out = flash_attn.flash_attn_varlen_func(
+    q.reshape(B * L, H, D),
+    k.reshape(B * L, H, D),
+    v.reshape(B * L, H, D),
+    cu_seqlens_q=batch["cu_seqlens"],   # int32, ends at B * max_length
+    cu_seqlens_k=batch["cu_seqlens"],
+    max_seqlen_q=batch["max_seqlen"],
+    max_seqlen_k=batch["max_seqlen"],
+    causal=True,
+)  # attention is now confined to each document; no cross-doc leakage
+```
+
+**Verify it.** With `pack=True`, the offsets and mask must be self-consistent: `assert int(batch["cu_seqlens"][-1]) == batch["input_ids"].numel()` (segments cover every token) and `assert (batch["labels"][batch["attention_mask"] == 0] == -100).all()` (every masked-out position is unsupervised). For the pad==eos trap, build a batch with a tokenizer where `pad_token_id == eos_token_id` and confirm `attention_mask.sum()` equals the number of real tokens — not real-tokens-minus-the-EOS-tokens, which is what the old `(batch_ids != pad_token_id)` mask would have produced.
 
 !!! interview "Interview Corner"
     **Q:** You are fine-tuning a 13B-parameter model on a multi-turn chat dataset with average conversation length of 400 tokens and a context length of 4,096. A colleague suggests just padding everything to 4,096. What is wrong with that approach, and what would you do instead?
@@ -736,7 +809,7 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
 - **HuggingFace `chat_templates` documentation and Jinja2 template examples** — the canonical reference for `apply_chat_template` and per-model template strings. Available in the `transformers` repository under `docs/source/en/chat_templating.md`.
 - **Meta, "Llama 2: Open Foundation and Fine-Tuned Chat Models"** (Touvron et al., 2023) — describes the `[INST]`/`[/INST]` format and its role in RLHF data collection.
 - **Meta, "The Llama 3 Herd of Models"** (Dubey et al., 2024) — introduces the Llama 3 header-token template and discusses multi-turn RLHF data formatting.
-- **OpenAI, "ChatML format"** — the original description of `<|im_start|>`/`<|im_end|>` tokens, described in early GPT-4 system-card documentation.
+- **OpenAI, "ChatML format"** — the original description of `<|im_start|>`/`<|im_end|>` tokens, introduced with the `gpt-3.5-turbo` API in 2023 in OpenAI's `openai-python` ChatML documentation (`chatml.md`).
 - **Krell et al., "Efficient Sequence Packing without Cross-contamination"** (2021) — empirical study on the impact of cross-document attention in packed pretraining sequences, and the efficacy of document-boundary masks.
 - **Tri Dao, "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning"** (2023) — the `flash_attn_varlen_func` API used for packing without explicit mask materialisation.
 - **Zheng et al., "SGLang: Efficient Execution of Structured Language Model Programs"** (2023) — covers structured generation and how tool-call schemas interact with constrained decoding, complementing the template story.

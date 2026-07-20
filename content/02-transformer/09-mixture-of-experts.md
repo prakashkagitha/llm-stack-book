@@ -326,6 +326,101 @@ A few practitioner realities round out the picture. MoE models are **less FLOP-e
 !!! tip "Practitioner tip: watch the routing entropy, not just the loss"
     The single most useful MoE training diagnostic is the **per-expert token distribution** (and its entropy) over time. Healthy training shows it rising toward uniform early and then *gently* specializing — not collapsing to a spike. A sudden drop in routing entropy, or one expert's load climbing past ~2–3× the mean, is an early warning of collapse that precedes any loss spike. Log it every few steps; it will save you a wasted multi-day run.
 
+### Instrumenting the tip: an `ExpertLoadMonitor`
+
+The tip above is only useful if you actually instrument it. Below is a drop-in `ExpertLoadMonitor` that mirrors the `TrainingMonitor` pattern from [Training Stability & Loss Spikes](../03-pretraining/11-training-stability.html) — same `log_every` throttling, same `log_step` returning a metrics dict — but computes the three signals that predict MoE collapse before the loss does: normalized router entropy, the per-expert dispatch-fraction histogram, and a starvation alert.
+
+```python
+import math
+import torch
+
+class ExpertLoadMonitor:
+    """
+    Tracks per-expert dispatch load and router entropy across MoE layers.
+    Wire it by having each SparseMoE layer stash its pre-softmax router
+    logits (shape (N, E), N = tokens in the batch, E = n_experts) into a
+    dict keyed by layer name, then call log_step(logits_by_layer) once
+    per training step.
+    """
+    def __init__(self, n_experts: int, k: int, log_every: int = 10,
+                 starve_frac: float = 0.2, patience: int = 3):
+        self.n_experts = n_experts
+        self.k = k
+        self.log_every = log_every
+        self.threshold = starve_frac / n_experts  # e.g. 0.2/8 = 0.025
+        self.patience = patience
+        self.step = 0
+        self.starve_streak = {}  # (layer_name, expert_idx) -> consecutive windows below threshold
+
+    @torch.no_grad()
+    def log_step(self, logits_by_layer: dict) -> dict:
+        self.step += 1
+        if self.step % self.log_every != 0:
+            return {}
+
+        metrics = {}
+        alerts = []
+        for name, logits in logits_by_layer.items():
+            N, E = logits.shape
+            probs = torch.softmax(logits, dim=-1)                       # (N, E)
+            tok_H = -(probs * probs.clamp_min(1e-9).log()).sum(dim=-1)  # (N,) nats
+            norm_entropy = (tok_H.mean() / math.log(E)).item()          # in [0, 1]
+
+            idx = torch.topk(logits, self.k, dim=-1).indices            # (N, k)
+            counts = torch.bincount(idx.reshape(-1), minlength=E).float()
+            total = counts.sum()
+            if total == 0:
+                continue  # empty batch edge case
+            f = counts / total                                          # (E,), sums to 1
+            fair = 1.0 / E
+            starved = (f < self.threshold).nonzero(as_tuple=True)[0].tolist()
+
+            for e in range(E):
+                key = (name, e)
+                if e in starved:
+                    self.starve_streak[key] = self.starve_streak.get(key, 0) + 1
+                    if self.starve_streak[key] >= self.patience:
+                        alerts.append(
+                            f"{name}: expert {e} starved for {self.starve_streak[key]} "
+                            f"windows (f={f[e]:.4f} < {self.threshold:.4f})"
+                        )
+                else:
+                    self.starve_streak[key] = 0
+
+            metrics[f"moe/{name}/router_entropy"] = norm_entropy
+            metrics[f"moe/{name}/max_load_ratio"] = (f.max() / fair).item()  # >~2-3x => imbalance
+            metrics[f"moe/{name}/min_load_ratio"] = (f.min() / fair).item()  # ->0 => a dying expert
+            metrics[f"moe/{name}/n_starved"] = len(starved)
+
+        metrics["moe/alerts"] = alerts
+        for a in alerts:
+            print("[MoE ALERT]", a)
+        return metrics
+
+
+# --- Demo: a healthy layer vs. a collapsed layer ---
+E, k, N = 8, 2, 4096
+monitor = ExpertLoadMonitor(n_experts=E, k=k, log_every=1, starve_frac=0.2, patience=3)
+
+torch.manual_seed(0)
+healthy_logits = torch.randn(N, E)          # uniform-ish routing
+
+torch.manual_seed(1)
+collapsed_logits = torch.randn(N, E)
+collapsed_logits[:, 0:4] += 4.0             # experts 0-3 dominate
+collapsed_logits[:, 4:8] -= 4.0             # experts 4-7 starve
+
+for _ in range(3):  # 3 windows == patience -> alert fires on the last call
+    out = monitor.log_step({
+        "layer0.healthy": healthy_logits,
+        "layer1.collapsed": collapsed_logits,
+    })
+
+print(out)
+```
+
+Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ratio ~= 1.0`, `n_starved = 0`; `layer1.collapsed` reports `router_entropy ~= 0.54`, experts 4-7 at `min_load_ratio = 0.0`, `n_starved = 4`, and on the third call four `[MoE ALERT]` lines fire for `layer1.collapsed` (none for `layer0.healthy`). The starvation rule in words: an expert holding fewer than `starve_frac/E = 0.2/8 = 0.025` of dispatched tokens — 20% of its fair share of `1/E = 0.125` — counts as starving; `patience` consecutive logging windows below that threshold trigger the alert.
+
 !!! key "Key Takeaways"
     - **MoE decouples parameters from FLOPs.** Replace the FFN with $E$ experts and a router; each token uses only $k \ll E$ of them, so the model has the *capacity* of a giant model at the *compute* of a small one. The total-to-active ratio is the sparsity dial.
     - **The router is a tiny linear gate** producing per-expert logits; you select **top-$k$** (the non-differentiable step) and combine outputs with softmax weights — either softmax-then-topk (Switch/GShard) or topk-then-softmax with renormalized weights (Mixtral).

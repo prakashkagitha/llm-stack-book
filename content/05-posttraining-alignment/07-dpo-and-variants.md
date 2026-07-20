@@ -272,8 +272,8 @@ KTO is grounded in **prospect theory**: humans are loss-averse (a loss hurts mor
 $$
 \mathcal{L}_{\text{KTO}} = \mathbb{E}\big[\, \lambda_y - v(x,y)\,\big],\qquad
 v(x,y)=\begin{cases}
-\lambda_D\,\sigma\!\big(\beta(r_\theta - z_0)\big) & y \text{ desirable}\\[2pt]
-\lambda_U\,\sigma\!\big(\beta(z_0 - r_\theta)\big) & y \text{ undesirable}
+\lambda_D\,\sigma\!\big(r_\theta - z_0\big) & y \text{ desirable}\\[2pt]
+\lambda_U\,\sigma\!\big(z_0 - r_\theta\big) & y \text{ undesirable}
 \end{cases}
 $$
 
@@ -283,15 +283,18 @@ def kto_loss(policy_logps, ref_logps, labels_desirable, kl_z0,
     """
     policy_logps, ref_logps : (B,) sequence log-probs (single, UNPAIRED responses).
     labels_desirable        : (B,) bool — True = thumbs up, False = thumbs down.
-    kl_z0                    : scalar reference point z0 (e.g. detached running mean
-                              of the in-batch KL / implicit reward).
+    kl_z0                    : scalar reference point z0 on the IMPLICIT-REWARD scale,
+                              i.e. beta times the detached running-mean in-batch KL
+                              (same units as r = beta * log(pi/pi_ref)). beta is
+                              already folded into r and z0, so it is NOT reapplied
+                              inside the sigmoid below.
     """
     r = beta * (policy_logps - ref_logps)                 # implicit reward, (B,)
     margin = r - kl_z0
     # Desirable: want margin > 0  → value = σ(margin); loss = λ_D · (1 − value).
     # Undesirable: want margin < 0 → value = σ(−margin); loss = λ_U · (1 − value).
-    desirable_loss   = lam_desirable   * (1.0 - torch.sigmoid(beta * margin))
-    undesirable_loss = lam_undesirable * (1.0 - torch.sigmoid(-beta * margin))
+    desirable_loss   = lam_desirable   * (1.0 - torch.sigmoid(margin))
+    undesirable_loss = lam_undesirable * (1.0 - torch.sigmoid(-margin))
     loss = torch.where(labels_desirable, desirable_loss, undesirable_loss)
     return loss.mean()
 ```
@@ -312,18 +315,29 @@ $$
 The odds ratio (rather than a probability ratio) is the deliberate choice: $\log$-odds penalizes the rejected response more gently as it gets unlikely, avoiding the runaway suppression that a raw probability ratio would cause. The win is operational: **one model, one stage.** You merge SFT and alignment into a single pass — no separate preference-tuning phase, no reference forward pass, roughly half the memory of DPO.
 
 ```python
-def orpo_loss(pol_chosen_logps, pol_rejected_logps, chosen_nll, lam=0.1):
+def orpo_loss(pol_chosen_logps, pol_rejected_logps,
+              chosen_len, rejected_len, chosen_nll, lam=0.1):
     """
     pol_chosen_logps / pol_rejected_logps : (B,) SEQUENCE log-probs (sum over tokens)
-        of chosen/rejected under the policy. For odds we use LENGTH-NORMALIZED
-        log-probs (mean per token) so odds is well-defined per sequence.
+        of chosen/rejected under the policy -- e.g. the output of sequence_logprob.
+    chosen_len / rejected_len : (B,) number of scored response tokens in each
+        response (the per-example sum of the loss_mask). Used to length-normalize
+        the log-probs BEFORE the odds so exp(mean_logp) is a valid per-token
+        probability in (0, 1); matches TRL ORPOTrainer's average_log_prob=True.
     chosen_nll : (B,) standard SFT negative log-likelihood on the chosen response.
     """
-    # log-odds(y) = log[ p/(1−p) ] = logp − log(1 − exp(logp))   (numerically: log1mexp)
+    # Length-normalize to a per-token MEAN log-prob. Without this, a summed logp
+    # is very negative (e.g. -12), exp(-12) ~ 6e-6, log1p(-exp) ~ 0, and the odds
+    # term collapses to a plain (mean_chosen - mean_rejected) log-prob difference.
+    mean_chosen   = pol_chosen_logps   / chosen_len       # (B,)
+    mean_rejected = pol_rejected_logps / rejected_len     # (B,)
+
+    # log-odds(y) = log[ p/(1-p) ] = logp - log(1 - exp(logp))  (log1mexp form).
     def log_odds(logp):
         return logp - torch.log1p(-torch.exp(logp.clamp(max=-1e-6)))
-    log_or = log_odds(pol_chosen_logps) - log_odds(pol_rejected_logps)   # (B,)
-    or_term = -torch.nn.functional.logsigmoid(log_or)                    # push chosen odds up
+
+    log_or = log_odds(mean_chosen) - log_odds(mean_rejected)   # (B,)
+    or_term = -torch.nn.functional.logsigmoid(log_or)          # push chosen odds up
     return (chosen_nll + lam * or_term).mean()
 ```
 
