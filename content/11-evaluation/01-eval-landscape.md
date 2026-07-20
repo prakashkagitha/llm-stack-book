@@ -66,7 +66,7 @@ $$
 
 **GSM8K** (Grade School Math 8K, Cobbe et al., 2021) is a dataset of roughly 8,500 school-level word problems. A correct answer requires multi-step arithmetic (integer or simple decimal, no calculus). The canonical evaluation uses a model's generated chain-of-thought followed by a numerical extraction regex, and accuracy is the fraction of problems where the extracted number matches the reference answer.
 
-**MATH** (Hendrycks et al., 2021) covers competition mathematics in seven categories — algebra, geometry, number theory, probability, pre-calculus, calculus, and combinatorics — at five difficulty levels. Problems require symbolic manipulation, not just numerical calculation, which makes automated verification harder.
+**MATH** (Hendrycks et al., 2021) covers competition mathematics in seven subject categories — Prealgebra, Algebra, Intermediate Algebra, Counting & Probability, Geometry, Number Theory, and Precalculus — at five difficulty levels. Problems require symbolic manipulation, not just numerical calculation, which makes automated verification harder.
 
 **Why GSM8K saturated fast.** Frontier models exceeded 90 % on GSM8K by 2023. The problems are short and the arithmetic is tractable for any model that learned the step-by-step format. Once a model learns *how to write out* arithmetic reasoning, the benchmark mainly tests whether that format was in training data. This led to MATH and then to AIME (below).
 
@@ -82,7 +82,7 @@ $$
 
 where $n$ is the number of samples drawn and $c$ is the number that pass. For unbiased estimation one draws $n \geq k$ samples and applies this formula. In practice, many papers report pass@1 (single sample, greedy decoding) for simplicity.
 
-**MBPP** (Mostly Basic Programming Problems, Austin et al., 2021) is 374 crowd-sourced Python problems, similarly evaluated with unit tests. Both HumanEval and MBPP are now largely saturated at the frontier; models score above 90 % pass@1.
+**MBPP** (Mostly Basic Programming Problems, Austin et al., 2021) is 974 crowd-sourced Python problems (the commonly evaluated test split is 500 problems; a hand-verified "sanitized" subset has 427), similarly evaluated with unit tests. Both HumanEval and MBPP are now largely saturated at the frontier; models score above 90 % pass@1.
 
 **Limitations.** Only functional correctness is tested; code style, efficiency, and security are ignored. The test suites are thin — typically 3–8 tests per problem — so it is possible to pass with a solution that is logically wrong but happens to match the test values.
 
@@ -172,7 +172,91 @@ def flag_contaminated(
     return contaminated
 ```
 
-**Memorization probes.** A stronger test presents the first half of a benchmark example and asks the model to complete it. If it produces the exact second half verbatim, that is strong evidence of memorization. The *MeMo* and *DataComp* lines of work developed more principled probes.
+**Memorization probes.** A stronger test presents the first half of a benchmark example and asks the model to complete it. If it produces the exact second half verbatim, that is strong evidence of memorization. Carlini et al. (2021, 2022) formalized this kind of training-data extraction and showed memorization grows with model scale and with how often a string is duplicated in the corpus; Oren et al. (2023) proposed an exchangeability test — a benchmark's examples are exchangeable, so a model that assigns systematically higher likelihood to the benchmark's canonical ordering than to shuffled orderings has likely seen the exact set; and Golchin & Surdeanu (2024) use guided prompting to coax verbatim continuations out of a suspected-contaminated model. The `completion_probe` below implements the simplest of these.
+
+```python
+from difflib import SequenceMatcher
+from typing import Callable, Dict, List
+
+
+def _token_lcs_similarity(reference: str, candidate: str) -> float:
+    """Longest common contiguous token run, normalized by reference length.
+
+    Lowercased whitespace tokenization so trivial case/spacing differences
+    do not hide a near-verbatim match. Returns a value in [0, 1].
+    """
+    ref = reference.lower().split()
+    cand = candidate.lower().split()
+    if not ref:
+        return 0.0
+    sm = SequenceMatcher(a=ref, b=cand, autojunk=False)
+    match = sm.find_longest_match(0, len(ref), 0, len(cand))
+    return match.size / len(ref)
+
+
+def completion_probe(
+    items: List[str],
+    generate: Callable[[str], str],
+    split_frac: float = 0.5,
+    threshold: float = 0.75,
+) -> Dict[str, float]:
+    """
+    Memorization probe by first-half completion.
+
+    For each benchmark item, split it into a prefix (the first `split_frac`
+    of its whitespace tokens) and a reference suffix (the rest). Ask the
+    model to continue the prefix, then measure how close the continuation is
+    to the true suffix. A high near-verbatim rate is evidence the item was
+    in the training corpus.
+
+    `generate(prefix) -> continuation` wraps your backend (HF
+    `model.generate`, vLLM, an API); decode GREEDILY (temperature 0) so the
+    probe is reproducible. An item counts as 'memorized' when the token-LCS
+    similarity between the continuation and the reference suffix is
+    >= threshold. threshold ~0.75 flags near-verbatim recall while
+    tolerating a few paraphrased tokens; raise it toward 0.9 for a stricter
+    verbatim-only test.
+
+    Returns {'memorized_rate', 'mean_similarity', 'n'}.
+    """
+    sims: List[float] = []
+    memorized = 0
+    for text in items:
+        toks = text.split()
+        if len(toks) < 4:
+            continue  # too short to split meaningfully
+        cut = max(1, int(len(toks) * split_frac))
+        prefix = " ".join(toks[:cut])
+        reference = " ".join(toks[cut:])
+        continuation = generate(prefix)
+        sim = _token_lcs_similarity(reference, continuation)
+        sims.append(sim)
+        if sim >= threshold:
+            memorized += 1
+    n = len(sims)
+    return {
+        "memorized_rate": memorized / n if n else 0.0,
+        "mean_similarity": sum(sims) / n if n else 0.0,
+        "n": n,
+    }
+
+
+# Verification (no model needed): an oracle that returns the exact suffix
+# gives similarity 1.0 on every item -> memorized_rate 1.0. A generator
+# that returns unrelated text gives memorized_rate ~ 0.0. Calibrate the
+# threshold on a KNOWN-CLEAN control set (e.g. freshly written items the
+# model cannot have seen) and treat a benchmark whose memorized_rate is far
+# above that control baseline as contaminated.
+#
+# oracle = lambda prefix: "placeholder"  # replace with real second half
+# items = ["the quick brown fox jumps over the lazy dog"]
+# def _oracle(prefix, full=items[0]):
+#     return full[len(prefix):]
+# assert completion_probe(items, _oracle, threshold=0.75)["memorized_rate"] == 1.0
+# assert completion_probe(items, lambda p: "zzz", threshold=0.75)["memorized_rate"] == 0.0
+```
+
+Like all these probes, the completion probe needs a clean control set to interpret: an absolute memorized_rate is meaningless without a contamination-free baseline to compare against.
 
 **Canary strings.** Benchmark authors embed unique, random token sequences into the evaluation set. If a model reproduces these during completion, the training corpus was contaminated.
 
@@ -202,7 +286,7 @@ GSM8K crossed this threshold around 2023; HumanEval in 2024. MMLU approaches it:
 
 ### Floor Effects in Smaller Models
 
-The mirror problem affects evaluations of smaller models on very hard benchmarks. If a 7B-parameter model scores 5 % on GPQA, that is near random chance (25 % for four-choice), and we cannot distinguish "cannot reason scientifically" from "cannot read the question." Performance at the floor is equally uninformative.
+The mirror problem affects evaluations of smaller models on very hard benchmarks. But there is a subtlety worth internalizing: a *genuine* floor on GPQA — a four-choice benchmark — is the random-chance rate of about 25 %, which a model reaches by emitting parseable answers that carry no signal. So if a 7B-parameter model scores 5 %, do not read that as "very weak scientific reasoning": 5 % is far *below* chance, and a model almost never performs worse than random guessing. A score that sits well under 25 % is a red flag that the answer extractor is failing — the model is producing answers in a format the regex misses (or refusing, or rambling without committing to a letter), so parsed answers default to wrong. Before drawing any capability conclusion, inspect the null/unparsed rate and a sample of raw generations; a true floor result clusters near 25 %, not near 0 %.
 
 The rule of thumb: **a benchmark is most informative when average performance is between roughly 20 % and 80 %.** Below 20 % you are measuring noise; above 80 % you are measuring ceiling effects and question quality.
 
@@ -265,7 +349,6 @@ def extract_mc_answer(output: str) -> Optional[str]:
 def evaluate_mc_batch(
     predictions: list[str],
     gold_labels: list[str],
-    shuffle_seed: Optional[int] = None,
 ) -> dict:
     """
     Evaluate a batch of multiple-choice predictions.
@@ -273,20 +356,19 @@ def evaluate_mc_batch(
     Args:
         predictions: raw model output strings.
         gold_labels: correct answer letters, e.g. ["A", "C", "B", ...].
-        shuffle_seed: if set, randomly shuffles answer order to test position bias.
 
     Returns:
-        dict with 'accuracy', 'null_rate' (fraction where answer was not extracted),
-        and 'corrected_accuracy' (guessing-corrected, k=4).
+        dict with 'accuracy', 'null_rate' (fraction where answer was not
+        extracted), and 'corrected_accuracy' (guessing-corrected, k=4).
+
+    NOTE: this scores predictions that ALREADY exist, so it cannot measure
+    position bias. Position bias is a property of how the model responds
+    when the SAME options are presented in a different order; detecting it
+    requires re-rendering each question with permuted choices and calling
+    the model again (see make_position_bias_variants below). Shuffling the
+    (prediction, gold) pairs post hoc only reorders examples -- every
+    pred/gold pairing, and therefore the accuracy, stays identical.
     """
-    import random
-
-    if shuffle_seed is not None:
-        rng = random.Random(shuffle_seed)
-        paired = list(zip(predictions, gold_labels))
-        rng.shuffle(paired)
-        predictions, gold_labels = zip(*paired)
-
     correct = 0
     wrong = 0
     null = 0
@@ -314,6 +396,60 @@ def evaluate_mc_batch(
         "wrong": wrong,
         "null": null,
     }
+```
+
+Measuring position bias itself is a separate experiment from scoring existing predictions, and it requires making NEW model calls: you re-render each question with the answer options permuted into every ordering, run the model on each permutation, and check whether accuracy depends on which letter the correct option happens to land on. A model with no position bias scores equally regardless of where the gold answer sits; a model that scores much higher when the answer is "A" (for instance) has a position bias.
+
+```python
+import itertools
+from typing import List, Optional, Tuple
+
+
+def make_position_bias_variants(
+    question: str,
+    choices: List[str],          # option TEXTS in original order: choices[0] == "A"
+    gold_index: int,             # index into choices of the correct option
+    max_variants: Optional[int] = None,
+) -> List[Tuple[str, str]]:
+    """
+    Build re-rendered prompts with the answer options permuted, so a caller
+    can re-run the model on each and see whether accuracy depends on WHERE
+    the correct option sits. This is how you actually test position bias --
+    it needs fresh model calls, not post-hoc relabeling.
+
+    Returns a list of (prompt, gold_letter) pairs, one per permutation:
+      - prompt: the question with choices relabeled A., B., ... in the
+        permuted order
+      - gold_letter: the letter the correct option now occupies
+
+    Usage: for each (prompt, gold_letter), call your model, run
+    extract_mc_answer on the output, and tally accuracy grouped by
+    gold_letter. A model with no position bias scores the same for every
+    gold_letter; a large spread (e.g. much higher when the answer is 'A')
+    is position bias.
+    """
+    letters = "ABCDEFGHIJ"
+    perms = list(itertools.permutations(range(len(choices))))
+    if max_variants is not None:
+        perms = perms[:max_variants]
+    variants: List[Tuple[str, str]] = []
+    for perm in perms:
+        lines = [question, ""]
+        new_gold = None
+        for new_pos, orig_idx in enumerate(perm):
+            lines.append(f"{letters[new_pos]}. {choices[orig_idx]}")
+            if orig_idx == gold_index:
+                new_gold = letters[new_pos]
+        variants.append(("\n".join(lines), new_gold))
+    return variants
+
+
+# Sanity check: 4 options -> 24 permutations; the correct option lands in
+# each of A/B/C/D exactly 6 times, so an unbiased model scores equally.
+# vs = make_position_bias_variants("Q?", ["w", "x", "y", "z"], gold_index=0)
+# assert len(vs) == 24
+# from collections import Counter
+# assert Counter(g for _, g in vs) == {"A": 6, "B": 6, "C": 6, "D": 6}
 ```
 
 **Log-likelihood versus generation scoring.** Log-likelihood scoring (ranking answers by $\log p$ of their text given the question) does not require a well-calibrated answer extractor, but it has its own artifacts: the probability of a completion depends on its *length*, so a short correct answer ("Yes") and a long incorrect answer ("No, because of the following reasons...") are not comparable without length normalization.
@@ -439,7 +575,7 @@ Reproducibility is a live problem. The same model evaluated with different harne
 | MATH | Competition math | Open answer | 12,500 | Exact match | Partial |
 | AIME | Hard competition math | Integer answer | 15/yr | Exact match | No |
 | HumanEval | Python coding | Code gen + unit tests | 164 | pass@1 | Yes |
-| MBPP | Python coding | Code gen + unit tests | 374 | pass@1 | Yes |
+| MBPP | Python coding | Code gen + unit tests | 974 (500 test) | pass@1 | Yes |
 | GPQA | PhD science | 4-choice | ~450 | Accuracy | No |
 | BBH | Complex reasoning | Open/4-choice | 6,511 | Accuracy | Partial |
 | IFEval | Instruction following | Open (rule-checked) | 541 | Prompt/instr accuracy | No |

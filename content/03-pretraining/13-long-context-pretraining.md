@@ -417,34 +417,51 @@ def ring_attention_forward(
     kv_rank = rank
 
     for step in range(world_size):
-        # Compute attention of q_local against k_chunk / v_chunk
-        # (in reality this calls flash_attn_with_kvcache or equivalent)
-        scale = d_model ** -0.5
-        scores = torch.einsum("thd,khd->thk", q_local, k_chunk) * scale  # (T, H, T_kv)
+        # Determine the global position ranges of this Q chunk and the current KV chunk.
+        q_global_start  = rank * T_local
+        kv_global_start = kv_rank * T_local
 
-        if causal:
-            # Mask out future KV positions relative to each Q position
-            q_global_start  = rank * T_local
-            kv_global_start = kv_rank * T_local
-            for t in range(T_local):
-                q_pos = q_global_start + t
-                # Cannot attend to kv positions > q_pos
-                cutoff = q_pos - kv_global_start + 1
-                if cutoff <= 0:
-                    scores[t] = float('-inf')
-                elif cutoff < T_local:
-                    scores[t, :, cutoff:] = float('-inf')
+        # CAUSAL BLOCK SKIP (critical for correctness):
+        # If this entire KV chunk lies in the future of every local query, no query
+        # may attend to any of it. Building an all -inf score row and calling softmax
+        # returns NaN (exp(-inf)/sum(exp(-inf)) = 0/0), and NaN * 0 in the merge step
+        # (exp_new = 0) then poisons output_acc. So we skip the whole block. Because
+        # ring rotations are block-aligned, the only partially masked block is the
+        # diagonal (own) block, which is always processed first; every other processed
+        # block is strictly in the past, so no score row is ever fully -inf once
+        # future blocks are skipped. Production kernels (zigzag / striped ring
+        # attention) skip these blocks the same way -- which is exactly what creates
+        # the causal load imbalance across the ring (rank 0 processes 1 block,
+        # rank N-1 processes N) discussed in Distributed Training II.
+        fully_future = causal and (kv_global_start > q_global_start + T_local - 1)
 
-        # Online softmax accumulation (simplified; real code tracks m and l)
-        new_lse = torch.logsumexp(scores, dim=-1)                    # (T, H)
-        new_out = torch.softmax(scores, dim=-1) @ v_chunk            # (T, H, D)
+        if not fully_future:
+            # Compute attention of q_local against k_chunk / v_chunk
+            # (in reality this calls a FlashAttention tile kernel)
+            scale = d_model ** -0.5
+            scores = torch.einsum("thd,khd->thk", q_local, k_chunk) * scale  # (T, H, T_kv)
 
-        # Merge with running accumulator
-        m = torch.maximum(lse_acc, new_lse)
-        exp_old = torch.exp(lse_acc - m)
-        exp_new = torch.exp(new_lse - m)
-        lse_acc = m + torch.log(exp_old + exp_new)
-        output_acc = (output_acc * exp_old.unsqueeze(-1) + new_out * exp_new.unsqueeze(-1)) / (exp_old + exp_new).unsqueeze(-1)
+            if causal:
+                # Mask out future KV positions relative to each Q position. Since
+                # fully-future blocks are skipped above, cutoff > 0 always holds
+                # here, so no score row is ever entirely -inf.
+                for t in range(T_local):
+                    q_pos = q_global_start + t
+                    cutoff = q_pos - kv_global_start + 1   # keep kv positions [0, cutoff)
+                    if cutoff < T_local:
+                        scores[t, :, cutoff:] = float('-inf')
+
+            # Online softmax accumulation (simplified; real code tracks m and l)
+            new_lse = torch.logsumexp(scores, dim=-1)                    # (T, H)
+            new_out = torch.einsum("thk,khd->thd",
+                                    torch.softmax(scores, dim=-1), v_chunk)  # (T, H, D)
+
+            # Merge with running accumulator
+            m = torch.maximum(lse_acc, new_lse)
+            exp_old = torch.exp(lse_acc - m)
+            exp_new = torch.exp(new_lse - m)
+            lse_acc = m + torch.log(exp_old + exp_new)
+            output_acc = (output_acc * exp_old.unsqueeze(-1) + new_out * exp_new.unsqueeze(-1)) / (exp_old + exp_new).unsqueeze(-1)
 
         # Rotate KV to next GPU in ring (overlap with next step's compute in real code)
         next_rank = (rank + 1) % world_size
@@ -457,6 +474,8 @@ def ring_attention_forward(
 
     return output_acc
 ```
+
+Verifying correctness: run this ring implementation on a toy problem (e.g. `world_size=4`, `T_local=8`, `H=2`, `D=16`, random `q`/`k`/`v` in fp32) under `torchrun --nproc_per_node=4`, gather the per-rank `output_acc` back into a full `(T, H, D)` tensor in rank order, and compare it against a single-device reference over the un-sharded sequence: `torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)`. The two should agree to within ~1e-5 in fp32 (~1e-2 in bf16). This is also the fastest way to catch the causal-masking bug: without the `fully_future` skip, rank 0 -- whose queries may attend only to their own block -- still receives every other rank's future KV chunk, softmaxes an all -inf row into NaN, and returns NaN for its entire output, so the reference comparison fails immediately with `nan`.
 
 ### Sequence Parallelism in Megatron-LM
 

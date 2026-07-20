@@ -13,7 +13,7 @@ This chapter is your annotated map of those decisions. We will examine each impr
 The original Transformer used LayerNorm (Ba et al., "Layer Normalization", 2016):
 
 $$
-\text{LayerNorm}(x) = \frac{x - \mu}{\sigma + \epsilon} \cdot \gamma + \beta
+\text{LayerNorm}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta
 $$
 
 where $\mu = \frac{1}{d}\sum_i x_i$ and $\sigma^2 = \frac{1}{d}\sum_i (x_i - \mu)^2$. This requires two passes over the feature vector: one to compute the mean, one to compute the variance. More importantly, it requires two learned parameter vectors: $\gamma$ (scale) and $\beta$ (shift). The $\beta$ term encodes an explicit re-centering.
@@ -546,37 +546,72 @@ The ratio $L / d_{\text{model}}$ tends to be consistent across generations:
 
 Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attention head dimension of 128 (with 32 heads). Larger models scale $d$ and $L$ roughly in proportion. Going much beyond $d=8192$ per attention head becomes hardware-unfriendly: matmuls want square-ish tensors, and very large hidden dimensions with few heads under-utilize hardware parallelism.
 
-!!! example "Worked example: parameter count breakdown for a 7B model"
+!!! example "Worked example: parameter count breakdown for Llama 2 7B"
 
-    Configuration: $L=32$, $d=4096$, $H_q=32$, $H_{kv}=8$, $d_k=128$, intermediate=11008 (SwiGLU).
+    Configuration (the *actual* Llama 2 7B): $L=32$, $d=4096$, $H_q=32$, $H_{kv}=32$ (full MHA -- Llama 2 predates GQA at the 7B size), $d_k=128$, intermediate $=11008$ (SwiGLU), vocab $=32000$, untied embeddings.
 
-    **Per-layer parameter count:**
+    **Attention ($Q, K, V, O$ projections), per layer.** With full MHA, $H_{kv}=H_q=32$, so K and V are full width:
 
-    Attention ($Q, K, V, O$ projections):
-    $$P_{\text{attn}} = d \cdot H_q \cdot d_k + d \cdot H_{kv} \cdot d_k \times 2 + H_q \cdot d_k \cdot d$$
-    $$= 4096 \times 4096 + 2 \times 4096 \times 1024 + 4096 \times 4096 = 4 \times 4096^2 / 2 + \ldots$$
+    $$P_{\text{attn}} = \underbrace{d\,H_q d_k}_{Q} + \underbrace{2\,d\,H_{kv} d_k}_{K,V} + \underbrace{H_q d_k\, d}_{O} = 4 \times 4096^2 \approx 67.1\text{M}$$
 
-    Let's be precise. With GQA:
-    - $Q$: $d \times (H_q \times d_k) = 4096 \times 4096 = 16.8M$
-    - $K$: $d \times (H_{kv} \times d_k) = 4096 \times 1024 = 4.2M$
-    - $V$: $4096 \times 1024 = 4.2M$
-    - $O$: $4096 \times 4096 = 16.8M$
-    - Attention total: $\approx 42M$
+    - $Q$: $4096 \times 4096 = 16.8$M
+    - $K$: $4096 \times 4096 = 16.8$M
+    - $V$: $4096 \times 4096 = 16.8$M
+    - $O$: $4096 \times 4096 = 16.8$M
+    - Attention total: $\approx 67.1$M
 
-    MLP (SwiGLU with intermediate=11008):
-    - gate_proj + up_proj: $2 \times 4096 \times 11008 = 90.2M$
-    - down_proj: $11008 \times 4096 = 45.1M$
-    - MLP total: $\approx 135M$
+    **MLP (SwiGLU, intermediate $=11008$), per layer:**
 
-    RMSNorm (2 per layer, negligible): $2 \times 4096 \approx 8K$
+    - gate_proj + up_proj: $2 \times 4096 \times 11008 = 90.2$M
+    - down_proj: $11008 \times 4096 = 45.1$M
+    - MLP total: $\approx 135.3$M
 
-    **Per-layer total**: $\approx 177M$ parameters.
+    **RMSNorm** (2 per layer): $2 \times 4096 \approx 8$K (negligible).
 
-    **32 layers**: $32 \times 177M \approx 5.66B$
+    **Per-layer total**: $67.1 + 135.3 \approx 202.4$M.
 
-    **Embeddings (untied)**: input: $32000 \times 4096 \approx 131M$; output (LM head): same $\approx 131M$. Total embedding: $\approx 262M$.
+    **32 layers**: $32 \times 202.4\text{M} \approx 6.48$B.
 
-    **Grand total**: $5.66B + 0.26B \approx 5.9B$ — close to the marketed "7B" (which often includes rounded counts and other components). The discrepancy also comes from Llama 2 7B actually having a vocab size of 32,000 and slightly different intermediate size.
+    **Embeddings (untied)**: input $32000 \times 4096 \approx 131$M; output (LM head) $\approx 131$M; total $\approx 262$M.
+
+    **Grand total**: $6.48\text{B} + 0.26\text{B} \approx 6.74$B -- exactly what "Llama 2 7B" denotes. The round "7B" is marketing rounding of 6.74B, *not* a vocabulary artifact.
+
+    Where does the often-quoted "~5.9B" figure come from? From plugging **GQA** ($H_{kv}=8$, Llama 3 8B style) into this same count: K and V shrink to $4096 \times 1024 = 4.2$M each, attention drops to $Q+K+V+O = 16.8+4.2+4.2+16.8 \approx 42$M/layer, and the model falls to $32 \times (42+135.3)\text{M} + 262\text{M} \approx 5.94$B. So the 5.9-vs-6.7B gap is *entirely* the MHA-vs-GQA choice in the attention block -- the vocabulary ($32000$) is identical either way. (Llama 3 8B ends up *larger* than 7B despite GQA because it pairs a 128K-token vocab with a wider $14336$ intermediate.)
+
+!!! example "Worked exercise: size a Llama-style model to a 3B budget"
+
+    This unit's deliverable is turning a *parameter budget* into a full config. Build a 3B-parameter dense decoder step by step, then verify the count. (The result is essentially Llama 3.2 3B.)
+
+    **Step 1 -- head dimension.** Fix $d_k = 128$ (the modern convention: good tensor-core shapes, enough per-head capacity).
+
+    **Step 2 -- width and depth via the aspect ratio.** From the $L/d$ table above, target $L/d \approx 0.009$. Pick $d = 3072$ (a multiple of both 128 and 256); then $L \approx 0.009 \times 3072 \approx 28$ layers.
+
+    **Step 3 -- query heads.** $H_q = d / d_k = 3072 / 128 = 24$.
+
+    **Step 4 -- KV heads (GQA).** Choose $H_{kv} = 8$ (grouping $G = H_q/H_{kv} = 3$), the usual quality/memory sweet spot; $24$ is divisible by $8$. checks out.
+
+    **Step 5 -- FFN width.** SwiGLU iso-parameter rule: $d_{ff} = \tfrac{8}{3} d = \tfrac{8}{3}\times 3072 = 8192$, already a multiple of 256 -- no rounding needed.
+
+    **Step 6 -- vocabulary and embedding tying.** Use the Llama 3 tokenizer, $V = 128256$. At $d=3072$ the embedding table is $128256 \times 3072 \approx 394$M -- over 12% of a 3B budget -- so **tie** input and output embeddings (share one matrix) as Llama 3.2 1B/3B do; untying would add another 394M and blow the budget.
+
+    **Step 7 -- verify.** Per layer: attention $Q(3072^2)+K(3072\cdot1024)+V(3072\cdot1024)+O(3072^2) \approx 25.2$M; MLP $2(3072\cdot8192)+8192\cdot3072 \approx 75.5$M; total $\approx 100.7$M. Times $L=28$ gives $2.82$B, plus the (tied) $0.39$B embedding $\Rightarrow \approx 3.21$B. On budget.
+
+    ```python
+    def llama_param_count(d, L, n_heads, n_kv, d_ff, vocab, head_dim=128, tied=True):
+        # Q + O are full width; K + V are GQA-width
+        attn  = 2 * d * (n_heads * head_dim) + 2 * d * (n_kv * head_dim)
+        mlp   = 3 * d * d_ff          # gate, up, down (SwiGLU)
+        norms = 2 * d                 # 2 RMSNorm per layer (gamma only)
+        per_layer = attn + mlp + norms
+        emb = vocab * d if tied else 2 * vocab * d
+        return per_layer * L + emb + d   # + final RMSNorm
+
+    n = llama_param_count(d=3072, L=28, n_heads=24, n_kv=8,
+                          d_ff=8192, vocab=128256, tied=True)
+    print(f"{n:,}")   # 3,212,749,824  -> ~3.21B, matches Llama 3.2 3B
+    ```
+
+    **Checklist to apply every time:** (1) $d = H_q \cdot d_k$ exactly; (2) $H_q \bmod H_{kv} = 0$; (3) $d_{ff}$ a multiple of 256; (4) for models under ~4B, tie embeddings or they dominate the budget; (5) recompute the total and confirm it lands within ~10% of target before committing to a training run.
 
 ---
 

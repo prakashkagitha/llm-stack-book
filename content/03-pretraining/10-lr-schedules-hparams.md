@@ -219,7 +219,7 @@ The practical takeaway: there is an optimal batch size for a given compute budge
 
     At 4M tokens/step, you'll also converge in roughly $1/4$ the steps for the same total token count. If original run had 100K steps, new run has 25K steps. With cosine schedule, the peak LR and total steps both halve/quarter.
 
-    **Check: does 1.2e-3 violate any rule of thumb?** For a 7B model with hidden dim $d = 4096$, muP-optimal LR scales as $1/d$ — at $d=4096$ we expect peak LRs in the range $1\text{e-}4$ to $3\text{e-}3$. So 1.2e-3 is well within range.
+    **Check: does 1.2e-3 violate any rule of thumb?** Under standard parameterization the optimal global LR shrinks as width grows (roughly $1/d$ for hidden matrices); for a 7B model with hidden dim $d = 4096$, published peak LRs fall in the range $1\text{e-}4$ to $3\text{e-}3$. (Under muP the *base* LR you tune is width-invariant instead — the $1/d$ factor lives in the per-layer LR multiplier, not in the number you sweep.) So 1.2e-3 is well within range.
 
     **Square-root rule (conservative):** $\eta' = 2 \times 3\text{e-}4 = 6\text{e-}4$. This is safer if you're uncertain whether you've exceeded the critical batch size.
 
@@ -383,6 +383,50 @@ def clip_and_log_grad_norm(
     return float(total_norm)
 ```
 
+`clip_grad_norm_` is a one-liner in PyTorch, but it's worth implementing from scratch once so the mechanics are unambiguous. The whole thing is two steps: (1) compute a single *global* L2 norm as the square root of the summed sum-of-squares across **all** parameters — not a separate norm per parameter — and (2) scale every gradient in place by $\min(1,\, c / \|g\|)$, i.e. you only ever scale gradients *down*, never up.
+
+```python
+@torch.no_grad()
+def clip_grad_norm_from_scratch(params, max_norm: float = 1.0, eps: float = 1e-6) -> float:
+    """From-scratch global-norm clip; matches torch.nn.utils.clip_grad_norm_."""
+    grads = [p.grad for p in params if p.grad is not None]
+    # ONE global L2 norm across ALL params, not per-parameter norms.
+    total_norm = torch.sqrt(sum((g.detach() ** 2).sum() for g in grads))
+    clip_coef = max_norm / (total_norm + eps)   # torch adds eps for stability
+    if clip_coef < 1.0:                          # only ever scale DOWN
+        for g in grads:
+            g.mul_(clip_coef)
+    return float(total_norm)
+
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    layer_a = nn.Linear(64, 64)
+    layer_b = nn.Linear(64, 64)
+    params = list(layer_a.parameters()) + list(layer_b.parameters())
+
+    x = torch.randn(8, 64)
+    loss = (layer_b(layer_a(x)) ** 2).sum()
+    loss.backward()
+
+    # Save the un-clipped grads so both implementations start from the same state.
+    original_grads = [p.grad.clone() for p in params]
+
+    total_norm_scratch = clip_grad_norm_from_scratch(params, max_norm=1.0)
+    scratch_clipped_grads = [p.grad.clone() for p in params]
+
+    for p, g in zip(params, original_grads):
+        p.grad.copy_(g)  # reset to un-clipped values before the torch reference call
+    total_norm_torch = float(nn.utils.clip_grad_norm_(params, max_norm=1.0))
+    torch_clipped_grads = [p.grad.clone() for p in params]
+
+    assert abs(total_norm_scratch - total_norm_torch) < 1e-5
+    for g_scratch, g_torch in zip(scratch_clipped_grads, torch_clipped_grads):
+        assert torch.allclose(g_scratch, g_torch, atol=1e-6)
+    print(f"scratch total_norm={total_norm_scratch:.6f}, torch total_norm={total_norm_torch:.6f}")
+    # Expected: both report the same total_norm and identical clipped grads
+```
+
 Always log the pre-clip gradient norm at every step. A sudden spike — say, from 0.5 to 50 — is an early warning of a loss spike before it becomes visible in the loss itself. See [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html) for the full debugging playbook.
 
 ## muP: Maximal-Update Parameterization
@@ -480,19 +524,26 @@ def build_mup_optimizer(
             # Scale LR inversely with layer width to maintain muP invariance
             actual_width = module.in_features
             lr_scale = proxy_width / actual_width  # == 1 at proxy, <1 at larger models
+            # muP scales ONLY the 2D matrix weight by 1/width. Vector params
+            # (biases, ndim==1) stay width-invariant under muP+Adam, so exclude
+            # them here; they fall through to the base-LR group below.
+            matrix_params = [p for p in module.parameters() if p.ndim >= 2]
             param_groups.append({
-                "params": list(module.parameters()),
+                "params": matrix_params,
                 "lr": base_lr * lr_scale,
                 "weight_decay": weight_decay,
                 "name": name,
             })
 
     # All other parameters (norms, embeddings) get base LR
+    # Only the width-scaled matrix weights were grouped above; MuPLinear biases
+    # (ndim==1) deliberately fall through to the width-invariant group below.
     named_param_set = {
         id(p)
         for m in model.modules()
         if isinstance(m, MuPLinear)
         for p in m.parameters()
+        if p.ndim >= 2
     }
     other_params = [p for p in model.parameters() if id(p) not in named_param_set]
     if other_params:
@@ -506,6 +557,92 @@ def build_mup_optimizer(
     return torch.optim.AdamW(param_groups, lr=base_lr, betas=(0.9, 0.95))
 ```
 
+### Verifying muP: The Coordinate Check
+
+The coordinate check is the single test that catches the large majority of real-world muP bugs. It plots the per-layer activation (or update) scale against width. Under a **correct** muP implementation, those curves are flat across widths — the whole point of the parameterization. Under standard parameterization (SP), the same curves blow up or shrink monotonically as width grows, because activation scale is exactly what SP fails to control.
+
+```python
+import torch
+import torch.nn as nn
+
+
+def make_mlp(width: int, mup: bool) -> nn.Module:
+    """4-layer MLP: input -> hidden -> hidden -> readout, ReLU between."""
+    if mup:
+        layers = [
+            MuPLinear(64, width),
+            nn.ReLU(),
+            MuPLinear(width, width),
+            nn.ReLU(),
+            MuPLinear(width, width),
+            nn.ReLU(),
+            MuPLinear(width, 64, is_readout=True),
+        ]
+    else:
+        # Standard parameterization contrast: plain nn.Linear, default init.
+        layers = [
+            nn.Linear(64, width),
+            nn.ReLU(),
+            nn.Linear(width, width),
+            nn.ReLU(),
+            nn.Linear(width, width),
+            nn.ReLU(),
+            nn.Linear(width, 64),
+        ]
+    return nn.Sequential(*layers)
+
+
+def last_hidden_mean_abs_act(model: nn.Module, x: torch.Tensor) -> float:
+    """Captures mean(abs(activation)) at the output of the last hidden ReLU."""
+    activations = {}
+
+    def hook(module, inp, out):
+        activations["last_hidden"] = out.detach().abs().mean().item()
+
+    # Index 5 is the ReLU right after the third (last hidden) linear layer.
+    handle = model[5].register_forward_hook(hook)
+    model(x)
+    handle.remove()
+    return activations["last_hidden"]
+
+
+if __name__ == "__main__":
+    print(f"{'width':>6} | {'muP mean|act|':>14} | {'SP mean|act|':>14}")
+    for width in [256, 512, 1024, 2048]:
+        for mup_flag, label in [(True, "mup"), (False, "sp")]:
+            torch.manual_seed(0)
+            model = make_mlp(width, mup=mup_flag)
+            optimizer = (
+                build_mup_optimizer(model, base_lr=1e-2, proxy_width=256)
+                if mup_flag
+                else torch.optim.AdamW(model.parameters(), lr=1e-2)
+            )
+
+            torch.manual_seed(0)
+            x = torch.randn(32, 64)
+            target = torch.randn(32, 64)
+
+            for _ in range(5):
+                optimizer.zero_grad()
+                out = model(x)
+                loss = nn.functional.mse_loss(out, target)
+                loss.backward()
+                optimizer.step()
+
+            act = last_hidden_mean_abs_act(model, x)
+            if mup_flag:
+                mup_act = act
+            else:
+                sp_act = act
+        print(f"{width:>6} | {mup_act:>14.4f} | {sp_act:>14.4f}")
+    # Expected: the muP column stays roughly constant (within ~2x) across the
+    # 8x width sweep 256 -> 2048; the SP column drifts several-fold over the
+    # same sweep (in a typical run it shrinks ~15-20x, e.g. ~0.24 -> ~0.014),
+    # i.e. it is NOT flat.
+```
+
+If your muP column is not flat, the bug is almost always in the init std, the per-layer LR multiplier, or the attention/readout scaling.
+
 ### Practical muP Workflow
 
 The Microsoft `mup` library (github.com/microsoft/mup) provides a plug-and-play implementation. The typical workflow is:
@@ -517,6 +654,17 @@ The Microsoft `mup` library (github.com/microsoft/mup) provides a plug-and-play 
 5. **Validate on a medium model** (e.g., 1B) before launching the full run.
 
 The evidence that this works is now substantial: Microsoft's Phi models, various internal runs at other labs, and controlled ablations in the *Tensor Programs V* paper all show that muP-transferred LRs closely match the empirically optimal LRs found by grid search at the large scale — saving orders-of-magnitude in tuning compute.
+
+!!! warning "What muP Transfers - and What It Does Not"
+
+    muP guarantees hyperparameter transfer across **width** only. Everything else is empirical and weaker, so a width-256 proxy sweep does *not* automatically transfer to a model that is also deeper, trained longer, or run at a different batch size.
+
+    - **Width:** guaranteed by construction (Yang et al., *Tensor Programs V*, 2022). A width-256 sweep transfers to width 4096+.
+    - **Depth:** approximate only. Vanilla muP does not stabilize optimal HPs as you add layers; residual-branch scaling (depth-muP / "complete-P", Yang et al. 2023; Bordelon et al. 2023) is a separate line of work. Do not assume a shallow proxy transfers to a 4x-deeper model.
+    - **Training horizon:** not covered. Optimal LR and schedule shift with the total token budget - retune, or use WSD to decouple length from schedule shape.
+    - **Batch size:** not covered. Apply the linear/sqrt scaling rules from earlier in this chapter and re-check against the critical batch size.
+
+    Rule of thumb: transfer LR and init across width with muP; retune (or use this chapter's scaling rules) whenever depth, horizon, or batch size change.
 
 ## Practical Hyperparameter Recipes
 

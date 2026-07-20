@@ -435,6 +435,63 @@ for it in range(max_iters):
 
 Four lines in that inner loop are the *entire* mechanics of training a neural network, and they recur unchanged in every model in this book: `forward → zero_grad → backward → step`. Everything else — the schedule, clipping, evaluation, distributed wrappers, mixed precision — is engineering around those four lines.
 
+### Checkpointing: save and resume
+
+The A1 deliverable asks for "a training loop with checkpointing," and at single-GPU scale that is not a distributed-systems problem — it is about 15 lines of `torch.save`/`torch.load`. The sharded, topology-agnostic version for multi-GPU and multi-node jobs (FSDP + PyTorch Distributed Checkpoint / DCP) is covered in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html); everything below is the honest small-scale baseline that version generalizes.
+
+```python
+def save_checkpoint(path, model, optimizer, it, config):
+    """Save everything needed to resume training bit-continuously."""
+    ckpt = {
+        "model":            model.state_dict(),
+        "optimizer":        optimizer.state_dict(),
+        "iter_num":         it,
+        "config":           config,
+        "torch_rng_state":  torch.get_rng_state(),
+        "cuda_rng_state":   torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+    torch.save(ckpt, path)
+
+def load_checkpoint(path, model, optimizer, device):
+    """Restore model, optimizer, and RNG state; return the iter to resume AT."""
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+    # RNG state must be a CPU ByteTensor regardless of map_location, hence .cpu().
+    torch.set_rng_state(ckpt["torch_rng_state"].cpu())
+    if ckpt["cuda_rng_state"] is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(ckpt["cuda_rng_state"])
+    return ckpt["iter_num"] + 1   # resume at the NEXT step, not the saved one
+
+# --- Wire it into the loop ---
+resume   = False               # flip to True to resume from ckpt_path
+ckpt_path = "ckpt.pt"
+
+start_it = load_checkpoint(ckpt_path, model, optimizer, device) if resume else 0
+
+model.train()
+for it in range(start_it, max_iters):
+    lr = get_lr(it)
+    for g in optimizer.param_groups:
+        g["lr"] = lr
+
+    if it % eval_iter == 0 or it == max_iters - 1:
+        losses = estimate_loss()
+        print(f"step {it:5d} | train {losses['train']:.4f} | val {losses['val']:.4f} | lr {lr:.2e}")
+        save_checkpoint(ckpt_path, model, optimizer, it, config)   # checkpoint on eval steps
+
+    X, Y = get_batch("train", config.block_size, batch_size, device)
+    logits, loss = model(X, Y)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+    optimizer.step()
+```
+
+Two things worth internalizing. First, **weight tying survives the round-trip automatically**: `wte.weight` and `lm_head.weight` are the *same* tensor object, so it appears once in `state_dict()` and reloads shared — there is nothing special to do. Second, **saving RNG state and the optimizer's moment buffers is what makes a kill/resume bit-continuous**: after resuming, the first logged loss should continue from roughly where it left off (modulo ordinary batch-sampling noise), *not* jump back up toward $\ln V$. If you see a jump on resume, you forgot to restore the optimizer state (AdamW's first/second moment estimates) or the RNG/data-iterator state — the model is stepping from a warm optimizer trajectory it thinks is cold.
+
+For sizing intuition: our default ~10.7M-parameter model produces a checkpoint of roughly 130 MB in fp32 — the model weights plus AdamW's two moment buffers per parameter (~3× the raw parameter count) — trivial to write on a laptop or a single GPU. At multi-node scale, saving every rank's full state to one file stops being trivial; you either checkpoint only on rank 0 or use DCP's sharded format, both covered in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
+
 !!! tip "Practitioner tip: what a healthy loss curve looks like here"
     For character-level Tiny Shakespeare with this config, the loss starts near $\ln(65) \approx 4.17$ — that is exactly the loss of a uniform random guesser over 65 characters, and seeing your *first* logged loss land near it is the cheapest sanity check that your data, masking, and loss are wired correctly. A working run drops below ~1.5 within a couple thousand steps; below ~1.0 it produces Shakespeare-flavored text with real words and pseudo-grammar. If your loss *starts* far from $\ln V$, suspect a labelling, masking, or initialization bug before you suspect the model.
 
@@ -533,6 +590,291 @@ What we just built is, structurally, GPT-2. The leap from this 10M-parameter cha
 - **Behavior:** the pretrained base model is then [supervised-fine-tuned](../05-posttraining-alignment/01-sft-instruction-tuning.html) and [RLHF-aligned](../05-posttraining-alignment/05-rlhf-reward-modeling.html) into an assistant.
 
 Every one of those is a swap of a single module or a multiplication of a single number in our `GPTConfig`. The skeleton — embed, stack pre-norm blocks on a residual stream, project to logits, train with next-token cross-entropy, sample autoregressively — is the same skeleton at every scale. You have now built it end to end.
+
+## A Modern GPT, Assembled
+
+The previous section *listed* the module swaps that turn GPT-2 into a modern model. This section *does* them. We assemble RoPE + RMSNorm + SwiGLU + weight tying into a single trained model — exactly the Llama-family block — so you have a worked RoPE-into-attention integration instead of having to invent one. Rather than reinvent the helpers, we reuse the verified implementations from earlier chapters verbatim, and we train on the *same* Tiny Shakespeare setup as the baseline to confirm the modern stack reaches an equal-or-better loss.
+
+```python
+from typing import Optional
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Reused verbatim from Chapter 2.5 (Positional Encoding)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def build_rope_cache(seq_len: int, head_dim: int, base: float = 10000.0,
+                     device=None, dtype=torch.float32):
+    """Precompute cos/sin tables for RoPE (Llama / rotate_half convention).
+    Returns cos, sin of shape (seq_len, head_dim)."""
+    assert head_dim % 2 == 0, "RoPE needs an even head dimension."
+    half = head_dim // 2
+    inv_freq = 1.0 / (base ** (torch.arange(0, half, device=device).float() / half))
+    pos = torch.arange(seq_len, device=device).float()
+    freqs = torch.outer(pos, inv_freq)                 # (seq_len, d/2)
+    emb = torch.cat([freqs, freqs], dim=-1)             # (seq_len, d)
+    return emb.cos().to(dtype), emb.sin().to(dtype)
+
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Map (x1, x2) -> (-x2, x1) where x1,x2 are the two halves of the last dim."""
+    half = x.shape[-1] // 2
+    x1, x2 = x[..., :half], x[..., half:]
+    return torch.cat([-x2, x1], dim=-1)
+
+def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """Apply RoPE to x of shape (B, n_head, T, head_dim); cos, sin: (T, head_dim)."""
+    cos = cos[None, None, :, :]   # (1, 1, T, head_dim) — broadcasts over batch & heads
+    sin = sin[None, None, :, :]
+    return x * cos + rotate_half(x) * sin
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Reused verbatim from Chapter 2.6 (The Transformer Block)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class RMSNorm(nn.Module):
+    """Root Mean Square LayerNorm (Zhang & Sennrich, 2019). No bias, no mean subtraction."""
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (x / rms) * self.weight
+
+class SwiGLUFFN(nn.Module):
+    """FFN(x) = W_down( Swish(W_gate x) * W_up x ). hidden_dim defaults to
+    8/3 * dim rounded up to a multiple of 64, matching Llama's convention."""
+    def __init__(self, dim: int, hidden_dim: Optional[int] = None,
+                 bias: bool = False, dropout: float = 0.0):
+        super().__init__()
+        if hidden_dim is None:
+            hidden_dim = int(8 * dim / 3)
+            hidden_dim = 64 * ((hidden_dim + 63) // 64)
+        self.w_gate = nn.Linear(dim, hidden_dim, bias=bias)
+        self.w_up   = nn.Linear(dim, hidden_dim, bias=bias)
+        self.w_down = nn.Linear(hidden_dim, dim, bias=bias)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gate = F.silu(self.w_gate(x))
+        up   = self.w_up(x)
+        return self.dropout(self.w_down(gate * up))
+```
+
+For `n_embd=384`, `SwiGLUFFN`'s default hidden dim is `64 * ceil(8*384/3/64) = 1024`, giving `3 * 384 * 1024 = 1,179,648 = 8 * n_embd^2` parameters — **identical** to the GELU MLP's `2 * (4 * n_embd^2)`. The swap is capacity-neutral; every difference in the final loss comes from the architecture, not from extra parameters.
+
+### The modern attention block: RoPE applied inside the heads
+
+```python
+class ModernCausalSelfAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.head_dim = config.n_embd // config.n_head
+        self.dropout = config.dropout
+
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.resid_dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x, cos, sin):
+        # cos, sin: (T, head_dim), already sliced to this sequence length by the caller.
+        B, T, C = x.size()
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)          # each (B, T, C)
+
+        # Reshape into heads FIRST: (B, T, C) -> (B, n_head, T, head_dim).
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)  # (B, nh, T, hd)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # THEN rotate — RoPE must be applied to q and k only, AFTER the head
+        # split. Rotating the (B,T,C) tensor before splitting into heads would
+        # pair dimensions across head boundaries instead of within a single
+        # head's head_dim block — a silent correctness bug, not a crash.
+        # v is never rotated: it carries content, not position.
+        q = apply_rope(q, cos, sin)
+        k = apply_rope(k, cos, sin)
+        # Under bf16/autocast, cos/sin must match q/k's dtype. Either build the
+        # cache directly in the model's working dtype, or do the safer:
+        #   q = apply_rope(q.float(), cos, sin).to(q.dtype)
+
+        y = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=None,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=True,
+        )
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        return self.resid_dropout(self.c_proj(y))
+
+
+class ModernBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.norm_1 = RMSNorm(config.n_embd)
+        self.attn   = ModernCausalSelfAttention(config)
+        self.norm_2 = RMSNorm(config.n_embd)
+        self.mlp    = SwiGLUFFN(config.n_embd, bias=config.bias, dropout=config.dropout)
+
+    def forward(self, x, cos, sin):
+        x = x + self.attn(self.norm_1(x), cos, sin)
+        x = x + self.mlp(self.norm_2(x))
+        return x
+```
+
+### The modern GPT: no `wpe`, cache built once, weight-tied
+
+```python
+class ModernGPT(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        assert config.vocab_size is not None and config.block_size is not None
+        head_dim = config.n_embd // config.n_head
+        assert head_dim % 2 == 0, "RoPE needs an even head_dim"   # 384/6=64: OK
+        self.config = config
+
+        self.transformer = nn.ModuleDict(dict(
+            wte  = nn.Embedding(config.vocab_size, config.n_embd),   # NO wpe: RoPE replaces it
+            drop = nn.Dropout(config.dropout),
+            h    = nn.ModuleList([ModernBlock(config) for _ in range(config.n_layer)]),
+            ln_f = RMSNorm(config.n_embd),
+        ))
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # WEIGHT TYING — unchanged from the baseline GPT.
+        self.transformer.wte.weight = self.lm_head.weight
+
+        # Build the RoPE cache ONCE, for the full block_size, and register it
+        # as a non-persistent buffer: it is cheap to recompute, so we don't
+        # want it bloating every checkpoint.
+        cos, sin = build_rope_cache(config.block_size, head_dim)
+        self.register_buffer("rope_cos", cos, persistent=False)
+        self.register_buffer("rope_sin", sin, persistent=False)
+
+        self.apply(self._init_weights)
+        for pn, p in self.named_parameters():
+            # Still exactly 2 residual adds per block (attn, mlp), so the
+            # 1/sqrt(2*n_layer) factor from the baseline is unchanged.
+            if pn.endswith("c_proj.weight") or pn.endswith("w_down.weight"):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02 / (2 * config.n_layer) ** 0.5)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.size()
+        assert T <= self.config.block_size, f"sequence length {T} > block_size"
+
+        x = self.transformer.drop(self.transformer.wte(idx))   # (B, T, n_embd) — no pos_emb add
+        cos = self.rope_cos[:T]     # slice the cache to the current sequence length
+        sin = self.rope_sin[:T]
+
+        for block in self.transformer.h:
+            x = block(x, cos, sin)
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+            )
+        else:
+            logits = self.lm_head(x[:, [-1], :])
+            loss = None
+        return logits, loss
+```
+
+Because our `generate` loop recomputes the entire prefix at every step, position ids are always `0..T-1` — so slicing the cache to `[:T]` is exactly correct, and the *same* `generate` function from the Sampling section works unchanged on a `ModernGPT` (it only ever calls `model(idx_cond)`). With a real KV cache, new tokens arrive one at a time at *absolute* positions beyond `T`, so you would instead index the RoPE cache at that absolute position rather than always starting from `0` — a detail deferred to [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html).
+
+### Training and verifying the swap
+
+Train it with the exact same hyperparameters and loop as the baseline — only the model class changes:
+
+```python
+model = ModernGPT(config).to(device)   # same GPTConfig: block_size=256, n_layer=6,
+                                        # n_head=6, n_embd=384, dropout=0.2, bias=False
+optimizer = configure_optimizer(model, weight_decay=0.1, lr=learning_rate,
+                                betas=(0.9, 0.95), device_type=device)
+# ... identical training loop as before, just with this model/optimizer ...
+
+print(sum(p.numel() for p in model.parameters()))   # sanity-check the param count
+```
+
+Four checks confirm the integration is wired correctly, not just "not crashing":
+
+1. **Param count.** `print(sum(p.numel() for p in model.parameters()))` should read **~10.6M** — slightly *smaller* than the baseline's 10.74M, because dropping the learned `wpe` table saves `256 * 384 = 98,304` parameters while RoPE adds none (it is a fixed, non-parametric cache).
+2. **Init loss.** The first logged loss should still land near $\ln(65) \approx 4.174$ — the same uniform-guess sanity check as the baseline; RoPE and RMSNorm don't change what an untrained model's loss should look like.
+3. **Final loss.** After the same 5000 iterations, validation loss should land essentially on top of the baseline's ~1.47 — commonly a hair lower, around 1.45–1.46. Reaching an equal-or-better loss than the GELU/LayerNorm/learned-position baseline is your confirmation that the RoPE-into-attention wiring, the RMSNorm placement, and the SwiGLU gating are all correct; a *much worse* loss here is the classic symptom of RoPE applied at the wrong tensor rank (see the load-bearing comment above).
+4. For a numeric unit test of the rotation itself (not the whole model), reuse the RoPE relative-position property already verified in [Positional Encoding](../02-transformer/05-positional-encoding.html).
+
+**Scaling this exercise to your hardware.** On a laptop or CPU, shrink to `n_layer=4, n_embd=128` and run a few hundred iterations — you should still watch the loss fall from ~4.17. On a single GPU, the defaults above take roughly 2–4 minutes for 5000 iterations on an A100 or 3090, matching the baseline's timing exactly, since param count and FLOPs are essentially unchanged. On an 8-GPU node or a multi-node cluster, the module itself is byte-for-byte the same — you only wrap `ModernGPT` in DDP or FSDP per [Distributed Data Parallelism](../03-pretraining/05-distributed-data-parallel.html); there is no architectural change at scale.
+
+What you just built is, module for module, Llama's decoder block. The next section maps every piece onto the actual `transformers` source so you can read it directly.
+
+## Reading the Real Thing: This Chapter in `transformers`
+
+The `ModernGPT` above is structurally identical to Hugging Face's `LlamaForCausalLM`. That means learning to read one file — `transformers/models/llama/modeling_llama.py` — unlocks navigating the whole library, because every Llama-family model (and most decoder-only models released since) is a variation on the same skeleton.
+
+**Module-for-module mapping:**
+
+| Our name | `transformers` name | Note |
+|---|---|---|
+| `RMSNorm` | `LlamaRMSNorm` | Same math, same no-bias/no-mean-subtraction design. |
+| `ModernCausalSelfAttention` | `LlamaAttention` | Uses *separate* `q_proj`/`k_proj`/`v_proj`/`o_proj` instead of our fused `c_attn`, and exposes `num_key_value_heads` for GQA — set it equal to `num_attention_heads` to recover our dense MHA. |
+| `build_rope_cache` + `apply_rope` | `LlamaRotaryEmbedding` + `apply_rotary_pos_emb(q, k, cos, sin)` | Same `rotate_half` convention. Structurally, recent `transformers` builds `cos`/`sin` **once** at the `LlamaModel` level and threads `(cos, sin)` via `position_embeddings` into every `LlamaDecoderLayer` — exactly our design, where the cache is built once in `ModernGPT.__init__` and passed down to each `ModernBlock`. |
+| `SwiGLUFFN` | `LlamaMLP` | `gate_proj`/`up_proj`/`down_proj` = our `w_gate`/`w_up`/`w_down`; `act_fn` = SiLU. |
+| `ModernBlock` | `LlamaDecoderLayer` | `input_layernorm`, `self_attn`, `post_attention_layernorm`, `mlp` — same pre-norm wiring. |
+| `ModernGPT` trunk | `LlamaModel` | `embed_tokens` = our `wte`, `layers` = our `h`, `norm` = our `ln_f`. |
+| `ModernGPT` + `lm_head` + loss | `LlamaForCausalLM` | `transformers` shifts logits/labels **internally** inside `forward` (`shift_logits`/`shift_labels`), whereas we shift in `get_batch` — so you feed `transformers` *unshifted* labels. |
+| weight tying | `config.tie_word_embeddings` | `True` for small models (e.g. Llama-3.2-1B, SmolLM), `False` for Llama-2/3 at 7B+, which untie the head. |
+
+**Attention backends.** The `attn_implementation` argument to `from_pretrained` selects the attention kernel: `"eager"` is the readable, pure-PyTorch masked-softmax path (the manual `else` branch in our baseline `CausalSelfAttention`); `"sdpa"` routes through `F.scaled_dot_product_attention` (exactly our `is_causal=True` path); `"flash_attention_2"` calls the FlashAttention-2 kernels directly. You select it explicitly:
+
+```python
+model = AutoModelForCausalLM.from_pretrained(name, attn_implementation="sdpa")
+```
+
+**Generation.** Our sample-append loop corresponds to `GenerationMixin.generate` in `transformers/generation/utils.py`. Temperature, top-k, and top-p become `LogitsProcessor`/`LogitsWarper` objects composed into a pipeline; the greedy-vs-sample choice is dispatched inside the internal `_sample` routine; and the KV cache we deferred throughout this chapter is `DynamicCache`. In short, `generate()` is our loop plus a KV cache, stopping criteria, and batching.
+
+**A runnable orientation.** Load any small Llama-family checkpoint and print its module tree — it will read as an isomorphism to `ModernGPT`:
+
+```python
+from transformers import AutoModelForCausalLM
+
+m = AutoModelForCausalLM.from_pretrained("HuggingFaceTB/SmolLM2-135M")
+print(m)
+# LlamaForCausalLM(
+#   (model): LlamaModel(
+#     (embed_tokens): Embedding(...)
+#     (layers): ModuleList(
+#       (0-N): LlamaDecoderLayer(
+#         (self_attn): LlamaAttention(...)
+#         (mlp): LlamaMLP(...)
+#         (input_layernorm): LlamaRMSNorm(...)
+#         (post_attention_layernorm): LlamaRMSNorm(...)
+#       )
+#     )
+#     (norm): LlamaRMSNorm(...)
+#   )
+#   (lm_head): Linear(...)
+# )
+```
+
+To read the source itself:
+
+```python
+python -c "import transformers, os; print(os.path.dirname(transformers.__file__))"
+```
+
+then open `models/llama/modeling_llama.py` for the model and `generation/utils.py` for `generate`. You now have the vocabulary to read both top to bottom.
 
 !!! key "Key Takeaways"
     - A GPT is a function from token IDs to per-position next-token logits, built as: token + positional embeddings → a stack of pre-norm Transformer blocks on a shared **residual stream** → final LayerNorm → a linear `lm_head` to vocabulary logits.

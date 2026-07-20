@@ -46,10 +46,10 @@ During the **forward pass**, each transformer block needs to store activations f
 A common rule of thumb aggregates this to roughly:
 
 $$
-M_{\text{act}} \approx 12 \times B \times T \times d \times L \text{ bytes (fp16)}
+M_{\text{act}} \approx \underbrace{12 \times B \times T \times d \times L}_{\text{elements}} \times (\text{bytes/element})
 $$
 
-The exact coefficient depends on architecture details (e.g., GQA reduces the attention term). The key observation is that activation memory scales as $B \times T \times L$ — it can dwarf the static weight cost for long sequences or large batches.
+so in fp16/bf16 (2 bytes per element) this is $M_{\text{act}} \approx 24\,B\,T\,d\,L$ bytes. The coefficient 12 counts stored elements per token per layer; it is a rounded-down version of Megatron-LM's exact per-layer accounting $34\,s\,b\,h + 5\,a\,s^2\,b$ bytes (with $s=T$, $b=B$, $h=d$, $a$ = number of heads), whose first term is $\approx 17$ elements/token/layer. The second term $5\,a\,s^2\,b$ is the $T\times T$ attention-score matrix; it is absent when FlashAttention is used (it never materializes the scores), leaving only the term linear in $T$. The exact coefficient depends on architecture details (e.g., GQA reduces the attention term). The key observation is that activation memory scales as $B \times T \times L$ — it can dwarf the static weight cost for long sequences or large batches.
 
 !!! example "Worked Example: LLaMA-7B Memory Budget"
 
@@ -59,21 +59,27 @@ The exact coefficient depends on architecture details (e.g., GQA reduces the att
     $$16P = 16 \times 7 \times 10^9 \approx 112\,\text{GB}$$
 
     **Activation memory, batch 1, sequence length 2048:**
-    $$M_{\text{act}} \approx 12 \times 1 \times 2048 \times 4096 \times 32 \times 2\,\text{bytes}$$
-    $$= 12 \times 2048 \times 4096 \times 32 \times 2 \approx 6.4\,\text{GB}$$
+    $$M_{\text{act}} \approx \underbrace{12 \times 1 \times 2048 \times 4096 \times 32}_{\approx 3.2\text{B elements}} \times 2\,\text{bytes/element} \approx 6.4\,\text{GB}$$
 
     So with one GPU and standard training: $112 + 6.4 \approx 118\,\text{GB}$.
     An H100 SXM has 80 GB — this doesn't fit even with one sample per GPU.
 
     **With gradient checkpointing (no activations stored):**
-    $$M_{\text{total}} \approx 112 + \sqrt{L} \times \text{(one layer's activations)} \approx 112 + 0.2 \approx 112.2\,\text{GB}$$
+    $$M_{\text{total}} \approx 112 + \sqrt{L} \times \text{(one layer's activations)} \approx 112 + \sqrt{32}\times 0.2 \approx 112 + 1.1 \approx 113\,\text{GB}$$
+    (One layer's activations $\approx 6.4/32 \approx 0.2$ GB and $\sqrt{32}\approx 5.7$, so the $\sqrt{L}$ checkpoints cost $\approx 1.1$ GB. The simpler "store only each block's input" strategy costs $L\,B\,T\,d\times 2$ bytes $\approx 0.5$ GB.)
+
     Still too large — we need ZeRO or PEFT as well.
 
-    **With QLoRA rank-16 (see §4.5 below):**
-    $$M_{\text{LoRA params}} = 2 \times 2 \times 16 \times 4096 \times 32 \approx 0.27\,\text{GB (bf16)}$$
-    Frozen quantized base: $\approx 3.5\,\text{GB (4-bit)}$. Optimizer states on LoRA only:
-    $$16 \times 2 \times 16 \times 4096 \times 32 \approx 0.27 \times 8 \approx 2.16\,\text{GB}$$
-    Total: roughly **6 GB** — easily fits in a consumer GPU.
+    **With QLoRA rank-16 (q, k, v, o projections; see §4.5 below):**
+
+    Each adapted matrix adds $r(d_{\text{in}}+d_{\text{out}})$ parameters. With 4 attention
+    matrices per layer (each $4096\times4096$) over $L=32$ layers:
+    $$|\theta_{\text{LoRA}}| = 16 \times (4096 + 4096) \times 4 \times 32 \approx 16.8\text{M params}$$
+    Adapter weights (bf16, 2 bytes/param): $2 \times 16.8\text{M} \approx 34\,\text{MB} \approx 0.03\,\text{GB}$.
+    Frozen quantized base: $\approx 3.5\,\text{GB (4-bit)}$.
+    Adam optimizer states on the adapters only (8 bytes/param):
+    $$8 \times 16.8\text{M} \approx 0.13\,\text{GB}$$
+    Total: $3.5 + 0.03 + 0.13 \approx$ **3.7 GB** — easily fits in a 6 GB consumer GPU.
 
 ## Activation Checkpointing: Recompute vs. Store
 
@@ -355,7 +361,7 @@ $$
 M_{\text{QLoRA}} = \underbrace{\frac{P}{2}}_{\text{4-bit base}} + \underbrace{2 \cdot |\theta_{\text{LoRA}}|}_{\text{bf16 adapters}} + \underbrace{8 \cdot |\theta_{\text{LoRA}}|}_{\text{Adam states on adapters}}
 $$
 
-For LLaMA-7B with rank 16 covering all attention weight matrices: approximately $3.5 + 0.27 + 2.16 = 5.9$ GB — fitting in a 6 GB GPU.
+For LLaMA-7B with rank 16 covering all four attention projections (q, k, v, o), $|\theta_{\text{LoRA}}| \approx 16.8$M: approximately $3.5 + 0.03 + 0.13 \approx 3.7$ GB — fitting in a 6 GB GPU.
 
 ### LoRA From Scratch: A Full Implementation
 
@@ -777,7 +783,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
 !!! key "Key Takeaways"
 
     - The full training memory budget is $16P$ bytes per parameter for standard Adam mixed-precision; optimizer states ($8P$) typically dominate — not weights.
-    - Activation memory scales as $B \times T \times L$ and can exceed static costs for long sequences; the activation memory equation gives roughly $12 \cdot B \cdot T \cdot d \cdot L$ bytes.
+    - Activation memory scales as $B \times T \times L$ and can exceed static costs for long sequences; the activation memory equation gives roughly $12 \cdot B \cdot T \cdot d \cdot L$ elements ($\approx 24\,B\,T\,d\,L$ bytes in fp16/bf16).
     - Gradient checkpointing trades ~33% extra compute for $O(\sqrt{L})$ activation memory; FlashAttention achieves a similar win for the $O(T^2)$ attention term.
     - CPU offloading (ZeRO-Offload, ZeRO-Infinity) works because optimizer states are accessed once per step, tolerating PCIe latency.
     - LoRA with rank $r$ reduces trainable parameters to $\rho \approx r/d$ of the full matrix count, eliminating nearly all optimizer state for frozen layers.
