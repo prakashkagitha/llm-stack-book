@@ -1,0 +1,67 @@
+{
+  "unit_id": "C2-debug-and-verify",
+  "grade": 4,
+  "chapters_examined": [
+    "03-pretraining/11-training-stability",
+    "02-transformer/07-build-gpt-from-scratch",
+    "04-kernels-efficiency/01-roofline-performance",
+    "02-transformer/03-attention-from-scratch",
+    "02-transformer/01-tokenization",
+    "01-foundations/06-neural-nets-from-scratch",
+    "01-foundations/07-autodiff-pytorch",
+    "02-transformer/09-mixture-of-experts",
+    "01-foundations/01-linear-algebra"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "04-kernels-efficiency/01-roofline-performance",
+      "kind": "correctness-bug",
+      "missing": "The MFU worked example is arithmetically wrong: 1.68e7 tokens in 2.4 s = 7.0e6 tok/s gives 6N*tok/s = 281 PFLOP/s vs 63.4 PFLOP/s peak, i.e. MFU = 4.44 (444%, physically impossible), yet the text concludes '0.44 = 44%'. The premise throughput is ~10x too high. The same example also contains a leftover editing artifact ('= 6.3x10^16 x ... = 6.34x10^16? Recompute:') in the peak-FLOPs line.",
+      "fix": "Change the measured step to e.g. 1.68e6 tokens in 2.4 s (or 1.68e7 tokens in 24 s) so throughput is 0.7e6 tok/s and MFU genuinely computes to 44%; delete the garbled 'Recompute' sentence and state peak cleanly as 64 x 990 TFLOP/s = 63.4 PFLOP/s."
+    },
+    {
+      "severity": "critical",
+      "target": "03-pretraining/11-training-stability",
+      "kind": "correctness-bug",
+      "missing": "The Adam spike-magnitude worked example is internally inconsistent: the spike update uses (1-beta1)=0.1 (beta1=0.9) giving 3e-3, but the 'normal' update applies an extra (1-beta1) factor and reports 3e-6, which requires beta1=0.99. With beta1=0.9 throughout, the normal update is 3e-5 and the spike is ~100x normal, not the claimed '1000x'. The follow-on claim that clipping limits damage 'to ~10x normal' (0.03 vs 3e-6 is 10,000x; vs 3e-5 is 1000x) is also inconsistent.",
+      "fix": "Redo the worked example with one consistent beta1=0.9: normal steady-state update ~alpha (m-hat converges to g), spike update ~alpha*(1-beta1)*g/sqrt(v-hat-old); state the ratio correctly (~100x under the fresh-moment assumption) and recompute the with-clipping ratio to match."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/01-tokenization",
+      "kind": "verification",
+      "missing": "The named 'tokenizer round-trip' test is absent as code. The chapter asserts the GPT-2 bytes-to-unicode map (b2u[32]=='G-dot', 256 distinct chars) and states in prose that byte-level BPE decodes losslessly, but there is no decode() implementation for the from-scratch BPE, no explicit `assert decode(encode(s)) == s` test over adversarial inputs (multi-byte unicode, emoji, invalid UTF-8, leading spaces, special tokens), and no cross-validation of the from-scratch encoder against a reference (tiktoken/HF) on identical text.",
+      "fix": "Add a decode() for the byte-level BPE (ids -> merged symbols -> b2u-inverse -> bytes -> utf-8 with errors='replace'), a round-trip test loop over an adversarial string list, and a short harness that encodes the same corpus with the from-scratch tokenizer and tiktoken gpt2 and asserts identical token counts/ids when using GPT-2's merges."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/09-mixture-of-experts",
+      "kind": "verification",
+      "missing": "Dead-expert/router-collapse is explained mechanistically (rich-get-richer loop, aux loss with runnable code, z-loss, expert-choice), but there is no monitoring snippet a reader can run during training to *detect* dying experts: no per-expert dispatch-fraction histogram, router-entropy metric, or alert threshold (e.g. expert receiving < 0.2/E of tokens for N steps).",
+      "fix": "Add a ~20-line ExpertLoadMonitor that logs f_e per layer every K steps, router softmax entropy, and flags experts whose dispatch fraction stays below a threshold — mirroring the TrainingMonitor pattern already in 3.11."
+    },
+    {
+      "severity": "minor",
+      "target": "01-foundations/07-autodiff-pytorch",
+      "kind": "explanation",
+      "missing": "torch.autograd.set_detect_anomaly is never mentioned anywhere in the book; it is the standard first tool for localizing which op produced a NaN in the backward pass (complementing the forward-hook activation probe in 3.11).",
+      "fix": "Add a short subsection or warning box in the debugging portion of 1.7 (cross-linked from 3.11's playbook STEP 3) showing `with torch.autograd.set_detect_anomaly(True):` usage and warning about its large overhead (debug-only)."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "2.3 attention: full reference test — 'ours = scaled_dot_product_attention(...); ref = F.scaled_dot_product_attention(...); assert torch.allclose(ours, ref, atol=1e-5)' plus causality check 'np.allclose(np.triu(w, k=1), 0.0)' and row-sum check, and a hand-checkable worked example.",
+    "2.3 pitfall box: 'The single most common attention bug is applying softmax over the *query* axis... Always assert A.sum(dim=-1) is all-ones during development.'",
+    "1.6: complete central-difference gradient_check() with expected value: 'gradient check (relative error): ~1e-7'; 1.7: torch.autograd.gradcheck with fp64, eps/atol given, plus forward/backward allclose test of a custom Function with printed expected outputs.",
+    "2.7 expected-value sanity check: 'the loss starts near ln(65) ≈ 4.17 — exactly the loss of a uniform random guesser... If your loss starts far from ln V, suspect a labelling, masking, or initialization bug'; loss landmarks (<1.5 by ~2k steps, <1.0 gives real words) and the off-by-one/leaked-causal-mask 'too-good loss' pitfall.",
+    "3.11 is a field manual: warning-threshold table (grad norm 2-5x yellow / >10x red; NaN count any nonzero = red), spike causal chain, batch_anomaly_score code, skip-batch training_step code, TrainingMonitor, distributed NaN all-reduce check, 6-step debugging checklist, stability_probe.py with per-layer grad-norm and activation-hook diagnosis, pre-run hardening checklist, and pointers into OLMo/mup/nanoGPT.",
+    "4.1 profiling workflow is reference-grade: torch.profiler with schedule/warmup/synchronize, kernel_verdict() converting a measured time into a roofline classification, nsys/ncu command lines with NVTX, the 'measuring without warmup or synchronization' pitfall, and a 4-step performance-debugging playbook ending in 'ncu the single worst kernel'.",
+    "MFU as regression test: 'Track MFU on every training run... A code change that drops MFU from 48% to 31% with no architectural reason is a performance regression'.",
+    "2.9 dead experts: collapse mechanism ('rich-get-richer feedback loop... you have then paid for E experts and trained one'), runnable switch_aux_loss with detached hard counts, router z-loss, capacity/dropping worked numbers.",
+    "Silent shape bugs are covered distributively: 1.1 'PyTorch matmul broadcasts over leading batch dimensions... can silently hide shape bugs. Use torch.Size assertions'; 2.4 'This reshape ... is the source of nearly every shape bug in attention code'; 2.8 mask-convention warning ('always verify whether True means attend or ignore').",
+    "CONFIRMED BUG (4.1): MFU worked example computes 281 PFLOP/s achieved vs 63.4 PFLOP/s peak (= 4.44) but reports '≈ 0.44 = 44%'; premise throughput 7.0e6 tok/s exceeds the hardware's own ceiling by >4x. Line ~440-452.",
+    "CONFIRMED BUG (3.11): Adam worked example mixes (1-beta1)=0.1 for the spike with an implied (1-beta1)=0.01 for the normal update; consistent beta1=0.9 gives normal 3e-5 and a 100x ratio, not the claimed '1000x'. Line ~67-80."
+  ],
+  "summary": "Verification/debugging discipline is one of the book's strengths and is woven through the build chapters rather than ghettoized: attention is tested against F.scaled_dot_product_attention with allclose plus causality and row-sum asserts; backward passes get both a from-scratch central-difference grad-check (with the expected ~1e-7 relative error) and torch.autograd.gradcheck; the GPT chapter gives the ln(V) initial-loss sanity check, loss-trajectory landmarks, and the classic too-good-loss pitfalls (off-by-one targets, leaked causal mask); 3.11 is a genuine field manual for spikes/NaNs/divergence with numeric warning thresholds, skip-batch and monitoring code, a 6-step debugging checklist, and library pointers (OLMo, mup); 4.1 gives a complete profiling workflow (torch.profiler -> roofline verdict -> nsys -> ncu) with MFU as a regression metric. A reader can verify every component they build from the book alone, so the unit earns grade 4 — but two worked examples in exactly these chapters contain confirmed arithmetic errors (4.1's MFU example reports 44% when its own numbers give 444%; 3.11's Adam spike example's 1000x claim is internally inconsistent, correct value ~100x), and the promised tokenizer round-trip test never appears as code (no decode(), no assert decode(encode(s))==s, no tiktoken cross-check). Fix the two critical bugs and add the tokenizer round-trip harness; the dead-expert monitor and set_detect_anomaly mentions are cheap polish."
+}

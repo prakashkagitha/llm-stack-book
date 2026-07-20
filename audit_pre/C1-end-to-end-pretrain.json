@@ -1,0 +1,56 @@
+{
+  "unit_id": "C1-end-to-end-pretrain",
+  "grade": 3,
+  "chapters_examined": [
+    "02-transformer/07-build-gpt-from-scratch",
+    "03-pretraining/01-pretraining-data",
+    "03-pretraining/03-pretraining-objective",
+    "03-pretraining/04-scaling-laws",
+    "03-pretraining/05-distributed-data-parallel",
+    "03-pretraining/10-lr-schedules-hparams",
+    "03-pretraining/12-checkpointing-fault-tolerance",
+    "99-appendix/04-tooling-setup",
+    "99-appendix/05-from-scratch-index"
+  ],
+  "buildable_verdict": true,
+  "deficits": [
+    {
+      "severity": "major",
+      "kind": "explanation",
+      "target": "NEW:03-pretraining/17-end-to-end-pretrain-recipe",
+      "missing": "There is no single coherent chapter that stitches the full real-scale pipeline (train a BPE tokenizer on a corpus -> clean/dedup -> pack into shards -> instantiate a real 125M/1B GPT -> multi-GPU launch -> checkpoint -> eval perplexity -> sample) into one integrated, followable walkthrough. build-gpt (2.7) is a complete coherent path ONLY at toy char-level/laptop scale; at real scale the reader must themselves assemble ~16 separate Part III chapters plus the tooling appendix. The unit's core demand ('a single coherent path from raw text to a trained, sampled-from model') is met only for Tiny-Shakespeare, not for a GPU/BPE run.",
+      "fix": "Add a capstone recipe chapter that runs one concrete model (e.g. 125M, GPT-2-ish, BPE vocab) end to end: exact commands to train/apply a BPE tokenizer, build tokenized .bin shards (the nanoGPT prepare.py pattern), the model config, a torchrun/FSDP launch, a checkpoint+resume, a periodic val-perplexity eval, and a final sample. Cross-link each step back to its deep-dive chapter."
+    },
+    {
+      "severity": "major",
+      "kind": "resource-accounting",
+      "target": "NEW:03-pretraining/17-end-to-end-pretrain-recipe",
+      "missing": "No per-scale config+timing table spanning laptop / 1 GPU / 8 GPU / multi-node for one concrete model. Ch 3.10 gives an hparam table (125M/1B/7B/70B/400B: peak LR, warmup, batch tokens, weight decay) but not throughput or wall-clock; ch 3.4 gives a single multi-node budget worked example (256 GPUs, 21 days, MFU 0.45); build-gpt gives only the laptop config. A reader cannot read off 'on 8xA100 this exact 1B config trains at ~X tok/s and finishes 20B tokens in ~Y hours.'",
+      "fix": "Add a table with columns [scale, GPUs, model config, effective batch tokens, expected MFU, tokens/sec, wall-clock for the target token budget, GPU-hours/$] for laptop, 1 GPU, 8 GPU, and multi-node, using the 6ND + MFU accounting already derived in 3.4."
+    },
+    {
+      "severity": "minor",
+      "kind": "verification",
+      "target": "03-pretraining/04-scaling-laws",
+      "missing": "Expected loss/perplexity-vs-tokens milestones for a real BPE run are absent. build-gpt states the toy expectation (first loss ~= ln(65)=4.17, <1.5 within a couple thousand steps) and the objective chapter gives the init sanity check (loss ~= ln V), but there is no 'a compute-optimal 125M model on ~2.5B tokens should reach ~X nats/token / BPB ~Y' checkpoint a reader can validate a real run against.",
+      "fix": "Add 2-3 concrete (N, D, expected held-out nats/token and BPB) reference points for small models (e.g. 125M and 1B at Chinchilla-optimal tokens) so a reader can confirm their real run is on-curve, not just their toy run."
+    },
+    {
+      "severity": "minor",
+      "kind": "code",
+      "target": "03-pretraining/05-distributed-data-parallel",
+      "missing": "The multi-GPU training loop is presented as a from-scratch DDP bucketing wrapper and (in 3.12) FSDP checkpoint utilities, but there is no single runnable torchrun-launchable train.py that wires model + real dataloader over sharded token files + optimizer + schedule + DDP/FSDP + checkpoint into one script. The pieces exist across chapters and the tooling appendix (accelerate/torchrun/DeepSpeed launch commands) but are never assembled.",
+      "fix": "Provide one ~150-line runnable distributed train.py (torchrun entry, init_process_group, shard-aware dataloader, DDP or FSDP wrap, cosine schedule, grad clip, periodic checkpoint via the 3.12 harness) so the 8-GPU path is buildable without the reader integrating five chapters by hand."
+    }
+  ],
+  "evidence": [
+    "build-gpt (2.7) is a complete, runnable, single-file end-to-end path at laptop scale: GPTConfig, LayerNorm/CausalSelfAttention/MLP/Block/GPT modules with exact tensor shapes, weight tying + scaled residual init, char-level tokenizer + get_batch shift-by-one, AdamW with decay/no-decay split, warmup+cosine get_lr, grad clip, estimate_loss, and a generate() with temperature/top-k/top-p. This alone satisfies 'raw corpus -> trained -> sampled model.'",
+    "Verification and failure signatures are explicit: 'first logged loss should be ~= ln V (uniform-guess baseline)'; off-by-one target and leaked causal mask produce implausibly-low loss; degenerate repetition is a decoding not weights problem (Interview Corner). Objective ch gives 'loss ~= log(256)=5.55 for random init'.",
+    "3.3 objective: exact CE/NLL math, teacher forcing, causal mask table, label shifting, loss masking (ignore_index=-100), document packing with cross-doc contamination handling, BPB conversion, z-loss - all with runnable code.",
+    "3.10: full hparam recipe table (125M-400B: peak LR, warmup, batch tokens, grad clip, weight decay, betas=(0.9,0.95)), from-scratch cosine and WSD schedulers with smoke-test asserts, grad accumulation with model.no_sync(), muP.",
+    "3.4 scaling laws: C=6ND derivation, MFU, Chinchilla 20x rule with Lagrange derivation and fitting code, and a self-consistent multi-node budget worked example (256 GPUs, 21 days, 0.45 MFU -> N, D, tok/s).",
+    "3.5 DDP from-scratch bucketing/overlap; 3.12 production FSDP + DCP checkpoint/resume harness with RNG state and async checkpointing. Tooling appendix gives torchrun/accelerate/DeepSpeed launch commands and ZeRO configs.",
+    "Gap confirmed: no integrated real-scale capstone exists. book.json calls 2.7 'the capstone of Part II' but it is toy-scale; Part III chapters cover each stage separately with strong cross-links but are never assembled into one raw-corpus-to-checkpoint-at-scale walkthrough."
+  ],
+  "summary": "Coverage of the end-to-end pretraining capability is strong and, taken as a whole, buildable. build-gpt (2.7) is a genuinely complete, correct, runnable single-file path from raw text to a trained-and-sampled model at laptop/char-level scale, including the ln(V) sanity check, failure signatures, and correct tensor shapes/edge cases (causal mask, weight tying, scaled residual init, weight-decay split). Every real-scale stage - data sourcing (3.1), loss/packing/masking (3.3), LR schedules and multi-scale hparam tables (3.10), DDP/FSDP (3.5) and checkpointing (3.12), scaling-law compute/timing accounting (3.4), and library launch commands (tooling appendix) - is present with real, mostly reference-quality code and pointers into nanoGPT/mup/DeepSpeed/FSDP/TRL. A reader with GPUs CAN reach a working trained LM using only this book. It falls short of REFERENCE for this specific capability because the 'single coherent path' and the demanded multi-scale (laptop/1GPU/8GPU/multi-node) config+timing+expected-loss-curve exist only at toy scale; at real scale the reader must integrate ~16 chapters themselves, with no stitched capstone recipe, no runnable distributed train.py, and no per-scale throughput/wall-clock table. Grade 3 (buildable, leaning high). No correctness bugs found in the end-to-end path."
+}

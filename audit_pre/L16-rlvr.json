@@ -1,0 +1,60 @@
+{
+  "unit_id": "L16-rlvr",
+  "grade": 4,
+  "chapters_examined": [
+    "05-posttraining-alignment/08-grpo-rloo",
+    "05-posttraining-alignment/09-rlvr-reasoning",
+    "05-posttraining-alignment/13-reward-hacking-failures",
+    "06-rl-infra/02-generation-training-loop",
+    "06-rl-infra/08-reward-verifiers-sandboxes",
+    "06-rl-infra/09-advantage-kl-tricks"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "06-rl-infra/02-generation-training-loop",
+      "kind": "correctness-bug",
+      "missing": "The decode-bandwidth worked example claims weight traffic per decode step is '2N*b_param = 2*7e9*2 = 2.8e10 bytes = 28 GB' for a 7B bf16 model. Reading N parameters at 2 bytes each is 14 GB, not 28 GB — the '2N' FLOP convention was conflated with bytes. The same chapter correctly states '~14 GB to move every step' in Phase 5, so the text contradicts itself; the derived ~8.4 ms/step and ~8.6 s totals are 2x too high.",
+      "fix": "Change the formula to N*b_param bytes (14 GB), recompute: ~4.2 ms per decode step and ~4.3 s over 1024 steps, and adjust the '~12-20 s' downstream estimate accordingly (the qualitative conclusion that generation dominates survives)."
+    },
+    {
+      "severity": "critical",
+      "target": "05-posttraining-alignment/08-grpo-rloo",
+      "kind": "correctness-bug",
+      "missing": "In the from-scratch GRPO trainer's rollout(), `model.generate(..., num_return_sequences=G, pad_token_id=eos)` pads shorter completions in a group with EOS up to the group max length, and `resp_mask[i, plen:s.shape[0]] = 1.0` then marks those trailing pad-EOS tokens as response tokens. The loss/ratio/KL are therefore computed on tokens the policy never sampled, injecting advantage-weighted gradient on repeated-EOS positions.",
+      "fix": "Truncate the mask at the first EOS in the generated region (e.g. find the first eos_token_id after plen and set mask beyond it to 0), or generate per-sequence lengths from the scores/stopping criteria; add one sentence warning that generate() pads with pad_token_id and masks must stop at the true EOS."
+    },
+    {
+      "severity": "critical",
+      "target": "05-posttraining-alignment/08-grpo-rloo",
+      "kind": "correctness-bug",
+      "missing": "The worked examples in 5.8 and 5.9 explicitly compute the group std as the population std (divide by G), but the accompanying code uses `g.std(dim=1)` which in PyTorch defaults to the Bessel-corrected sample std (divide by G-1). A reader validating the code against the worked example's expected values (e.g. A1 = +0.992 in 5.8) will get A1 = +0.859 instead (pop std 0.5545 vs sample std 0.6403). Same mismatch in 06-rl-infra/02's grpo_advantages.",
+      "fix": "Either pass `correction=0` (unbiased=False) in the code to match the worked examples, or add a one-line note that torch defaults to the sample std, both conventions appear in real codebases (TRL uses the default), and the worked example uses population std — then state the alternative expected values."
+    },
+    {
+      "severity": "minor",
+      "target": "06-rl-infra/02-generation-training-loop",
+      "kind": "code",
+      "missing": "In rl_outer_step(), reward_fn is called with r['response_ids'] (token ids) although every reward function defined in the book takes decoded text; and sync_weights_to_engine is called once with a state dict (from the async sketch) and once with a model, with incompatible signatures. Sketch-level, but a reader stitching the pieces together must notice and fix it.",
+      "fix": "Decode the response before scoring (`tok.decode(r['response_ids'], skip_special_tokens=True)`) and unify sync_weights_to_engine to take a state_dict in both call sites."
+    }
+  ],
+  "buildable_verdict": true,
+  "buildable_reasoning": "A competent reader can implement GRPO for math reasoning with a verifiable reward from this book alone. Chapter 5.8 provides a complete, runnable single-GPU GRPO trainer: rollout with num_return_sequences=G, per-token log-prob extraction with the explicit logits[:, :-1]/targets[:, 1:] shift and mask alignment, group z-score advantage with the epsilon guard, the clipped surrogate with decoupled eps_low/eps_high, the k3 KL estimator with code, detach semantics, multi-epoch reuse, grad clipping, and concrete hyperparameters (G=8, eps=0.2/0.28, lr=1e-6, PPO_EPOCHS=2, beta=0). Chapter 5.9 supplies a real math verifier (last-boxed extraction with brace walking, Fraction/LaTeX normalization) with executable assert-based sanity checks, a sandboxed code reward, and a full shaped-reward function. Worked numerical examples give exact expected advantages, and the diagnostics section (ratio ~1.0 at epoch-0 minibatch-0, clip fraction, approx KL) tells the reader how to verify their implementation. Edge cases (dead groups, degenerate responses, verifier false negatives, numerics mismatch between sampler and trainer log-probs) are covered explicitly. The three flagged bugs are real but localized: the mask/EOS-padding issue and the std-convention mismatch would produce a slightly noisy but still-converging trainer, and the bandwidth factor-of-2 affects only a resource estimate, not the algorithm.",
+  "evidence": [
+    "5.8 contains a complete runnable GRPO trainer ('GRPO from scratch: a complete, runnable training step') with rollout, token_logprobs (explicit shift: 'return tok_lp, resp_mask[:, 1:]  # shift mask to align with targets'), grpo_advantage, clipped loss with decoupled CLIP_EPS_LOW=0.2/CLIP_EPS_HIGH=0.28, and multi-epoch update.",
+    "5.8 derives RLOO exactly: 'b_i = 1/(G-1) sum_{j!=i} R_j, A_i = G/(G-1)(R_i - Rbar)' — identity verified numerically.",
+    "5.8 worked example computes exact advantages (A1=A3=+0.992, A4=-1.172) and traces clipping on individual tokens (ratio 1.35 vs ceiling 1.28 -> clipped), verified by independent recomputation.",
+    "5.8 covers the 2025 fixes in depth: Dr. GRPO (drop std normalization, token-level loss), DAPO (clip-higher, dynamic sampling, overlong filtering), with a comparison table and the length-bias mechanism explained algebraically ('a long correct response gets a smaller per-token push than a short correct one').",
+    "5.9 provides a real math verifier: extract_boxed_answer with nested-brace walking, normalize_numeric handling \\frac, fractions, percentages, and executable asserts ('assert math_is_correct(r\"... \\boxed{1/2}.\", \"0.5\") == 1.0').",
+    "5.9 provides a sandboxed code-execution reward (rlimits, subprocess -I, timeout, hidden tests via stdin) with explicit production caveat ('use gVisor/Firecracker'), and a full rlvr_reward with contingent format bonus and degeneracy guard.",
+    "5.9 covers RLVR reward hacking as a taxonomy: test hard-coding, parser exploits, sandbox escapes, format farming, length inflation — 'RLVR converts statistical reward-hacking into software security'.",
+    "6.2 gives the five-phase generation-training loop with a FLOP/bandwidth resource-accounting worked example, vLLM rollout code returning behavior logprobs (logprobs=0), weight hot-swap via collective_rpc('load_weights'), the async staleness ladder with a bounded-queue code skeleton, and the sampler-vs-trainer numerics pitfall ('recompute the old logprobs on the trainer... ratio should be ~1.0 at the first minibatch').",
+    "6.9 is an explicit engineering reference for advantages/KL ('read a verl or trl advantage-computation function line by line'), including GAE code, the std-normalization bias, and the all-same-reward dead group.",
+    "Library pointers are concrete throughout: TRL GRPOTrainer/RLOOTrainer, veRL/HybridFlow, OpenRLHF, DAPO repo — each with its own dedicated chapter (6.3, 6.4, 6.5).",
+    "Bug found: 6.2's decode-bandwidth example states 2N*b_param = 28 GB for a 7B bf16 model; the correct weight read is 14 GB (the same chapter says '~14 GB' in Phase 5).",
+    "Bug found: 5.8's rollout marks generate()'s EOS padding as response tokens (resp_mask[i, plen:s.shape[0]] = 1.0 while generate pads to group max length with pad_token_id=eos).",
+    "Inconsistency found: worked examples use population std (0.5545) but the code's g.std() defaults to sample std (0.6403), so the code does not reproduce the printed expected advantages."
+  ],
+  "summary": "Outstanding coverage — the strongest unit audited so far. All four learning objectives are met at reference depth: 5.8 (GRPO/RLOO with a complete runnable trainer, worked numerics, and the Dr. GRPO/DAPO fix literature), 5.9 (verifiable rewards with real, assert-tested math and sandboxed-code verifiers and an RLVR hacking taxonomy), 6.2 (five-phase loop, rollout engines, resource accounting, async staleness), plus 6.8/6.9/5.13 as reinforcing depth. The deliverable (GRPO for math reasoning with a verifiable reward) is fully buildable with hyperparameters, edge cases, verification diagnostics, and library pointers. Grade 4, with three correctness bugs to fix: a factor-of-2 bandwidth error in 6.2's worked example, EOS-padding leakage into the response mask in 5.8's toy rollout, and a population-vs-sample std mismatch between the code and the worked examples' expected values."
+}

@@ -1,0 +1,69 @@
+{
+  "unit_id": "L06-kernels-triton",
+  "grade": 3,
+  "chapters_examined": [
+    "04-kernels-efficiency/02-flash-attention-1",
+    "04-kernels-efficiency/03-flash-attention-2-3",
+    "04-kernels-efficiency/04-triton-kernels"
+  ],
+  "deficits": [
+    {
+      "severity": "major",
+      "target": "04-kernels-efficiency/04-triton-kernels",
+      "kind": "code",
+      "missing": "No Triton backward kernel anywhere in the book. The backward algorithm is fully derived and gradient-checked in NumPy (ch 4.2) and the kv-parallel loop-ordering strategy is stated in prose (ch 4.3, line 122), but the deliverable 'Triton FA-2 forward and backward kernel' requires the reader to synthesize the entire Triton backward (D-preprocessing, kv-parallel dK/dV kernel, q-parallel or atomic dQ) from scratch.",
+      "fix": "Add a 'Kernel 5: FlashAttention backward' section (or a fully-guided exercise with skeleton code) implementing the two-kernel backward: a preprocessing step computing D = rowsum(dO*O), a kv-parallel kernel producing dK/dV via load-time-transposed Q/dO tiles, and a q-parallel dQ kernel, each verified against torch.autograd."
+    },
+    {
+      "severity": "major",
+      "target": "04-kernels-efficiency/04-triton-kernels",
+      "kind": "code",
+      "missing": "Kernel 4 (the Triton FlashAttention forward) does not compute or store the per-row logsumexp L = m_i + log(l_i), which chapter 4.2 establishes as the one statistic the backward pass requires. As written, no backward can be attached to this forward without modifying it.",
+      "fix": "Add an L_ptr output to flash_attn_kernel and store m_i + tl.log(l_i) (or the base-2 equivalent) after the KV loop, with a comment tying it to the backward-pass recomputation in ch 4.2."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/04-triton-kernels",
+      "kind": "explanation",
+      "missing": "The exp2 trick (folding log2(e) into qk_scale) puts the running max m_i in base-2 log space. The interaction between this and the saved logsumexp L (which the ch-4.2 backward defines in natural-log space) is never discussed; a reader combining the two chapters can silently produce an inconsistent-base L and wrong gradients.",
+      "fix": "Add a note stating that with the exp2 trick, L must be stored as (m_i + tl.log2(l_i))/log2(e) to recover the natural-log logsumexp, or that the backward must use exp2 with the same folded scale consistently."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/04-triton-kernels",
+      "kind": "code",
+      "missing": "Causal masking is described precisely in prose (loop break at the diagonal block plus tl.where(offs_m[:,None] >= offs_n[None,:], s, -inf)) but is not implemented in the Triton kernel, and the FA-2 deliverable implies causal support. The two-phase loop structure (full blocks then masked diagonal block) that real kernels use is not shown in code.",
+      "fix": "Add a causal variant of Kernel 4 (or an exercise with the exact loop bound `range(0, (start_m+1)*BLOCK_M, BLOCK_N)` and the diagonal-block mask) verified against a causal fp32 reference."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/04-triton-kernels",
+      "kind": "library-mapping",
+      "missing": "tl.atomic_add and tl.trans are never introduced anywhere in the book, yet the stated backward strategies (ch 4.2: 'dQ is accumulated with atomics') reference atomics. A reader following that prose route has no Triton primitive to reach for; the no-atomics alternative (load-time transposes via stride swapping, separate dQ kernel) is derivable but never made explicit.",
+      "fix": "Introduce tl.atomic_add (and note tl.trans) in the Triton-language survey, and state explicitly that transposed operands can be obtained by swapping the roles of stride offsets in the pointer computation, as Kernel 4 already does implicitly for K."
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/02-flash-attention-1",
+      "kind": "explanation",
+      "missing": "The 'Watch the correction factor work' worked example deliberately presents a wrong reference value (1.00339), then reveals it was 'an arithmetic slip on the reader's behalf' and recomputes 1.010129. The self-correcting device reads as an uncaught erratum on first pass and risks confusing readers.",
+      "fix": "Rewrite the example to compute the correct reference (1.010129) upfront, or clearly frame the wrong value as an intentional trap before presenting it."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "04-triton-kernels contains four complete, runnable kernels (vector add, fused softmax, autotuned matmul with GROUP_M L2 swizzle, simplified FlashAttention forward), each with exact shapes, stride passing, masks, and a correctness check against a PyTorch reference.",
+    "Triton programming model covered as five concepts: '@triton.jit, the launch grid, tl.program_id, pointer-block arithmetic, and masks' with the [:,None]/[None,:] broadcast pattern spelled out.",
+    "Autotuning covered concretely: @triton.autotune configs with BLOCK_M/N/K, num_warps, num_stages, GROUP_M, key=['M','N','K'], plus a knob-effect table and a worked SRAM-budget example (96 KiB vs 164/228 KiB per SM) tying tile size to occupancy.",
+    "Benchmarking and testing methodology explicit: triton.testing.do_bench with TFLOP/s computation, TRITON_INTERPRET=1 debugging, and the rule 'write the eager-PyTorch reference first, then make the kernel match it under torch.allclose'.",
+    "02-flash-attention-1 derives the online softmax with a full induction proof of exactness, runnable NumPy streaming implementation (error ~1e-16), and the correction factor alpha = exp(m_old - m_new).",
+    "Full NumPy FlashAttention forward with causal masking, fully-masked-row guards (l_safe), and logsumexp L saved; verified to ~1e-15 against a dense reference for both causal settings.",
+    "Complete backward derivation: dV = P^T dO, dP = dO V^T, D_i = dO_i . O_i, dS = P(dP - D), dQ = dS K/sqrt(d), dK = dS^T Q/sqrt(d), with P recomputed as exp(S_ij - L_i); runnable NumPy code passes a central-difference gradient check to ~1e-7.",
+    "IO accounting proved: naive Theta(N^2) vs FlashAttention Theta(N^2 d^2 / M) HBM accesses, with a comparison table and the N^2-wall memory table.",
+    "03-flash-attention-2-3 explains FA-2's three edits (deferred normalization, seqlen-parallel grid (ceil(N/Br), heads, batch), split-Q warp partitioning) with a runnable FA-2-dataflow reference including causal block skipping, plus the backward kv-parallel strategy: 'each thread block owns a K_j, V_j and loops over query blocks, avoiding atomic adds into dK, dV'.",
+    "Kernel 4 in 04-triton-kernels is FA-2-style (q-block-parallel grid, deferred final division, exp2 trick) and the common-pitfall box warns about forgetting to rescale the accumulator by alpha.",
+    "Gaps: Kernel 4 is non-causal and does not store L; no Triton backward code exists ('the backward pass ... is covered in the FlashAttention chapters' — where it is NumPy only); tl.atomic_add/tl.trans never introduced.",
+    "Pointers into real implementations are abundant: triton-lang tutorials, Dao-AILab/flash-attention, vLLM, Liger-Kernel, Unsloth, CUTLASS."
+  ],
+  "summary": "Coverage of the Triton programming model, tiling/autotuning/occupancy, the online-softmax/FlashAttention derivation, and correctness testing is reference-grade: four complete runnable Triton kernels, a proof of online-softmax exactness, a gradient-checked NumPy forward+backward, IO-complexity accounting, and FA-2's work-partitioning edits with a causal reference implementation. The specific deliverable — a Triton FA-2 forward AND backward kernel — is buildable but requires real synthesis: the provided Triton forward is non-causal and omits the logsumexp output the backward needs, and the backward exists only as verified NumPy plus a prose parallelization strategy (no Triton code, no tl.atomic_add/tl.trans introduction, no discussion of the exp2-base interaction with the saved logsumexp). A competent reader can bridge these gaps using the taught stride-swapping and gradient-check methodology, so the verdict is buildable at grade 3; adding a guided Triton backward section would lift the unit to 4. No critical correctness bugs were found."
+}

@@ -1,0 +1,68 @@
+{
+  "unit_id": "L19-guest-fu",
+  "grade": 4,
+  "chapters_examined": [
+    "02-transformer/11-ssm-and-alternatives",
+    "04-kernels-efficiency/01-roofline-performance",
+    "04-kernels-efficiency/02-flash-attention-1",
+    "04-kernels-efficiency/03-flash-attention-2-3"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "correctness-bug",
+      "missing": "The Mamba-2 SSD equation is garbled: it states 'Y = (L \\circ M) V, L_{ij} = C_i^T h_j (if using state expansion)' with M_{ij} = prod of decays. This conflates the decay mask and the attention-like matrix, and L_{ij} = C_i^T h_j is not a valid entry of either (h_j is a hidden state, not a factor in the mask). The correct SSD form is Y = (L \\circ (C B^T)) V where L_{ij} = prod_{k=j+1}^{i} a_k for i >= j (0 otherwise).",
+      "fix": "Rewrite the SSD section: define the 1-semiseparable decay mask L_{ij} = prod_{k=j+1}^{i} a_k, then state Y = (L \\circ (C B^T)) V, and note this is exactly linear attention with a data-dependent multiplicative causal mask. Keep the block-decomposition remark."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "code",
+      "missing": "The training-time parallel/chunked scan — the actual hardware-aware algorithm that makes Mamba/GLA trainable at speed — is dispatched in one sentence ('production uses parallel scan') and one paragraph on kernel fusion. The provided SelectiveSSM uses a Python for-loop over L, which is correct but does not teach the associative-scan or chunkwise (intra-chunk parallel + inter-chunk recurrent) algorithm that is the SSM counterpart of the FlashAttention story and the heart of this lecture's 'hardware-aware algorithm design' objective.",
+      "fix": "Add a section deriving the chunked scan: show the associative combine operator (a1,b1)*(a2,b2)=(a1*a2, a2*b1+b2) for the linear recurrence, and/or the chunkwise GLA/SSD algorithm (process chunks of length C with intra-chunk matmuls, carry an inter-chunk state), with a ~30-line NumPy/PyTorch implementation verified against the sequential loop."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "verification",
+      "missing": "Unlike the FlashAttention chapter (which asserts equivalence to a reference and grad-checks the backward), the SSM chapter's code has no numerical checks: linear_attention_parallel is never verified against a recurrent-form rollout, and SelectiveSSM/RWKVTimeMixing have no expected-output or equivalence tests (only a shape print for the hybrid model).",
+      "fix": "Add short verification snippets: (a) assert non-causal linear_attention_parallel matches an explicit softmax-free reference and that stepping linear_attention_recurrent_step over t reproduces the causal output; (b) assert the sequential selective scan matches a cumulative-product closed form on a tiny (B=1, L=5, D=2, N=3) example with hand-checkable numbers."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "explanation",
+      "missing": "Dan Fu's signature research line is absent: no mention anywhere in the book of H3, Hyena (implicit long convolutions), FlashFFTConv (hardware-aware O(N log N) FFT convolution), Monarch/butterfly structured matrices, or Based (Taylor linear attention + sliding window). The chapter jumps from S4's FFT-convolution view straight to Mamba.",
+      "fix": "Add a short 'Convolutional language models' subsection to 02-transformer/11 covering H3/Hyena long convolutions, the FlashFFTConv idea (Monarch decomposition of the FFT to use tensor cores), and Based's Taylor-feature-map + sliding-window hybrid, with citations."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "correctness-bug",
+      "missing": "The worked FLOP example counts only one of the two matmuls in each block: 'attention FLOPs per layer ~ 2 x 32 x 2048^2 x 128 ~ 34 GFLOPs' is only QK^T (PV doubles it to ~69 GF), and 'feed-forward FLOPs ~ 2 x 2048 x 4096 x 16384 ~ 275 GFLOPs' is only the up-projection (up+down gives ~550 GF). The ~11% ratio survives because both are halved, but the absolute numbers are each understated by 2x. The follow-on sentence 'attention dominates by more than 500x over the MLP at 2048 length' compares attention at 128K against MLP at 2K, which is confusing as written.",
+      "fix": "Count both matmuls in each block (attention ~69 GF, FFN ~550 GF at N=2048), and rephrase the 128K comparison to compare attention and MLP at the same sequence length (attention ~8x the MLP at N=131072)."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "math",
+      "missing": "The RetNet retention equation is written as a scalar-looking double sum '(sum_{m,n} (Q_m K_n^T) gamma^{m-n} 1_{m>=n}) V', which does not typecheck as the N x N masked score matrix it intends.",
+      "fix": "Write it as Retention(Q,K,V) = (QK^T \\odot D) V with D_{mn} = gamma^{m-n} for m >= n and 0 otherwise."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "02-transformer/11 gives linear attention in both parallel and recurrent forms with full runnable PyTorch and exact shapes: 'linear_attention_parallel(Q: (B, N, H, d_k) ...)' and 'linear_attention_recurrent_step ... O(d_k * d_v) per step'.",
+    "02-transformer/11 provides a complete SelectiveSSM + MambaBlock implementation with Mamba's real hyperparameters (d_state=16, expand=2, d_conv=4, dt_rank=ceil(d/16), softplus(dt), A=-exp(A_log), causal left-padded depthwise conv) and a full HybridLanguageModel with a runnable sanity check.",
+    "02-transformer/11 RWKV code implements the numerically stable log-space WKV update ('qq = torch.maximum(pp + w, kt + u)') matching the official kernel's stabilization.",
+    "02-transformer/11 has resource accounting: FLOP/memory trade-off table plus a worked 32K-context comparison (16 GB KV cache vs 4 MB Mamba state vs 256 KB RWKV state).",
+    "02-transformer/11 covers Mamba-2/SSD duality, GLA unification (gate choices recovering RetNet/RWKV/Mamba/linear attention), Griffin/Hawk, HGRN, and hybrid design space (Jamba 1:8, Zamba shared attention), with library pointers to state-spaces/mamba, BlinkDL/RWKV-LM, and fla-org/flash-linear-attention.",
+    "04-kernels-efficiency/02 (co-authored by Dan Fu) is reference-grade on hardware-aware algorithm design: online softmax derived with an inductive exactness proof, full NumPy forward AND backward with causal masking and fully-masked-row guards, asserted against a reference ('max abs error ~1e-15') and grad-checked ('~1e-7'), IO-complexity accounting Theta(N^2 d^2 / M), fallback failure modes for the SDPA backend, and pointers into Dao-AILab/flash-attention and FlexAttention.",
+    "04-kernels-efficiency/03 covers FA2 loop-reordering/deferred rescale/warp partitioning and FA3 warp specialization, TMA producer/consumer pipelining, and FP8 with incoherent processing — the 'hardware-aware algorithm design' objective at depth.",
+    "04-kernels-efficiency/01 grounds the roofline/arithmetic-intensity framework with MFU math and profiler workflows (torch profiler, Nsight).",
+    "Absent: Hyena, H3, Monarch, FlashFFTConv, Based — grep over content/ returns no hits ('butterfly' only appears for __shfl_xor_sync).",
+    "Bug found: SSD equation 'Y = (L \\circ M) V, L_{ij} = C_i^T h_j' in 02-transformer/11 line ~376 is not the correct state-space-duality formula."
+  ],
+  "summary": "This guest-lecture unit (efficient architectures, SSMs, hardware-aware algorithm design) is covered at reference quality overall. Chapter 2.11 delivers linear attention (parallel + recurrent forms), S4 discretization, a complete runnable Mamba block with real hyperparameters, numerically stable RWKV, RetNet, GLA unification, and hybrid architectures with resource-accounting worked examples; chapters 4.1-4.3 deliver the hardware-aware design methodology (roofline, IO-aware FlashAttention with proofs, verified NumPy forward/backward, FA2/FA3 warp specialization and FP8) at genuinely reference grade. The unit has no implementable deliverable, and the objectives are conveyed well beyond buildable depth. Deficits: the Mamba-2 SSD formula is garbled (correctness bug), the training-time chunked/parallel scan — the SSM analogue of FlashAttention and central to this lecture — is only mentioned rather than derived or implemented, the SSM chapter's code lacks the verification harnesses the FlashAttention chapter exemplifies, and Dan Fu's convolutional line (H3/Hyena/Monarch/FlashFFTConv/Based) is entirely absent from the book."
+}

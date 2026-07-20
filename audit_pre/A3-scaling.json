@@ -1,0 +1,63 @@
+{
+  "unit_id": "A3-scaling",
+  "grade": 3,
+  "chapters_examined": [
+    "03-pretraining/04-scaling-laws",
+    "03-pretraining/10-lr-schedules-hparams",
+    "02-transformer/10-modern-arch-improvements",
+    "04-kernels-efficiency/01-roofline-performance",
+    "02-transformer/11-ssm-and-alternatives",
+    "03-pretraining/14-data-mixing-curriculum"
+  ],
+  "deficits": [
+    {
+      "severity": "major",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "code",
+      "missing": "The IsoFLOP method (Chinchilla approach 2) — the method the deliverable is named after — gets exactly one prose sentence ('fits a parabola in log N to find the valley... then fits a power law through those valleys') with no code, no worked example, and no discussion of how many points per slice, quadratic-fit robustness, or extracting D_opt from each valley. Only the parametric fit (approach 3) is fully implemented.",
+      "fix": "Add a runnable IsoFLOP section: group synthetic runs into 4-6 fixed-C slices, fit a quadratic in log N per slice (np.polyfit), extract N_opt(C) and D_opt(C)=C/(6*N_opt), fit log N_opt vs log C to recover exponent a, and cross-check a against the parametric fit's beta/(alpha+beta). Include the expected recovered exponent as a printed check."
+    },
+    {
+      "severity": "major",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "explanation",
+      "missing": "No concrete procedure for DESIGNING a sweep under a constrained experimentation budget. The chapter says 'run a grid of small models at varying N and D' and lists pitfalls (unconverged runs, LR schedule matched to token count), but never answers: given a sweep budget of, say, 1-2% of the final run's FLOPs, how many compute slices, how many models per slice, how to space N around the expected optimum, how to set per-run LR/batch (linking the ch. 3.10 scaling rules), and how the run-table FLOPs sum to the budget.",
+      "fix": "Add a worked sweep-design example: 'You have 2e18 FLOPs for experiments before a 1e21 run.' Produce an explicit run table (C slice, N values, D values, LR, batch, per-run FLOPs, total) using log-spaced slices and ~6 models per slice spanning ~1 order of magnitude in N, with LR chosen via muP or the batch-scaling rules, and total cost verified against the budget. This is the exact skill the assignment demands."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "correctness-bug",
+      "missing": "The emergent-abilities demo defines smooth_per_token_accuracy(N) = 1 - 0.9*(N/1e9)**-0.12, which is NEGATIVE for N < ~4.2e8; since Ns = np.logspace(8, 12, 9), the first two printed rows show per-token 'accuracy' of about -0.19 and -0.03 (only exact_match clips). Verified numerically.",
+      "fix": "Clip inside smooth_per_token_accuracy (np.clip(..., 0, 1)) or start Ns at 1e9 so the printed table shows valid probabilities."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "code",
+      "missing": "predict_log_loss's comment claims 'log-sum-exp form keeps it numerically stable', but the code exponentiates each term and sums directly — no logsumexp is used. Harmless at these magnitudes but the comment misdescribes the code and misattributes Chinchilla's actual LSE trick.",
+      "fix": "Either use scipy.special.logsumexp over the stacked terms (matching Hoffmann et al.'s actual objective) or correct the comment to say the parameterization via logs keeps the fitted constants positive."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/04-scaling-laws",
+      "kind": "exercise",
+      "missing": "No end-of-chapter exercises rehearsing the full assignment loop (design sweep -> fit both methods -> project N*, D* at 10x budget), and component-to-LOSS attribution (e.g., how loss responds to aspect ratio, head count, batch/LR misconfiguration at fixed FLOPs) is only qualitative, spread across 02-transformer/10 and 03-pretraining/10.",
+      "fix": "Add 2-3 exercises: (a) hold out the largest synthetic run, fit on the rest, verify extrapolated loss within 2%; (b) refit with under-converged runs deliberately included and observe the Kaplan-style bias in the exponents; (c) given a fixed C slice, predict the loss penalty of training at 2x and 0.5x the optimal N."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "03-pretraining/04-scaling-laws gives the full parametric fit with real code: Huber loss on log-loss residuals, positivity via log-parameterization, L-BFGS-B with 40 multi-starts and bounds, and verification by recovering known ground-truth constants from synthetic noisy data ('Recovered: E=... Ground truth: E=1.69 A=406 ...').",
+    "Compute-optimal projection is fully derived (Lagrange condition, N_opt = [alphaA/betaB]^{1/(alpha+beta)} (C/6)^{beta/(alpha+beta)}, a+b=1) and implemented twice (chinchilla_optimal and optimal_alloc), then exercised at C=1e23..1e25 — deliverable 4 is directly buildable.",
+    "Resource accounting is genuinely worked: 6ND derivation (2 fwd + 4 bwd), MFU definition, and a self-consistent 256-GPU/21-day/MFU-0.45 example yielding 42B params / 840B tokens with a throughput cross-check (460k tok/s).",
+    "Failure modes are covered: Kaplan's LR-schedule confound explained mechanistically, 'exclude under-converged runs', 'validate by extrapolating to a held-out large run', data-repetition wall (~4 epochs near-free, ~16 collapse), MoE active-param caveat, constants-not-universal warning.",
+    "Inference-aware over-training is quantitative: C_total = 6ND_train + 2ND_inf objective with a runnable lifetime_optimal grid search showing optimal N shrinking as D_inf grows; Llama-3-8B ~1900 tok/param cited.",
+    "Component cost accounting exists with code: 04-kernels-efficiency/01 has transformer_flops_per_token returning a per-component dict (QKVO 8d^2, scores 4sd, FFN 16d^2 or 6*d*d_ff gated) cross-checked against 6N within 10-20%; 02-transformer/10 has a full 7B per-layer parameter breakdown (attn ~42M, MLP ~135M, embeddings ~262M) and depth-vs-width L/d aspect-ratio table.",
+    "Sweep hyperparameters are supported by 03-pretraining/10: muP with MuPLinear code and proxy-sweep workflow, critical batch size (McCandlish gradient noise scale), linear/sqrt LR-batch scaling with a worked 1M->4M token example, and a per-scale recipe table (125M-400B).",
+    "IsoFLOP, by contrast, is one sentence: 'fits a parabola in log N to find the valley (the optimal N) at each budget, and finally fits a power law through those valleys' — no code, no worked slice.",
+    "Verified bug: smooth_per_token_accuracy(1e8) = -0.186 and smooth_per_token_accuracy(3.16e8) = -0.033, so the demo's printed table shows negative accuracies for its first two rows.",
+    "No chapter walks through allocating a fixed experimentation budget across sweep runs; the worked budget example plans the single final run, not the sweep that precedes it."
+  ],
+  "summary": "Coverage of scaling laws is among the book's strongest units: the parametric Chinchilla fit is fully implemented with robust-loss fitting, multi-start optimization, and synthetic ground-truth verification; compute-optimal projection, 6ND/MFU resource accounting, inference-aware over-training, and the data wall are all derived and coded; per-component FLOP and parameter breakdowns exist with runnable code in supporting chapters; and muP/critical-batch-size machinery supports sweep hyperparameters. Grade 3 rather than 4 because two assignment-critical pieces are thin: the IsoFLOP method itself is a single prose sentence with no implementation, and there is no concrete worked procedure for designing a sweep under a constrained experimentation budget (run table, slice spacing, per-run LR/batch, cost summation). A competent reader could still produce correct implementations of all four deliverables from the book alone — the parametric route is fully specified and the IsoFLOP description, while terse, is precise enough to implement — so buildable_verdict is true. One minor verified demo bug (negative printed per-token accuracy) should be fixed."
+}

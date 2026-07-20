@@ -1,0 +1,72 @@
+{
+  "unit_id": "L15-midtraining-sft-rlhf",
+  "grade": 4,
+  "chapters_examined": [
+    "05-posttraining-alignment/01-sft-instruction-tuning",
+    "05-posttraining-alignment/02-chat-templates-packing",
+    "05-posttraining-alignment/05-rlhf-reward-modeling",
+    "05-posttraining-alignment/06-ppo-for-llms",
+    "05-posttraining-alignment/07-dpo-and-variants"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "05-posttraining-alignment/01-sft-instruction-tuning",
+      "kind": "correctness-bug",
+      "missing": "InstructionDataset._format has an off-by-one in the loss mask: full_text is tokenized with default add_special_tokens=True (auto-prepends BOS) while the prompt-only encoding uses add_special_tokens=False, so prompt_len undercounts by one and labels[:prompt_len] leaves the LAST prompt token unmasked/supervised. The literal '<s>' in the prompt string plus the auto-added BOS also yields a double-BOS sequence.",
+      "fix": "Remove the literal '<s>' from the template, tokenize BOTH full_text and prompt with the same add_special_tokens setting (True), compute prompt_len = prompt_enc['input_ids'].shape[1] under that setting, and add an assertion that tokenizer.decode(input_ids[prompt_len:]) startswith the response. Add a printed token-id/label dump for one example as the chapter's own checklist recommends."
+    },
+    {
+      "severity": "minor",
+      "target": "05-posttraining-alignment/07-dpo-and-variants",
+      "kind": "correctness-bug",
+      "missing": "KTO formula and code apply beta twice: r is defined as beta*log(pi/pi_ref) (the implicit reward already includes beta), then the value function applies sigmoid(beta*(r - z0)) again. In the KTO paper the beta appears once, on the un-scaled log-ratio inside the sigmoid.",
+      "fix": "Either define r as the raw log-ratio and keep sigma(beta*(r - z0)), or keep r = beta*log-ratio and use sigma(r - z0); make the math block and kto_loss code consistent."
+    },
+    {
+      "severity": "minor",
+      "target": "05-posttraining-alignment/02-chat-templates-packing",
+      "kind": "correctness-bug",
+      "missing": "Claim that <|im_start|> is 'short for image marker in the original GPT-4-V vocabulary' is false: ChatML and the im_start/im_end tokens predate GPT-4V (they shipped with gpt-3.5-turbo's ChatML spec) and 'im' is generally read as input/instant message, not image marker.",
+      "fix": "Correct or delete the etymology aside; state that ChatML was introduced with OpenAI's gpt-3.5-turbo ChatML documentation."
+    },
+    {
+      "severity": "minor",
+      "target": "05-posttraining-alignment/02-chat-templates-packing",
+      "kind": "code",
+      "missing": "The 'training-ready' ChatMLCollator with pack=True teaches block-diagonal masking and cu_seqlens earlier in the chapter but then emits only a token-level attention_mask computed as (batch_ids != pad_token_id), which (a) does not prevent the cross-document attention leakage the chapter warns about, and (b) zeroes out real EOS tokens whenever pad_token == eos_token, which is exactly the configuration chapter 5.1 recommends for Llama-style models.",
+      "fix": "Have the collator also return per-row document_lengths (or cu_seqlens) and show one line wiring them into flash_attn_varlen_func or make_block_diagonal_mask; build attention_mask from sequence lengths rather than token-id comparison, or add a warning about the pad==eos collision."
+    },
+    {
+      "severity": "minor",
+      "target": "05-posttraining-alignment/07-dpo-and-variants",
+      "kind": "code",
+      "missing": "orpo_loss docstring says the odds computation requires LENGTH-NORMALIZED (per-token mean) log-probs, but the function signature accepts 'SEQUENCE log-probs (sum over tokens)' and never normalizes; a reader passing summed log-probs gets log1p(-exp(logp)) ~ 0 and the odds term degenerates to a plain log-prob difference.",
+      "fix": "Normalize inside the function (divide by response token counts passed as arguments) or change the docstring and parameter names to demand per-token mean log-probs explicitly."
+    },
+    {
+      "severity": "minor",
+      "target": "05-posttraining-alignment/06-ppo-for-llms",
+      "kind": "verification",
+      "missing": "The chapter has excellent worked examples for REINFORCE-baseline variance and the PPO clip, but no hand-computed numeric check for compute_gae itself (the trickiest function: backward recursion, mask handling, terminal-reward placement).",
+      "fix": "Add a 3-4 token toy example with explicit values/rewards and the expected delta_t, advantage, and return at each position, so a reader can unit-test their compute_gae against known numbers."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "01-sft: complete runnable sft_train.py with response-only masking via IGNORE_INDEX=-100, collator with right-padding, cosine schedule, grad accumulation, clipping, and explicit shift logic in compute_sft_loss (shift_logits = logits[:, :-1, :], shift_labels = labels[:, 1:]).",
+    "01-sft: resource accounting worked example: full 7B FT ~110-120 GB vs QLoRA ~10-15 GB, plus tokens/sec and optimizer-step arithmetic (937 steps, 28 warmup).",
+    "02-chat-templates: from-scratch ChatML formatter + span-scanning build_chatml_loss_mask that supervises every assistant turn including <|im_end|>, with the verification check '(labels != -100).float().mean() should match your expected supervised-fraction (typically 0.25-0.50)'.",
+    "02-chat-templates: sequence packing with first-fit-decreasing, per-document position_ids for RoPE, block-diagonal mask code, and flash_attn_varlen_func/cu_seqlens pointer; packing utilisation worked example (24% -> 60%).",
+    "05-rlhf: Bradley-Terry derived from the preference likelihood with gradient dL/dDelta = -(1-sigma(Delta)); runnable RewardModel with scalar head read at last non-pad token via attention_mask.sum(dim=1)-1, and stable F.softplus(-delta) loss with the explanation of why naive -log(sigmoid) underflows.",
+    "05-rlhf: InstructGPT all-pairs-from-one-prompt regularizer implemented (all_pairs_bt_loss with triu_indices); four-model table (actor/critic/reward/reference, trained vs frozen) and ~250 GB memory bill for a 7B run.",
+    "06-ppo: full derivation chain REINFORCE -> baseline (with the one-line unbiasedness proof) -> advantage -> GAE backward recursion, plus runnable compute_gae, ppo_policy_loss (with clipfrac and k3 approx_kl diagnostics), clipped value loss, make_token_rewards folding the per-token k1 KL penalty plus terminal RM score, and a complete rollout/update loop with concrete hyperparameters (eps=0.2, beta=0.05, lambda=0.95, gamma=1.0, 4 PPO epochs, target KL 0.02).",
+    "06-ppo: worked example tracing one token through the clip (ratio 1.40 vs ceiling 1.20, clip engages, gradient zeroed) and healthy clipfrac range 0.1-0.3.",
+    "07-dpo: complete derivation from the KL-regularized RLHF objective to the closed-form Gibbs policy, the implicit reward inversion, the Z(x) cancellation in the Bradley-Terry difference, and the gradient with the sigma(-Delta) weighting.",
+    "07-dpo: runnable sequence_logprob + dpo_loss + dpo_training_step with explicit prompt masking and label shifting ([:, 1:]/[:, :-1]), the pitfall box naming exactly the two off-by-one bugs, beta guidance (0.1 default, [0.1, 0.5] range), and the diagnostic rule 'if reward_acc is not above 0.5 in the first hundred steps you have a masking/shift bug'.",
+    "07-dpo: failure-mode coverage of both-log-probs-falling degeneration with four concrete fixes; IPO/KTO/ORPO/SimPO/CPO each given loss formula and code; DPO-vs-PPO debate with citations.",
+    "Library mapping throughout: TRL SFTTrainer/DPOTrainer/PPOTrainer/RewardTrainer, OpenRLHF, veRL, axolotl, LLaMA-Factory, open-instruct, DataCollatorForCompletionOnlyLM, flash_attn_varlen_func.",
+    "BUG (01-sft, lines ~270-297): full_text tokenized with add_special_tokens=True (auto-BOS) but prompt_len computed with add_special_tokens=False, so labels[:prompt_len] leaves the final prompt token supervised (off-by-one), and the literal '<s>' plus auto-BOS double-encodes BOS."
+  ],
+  "summary": "Coverage of this unit is the strongest part of the book audited so far: five chapters (5.1, 5.2, 5.5, 5.6, 5.7) deliver every learning objective with full derivations, runnable shape-annotated code, concrete hyperparameters, worked numeric examples, failure modes, memory/FLOP accounting, and pointers into TRL/OpenRLHF/veRL. SFT loss masking is implemented twice (simple prompt-length masking and a multi-turn span-scanning ChatML mask builder), reward modeling includes the Bradley-Terry derivation plus the InstructGPT all-pairs batching trick, the PPO chapter builds REINFORCE -> GAE -> clipped surrogate -> KL-folded per-token rewards into a complete loop, and the DPO chapter derives the loss from the RLHF objective and ships a correct training step with diagnostics. The deliverable (SFT with correct masking + a DPO step) is clearly buildable from the book alone. The main blemish is a genuine off-by-one/double-BOS bug in chapter 5.1's flagship InstructionDataset masking code (the last prompt token gets supervised); chapter 5.2's mask builder is correct and the book's own verification checklist would catch the bug, but the code should be fixed. Smaller issues: KTO applies beta twice, the packing collator never wires in the block-diagonal mask it teaches, ORPO's code/docstring disagree on length normalization, and the '<|im_start|> = image marker' etymology is wrong."
+}

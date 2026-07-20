@@ -1,0 +1,75 @@
+{
+  "unit_id": "L01-tokenization",
+  "grade": 3,
+  "chapters_examined": [
+    "02-transformer/01-tokenization",
+    "02-transformer/02-embeddings-input",
+    "02-transformer/07-build-gpt-from-scratch",
+    "99-appendix/05-from-scratch-index"
+  ],
+  "deficits": [
+    {
+      "severity": "major",
+      "target": "02-transformer/01-tokenization",
+      "kind": "code",
+      "missing": "No end-to-end byte-level BPE tokenizer. The runnable trainer (train_bpe/encode_word) is character-level with a '</w>' end-of-word marker, while the byte-level section provides only the bytes_to_unicode map. The glue -- pre-tokenize into chunks, map UTF-8 bytes through the table, train WITHOUT '</w>' (GPT-2 does not use it), assign integer IDs, and decode ids -> printable symbols -> bytes -> UTF-8 text -- is described in one prose sentence but never shown as code. The reader must reconcile two incompatible schemes ('</w>' marker vs. byte-level leading-space chunks) on their own.",
+      "fix": "Add a ~60-line ByteLevelBPETokenizer class combining the existing pieces: train(corpus) using pre-tokenized byte-mapped chunks (no '</w>'), encode(text) -> list[int], decode(ids) -> str (invert b2u, bytes(...).decode('utf-8', errors='replace')), with an explicit ID convention (256 base byte tokens + one ID per merge in learned order) and a round-trip assert: decode(encode(s)) == s on a string containing emoji, CJK, and leading spaces."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/01-tokenization",
+      "kind": "code",
+      "missing": "The GPT-2/GPT-4 pre-tokenization regex is repeatedly invoked ('BPE merges only within a chunk', 'why cl100k keeps digits in groups of at most three') but the actual pattern is never given, so a reader cannot reproduce the merge-boundary behavior of a real byte-level tokenizer, nor handle whitespace attachment (the ' hello' single-token behavior the chapter itself highlights).",
+      "fix": "Print the actual GPT-2 pattern ('s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+) and the cl100k digit-group change, explain each alternation in one line, and show it feeding chunks into the BPE trainer."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/01-tokenization",
+      "kind": "correctness-bug",
+      "missing": "Line ~248 claims 'GPT-2, GPT-3, GPT-4, Llama, Mistral ... use byte-level BPE', but line ~366 (and the comparison table) says Llama and early Mistral use SentencePiece. In fact Llama-1/2 and early Mistral use SentencePiece BPE with byte-fallback (not GPT-2-style byte-level BPE); only Llama-3 switched to a tiktoken-style byte-level tokenizer. The two passages contradict each other.",
+      "fix": "State the lineage precisely: Llama-1/2 and Mistral-v0.x = SentencePiece BPE (32k, byte-fallback, '▁' marker); Llama-3 = tiktoken-style byte-level BPE (128k). Remove Llama/Mistral from the blanket byte-level claim."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/01-tokenization",
+      "kind": "correctness-bug",
+      "missing": "Claim that 'Llama models split numbers into individual digits' is only true of Llama-1/2; Llama-3 tokenizes digits in groups of up to three (like cl100k). Stated unqualified, a reader inspecting Llama-3 tokens would find the book wrong.",
+      "fix": "Qualify: Llama-1/2 and PaLM split per digit; Llama-3/GPT-4 group digits 1-3 at a time via the pre-tokenizer regex."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/01-tokenization",
+      "kind": "verification",
+      "missing": "No verification against a reference implementation for the byte-level deliverable: the chapter never shows checking the from-scratch encoder's output token-by-token against tiktoken/minbpe on the same merge table, and gives no expected vocab/merge counts for a small real corpus (e.g. train 500 merges on a few MB and report bytes-per-token).",
+      "fix": "Add a short 'verify your tokenizer' block: load GPT-2's vocab.json/merges.txt into the from-scratch encoder and assert equality with tiktoken's gpt2 encoding on a test paragraph; report expected bytes/token (~4.0 for English at 50k vocab)."
+    },
+    {
+      "severity": "minor",
+      "target": "99-appendix/05-from-scratch-index",
+      "kind": "code",
+      "missing": "The duplicate BPE trainer in the appendix uses max(pairs, key=pairs.get) with a nondeterministic tie-break, directly contradicting the main chapter's (correct) insistence on deterministic tie-breaking; its worked example also asserts ('e','s') is 'most frequent' when several pairs tie at freq 2, and says 'Vocabulary shrinks by 2 entries' after a merge, which is not what happens (the per-word symbol sequences shorten; the word-frequency dict size is unchanged).",
+      "fix": "Align the appendix snippet with the chapter version (deterministic tie-break), note the tie explicitly in the worked example, and fix the 'vocabulary shrinks' sentence."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/01-tokenization",
+      "kind": "resource-accounting",
+      "missing": "Training-at-scale cost is not treated: the shown trainer recounts every pair from scratch each merge (O(corpus) per merge). Real trainers (HF tokenizers, minbpe on large corpora, CS336 assignment 1) update pair counts incrementally and parallelize pre-tokenization; nothing tells the reader what to expect when training 32k merges on gigabytes.",
+      "fix": "Add a paragraph on incremental pair-count updates (only pairs adjacent to a merge site change), unique-word compression of the corpus, and a rough wall-clock estimate (naive vs incremental) for a 1 GB corpus at 32k merges."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "02-transformer/01-tokenization contains a complete, runnable char-level BPE trainer and encoder with correct rank-priority merge application ('we apply the merges in the same order they were learned. The earliest-learned merge has the highest priority. A naive implementation that scans left-to-right ... will produce different, wrong tokenizations').",
+    "The worked hand example gives exact frequency-weighted pair counts ((u,g)=20, (p,u)=17, (u,n)=16 ...) and the full ordered merge list, plus expected demo output: encode('lowest') -> ['low', 'est</w>'].",
+    "GPT-2's exact bytes_to_unicode map is reproduced with verification asserts: b2u[32]=='Ġ', b2u[10]=='Ċ', len(set(b2u.values()))==256.",
+    "WordPiece score formula count(ab)/(count(a)count(b)) is given with a runnable greedy longest-match encoder; Unigram is covered with the EM training loop, pruning criterion, and a runnable Viterbi segmenter.",
+    "Vocabulary-size resource accounting is concrete: 32k vs 128k at d_model=4096 = 131M vs 524M embedding params, traded against ~12% token-count reduction.",
+    "Pathologies are covered in depth: leading-space asymmetry with tiktoken demo code, glitch tokens/undertrained embeddings, special-token injection surface, 3-5x multilingual token inflation, multi-space code tokens, digit-chunking inconsistency and per-digit splitting.",
+    "Library pointers are real and appropriate: tiktoken, sentencepiece, huggingface/tokenizers, karpathy/minbpe.",
+    "Gap: the deliverable's byte-level end-to-end path is not shown as code -- decoding is one prose sentence ('Decoding maps the printable chars back to bytes, then UTF-8-decodes'), integer ID assignment never appears (encode_word returns strings), and the pre-tokenizer regex is described but never printed.",
+    "The trainer's '</w>' scheme and the byte-level Ġ/leading-space scheme are presented side by side without reconciling that GPT-2-style byte-level BPE drops '</w>' in favor of regex pre-tokenization -- the reader must bridge this seam alone.",
+    "Factual inconsistency: line ~248 puts Llama/Mistral under byte-level BPE while line ~366 and the comparison table put them under SentencePiece."
+  ],
+  "summary": "The tokenization chapter is one of the strongest single chapters audited: correct and complete BPE training/encoding algorithms with runnable code and expected outputs, the exact GPT-2 bytes-to-unicode map with asserts, correct WordPiece and Unigram treatments including a runnable Viterbi segmenter, real resource accounting for vocabulary size, and thorough pathology coverage matching CS336 lecture 1's scope. It falls short of grade 4 on the unit's specific deliverable: there is no end-to-end byte-level tokenizer class -- integer ID assignment, the decode function, and the pre-tokenization regex are prose-only, and the char-level '</w>' trainer is never reconciled with the byte-level scheme -- so round-trip encode/decode requires the reader to bridge a real seam. A competent reader can bridge it (verdict: buildable), but adding ~60 lines of integration code, the GPT-2 regex, and a tiktoken cross-check would make this a reference-grade chapter. Minor factual bugs: contradictory claims about Llama/Mistral being byte-level, an unqualified per-digit-splitting claim that is false for Llama-3, and a sloppier duplicate BPE trainer in the appendix with a nondeterministic tie-break."
+}

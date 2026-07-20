@@ -283,9 +283,9 @@ And here are the exact four launches — the same file, four flag changes:
 ```bash
 # --- Laptop / CPU (or Apple Silicon via MPS): learning, not speed. -----------------
 # dist.init_process_group needs RANK/WORLD_SIZE/MASTER_ADDR set, so even ONE process
-# goes through torchrun; and since there's no NCCL on CPU, change the one line
-# `backend="nccl"` -> `backend="gloo"` in train.py before running this.
-torchrun --nproc_per_node=1 train.py --data ./data --parallel ddp \
+# goes through torchrun; and since there's no NCCL on CPU, pass --backend gloo
+# (train.py selects a CPU device automatically on the gloo backend).
+torchrun --nproc_per_node=1 train.py --data ./data --parallel ddp --backend gloo \
     --ctx 256 --local-bsz 8 --grad-accum 1 --steps 2000 --warmup 100
 
 # --- Single GPU: ordinary DDP with world_size=1 (no-op all-reduce). ----------------

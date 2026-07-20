@@ -7,57 +7,24 @@
     "05-posttraining-alignment/06-ppo-for-llms",
     "05-posttraining-alignment/07-dpo-and-variants",
     "05-posttraining-alignment/08-grpo-rloo",
-    "05-posttraining-alignment/09-rlvr-reasoning",
-    "05-posttraining-alignment/11-constitutional-rlaif",
-    "06-rl-infra/03-trl",
-    "06-rl-infra/08-reward-verifiers-sandboxes",
-    "99-appendix/05-from-scratch-index"
+    "05-posttraining-alignment/09-rlvr-reasoning"
   ],
   "deficits": [
     {
-      "severity": "major",
+      "severity": "minor",
+      "kind": "code",
+      "target": "05-posttraining-alignment/08-grpo-rloo",
+      "missing": "The from-scratch GRPO trainer uses HF `policy.generate(num_return_sequences=G)` for rollouts and recomputes old_lp with a separate forward pass, but never shows how to align sampler log-probs with trainer log-probs when the policy was set to .eval()/bf16 during generation vs .train() during the loss pass. The toy code silently uses the same weights so ratio starts near 1, but a reader wiring their own loop could get a systematic ratio bias on the first epoch.",
+      "fix": "Add one sentence + a two-line assert showing that on epoch 0 (before any opt.step) the per-token ratio should be ~1.0 (exp(new_lp - old_lp) approx 1), and note that dropout must be disabled / dtype must match between the old_lp cache pass and the loss pass."
+    },
+    {
+      "severity": "minor",
+      "kind": "exercise",
       "target": "05-posttraining-alignment/01-sft-instruction-tuning",
-      "kind": "correctness-bug",
-      "missing": "In InstructionDataset._format, full_text (which begins with a literal '<s>') is tokenized with default add_special_tokens=True while the prompt-only encoding uses add_special_tokens=False. For Llama-2-style tokenizers this produces a duplicate BOS in input_ids and makes prompt_len off by one, leaving the final prompt token unmasked (it receives loss). This is exactly the 'mask boundary' bug class the chapter itself warns about in 'Assistant prefix contamination'.",
-      "fix": "Tokenize full_text with add_special_tokens=False as well (the template already contains '<s>'/'</s>'), or drop the literal '<s>'/'</s>' from the template and let the tokenizer add specials consistently for both encodings; add an assert that input_ids[:prompt_len] equals prompt_enc ids."
-    },
-    {
-      "severity": "minor",
-      "target": "05-posttraining-alignment/08-grpo-rloo",
-      "kind": "correctness-bug",
-      "missing": "In the rollout() function, resp_mask is set to 1.0 for positions plen..s.shape[0], but model.generate with num_return_sequences pads early-finishing sequences in the group with eos/pad tokens up to the longest completion; those trailing pad tokens are included in the response mask and thus contribute to the policy-gradient loss and KL.",
-      "fix": "Mask out tokens after the first EOS in each generated completion (e.g. compute per-sequence generation length via (out[g, plen:] != eos).cumprod or by locating the first eos), or note explicitly that including one EOS is intended and everything after it must be masked."
-    },
-    {
-      "severity": "minor",
-      "target": "05-posttraining-alignment/08-grpo-rloo",
-      "kind": "math",
-      "missing": "The worked numerical example computes the group standard deviation as the population std (divide by G), but the reference code uses torch.Tensor.std(dim=1), which defaults to the Bessel-corrected sample std (divide by G-1). A reader checking the code against the worked numbers will get slightly different advantages (0.5545 vs 0.6403 for the G=4 example).",
-      "fix": "Either pass correction=0 (or unbiased=False) in g.std(...) to match the worked example, or add one sentence noting the population/sample-std convention difference and that either is acceptable as long as it is consistent."
-    },
-    {
-      "severity": "minor",
-      "target": "05-posttraining-alignment/08-grpo-rloo",
-      "kind": "verification",
-      "missing": "The GRPO chapter's toy driver is commented out and no expected end-to-end training signature is given (e.g. 'mean_reward should climb from ~0.1 to >0.9 within ~100 steps on the toy arithmetic task with Qwen2.5-0.5B-Instruct'). The verifier code in 5.9 has assert-based tests, but the training loop itself has no expected-values check a reader can use to confirm their implementation converges.",
-      "fix": "Add a short 'expected behavior' note after the driver: expected mean-reward trajectory on the toy task, roughly how many steps/minutes on a single consumer GPU, and one or two diagnostic thresholds (fraction of non-degenerate groups, entropy) that indicate a healthy vs. broken run."
+      "missing": "The complete SFT loop is single-turn instruction/response and generic; it never demonstrates masking a math chain-of-thought target (the specific deliverable 'SFT for math reasoning'). Multi-turn masking is deferred to 05/02, but there is no worked math-CoT example tying SFT masking to the RLVR reasoning data used two chapters later.",
+      "fix": "Add a short worked example that formats a GSM8K-style (question, CoT + \\boxed{answer}) pair through the same InstructionDataset._format, showing the reasoning+answer tokens unmasked and the question masked, so the SFT->RLVR bridge is concrete."
     }
   ],
   "buildable_verdict": true,
-  "evidence": [
-    "05/01 contains a complete ~300-line runnable SFT loop (sft_train.py) with IGNORE_INDEX=-100 response-only masking, explicit shift ('shift_logits = logits[:, :-1, :]', 'shift_labels = labels[:, 1:]'), padding via collate_fn with labels padded to IGNORE_INDEX, grad accumulation, cosine schedule, clipping, plus a memory budget (full-FT ~110-120GB vs QLoRA ~10-15GB) and a tokens/sec + optimizer-step walkthrough.",
-    "05/02 provides a from-scratch ChatML formatter and build_chatml_loss_mask returning (input_ids, loss_mask) with a worked example counting exactly which ~3 of 26 tokens carry loss — multi-turn assistant-only masking is fully specified.",
-    "05/08 gives a complete, self-contained GRPO trainer (Qwen2.5-0.5B-Instruct): rollout with num_return_sequences=G, group z-score advantage with eps=1e-4, per-token importance ratio, decoupled clip (0.2/0.28), k3 KL estimator with code, multi-epoch updates with cached old_lp/ref_lp, and concrete hyperparameters (G=8, lr=1e-6, PPO_EPOCHS=2, temperature 1.0).",
-    "05/08 includes a fully worked numerical example (rewards {1.2,0.2,1.2,0.0} → advantages ±0.99/-0.81/-1.17, clip engagement traced for both positive and negative advantage) and the RLOO leave-one-out identity A_i = G/(G-1)(R_i - mean).",
-    "05/08 covers the 2025 fixes with exact loss algebra: Dr. GRPO token-level loss (sum/total-tokens), dropping std-normalization, DAPO clip-higher, dynamic sampling, overlong filtering, plus the dead-group (all-equal-reward, zero-gradient) failure mode as a first-class monitored metric.",
-    "05/09 builds a real math verifier: extract_boxed_answer with nested-brace walking and <answer> fallback, normalize_numeric handling \\frac, fractions, percentages, Fraction-exact comparison with float atol fallback — followed by five assert-based sanity tests (verification with expected values).",
-    "05/09 builds a sandboxed code verifier with POSIX rlimits (CPU 5s, 512MB AS, NPROC 64), subprocess timeout, python -I isolated mode, hidden-test harness, graded fraction-of-tests reward, and explicitly flags it as illustrative vs container/microVM for production.",
-    "05/09 has a complete rlvr_reward with contingent format bonus and degeneracy guard, plus a worked G=6 GRPO group tracing mean 0.567, sigma 0.502, and all six advantages — including the case where the verifier saves a '1.0'-vs-'1' answer.",
-    "05/07 derives DPO end-to-end (closed-form optimum, implicit reward, BT cancellation of log Z), gives dpo_loss with the numerically-stable softplus(-Delta) form, a training step with frozen-reference no_grad passes, reward_acc/margin diagnostics, a hand-worked numerical update, beta guidance (0.1 default, 0.1-0.5 range), and the chosen-logprob-collapse failure mode with four fixes.",
-    "05/06 provides the full PPO stack (REINFORCE derivation, GAE recursion code, clipped surrogate, value clip, KL-folded-into-reward, entropy bonus, two-phase loop code, TARGET_KL early stopping) with healthy-clipfrac ranges (0.1-0.3) and the four-model memory accounting.",
-    "06-rl-infra/03 maps every algorithm to TRL (SFTTrainer, DPOTrainer, PPOTrainer, GRPOTrainer with a fully annotated runnable GSM8K-style math example, vLLM backend, monitoring health metrics); 06-rl-infra/08 gives production verifier/sandbox/reward-server architecture with throughput arithmetic.",
-    "Safety alignment (optional deliverable) is covered with code in 05/11: constitution-driven critique-revision, AI preference dataset construction, RLAIF labeling protocol, rejection sampling/STaR/ReST.",
-    "Appendix 05-from-scratch-index cross-links standalone DPO and GRPO from-scratch implementations, forming a deliberate SFT → DPO → GRPO build arc."
-  ],
-  "summary": "Reference-grade coverage. Every deliverable of Assignment 5 is independently buildable from the book alone: a complete SFT loop with correct response-only loss masking and shift/padding edge cases (05/01, with multi-turn ChatML masking in 05/02); a real math verifier with answer extraction, Fraction-exact equivalence, and assert-based tests plus a sandboxed code verifier (05/09, production view in 06/08); a self-contained runnable GRPO trainer with worked numerical advantage/clip examples, RLOO, k3 KL, the Dr. GRPO/DAPO fixes, hyperparameters, and failure modes (05/08, PPO foundations in 05/06); and full DPO with derivation, stable implementation, worked update, and variants (05/07), plus safety alignment via CAI/RLAIF (05/11). Verification (asserts, worked numbers, diagnostic thresholds like clipfrac and reward_acc), resource accounting (memory budgets, throughput arithmetic), and library mappings (TRL GRPOTrainer/DPOTrainer, veRL, OpenRLHF) are all present. Deficits are small: an off-by-one/double-BOS mask-boundary bug in the flagship SFT example code, loss on trailing EOS-padding in the GRPO rollout, a population-vs-sample std inconsistency between worked example and code, and no expected end-to-end convergence signature for the toy GRPO run."
+  "summary": "Outstanding, reference-quality coverage of every deliverable in this unit. SFT with correct response-only loss masking (05/01) ships a complete runnable PyTorch loop with IGNORE_INDEX, separate prompt/response tokenization to make the mask boundary exact, EOS handling, padding-aware collate, next-token shift, gradient accumulation, LR schedule, and an explicit mask-verification snippet with expected output. The verifiable-reward deliverable (05/09) is exceptional: a real extract_boxed_answer with nested-brace walking and an <answer> fallback, normalize_numeric handling fractions/LaTeX \\frac/percent/decimals, math_is_correct with passing assert-based test vectors, a resource-limited sandboxed code runner (rlimits, isolated interpreter, timeouts, hidden tests, graded fraction-of-tests reward), a full rlvr_reward with contingent format bonus and degeneracy guard, and a fully-traced GRPO group worked example. The GRPO/policy-gradient loop (05/08) is the strongest chapter: derivation from REINFORCE + baseline through RLOO to GRPO, a complete self-contained trainer (rollout, z-score advantage with population-std matching the worked numbers, per-token clipped surrogate, k3 KL, multi-epoch), the subtle generate()-EOS-padding mask bug called out and fixed in code, exact tensor shapes throughout, a numeric worked example with correct arithmetic, expected-behavior/failure-signature diagnostics, and the 2025 Dr.GRPO/DAPO fixes (token-level loss, drop-std, clip-higher, dynamic sampling) with a comparison table. PPO/GAE (05/06) and DPO (05/07) round out the optional deliverables with real code (compute_gae, dpo_loss with log-prob masking). I spot-checked the GRPO advantage arithmetic, the population-vs-sample-std note, the k3 KL sign convention (estimates KL(pi_theta||pi_ref) correctly), the PPO clip-branch selection for negative advantage, and the RLVR worked-example numbers -- all correct. No correctness bugs found. A competent reader could build a correct SFT + verifiable-reward + GRPO reasoning pipeline from these chapters alone. Only nitpick-level deficits remain (sampler/trainer log-prob alignment note; a math-CoT SFT worked example)."
 }

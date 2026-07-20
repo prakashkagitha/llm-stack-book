@@ -1,0 +1,63 @@
+{
+  "unit_id": "L10-inference",
+  "grade": 4,
+  "chapters_examined": [
+    "07-inference-serving/01-anatomy-inference",
+    "07-inference-serving/02-continuous-batching",
+    "07-inference-serving/03-vllm-internals",
+    "07-inference-serving/06-speculative-decoding",
+    "07-inference-serving/12-inference-economics",
+    "04-kernels-efficiency/06-paged-attention-kv",
+    "04-kernels-efficiency/07-quantization-ptq",
+    "04-kernels-efficiency/08-quantization-formats-qat",
+    "07-inference-serving/09-sampling-decoding"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "04-kernels-efficiency/06-paged-attention-kv",
+      "kind": "correctness-bug",
+      "missing": "Off-by-one in the 'Minimal Paged Serving Loop': serve_step writes the new token's KV at slot_index(seq_id, cur_len) BEFORE growing the block table, but append_token(seq_id, s['len']) only allocates a new block after the write. When prompt_len (or any current length) is an exact multiple of block_size, slot_index indexes table[cur_len // block_size], one past the last allocated block, and raises IndexError. E.g. prompt_len=32, block_size=16: allocate() gives 2 blocks (positions 0-31); the first decode write at position 32 reads table[2], which does not exist.",
+      "fix": "Either call block_mgr.append_token (i.e., grow the table when cur_len % block_size == 0) BEFORE computing slot_index for the write, or make allocate() reserve ceil((num_tokens+1)/block_size) blocks. Add a boundary-case test (prompt length exactly divisible by block_size) to the code listing."
+    },
+    {
+      "severity": "minor",
+      "target": "07-inference-serving/03-vllm-internals",
+      "kind": "correctness-bug",
+      "missing": "In the BlockManager sketch, append_slot()'s docstring says a new block is popped 'iff the last block just filled up', but the code pops a block from the free list unconditionally, and schedule_step() calls append_slot for every running sequence every decode step. As written, the sketch would allocate one fresh block per sequence per step (block_size-times over-allocation) instead of one per block_size steps. can_append() is also referenced but never defined.",
+      "fix": "Pass the sequence's current token count into append_slot and only pop a block when count % block_size == 0 (mirroring the correct logic in 4.6's BlockManager.append_token); define can_append(seq) as free_blocks >= (1 if boundary else 0)."
+    },
+    {
+      "severity": "minor",
+      "target": "07-inference-serving/12-inference-economics",
+      "kind": "explanation",
+      "missing": "The claim 'output tokens cost roughly 3-5x more compute per token than input tokens' is imprecise: per-token FLOPs are essentially identical (~2P) for prefill and decode tokens. The cost asymmetry comes from wall-clock/bandwidth (decode is memory-bound and poorly utilized per token), not from FLOPs.",
+      "fix": "Reword to 'output tokens cost roughly 3-5x more in wall-clock GPU-time (and hence dollars) per token, because decode steps are bandwidth-bound and cannot amortize the weight read the way parallel prefill does; the FLOPs per token are the same.'"
+    },
+    {
+      "severity": "minor",
+      "target": "07-inference-serving/06-speculative-decoding",
+      "kind": "code",
+      "missing": "The from-scratch speculative-sampling implementation re-runs draft and target from scratch each step (no KV cache, no rollback). The text explicitly flags this as an engineering note, but a cache-reusing variant with rollback of the rejected positions' KV is exactly the fiddly part a reader would need for a production-shaped implementation.",
+      "fix": "Add a second listing (or exercise with solution sketch) that uses past_key_values for both models and shows how to truncate/roll back both caches to the accepted length after each speculative step, including the DynamicCache.crop / index-select mechanics."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "7.1 contains a complete from-scratch CachedSelfAttention with exact shapes ([n_new, d_head] vs cache [seq_so_far, d_head]), the prefill causal-mask edge case handled explicitly (mask needed when n_new>1, none for single-token decode), and a full HF-style prefill/decode generation loop using past_key_values.",
+    "7.1 derives the KV-cache size formula 2*B*S*L*H_kv*d_h*P with a runnable kv_cache_bytes() function and verified expected values ('~1.0 GiB per 8k-token sequence' for Llama-3-8B GQA; 131,072 bytes/token = 128 KiB/token checks out).",
+    "7.1 derives arithmetic intensity I ~ 2N/P, the A100 ridge (~156 FLOP/byte from 312 TFLOP/s / 2.0 TB/s), and the decode ceiling tokens/sec <= BW/(N_params*P) with correct worked examples (70B fp16 on A100 -> 70 ms/step, ~14 tok/s; 8B -> ~125 tok/s), plus a runnable microbenchmark (bench_decode) whose expected memory-bound signature is described.",
+    "7.1 defines TTFT/TPOT/ITL/E2E precisely, gives a runnable measure_streaming_latency harness, and applies Little's law (lambda = L/W) with a numerically correct fleet-sizing example (60 sequences / 10.5 s -> ~5.7 req/s, ~2850 tok/s).",
+    "7.2 builds a complete runnable continuous-batching scheduler simulator (~200 lines) with KV-block budget, per-iteration token budget, FCFS/priority/shortest policies, preemption with recompute semantics, and a driver reporting TTFT and tokens/iter; the worked throughput-multiplier example (static ~300 tok/s vs continuous ~1951 tok/s) is arithmetically correct.",
+    "4.6 gives the full PagedAttention stack from scratch: BlockManager with free list, ref counts, fork/COW (cow_append returns src/dst so the kernel knows to copy), a numerically exact paged_attention_decode reference kernel with online softmax and GQA head mapping, block-size tradeoff discussion, and a correct parallel-sampling worked example (3.6x memory reduction).",
+    "7.6 proves the modified-rejection-sampling exactness theorem in full (both cases of the p>=q split), provides a complete runnable GPT-2 target/draft implementation of speculative_step with the residual sampling and bonus token, derives E[tokens/step] = (1-alpha^(gamma+1))/(1-alpha) and the speedup formula, covers Medusa/EAGLE-1/2/3/lookahead, and includes a runnable tree-attention mask builder with expected output ([0,1,1,2,2,2,2]).",
+    "7.6 correctly indexes the target verification distributions: t_logits[:, T-1 : T+gamma, :] yields gamma+1 rows verifying d_1..d_gamma plus the bonus slot.",
+    "7.3 covers vLLM internals: startup KV-budget computation code, three-queue scheduler with preemption (recompute vs swap), COW, prefix caching by block hashing, CUDA graphs, V1 rewrite, and points readers at vLLM's Scheduler/KVCacheManager classes by name.",
+    "Quantization for serving is covered in 4.7 (GPTQ algorithm, AWQ, SmoothQuant, LLM.int8) and 4.8 (INT4/NF4 from-scratch layer, FP8, GGUF K-quants, KV-cache quantization with memory comparison, perplexity-cost hierarchy and decision tree); 7.1 correctly frames quantization as buying decode speed via smaller P.",
+    "7.12 provides the $/1M-token derivation with worked H100/Llama-70B examples, the t_decode(B) = max(2P/BW, 2PB/FLOPs) model, and the B* breakeven (~295 on H100) — the latency/throughput/cost metrics objective.",
+    "Failure modes are systematically covered: preemption thrashing/watermarks (7.2, 7.3), speculation collapsing at large batch (7.6), tokenizer/temperature mismatch (7.6), optimizing the wrong metric (7.1).",
+    "Bug found: 4.6's serve_step writes KV at slot_index(seq_id, cur_len) before growing the block table, so a sequence whose current length is an exact multiple of block_size raises IndexError (table one block short)."
+  ],
+  "buildable_reasoning": "The deliverable — implement KV-cached autoregressive generation and reason about its throughput limits — is fully buildable from chapter 7.1 alone. It gives (a) a from-scratch single-head cached-attention module with exact tensor shapes, the append-to-cache mechanic, and the prefill causal-mask edge case handled correctly; (b) a complete HF-style generate() loop with the prefill/decode split explicit; (c) the exact KV-size formula with a verified worked example; (d) the arithmetic-intensity derivation (I ~ 2N/P vs a ~150 FLOP/byte ridge), the bandwidth decode ceiling with correct numbers, and a runnable microbenchmark whose expected signature is stated; and (e) TTFT/TPOT/Little's-law machinery for fleet-level throughput reasoning. The supporting units (continuous batching, PagedAttention, speculative decoding) also meet the buildable bar with runnable from-scratch code, worked numeric examples, pitfalls, and named pointers into vLLM/SGLang/EAGLE source. The only code defects found are in illustrative systems sketches (a block-boundary off-by-one in 4.6's toy serving loop, an unconditional block allocation in 7.3's sketch), neither of which blocks the core deliverable.",
+  "summary": "Reference-grade coverage. The inference unit spans 7.1 (prefill/decode asymmetry, KV-cache math, bandwidth ceiling, TTFT/TPOT/Little's law — all with runnable code and verified worked examples), 7.2 (a complete from-scratch continuous-batching scheduler with preemption), 4.6/7.3 (PagedAttention: block tables, COW, an exact online-softmax paged kernel, vLLM internals), 7.6 (speculative decoding with the full exactness proof, a runnable GPT-2 implementation, Medusa/EAGLE/lookahead, tree attention, and the speedup formula), and 4.7/4.8 + 7.12 (quantization for serving and latency/throughput/cost economics). Exceeds CS336's inference lecture in depth and implementability. Grade 4 stands despite one edge-case off-by-one bug in 4.6's toy paged serving loop (block-boundary write before table growth) and two minor sketch/wording issues, all listed as deficits."
+}

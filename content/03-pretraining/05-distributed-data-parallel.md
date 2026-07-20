@@ -713,7 +713,7 @@ The pieces so far live in separate scripts — the DDP mechanics, the FSDP wrap,
 # 8 GPUs:  torchrun --nproc_per_node=8 train.py --data ./tokens --parallel fsdp
 # 2 nodes: torchrun --nnodes=2 --node_rank=$RANK --nproc_per_node=8 \
 #                   --rdzv_endpoint=$HEAD:29500 train.py --data ./tokens --parallel fsdp
-import argparse, functools, glob, math, os, time
+import argparse, contextlib, functools, glob, math, os, time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -748,6 +748,8 @@ class GPT(nn.Module):
         self.blocks = nn.ModuleList([Block(d, h) for _ in range(n_layers)])
         self.lnf = nn.LayerNorm(d)
         self.head = nn.Linear(d, vocab, bias=False)
+        self.head.weight = self.tok.weight       # weight tying (Press & Wolf): head shares the embedding
+                                                  # -> 124M at these dims, not ~163M untied
 
     def forward(self, idx):
         B, T = idx.shape
@@ -816,15 +818,20 @@ def main():
     ap.add_argument("--local-bsz", type=int, default=8)
     ap.add_argument("--ctx", type=int, default=1024)
     ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--grad-accum", type=int, default=1)
+    ap.add_argument("--backend", default="nccl", help="nccl on GPUs, gloo on CPU")
     ap.add_argument("--ckpt-every", type=int, default=500)
     ap.add_argument("--ckpt-dir", default="./ckpt")
     args = ap.parse_args()
 
-    dist.init_process_group(backend="nccl")
+    dist.init_process_group(backend=args.backend)
     rank, world = dist.get_rank(), dist.get_world_size()
-    local_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local_rank)
-    device = torch.device(f"cuda:{local_rank}")
+    if args.backend == "nccl":
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+    else:
+        device = torch.device("cpu")            # CPU/gloo path for the laptop toy
     torch.manual_seed(0)                        # identical init on every rank
 
     model = GPT(ctx=args.ctx).to(device)
@@ -850,16 +857,23 @@ def main():
     for step in range(args.steps):
         for grp in opt.param_groups:
             grp["lr"] = lr_at(step, args.warmup, args.steps, args.lr, args.lr * 0.1)
-        x, y = loader.batch(device)
-        loss = nn.functional.cross_entropy(
-            model(x).view(-1, 50304), y.view(-1))
         opt.zero_grad(set_to_none=True)
-        loss.backward()                         # DDP/FSDP collectives, overlapped
+        step_loss = 0.0
+        for micro in range(args.grad_accum):    # gradient accumulation: G micro-steps / opt step
+            x, y = loader.batch(device)
+            last = micro == args.grad_accum - 1
+            # Under DDP, skip the all-reduce on every micro-step but the last.
+            sync = contextlib.nullcontext() if last or args.parallel != "ddp" else model.no_sync()
+            with sync:
+                loss = nn.functional.cross_entropy(
+                    model(x).view(-1, 50304), y.view(-1)) / args.grad_accum
+                loss.backward()                 # collectives fire on the last micro-step
+            step_loss += loss.item()            # sum of G scaled losses = full-batch mean
         clip()
         opt.step()
         if rank == 0 and step % 20 == 0:
             ms = (time.time() - t0) / (step + 1) * 1e3
-            print(f"step {step:5d} | loss {loss.item():.4f} "
+            print(f"step {step:5d} | loss {step_loss:.4f} "
                   f"| lr {opt.param_groups[0]['lr']:.2e} | {ms:.0f} ms/step")
         if step > 0 and step % args.ckpt_every == 0:
             save_checkpoint(model, step, args.ckpt_dir, rank)
@@ -872,7 +886,7 @@ if __name__ == "__main__":
     main()
 ```
 
-What to expect across hardware. On a **single GPU** (`--parallel ddp`, 124M-param default GPT) this is ordinary training — DDP with `world_size=1` just skips the all-reduce; loss falls from ~11 (ln of vocab) toward ~4-5 on real tokens in a few hundred steps. On an **8-GPU node**, `--parallel fsdp` shards the model across the eight ranks; per-step time is dominated by compute with FSDP's all-gathers hidden behind it on NVLink, and the effective batch is `8 x local_bsz`. Across **2+ nodes**, launch with `--nnodes` and a shared `--rdzv_endpoint`; if you become communication-bound on the inter-node link, switch `ShardingStrategy.FULL_SHARD` to `HYBRID_SHARD` (per the decision guide below). Common failure signatures: a hang at the first backward usually means mismatched world size / an unused parameter (DDP) or an auto-wrap policy that left a parameter unsharded; an immediate OOM on the FSDP path means the *activations* (not the now-sharded model state) overflow — add activation checkpointing as in the FSDP example above. For production-grade checkpointing that also saves optimizer state and writes sharded (no rank-0 memory spike), use `FSDP.optim_state_dict` and `torch.distributed.checkpoint`, developed in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
+What to expect across hardware. On a **single GPU** (`--parallel ddp`, 124M-param default GPT) this is ordinary training — DDP with `world_size=1` just skips the all-reduce; loss falls from ~11 (ln of vocab) toward ~4-5 on real tokens in a few hundred steps. On an **8-GPU node**, `--parallel fsdp` shards the model across the eight ranks; per-step time is dominated by compute with FSDP's all-gathers hidden behind it on NVLink, and the effective batch is `8 x local_bsz x grad_accum` tokens-groups per optimizer step. Across **2+ nodes**, launch with `--nnodes` and a shared `--rdzv_endpoint`; if you become communication-bound on the inter-node link, switch `ShardingStrategy.FULL_SHARD` to `HYBRID_SHARD` (per the decision guide below). Common failure signatures: a hang at the first backward usually means mismatched world size / an unused parameter (DDP) or an auto-wrap policy that left a parameter unsharded; an immediate OOM on the FSDP path means the *activations* (not the now-sharded model state) overflow — add activation checkpointing as in the FSDP example above. For production-grade checkpointing that also saves optimizer state and writes sharded (no rank-0 memory spike), use `FSDP.optim_state_dict` and `torch.distributed.checkpoint`, developed in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
 ## Choosing and Combining Strategies
 

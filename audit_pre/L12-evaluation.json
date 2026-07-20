@@ -1,0 +1,69 @@
+{
+  "unit_id": "L12-evaluation",
+  "grade": 3,
+  "chapters_examined": [
+    "11-evaluation/01-eval-landscape",
+    "11-evaluation/02-llm-as-judge",
+    "11-evaluation/03-eval-harnesses",
+    "11-evaluation/06-statistical-rigor-eval",
+    "01-foundations/02-probability-information",
+    "03-pretraining/03-pretraining-objective"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "11-evaluation/03-eval-harnesses",
+      "kind": "correctness-bug",
+      "missing": "In minimal_harness.py score_choices(), context_ids is encoded with default add_special_tokens=True (which prepends BOS for Llama/Mistral tokenizers) while full_ids is encoded with add_special_tokens=False plus a manually prepended BOS; ctx_len = context_ids.shape[1] + 1 therefore double-counts BOS, so cont_ids = full_ids[0, ctx_len:] skips the first continuation token. Since each continuation (' A'..' D') is typically one token, cont_ids is empty, every choice scores ll=0.0, argmax always returns choice 0, and the harness silently reports ~25% accuracy for exactly the models used in the chapter's own examples (Llama-3, Mistral).",
+      "fix": "Encode context with add_special_tokens=False so it matches the full_text encoding (ctx_len = context_ids_no_special.shape[1] + 1 when BOS is manually prepended), add an assertion that len(cont_ids) >= 1 per choice, and add a sanity check in the text (e.g., 'if all four log-likelihoods are identical or zero, your context/continuation split is wrong'). Also warn about the token-boundary hazard of computing ctx_len from a separately-encoded context string."
+    },
+    {
+      "severity": "major",
+      "target": "11-evaluation/01-eval-landscape",
+      "kind": "correctness-bug",
+      "missing": "evaluate_mc_batch()'s shuffle_seed docstring claims 'randomly shuffles answer order to test position bias', but the code shuffles the zipped (prediction, gold) pairs jointly — a no-op on accuracy that shuffles example order, not answer-option order. It cannot detect position bias; a reader using it to test position bias will conclude their model has none.",
+      "fix": "Either remove the shuffle_seed parameter or implement true option-order permutation: re-render the question with permuted choices, re-run the model, and remap gold labels through the permutation before comparing. Testing position bias requires new model calls, not post-hoc relabeling — say so explicitly."
+    },
+    {
+      "severity": "major",
+      "target": "11-evaluation/03-eval-harnesses",
+      "kind": "correctness-bug",
+      "missing": "mcnemar_test()'s printed example output comment is wrong: for n_01=2, n_10=2 the Yates-corrected statistic is (|2-2|-1)^2/4 = 0.25 with p ~= 0.617, not the claimed {'chi2': 0.0, 'p_value': 1.0}. Additionally the continuity correction (|b-c|-1)^2 is applied without clamping at 0, producing a spurious positive statistic when b == c, and the chi-square approximation is used even for tiny discordant counts (the ch. 11.6 version correctly falls back to the exact binomial test).",
+      "fix": "Correct the example output comment, use max(abs(n_01 - n_10) - 1, 0)**2 in the numerator, and add the exact-binomial fallback for n_01 + n_10 < 25 (or simply cross-reference the corrected implementation in 11-evaluation/06-statistical-rigor-eval)."
+    },
+    {
+      "severity": "minor",
+      "target": "11-evaluation/01-eval-landscape",
+      "kind": "correctness-bug",
+      "missing": "Factual slips in the benchmark survey: MBPP is stated as '374 crowd-sourced Python problems' (MBPP has 974 problems; the commonly-evaluated test split is 500 and the sanitized subset 427); the MATH categories list includes 'calculus' and 'combinatorics' (actual categories are Prealgebra, Algebra, Intermediate Algebra, Counting & Probability, Geometry, Number Theory, Precalculus); and 'a 7B model scores 5% on GPQA, that is near random chance (25%)' — 5% is far below chance, which itself signals a broken answer extractor rather than floor performance.",
+      "fix": "Correct the MBPP count (974 total / 500 test split), fix the MATH category list, and rewrite the GPQA floor-effect example so a below-chance score is diagnosed as an extraction/format failure."
+    },
+    {
+      "severity": "minor",
+      "target": "11-evaluation/01-eval-landscape",
+      "kind": "code",
+      "missing": "Contamination detection covers n-gram overlap with working code, but the stronger methods (memorization/completion probes, canary strings, paraphrase/shuffle behavioral tests) are described in prose only, and the deliverable is a 'contamination-aware' harness. The 'MeMo and DataComp lines of work' citation for memorization probes is also dubious (DataComp is a dataset-curation benchmark, not a memorization-probe method).",
+      "fix": "Add a short runnable completion-probe implementation (feed first half of each benchmark item, measure verbatim/near-verbatim continuation rate via longest-common-substring or edit distance against the second half, with a decision threshold), and replace the MeMo/DataComp citation with accurate references (e.g., Carlini et al. extraction/memorization work, Oren et al. exchangeability test, Golchin & Surdeanu guided prompting)."
+    },
+    {
+      "severity": "minor",
+      "target": "11-evaluation/03-eval-harnesses",
+      "kind": "verification",
+      "missing": "The minimal harness has no end-to-end verification target: no tiny worked fixture (e.g., a 10-question toy task with a known model where expected acc/acc_norm values are stated), so a reader cannot confirm their implementation is correct — which matters doubly given the score_choices bug would pass unnoticed.",
+      "fix": "Add a smoke-test fixture: run the minimal harness on ~20 items with a small public model (e.g., gpt2 or a 0.5B model) and state the expected accuracy range and one hand-checked per-item log-likelihood, plus the invariant checks (choices must have distinct log-likelihoods; null_rate should be reported)."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "11.3 contains a complete self-contained multiple-choice harness (minimal_harness.py) with few-shot assembly, target-token-only log-likelihood scoring, seeds, SE reporting, and JSON sample logs, plus lm-eval-harness YAML task authoring and HELM usage.",
+    "11.1 covers contamination as a severity spectrum (verbatim -> format priming) with working 13-gram overlap detection code, canary strings, memorization probes, and behavioral paraphrase tests; pass@k formula is stated correctly with the unbiased combinatorial estimator.",
+    "11.6 is exceptional: Wilson/Clopper-Pearson/percentile/BCa bootstrap CIs, cluster bootstrap warning, McNemar with exact-binomial fallback, paired bootstrap, Bradley-Terry fitting + Elo bootstrap CIs, variance decomposition across items/prompts/seeds/judges, power analysis with simulation, and a from-scratch 2PL IRT + adaptive testing implementation — all with runnable code and worked numeric examples ('Wilson 49/50: [0.894, 0.997] while Wald gives an upper limit above 1.0').",
+    "11.2 gives a full LLM-as-judge implementation (rubric prompts, CoT-before-score, JSON parsing with retries), the five bias taxonomy with mitigations (swap-ordering debias code), Cohen's kappa and Spearman calibration, a from-scratch EloRanker with a hand-verified update example (1050/980, K=32 -> +-12.8), reward-model-as-judge, caching, and a judge cost model (~$30-50 per 10k-example run).",
+    "Perplexity is buildable in 01-foundations/02: worked toy example (PPL ~= 5.17), from-scratch code at three abstraction levels including sliding-window evaluation, expected outputs printed, and explicit limits (tokenizer dependence, weak correlation with downstream quality); 03-pretraining/03 repeats the tokenizer-comparability caveat.",
+    "Few-shot protocol sensitivity is treated concretely: 11.3's prompt-formatting section ('same model can vary by 5-10 points on MMLU'), chat-template pitfalls with apply_chat_template code, acc vs acc_norm worked example where normalization flips the winner, and 11.6's variance decomposition showing prompt variance is invisible to item-only CIs ('run >= 3 prompts and >= 3 seeds').",
+    "CONFIRMED BUG: minimal_harness.py score_choices double-counts BOS for BOS-adding tokenizers (context encoded with special tokens, full text without + manual BOS, ctx_len = context_len + 1), silently yielding empty continuations and ll=0.0 for all choices with Llama-style tokenizers.",
+    "CONFIRMED BUG: ch 11.3 mcnemar_test example comment claims chi2=0.0, p=1.0 for n01=2, n10=2; actual values are 0.25 and 0.617 (verified by execution).",
+    "CONFIRMED BUG: evaluate_mc_batch shuffles (prediction, gold) pairs jointly and claims this tests position bias; the shuffle is accuracy-invariant and tests nothing."
+  ],
+  "summary": "Evaluation is one of the strongest units in the book — arguably the closest to reference grade. All five learning objectives are covered with runnable code and worked numerics: perplexity from scratch with expected values and limits (01-foundations/02), the benchmark zoo with contamination spectrum and n-gram detection code (11.1), a complete LLM-judge + Elo/Bradley-Terry arena implementation with bias taxonomy and calibration protocol (11.2), harness engineering including lm-eval YAML tasks, chat templates, and a from-scratch minimal harness (11.3), and an outstanding statistics chapter (11.6) with Wilson/BCa/cluster bootstrap, McNemar, power analysis, and IRT-based adaptive eval. Verification, failure modes, cost accounting, and real library pointers are all present. The grade is held at 3 rather than 4 by verified correctness bugs in the deliverable's core code: the flagship minimal harness silently mis-scores every choice for BOS-adding tokenizers (Llama/Mistral — the very models in its examples), the position-bias shuffle in 11.1 is a no-op, and the 11.3 McNemar listing has a wrong claimed output and unclamped continuity correction. A competent reader following the prose (which correctly specifies target-token-only scoring, with a correct reference implementation in the foundations perplexity code) can build a correct contamination-aware harness, so buildable_verdict is true — but a copy-paste reader would ship a silently wrong one. Fixing the three code bugs and adding a smoke-test fixture would make this a clean 4."
+}

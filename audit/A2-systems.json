@@ -1,82 +1,43 @@
 {
   "unit_id": "A2-systems",
-  "grade": 3,
+  "grade": 4,
   "chapters_examined": [
-    "04-kernels-efficiency/01-roofline-performance",
-    "04-kernels-efficiency/02-flash-attention-1",
-    "04-kernels-efficiency/03-flash-attention-2-3",
     "04-kernels-efficiency/04-triton-kernels",
+    "04-kernels-efficiency/01-roofline-performance",
     "03-pretraining/05-distributed-data-parallel",
-    "03-pretraining/07-megatron-deepspeed",
-    "01-foundations/09-parallel-collectives",
-    "04-kernels-efficiency/10-memory-efficient-training"
+    "04-kernels-efficiency/10-memory-efficient-training",
+    "04-kernels-efficiency/03-flash-attention-2-3",
+    "04-kernels-efficiency/02-flash-attention-1"
   ],
+  "buildable_verdict": true,
   "deficits": [
     {
-      "severity": "major",
-      "target": "04-kernels-efficiency/04-triton-kernels",
-      "kind": "code",
-      "missing": "No Triton FlashAttention BACKWARD kernel anywhere in the book. The backward algorithm is fully derived and implemented in NumPy (FA1 chapter, with grad check), but the Triton chapter's Kernel 4 is forward-only and explicitly defers backward to 'the FlashAttention chapters', which only give NumPy. The Triton mechanics the backward specifically needs are never taught: tl.atomic_add (or the two-kernel dKdV/dQ split), a preprocessing kernel computing D_i = rowsum(dO*O), and how the forward must store the per-row logsumexp L (the shown Triton forward never writes L).",
-      "fix": "Add a 'Kernel 5: FlashAttention backward' section: (1) modify the forward kernel to compute and tl.store L = m_i + log2/ln-consistent logsumexp; (2) a small preprocess kernel computing D = rowsum(dO*O); (3) a backward kernel parallel over KV blocks producing dK/dV locally and accumulating dQ via tl.atomic_add (introduce the primitive), mirroring the FA2 paper's partitioning the FA2-3 chapter already describes in prose; (4) correctness test against torch.autograd on an fp32 reference with stated tolerances."
-    },
-    {
-      "severity": "major",
-      "target": "04-kernels-efficiency/04-triton-kernels",
-      "kind": "code",
-      "missing": "The Triton FlashAttention kernel is non-causal only. Causal masking is described in one prose note ('break the loop at the diagonal block and apply tl.where(offs_m[:,None] >= offs_n[None,:], s, -inf)') but never shown in working kernel code, and the fully-masked-row edge case (l_i == 0 guard, handled in the NumPy version) is not addressed for the Triton version.",
-      "fix": "Add the causal variant to the kernel code: pass a CAUSAL: tl.constexpr flag, compute the loop bound hi = (start_m+1)*BLOCK_M for causal, apply the triangular tl.where on the diagonal block, and extend the correctness test to causal=True. Note the l_i==0 guard needed if BLOCK_M rows can be fully masked."
-    },
-    {
-      "severity": "major",
-      "target": "04-kernels-efficiency/04-triton-kernels",
-      "kind": "library-mapping",
-      "missing": "No demonstration of wiring custom forward/backward kernels into PyTorch autograd (torch.autograd.Function with ctx.save_for_backward). Without it a reader cannot actually train with their Triton attention kernel, which is the point of the assignment.",
-      "fix": "Add a short section defining class FlashAttentionFn(torch.autograd.Function) with forward saving (q,k,v,o,L) via ctx.save_for_backward and backward invoking the Triton backward kernels, plus a torch.autograd.gradcheck-style or analytic-vs-reference gradient test."
-    },
-    {
-      "severity": "major",
-      "target": "03-pretraining/05-distributed-data-parallel",
-      "kind": "code",
-      "missing": "Optimizer state sharding (ZeRO-1) has a precise 4-step protocol description (reduce-scatter grads, update owned shard, all-gather updated params) and memory accounting, plus library-level FSDP usage — but no from-scratch implementation, unlike DDP which gets the excellent TinyDDP. Left unspecified in code: how to partition parameters across ranks (flat-buffer slice vs per-parameter assignment), handling world-size-indivisible parameter counts, and constructing the wrapped torch.optim instance over only owned shards.",
-      "fix": "Add a ~80-line TinyShardedOptimizer companion to TinyDDP: greedy per-parameter assignment to ranks (or flat slicing), each rank runs AdamW over its owned params only, then dist.broadcast (from owner) or all-gather of updated params; include a test asserting bit-identical parameter trajectories versus unsharded AdamW after N steps, and a per-rank memory measurement showing the ~12 bytes/param saving."
-    },
-    {
       "severity": "minor",
-      "target": "03-pretraining/05-distributed-data-parallel",
-      "kind": "verification",
-      "missing": "TinyDDP has a usage loop but no correctness verification: nothing asserts that replicas stay in lockstep or that the result matches single-process training on the concatenated batch.",
-      "fix": "Add a test: run the same data through a single-process model with the full batch and assert torch.allclose of parameters against the TinyDDP run after several steps; also assert all-rank parameter equality via all-gather."
-    },
-    {
-      "severity": "minor",
+      "kind": "code",
       "target": "04-kernels-efficiency/01-roofline-performance",
-      "kind": "correctness-bug",
-      "missing": "The MFU worked example contains a leftover self-correction artifact: 'Peak: 64 x 990x10^12 = 6.3x10^16 x ... = 6.34x10^16? Recompute: ...'. The final number (63.4 PFLOP/s) is correct, but the mangled first attempt is left in the published prose.",
-      "fix": "Delete the false start and keep only the clean computation: 64 x 990 TFLOP/s = 63,360 TFLOP/s = 63.4 PFLOP/s."
+      "missing": "There is no single consolidated 'benchmark the transformer end-to-end' script matching CS336 A2 Part 1's deliverable: a script that times FORWARD and BACKWARD of the full model (not just the profiler's forward-only eval loop) across varying context lengths / model sizes, with warmup + torch.cuda.synchronize(), emitting a table of mean/std latency per config. The pieces exist but are scattered (torch.profiler eval loop in 4.1, do_bench in 4.4, memory_snapshot in 4.10) and none times the backward pass in a benchmarking harness.",
+      "fix": "Add a ~40-line benchmark harness that builds a transformer, runs N warmup + M timed steps of forward AND loss.backward() via torch.cuda.Event(enable_timing=True), sweeps (context_len, d_model, n_layers), reports mean/std ms and peak memory (torch.cuda.max_memory_allocated after reset_peak_memory_stats), mirroring CS336 A2 benchmarking_script.py."
     },
     {
       "severity": "minor",
+      "kind": "explanation",
       "target": "04-kernels-efficiency/04-triton-kernels",
-      "kind": "resource-accounting",
-      "missing": "The Triton FA kernel hardcodes BLOCK_M=BLOCK_N=64 with no autotuning and no SRAM/register budget analysis for the attention kernel (the matmul kernel gets a worked SRAM example; attention does not), and requires HEAD_DIM to be a tl.constexpr power-of-two without saying what to do for e.g. d=80.",
-      "fix": "Add an @triton.autotune config list for the attention kernel and a one-paragraph SRAM budget (Q tile + K/V tiles + fp32 acc) analogous to the matmul worked example; note padding of head_dim to the next power of two."
+      "missing": "The Kernel 4/5 implementation is FA2-style (forward parallelized over query blocks across the program grid, backward parallelized over KV blocks), but the chapter never explicitly ties its parallelization choice back to the specific FA-2 innovations (parallelize over the sequence-length dimension, minimize non-matmul FLOPs, warp-partition Q instead of K). A reader could build the kernel but might not articulate WHY it is 'FlashAttention-2' rather than 'FlashAttention-1'.",
+      "fix": "Add 2-3 sentences (or a cross-link callout to 4.3) naming the three FA-2 changes and pointing out which lines of Kernel 4/5 realize the seq-parallel grid and the query-parallel forward / key-parallel backward asymmetry."
     }
   ],
-  "buildable_verdict": false,
-  "buildable_reasoning": "Three of five deliverables are reference-grade: (1) profiling/benchmarking — torch.profiler with schedule/warmup/sync, nsys/ncu command lines, NVTX, roofline classification of measured kernels, MFU accounting, memory snapshots in 04/10, and an all-reduce bandwidth benchmark with the busbw formula; (3) correctness testing — every kernel in the book ships with a reference test, tolerance guidance, TRITON_INTERPRET=1 debugging, and a finite-difference grad check for the attention backward; (4) DDP with overlap — TinyDDP is a genuine from-scratch implementation of broadcast-on-init, post-accumulate-grad hooks, reverse-order 25MB bucketing, and async all-reduce overlap. But the unit's headline deliverable — a Triton FlashAttention-2 forward AND backward kernel — is only half-buildable from this book: the Triton forward is complete and tested but non-causal and does not store the logsumexp L; the backward exists only as NumPy. The Triton-specific machinery the backward requires (tl.atomic_add or the dKdV/dQ two-kernel split, the D-preprocess kernel, torch.autograd.Function integration) is never demonstrated, so a reader attempting the real deliverable hits genuinely untaught territory. Optimizer state sharding is precisely explained (exact collectives, memory arithmetic, FSDP usage) but has no from-scratch implementation and no verification recipe, leaving partitioning and optimizer-wrapping details to the reader. Under a strict standard, the unit as specified is not fully producible from the book alone.",
   "evidence": [
-    "04/01 gives a complete profiling stack: torch.profiler with schedule(wait/warmup/active), 'nsys profile --trace=cuda,nvtx,osrt,cudnn,cublas', 'ncu --set full ... regex:\".*gemm.*\"', NVTX ranges, and a kernel_verdict() function that classifies measured kernels on the roofline.",
-    "04/01 warns: 'If you time with time.time() ... and forget torch.cuda.synchronize(), you measure launch time, not execution time — often 100x too fast' — timing methodology is explicit.",
-    "04/02 implements flash_attention_forward and flash_attention_backward in runnable NumPy with causal masking, -inf row guards, saved logsumexp L, the D_i = dO.O derivation, and a central-difference grad check ('max grad-check error: ~1e-7').",
-    "04/02 states the backward parallelization: 'FlashAttention-1 handles this by looping keys in the outer loop for the backward pass ... dQ is accumulated with atomics' — prose only, no kernel code.",
-    "04/04 Kernel 4 is a complete Triton FA forward (strides, 2-D grid over (query blocks, batch*head), exp2/log2e trick, masked loads, correctness test vs fp32 reference) but says 'This is the non-causal version ... We omit it for clarity' and 'the backward pass ... is covered in the FlashAttention chapters' (where it is NumPy, not Triton).",
-    "04/04 Triton forward never stores L, so it cannot support the backward as written; tl.atomic_add and torch.autograd.Function appear nowhere in the book.",
-    "04/03 gives the FA2 recurrence in runnable PyTorch (deferred normalization, causal block skipping) and the split-K vs split-Q warp partitioning, the 3-D launch grid 'gridDim = (ceil(seqlen_q/Br), num_heads, batch_size)', and backward-over-KV-blocks reasoning.",
-    "03/05 TinyDDP is a faithful from-scratch DDP: broadcast params+buffers from rank 0, register_post_accumulate_grad_hook, reverse-order bucketing to bucket_cap_mb, async all_reduce with handle.wait() in finish_gradient_synchronization, plus no_sync and find_unused_parameters pitfalls.",
-    "03/05 ZeRO stages: exact 4-step ZeRO-1 protocol with reduce-scatter/all-gather, memory ladder 120 -> 31.4 -> 16.6 -> 1.9 GB for a 7.5B model on 64 GPUs, comm-volume accounting (2-psi vs 3-psi), FSDP FULL_SHARD/SHARD_GRAD_OP/HYBRID_SHARD mapping — but no from-scratch sharded optimizer code.",
-    "01/09 provides all collective primitives with code, the alpha-beta cost model, ring all-reduce derivation (2(n-1)/n * M), a from-scratch naive DDP loop, process-group construction for TP x DP, and benchmark_all_reduce with the busbw formula.",
-    "04/01 line ~446 contains an uncleaned drafting artifact in the MFU worked example: 'Peak: 64 x 990x10^12 = 6.3x10^16 x ... = 6.34x10^16? Recompute: ...' (final answer 63.4 PFLOP/s is correct).",
-    "Correctness spot-checks passed: Triton FA exp2 scaling is self-consistent (base-2 exponentials in both numerator and l_i), FA2 causal break condition 'j > i + Br - 1' is correct, ZeRO memory formulas check out, GEMM arithmetic-intensity derivation is dimensionally correct for fp16."
+    "4.4 Kernel 5 provides a COMPLETE runnable Triton FlashAttention backward: attn_bwd_preprocess computes D_i = rowsum(dO*O), attn_bwd_dkdv_dq recomputes P=exp(S-L) with correct dV=P^T dO, dP=dO V^T, dS=P*(dP-D_i)*sm_scale, dQ=dS K (atomic_add), dK=dS^T Q, plus torch.autograd.Function wiring.",
+    "4.4 gives exact base-consistency handling: forward folds log2(e) into qk_scale and uses exp2, then stores L=(m_i+log2(l))*ln2 as natural-log logsumexp so the backward uses a plain tl.exp -- and explicitly warns that mixing bases silently corrupts gradients.",
+    "4.4 correctness test diffs kernel gradients against an fp32 PyTorch-autograd reference for causal and non-causal, states expected tolerances (~2e-2 fp16, ~1e-3 fp32), and lists two named failure signatures (dropping D_i -> per-row constant dQ offset; dropping sm_scale fold -> gradients off by sqrt(d)).",
+    "4.4 handles edge cases: non-power-of-two HEAD_DIM (next_power_of_2 + mask offs_d<d), padding masks with other=-inf, l_i>0 guard against divide-by-zero on fully-masked tail, causal loop-bound skipping + triangular diagonal mask.",
+    "4.4 includes resource accounting (SRAM/register budgets for both matmul and attention tiles), autotuning configs, do_bench benchmarking, TRITON_INTERPRET debugging, and library mapping to the official 06-fused-attention.py tutorial and Dao-AILab/flash-attention.",
+    "3.5 provides a from-scratch TinyDDP with param/buffer broadcast, reverse-order gradient bucketing (25MB), register_post_accumulate_grad_hook, async all-reduce overlap, and finish_gradient_synchronization -- plus a verify_tiny_ddp.py that asserts bit-identical replicas (atol=0) and matches single-process training on the concatenated batch.",
+    "3.5 provides a from-scratch ZeRO-1 (TinyShardedOptimizer) with greedy-by-size ownership assignment, per-rank local AdamW over owned params, owner broadcast, a bit-exact (max_diff==0.0) verification against unsharded AdamW, and per-rank owned_state_bytes memory measurement.",
+    "3.5 gives the precise 16-bytes/param memory model table and a worked 7.5B-on-80GB example showing 120->31->17->1.9 GB progression across ZeRO-1/2/3, plus a complete runnable FSDP training script (auto-wrap, MixedPrecision reduce_dtype=fp32, FULL_SHARD, activation checkpointing, sharded-aware clip_grad_norm_, full-state-dict checkpoint).",
+    "4.1 profiling section: torch.profiler with schedule(wait/warmup/active), record_shapes, profile_memory, chrome trace export; nsys command with NVTX ranges; ncu --set full roofline; kernel_verdict() classifier; and the warmup+synchronize pitfall (cuda.Event / torch.utils.benchmark.Timer).",
+    "4.10 supplies memory benchmarking helpers: reset_peak_memory_stats, max_memory_allocated, memory_snapshot(label) -- covering the 'memory' half of the profiling deliverable."
   ],
-  "summary": "Coverage of Assignment-2 material is broad and unusually deep: profiling/benchmarking (torch.profiler, nsys/ncu, MFU, memory snapshots) and kernel correctness-testing methodology are reference-grade; DDP-with-overlap is genuinely buildable from the from-scratch TinyDDP; the FlashAttention algorithm (forward and backward, causal, numerically guarded, grad-checked) is fully derived in runnable NumPy. The gap is the actual Triton deliverable: the book ships a tested Triton FA forward but it is non-causal and drops the logsumexp, and there is no Triton backward, no tl.atomic_add, and no torch.autograd.Function integration — the reader is left to synthesize the hardest 40% of the assignment. Optimizer state sharding is precisely explained with exact collectives and memory arithmetic but never implemented from scratch. Grade 3: most sub-deliverables buildable, but the unit as specified (Triton fwd+bwd kernel, ZeRO implementation) is not fully producible from the book alone."
+  "summary": "Reference-grade coverage of every A2-Systems deliverable. The Triton FlashAttention forward AND backward kernels (4.4 Kernels 4-5) are complete, runnable, causal-correct, handle non-power-of-two head dims and padding, get the exp2/natural-log base consistency exactly right, are wired into torch.autograd, and are validated against an fp32 reference with stated tolerances and named failure signatures. DDP-with-overlap and ZeRO-1 optimizer-state sharding each get a from-scratch, runnable, verified implementation in 3.5 (TinyDDP with bucketing/hooks/async all-reduce; TinyShardedOptimizer with greedy ownership and bit-exact verification), plus a full FSDP end-to-end script and precise 16-byte memory accounting. Profiling/benchmarking is covered in 4.1 (torch.profiler, nsys, ncu, roofline verdict, warmup/sync pitfalls) and 4.10 (peak-memory helpers). A competent reader could build all five deliverables from the book alone. The only gaps are minor: no single forward+backward end-to-end benchmarking-sweep harness, and the FA-2-vs-FA-1 partitioning rationale is left implicit. No correctness bugs found in the kernel or distributed code.",
+  "buildable_reasoning": "Adversarially checked each deliverable. (1) FlashAttention forward+backward: both full kernels present with exact tensor shapes (B,H,N_CTX,HEAD_DIM), block-pointer arithmetic, online-softmax recurrence with alpha rescaling of BOTH l_i and acc, causal masking on both passes, atomic_add fp32 dQ, and driver + autograd.Function. Backward math (dV=P^T dO, dS=P*(dP-D_i)*sm_scale, dQ=dS K, dK=dS^T Q) is correct and D_i=rowsum(dO*O) is derived. (2) Correctness testing: eager reference + torch.allclose with dtype-appropriate tolerances and failure diagnostics. (3) DDP overlap: complete hook/bucket/async-allreduce implementation verified against single-process. (4) ZeRO sharding: complete, bit-exact-verified, with memory measurement. (5) Profiling: real profiler/nsys/ncu code and memory helpers. Nothing is hand-waved or left as pseudo-code."
 }

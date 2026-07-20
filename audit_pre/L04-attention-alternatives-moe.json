@@ -1,0 +1,74 @@
+{
+  "unit_id": "L04-attention-alternatives-moe",
+  "grade": 3,
+  "chapters_examined": [
+    "02-transformer/04-mha-gqa-mla",
+    "02-transformer/09-mixture-of-experts",
+    "02-transformer/11-ssm-and-alternatives",
+    "02-transformer/10-modern-arch-improvements",
+    "02-transformer/08-architecture-variants",
+    "03-pretraining/06-distributed-model-parallel",
+    "03-pretraining/13-long-context-pretraining",
+    "04-kernels-efficiency/02-flash-attention-1"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "correctness-bug",
+      "missing": "The SelectiveSSM (Mamba) code crashes when run: in forward(), `y = (h * C[:, t].unsqueeze(2)).sum(-1)` broadcasts (B, N, 1) against h of shape (B, D, N) and raises 'The size of tensor a (D) must match the size of tensor b (N) at non-singleton dimension 1'. Verified by executing the code verbatim (PyTorch 2.9): RuntimeError for any d_model != d_state.",
+      "fix": "Change `C[:, t].unsqueeze(2)` to `C[:, t].unsqueeze(1)` so C broadcasts as (B, 1, N) against h (B, D, N), and add a smoke test that actually runs SelectiveSSM/MambaBlock end-to-end with printed expected shapes (the chapter's other blocks have no executed smoke test for this class)."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "explanation",
+      "missing": "Sliding-window attention is never explained anywhere in the book — it appears only as name-drops (Mistral 7B and Gemma 2 in reference lists, a flash-attn API knob in 4.2, 'sliding window attention' as an option in the hybrid design-space list). The unit's learning objective 'sliding-window and sparse attention' is unmet: no banded/local causal mask definition, no rolling-buffer KV cache (fixed W-sized cache), no receptive-field-grows-with-depth (~layers x W) argument, no interleaved global/local layer pattern (Gemma 2/3, GPT-oss style).",
+      "fix": "Add a 'Sliding-Window and Sparse Attention' section to 2.11 (or 2.10): define the banded causal mask (attend to positions [t-W+1, t]), give the O(N*W) FLOP/memory accounting, explain the rolling-buffer KV cache bounding cache at W tokens, the effective receptive field across L layers, and the interleaved full/local layer recipe with a short mask-construction code snippet (torch or flex_attention mask_mod)."
+    },
+    {
+      "severity": "major",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "explanation",
+      "missing": "Sparse attention patterns are essentially absent: no coverage of block-sparse/strided patterns (Sparse Transformer), global+local+random patterns (Longformer/BigBird), or modern trainable sparse attention (DeepSeek NSA, MoBA). Only StreamingLLM/attention sinks (covered well in 2.10) and a LongLoRA citation in 3.13 touch the space.",
+      "fix": "In the same new section, add ~1-2 pages on sparse attention: the pattern taxonomy (strided, block-sparse, global tokens), why block granularity matches GPU tiles, and a paragraph on 2025-era learned sparsity (NSA's compressed/selected/sliding branches), with citations. A figure contrasting full / sliding / block-sparse / global+local mask matrices would carry most of the weight."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "code",
+      "missing": "The linear-attention training code only implements the non-causal parallel form; the comment says 'the causal form requires a cumulative outer-product scan' but never shows it, so a reader cannot train a causal linear-attention LM efficiently from the book alone (the recurrent step is O(N) sequential in Python).",
+      "fix": "Add a chunked causal linear attention implementation (chunk-parallel: intra-chunk quadratic masked attention + inter-chunk state passing), ~25 lines, which is also the algorithmic core reused by GLA/RetNet chunkwise forms discussed later in the chapter."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/11-ssm-and-alternatives",
+      "kind": "correctness-bug",
+      "missing": "The RWKVTimeMixing code disagrees with the chapter's own displayed WKV recurrence: the output step uses exp(pp + w - qq)*aa (applying an extra decay w to the historical state), while the displayed equation and the reference BlinkDL kernel use a_{t-1} undecayed (exp(pp - qq)*aa) with decay applied only in the state update. The variant is a u -> u - w reparameterization so it trains, but code and math contradict each other.",
+      "fix": "Align the code with the equation: in the output step compute qq = max(pp, kt + u) and use exp(pp - qq) * aa (and same for bb), matching the official RWKV-4 kernel; or add a note explaining the intentional offset."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/06-distributed-model-parallel",
+      "kind": "code",
+      "missing": "The expert-parallel MoE forward sketch calls undefined helpers (bucket_tokens_by_rank, run_local_experts, weighted_scatter_add) and uses a global ep_group; the all-to-all recv buffer sized with torch.empty_like(send_buf) silently assumes perfectly equal per-rank counts, which is exactly the imbalanced case the surrounding prose warns about.",
+      "fix": "Either label the count-exchange step explicitly (a preliminary all_to_all of per-rank token counts to size recv buffers, as real implementations do) or provide the ~15-line bucket_tokens_by_rank helper, so the sketch does not paper over the hardest part of EP."
+    }
+  ],
+  "buildable_verdict": true,
+  "buildable_reasoning": "The deliverable — a top-k routed MoE FFN with an auxiliary load-balancing loss — is fully buildable from chapter 2.9 alone, and I verified it empirically: the SparseMoE class ran verbatim (output shape (4,16,32), aux loss 1.029 near the uniform lower bound of 1.0), gradients flow to both the router and the experts, and index_add_/gate-renormalization handle the top-k>1 case correctly. The chapter supplies exact tensor shapes at every step, the capacity formula ceil(Cf*N*k/E) with typical values (Cf 1.0-2.0, alpha ~1e-2, k=1 or 2), the softmax-before/after-top-k distinction with both variants coded, the hard-count/soft-probability gradient trick explained and coded with an explicit .detach(), edge cases (empty expert, capacity overflow drop, batch-dependence at inference), a worked resource-accounting example (params, FLOPs, capacity headroom), and library pointers (megablocks grouped-GEMM, DeepSeek-V3). This is reference-grade for the deliverable.",
+  "evidence": [
+    "2.9 SparseMoE code executed verbatim: torch.Size([4, 16, 32]), aux=1.029; backward pass gives nonzero router and expert gradients.",
+    "2.9 gives the Switch aux loss L_aux = alpha*E*sum(f_e*P_e) with alpha ~1e-2, explains the hard-f/soft-P gradient-routing trick, and codes it with an explicit .detach() on f.",
+    "2.9 worked example computes capacity (2560 tokens at Cf=1.25), dropped-token count for a hot expert, per-layer params (9.4e8 vs 1.17e8 dense) and per-token FLOPs (2-of-8 experts).",
+    "2.9 covers expert-choice routing ('each expert picks its top-C tokens ... breaks causal, one-token-at-a-time decoding'), z-loss, DeepSeek aux-loss-free bias, capacity factor, and dropless Megablocks.",
+    "2.4 derives KV bytes = 2*B*L*S*g*d_h*P, worked 70B example (10.7 GB MHA -> 1.34 GB GQA g=8), and its GQA/MLA code ran correctly for n_kv in {8,2,1} (verified).",
+    "2.4 covers MLA weight absorption and the decoupled-RoPE split, with a runnable latent-cache forward pass (verified: output (2,16,512)).",
+    "3.6 covers expert parallelism: dispatch/combine all-to-all with dist.all_to_all_single sketch, load-balance-to-throughput argument, EP in the 5D parallelism product.",
+    "2.11 covers linear attention (parallel + recurrent forms, verified they agree numerically at the final position), S4 discretization/HiPPO, Mamba selective scan, RWKV, RetNet, GLA unification, and Jamba/Zamba hybrids.",
+    "BUG (verified by execution): 2.11 SelectiveSSM raises 'The size of tensor a (64) must match the size of tensor b (16) at non-singleton dimension 1' — C[:, t].unsqueeze(2) should be unsqueeze(1).",
+    "Sliding-window attention: grep across the book finds only citation-level mentions (Mistral 7B ref in 2.8, Gemma 2 refs in 2.10, flash-attn knob list in 4.2); no section explains the mechanism, rolling KV buffer, or receptive-field stacking.",
+    "Sparse attention patterns (Sparse Transformer/Longformer/BigBird/NSA): no coverage found beyond a LongLoRA citation in 3.13 and a flashinfer 'block-sparse KV layout' bullet in 4.2; attention sinks/StreamingLLM are covered in 2.10."
+  ],
+  "summary": "Three of the four learning objectives are covered at buildable-to-reference level: MQA/GQA/MLA with exact KV-cache math and verified runnable code (2.4), MoE routing/load-balancing/capacity with a verified runnable top-k MoE layer plus aux loss (2.9), and expert-parallelism/all-to-all systems concerns (2.9 preview + 3.6). The deliverable is unambiguously buildable — I ran the book's SparseMoE verbatim, including the backward pass. Two real problems keep the unit at 3: the Mamba SelectiveSSM code in 2.11 crashes as written (one-character shape bug, verified by execution), and sliding-window/sparse attention — an explicit learning objective — exists only as name-drops with no mechanism explanation anywhere in the book."
+}

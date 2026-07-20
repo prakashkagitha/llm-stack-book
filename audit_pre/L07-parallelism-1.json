@@ -1,0 +1,61 @@
+{
+  "unit_id": "L07-parallelism-1",
+  "grade": 4,
+  "chapters_examined": [
+    "01-foundations/09-parallel-collectives",
+    "03-pretraining/05-distributed-data-parallel",
+    "03-pretraining/07-megatron-deepspeed",
+    "04-kernels-efficiency/10-memory-efficient-training"
+  ],
+  "deficits": [
+    {
+      "severity": "minor",
+      "target": "01-foundations/09-parallel-collectives",
+      "kind": "correctness-bug",
+      "missing": "In the reduce-scatter demo, each rank contributes torch.full((world_size,), float(rank)), so every rank's output is sum(0..world_size-1) = world_size*(world_size-1)/2 (identical on all ranks). The code comment claims 'Rank i's output = sum of input[i] from all ranks = rank * world_size', which is wrong on both the value and the rank-dependence.",
+      "fix": "Change the comment to '= sum over ranks r of r = world_size*(world_size-1)/2, same on every rank', or change the input to torch.arange(world_size)+rank so the per-rank outputs actually differ and illustrate the scatter."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/07-megatron-deepspeed",
+      "kind": "correctness-bug",
+      "missing": "ZeRO-3 memory formula given as (2P + 12P)/DP = 14P/DP, omitting the 2P of bf16 gradients; the accompanying text says 'ZeRO-3 shards all 14 bytes'. This contradicts chapter 3.5's correct 16 bytes/param accounting (2 params + 2 grads + 12 optimizer) and the ZeRO paper's (2+2+K)Psi/N with K=12.",
+      "fix": "Correct the formula to (2P + 2P + 12P)/DP = 16P/DP and update the surrounding prose and the stage table to be consistent with chapter 3.5."
+    },
+    {
+      "severity": "minor",
+      "target": "01-foundations/09-parallel-collectives",
+      "kind": "correctness-bug",
+      "missing": "The Interview Corner remedy claims switching to 'ZeRO Stage 1 or 2 (reduce-scatter then all-gather) ... reduces peak communication by the same ~2x factor'. Total ZeRO-1/2 communication volume equals DDP's all-reduce (reduce-scatter + all-gather = all-reduce), as chapter 3.5 itself correctly states ('Communication volume is essentially the same as DDP'). Presenting ZeRO-1/2 as the top remedy for a communication-bound job is misleading.",
+      "fix": "Rephrase: ZeRO-1/2 fixes memory redundancy at roughly the same communication volume; the actual communication remedies are shrinking the DP world via TP within node, gradient compression, hierarchical/hybrid sharding, and larger batch/accumulation."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/05-distributed-data-parallel",
+      "kind": "verification",
+      "missing": "The TinyDDP from-scratch wrapper is runnable and prints loss, but there is no correctness test — the canonical check that DDP gradients/losses match a single-process run on the concatenated batch (bitwise or within fp tolerance) is absent, so a reader cannot confirm their reimplementation is right.",
+      "fix": "Add a short verification harness: run the same model/seed/data single-process vs 4-rank TinyDDP, assert torch.allclose on post-sync gradients and on parameters after k optimizer steps; state the expected tolerance (exact match in fp32 SUM order caveats aside)."
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/05-distributed-data-parallel",
+      "kind": "explanation",
+      "missing": "TinyDDP silently breaks under gradient accumulation: hooks fire on every backward, so buckets all-reduce after each micro-batch and _ready_counts over-increment across micro-batches. The no_sync() tip covers production DDP but the toy's limitation is not flagged.",
+      "fix": "Add one sentence noting the toy fires communication every backward and sketch the two-line fix (a require_sync flag checked in the hook), mirroring DDP's no_sync()."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "Ch 1.9 gives all six collectives with a per-rank output-size table, runnable torch.distributed demos with expected values, the alpha-beta cost model, ring all-reduce with the 2(n-1)/n*M per-phase volume, busbw formula, and a bandwidth benchmark script.",
+    "Ch 1.9: 'All-Reduce = Reduce-Scatter followed by All-Gather. This decomposition lets us interleave communication with computation' — the exact identity ZeRO builds on.",
+    "Ch 3.5 contains a complete from-scratch DDP (TinyDDP): broadcast-on-init of params AND buffers, reverse-order bucketing with a 25 MB byte cap, register_post_accumulate_grad_hook per parameter, async all_reduce per full bucket, flatten/unflatten, wait-and-average in finish_gradient_synchronization — directly satisfying the deliverable.",
+    "Ch 3.5 memory accounting: '2+2+4+4+4 = 16 bytes per parameter' with a worked 7.5B/64-GPU example giving the 120 -> 31.4 -> 16.6 -> 1.9 GB ladder across DDP/ZeRO-1/2/3 (arithmetic checks out).",
+    "ZeRO stages given as exact step-by-step algorithms (reduce-scatter grads, shard-local optimizer step, all-gather updated params) with per-stage communication volumes (2Psi for stages 1-2, ~3Psi for stage 3).",
+    "FSDP covered with FlatParameter/unit semantics, prefetch/stream overlap, a complete runnable script (auto-wrap policy, MixedPrecision with fp32 reduce_dtype, FULL_SHARD, sharded clip_grad_norm_, full-vs-sharded state dict), and the FULL_SHARD/SHARD_GRAD_OP/NO_SHARD/HYBRID_SHARD mapping to ZeRO stages.",
+    "Activation checkpointing interaction is explicit: 'ZeRO-3 can shrink model state to nearly nothing yet still OOM on activations'; the FSDP script applies apply_activation_checkpointing per Block; ch 4.10 derives the O(sqrt(L)) tradeoff with a peak-memory measurement script and expected numbers.",
+    "Failure modes covered: conditional-collective deadlock, unused-parameter hang (find_unused_parameters), wrong gradient clipping under sharding, gradient-accumulation without no_sync, ZeRO-3 x gradient-accumulation all-gather storm (ch 3.7).",
+    "Resource accounting is exceptional: worked comm-vs-compute examples for 1.3B/8-GPU NVLink, 70B/64-GPU IB, 13B FSDP HYBRID_SHARD example with numeric T_comm.",
+    "Library pointers: NCCL/nccl-tests repos, DDP design paper (Li et al. 2020), ZeRO paper, FSDP paper (Zhao et al. 2023), torchtitan, DeepSpeed config JSON in ch 3.7, plus a list of ways production DDP differs from TinyDDP."
+  ],
+  "summary": "Coverage of Parallelism I is excellent and essentially reference-grade. Chapter 1.9 delivers all collectives with costs, the alpha-beta model, ring all-reduce, topology, and benchmarking; chapter 3.5 delivers a runnable from-scratch bucketed-and-overlapped DDP (the unit's deliverable), exact 16-bytes/param memory accounting, precise ZeRO-1/2/3 algorithms with communication volumes, a complete FSDP script with sharding-strategy semantics, and the activation-checkpointing interaction. Failure modes, worked resource-accounting examples, and pointers into NCCL/DDP/DeepSpeed/torchtitan are all present. Deficits are minor: a wrong reduce-scatter code comment in ch 1.9, an inconsistent 14P/DP ZeRO-3 formula in ch 3.7, a misleading claim that ZeRO-1/2 halves communication in ch 1.9's interview corner, no single-process-equivalence test for the TinyDDP wrapper, and an unflagged gradient-accumulation limitation of the toy DDP."
+}

@@ -1,0 +1,50 @@
+{
+  "unit_id": "L05-gpus-tpus",
+  "grade": 4,
+  "chapters_examined": [
+    "01-foundations/08-gpu-architecture",
+    "01-foundations/09-parallel-collectives",
+    "01-foundations/10-accelerator-landscape",
+    "04-kernels-efficiency/01-roofline-performance"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "04-kernels-efficiency/01-roofline-performance",
+      "kind": "correctness-bug",
+      "missing": "The 'Worked example: MFU of a concrete training step' is arithmetically wrong and describes a physically impossible scenario. 7B model, 64 H100s, 4096 seqs x 4096 tokens in 2.4 s gives 6.99e6 tok/s -> 6N*tok/s = 281 PFLOP/s vs 63.4 PFLOP/s peak, i.e. MFU = 4.43 (443%), not the claimed 0.44 = 44%. The division 281/63.4 is off by 10x, and the example also contains a leftover self-correction artifact ('Peak: ... = 6.34x10^16? Recompute: ...') in the published prose.",
+      "fix": "Make the scenario physically consistent: keep 64 H100s and 44% target MFU but change the step to 4096 seqs x 4096 tokens in 24 s (0.70e6 tok/s -> 281/634... recompute: 6*6.7e9*0.699e6 = 2.81e16 FLOP/s vs 6.34e16 peak = 44%), or keep 2.4 s and use 640 GPUs. Then delete the 'Recompute:' artifact and re-verify the printed numbers with the chapter's own mfu() function."
+    },
+    {
+      "severity": "minor",
+      "target": "01-foundations/08-gpu-architecture",
+      "kind": "explanation",
+      "missing": "The occupancy worked example contains an uncorrected drafting artifact in the published text: '5 blocks -> 5x256=1280 threads = 20 warps... wait, 5 blocks of 256 = 1280 threads = 40 warps'. The final figure (40 warps, 62.5%) is correct, but the 'wait' self-correction should not appear in a textbook.",
+      "fix": "Delete the '= 20 warps... wait,' fragment and state directly: '5 blocks x 256 threads = 1,280 threads = 40 warps = 62.5% occupancy.'"
+    },
+    {
+      "severity": "minor",
+      "target": "01-foundations/08-gpu-architecture",
+      "kind": "explanation",
+      "missing": "TPU learning objective is fully covered but lives entirely in 1.10; chapter 1.8 (the flagship hardware chapter) never forward-references the systolic-array contrast, so a reader auditing 'GPUs, TPUs' from 1.8 alone will miss it. Also, Grace Hopper NVLink-C2C is mentioned but PCIe generation labels (Gen4 vs Gen5) behind the '~32-64 GB/s' figure are not stated, while 1.9 quotes 'PCIe Gen 5 ~128 GB/s bidirectional' - consistent only if the reader realizes 1.8's number is unidirectional.",
+      "fix": "Add one sentence in 1.8's memory-hierarchy table or NVLink section labeling the PCIe figure ('PCIe Gen5 x16: ~64 GB/s per direction, ~128 GB/s bidirectional') and a one-line pointer to 1.10 for the systolic-array/TPU contrast."
+    }
+  ],
+  "buildable_verdict": true,
+  "buildable_reasoning": "The deliverable - predict whether a given layer is compute- or memory-bound and explain the hardware reason - is delivered at reference level. Chapter 1.8 derives arithmetic intensity and the ridge point with runnable code (arithmetic_intensity, roofline_perf, classify_op) and worked examples with expected values (8192^3 matmul I~2700 FLOP/B compute-bound; 7B batch-1 decode I~1 FLOP/B, >=7 ms/token floor; batch sweep crossing the ridge). Chapter 4.1 adds per-layer transformer FLOP counting (24d^2+4sd per token per layer, SwiGLU 6*d*d_ff variant), byte counting for GEMM vs elementwise vs LayerNorm, the kernel_verdict function that classifies a measured kernel against the A100/H100 rooflines, MFU as the training north-star, and verification on silicon via torch.profiler and Nsight Compute's hardware roofline (ncu --set full). Failure modes (measuring without sync/warmup, optimizing FLOPs on a memory-bound kernel, sparse-vs-dense TFLOP quotes), resource accounting (occupancy packing, KV-cache/weights footprints), and library pointers (CUTLASS, Triton, flash-attention, LLM-Viewer, Nsight docs) are all present. A competent reader can produce a correct compute-vs-memory-bound classifier for any layer from the book alone. The one critical bug (443% MFU example presented as 44%) is in adjacent verification material, not in the classifier path itself, and must be fixed.",
+  "evidence": [
+    "1.8 covers the full execution hierarchy with exact constants: 'warps of exactly 32 threads', 'An H100 has 132 SMs; an A100 has 108', '65,536 32-bit registers - 256 KB - per SM', SMEM 'up to ~228 KB total per SM on H100', L2 '~50 MB', HBM '80 GB ... ~3.35 TB/s'.",
+    "1.8 memory-hierarchy table gives size/bandwidth/latency per tier (registers ~1 cycle -> HBM ~400-800 cycles -> NVLink -> PCIe) and an occupancy worked example solved as a resource-packing min over registers/SMEM/thread slots, with a replica of NVIDIA's occupancy-calculator logic in code.",
+    "Tensor cores: 'BF16/FP16/FP8/FP4 inputs, usually with FP32 accumulation ... multiples of 8 or 16', A100 BF16 312 TFLOP/s = 16x FP32, sparse-vs-dense TFLOP warning ('A 1979 TFLOP/s H100 number is FP16 with sparsity'), per-generation table A100/H100/H200/B200 with SMs, HBM type/capacity/bandwidth, NVLink BW.",
+    "Deliverable code is directly present: classify_op(flops, hbm_bytes) in 1.8 returns bound + attainable TFLOPs + advice; kernel_verdict in 4.1 does the same from measured time and is validated on a LayerNorm (memory-bound, I<1) and an FFN GEMM (compute-bound).",
+    "Worked roofline predictions carry expected values: 7B bf16 decode '>= 6.7 ms/token, ~150 tok/s ceiling, <1% of peak compute'; batch sweep shows intensity scaling linearly with B until crossing ridge ~156 (A100) / ~295 (H100).",
+    "Verification on real hardware is taught: torch.profiler with schedule/warmup/synchronize, nsys timeline capture, ncu --set full roofline section, and the diagnosis rubric 'If SM throughput is ~90% you're compute-bound... If memory throughput is ~90% but SM is low, you're bandwidth-bound'.",
+    "1.10 covers TPUs at depth: 128x128 MXU systolic dataflow ('weights pre-loaded; activations flow in from the left edge... partial sums never leave the array'), MXU+VPU+scalar+HBM chip anatomy, v5p pod of up to 8,960 chips on a 2D/3D ICI torus, XLA/JAX/GSPMD sharding with runnable jax.sharding example, Pallas as the kernel escape hatch, and the bf16 co-design aside.",
+    "GPU-vs-TPU contrast is explicit and correct: 'GPUs give you a programmable machine and make you manage memory; systolic accelerators give you a compiler and make you accept its abstractions', plus a five-family comparison table (warp 32 vs wavefront 64 vs compiler-scheduled).",
+    "Interconnects quantified in 1.9: NVLink 4.0 '18 lanes, ~900 GB/s bidirectional per GPU' vs 'PCIe Gen 5 ~128 GB/s bidirectional'; InfiniBand HDR 200 Gb/s ~25 GB/s, NDR 400 Gb/s ~50 GB/s, XDR 800 Gb/s; GPUDirect RDMA; hierarchical NCCL collectives; alpha-beta cost model with a worked 1.3B gradient all-reduce (17 ms NVLink vs cross-node IB).",
+    "CONFIRMED BUG: 4.1's MFU worked example - 4096x4096 tokens / 2.4 s on 64 H100s = 6.99e6 tok/s -> 6N*tok/s = 281 PFLOP/s vs 63.4 PFLOP/s peak -> MFU = 4.43 (443%), yet the text concludes '~ 0.44 = 44%'; the example also retains a 'Recompute:' drafting artifact.",
+    "Minor drafting artifact in 1.8 occupancy example: '= 20 warps... wait, 5 blocks of 256 = 1280 threads = 40 warps' left in published prose (final answer correct).",
+    "All three {{fig:...}} placeholders used by these chapters (memory-hierarchy, roofline, accel-systolic-array-dataflow, accel-portability-spectrum) are backed by real assets in figures/."
+  ],
+  "summary": "Coverage of this unit is reference-grade and exceeds CS336 Lecture 5 scope: chapter 1.8 delivers the SM/warp/thread and register/SMEM/L2/HBM hierarchies with exact per-SKU constants, tensor-core dtype rules, occupancy as a worked resource-packing problem, and arithmetic-intensity classification with runnable code; 4.1 formalizes the roofline with transformer FLOP/byte accounting, MFU, and silicon-level verification via torch.profiler and Nsight Compute; 1.10 gives an unusually strong systolic-array/TPU treatment (MXU dataflow, ICI torus pods, XLA/GSPMD, Pallas) contrasted against SIMT; 1.9 quantifies NVLink/NVSwitch/PCIe/InfiniBand with an alpha-beta cost model. The deliverable (predict compute- vs memory-bound with the hardware reason) is buildable with verification, failure modes, resource accounting, and library pointers. One critical correctness bug must be fixed: the MFU worked example in 4.1 claims 44% but its own numbers give a physically impossible 443% (division off by 10x, plus a leftover 'Recompute:' drafting artifact); a second drafting artifact ('...20 warps... wait...') mars the otherwise-correct occupancy example in 1.8."
+}

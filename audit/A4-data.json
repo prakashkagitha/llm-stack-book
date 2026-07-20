@@ -1,54 +1,33 @@
 {
   "unit_id": "A4-data",
-  "grade": 3,
+  "grade": 4,
   "chapters_examined": [
     "03-pretraining/01-pretraining-data",
     "03-pretraining/02-data-cleaning-dedup"
   ],
   "deficits": [
     {
-      "severity": "major",
+      "severity": "minor",
       "kind": "code",
-      "target": "03-pretraining/01-pretraining-data",
-      "missing": "The book jumps directly to WET files (already-extracted plain text) and never covers extracting text from raw WARC HTML. Deliverable #1 and CS336 Assignment 4 explicitly require going from raw WARC (full HTTP responses / HTML) to text. There is no HTML-to-text extraction code, no encoding/charset detection, no boilerplate stripping, and no use of warcio/fastwarc/resiliparse/trafilatura. The single trafilatura mention is a passing (and incorrect) aside about what Common Crawl already did.",
-      "fix": "Add a section 'Extracting text from WARC' with real code: iterate WARC response records with fastwarc/warcio, detect charset, run an HTML-to-text extractor (resiliparse or trafilatura) to strip boilerplate, and compare WARC-derived vs WET-derived text quality. This is the actual first stage of the CS336 assignment."
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "missing": "The 'Toxicity Filtering' subsection is EXPLAINED but not BUILDABLE: it describes scoring with 'a lightweight classifier' and Perspective API but ships no runnable classifier. Every other stage in the chapter (LangID, heuristics, quality classifier, PII, exact/Bloom/MinHash dedup) has working code, so toxicity is the one soft spot against the 'harmful-content filtering' deliverable.",
+      "fix": "Add a compact runnable toxicity classifier mirroring the quality-classifier block: fasttext.train_supervised on a labeled hate-speech dataset (or a HashingVectorizer+LogisticRegression head) plus a threshold-selection snippet, so harmful-content filtering is implementable from the book alone rather than via an external API."
     },
     {
-      "severity": "major",
+      "severity": "minor",
+      "kind": "code",
+      "target": "03-pretraining/02-data-cleaning-dedup",
+      "missing": "Suffix-array exact-substring dedup (Lee et al.) is EXPLAINED with the SA-IS/LCP algorithm sketch and correct 800GB resource accounting but no code, unlike MinHash which is fully implemented from scratch. A reader could not build the substring deduper from the text alone.",
+      "fix": "Either add a small from-scratch suffix-array + LCP demo over a toy token sequence with expected repeated-span output, or explicitly scope substring dedup as 'use deduplicate-text-datasets' and mark it out of the buildable set (document-level MinHash already satisfies the fuzzy-dedup deliverable)."
+    },
+    {
+      "severity": "minor",
       "kind": "verification",
       "target": "03-pretraining/02-data-cleaning-dedup",
-      "missing": "Deliverable #4 ('measure the downstream effect of filtering choices on model quality') is only discussed qualitatively (Lee et al. 1.5-2x sample efficiency, FineWeb/DCLM ablation citations, yield tables). There is no experimental protocol or runnable harness a reader could execute to actually MEASURE the effect: no train-a-small-LM-on-filtered-vs-unfiltered loop, no held-out eval/benchmark comparison, no delta-reporting methodology, no compute budget for the ablation.",
-      "fix": "Add a worked ablation harness: take two data subsets (e.g. raw vs filtered+deduped), train a small (~100M-160M) model on each for a fixed token budget, evaluate held-out perplexity plus a small downstream benchmark (e.g. a subset of HellaSwag/PIQA), and report the metric delta. Include the exact eval loop and expected magnitude of improvement so the reader can reproduce and validate."
-    },
-    {
-      "severity": "critical",
-      "kind": "correctness-bug",
-      "target": "03-pretraining/01-pretraining-data",
-      "missing": "Line 37 claims 'Common Crawl's crawlers already ran trafilatura or a similar extraction tool' to produce WET files. This is factually wrong: Common Crawl WET files are produced by its own simple text extractor (historically Apache Tika-based), not trafilatura. This misleads a reader into thinking WET already has trafilatura-quality extraction, which is a primary reason FineWeb/RefinedWeb re-extract from WARC.",
-      "fix": "Correct the claim: state that CC WET uses a basic built-in extractor whose quality is lower than modern extractors, which is exactly why high-quality pipelines (RefinedWeb, FineWeb) re-extract from WARC with trafilatura/resiliparse."
-    },
-    {
-      "severity": "minor",
-      "kind": "math",
-      "target": "03-pretraining/02-data-cleaning-dedup",
-      "missing": "The quality-score formula at line 155 writes score(d) = exp(-(1/N) sum log P)^{-1}, which is the INVERSE of perplexity, while the surrounding text says 'a lower perplexity means the document resembles Wikipedia-quality text.' The labeled quantity and the prose disagree, and the extra ^{-1} is unexplained.",
-      "fix": "Either define perplexity cleanly as PPL = exp(-(1/N) sum log P) and say keep low-PPL docs, or if defining an inverted score make the direction (higher score = better) explicit and consistent."
-    },
-    {
-      "severity": "minor",
-      "kind": "code",
-      "target": "03-pretraining/02-data-cleaning-dedup",
-      "missing": "Line 26 comment 'suppress_stdou=True silences fastText's noisy banner' has a typo and references a parameter that is never passed to fasttext.load_model (which takes no such argument). Cosmetic but misleading in code a reader will copy.",
-      "fix": "Remove the erroneous comment or show the correct way to suppress fastText output (e.g. fasttext.FastText.eprint = lambda *a, **k: None)."
-    },
-    {
-      "severity": "minor",
-      "kind": "code",
-      "target": "03-pretraining/01-pretraining-data",
-      "missing": "parse_wet_records is a hand-rolled line-scanner that delimits records by the next 'WARC-Target-URI:' header and ignores Content-Length; it is fragile (body lines that resemble headers, the leading warcinfo record, multi-blank-line bodies) and no robust alternative is shown.",
-      "fix": "Note the fragility and show the production-standard path (warcio/fastwarc ArchiveIterator honoring Content-Length) alongside the didactic parser, or at least add a caveat that real pipelines must not rely on header-string heuristics."
+      "missing": "PII redaction and heuristic-filter code lack the deterministic unit-test-with-expected-output treatment that the WET parser, TokenShard, Bloom filter, and MinHash demo all receive; redact_pii and passes_heuristic_filters have only inline comment examples.",
+      "fix": "Add a tiny assert-based test block for redact_pii (each PII type -> placeholder) and passes_heuristic_filters (one pass / one fail per rule) to match the chapter's otherwise-excellent verification standard."
     }
   ],
-  "buildable_verdict": false,
-  "summary": "Two strong, code-rich chapters (3.1 sourcing/pipeline, 3.2 cleaning/dedup) cover this unit. Language ID (fastText), heuristic + classifier quality filtering, toxicity/PII removal, and both exact (SHA-256) and fuzzy MinHash-LSH deduplication are BUILDABLE: complete from-scratch MinHash with shingling, universal hashing, LSH banding, the S-curve threshold math, a worked parameter example, and a runnable demo; suffix-array substring dedup and 13-gram benchmark decontamination are also well explained. However the full deliverable set is not buildable from the text alone: (1) extracting text from raw WARC HTML is entirely absent (only pre-extracted WET is handled, and the one WARC-vs-WET remark is factually wrong), and (4) 'measure the downstream effect of filtering on model quality' is only discussed qualitatively with no runnable train+eval ablation protocol. Grade 3, verdict false, driven by the missing WARC extraction stage and the missing measurement harness plus a factual bug about CC WET extraction."
+  "buildable_verdict": true,
+  "summary": "Reference-grade coverage of all four A4 deliverables across two chapters (3.1 sourcing/WARC extraction, 3.2 cleaning/dedup/measurement). WARC->text extraction ships working warcio+trafilatura code with charset fallback plus a didactic WET parser with offline tests; LangID uses real fastText lid.176 code with thresholds; quality filtering has full compute_heuristics/passes_heuristic_filters plus a trainable CCNet-style HashingVectorizer+LogisticRegression classifier with percentile thresholding; exact dedup (SHA-256), Bloom-filter dedup (correct m/n=28.8, k=20 sizing with empirical FP verification), and fuzzy MinHash-LSH are all implemented from scratch with shingling, a universal hash family, band/row derivation (t*=(1/b)^(1/r)), a deterministic demo with expected Jaccard outputs, and a 3-sigma estimator check. The fourth deliverable -- measuring downstream filtering effect -- is a fully runnable GPT-2 ablation harness (pack/train/heldout_ppl/acc_norm) with a same-data noise-floor control, hardware-tiered expected magnitudes, and a pointer to lm-eval-harness. Includes resource accounting (TB/GB/hours, 800GB suffix array), failure modes (toxicity bias, benchmark contamination, dedup false positives), and pointers into datatrove/dolma/dclm/deduplicate-text-datasets. All spot-checked numerics (Bloom sizing, LSH candidate probabilities, epoch counts, suffix-array memory) verified correct. Deficits are minor: no runnable toxicity classifier, no suffix-array code, and two stages lacking the chapter's own test-with-expected-value standard. No correctness bugs found; the earlier trafilatura/WET factual error and perplexity-formula ambiguity noted in the pre-revision audit are both fixed."
 }

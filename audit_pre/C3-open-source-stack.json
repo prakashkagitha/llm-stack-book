@@ -1,0 +1,73 @@
+{
+  "unit_id": "C3-open-source-stack",
+  "grade": 4,
+  "chapters_examined": [
+    "03-pretraining/07-megatron-deepspeed",
+    "03-pretraining/05-distributed-data-parallel",
+    "06-rl-infra/03-trl",
+    "06-rl-infra/04-verl",
+    "07-inference-serving/03-vllm-internals",
+    "07-inference-serving/04-sglang-radixattention",
+    "04-kernels-efficiency/04-triton-kernels",
+    "04-kernels-efficiency/03-flash-attention-2-3",
+    "04-kernels-efficiency/08-quantization-formats-qat",
+    "11-evaluation/03-eval-harnesses",
+    "01-foundations/07-autodiff-pytorch",
+    "99-appendix/04-tooling-setup",
+    "02-transformer/01-tokenization",
+    "03-pretraining/01-pretraining-data"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "03-pretraining/07-megatron-deepspeed",
+      "missing": "In compute_mfu(), the attention correction is added as attn_flops = 4 * n_layers * d_model * seq_len (forward-only) while the base term 6P covers forward+backward; the attention term should be 12 * n_layers * d_model * seq_len to be consistent. The adjacent prose formula also carries a stray '/1' ('12 * n_layers * d_model * S / 1') and the recompute paragraph says total FLOPs are 'approximately 4P per token' before correctly concluding 8P.",
+      "fix": "Change attn_flops to 12 * n_layers * d_model * seq_len (or state explicitly that the code adds only the forward attention term), remove the '/1' typo, and rewrite the recompute sentence to 'forward 2P + recomputed forward 2P + backward 4P = 8P'.",
+      "kind": "correctness-bug"
+    },
+    {
+      "severity": "critical",
+      "target": "04-kernels-efficiency/08-quantization-formats-qat",
+      "missing": "The Q4_K_M internal structure inverts the precision hierarchy: the book says the super-block stores '2 high-precision (6-bit) scales and mins' and 'each sub-block has a 4-bit scale'. In llama.cpp's actual block_q4_K, the super-block scale d and min dmin are fp16, and the 8 sub-block scales/mins are 6-bit (packed in scales[12]); weights are 4-bit.",
+      "fix": "Correct to: fp16 super-block scale/min, 6-bit sub-block scales and mins for the 8 sub-blocks of 32 weights, 4-bit quantized weights; cite ggml's block_q4_K struct as the source of truth.",
+      "kind": "correctness-bug"
+    },
+    {
+      "severity": "minor",
+      "target": "03-pretraining/07-megatron-deepspeed",
+      "missing": "The global-batch-size heuristic 'GBS ≈ C_critical × S / T where T is vocabulary size' is not a recognized relationship (critical batch size does not scale inversely with vocab size) and could mislead a reader sizing a run.",
+      "fix": "Delete the formula or replace it with the McCandlish critical-batch-size framing (B_crit from gradient noise scale) plus the empirical 1M-4M tokens/step guidance that already follows.",
+      "kind": "math"
+    },
+    {
+      "severity": "minor",
+      "target": "04-kernels-efficiency/03-flash-attention-2-3",
+      "missing": "xformers is named in this unit's objectives but appears in the entire book only as one row of a backend-comparison table ('xFormers mem-efficient | Ampere+ | tiled attention'); a reader gets no sense of what memory_efficient_attention is, its historical role, or when to use it vs sdpa/flash-attn.",
+      "fix": "Add a short paragraph (3-5 sentences) on xformers: memory_efficient_attention API, its Cutlass-based tiled kernel lineage, that PyTorch sdpa's EFFICIENT_ATTENTION backend descends from it, and that today it is mostly relevant for older GPUs and diffusion stacks.",
+      "kind": "library-mapping"
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/07-gpt-from-scratch",
+      "missing": "HuggingFace transformers is used pervasively as an API (AutoModel, Trainer, chat templates) but its internals are never mapped: no pointer to modeling_llama.py, no explanation of how the from-scratch GPT of this chapter corresponds to a transformers modeling file, attention backends selection (attn_implementation), or generate()'s structure.",
+      "fix": "Add a closing section 'Reading the real thing' that maps this chapter's from-scratch modules onto transformers/models/llama/modeling_llama.py (LlamaAttention, LlamaMLP, LlamaRMSNorm, rotary embedding, GenerationMixin.generate), so readers can navigate the library source the way the vLLM/Megatron chapters already enable.",
+      "kind": "library-mapping"
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "03-pretraining/07: reproduces megatron/core/parallel_state.py ('# megatron/core/parallel_state.py (simplified)') with TP/PP/DP group construction, full DeepSpeed ZeRO-3 JSON config, a complete 70B SLURM launch script, MFU/HFU accounting, and an explicit Megatron-vs-FSDP decision rule ('Megatron-Core + ZeRO-1 for ... >30B parameters; FSDP2 for runs up to ~30B').",
+    "06-rl-infra/03 (TRL): every trainer (SFT/Reward/DPO/PPO/GRPO) gets runnable code with real hyperparameters, a numeric DPO loss worked example (-log sigma(0.2) ~ 0.598), PPO memory accounting (~100 GB for 7B), monitoring metric names (train/kl, train/clip_ratio), and explicit limits ('for production-scale multi-node runs (70B+), consider veRL or OpenRLHF').",
+    "06-rl-infra/04 (veRL): implements a miniature version of the @register(dispatch=...) fan-out/fan-in mechanism and a from-scratch TP resharding routine for the 3D-HybridEngine — 'We will write a miniature single-controller dispatcher and a from-scratch resharding routine so the mechanism is concrete, not magic.'",
+    "07-inference-serving/03 (vLLM): block manager with refcounting and copy-on-write in code, scheduler step loop, slot-mapping assembly, V1 architecture, prefix-cache block hashing code, multi-LoRA SGMV, a full worked example (128 KB/token KV for Llama-3-8B, ~425k token slots, 4x concurrency vs pre-paging), and a tuning-knob table with failure modes ('preemption storms degrade tail latency').",
+    "07-inference-serving/04 (SGLang): from-scratch RadixAttention cache implementation, LRU leaf eviction, and a practical SGLang-vs-vLLM comparison table with when-to-use guidance.",
+    "04-kernels-efficiency/04 (Triton): four fully runnable kernels (vector add, fused softmax, matmul with autotune+swizzle, simplified FlashAttention) each verified against a PyTorch reference via allclose; explicit build-vs-buy guidance ('You usually don't beat cuBLAS/cuDNN with hand Triton; you write Triton to fuse what they can't') and TorchInductor-emits-Triton mapping.",
+    "11-evaluation/03: lm-evaluation-harness internals (log-likelihood scoring mechanics, few-shot formatting pseudocode), custom task integration via lm_eval.api.task.ConfigurableTask, version pinning for reproducibility, and lm-eval vs HELM comparison.",
+    "04-kernels-efficiency/08: GGUF k-quant family table with bits/weight, dequantization formula, and the full convert_hf_to_gguf.py -> llama-quantize -> llama-cli workflow including --n-gpu-layers CPU/GPU split.",
+    "03-pretraining/05: from-scratch DDP wrapper ('tiny_ddp.py'), FlatParameter/auto-wrap/FSDP2-DTensor internals, and a runnable 4-rank FSDP example.",
+    "99-appendix/04: cross-stack library landscape, dependency matrix, and install/version-pinning gotchas (flash-attn compiles against system CUDA, vLLM/SGLang pin their own torch).",
+    "xformers is the one named library with only a single table-row mention in the whole book (04-kernels-efficiency/03, line 393)."
+  ],
+  "buildable_reasoning": "The deliverable is knowing which library to reach for and how it works internally. The book delivers this at reference level: each major library (Megatron-LM, DeepSpeed, FSDP, TRL, veRL, vLLM, SGLang, Triton, FlashAttention, llama.cpp/GGUF, bitsandbytes, lm-eval-harness) has a dedicated chapter that reimplements its core mechanism from scratch (block manager, radix cache, dispatch layer, DDP bucketing, online-softmax kernel), gives runnable configs with real hyperparameters, quantifies memory/FLOPs, names failure modes, and points into the actual source (file paths, class names, GitHub repos). Build-vs-buy guidance is explicit at every layer. The two correctness bugs found are detail-level (a factor-3 attention term in an MFU helper, an inverted precision hierarchy in the Q4_K description) and do not undermine the deliverable.",
+  "summary": "Reference-grade coverage. Every library named in the unit gets a dedicated internals treatment with from-scratch reimplementations of its core mechanism, runnable configs, resource accounting, failure modes, and pointers into real source; when-to-use-vs-build guidance is explicit at each layer (Triton vs cuBLAS, Megatron vs FSDP, TRL vs veRL, SGLang vs vLLM). Gaps are small: xformers is a single table row, HF transformers internals are never mapped to source the way vLLM/Megatron are, and two detail-level correctness bugs (MFU attention-FLOPs factor, Q4_K scale precision) need fixing."
+}

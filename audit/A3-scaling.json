@@ -1,63 +1,36 @@
 {
   "unit_id": "A3-scaling",
-  "grade": 3,
+  "grade": 4,
   "chapters_examined": [
     "03-pretraining/04-scaling-laws",
-    "03-pretraining/10-lr-schedules-hparams",
-    "02-transformer/10-modern-arch-improvements",
-    "04-kernels-efficiency/01-roofline-performance",
-    "02-transformer/11-ssm-and-alternatives",
-    "03-pretraining/14-data-mixing-curriculum"
+    "04-kernels-efficiency/01-roofline-performance"
+  ],
+  "buildable_verdict": true,
+  "summary": "Reference-quality coverage of the CS336 Assignment 3 (Scaling) deliverables, and a clear upgrade over the prior grade-3 audit: all five previously-flagged deficits are now fixed. Chapter 3.4 develops the Chinchilla parametric law L(N,D)=E+A N^-alpha+B D^-beta, derives the compute-optimal allocation via Lagrange multipliers (formula verified), and ships complete runnable code for all four deliverables: 6ND/FLOP accounting, sweep design under a constrained experimentation budget (new 'Designing the Sweep Under a Budget' section with a verified 24-run/1.32%-of-target table and a design checklist), BOTH the parametric fit (log-space Huber, now genuinely using scipy.special.logsumexp, multi-start L-BFGS-B, plus a bootstrap identifiability analysis) and the IsoFLOP parabola method (new runnable section recovering allocation exponent 0.447 vs analytic 0.452), and optimal-(N,D) projection with a fully worked 256-GPU/21-day budget example. Chapter 4.1 supplies the per-component FLOP breakdown (FFN 16d^2, QKVO 8d^2, scores 4sd = 24d^2+4sd/token/layer) via a dict-returning code function, covering the cost side of deliverable 1. I independently re-ran the deterministic optimal-allocation code and reproduced the book's exact claimed table (tok/param 32.1/50.1/78.2/122.1; losses 2.986->1.845) and the 42B worked-example figure. Verification (expected outputs, held-out extrapolation, bootstrap CIs), failure modes (Kaplan LR-schedule confound, under-converged runs, compensating-error identifiability with Epoch AI replication cited, data wall, emergence-is-metric-artifact), resource accounting, library pointers (scipy, torch.utils.flop_counter, DeepSpeed FLOPs profiler), and a 4-problem exercise set including a full-loop capstone are all present. A competent reader can build every deliverable from the text alone.",
+  "evidence": [
+    "Verified by re-running: chinchilla_optimal reproduces the exact printed table (C=1e19 -> N=2.28e8, tok/param=32.1, L=2.986; ... C=1e25 -> 122.1, 1.845).",
+    "Verified: N=sqrt(C/120)=4.18e10 for C=2.1e23, matching the '~42B params / 840B tokens' worked example, and the throughput cross-check (460k tok/s over 21 days ~ 8.3e11 tokens) closes.",
+    "Optimal-allocation formula N_opt=[alphaA/(betaB)]^{1/(alpha+beta)}(C/6)^{beta/(alpha+beta)} derives correctly from d/dN of A N^-alpha + B(6/C)^beta N^beta; a+b=1 shown.",
+    "IsoFLOP section (prior deficit) is now fully coded: 5 fixed-C slices, np.polyfit parabola in log N, vertex -c1/2c2, recovers a~0.447 vs analytic beta/(alpha+beta)=0.452; grid-design guidance (4-6 slices, >=6 models bracketing both arms, center sqrt(C/120)).",
+    "Sweep-design section (prior deficit) now present: 4 slices x 6 models = 24 runs = 2.64e19 FLOPs = 1.32% of a 2e21 target, verified by construction, with per-run cosine-decay-matched-to-token-count, muP LR transfer, and a 7-point checklist.",
+    "Emergent-abilities bug fixed: smooth_per_token_accuracy now np.clip(...,0,1); logsumexp trick now actually used in predict_log_loss via scipy.special.logsumexp over stacked log-terms.",
+    "Exercises added: extrapolation-not-interpolation, reproduce-Kaplan-bias, loss-penalty-of-mis-sized-model, and a full-loop capstone (design sweep -> fit both methods -> confirm exponents agree within 0.03).",
+    "Roofline chapter gives per-token/per-layer FLOPs = 24 d^2 + 4 s d with correct sub-terms and a numeric 12x dominance check at d=4096,s=2048, plus transformer_flops_per_token returning a per-component dict."
   ],
   "deficits": [
     {
-      "severity": "major",
-      "target": "03-pretraining/04-scaling-laws",
-      "kind": "code",
-      "missing": "The IsoFLOP method (Chinchilla approach 2) — the method the deliverable is named after — gets exactly one prose sentence ('fits a parabola in log N to find the valley... then fits a power law through those valleys') with no code, no worked example, and no discussion of how many points per slice, quadratic-fit robustness, or extracting D_opt from each valley. Only the parametric fit (approach 3) is fully implemented.",
-      "fix": "Add a runnable IsoFLOP section: group synthetic runs into 4-6 fixed-C slices, fit a quadratic in log N per slice (np.polyfit), extract N_opt(C) and D_opt(C)=C/(6*N_opt), fit log N_opt vs log C to recover exponent a, and cross-check a against the parametric fit's beta/(alpha+beta). Include the expected recovered exponent as a printed check."
-    },
-    {
-      "severity": "major",
-      "target": "03-pretraining/04-scaling-laws",
+      "severity": "minor",
       "kind": "explanation",
-      "missing": "No concrete procedure for DESIGNING a sweep under a constrained experimentation budget. The chapter says 'run a grid of small models at varying N and D' and lists pitfalls (unconverged runs, LR schedule matched to token count), but never answers: given a sweep budget of, say, 1-2% of the final run's FLOPs, how many compute slices, how many models per slice, how to space N around the expected optimum, how to set per-run LR/batch (linking the ch. 3.10 scaling rules), and how the run-table FLOPs sum to the budget.",
-      "fix": "Add a worked sweep-design example: 'You have 2e18 FLOPs for experiments before a 1e21 run.' Produce an explicit run table (C slice, N values, D values, LR, batch, per-run FLOPs, total) using log-spaced slices and ~6 models per slice spanning ~1 order of magnitude in N, with LR chosen via muP or the batch-scaling rules, and total cost verified against the budget. This is the exact skill the assignment demands."
+      "target": "03-pretraining/04-scaling-laws",
+      "missing": "The 'contribution to LOSS' half of deliverable 1 is under-served relative to the cost half. The chapter states architecture (SwiGLU/RoPE/norm placement) shifts the offset A but gives no concrete component-ablation procedure (train with/without a component at fixed FLOPs, measure delta-loss, convert to an equivalent compute multiplier).",
+      "fix": "Add a short subsection or exercise: hold C fixed, toggle one component (GLU vs vanilla MLP, RoPE vs learned pos, pre- vs post-norm), refit offset A, report the vertical loss shift as an equivalent compute multiplier. Cross-link to 02-transformer/06-transformer-block."
     },
     {
       "severity": "minor",
-      "target": "03-pretraining/04-scaling-laws",
-      "kind": "correctness-bug",
-      "missing": "The emergent-abilities demo defines smooth_per_token_accuracy(N) = 1 - 0.9*(N/1e9)**-0.12, which is NEGATIVE for N < ~4.2e8; since Ns = np.logspace(8, 12, 9), the first two printed rows show per-token 'accuracy' of about -0.19 and -0.03 (only exact_match clips). Verified numerically.",
-      "fix": "Clip inside smooth_per_token_accuracy (np.clip(..., 0, 1)) or start Ns at 1e9 so the printed table shows valid probabilities."
-    },
-    {
-      "severity": "minor",
-      "target": "03-pretraining/04-scaling-laws",
-      "kind": "code",
-      "missing": "predict_log_loss's comment claims 'log-sum-exp form keeps it numerically stable', but the code exponentiates each term and sums directly — no logsumexp is used. Harmless at these magnitudes but the comment misdescribes the code and misattributes Chinchilla's actual LSE trick.",
-      "fix": "Either use scipy.special.logsumexp over the stacked terms (matching Hoffmann et al.'s actual objective) or correct the comment to say the parameterization via logs keeps the fitted constants positive."
-    },
-    {
-      "severity": "minor",
-      "target": "03-pretraining/04-scaling-laws",
       "kind": "exercise",
-      "missing": "No end-of-chapter exercises rehearsing the full assignment loop (design sweep -> fit both methods -> project N*, D* at 10x budget), and component-to-LOSS attribution (e.g., how loss responds to aspect ratio, head count, batch/LR misconfiguration at fixed FLOPs) is only qualitative, spread across 02-transformer/10 and 03-pretraining/10.",
-      "fix": "Add 2-3 exercises: (a) hold out the largest synthetic run, fit on the rest, verify extrapolated loss within 2%; (b) refit with under-converged runs deliberately included and observe the Kaplan-style bias in the exponents; (c) given a fixed C slice, predict the loss penalty of training at 2x and 0.5x the optimal N."
+      "target": "03-pretraining/04-scaling-laws",
+      "missing": "CS336 A3's defining framing -- a budgeted black-box training API that returns loss for a submitted config, forcing the reader to spend a hard query budget and emit one optimal config for a larger target -- is not assembled into a single harness. All the pieces exist as separate code blocks but are not wired into the 'you have X FLOPs of queries, output one config, get scored' loop.",
+      "fix": "Add a capstone lab wrapping true_loss as a budgeted query oracle: spend <=1-2% of the target budget on the IsoFLOP sweep, fit both methods, emit one (d_model, n_layers, D) prediction for target C, and score it against the oracle optimum -- turning the scattered blocks into the exact A3 deliverable."
     }
-  ],
-  "buildable_verdict": true,
-  "evidence": [
-    "03-pretraining/04-scaling-laws gives the full parametric fit with real code: Huber loss on log-loss residuals, positivity via log-parameterization, L-BFGS-B with 40 multi-starts and bounds, and verification by recovering known ground-truth constants from synthetic noisy data ('Recovered: E=... Ground truth: E=1.69 A=406 ...').",
-    "Compute-optimal projection is fully derived (Lagrange condition, N_opt = [alphaA/betaB]^{1/(alpha+beta)} (C/6)^{beta/(alpha+beta)}, a+b=1) and implemented twice (chinchilla_optimal and optimal_alloc), then exercised at C=1e23..1e25 — deliverable 4 is directly buildable.",
-    "Resource accounting is genuinely worked: 6ND derivation (2 fwd + 4 bwd), MFU definition, and a self-consistent 256-GPU/21-day/MFU-0.45 example yielding 42B params / 840B tokens with a throughput cross-check (460k tok/s).",
-    "Failure modes are covered: Kaplan's LR-schedule confound explained mechanistically, 'exclude under-converged runs', 'validate by extrapolating to a held-out large run', data-repetition wall (~4 epochs near-free, ~16 collapse), MoE active-param caveat, constants-not-universal warning.",
-    "Inference-aware over-training is quantitative: C_total = 6ND_train + 2ND_inf objective with a runnable lifetime_optimal grid search showing optimal N shrinking as D_inf grows; Llama-3-8B ~1900 tok/param cited.",
-    "Component cost accounting exists with code: 04-kernels-efficiency/01 has transformer_flops_per_token returning a per-component dict (QKVO 8d^2, scores 4sd, FFN 16d^2 or 6*d*d_ff gated) cross-checked against 6N within 10-20%; 02-transformer/10 has a full 7B per-layer parameter breakdown (attn ~42M, MLP ~135M, embeddings ~262M) and depth-vs-width L/d aspect-ratio table.",
-    "Sweep hyperparameters are supported by 03-pretraining/10: muP with MuPLinear code and proxy-sweep workflow, critical batch size (McCandlish gradient noise scale), linear/sqrt LR-batch scaling with a worked 1M->4M token example, and a per-scale recipe table (125M-400B).",
-    "IsoFLOP, by contrast, is one sentence: 'fits a parabola in log N to find the valley (the optimal N) at each budget, and finally fits a power law through those valleys' — no code, no worked slice.",
-    "Verified bug: smooth_per_token_accuracy(1e8) = -0.186 and smooth_per_token_accuracy(3.16e8) = -0.033, so the demo's printed table shows negative accuracies for its first two rows.",
-    "No chapter walks through allocating a fixed experimentation budget across sweep runs; the worked budget example plans the single final run, not the sweep that precedes it."
-  ],
-  "summary": "Coverage of scaling laws is among the book's strongest units: the parametric Chinchilla fit is fully implemented with robust-loss fitting, multi-start optimization, and synthetic ground-truth verification; compute-optimal projection, 6ND/MFU resource accounting, inference-aware over-training, and the data wall are all derived and coded; per-component FLOP and parameter breakdowns exist with runnable code in supporting chapters; and muP/critical-batch-size machinery supports sweep hyperparameters. Grade 3 rather than 4 because two assignment-critical pieces are thin: the IsoFLOP method itself is a single prose sentence with no implementation, and there is no concrete worked procedure for designing a sweep under a constrained experimentation budget (run table, slice spacing, per-run LR/batch, cost summation). A competent reader could still produce correct implementations of all four deliverables from the book alone — the parametric route is fully specified and the IsoFLOP description, while terse, is precise enough to implement — so buildable_verdict is true. One minor verified demo bug (negative printed per-token accuracy) should be fixed."
+  ]
 }

@@ -1,0 +1,63 @@
+{
+  "unit_id": "L03-architectures-hyperparameters",
+  "grade": 4,
+  "chapters_examined": [
+    "02-transformer/05-positional-encoding",
+    "02-transformer/06-transformer-block",
+    "02-transformer/07-build-gpt-from-scratch",
+    "02-transformer/10-modern-arch-improvements",
+    "03-pretraining/10-lr-schedules-hparams",
+    "01-foundations/06-neural-nets-from-scratch"
+  ],
+  "deficits": [
+    {
+      "severity": "critical",
+      "target": "02-transformer/06-transformer-block",
+      "kind": "correctness-bug",
+      "missing": "The stated verification value after the sanity-check code is wrong: 'Running the sanity-check section above with the Llama 2 7B single-block dimensions prints approximately 218M parameters per block ... consistent with 7B/32 ≈ 219M per layer.' The code actually prints ~201.6M (attn 67.1M + SwiGLU with hidden=10944 giving 134.5M + norms). The '7B/32' comparison is also misleading: Llama 2 7B is 6.74B total including two 131M embedding matrices; its true per-block count is ~202M — which the code output actually matches.",
+      "fix": "Change the claimed print value to ~202M and rewrite the consistency check as: Llama 2 7B total 6.74B = 32 x ~202M per block + ~0.26B embeddings + final norm. This turns a failing expected value into a correct, stronger verification."
+    },
+    {
+      "severity": "critical",
+      "target": "02-transformer/05-positional-encoding",
+      "kind": "correctness-bug",
+      "missing": "YaRN attention-temperature formula is stated as 'multiplies the attention logits by a constant 1/t = 0.1 ln(s) + 1'. The YaRN paper defines sqrt(1/t) = 0.1 ln(s) + 1; the scalar mscale = 0.1 ln(s) + 1 is folded into the cos/sin cache (multiplying both q and k), so the logits are effectively scaled by (0.1 ln(s) + 1)^2, not by 0.1 ln(s) + 1. As written, a reader implementing YaRN from this text would use the wrong temperature.",
+      "fix": "Correct to: sqrt(1/t) = 0.1 ln(s) + 1, i.e. logits scaled by (0.1 ln s + 1)^2; note that implementations fold mscale = 0.1 ln(s)+1 into the cos/sin tables so the square arises automatically from applying it to both q and k."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/06-transformer-block",
+      "kind": "correctness-bug",
+      "missing": "Misattributed citation for scaled residual initialization: 'Bai et al., Transformers Need Glasses! (2024)' — that paper (Barbero et al.) is about representational collapse / over-squashing at the last token, not initialization variance at depth.",
+      "fix": "Cite GPT-2 (Radford et al. 2019) and/or Megatron-LM (Shoeybi et al. 2019) for the 1/sqrt(2L) output-projection scaling, and drop or correctly repurpose the Transformers-Need-Glasses reference."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/10-modern-arch-improvements",
+      "kind": "correctness-bug",
+      "missing": "Two blemishes: (1) LayerNorm is written as (x-mu)/(sigma+eps) with eps added to the std outside the square root, inconsistent with the correct form sqrt(sigma^2+eps) given in ch 2.6 and used by PyTorch. (2) The parameter-count worked example uses a GQA config labelled 'similar to Llama 3 8B' but concludes it is 'close to the marketed 7B' of Llama 2 and attributes the 5.9B-vs-7B gap to vocab size — the real reason is that Llama 2 7B uses full MHA (no GQA), so its attention block is 67M not 42M per layer.",
+      "fix": "Fix the LayerNorm epsilon placement, and either recompute the worked example with Llama 2 7B's actual MHA config (recovering ~6.7B) or consistently frame it as Llama 3 8B (128K vocab, GQA) so the totals reconcile."
+    },
+    {
+      "severity": "minor",
+      "target": "02-transformer/10-modern-arch-improvements",
+      "kind": "exercise",
+      "missing": "The depth/width section gives an L/d table and the head_dim=128 convention, but never walks the reader forward through the full sizing procedure: given a target parameter budget N, derive d, L, n_heads, n_kv_heads, d_ff, and vocab size step by step.",
+      "fix": "Add a short worked exercise: 'You have a 3B-parameter budget; specify every config field of a Llama-style model and verify the count' — this directly rehearses the unit's deliverable end-to-end in one place."
+    }
+  ],
+  "buildable_verdict": true,
+  "evidence": [
+    "ch 2.6 gives full pre-norm vs post-norm mechanics with the gradient argument (product of (I + dF/dx) factors), RMSNorm vs LayerNorm formulas plus a hand-computed worked example on [1,3,-1,5], and a complete runnable TransformerBlock/TransformerStack in PyTorch with shape comments.",
+    "ch 2.6 covers SwiGLU/GeGLU with exact formulas, the 8d/3 iso-FLOP sizing derivation (11008 from 8*4096/3 rounded), FFN parameter accounting (135M/FFN, ~62% of Llama 2 7B), and dropout=0.0 pretraining convention.",
+    "ch 2.5 is reference-quality on RoPE: 2-D complex derivation, block-diagonal lift, rotate_half vs interleaved conventions, runnable code, and a numerical assert verifying the relative-position property (lhs==rhs for offsets 25/10 vs 15/0); plus ALiBi slopes code, NoPE, PI/NTK/YaRN lineage with formulas and code.",
+    "ch 2.10 gives the modern recipe table (RMSNorm-pre, SwiGLU, RoPE, GQA, no-bias, untied embeddings, QK-norm, soft-capping, attention sinks), an L/d aspect-ratio table across GPT-2/Llama/Qwen/DeepSeek, a KV-cache memory worked example, and a runnable ModernTransformerBlock integration test.",
+    "Initialization is covered at three levels: Xavier/Kaiming derived from variance propagation in 1.6 (with a 50-layer signal-scale experiment), the GPT-2 std=0.02 plus 1/sqrt(2L) scaled residual init with the 2L variance justification in 2.7, and muP width-transfer (init table + MuPLinear code) in 3.10.",
+    "ch 3.10 gives a concrete hyperparameter recipe table by scale (125M to 400B: peak LR, warmup, batch tokens, clip, wd, betas), batch-LR scaling rules with critical batch size, and a launch checklist.",
+    "Verification artifacts exist throughout: RoPE property assert, LR-schedule smoke-test asserts, ln(V)~4.17 initial-loss sanity check in 2.7, RMSNorm unit-RMS check.",
+    "Library pointers are concrete: nanoGPT, gpt-neox, HF rope_utils and rope_scaling config keys, microsoft/mup, model config field names (rope_theta, num_key_value_heads).",
+    "BUG confirmed by execution: ch 2.6 claims the sanity check 'prints approximately 218M parameters per block'; running the arithmetic gives 201.6M (hidden=10944).",
+    "ch 2.5 states YaRN logit temperature as 1/t = 0.1 ln(s) + 1, whereas the paper defines sqrt(1/t) = 0.1 ln(s) + 1."
+  ],
+  "summary": "Coverage of this unit is excellent and reference-grade across five chapters: pre/post-norm and the residual stream with gradient math and worked numerics (2.6), SwiGLU/FFN sizing with iso-FLOP derivation (2.6, 2.10), a genuinely outstanding RoPE chapter with a numerically verified relative-position property and the full PI/NTK/YaRN extension toolkit (2.5), width/depth/head-count ratios plus the complete modern config recipe and per-scale hyperparameter tables (2.10, 3.10), and initialization justified at three levels (Xavier/Kaiming derivation, GPT-2 scaled residual init, muP). A reader could specify and justify every hyperparameter of a modern decoder-only LM from this book alone. Grade 4 stands despite two real correctness bugs that should be fixed: a wrong claimed verification value (~218M vs actual ~202M per block in 2.6) and an incorrect YaRN temperature formula (missing the square in 2.5)."
+}
