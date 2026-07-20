@@ -1,51 +1,51 @@
 {
   "unit_id": "C1-end-to-end-pretrain",
-  "grade": 3,
+  "grade": 4,
   "chapters_examined": [
     "03-pretraining/17-end-to-end-pretrain-recipe",
-    "02-transformer/07-build-gpt-from-scratch",
-    "03-pretraining/05-distributed-data-parallel"
-  ],
-  "buildable_verdict": true,
-  "summary": "Re-audit after the 3.17 capstone recipe and the runnable distributed train.py (3.5) were added, which resolve the prior finding's two major deficits (missing coherent path, missing runnable train.py). The unit is now covered by a dedicated end-to-end recipe chapter (3.17) plus a fully self-contained from-scratch GPT (2.7) and a torchrun-launchable train.py (3.5). The single coherent path (data -> tokenizer -> model -> optimizer -> loop -> checkpoint -> eval -> inference) is present with real, runnable prepare.py / train.py / eval_ppl.py / sample.py, a four-scale config-and-compute-budget table (laptop/1GPU/8GPU/multi-node with configs, wall-clock, MFU, expected val loss+ppl), exact torchrun invocations, and extensive expected-value and failure-mode tables. Chapter 2.7 alone is a flawless buildable single-GPU/laptop path (char-level Tiny Shakespeare) that satisfies the deliverable end to end. It falls short of REFERENCE (4) specifically in what 3.17 advertises as its unique contribution -- 'the exact commands, the exact flags': the recipe's four launch commands and its entire token-budget arithmetic depend on a --grad-accum flag and a gradient-accumulation micro-loop that the train.py it points to does not implement, the recommended laptop/CPU path uses a train.py that is CUDA-hardcoded beyond the single backend swap the recipe describes, and Stage 3 claims weight tying + scaled init that the actual train.py GPT lacks. A competent reader reconciles these (the accumulation loop body is printed in Stage 5), so the deliverable is buildable, but the glue is not verbatim-correct as claimed.",
-  "evidence": [
-    "3.17 now exists and is a genuine coherent lab-manual: 8-stage pipeline diagram, stage-to-chapter map, prepare.py (uint16 shard writer + dtype contract), four-scale config table, four torchrun commands, monitoring (MFU/grad-norm/loss), a failure-signature table, eval_ppl.py, sample.py, and a four-scale recipe table with wall-clock/MFU/ppl -- directly addressing the prior 'no integrated capstone' and 'no per-scale timing table' deficits.",
-    "3.5 now contains a runnable, torchrun-launchable train.py (compact GPT, ShardedTokenLoader over uint16 .bin, AdamW, lr_at cosine+warmup, --parallel {ddp,fsdp}, FSDP FULL_SHARD MixedPrecision, save_checkpoint) -- addressing the prior 'no single runnable distributed train.py' deficit.",
-    "3.17 Stage 5 launch commands all pass --grad-accum (e.g. '--grad-accum 40 --steps 9000'); Stage 4 derives 0.33M tokens/step and the 9k-step 3B-token budget entirely from grad_accum=40.",
-    "The referenced train.py (3.5 lines 810-821) defines args --data/--parallel/--steps/--warmup/--local-bsz/--ctx/--lr/--ckpt-every/--ckpt-dir but NO --grad-accum, and its per-step loop (850-859) does a single forward/backward with no accumulation and no no_sync -- so the recipe's commands fail with 'unrecognized arguments: --grad-accum', and the actual tokens/step is 8*1024=8192, not 0.33M.",
-    "3.17 laptop command says only 'change backend=\"nccl\" -> \"gloo\"', but train.py (823-827) hardcodes torch.cuda.set_device(local_rank) and device=cuda:local_rank with no is_available() guard, so the CPU toy path -- the chapter's 'if you only do one thing' run -- crashes on CPU.",
-    "3.17 Stage 3 asserts the training GPT ties wte/lm_head into one tensor and applies 1/sqrt(2*n_layer) scaled residual init, and the '124M' label assumes tying; the actual train.py GPT (742-758) uses an untied nn.Linear head, nn.MultiheadAttention, default init -- no tying, no scaled init -- so the real single-GPU model is ~163M.",
-    "2.7 is a complete self-contained buildable path (char vocab, x=w[:-1]/y=w[1:] shift, GPT with tying+scaled init, configure_optimizer decay split, cosine+warmup get_lr, training loop, save/load_checkpoint with RNG state, generate() with temp/top-k/top-p), plus step-0 loss ~= ln(V) sanity check and failure-mode warnings -- runnable end to end with zero missing flags.",
-    "Verification/resource-accounting present: MFU worked example (40.5% checks out), param-count formula 12*n_layer*d^2 + vocab*d worked for 124M, step-0 loss ln(50304)~=10.83, four-row failure table, four-scale wall-clock/MFU/ppl table, and library pointers (nanoGPT, transformers Llama mapping, lm-eval, FineWeb, Chinchilla)."
+    "03-pretraining/05-distributed-data-parallel",
+    "02-transformer/07-build-gpt-from-scratch"
   ],
   "deficits": [
     {
-      "severity": "major",
-      "kind": "code",
-      "target": "03-pretraining/05-distributed-data-parallel",
-      "missing": "The train.py that 3.17's commands invoke lacks the --grad-accum argument and the gradient-accumulation micro-loop (with model.no_sync() on non-final micro-steps). Every 3.17 launch command passes --grad-accum, and the single-GPU token budget (0.33M tokens/step, 9k steps for 3B tokens) is arithmetically impossible without it (the real loop yields 8*1024=8192 tokens/step, ~74M tokens total).",
-      "fix": "Add `ap.add_argument('--grad-accum', type=int, default=1)` and replace train.py's single forward/backward with the exact accumulation body already printed in 3.17 Stage 5 (for micro in range(grad_accum): scale loss by 1/grad_accum; wrap all but the last micro-step in model.no_sync() under DDP). Keep the two chapters' train.py byte-identical."
-    },
-    {
-      "severity": "major",
-      "kind": "code",
-      "target": "03-pretraining/17-end-to-end-pretrain-recipe",
-      "missing": "The laptop/CPU path is presented as the primary integration test ('if you only do one thing') but the referenced train.py hardcodes backend='nccl', torch.cuda.set_device(local_rank), and device=cuda:local_rank; the recipe tells the reader only to swap the backend to gloo, so the CPU run still crashes on torch.cuda.set_device.",
-      "fix": "Make train.py device/backend selection conditional on torch.cuda.is_available() (gloo+cpu when no CUDA, nccl+cuda otherwise), or enumerate every line the reader must change for the CPU toy rather than just the backend line; then verify the TinyStories CPU path actually runs."
-    },
-    {
-      "severity": "major",
+      "severity": "critical",
       "kind": "correctness-bug",
-      "target": "03-pretraining/17-end-to-end-pretrain-recipe",
-      "missing": "Stage 3 claims the training model ties wte/lm_head into one tensor and applies the 1/sqrt(2*n_layer) scaled residual init, and the '124M' single-GPU row assumes tying. The actual 3.5 train.py GPT (also imported by eval_ppl.py and sample.py) uses an untied nn.Linear head, nn.MultiheadAttention, and default init -- no tying, no scaled init -- so the real single-GPU model is ~163M and the described initialization is not what runs.",
-      "fix": "Reconcile code and prose: either give the 3.5 train.py GPT weight tying (self.head.weight = self.tok.weight) plus the scaled c_proj init so it matches the 2.7 GPT and the 124M label, or correct Stage 3's text and the four-scale table to describe the untied model that actually runs."
+      "target": "03-pretraining/05-distributed-data-parallel",
+      "missing": "In train.py's main(), `local_rank` is only bound inside the `if args.backend == 'nccl'` branch (line 830). The CPU/gloo path (else, line 833) never defines it, yet the DDP wrap at line 839 unconditionally calls `DDP(model, device_ids=[local_rank])`. Running the laptop command exactly as printed in 3.17 Stage 5 (`torchrun --nproc_per_node=1 train.py --parallel ddp --backend gloo ...`) raises `NameError: name 'local_rank' is not defined`. CPU DDP must also pass `device_ids=None`, not a device index. This breaks the chapter's own flagship 'if you only do one thing, run the laptop TinyStories path' recommendation.",
+      "fix": "Bind `local_rank = int(os.environ.get('LOCAL_RANK', 0))` before the backend branch, and wrap DDP as `DDP(model, device_ids=[local_rank] if args.backend=='nccl' else None)`. Verify the gloo/CPU laptop command runs end to end."
     },
     {
       "severity": "minor",
       "kind": "explanation",
       "target": "03-pretraining/17-end-to-end-pretrain-recipe",
-      "missing": "Stage 3 conflates two different GPT implementations as one ('it IS the GPT built in 2.7 ... and it IS the compact GPT in train.py'). The 2.7 GPT.forward returns (logits, loss); the 3.5 GPT.forward returns bare logits. A reader who assumes they are interchangeable (calls model(x) expecting a tuple, or ports 2.7's GPTConfig constructor into eval_ppl.py/sample.py which use GPT(vocab=,d=,h=,n_layers=,ctx=)) hits an interface mismatch.",
-      "fix": "State plainly that the recipe uses the compact 3.5 train.py GPT (bare-logits forward, constructor GPT(vocab,d,h,n_layers,ctx)) throughout eval/sample, and that 2.7's GPTConfig-based GPT with a (logits,loss) forward is the pedagogical sibling; note the single call-site difference so the two are never mixed."
+      "missing": "Stage 4 states the optimizer is 'exactly configure_optimizer from 2.7' with the 1-D weight-decay exclusion (biases, norm gains not decayed), but the runnable train.py the recipe points to (3.5, line 851) uses plain `torch.optim.AdamW(model.parameters(), weight_decay=0.1)`, decaying every parameter including LayerNorm gains and biases. The prose describes behavior the referenced code does not implement.",
+      "fix": "Either apply the decay/no-decay param-group split inside 3.5's train.py, or soften the Stage 4 prose to note the split is a refinement not present in the compact train.py."
+    },
+    {
+      "severity": "minor",
+      "kind": "explanation",
+      "target": "03-pretraining/17-end-to-end-pretrain-recipe",
+      "missing": "Stage 3 attributes weight tying AND the scaled-residual init (std/sqrt(2*n_layer)) to 'the exact compact GPT class embedded inside chapter 3.5's train.py'. Weight tying is present in 3.5's GPT (line 751), but the scaled residual init / custom _init_weights is NOT — 3.5's train.py relies on default PyTorch init. Only 2.7's GPT has the scaled init, so a reader running the recipe verbatim does not get the described init.",
+      "fix": "Clarify that the scaled-residual init lives in 2.7's pedagogical GPT and is optional, or port _init_weights into 3.5's train.py so the runnable model matches the description."
+    },
+    {
+      "severity": "minor",
+      "kind": "library-mapping",
+      "target": "03-pretraining/17-end-to-end-pretrain-recipe",
+      "missing": "Stage 8's `lm_eval --model hf --model_args pretrained=./ckpt` will fail against the artifacts the recipe produces: train.py saves a raw `{'model': state_dict}` .pt, not a HuggingFace-transformers directory with config.json. The text hand-waves 'if not already in HF-loadable format... see 11.3' but gives no concrete bridge, so this exact command is not runnable from this book alone.",
+      "fix": "Provide a short state_dict -> HF GPT2LMHeadModel conversion snippet, or a few-line custom lm-eval LM subclass wrapping the compact GPT, so the extrinsic-eval stage is self-contained."
     }
+  ],
+  "buildable_verdict": true,
+  "summary": "This unit is unusually strong. Chapter 3.17 is a dedicated end-to-end capstone wiring a single coherent path (raw corpus -> tiktoken BPE -> uint16 .bin shards -> GPT -> AdamW+cosine -> torchrun loop -> checkpoint -> perplexity+lm_eval -> sampling) with complete runnable glue: prepare.py, eval_ppl.py, and sample.py are printed in full; the training loop train.py plus ShardedTokenLoader are printed in full and correct in 3.5; and the from-scratch GPT (causal masking both flash and manual, weight tying, scaled init, correct target-shift labelling) is complete in 2.7. It gives four concrete scale configs (laptop 10M / 1-GPU 124M / 8-GPU 1.3B / multi-node 7B) with exact torchrun invocations, hyperparameters, tokens/step arithmetic, and a compute-budget table; verification/expected values (step-0 loss = ln(vocab) ~= 10.83, expected per-scale perplexity, MFU worked example = 40.5%, healthy grad-norm ranges); an explicit failure-signature table with fixes; resource accounting (param formula, 6N/MFU rule, OOM=activations reasoning, disk footprint); and pointers into real implementations (nanoGPT, a LlamaForCausalLM module-mapping table, lm-eval, FineWeb-Edu). A GPU-equipped reader can genuinely go from raw corpus to a trained, sampled model using only this book. One critical correctness bug (undefined local_rank breaks the recommended CPU/laptop run) and a few minor prose/code mismatches keep it from flawless, but the coverage clears the REFERENCE bar.",
+  "evidence": [
+    "3.17 Stage 2 prints a complete prepare.py streaming a HF dataset, encoding with tiktoken gpt2, appending EOT, writing fixed-size uint16 shards, with expected stdout ('total: 9,842,113,207 tokens, 19.68 GB on disk (uint16)').",
+    "3.5 lines 710-887 print a complete torchrun-launchable train.py: GPT, ShardedTokenLoader (uint16 memmap, disjoint per-rank window strides), lr_at (warmup+cosine), save_checkpoint (FSDP gather + DDP path), grad-accum with DDP no_sync(), FSDP FULL_SHARD + bf16 MixedPrecision.",
+    "2.7 lines 96-148 give from-scratch CausalSelfAttention with both F.scaled_dot_product_attention(is_causal=True) and a manual masked-softmax fallback with exact shapes; get_batch (328-336) shows x=[i:i+T], y=[i+1:i+1+T] shift-by-one labelling.",
+    "3.17 Stage 6: step-0 loss must be near ln(50304) ~= 10.83; MFU worked example prints 40.5% for a 124M model at 170k tok/s on a 312 TFLOP/s A100.",
+    "3.17 Stage 7 failure table: 'Loss stuck near ln(vocab)' -> verify x=w[:-1], y=w[1:]; 'NaN/spike' -> fp16->bf16, clip 1.0, skip-batch, QK-norm; 'OOM' -> activations not sharded, lower bsz/raise grad_accum.",
+    "3.17 four-scale table gives exact configs, Chinchilla token budgets (~20 tok/param), wall-clock ballparks, and expected final loss/ppl (~4 TinyStories, ~20-28 for 124M, ~12-16 for 1.3B).",
+    "CORRECTNESS BUG: 3.5 train.py line 839 `DDP(model, device_ids=[local_rank])` but local_rank is defined only under the nccl branch (830); the gloo/CPU laptop command in 3.17 Stage 5 hits a NameError.",
+    "Inconsistency: 3.17 Stage 4 says optimizer is 'exactly configure_optimizer from 2.7' (1-D params excluded) but 3.5 train.py line 851 uses plain AdamW(model.parameters(), weight_decay=0.1)."
   ]
 }

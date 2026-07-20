@@ -826,8 +826,8 @@ def main():
 
     dist.init_process_group(backend=args.backend)
     rank, world = dist.get_rank(), dist.get_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     if args.backend == "nccl":
-        local_rank = int(os.environ["LOCAL_RANK"])
         torch.cuda.set_device(local_rank)
         device = torch.device(f"cuda:{local_rank}")
     else:
@@ -836,7 +836,8 @@ def main():
 
     model = GPT(ctx=args.ctx).to(device)
     if args.parallel == "ddp":
-        model = DDP(model, device_ids=[local_rank])
+        # CPU/gloo DDP takes device_ids=None; only CUDA/nccl pins a device index.
+        model = DDP(model, device_ids=[local_rank] if args.backend == "nccl" else None)
         clip = lambda: nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     else:
         mp = MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32,
