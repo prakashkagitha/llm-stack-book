@@ -101,6 +101,12 @@ CRITICAL RULE FOR BUGS: for every correctness-bug, actually WORK OUT the correct
 `corrected_value`. Do not defer this to the drafting agent — it will copy your `corrected_value` verbatim.
 Verify your own math before emitting it.
 
+KEEP STRUCTURED FIELDS COMPACT (avoids truncating your JSON output): put only the specific
+corrected value/formula/short snippet in `corrected_value` (aim < 30 lines). For a LARGE code
+addition or rewrite, describe precisely what to write in `instruction` (signature, shapes, the
+algorithm, edge cases, the exact expected test value) and let the drafting agent produce the full
+code — do NOT paste long multi-hundred-line code into structured fields.
+
 For each edit give a `locator` = a short, UNIQUE substring currently in the file so the drafting
 agent can find the exact site. Prefer surgical `replace`/`insert-after` over `rewrite-section`.
 Keep the chapter's voice and existing correct content; change only what the deficits require

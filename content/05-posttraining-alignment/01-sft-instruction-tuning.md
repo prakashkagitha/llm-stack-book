@@ -103,6 +103,30 @@ Given the LIMA insight, how do you build high-quality SFT data in practice?
 | OpenHermes | ~900k | Multi-source synthetic blend | Yes | Quality curation at scale |
 | LIMA | 1k | Human curated | No | Quality > quantity demo |
 
+## Refusal Training: A Safety Data Recipe
+
+The "Long-tail coverage" bullet above gestures at "safety refusals" as one underrepresented category — but refusal data deserves its own recipe, because getting it wrong in either direction is easy: too little and refusals are unreliable, too much and the model over-refuses.
+
+**Mixing ratio.** Safety demonstrations should be a small fraction of the overall SFT mix — roughly 1–5% (Llama-2 and Tulu-style recipes sit in the low single digits). This is a calibration problem, not a "more is better" axis: pushing the fraction up doesn't make the model safer past a point, it makes it learn to decline on keyword triggers regardless of context.
+
+**Refusal response format.** A good refusal is short and non-preachy: (a) a brief decline, (b) one clause of reason, (c) optionally a safe redirection or partial, harm-reducing help for dual-use asks. For example: *"I can't help with synthesizing that compound, but I can point you to general lab-safety resources if that's useful."* Long moralizing refusals are bad — they teach the model verbosity, they're trivially detected and steered around by jailbreaks, and they annoy users. Wherever the request is dual-use rather than clearly malicious, prefer a "safe completion" (partial, harm-reducing help) over a flat refusal.
+
+**Contrast sets to control over-refusal.** For every harmful prompt in the mix, include several benign look-alike prompts as COMPLY examples — XSTest-style pairs such as "How do I whittle a knife?" (comply) versus "How do I whittle a knife to kill my sister?" (refuse). Without these, the model learns keyword matching and starts refusing benign medical, history, fiction, or chemistry questions. Within any topic cluster, the comply contrast examples should outnumber the refusals — that ratio is what keeps the model from generalizing "knife" to "refuse."
+
+**Safety preference pairs.** For the reward model or DPO stage (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)), construct pairs on both axes:
+
+- **Harm axis:** chosen = calibrated refusal or safe completion, rejected = harmful compliance.
+- **Over-refusal axis:** chosen = helpful compliance on a benign look-alike, rejected = an unnecessary refusal of that same benign prompt.
+
+If you only build harm-axis pairs, the reward model learns that refusing is always the safe choice and pushes the policy toward blanket refusal. The over-refusal pairs are the counterweight that keeps refusal calibrated rather than maximal.
+
+**Scaling the data.** Hand-writing thousands of refusal and safe-completion examples doesn't scale. See [Constitutional AI, RLAIF & Self-Improvement](../05-posttraining-alignment/11-constitutional-rlaif.html) for generating refusal and revision data at scale via model self-critique instead.
+
+**Evaluation.** A safety change is only good if attack success rate (ASR) drops without benign compliance dropping — report both as one operating point, not in isolation. Evaluate with the red-teaming and safety harness: ASR on HarmBench-style jailbreaks and over-refusal false-positive rate / XSTest compliance on benign look-alikes. See [Red-Teaming & Safety Evaluation](../11-evaluation/05-redteaming-safety-eval.html).
+
+!!! warning "The over-refusal failure mode"
+    A naive "add more refusals" approach reliably produces a model that refuses benign requests. It happens by default because refusal examples are cheap to write and comply examples on adjacent benign topics are easy to forget. The contrast set (comply examples outnumbering refusals per cluster) and the over-refusal preference pairs are what keep the operating point calibrated — without them, safety training silently trades helpfulness for a false sense of security.
+
 ## The Three-Stage Post-Training Recipe
 
 Modern instruction-following models are not trained in one step. The standard recipe, used across frontier labs, involves three stages:
@@ -262,39 +286,37 @@ class InstructionDataset(Dataset):
 
     def _format(self, instruction: str, response: str) -> Dict[str, torch.Tensor]:
         """
-        Build the full sequence and compute a label tensor where
-        all tokens except the response are set to IGNORE_INDEX.
+        Build input_ids + labels with response-only loss masking.
+        We tokenize the prompt and the response SEPARATELY and concatenate
+        their ids. This makes the mask boundary exact: there is no
+        cross-boundary merge and no off-by-one from an auto-prepended BOS.
+        The template contains NO literal <s>/</s> -- the tokenizer adds a
+        single BOS to the prompt, and we append EOS by id so the model
+        learns to stop.
         """
-        # Construct the prompt (instruction side) using a simple template.
-        # In production, replace with the model's official chat template.
         prompt = (
-            f"<s>[INST] <<SYS>>\n{self.system_prompt}\n<</SYS>>\n\n"
-            f"{instruction} [/INST] "
+            f"[INST] <<SYS>>\n{self.system_prompt}\n<</SYS>>\n\n"
+            f"{instruction} [/INST]"
         )
-        full_text = prompt + response + "</s>"
+        # add_special_tokens=True -> prompt_ids begins with exactly one BOS.
+        prompt_ids = self.tokenizer(prompt, add_special_tokens=True)["input_ids"]
+        # add_special_tokens=False -> response carries NO BOS of its own.
+        response_ids = self.tokenizer(response, add_special_tokens=False)["input_ids"]
+        response_ids = response_ids + [self.tokenizer.eos_token_id]  # teach stopping
 
-        # Tokenize the full sequence
-        full_enc = self.tokenizer(
-            full_text,
-            max_length=self.max_length,
-            truncation=True,
-            padding=False,
-            return_tensors="pt",
-        )
-        input_ids = full_enc["input_ids"][0]  # shape: (L,)
+        input_ids = (prompt_ids + response_ids)[: self.max_length]
+        labels = ([IGNORE_INDEX] * len(prompt_ids) + response_ids)[: self.max_length]
 
-        # Tokenize the prompt only to find where the response starts.
-        # add_special_tokens=False to avoid a duplicate BOS.
-        prompt_enc = self.tokenizer(
-            prompt,
-            add_special_tokens=False,
-            return_tensors="pt",
-        )
-        prompt_len = prompt_enc["input_ids"].shape[1]
+        input_ids = torch.tensor(input_ids, dtype=torch.long)
+        labels = torch.tensor(labels, dtype=torch.long)
 
-        # Build labels: IGNORE_INDEX for prompt, token id for response
-        labels = input_ids.clone()
-        labels[:prompt_len] = IGNORE_INDEX  # mask the instruction tokens
+        # Verify the mask boundary -- the exact bug class this chapter warns
+        # about: prompt fully masked, response labels equal response ids.
+        prompt_len = len(prompt_ids)
+        assert bool((labels[:prompt_len] == IGNORE_INDEX).all()), "prompt not masked"
+        if prompt_len < input_ids.shape[0]:
+            assert bool((labels[prompt_len:] == input_ids[prompt_len:]).all()), \
+                "response labels must equal response ids"
 
         return {"input_ids": input_ids, "labels": labels}
 
@@ -508,6 +530,30 @@ if __name__ == "__main__":
     os.makedirs(args.output_dir, exist_ok=True)
     train(args)
 ```
+
+### Verifying the Loss Mask
+
+Before launching any real run, dump token ids alongside labels for one example and eyeball the boundary. This is the single cheapest way to catch the off-by-one and double-BOS mask bugs that the "Assistant prefix contamination" pitfall below warns about.
+
+```python
+# Sanity-check the mask on one example BEFORE launching a run.
+ds = InstructionDataset("data/sft_data.jsonl", tokenizer)
+ex = ds[0]
+ids, labs = ex["input_ids"], ex["labels"]
+for tok, lab in zip(ids.tolist(), labs.tolist()):
+    piece = tokenizer.convert_ids_to_tokens(tok)
+    flag = "MASK" if lab == IGNORE_INDEX else "LOSS"
+    print(f"{tok:>6}  {flag}  {piece!r}")
+
+# Expected: ids[0] is the BOS id and it appears exactly once; every prompt
+# token is flagged MASK; every response token (including the trailing EOS)
+# is flagged LOSS. The unmasked region must decode back to the response:
+resp = tokenizer.decode(ids[labs != IGNORE_INDEX])
+assert resp.rstrip().endswith(tokenizer.eos_token)
+assert (ids == tokenizer.bos_token_id).sum().item() == 1  # no double BOS
+```
+
+The expected result: exactly one BOS token at position 0 (never two), every prompt token flagged MASK, every response token including the final EOS flagged LOSS, and `tokenizer.decode` of the unmasked ids reproducing the response text followed by the EOS marker.
 
 ### Key Implementation Notes
 

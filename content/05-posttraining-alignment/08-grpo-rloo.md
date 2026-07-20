@@ -253,7 +253,18 @@ def rollout(prompts, golds):
     resp_mask = torch.zeros((B, maxlen), dtype=torch.float, device=device)
     for i, (s, plen) in enumerate(zip(seqs, prompt_lens)):
         input_ids[i, :s.shape[0]] = s
-        resp_mask[i, plen:s.shape[0]] = 1.0        # mask out the prompt tokens
+        resp_mask[i, plen:s.shape[0]] = 1.0        # 1.0 on generated tokens
+        # generate(num_return_sequences=G) RIGHT-PADS early-finishing completions
+        # with pad_token_id (== eos here) up to the group's longest sequence.
+        # Those trailing pad-eos tokens were NEVER sampled by the policy; leaving
+        # them in resp_mask feeds advantage-weighted gradient and KL into
+        # positions the policy never chose. Keep exactly ONE eos (the true stop
+        # token the policy did emit) and mask everything after it.
+        gen = s[plen:]
+        eos_hits = (gen == tok.eos_token_id).nonzero(as_tuple=True)[0]
+        if eos_hits.numel() > 0:
+            first_eos = plen + int(eos_hits[0])
+            resp_mask[i, first_eos + 1:] = 0.0     # drop pad-eos after true stop
     rewards = torch.tensor(rewards, dtype=torch.float, device=device)
     return input_ids, resp_mask, rewards
 
@@ -274,7 +285,7 @@ def grpo_advantage(rewards, group_size, normalize_std=True):
     g = rewards.view(-1, group_size)               # (n_prompts, G)
     adv = g - g.mean(dim=1, keepdim=True)          # subtract group mean (baseline)
     if normalize_std:
-        adv = adv / (g.std(dim=1, keepdim=True) + 1e-4)   # divide by group std
+        adv = adv / (g.std(dim=1, keepdim=True, correction=0) + 1e-4)  # population std (matches worked example); torch default is SAMPLE std
     return adv.reshape(-1)                          # (B,) one scalar per response
 
 # ---------------------------------------------------------------------------
@@ -332,8 +343,15 @@ def grpo_step(prompts, golds):
 #     print(it, "mean_reward", round(mean_r, 3), "loss", round(l, 4))
 ```
 
+!!! note "Expected behavior: what a healthy toy run looks like"
+    - **Trajectory.** On this single-prompt arithmetic toy with `Qwen/Qwen2.5-0.5B-Instruct` and `GROUP_SIZE=8`, `mean_reward` should climb from roughly `0.2`-`0.5` at step 0 (the base instruct model already answers `17+26` some of the time and often emits the tags) to `>1.0` within about `30`-`80` outer steps. It will not sit exactly at the `1.2` ceiling because sampling stays stochastic. Wall-clock is a few minutes on one consumer GPU (24 GB, e.g. RTX 3090/4090); generation dominates the time, not the backward pass.
+    - **Healthy diagnostics.** The **fraction of non-degenerate groups** (groups whose `G` rewards are not all equal) should be clearly `>0` in the early steps -- that is the *only* source of gradient. It naturally decays toward `0` as the policy saturates to always-correct, at which point `mean_reward` plateaus near the ceiling (expected, not a bug). Token-level **entropy** should stay positive (the policy keeps exploring).
+    - **Failure signatures.** `mean_reward` flat near `0` with all-wrong groups -> reward/parsing broken or task too hard (check the exact `<answer>{gold}</answer>` string match). `mean_reward` stuck mid-range while the non-degenerate-group fraction is already `0` -> dead groups (raise `G`, vary the prompts, add curriculum). Reward rising while decoded samples turn into repetitive gibberish and entropy collapses -> the policy is diverging: lower the learning rate, set `KL_BETA>0`, and confirm the EOS-mask fix in `rollout` is in place.
+    - **Beyond the toy.** For a non-trivial signal, swap the single repeated prompt for a small GSM8K slice and track pass@1 over a few hundred steps rather than one arithmetic fact.
+
 A few engineering notes that matter in practice:
 
+- **`generate` pads with `pad_token_id`, so the response mask must stop at the true EOS.** With `num_return_sequences=G`, completions that finish early are right-padded with `pad_token_id` (here the EOS id) up to the group's longest sequence. The rollout loop above therefore masks everything after the *first* EOS, so the ratio, KL, and advantage-weighted loss are computed only on tokens the policy actually sampled. Forgetting this silently injects advantage-weighted gradient on repeated pad-EOS positions — a classic, hard-to-spot GRPO bug.
 - **`old_lp` is recomputed, not reused from generation.** In the toy code we recompute log-probs with a forward pass. In production, generation happens on a separate inference engine (vLLM/SGLang) and you must be careful that the log-probs used for the ratio come from a *consistent* policy. Mismatch between the sampler's numerics and the trainer's numerics is a real, subtle source of bias — see [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
 - **KL is often set to zero in R1-style recipes.** DeepSeek-R1-Zero used essentially no KL/penalty and let the model drift far from the base, which is *desired* when you want emergent long reasoning. Keep $\beta>0$ for chat alignment where you must preserve the SFT persona.
 - **PPO_EPOCHS > 1 is why we need the ratio and clip at all.** If you only ever take one gradient step on each rollout batch ($\pi_\theta=\pi_{\text{old}}$, ratio $=1$), GRPO collapses into RLOO-with-std-normalization. The clip earns its keep only when you reuse rollouts.
@@ -379,6 +397,9 @@ Let's make the magnitudes concrete. Take one prompt, a group of $G=4$ sampled re
     - $\min(-0.703,-0.938)=-0.938$ → the **clipped** branch is selected; the surrogate is the more-negative value, so its gradient is also zeroed. (For negative advantage, `min` selects the clipped term whenever the ratio fell below the floor — the trust region prevents over-suppressing already-suppressed tokens.)
 
     The point of the worked numbers: the advantage magnitudes are $O(1)$, clipping engages exactly when a single step moved a token's probability by more than ~20–28%, and the std-normalization made a $1.2$-vs-$0.0$ reward gap into a clean $\pm 1$ advantage regardless of the raw reward scale.
+
+!!! note "Population vs. sample std: a convention gotcha"
+    The worked numbers above use the **population** standard deviation (divide the summed squared deviations by $G=4$), giving $\operatorname{std}\approx 0.5545$ and advantages $+0.992,\,-0.811,\,+0.992,\,-1.172$. PyTorch's `Tensor.std()` **defaults to the Bessel-corrected sample std** (divide by $G-1=3$), which gives $\operatorname{std}\approx 0.6403$ and the slightly smaller advantages $+0.859,\,-0.703,\,+0.859,\,-1.015$. Both conventions appear in production code — TRL's `GRPOTrainer` uses the PyTorch default (sample std) — and either is fine as long as your code and your expected values agree. The `grpo_advantage` code above pins `correction=0` (population std) specifically so it reproduces the numbers in this example; drop that argument if you want to match TRL.
 
 ## The DeepSeek-R1 recipe
 

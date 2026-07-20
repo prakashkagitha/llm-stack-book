@@ -57,6 +57,9 @@ ptrs = base_ptr + row * stride_m + col * stride_n   # shape (BLOCK_M, BLOCK_N)
 
 This `[:, None]` / `[None, :]` broadcasting (identical to NumPy) is the workhorse. Internalize it: **rows down, columns across, strides convert logical indices to memory offsets.** `BLOCK_M`, `BLOCK_N`, and `BLOCK_SIZE` are *compile-time constants* (declared `tl.constexpr`), which lets the compiler unroll loops, size registers, and pick vector widths. Newer Triton also offers `tl.make_block_ptr`, a structured block-pointer object that tracks shape, strides, and offsets for you; we use explicit pointer math here because it makes the mechanism visible.
 
+!!! note "Two more primitives: `tl.trans` and `tl.atomic_add`"
+    Two `tl` operations round out the survey and appear the moment you write a backward pass. **`tl.trans(x)`** transposes a 2-D tile already in registers — handy when a matmul needs the transpose of a loaded tile, e.g. `tl.dot(tl.trans(P), dO)` to form `P^T dO`. You can often avoid it by **swapping the roles of the two strides** when you build the pointer block: put the index you want on the columns onto the row axis and vice-versa, and the tile arrives transposed at load time for free. Kernel 4 already does this implicitly for `K` — it builds a `(HEAD_DIM, BLOCK_N)` tile by placing `offs_n` on the column axis and `offs_d` on the row axis, so `tl.dot(q, k)` sees `K^T` with no transpose op. **`tl.atomic_add(ptr, val, mask=...)`** does a race-safe read-modify-write, needed whenever *several programs* accumulate into the same address — most importantly `dQ` in the attention backward, where every key block contributes to every query's gradient (Kernel 5). Accumulate atomics into an **fp32** buffer (atomic fp16 adds lose precision) and zero it before launch. The atomics-free alternative is to re-partition the loop so each program owns its reduced output exclusively — the two-kernel split we discuss in Kernel 5.
+
 ## Kernel 1: Vector Add — The "Hello World"
 
 The whole machine in one screen. We add two length-`n` vectors. Each program handles `BLOCK_SIZE` consecutive elements; the grid has `ceil(n / BLOCK_SIZE)` programs.
@@ -377,7 +380,7 @@ import triton.language as tl
 
 @triton.jit
 def flash_attn_kernel(
-    Q_ptr, K_ptr, V_ptr, O_ptr,
+    Q_ptr, K_ptr, V_ptr, O_ptr, L_ptr,   # L_ptr: per-row logsumexp out, shape (B,H,N_CTX)
     sm_scale,                       # 1/sqrt(d), folded with log2e below
     stride_qb, stride_qh, stride_qm, stride_qd,   # Q strides (B,H,seq,dim)
     stride_kb, stride_kh, stride_kn, stride_kd,
@@ -387,6 +390,7 @@ def flash_attn_kernel(
     BLOCK_M: tl.constexpr,          # query block (rows handled per program)
     BLOCK_N: tl.constexpr,          # key/value block (streamed)
     HEAD_DIM: tl.constexpr,         # d, the per-head dimension
+    CAUSAL: tl.constexpr,           # apply the causal (lower-triangular) mask
 ):
     # ---- Which query block, and which (batch, head)? 2-D grid. ----
     start_m = tl.program_id(0)      # query-block index along the sequence
@@ -416,7 +420,10 @@ def flash_attn_kernel(
     qk_scale = sm_scale * 1.44269504   # 1/ln(2)
 
     # ---- Stream over key/value blocks ----
-    for start_n in range(0, N_CTX, BLOCK_N):
+    # Causal: only visit key blocks up to and including this query block's
+    # diagonal (assumes BLOCK_M == BLOCK_N alignment). Non-causal: all blocks.
+    hi = (start_m + 1) * BLOCK_M if CAUSAL else N_CTX
+    for start_n in range(0, hi, BLOCK_N):
         offs_n = start_n + tl.arange(0, BLOCK_N)
         n_mask = offs_n < N_CTX
 
@@ -430,6 +437,9 @@ def flash_attn_kernel(
         s = tl.dot(q, k) * qk_scale
         # Mask out padded keys so they never win the max / contribute to sum.
         s = tl.where(n_mask[None, :], s, -float("inf"))
+        if CAUSAL:
+            # query i attends only to keys j <= i within this diagonal block
+            s = tl.where(offs_m[:, None] >= offs_n[None, :], s, -float("inf"))
 
         # ----- online softmax update -----
         m_ij = tl.max(s, axis=1)                 # per-row block max
@@ -442,31 +452,43 @@ def flash_attn_kernel(
         m_i = m_new                              # commit new max
 
     # ---- Final normalization (one division at the end) ----
-    acc = acc / l_i[:, None]
+    # Guard fully-masked rows (possible only for a padding-only tail block) so
+    # we never divide by zero; those rows are masked off at store time anyway.
+    l_safe = tl.where(l_i > 0.0, l_i, 1.0)
+    acc = acc / l_safe[:, None]
+
+    # Save the per-row logsumexp for the BACKWARD pass, in NATURAL-LOG space.
+    # The exp2 trick kept m_i and the scores in base-2 log space; convert back
+    # so ch 4.2's backward can reconstruct P = exp(S - L) with a plain exp:
+    #   L_nat = m_nat + ln(l_i) = (m_i + log2(l_i)) / log2(e) = (m_i+log2 l_i)*ln2
+    L_i = (m_i + tl.log2(l_safe)) * 0.6931471805599453   # 1/log2(e) = ln(2)
+    l_ptrs = L_ptr + off_bh * N_CTX + offs_m
+    tl.store(l_ptrs, L_i, mask=offs_m < N_CTX)
 
     # Write the output block.
     o_ptrs = o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_od
     tl.store(o_ptrs, acc.to(O_ptr.dtype.element_ty), mask=offs_m[:, None] < N_CTX)
 
 
-def flash_attention(q, k, v, sm_scale=None):
-    # q,k,v: (B, H, N_CTX, HEAD_DIM)
+def flash_attention(q, k, v, sm_scale=None, causal=False):
+    # q,k,v: (B, H, N_CTX, HEAD_DIM); returns (o, L) where L is the per-row logsumexp
     B, H, N_CTX, HEAD_DIM = q.shape
     if sm_scale is None:
         sm_scale = 1.0 / (HEAD_DIM ** 0.5)
     o = torch.empty_like(q)
+    L = torch.empty((B, H, N_CTX), device=q.device, dtype=torch.float32)  # for backward
     BLOCK_M, BLOCK_N = 64, 64
     grid = (triton.cdiv(N_CTX, BLOCK_M), B * H)   # (query blocks, batch*head)
     flash_attn_kernel[grid](
-        q, k, v, o, sm_scale,
+        q, k, v, o, L, sm_scale,
         q.stride(0), q.stride(1), q.stride(2), q.stride(3),
         k.stride(0), k.stride(1), k.stride(2), k.stride(3),
         v.stride(0), v.stride(1), v.stride(2), v.stride(3),
         o.stride(0), o.stride(1), o.stride(2), o.stride(3),
         B, H, N_CTX,
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, HEAD_DIM=HEAD_DIM,
+        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, HEAD_DIM=HEAD_DIM, CAUSAL=causal,
     )
-    return o
+    return o, L
 
 
 if __name__ == "__main__":
@@ -475,24 +497,300 @@ if __name__ == "__main__":
     q = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16)
     k = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16)
     v = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16)
-    ours = flash_attention(q, k, v)
-
-    # Reference: plain (non-causal) attention in fp32 for accuracy.
-    scale = 1.0 / (D ** 0.5)
-    ref = torch.softmax((q.float() @ k.float().transpose(-2, -1)) * scale, dim=-1) @ v.float()
-    print("max abs error:", (ours.float() - ref).abs().max().item())   # ~1e-2 (fp16)
+    for causal in (False, True):
+        ours, L = flash_attention(q, k, v, causal=causal)
+        scale = 1.0 / (D ** 0.5)
+        s = (q.float() @ k.float().transpose(-2, -1)) * scale
+        if causal:
+            m = torch.tril(torch.ones(N, N, device="cuda", dtype=torch.bool))
+            s = s.masked_fill(~m, float("-inf"))
+        ref = torch.softmax(s, dim=-1) @ v.float()
+        err = (ours.float() - ref).abs().max().item()
+        print(f"causal={causal}  max abs error: {err:.3e}")   # ~1e-2 (fp16)
 ```
 
 A few notes that connect this to production kernels.
 
 **Why `exp2` instead of `exp`.** GPUs have a fast hardware approximation for base-2 exponentiation (`exp2` / `ex2.approx`). FlashAttention folds the $1/\ln 2$ factor into the QK scale (`qk_scale = sm_scale * 1.44269...`) so that $e^{x} = 2^{x \log_2 e}$ becomes a single `exp2`. It is a small constant-factor win that the real kernels all use.
 
-**This is the non-causal version.** A causal (decoder) attention adds a mask so query $i$ only attends to keys $j \le i$, which lets the kernel *skip* key blocks entirely beyond the diagonal — a roughly 2x saving. You implement it by (a) breaking the loop at the block containing the diagonal and (b) applying a triangular mask in the diagonal block via `tl.where(offs_m[:, None] >= offs_n[None, :], s, -inf)`. We omit it for clarity; the real vLLM/FlashAttention Triton kernels include it.
+**Causal masking, implemented above.** The kernel supports causal (decoder) attention via the `CAUSAL: tl.constexpr` flag: when it's set, the loop bound `hi = (start_m + 1) * BLOCK_M` skips key blocks entirely beyond this query block's diagonal — a roughly 2x FLOP saving — and the diagonal block itself gets a triangular mask, `tl.where(offs_m[:, None] >= offs_n[None, :], s, -inf)`, so query $i$ only attends to keys $j \le i$. The `l_i > 0` guard before the final divide protects a fully-padding tail block; a valid causal query row always attends to at least itself, so it is never fully masked, but the guard keeps the padding case safe regardless.
 
-**The memory win, quantified.** The naive path reads/writes the $N\times N$ score matrix. Our kernel keeps $Q$, the running $O$, $m$, and $\ell$ in registers/SRAM and streams $K$,$V$ tiles — total HBM traffic is $O(N d)$ per head, not $O(N^2)$. This is *the* reason long-context attention is feasible at all. The backward pass needs the same statistics recomputed (FlashAttention recomputes $S$ in the backward rather than storing it — trading FLOPs for memory), which is covered in the FlashAttention chapters.
+**Base consistency: `exp2` and the saved `L`.** Because the kernel folds `log2(e)` into `qk_scale` and runs the online softmax in base-2 log space, `m_i` is a base-2 quantity. The forward therefore converts before storing: `L = (m_i + log2(l_i)) * ln(2)`, so the saved `L` is a **natural-log** logsumexp, and Kernel 5's backward can reconstruct `P = exp(S - L)` with a plain `exp`. Combining the two chapters naively — storing `m_i + ln(l_i)`, i.e. mixing bases — would silently produce an inconsistent `L` and wrong gradients.
+
+**The memory win, quantified.** The naive path reads/writes the $N\times N$ score matrix. Our kernel keeps $Q$, the running $O$, $m$, and $\ell$ in registers/SRAM and streams $K$,$V$ tiles — total HBM traffic is $O(N d)$ per head, not $O(N^2)$. This is *the* reason long-context attention is feasible at all. The backward pass needs the same statistics recomputed (FlashAttention recomputes $S$ in the backward rather than storing it — trading FLOPs for memory), which we implement in Triton as Kernel 5 below (the forward above already saved the per-row logsumexp L that the backward needs).
 
 !!! warning "Common pitfall: forgetting to rescale the accumulator"
     The most common bug when writing your first online-softmax kernel is rescaling `l_i` by `alpha` but forgetting to rescale `acc` by `alpha` (or vice versa). Both the running sum *and* the running output accumulator were computed against the old max, so **both** must be multiplied by `alpha = exp(m_old - m_new)` before adding the new block's contribution. A unit test against a dense fp32 reference (as above) catches this instantly — always write that test first.
+
+### Sizing the attention kernel: autotuning, SRAM, and head_dim
+
+Kernel 4 hardcodes `BLOCK_M = BLOCK_N = 64` for readability, but a production kernel autotunes it exactly like the matmul in Kernel 3:
+
+```python
+@triton.autotune(
+    configs=[
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 32},  num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64},  num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64},  num_warps=8, num_stages=3),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 128}, num_warps=8, num_stages=4),
+        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64},  num_warps=4, num_stages=4),
+    ],
+    key=["N_CTX", "HEAD_DIM", "CAUSAL"],
+)
+@triton.jit
+def flash_attn_kernel(
+    # ... same parameter list and body as the Kernel 4 definition above ...
+    Q_ptr, K_ptr, V_ptr, O_ptr, L_ptr, sm_scale,
+    stride_qb, stride_qh, stride_qm, stride_qd,
+    stride_kb, stride_kh, stride_kn, stride_kd,
+    stride_vb, stride_vh, stride_vn, stride_vd,
+    stride_ob, stride_oh, stride_om, stride_od,
+    B, H, N_CTX,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+    HEAD_DIM: tl.constexpr, CAUSAL: tl.constexpr,
+):
+    pass   # body unchanged from Kernel 4
+```
+
+Because the grid now depends on the autotuned `BLOCK_M`, the launch must switch to a `meta`-driven grid — `grid = lambda meta: (triton.cdiv(N_CTX, meta["BLOCK_M"]), B * H)` — and `BLOCK_M`/`BLOCK_N` drop out of the explicit kwargs passed to `flash_attn_kernel[grid](...)`.
+
+!!! example "Worked example: SRAM/register budget for the attention tile"
+    Take the defaults `BLOCK_M = BLOCK_N = HEAD_DIM = 64`, fp16 inputs (2 bytes), fp32 accumulator (4 bytes):
+
+    - Q tile (resident the whole kernel): $64 \times 64 \times 2 = 8$ KiB
+    - Per KV step: K tile $64 \times 64 \times 2 = 8$ KiB, V tile $8$ KiB (double-buffered by `num_stages`)
+    - Score tile `s` ($64\times64$, fp32, registers): $64 \times 64 \times 4 = 16$ KiB
+    - `acc` ($64\times64$, fp32, registers): $64 \times 64 \times 4 = 16$ KiB
+
+    Shared-memory footprint is roughly $Q + K + V \approx 24$ KiB (times `num_stages` for the streamed K/V) — well under the A100's 164 KiB or the H100's 228 KiB, so shared memory is never the binding constraint here. The real limiter is **register pressure** from the fp32 `acc` and `s` tiles, which is exactly why `HEAD_DIM = 128` or `BLOCK_M = 128` tends to be the practical ceiling before occupancy collapses.
+
+A last wrinkle: the kernel needs `HEAD_DIM` to be a `tl.constexpr` **power of two** (it sizes `tl.arange(0, HEAD_DIM)`). For a non-power-of-two head dimension — d=80 or d=96 are common — set `HEAD_DIM = triton.next_power_of_2(d)` and mask `offs_d < d` (with `other=0.0`) on every Q/K/V load. Zero-padding the head dimension is exact: the padded lanes contribute `0` to `Q @ K^T` and produce output columns you simply slice off after the kernel returns. Pre-padding the tensors before the launch is the alternative if you'd rather not thread the extra mask through.
+
+## Kernel 5: FlashAttention Backward
+
+The backward pass reuses every idea from Kernel 4 — tiling, the online recurrence's cousin, and pointer arithmetic — plus the two primitives introduced above: `tl.trans` and `tl.atomic_add`. Recall the three backward quantities from [FlashAttention I](../04-kernels-efficiency/02-flash-attention-1.html)'s NumPy derivation: $dV = P^\top dO$, $dP = dO\,V^\top$, and the softmax-Jacobian collapses to a per-row scalar $D_i = \text{rowsum}(dO \odot O)$, giving $dS = P \odot (dP - D_i)$, then $dQ = dS\,K / \sqrt d$ and $dK = dS^\top Q / \sqrt d$. The whole trick that makes this an *IO-aware* backward — no $N\times N$ tensor touches HBM — is that $P$ is reconstructed tile-by-tile as $P = \exp(S - L_i)$ using the **natural-log** $L$ that Kernel 4's forward saved. That's a plain `tl.exp`, no `exp2`: `L` is already natural-log (see the base-consistency note above), so folding `log2(e)` in again here would double-apply the base change and silently corrupt every gradient.
+
+### Preprocessing: the per-row scalar D
+
+```python
+@triton.jit
+def attn_bwd_preprocess(
+    O_ptr, dO_ptr, D_ptr,
+    stride_ob, stride_oh, stride_om, stride_od,
+    B, H, N_CTX,
+    BLOCK_M: tl.constexpr, HEAD_DIM: tl.constexpr,
+):
+    start_m = tl.program_id(0)
+    off_bh = tl.program_id(1)
+    off_b = off_bh // H
+    off_h = off_bh % H
+
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, HEAD_DIM)
+    m_mask = offs_m < N_CTX
+
+    o_base = O_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = dO_ptr + off_b * stride_ob + off_h * stride_oh   # dO shares O's layout
+    ptrs = offs_m[:, None] * stride_om + offs_d[None, :] * stride_od
+
+    o = tl.load(o_base + ptrs, mask=m_mask[:, None], other=0.0)
+    do = tl.load(do_base + ptrs, mask=m_mask[:, None], other=0.0)
+
+    # D_i = rowsum(dO * O) -- the scalar that collapses the softmax Jacobian.
+    d = tl.sum(o.to(tl.float32) * do.to(tl.float32), axis=1)
+    d_ptrs = D_ptr + off_bh * N_CTX + offs_m
+    tl.store(d_ptrs, d, mask=m_mask)
+```
+
+### The kv-parallel dK/dV/dQ kernel
+
+Each program owns *one key/value block* `j` (the backward-parallelizes-over-keys strategy from [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html)), loops over the query blocks that can see it, and accumulates `dK_j`, `dV_j` exclusively (no atomics needed) while scattering its contribution to `dQ` with `tl.atomic_add`, since every key block touches every query row's gradient.
+
+```python
+@triton.jit
+def attn_bwd_dkdv_dq(
+    Q_ptr, K_ptr, V_ptr, L_ptr, D_ptr, dO_ptr,
+    dQ_ptr, dK_ptr, dV_ptr,
+    sm_scale,
+    stride_qb, stride_qh, stride_qm, stride_qd,
+    stride_kb, stride_kh, stride_kn, stride_kd,
+    stride_vb, stride_vh, stride_vn, stride_vd,
+    B, H, N_CTX,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, HEAD_DIM: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    start_n = tl.program_id(0)      # this program's KV block index
+    off_bh = tl.program_id(1)
+    off_b = off_bh // H
+    off_h = off_bh % H
+
+    q_base = Q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = K_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = V_ptr + off_b * stride_vb + off_h * stride_vh
+    do_base = dO_ptr + off_b * stride_qb + off_h * stride_qh   # dO shares Q's layout
+    dq_base = dQ_ptr + off_b * stride_qb + off_h * stride_qh
+
+    offs_n = start_n * BLOCK_N + tl.arange(0, BLOCK_N)   # this program's key rows
+    offs_d = tl.arange(0, HEAD_DIM)
+    n_mask = offs_n < N_CTX
+
+    k_ptrs = k_base + offs_n[:, None] * stride_kn + offs_d[None, :] * stride_kd
+    v_ptrs = v_base + offs_n[:, None] * stride_vn + offs_d[None, :] * stride_vd
+    k = tl.load(k_ptrs, mask=n_mask[:, None], other=0.0)   # (BLOCK_N, HEAD_DIM)
+    v = tl.load(v_ptrs, mask=n_mask[:, None], other=0.0)   # (BLOCK_N, HEAD_DIM)
+
+    dk_acc = tl.zeros((BLOCK_N, HEAD_DIM), dtype=tl.float32)
+    dv_acc = tl.zeros((BLOCK_N, HEAD_DIM), dtype=tl.float32)
+
+    # Causal: key block j only receives gradient from query blocks i >= j
+    # (the same diagonal that let the forward skip blocks the other way).
+    lo = (start_n * BLOCK_N // BLOCK_M) * BLOCK_M if CAUSAL else 0
+
+    for start_m in range(lo, N_CTX, BLOCK_M):
+        offs_m = start_m + tl.arange(0, BLOCK_M)
+        m_mask = offs_m < N_CTX
+
+        q_ptrs = q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+        do_ptrs = do_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+        q = tl.load(q_ptrs, mask=m_mask[:, None], other=0.0)     # (BLOCK_M, HEAD_DIM)
+        do = tl.load(do_ptrs, mask=m_mask[:, None], other=0.0)   # (BLOCK_M, HEAD_DIM)
+
+        l_i = tl.load(L_ptr + off_bh * N_CTX + offs_m, mask=m_mask, other=0.0)
+        d_i = tl.load(D_ptr + off_bh * N_CTX + offs_m, mask=m_mask, other=0.0)
+
+        # ---- recompute the score/probability tile (no exp2: L is natural-log) ----
+        s = tl.dot(q, tl.trans(k)) * sm_scale             # (BLOCK_M, BLOCK_N)
+        if CAUSAL:
+            s = tl.where(offs_m[:, None] >= offs_n[None, :], s, -float("inf"))
+        p = tl.exp(s - l_i[:, None])                       # plain exp; P = exp(S - L)
+
+        # ---- dV_j += P^T dO_i ----
+        dv_acc += tl.dot(tl.trans(p).to(do.dtype), do)
+
+        # ---- dP = dO_i V_j^T ; dS = P * (dP - D_i) * sm_scale ----
+        dp = tl.dot(do, tl.trans(v))                        # (BLOCK_M, BLOCK_N)
+        ds = p * (dp - d_i[:, None]) * sm_scale             # scale folded once here
+
+        # ---- dK_j += dS^T Q_i ----
+        dk_acc += tl.dot(tl.trans(ds).to(q.dtype), q)
+
+        # ---- dQ_i += dS K_j  (scattered: every key block hits every query row) ----
+        dq_part = tl.dot(ds.to(k.dtype), k)                  # (BLOCK_M, HEAD_DIM)
+        dq_ptrs = dq_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+        tl.atomic_add(dq_ptrs, dq_part, mask=m_mask[:, None])
+
+    dk_ptrs = dK_ptr + off_b * stride_kb + off_h * stride_kh + offs_n[:, None] * stride_kn + offs_d[None, :] * stride_kd
+    dv_ptrs = dV_ptr + off_b * stride_vb + off_h * stride_vh + offs_n[:, None] * stride_vn + offs_d[None, :] * stride_vd
+    tl.store(dk_ptrs, dk_acc.to(dK_ptr.dtype.element_ty), mask=n_mask[:, None])
+    tl.store(dv_ptrs, dv_acc.to(dV_ptr.dtype.element_ty), mask=n_mask[:, None])
+```
+
+Note the dtype discipline: `tl.dot`'s operands are cast down to the working dtype (`do.dtype`, `q.dtype`, `k.dtype`) right before the call, while `dk_acc`, `dv_acc`, and the `dQ` buffer stay fp32 throughout — the same "multiply low, accumulate high" pattern as the forward and the Kernel 3 matmul.
+
+### Driver
+
+```python
+def flash_attn_backward(q, k, v, o, L, do, sm_scale, causal=False):
+    B, H, N_CTX, HEAD_DIM = q.shape
+    BLOCK_M, BLOCK_N = 64, 64
+
+    D = torch.empty((B, H, N_CTX), device=q.device, dtype=torch.float32)
+    grid_pre = (triton.cdiv(N_CTX, BLOCK_M), B * H)
+    attn_bwd_preprocess[grid_pre](
+        o, do, D,
+        o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+        B, H, N_CTX,
+        BLOCK_M=BLOCK_M, HEAD_DIM=HEAD_DIM,
+    )
+
+    dq = torch.zeros_like(q, dtype=torch.float32)   # fp32: atomic_add target
+    dk = torch.empty_like(k)
+    dv = torch.empty_like(v)
+    grid_bwd = (triton.cdiv(N_CTX, BLOCK_N), B * H)
+    attn_bwd_dkdv_dq[grid_bwd](
+        q, k, v, L, D, do,
+        dq, dk, dv,
+        sm_scale,
+        q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+        k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+        v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+        B, H, N_CTX,
+        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, HEAD_DIM=HEAD_DIM, CAUSAL=causal,
+    )
+    return dq.to(q.dtype), dk, dv
+```
+
+!!! note "The atomics-free alternative"
+    Production kernels — including the official Triton `06-fused-attention.py` tutorial and Dao-AILab/flash-attention — usually avoid `tl.atomic_add` on `dQ` entirely by splitting the backward into **two** kernels: the kv-parallel `dK`/`dV` kernel above, plus a *separate* q-parallel `dQ` kernel that loops over key blocks for a fixed query block, exactly mirroring the forward. Each program then owns its output exclusively and there's no contention. This is the same forward-parallel-over-queries / backward-parallel-over-keys asymmetry discussed in [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html); we used one kernel plus `tl.atomic_add` above because it's shorter to read end-to-end.
+
+### Wiring it into `torch.autograd`
+
+```python
+class FlashAttentionFn(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, q, k, v, causal, sm_scale):
+        o, L = flash_attention(q, k, v, sm_scale=sm_scale, causal=causal)
+        ctx.save_for_backward(q, k, v, o, L)
+        ctx.causal = causal
+        ctx.sm_scale = sm_scale
+        return o
+
+    @staticmethod
+    def backward(ctx, do):
+        q, k, v, o, L = ctx.saved_tensors
+        dq, dk, dv = flash_attn_backward(q, k, v, o, L, do, ctx.sm_scale, ctx.causal)
+        return dq, dk, dv, None, None   # None, None for the non-tensor causal/sm_scale args
+
+
+def flash_attn_func(q, k, v, causal=False, sm_scale=None):
+    if sm_scale is None:
+        sm_scale = 1.0 / (q.shape[-1] ** 0.5)
+    return FlashAttentionFn.apply(q, k, v, causal, sm_scale)
+```
+
+`ctx.save_for_backward(q, k, v, o, L)` is the standard `autograd.Function` mechanism for stashing tensors needed later without keeping the whole autograd graph alive. We save `L`, not the $N\times N$ probability matrix `P` — that's the entire point of the recompute-don't-store strategy from [FlashAttention I](../04-kernels-efficiency/02-flash-attention-1.html): `L` is $O(N)$ per head, `P` is $O(N^2)$, and the backward regenerates `P` tile-by-tile from `L` at the cost of one extra `tl.dot` and one `tl.exp`.
+
+### Correctness test
+
+```python
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    B, H, N, D = 2, 4, 256, 64
+    for causal in (False, True):
+        q = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16, requires_grad=True)
+        k = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16, requires_grad=True)
+        v = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16, requires_grad=True)
+        do = torch.randn(B, H, N, D, device="cuda", dtype=torch.float16)
+
+        o = flash_attn_func(q, k, v, causal=causal)
+        o.backward(do)
+        dq, dk, dv = q.grad.clone(), k.grad.clone(), v.grad.clone()
+
+        # fp32 PyTorch-autograd reference (not gradcheck: gradcheck needs
+        # float64, and tl.dot's Tensor Core path does not support float64).
+        qf = q.detach().float().requires_grad_()
+        kf = k.detach().float().requires_grad_()
+        vf = v.detach().float().requires_grad_()
+        scale = 1.0 / (D ** 0.5)
+        s = (qf @ kf.transpose(-2, -1)) * scale
+        if causal:
+            mask = torch.tril(torch.ones(N, N, device="cuda", dtype=torch.bool))
+            s = s.masked_fill(~mask, float("-inf"))
+        ref_o = torch.softmax(s, dim=-1) @ vf
+        ref_o.backward(do.float())
+
+        print(f"causal={causal}")
+        print("  max dQ error:", (dq.float() - qf.grad).abs().max().item())   # ~2e-2 (fp16 kernel vs fp32 ref)
+        print("  max dK error:", (dk.float() - kf.grad).abs().max().item())   # ~2e-2
+        print("  max dV error:", (dv.float() - vf.grad).abs().max().item())   # ~2e-2
+```
+
+Run the same test with `q, k, v` in fp32 and you should see errors tighten to roughly `1e-3` — the fp16 case's larger tolerance is accumulation-order noise, not a bug. Two failure signatures worth memorizing so you recognize them instantly: **dropping the $D_i$ subtraction** (using `dS = P * dP * sm_scale` instead of `P * (dP - D_i) * sm_scale`) makes `dQ` wrong by a per-row *constant* offset, because the softmax Jacobian's rank-1 correction term vanishes; **dropping the `sm_scale` fold** (forgetting to multiply `dS` by `sm_scale`, or applying it twice) makes *every* gradient off by a factor of $\sqrt d$.
+
+**Full-spectrum hardware notes.** On a laptop or CPU-only box, set `TRITON_INTERPRET=1` and shrink the problem (`B=1, H=1, N=64, D=16`) to check correctness only — the interpreter is very slow, so this is a debugging mode, not a benchmark. On a single A100 or H100, use realistic sizes (`N = 1024` to `8192`) for real timing; the backward does roughly 2x the forward's FLOPs (it recomputes `S`/`P` and additionally produces `dQ`, `dK`, `dV`), so expect the backward to cost about 2–2.5x the forward's latency at matched shapes. Multi-GPU is orthogonal here — this is a per-`(batch, head)` kernel; sharding across devices is handled by the training framework (data/tensor/context parallelism), not by anything inside the kernel.
+
+**Library mapping.** The official Triton tutorial `06-fused-attention.py` implements exactly this structure: the forward stores `M` (the running max) and `L`-equivalent statistics, `_attn_bwd_preprocess` computes `delta = sum(o * do)`, and `_attn_bwd_dkdv` / `_attn_bwd_dq` split the backward the atomics-free way described above. [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) is the reference implementation to read once this kernel makes sense.
+
 
 ## Autotuning, Debugging, and Performance Practice
 

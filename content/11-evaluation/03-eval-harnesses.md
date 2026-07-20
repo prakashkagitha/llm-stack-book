@@ -541,7 +541,17 @@ def score_choices(
         log_liks_norm: log_liks divided by choice token count
     """
     letters = "ABCD"
-    context_ids = tokenizer.encode(context, return_tensors="pt").to(device)
+    # Encode the context WITHOUT special tokens so its ids are exactly a
+    # prefix of the full [context + choice] encoding below. Letting the
+    # default add_special_tokens=True prepend a BOS here (as Llama/Mistral
+    # tokenizers do) would make context_len already include that BOS; the
+    # "+1 for BOS" added below then double-counts it and shifts the split by
+    # one token. For single-token continuations (" A".." D") that leaves
+    # cont_ids empty, so every choice scores 0.0, argmax always returns
+    # choice 0, and the harness silently reports ~25% for Llama-3/Mistral.
+    context_ids = tokenizer.encode(
+        context, return_tensors="pt", add_special_tokens=False
+    ).to(device)
     context_len = context_ids.shape[1]
 
     log_liks = []
@@ -576,6 +586,16 @@ def score_choices(
         # Continuation tokens are at positions [ctx_len, seq_len)
         # Their log-probs are at positions [ctx_len-1, seq_len-1)
         cont_ids = full_ids[0, ctx_len:]  # the actual continuation token ids
+
+        # Sanity check: each choice must contribute >= 1 continuation token.
+        # An empty split means the context/continuation boundary is wrong --
+        # usually a BOS double-count, or a tokenizer that merged the last
+        # context token with the leading-space continuation token.
+        assert len(cont_ids) >= 1, (
+            f"empty continuation for choice {letters[i]!r} "
+            f"(ctx_len={ctx_len}, full_len={full_ids.shape[1]}); "
+            "check the context/continuation token split"
+        )
         cont_log_probs = log_probs[ctx_len - 1: ctx_len - 1 + len(cont_ids)]
 
         # Gather the log-prob of each actual token
@@ -620,9 +640,11 @@ def evaluate(
             d = json.loads(line)
             docs.append(MCDoc(**d))
 
-    # Separate fewshot pool (use first 20% for fewshot, rest for eval)
-    # In a real harness, this uses the training split, never the test split.
-    n_fewshot_pool = max(num_fewshot * 5, 20)
+    # Few-shot exemplars come from a held-in pool (the first slice of docs); the
+    # rest are the eval set. Cap the pool at half the data so the eval set is
+    # never empty on small sets, and reserve nothing for 0-shot.
+    # In a real harness, the pool is the training split, never the test split.
+    n_fewshot_pool = min(num_fewshot * 5, len(docs) // 2) if num_fewshot > 0 else 0
     fewshot_pool = docs[:n_fewshot_pool]
     eval_docs = docs[n_fewshot_pool:]
 
@@ -716,6 +738,103 @@ if __name__ == "__main__":
         output_path=args.output,
     )
 ```
+
+### Verifying the Harness: A Smoke Test
+
+The most dangerous failure mode in log-likelihood scoring is a misaligned context/continuation split — exactly the BOS double-count fixed above. It does not crash. It silently returns identical or zero per-choice log-likelihoods, argmax always picks choice 0, and accuracy collapses to the chance floor (~25% for 4 choices) while everything looks like a normal run. Never trust a harness you have not smoke-tested. Two invariants catch this class of bug directly: (a) within one question, the four raw log-likelihoods must be **distinct and strictly negative** — if they are all equal, or any of them is exactly 0.0, the split is broken; (b) because " A".." D" are each a single token for common tokenizers (gpt2, Llama-3, Mistral), `acc` must equal `acc_norm` **exactly**. There is also a token-boundary hazard worth naming: computing `ctx_len` from a separately-encoded context string is only safe because the continuation begins with a leading space, so it cannot merge with the last context token during re-tokenization — the `len(cont_ids) >= 1` assertion added to `score_choices` is the guardrail against that boundary shifting silently.
+
+```python
+"""smoke_test.py — end-to-end check for minimal_harness.py"""
+import json
+import tempfile
+from pathlib import Path
+
+from minimal_harness import evaluate, MCDoc, build_fewshot_prompt
+
+def make_toy_dataset() -> list[dict]:
+    """8 capital-cities questions, 4 plausible choices each."""
+    items = [
+        ("France", ["Paris", "Lyon", "Marseille", "Nice"], 0),
+        ("Japan", ["Osaka", "Kyoto", "Tokyo", "Nagoya"], 2),
+        ("Italy", ["Milan", "Rome", "Naples", "Turin"], 1),
+        ("Egypt", ["Alexandria", "Giza", "Luxor", "Cairo"], 3),
+        ("Canada", ["Toronto", "Ottawa", "Vancouver", "Montreal"], 1),
+        ("Brazil", ["Rio de Janeiro", "Sao Paulo", "Brasilia", "Salvador"], 2),
+        ("Germany", ["Munich", "Hamburg", "Berlin", "Cologne"], 2),
+        ("Russia", ["St. Petersburg", "Moscow", "Novosibirsk", "Kazan"], 1),
+    ]
+    return [
+        {"id": f"cap_{i}", "question": f"What is the capital of {country}?",
+         "choices": choices, "answer": answer}
+        for i, (country, choices, answer) in enumerate(items)
+    ]
+
+def smoke_test():
+    docs = make_toy_dataset()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        for d in docs:
+            f.write(json.dumps(d) + "\n")
+        task_file = f.name
+
+    # gpt2 (124M) runs in seconds on CPU. evaluate() hardcodes bf16 +
+    # device_map="auto"; on a pure-CPU machine also switch torch_dtype to
+    # float32 in evaluate() (bf16 matmuls are slow/unsupported on many CPUs).
+    summary = evaluate(
+        model_name="gpt2", task_file=task_file, num_fewshot=0, device="cpu"
+    )
+
+    # Invariant (b): single-token choices -> acc and acc_norm must agree exactly.
+    assert summary["acc"] == summary["acc_norm"]
+
+    # Invariant (a): four distinct, strictly negative log-likelihoods per item.
+    null_count = 0
+    for s in summary["samples"]:
+        lls = s["log_likelihoods"]
+        assert len(set(lls)) == 4, f"non-distinct log-likelihoods: {lls}"
+        assert all(x < 0.0 for x in lls) and 0.0 not in lls, f"non-negative/zero ll: {lls}"
+        if s["predicted_raw"] is None:  # structurally never true: argmax over 4 finite values
+            null_count += 1
+    null_rate = null_count / len(summary["samples"])
+    assert null_rate == 0.0
+    print(f"null_rate={null_rate:.4f}  acc={summary['acc']:.4f}  acc_norm={summary['acc_norm']:.4f}")
+    return summary
+
+if __name__ == "__main__":
+    smoke_test()
+```
+
+For a stronger check than "the numbers look plausible," recompute one item's log-likelihood independently and compare it to what the harness recorded:
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from minimal_harness import MCDoc, build_fewshot_prompt
+from smoke_test import smoke_test
+
+# smoke_test() runs the harness on the toy set and returns the summary dict:
+summary = smoke_test()
+
+tok = AutoTokenizer.from_pretrained('gpt2')
+m = AutoModelForCausalLM.from_pretrained('gpt2').eval()
+
+# With num_fewshot=0 the harness evaluates every doc in order, so samples[0] is
+# the first toy question (capital of France). Rebuild that MCDoc explicitly so
+# this check is self-contained (eval_docs is internal to evaluate()).
+doc0 = MCDoc(id="cap_0", question="What is the capital of France?",
+             choices=["Paris", "Lyon", "Marseille", "Nice"], answer=0)
+ctx = build_fewshot_prompt(doc0, [], 0)   # 0-shot context, matches score_choices
+ids = [tok.bos_token_id] + tok.encode(ctx, add_special_tokens=False)
+pred = summary['samples'][0]['predicted_raw']
+letter_ids = tok.encode(f' {chr(65 + pred)}', add_special_tokens=False)
+assert len(letter_ids) == 1            # ' A'..' D' are single gpt2 tokens
+with torch.no_grad():
+    logits = m(torch.tensor([ids])).logits
+ref_ll = torch.log_softmax(logits[0, -1], dim=-1)[letter_ids[0]].item()
+# Must match the harness-recorded log-likelihood for the chosen letter:
+assert abs(ref_ll - summary['samples'][0]['log_likelihoods'][pred]) < 1e-4
+```
+
+One caveat on interpreting the result: this scheme scores the answer **letter** (" A".." D"), not the answer text, so a base model like gpt2 evaluated zero-shot sits near the 0.25 chance floor on letter selection — the smoke test verifies mechanics, not model quality. Give gpt2 `num_fewshot=2` and it picks up the letter-answer format and rises above chance. The diagnostic signal is not the accuracy number in isolation but its relationship to the invariants: an accuracy of exactly 0.25 **accompanied by identical per-choice log-likelihoods** is the signature of the BOS split bug; genuinely distinct log-likelihoods that still average near chance just mean the base model is weak at this format, which is a legitimate result.
 
 ## Reproducibility Engineering
 
@@ -821,32 +940,35 @@ $$
 where $n_{01}$ is the number of examples where model A is wrong and model B is right, and $n_{10}$ is the reverse.
 
 ```python
-from scipy.stats import chi2
+from scipy.stats import chi2, binomtest
 
 def mcnemar_test(results_a: list[int], results_b: list[int]) -> dict:
-    """Perform McNemar's test for two paired binary result sequences.
-    
-    Args:
-        results_a: list of 0/1 correctness for model A (one per doc)
-        results_b: list of 0/1 correctness for model B (one per doc)
-    
-    Returns:
-        dict with chi2 statistic, p-value, and cell counts
+    """McNemar's test for two paired binary result sequences.
+
+    Uses the exact two-sided binomial test when discordant pairs are few
+    (< 25) and the continuity-corrected chi-square approximation otherwise.
+    See 11.6 (Statistical Rigor) for the full derivation and reference code.
     """
     assert len(results_a) == len(results_b), "Must be paired on the same docs"
-    
-    n_01 = sum(a == 0 and b == 1 for a, b in zip(results_a, results_b))
-    n_10 = sum(a == 1 and b == 0 for a, b in zip(results_a, results_b))
-    
-    if n_01 + n_10 == 0:
-        return {"chi2": 0.0, "p_value": 1.0, "n_01": 0, "n_10": 0}
-    
-    # Apply continuity correction (Yates) for small cell counts
-    statistic = (abs(n_01 - n_10) - 1) ** 2 / (n_01 + n_10)
-    p_value = 1 - chi2.cdf(statistic, df=1)
-    
+
+    n_01 = sum(a == 0 and b == 1 for a, b in zip(results_a, results_b))  # B right, A wrong
+    n_10 = sum(a == 1 and b == 0 for a, b in zip(results_a, results_b))  # A right, B wrong
+    n_disc = n_01 + n_10
+
+    if n_disc == 0:                    # models never disagree -> no evidence
+        statistic, p_value = None, 1.0
+    elif n_disc < 25:                  # too few pairs for chi-square: exact test
+        # Under H0 each discordant pair is a fair coin: n_01 ~ Binomial(n_disc, 0.5).
+        statistic = None
+        p_value = binomtest(n_01, n_disc, 0.5, alternative="two-sided").pvalue
+    else:
+        # Yates continuity correction, clamped at 0 so n_01 == n_10 gives
+        # exactly 0 (an uncorrected (|0|-1)**2 would report a spurious 1/n_disc).
+        statistic = max(abs(n_01 - n_10) - 1, 0) ** 2 / n_disc
+        p_value = float(chi2.sf(statistic, df=1))
+
     return {
-        "chi2": round(statistic, 4),
+        "chi2": round(statistic, 4) if statistic is not None else None,
         "p_value": round(p_value, 4),
         "n_01": n_01,  # B correct, A wrong
         "n_10": n_10,  # A correct, B wrong
@@ -858,7 +980,9 @@ def mcnemar_test(results_a: list[int], results_b: list[int]) -> dict:
 results_a = [1, 0, 1, 1, 0, 1, 0, 0, 1, 1]  # model A correct/wrong
 results_b = [1, 1, 1, 0, 0, 1, 1, 0, 1, 0]  # model B correct/wrong
 print(mcnemar_test(results_a, results_b))
-# {'chi2': 0.0, 'p_value': 1.0, 'n_01': 2, 'n_10': 2, 'acc_a': 0.6, 'acc_b': 0.6}
+# Only 4 discordant pairs (n_disc = 4 < 25), so the exact binomial test runs
+# and no chi-square statistic is reported:
+# {'chi2': None, 'p_value': 1.0, 'n_01': 2, 'n_10': 2, 'acc_a': 0.6, 'acc_b': 0.6}
 ```
 
 ### Bootstrap Confidence Intervals

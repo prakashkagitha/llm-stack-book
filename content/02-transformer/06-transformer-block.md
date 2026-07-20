@@ -190,7 +190,7 @@ $$
 \text{FFN}_\text{SwiGLU}(\mathbf{x}) = W_\text{down}\big(\text{Swish}(W_\text{gate}\mathbf{x}) \odot (W_\text{up}\mathbf{x})\big)
 $$
 
-To keep parameter count and FLOPs comparable to the standard $4d$ expansion, the inner dimension is reduced to $\frac{2}{3} \times 4d \approx \frac{8d}{3}$, rounded to a multiple of 64 for hardware efficiency. In Llama 2 7B this gives $d_\text{ff} = 11{,}008$ from $\frac{8 \times 4096}{3} = 10{,}922.7 \to 11{,}008$.
+To keep parameter count and FLOPs comparable to the standard $4d$ expansion, the inner dimension is reduced to $\frac{2}{3} \times 4d \approx \frac{8d}{3}$, then rounded up to a hardware-friendly multiple. Llama 2 7B rounds $\frac{8 \times 4096}{3} = 10{,}922.7$ up to a multiple of 256 (its `multiple_of` hyperparameter), giving $d_\text{ff} = 11{,}008$. Rounding the same $8d/3$ target up to a multiple of 64 instead — as the reference implementation later in this chapter does — yields $d_\text{ff} = 10{,}944$; it is the identical recipe with a different alignment constant.
 
 **GeGLU** is the same idea with GELU instead of Swish: $\text{GeGLU}(x, W, V) = \text{GELU}(xW) \odot (xV)$. Gemma 2 uses GeGLU.
 
@@ -458,7 +458,7 @@ if __name__ == "__main__":
     print(f"Small model parameters: {total_params / 1e6:.2f}M")
 ```
 
-Running the sanity-check section above with the Llama 2 7B single-block dimensions prints approximately 218M parameters per block (attention + FFN + two RMSNorms), consistent with $7\text{B} / 32 \approx 219\text{M}$ per layer.
+Running the sanity-check section above with the Llama 2 7B single-block dimensions prints approximately **201.6M** parameters per block: attention $4d^2 = 67.1\text{M}$ (fused QKV $3d^2$ plus the output projection $d^2$) plus the SwiGLU FFN $3 \cdot d \cdot d_\text{ff} = 3 \cdot 4096 \cdot 10{,}944 = 134.5\text{M}$ (this chapter's code rounds $8d/3$ up to a multiple of 64, giving $d_\text{ff}=10{,}944$), plus two RMSNorms ($2 \cdot 4096$, negligible). To sanity-check against the full model, multiply $201.6\text{M} \times 32 \approx 6.45\text{B}$ and add the two $32{,}000 \times 4096 \approx 131\text{M}$ embedding matrices (input token embedding plus the untied LM head), giving $\approx 6.71\text{B}$ — close to Llama 2 7B's true 6.74B. The small residual gap is the FFN alignment constant: the real Llama 2 uses `multiple_of=256`, which rounds $8d/3$ up to $d_\text{ff}=11{,}008$ (not 10,944), raising each block to $\approx 202.4\text{M}$ and the 32-block trunk to $\approx 6.48\text{B}$; adding the $\approx 0.26\text{B}$ of embeddings recovers the reported 6.74B exactly. Note that the naive '$7\text{B}/32 \approx 219\text{M}$ per layer' estimate is misleading precisely because the nominal 7B includes $\approx 0.26\text{B}$ of embedding parameters that live outside the transformer blocks.
 
 ---
 
@@ -472,7 +472,7 @@ At layer $l$, the residual stream has (empirically) roughly unit variance after 
 
 ### Initialization scaling for deep stacks
 
-Wang & Komatsuzaki (*GPT-J-6B*, 2021) and Bai et al. (*Transformers Need Glasses!*, 2024) note that naive Xavier/Kaiming initialization for a 96-layer stack can still produce variance blowup in the residual stream. The fix: scale the output projections of each sublayer by $1/\sqrt{2L}$ (where $L$ is the total number of layers), so that the $L$ residual contributions have unit total variance. This is the `init_scale` trick in many industrial implementations.
+Radford et al. (*Language Models are Unsupervised Multitask Learners* / GPT-2, 2019) and Shoeybi et al. (*Megatron-LM*, 2019) note that naive Xavier/Kaiming initialization for a deep stack can produce variance blowup in the residual stream. GPT-2 addresses this by scaling the residual output projections by $1/\sqrt{N}$ (with $N$ the number of residual layers), and Megatron-LM uses the equivalent $1/\sqrt{2L}$ factor (two residual additions per block over $L$ blocks). The fix: scale the output projections of each sublayer by $1/\sqrt{2L}$ (where $L$ is the total number of layers), so that the $L$ residual contributions have unit total variance. This is the `init_scale` trick in many industrial implementations.
 
 ### bfloat16 and overflow in the FFN
 

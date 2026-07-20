@@ -18,6 +18,8 @@ There are three broad answers:
 
 The projector approach (strategy 1) has become the dominant recipe because it is simple, cheap to train, and easy to compose with any pretrained LLM.
 
+Strategies 1 and 2 are both forms of *late fusion*: a separately pretrained vision encoder produces features that a lightweight connector (projector or cross-attention) injects into a largely-frozen LLM, so the two modalities are computed independently and only merged partway through. Strategy 3 is *early fusion*: image and text become a single joint token stream that one model attends over from its very first layer, with no separate vision tower at inference (Chameleon quantizes patches into codebook tokens; Fuyu skips the encoder entirely and feeds linearly-projected raw patches straight into the decoder). Late fusion is cheaper to train and composes with any pretrained LLM, which explains its dominance; early fusion is architecturally simpler and unifies understanding with generation, but it must be trained from scratch on mixed data.
+
 {{fig:vlm-projector-dataflow}}
 
 ## LLaVA: The Projector Paradigm
@@ -138,6 +140,25 @@ class MiniLLaVA(nn.Module):
         return outputs
 
 
+# NOTE: MiniLLaVA.forward above always prepends all visual tokens before the text,
+# which is a functional simplification. Real LLaVA splices projected image tokens at
+# the position of an <image> placeholder inside the chat template (so, e.g., a system
+# prompt can precede the image). The helper below shows that real placeholder-splicing.
+def splice_visual_tokens(text_embeds, input_ids, visual_tokens, labels, image_token_id):
+    # single example (no batch dim): text_embeds [T,D], input_ids [T],
+    # visual_tokens [N,D], labels [T] (-100 on prompt/system positions), scalar image_token_id
+    pos = (input_ids == image_token_id).nonzero(as_tuple=True)[0]
+    assert pos.numel() == 1, "expected exactly one <image> placeholder"
+    p = pos.item()
+    N = visual_tokens.shape[0]
+    new_embeds = torch.cat([text_embeds[:p], visual_tokens, text_embeds[p+1:]], dim=0)  # [T-1+N, D]
+    vis_labels = torch.full((N,), -100, dtype=labels.dtype, device=labels.device)
+    new_labels = torch.cat([labels[:p], vis_labels, labels[p+1:]], dim=0)               # [T-1+N]
+    new_mask   = torch.ones(new_embeds.shape[0], dtype=torch.long, device=new_embeds.device)
+    # check: new_embeds.shape[0] == input_ids.shape[0] - 1 + N
+    return new_embeds, new_labels, new_mask
+
+
 # --- Quick shape check (no weights needed) ---
 if __name__ == "__main__":
     B, H, W = 2, 336, 336  # LLaVA uses 336x336
@@ -152,7 +173,8 @@ if __name__ == "__main__":
     print(f"Patches in:  {fake_patches.shape}")  # [2, 576, 1024]
     print(f"Tokens out:  {out.shape}")            # [2, 576, 4096]
     print(f"Projector params: {sum(p.numel() for p in proj.parameters()):,}")
-    # Approx 4096*1024*2 + 4096*4096*2 ≈ 42M params — tiny vs 7B LLM
+    # 1024*4096 + 4096*4096 (+ biases) ≈ 21M params — tiny vs 7B LLM
+    # (prints 20,979,712 = 4,198,400 + 16,781,312)
 ```
 
 LLaVA-1.5 replaced the linear projector with this MLP connector, achieving significant gains on benchmarks like VQAv2 and MMBench. The lesson: the projector is a hyperparameter worth tuning.
@@ -174,7 +196,7 @@ The key architectural difference from the projector approach:
 | Dimension | LLaVA-style projector | Flamingo cross-attn |
 |---|---|---|
 | Visual tokens in LLM stream | Yes — they occupy sequence positions | No — LLM residual stream unchanged |
-| New parameters | Projector only (~40M) | Cross-attn KV projections in every layer |
+| New parameters | Projector only (~21M) | Cross-attn KV projections in every layer |
 | LLM context consumed by image | Proportional to N_patches (e.g. 576) | Zero — image stored externally |
 | Few-shot image interleaving | Awkward — prepend all images | Natural — interleaved in context |
 | Fine-tuning complexity | Straightforward | More complex; two parameter groups |
@@ -272,7 +294,7 @@ The most important practical concern in VLM engineering is the **visual token ex
     - Each $336 \times 336$ tile produces $576$ patch tokens through CLIP ViT-L/14.
     - 4 tiles + 1 thumbnail $\times 576 = 2880$ visual tokens.
 
-    At LLaMA-2-7B with $D_\text{llm} = 4096$, each token costs $2 \times 4096 = 8192$ bytes (bf16) in the KV cache per layer, across 32 layers:
+    At LLaMA-2-7B with $D_\text{llm} = 4096$, each token costs $2 \text{ (K and V)} \times 4096 \text{ dims} \times 2 \text{ bytes} = 16{,}384$ bytes (bf16) in the KV cache per layer, across 32 layers:
 
     $$
     \text{KV memory} = 2880 \times 32 \times 2 \times 4096 \times 2 \,\text{bytes} \approx 1.5\,\text{GB}
@@ -566,7 +588,7 @@ The remaining open questions the field is actively working on:
 !!! key "Key Takeaways"
 
     - VLMs bridge a vision encoder and an LLM via two main strategies: **projector (LLaVA-style)** prepends projected visual tokens into the LLM's sequence; **cross-attention (Flamingo-style)** inserts new cross-attention layers that let LLM hidden states query visual features without consuming context positions.
-    - The **projector approach** dominates in 2024–2025 due to its simplicity: a two-layer MLP maps CLIP ViT patch embeddings into the LLM embedding space. Only ~40M new parameters are needed.
+    - The **projector approach** dominates in 2024–2025 due to its simplicity: a two-layer MLP maps CLIP ViT patch embeddings into the LLM embedding space. Only ~21M new parameters are needed.
     - The **visual token explosion** is the central engineering constraint: a 336px image generates 576 tokens, and any-resolution tiling multiplies this by the number of tiles. KV-cache memory and prefill FLOPS scale accordingly.
     - **Any-resolution (AnyRes) tiling** — dividing an image into multiple 336×336 tiles and encoding each independently — is the standard solution for high-resolution and OCR tasks. LLaVA-1.6, InternVL 2, and Qwen-VL all use this approach.
     - **Training is staged:** first align the projector with frozen encoder + LLM; then co-train the projector and LLM (and optionally the encoder at a lower LR) on diverse instruction-following data.

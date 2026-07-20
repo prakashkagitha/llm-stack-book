@@ -142,17 +142,17 @@ def rollout(prompts):
 The weight swap (Phase 5) typically goes through vLLM's worker API. Conceptually:
 
 ```python
-def sync_weights_to_engine(engine, trainer_model):
+def sync_weights_to_engine(engine, state_dict):
     """
     Push freshly-trained weights into the live vLLM engine without a restart.
+    `state_dict` maps param name -> bf16 tensor (e.g. policy.state_dict()).
     In colocated setups this is an in-process update of the model's parameters;
     veRL/OpenRLHF wrap this so the named tensors map correctly onto vLLM's
     (possibly differently-sharded) internal layout.
     """
-    state = trainer_model.state_dict()                 # name -> bf16 tensor
     # vLLM exposes a collective_rpc / load_weights path on its workers:
     engine.llm_engine.model_executor.collective_rpc(
-        "load_weights", args=(list(state.items()),)
+        "load_weights", args=(list(state_dict.items()),)
     )
     # After this, the next engine.generate() samples from the NEW policy.
 ```
@@ -190,15 +190,15 @@ By raw FLOPs, generation looks *cheaper* than training ($2N$ vs $6NE$). So why d
 The decode time is better modeled by bandwidth. Per decode step across a batch of $B$ sequences, you read the weights once (amortized over the batch) plus each sequence's KV:
 
 $$
-T_{\text{decode-step}} \approx \frac{2 N \cdot b_{\text{param}} + B \cdot \text{KV}_{\text{per-seq-step}}}{\text{HBM bandwidth}},
+T_{\text{decode-step}} \approx \frac{N \cdot b_{\text{param}} + B \cdot \text{KV}_{\text{per-seq-step}}}{\text{HBM bandwidth}},
 $$
 
-and total decode time is roughly $L_g$ times that. The key term is the weight read: even with a large batch, you pay $\sim 2N \cdot b_{\text{param}}$ bytes of weight traffic *per decode step*, and there are $L_g$ steps. That is the tax that makes generation slow.
+and total decode time is roughly $L_g$ times that. The key term is the weight read: even with a large batch, you pay $\sim N \cdot b_{\text{param}}$ bytes of weight traffic *per decode step*, and there are $L_g$ steps. That is the tax that makes generation slow.
 
 !!! example "Worked example: where does an RL step's time go?"
     Take a 7B model in bf16 ($N=7\times10^9$, $b_{\text{param}}=2$ bytes) on a single H100 (peak bf16 ≈ 990 TFLOP/s dense; HBM bandwidth ≈ 3.35 TB/s). Batch: $P=64$ prompts, $G=8$ → $B=512$ sequences. Lengths: $L_p=512$, $L_g=1024$. PPO epochs $E=2$.
 
-    **Generation time (Phase 1), bandwidth-bound.** Weight traffic per decode step ≈ $2N\cdot b_{\text{param}} = 2\cdot7\text{e}9\cdot2 = 2.8\times10^{10}$ bytes = 28 GB. Time to read that once: $28\text{ GB} / 3.35\text{ TB/s} \approx 8.4$ ms per decode step (ignoring KV traffic, which adds more). Over $L_g=1024$ steps: $\approx 8.6$ s of weight-read-bound decode — *and this is amortized across the whole batch*, because all 512 sequences decode their next token together. With realistic KV traffic and imperfect batching, call it **~12–20 s per outer step for generation.** Prefill of the 512 prompts (×512 tokens) is compute-bound and comparatively quick, a second or two.
+    **Generation time (Phase 1), bandwidth-bound.** Weight traffic per decode step ≈ $N\cdot b_{\text{param}} = 7\text{e}9\cdot2 = 1.4\times10^{10}$ bytes = 14 GB. Time to read that once: $14\text{ GB} / 3.35\text{ TB/s} \approx 4.2$ ms per decode step (ignoring KV traffic, which adds more). Over $L_g=1024$ steps: $\approx 4.3$ s of weight-read-bound decode — *and this is amortized across the whole batch*, because all 512 sequences decode their next token together. With realistic KV traffic and imperfect batching, call it **~6–10 s per outer step for generation.** Prefill of the 512 prompts (×512 tokens) is compute-bound and comparatively quick, a second or two.
 
     **Training time (Phase 4), compute-bound.** $C_{\text{train}} = 6N\cdot B\cdot L_g\cdot E = 6\cdot7\text{e}9\cdot512\cdot1024\cdot2 \approx 4.4\times10^{16}$ FLOPs. At 45% MFU on an H100: effective throughput $\approx 0.45\cdot 990\text{e}12 = 4.5\times10^{14}$ FLOP/s. Time $\approx 4.4\text{e}16 / 4.5\text{e}14 \approx$ **~98 s**... but wait — that is on *one* GPU. The point of FSDP is to spread this across, say, 8 GPUs, giving **~12 s**. Meanwhile the *generation* above was also on the available GPUs.
 
@@ -430,13 +430,14 @@ The async ladder is the single biggest lever on RL throughput, and choosing a ru
 Here is the whole synchronous loop assembled from the pieces, so the five phases are visible end to end. This is essentially what a single-controller trainer (veRL-style) executes per step, minus the distributed plumbing.
 
 ```python
-def rl_outer_step(prompts, golds, *, engine, policy, ref, opt, group_size=8):
+def rl_outer_step(prompts, golds, *, engine, policy, ref, opt, tok, group_size=8):
     # ---- Phase 1: ROLLOUT (inference engine, continuous-batched) -------------
     rollouts = rollout(prompts)                      # G completions/prompt + beh logprobs
 
     # ---- Phase 2: REWARD (verifier / RM / sandbox) ---------------------------
     for r, gold in zip(rollouts, expand(golds, group_size)):
-        r["reward"] = reward_fn(r["prompt"], r["response_ids"], gold)
+        response_text = tok.decode(r["response_ids"], skip_special_tokens=True)
+        r["reward"] = reward_fn(r["prompt"], response_text, gold)
 
     # ---- Phase 3: EXPERIENCE PREP (trainer-side no_grad forwards) -------------
     input_ids, resp_mask, beh_lp, rewards = build_experience_batch(rollouts, pad_id, dev)
@@ -449,7 +450,7 @@ def rl_outer_step(prompts, golds, *, engine, policy, ref, opt, group_size=8):
         input_ids, resp_mask[:, 1:], old_lp, ref_lp, advantages, policy, opt)
 
     # ---- Phase 5: WEIGHT SYNC (push new theta into the engine) ----------------
-    sync_weights_to_engine(engine, policy)
+    sync_weights_to_engine(engine, policy.state_dict())
 
     return {"reward": rewards.mean().item(), "loss": loss,
             "clip_frac": clip_frac, "kl": approx_kl,
