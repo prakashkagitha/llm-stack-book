@@ -705,7 +705,7 @@ The newer **FSDP2** redesigns sharding around per-parameter `DTensor` (distribut
 
 ### Putting It Together: A Runnable Distributed `train.py`
 
-The pieces so far live in separate scripts — the DDP mechanics, the FSDP wrap, the checkpoint dance. A real pretraining run wires them into one file that `torchrun` launches identically on 1 GPU, an 8-GPU node, or many nodes. Here is that file: a compact causal GPT, a shard-aware dataloader over pre-tokenized `uint16` `.bin` files (the nanoGPT-style format used throughout Part III), AdamW, a cosine schedule with warmup, gradient clipping, a `--parallel {ddp,fsdp}` switch, and periodic full-state-dict checkpointing. It is the 8-GPU path made buildable without hand-integrating five chapters.
+The pieces so far live in separate scripts — the DDP mechanics, the FSDP wrap, the checkpoint dance. A real pretraining run wires them into one file that `torchrun` launches identically on 1 GPU, an 8-GPU node, or many nodes. Here is that file: a compact causal GPT, a shard-aware dataloader over pre-tokenized `uint16` `.bin` files (the nanoGPT-style format produced in [Training an LLM From Scratch: The End-to-End Recipe](../03-pretraining/17-end-to-end-pretrain-recipe.html)), AdamW, a cosine schedule with warmup, gradient clipping, a `--parallel {ddp,fsdp}` switch, and periodic full-state-dict checkpointing. It is the 8-GPU path made buildable without hand-integrating five chapters.
 
 ```python
 # train.py -- one torchrun-launchable pretraining loop.

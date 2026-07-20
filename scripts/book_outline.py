@@ -394,6 +394,9 @@ EXTRA = {
         ch("16-continual-pretraining", "Continual & Domain-Adaptive Pretraining",
            "Extending an existing base model instead of retraining: learning-rate re-warming/re-decay, replay ratios to fight catastrophic forgetting, domain/language adaptation (code, medical, legal, new languages), and streaming-data scenarios. Model-growth and weight-reuse (depth/width expansion, dense-to-MoE upcycling, vocabulary/tokenizer transfer) and planning CPT compute with loss-trajectory models.",
            5000, "opus"),
+        ch("17-end-to-end-pretrain-recipe", "Training an LLM From Scratch: The End-to-End Recipe",
+           "The capstone that wires every prior stage into one runnable path from raw text to a trained, sampled-from model: corpus -> tokenizer -> uint16 shards -> GPT -> AdamW + cosine schedule -> torchrun training loop with gradient accumulation and checkpointing -> monitoring (loss, grad norm, MFU) -> eval (perplexity) -> inference/sampling. Concrete configs and expectations at four scales (laptop/single-GPU/8-GPU/multi-node) plus a failure-mode playbook, linking to every deep chapter for the internals.",
+           6000, "sonnet"),
     ],
     "06-rl-infra": [
         ch("12-rl-data-curriculum-replay", "RL Data, Curriculum & Replay Management",
