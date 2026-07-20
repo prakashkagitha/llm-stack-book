@@ -98,12 +98,23 @@ class BlockManager:
             table.append(blk)
         return table                                  # this is the block table
 
-    def append_slot(self, block_table: list[int]) -> int | None:
-        """Called each decode step. Returns a new block id iff a fresh
-        block was needed (i.e. the last block just filled up)."""
-        # Caller knows the current token count; if it crosses a block
-        # boundary we must grow the table by one block.
-        blk = self.free_blocks.pop()
+    def can_append(self, seq) -> bool:
+        """Room for one more decode token? A fresh block is only needed when
+        the current tokens exactly fill the last block."""
+        boundary = seq.num_tokens % self.block_size == 0
+        return len(self.free_blocks) >= (1 if boundary else 0)
+
+    def append_slot(self, block_table: list[int], cur_len: int) -> int | None:
+        """Called each decode step. `cur_len` is the number of tokens already
+        stored; the token about to be generated lands at position `cur_len`.
+        Grow the table by one block ONLY when that position starts a fresh
+        block (cur_len % block_size == 0); otherwise the last block still has
+        a free slot and we return None. (Mirrors 4.6's BlockManager.append_token:
+        without this guard we would pop one block per sequence *per step*, a
+        block_size-fold over-allocation.)"""
+        if cur_len % self.block_size != 0:
+            return None                              # room in the last block
+        blk = self.free_blocks.pop()                 # boundary: need a new block
         self.ref_count[blk] = 1
         block_table.append(blk)
         return blk
@@ -165,7 +176,7 @@ def schedule_step(self):
             if victim is seq:
                 break
         if seq in self.running:
-            self.block_mgr.append_slot(seq.block_table)
+            self.block_mgr.append_slot(seq.block_table, seq.num_tokens)
             scheduled.append(seq)
 
     # 2. Admit WAITING sequences (prefill) if budget and token quota allow.

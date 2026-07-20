@@ -185,13 +185,13 @@ and adding $\sum_{j \in J} e^{x_j - m_{\text{new}}}$ gives $\ell_{\text{new}} = 
 So at the end $m = \max_i x_i$, $\ell = \sum_i e^{x_i - m}$, and $o = \sum_i e^{x_i - m} v_i$, hence $o/\ell = \sum_i \frac{e^{x_i - m}}{\sum_j e^{x_j - m}} v_i = \sum_i p_i v_i$. The streaming computation equals the reference. The whole point is that we paid only $O(d)$ state and one extra multiply per block to avoid ever holding all $N$ logits at once. The numerical stability is preserved at every step because every exponent $x_j - m_{\text{new}} \le 0$, so we never exponentiate a positive number — the running max guarantees it.
 
 !!! example "Watch the correction factor work"
-    Stream the logits $x = [1,\,2,\,8,\,3]$ with block size 2 (blocks $[1,2]$ then $[8,3]$). Reference: max is 8, so the stable exponentials are $e^{-7}, e^{-6}, e^{0}, e^{-5}$, summing to $\ell^\star \approx 1.00339$.
+    Stream the logits $x = [1,\,2,\,8,\,3]$ with block size 2 (blocks $[1,2]$ then $[8,3]$). First, the reference. The global max is $8$, so the stable exponentials are $e^{1-8}, e^{2-8}, e^{8-8}, e^{3-8} = 0.000912,\ 0.002479,\ 1,\ 0.006738$, summing to $\ell^\star = 1.010129$. We will reproduce this value by streaming, never seeing all four logits at once.
 
     **Block 1** $[1, 2]$: local max $\tilde m = 2$, so $m = 2$, $\alpha = e^{-\infty - 2}\to 0$ (no prior state). $\ell = e^{1-2} + e^{2-2} = 0.3679 + 1 = 1.3679$.
 
-    **Block 2** $[8, 3]$: local max $\tilde m = 8$, new $m_{\text{new}} = 8$. Correction $\alpha = e^{2 - 8} = e^{-6} = 0.002479$. Rescale old denominator: $\alpha \cdot 1.3679 = 0.003391$. Add new terms $e^{8-8} + e^{3-8} = 1 + 0.006738 = 1.006738$. Total $\ell = 0.003391 + 1.006738 = 1.01013$.
+    **Block 2** $[8, 3]$: local max $\tilde m = 8$, new $m_{\text{new}} = 8$. Correction $\alpha = e^{2 - 8} = e^{-6} = 0.002479$. Rescale old denominator: $\alpha \cdot 1.3679 = 0.003391$. Add new terms $e^{8-8} + e^{3-8} = 1 + 0.006738 = 1.006738$. Total $\ell = 0.003391 + 1.006738 = 1.010129$.
 
-    Hmm — compare to $\ell^\star \approx 1.00339$. They differ because $\ell^\star$ above used max $=8$ for *all four* terms; let us recompute the reference carefully: $e^{1-8}+e^{2-8}+e^{8-8}+e^{3-8} = 0.000912 + 0.002479 + 1 + 0.006738 = 1.010129$. The online value $1.01013$ matches to five decimals. The earlier "$1.00339$" was an arithmetic slip on the reader's behalf — *which is exactly the kind of mistake the algorithm never makes*, because the correction factor re-bases every prior term to the final max automatically.
+    The streaming denominator $1.010129$ equals the reference $\ell^\star = 1.010129$ exactly. Watch what the correction factor bought us: block 1 was accumulated against its *local* max of $2$ (giving $\ell = 1.3679$), yet when block 2 revealed the true max of $8$, the single multiply $\alpha = e^{2-8}$ re-based that entire prior contribution down onto the final scale — no second pass over the data, no re-reading of block 1. The running max guarantees every exponent stays $\le 0$, and the final divide by $\ell$ happens exactly once.
 
 ## FlashAttention forward: tiling + online softmax fused into one pass
 

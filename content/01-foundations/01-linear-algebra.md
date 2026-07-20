@@ -627,6 +627,59 @@ B2 = torch.randn(4, 4)
 frob_inner = torch.einsum('ij,ij->', A2, B2)  # same as (A2 * B2).sum()
 ```
 
+### einops: named-axis tensor ops
+
+`einops` (a separate library, `pip install einops`; works transparently with PyTorch, NumPy, JAX, and TensorFlow tensors) replaces error-prone chains of `.view()`, `.reshape()`, `.permute()`, `.transpose()`, `.squeeze()`, and `.unsqueeze()` with a single readable pattern string. Where `einsum` expresses contractions (sums over shared indices), einops expresses pure re-layout and reductions: no axis is ever summed unless you explicitly reduce. The pattern is a mini-language: names left of `->` label the input axes, names on the right give the output order; parentheses group axes (merge, on the right) or split a composite axis (on the left, with the split size supplied as a keyword like `h=8`). Because every axis is named, the operation is self-documenting and shape bugs surface as readable errors rather than silently-wrong strides.
+
+The three verbs: `rearrange` (reorder/split/merge axes, never changes the number of elements), `reduce` (rearrange + aggregate over axes that disappear, with reduction one of `'mean'`|`'sum'`|`'max'`|`'min'`|`'prod'`), and `repeat` (rearrange + tile/broadcast new axes into existence). The key invariant: any name appearing on exactly one side is created (`repeat`) or removed (`reduce`); `rearrange` requires the multiset of element-carrying names to match on both sides.
+
+```python
+import torch
+from einops import rearrange, reduce, repeat
+
+x = torch.randn(3, 4)
+xt = rearrange(x, 'a b -> b a')               # (4, 3)  == x.T / x.transpose(0, 1)
+
+# Merge axes (flatten)
+B, S, D = 2, 4, 6
+x2 = torch.randn(B, S, D)
+flat = rearrange(x2, 'b s d -> b (s d)')      # (2, 24)  == x2.reshape(B, S*D)
+
+# Split axes (inverse of the merge above)
+back = rearrange(flat, 'b (s d) -> b s d', d=D)  # (2, 4, 6)  == flat.reshape(B, S, D)
+assert torch.allclose(back, x2)
+
+# Multi-head attention: split the model dim into (heads, head_dim)
+B, S, D, H = 2, 4, 6, 2
+d_head = D // H  # 3
+x = torch.randn(B, S, D)
+
+xh = rearrange(x, 'b s (h d) -> b h s d', h=H)   # (2, 2, 4, 3)
+# The composite '(h d)' on the LEFT means D is read as h-major, d-minor --
+# matching reshape(..., H, d_head), NOT reshape(..., d_head, H). Getting this
+# ordering backwards is the classic multi-head bug.
+x_manual = x.reshape(B, S, H, d_head).permute(0, 2, 1, 3)
+assert torch.allclose(xh, x_manual)
+
+# Merge heads back -- exact round trip
+x_back = rearrange(xh, 'b h s d -> b s (h d)')
+assert torch.allclose(x_back, x)              # exact inverse
+
+# reduce: mean-pool over the sequence axis
+pooled = reduce(x, 'b s d -> b d', 'mean')    # == x.mean(dim=1)
+assert torch.allclose(pooled, x.mean(dim=1))
+
+# repeat: broadcast a per-position mask across heads (creates a new axis)
+mask = torch.zeros(B, S)
+mask_h = repeat(mask, 'b s -> b h s', h=H)    # (2, 2, 4)  == mask[:, None, :].expand(B, H, S)
+
+# all asserts above passing == correct
+print('heads split:', xh.shape, '| round-trip OK')
+# heads split: torch.Size([2, 2, 4, 3]) | round-trip OK
+```
+
+This book uses einops for Vision Transformer patchification (see [Vision Transformers](../10-multimodal-and-arch/01-vision-transformers.html)), where an image `(b c (h1 h2) (w1 w2))` is rearranged to a patch sequence `(b (h1 w1) (h2 w2 c))` in a single call; `einops.layers.torch.Rearrange` can likewise be dropped into an `nn.Sequential` as a shape-changing layer. The same named-axis idea underlies `torch.einsum` (above), and HF/timm model code uses einops widely, so the pattern language is worth internalizing.
+
 ### Memory layout: contiguous tensors
 
 PyTorch stores tensors in row-major (C-contiguous) order by default. After a `.transpose()` or `.permute()`, the tensor may become non-contiguous, causing performance regressions in subsequent operations. Call `.contiguous()` before passing to `@` or `F.linear` when in doubt.

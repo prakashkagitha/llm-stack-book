@@ -220,6 +220,28 @@ def compute_gae(rewards, values, response_mask, gamma=1.0, lam=0.95):
     return advantages, returns
 ```
 
+!!! example "Worked example: hand-checking compute_gae on a 4-token toy"
+    Take one sequence (B=1) with four positions and `response_mask = [1, 1, 1, 0]` — position 3 is padding. Use `gamma=1.0` and `lam=0.5` (the code defaults to `lam=0.95`; we pick 0.5 here purely for clean arithmetic — the recursion is byte-identical either way). The reward-model score $R=10$ is placed on the last *unmasked* token (position 2), zeros elsewhere: `rewards = [0, 0, 10, 0]`. Critic values are `values = [1, 2, 3, 5]`, where the 5 at the padding slot is deliberately garbage and must not leak into any real advantage.
+
+    The recursion being applied at each step, walking $t$ from 3 down to 0, is $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$ then $\hat A_t = \delta_t + \gamma\lambda\, \hat A_{t+1}$, with `next_value` and `last_adv` reset to 0 whenever the mask is 0.
+
+    | t | mask | $r_t$ | $V_t$ | $V(s_{t+1})$ | $\delta_t$ | $\hat A_t$ (raw) | $R_t$ (return) |
+    |---|------|-------|-------|--------------|------------|-------------------|-----------------|
+    | 3 | 0 | 0  | 5 | 0 (init) | -5 | 0 (masked out) | 5 (masked, ignore) |
+    | 2 | 1 | 10 | 3 | 0        | 7  | 7               | 10 |
+    | 1 | 1 | 0  | 2 | 3        | 1  | 4.5             | 6.5 |
+    | 0 | 1 | 0  | 1 | 2        | 1  | 3.25            | 4.25 |
+
+    Three subtle points the table makes concrete:
+
+    - **Mask boundary / terminal bootstrap.** At $t=2$ the incoming `next_value` is 0, *not* the padding value 5 — stepping past position 3 set `next_value = values * mask = 0`, so the last real token correctly bootstraps from $V(s_T)=0$. Hence $\hat A_2 = \delta_2 = 7$, with no leakage from the garbage padding value.
+    - **Backward recursion.** $\hat A_1 = 1 + 0.5 \times 7 = 4.5$, then $\hat A_0 = 1 + 0.5 \times 4.5 = 3.25$ — each step folds in the discounted future advantage exactly as the formula prescribes.
+    - **Returns.** $R_t = \hat A_t + V_t$, computed *before* whitening: $10 = 7+3$, $6.5 = 4.5+2$, $4.25 = 3.25+1$.
+
+    Whitening then normalizes over the three unmasked raw advantages $[3.25, 4.5, 7]$: mean $= 4.9167$, std $= 1.9094$ (`torch.std` defaults to unbiased, $\text{ddof}=1$). The returned, whitened, mask-applied advantages are approximately $[-0.873, -0.218, 1.091, 0.000]$ — the padding slot is forced to exactly 0 by the final `* response_mask`.
+
+    As a unit test: calling `compute_gae(rewards, values, mask, gamma=1.0, lam=0.5)` on these exact tensors should reproduce raw advantages `[3.25, 4.5, 7, 0]`, returns `[4.25, 6.5, 10, 5]`, and whitened advantages `[-0.873, -0.218, 1.091, 0]`. Note the return at the padding slot is a meaningless 5 (= 0 + 5); that's harmless because every downstream consumer multiplies by the mask, but a good test also asserts the nonzero reward landed on the last unmasked token.
+
 !!! warning "Common pitfall: where exactly does the reward go?"
     The reward model produces *one* scalar per response, but GAE wants a per-token `rewards` tensor. The standard convention is to place the RM score (and the per-token KL penalty, see below) on the **last response token** (the token before/at EOS), with zeros elsewhere. A frequent bug is putting the reward on the padding position, on the prompt's last token, or one step off — which silently shifts all advantages by one and quietly wrecks training. Always assert that the nonzero terminal reward lands on the final *unmasked* token of each sequence.
 

@@ -202,6 +202,138 @@ A few engineering notes the code glosses over but production systems must handle
 - **Numerical stability.** Compute $p/q$ carefully; clamp $q$ away from zero. With temperature 0, special-case the comparison to argmax to avoid $0/0$.
 - **Batching.** Different requests in a batch accept different numbers of tokens, so the "advance" is ragged. This interacts non-trivially with [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html); engines pad to the max accepted length or use variable-length kernels.
 
+### KV-Cache Reuse and Rollback
+
+The `speculative_step` above re-runs `draft(draft_ids)` and `target(draft_ids)` over the *entire* sequence every single step — an $O(T)$ recompute that gets more wasteful the longer the generation runs. A production implementation instead keeps a KV cache for each model and feeds only the *new* tokens at every step, then **rolls each cache back** to the accepted length with `DynamicCache.crop(...)` once accept/reject is resolved. The invariant to hold in your head: at the start of a step, both caches hold KV for the committed prefix *except* the final committed token, which is left "pending" and re-fed as the first input of the next step. Equivalently, `cache.get_seq_length()` is always one less than the committed sequence length, and each step's first move is simply to feed `prefix_ids[:, cache.get_seq_length():]` to catch the cache up. This is exactly the bookkeeping Hugging Face's assisted-generation implementation performs internally.
+
+```python
+import torch
+from transformers import DynamicCache  # transformers >= 4.44
+
+# reuses apply_temperature, target, draft, tok from the previous listing
+
+
+@torch.no_grad()
+def speculative_step_cached(prefix_ids, draft_cache, target_cache, gamma=4, temperature=1.0):
+    """
+    Same contract as speculative_step, but threads and mutates two
+    DynamicCache objects (one per model) instead of recomputing from scratch.
+    Returns: new_ids, n, draft_cache, target_cache
+    """
+    device = prefix_ids.device
+    T = prefix_ids.shape[1]
+
+    # ---- 1) DRAFT: γ cheap steps, feeding only the tokens not yet cached. ----
+    draft_ids   = prefix_ids.clone()
+    draft_probs = []
+    for i in range(gamma):
+        if i == 0:
+            # Gap-prefill: catch the draft cache up to the current prefix.
+            # Normally this is just the one pending token, but see the
+            # all-accepted note below — it can legitimately be more.
+            cur = draft_ids[:, draft_cache.get_seq_length():]
+        else:
+            cur = draft_ids[:, -1:]                        # one new token
+        out = draft(cur, past_key_values=draft_cache, use_cache=True)
+        draft_cache = out.past_key_values                  # reassign (in-place DynamicCache)
+        q = apply_temperature(out.logits[:, -1, :], temperature)   # [1, V]
+        x = torch.multinomial(q, num_samples=1)             # [1, 1]
+        draft_probs.append(q)
+        draft_ids = torch.cat([draft_ids, x], dim=1)
+    # draft_cache now holds KV for positions 0..T+gamma-2 — i.e. everything
+    # up to (but not including) the last draft token d_gamma, which is
+    # intentionally left uncached.
+
+    # ---- 2) VERIFY: ONE target pass over only the uncached tail. ----
+    # In steady state this tail is the pending token plus d_1..d_gamma:
+    # gamma+1 tokens.
+    t_in = draft_ids[:, target_cache.get_seq_length():]
+    out = target(t_in, past_key_values=target_cache, use_cache=True)
+    target_cache = out.past_key_values
+    # Use the LAST gamma+1 logits, not absolute indices: on the very first
+    # step t_in also contains the whole prompt, so its length varies.
+    target_probs = apply_temperature(
+        out.logits[0, -(gamma + 1):, :], temperature
+    )  # [gamma+1, V]; row k predicts position T+k: rows 0..gamma-1 verify
+       # d_1..d_gamma, row gamma is the bonus-token distribution.
+
+    # ---- 3) ACCEPT/REJECT loop — identical logic to speculative_step. ----
+    accepted = []
+    n = 0
+    for i in range(gamma):
+        d_tok = draft_ids[0, T + i].item()
+        p_i = target_probs[i]
+        q_i = draft_probs[i].squeeze(0)
+        accept_prob = min(1.0, (p_i[d_tok] / q_i[d_tok]).item())
+        if torch.rand(1, device=device).item() < accept_prob:
+            accepted.append(d_tok)
+            n += 1
+        else:
+            residual = torch.clamp(p_i - q_i, min=0.0)
+            residual = residual / residual.sum()
+            accepted.append(torch.multinomial(residual, num_samples=1).item())
+            break
+    else:
+        accepted.append(torch.multinomial(target_probs[gamma], num_samples=1).item())
+
+    new_ids = torch.cat(
+        [prefix_ids, torch.tensor([accepted], device=device, dtype=prefix_ids.dtype)],
+        dim=1,
+    )
+
+    # ---- 4) ROLLBACK: crop both caches to the accepted length. ----
+    # `keep` is the number of context tokens whose KV is valid going into the
+    # next step — one less than the new committed length T+n+1, matching the
+    # "pending final token" invariant described above.
+    keep = T + n
+    # DynamicCache.crop(max_length) truncates every layer's K/V tensors to
+    # max_length along the sequence dimension. It is a NO-OP when
+    # max_length >= cache.get_seq_length(). Two cases:
+    #   (1) Some draft token rejected (n < gamma): the draft cache currently
+    #       holds T+gamma-1 positions; crop(keep) truncates it down to T+n,
+    #       discarding the speculative-but-now-invalid positions.
+    #   (2) ALL gamma drafts accepted (n == gamma): keep = T+gamma, which
+    #       exceeds the draft cache's current length T+gamma-1, so
+    #       draft_cache.crop is a no-op — the draft cache legitimately LAGS
+    #       the committed prefix by one token (d_gamma was never fed to the
+    #       drafter). This is fine and self-healing: next step's gap-prefill
+    #       `draft_ids[:, draft_cache.get_seq_length():]` will simply feed
+    #       TWO tokens (d_gamma and the bonus) instead of one. The target
+    #       cache never lags this way, since the verify pass always
+    #       processes through position T+gamma.
+    target_cache.crop(keep)
+    draft_cache.crop(keep)
+
+    return new_ids, n, draft_cache, target_cache
+
+
+@torch.no_grad()
+def generate_cached(prompt, max_new_tokens=128, gamma=4, temperature=1.0):
+    ids = tok(prompt, return_tensors="pt").input_ids.cuda()
+    start = ids.shape[1]
+    draft_cache = DynamicCache()   # empty: first step's gap-prefill feeds the
+    target_cache = DynamicCache()  # whole prompt to both models.
+    total_accepted, total_steps = 0, 0
+    while ids.shape[1] - start < max_new_tokens:
+        ids, n, draft_cache, target_cache = speculative_step_cached(
+            ids, draft_cache, target_cache, gamma=gamma, temperature=temperature
+        )
+        total_accepted += n
+        total_steps += 1
+    # Target cache always trails the committed length by exactly one (the
+    # pending-token invariant). The draft cache may trail by two right after
+    # an all-accepted step, so we only bound it, not assert equality.
+    assert target_cache.get_seq_length() == ids.shape[1] - 1
+    assert draft_cache.get_seq_length() <= ids.shape[1] - 1
+    avg_accept = total_accepted / max(total_steps, 1)
+    print(f"target passes: {total_steps}, mean accepted draft/step: {avg_accept:.2f}")
+    return tok.decode(ids[0, start:], skip_special_tokens=True)
+```
+
+Correctness is easy to check reproducibly. At `temperature=0`, speculative decoding is deterministic and lossless — the accept/reject rule collapses to argmax comparison — so `generate_cached` must produce a byte-identical continuation to both the naive `generate(...)` above and plain Hugging Face greedy decoding: `tok.decode(target.generate(tok(prompt, return_tensors="pt").input_ids.cuda(), max_new_tokens=128, do_sample=False)[0, start:])`. Concretely: `assert generate_cached("The future of machine learning is", temperature=0) == generate("The future of machine learning is", temperature=0)`. At `temperature > 0` the two only match if the same RNG draws happen in the same order (seed with `torch.manual_seed` before each call), since sampling consumes randomness — the greedy-equivalence check is the robust invariant to test. As a speed sanity check, `generate_cached` should be several times faster wall-clock than `generate` for long generations, since it drops the $O(T)$ per-step recompute entirely.
+
+Hugging Face Transformers implements exactly this rollback in `transformers/generation/utils.py` (the assisted-generation path and `_speculative_sampling`), backed by `DynamicCache.crop` in `transformers/cache_utils.py`. For **tree verification** (see the Tree Attention section below), crop-by-length no longer applies — instead of truncating a contiguous suffix, you keep exactly the accepted root-to-leaf path's nodes with a per-layer gather: `key_cache[l] = key_cache[l].index_select(-2, keep_idx)` (and likewise for `value_cache`), where `keep_idx` is a `LongTensor` of the flattened node indices on the accepted path and `-2` is the sequence dimension of the `[batch, heads, seq, head_dim]` KV tensors. This `index_select` mechanics is what paged/tree engines like vLLM, SGLang, and gpt-fast's speculative-decoding worker use under the hood.
+
 ## Choosing and Training a Draft Model
 
 The accept/reject proof says correctness is free; the drafter only governs throughput. So drafter design is purely an optimization problem with two competing knobs:
