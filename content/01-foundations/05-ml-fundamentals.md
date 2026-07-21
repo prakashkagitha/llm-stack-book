@@ -36,6 +36,8 @@ $$
 
 The classic tradeoff: as model complexity increases, bias falls but variance rises. The optimal model complexity minimizes their sum.
 
+{{fig:mlfund-bias-variance-decomposition}}
+
 ```python
 import numpy as np
 import matplotlib
@@ -145,6 +147,8 @@ $$
 $$
 
 L1 promotes *sparsity*: many parameters are driven to exactly zero, performing automatic feature selection. Bayesian interpretation: Laplace prior on weights. In practice, L1 is rarely used for neural networks (subgradients complicate optimization) but is standard for linear models and feature selection.
+
+{{fig:mlfund-l1-l2-geometry}}
 
 ### Dropout
 

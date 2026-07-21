@@ -1,0 +1,123 @@
+<figure class="viz" id="fig-rlanat-relay-idle-timeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 800 520" role="img" aria-label="Three timelines comparing synchronous disaggregated RL, where the training pool sits idle during generation and the inference pool sits idle during training, against colocation, which time-slices generate and train on one pool with no second idle pool, and asynchronous RL, where generation of the next step overlaps training of the current step so neither pool waits.">
+  <defs>
+    <pattern id="rlanat-relay-hatch" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="7" stroke="var(--border-2,#d8d1c0)" stroke-width="1.6"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-rlanat-relay-idle-timeline text{ fill:var(--ink-soft); }
+    #fig-rlanat-relay-idle-timeline .stitle{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-rlanat-relay-idle-timeline .tag{ font:600 10px var(--sans,sans-serif); fill:var(--muted); font-style:italic; }
+    #fig-rlanat-relay-idle-timeline .lane{ font:700 10.5px var(--sans,sans-serif); }
+    #fig-rlanat-relay-idle-timeline .blk{ font:600 10px var(--sans,sans-serif); }
+    #fig-rlanat-relay-idle-timeline .sub{ font:500 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rlanat-relay-idle-timeline .callout{ font:600 10px var(--sans,sans-serif); }
+    #fig-rlanat-relay-idle-timeline .strap{ font:600 12px var(--sans,sans-serif); }
+    #fig-rlanat-relay-idle-timeline .legend{ font:600 10px var(--sans,sans-serif); }
+    #fig-rlanat-relay-idle-timeline .busy{ fill:var(--accent); fill-opacity:0.28; stroke:var(--accent); stroke-width:1.2; }
+    #fig-rlanat-relay-idle-timeline .idle{ fill:url(#rlanat-relay-hatch); stroke:var(--muted); stroke-width:1.2; }
+    #fig-rlanat-relay-idle-timeline .divider{ stroke:var(--border-2); stroke-width:1; }
+  </style>
+
+
+  <g data-anim="1">
+    <rect x="150" y="14" width="16" height="12" class="busy"/>
+    <text x="170" y="24" text-anchor="start" class="legend">busy</text>
+    <rect x="220" y="14" width="16" height="12" class="idle"/>
+    <text x="240" y="24" text-anchor="start" class="legend">idle</text>
+    <text x="780" y="24" text-anchor="end" class="sub">time -&gt;</text>
+  </g>
+
+
+  <g data-anim="1">
+    <text x="20" y="55" text-anchor="start" class="stitle">A. SYNCHRONOUS DISAGGREGATED (the relay race)</text>
+    <text x="780" y="55" text-anchor="end" class="tag">only one pool works at a time</text>
+  </g>
+
+  <g data-anim="2">
+    <text x="140" y="90" text-anchor="end" class="lane">INFER pool</text>
+    <rect x="150" y="74" width="300" height="26" class="busy"/>
+    <text x="300" y="91" text-anchor="middle" class="blk" fill="var(--accent)">generate</text>
+    <rect x="450" y="74" width="75" height="26" class="idle"/>
+
+    <text x="140" y="128" text-anchor="end" class="lane">TRAIN pool</text>
+    <rect x="150" y="112" width="300" height="26" class="idle"/>
+    <rect x="450" y="112" width="75" height="26" class="busy"/>
+    <text x="487" y="129" text-anchor="middle" class="blk" fill="var(--accent)">train</text>
+    <rect x="525" y="112" width="35" height="26" class="idle"/>
+  </g>
+
+  <g data-anim="3">
+    <line x1="300" y1="138" x2="300" y2="152" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="300" y="166" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">train pool idle</text>
+    <text x="300" y="179" text-anchor="middle" class="sub">~80% of the step</text>
+
+    <line x1="525" y1="87" x2="538" y2="87" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="542" y="83" text-anchor="start" class="callout" fill="var(--warn,#e0a106)">infer pool idle</text>
+    <text x="542" y="96" text-anchor="start" class="sub">during training</text>
+  </g>
+
+
+  <line x1="20" y1="200" x2="780" y2="200" class="divider"/>
+  <g data-anim="1">
+    <text x="20" y="222" text-anchor="start" class="stitle">B. COLOCATED</text>
+  </g>
+
+  <g data-anim="3">
+    <text x="140" y="248" text-anchor="end" class="lane">GPU pool</text>
+    <rect x="150" y="230" width="160" height="26" class="busy"/>
+    <text x="230" y="247" text-anchor="middle" class="blk" fill="var(--accent)">generate</text>
+    <rect x="310" y="230" width="14" height="26" class="idle"/>
+    <rect x="324" y="230" width="40" height="26" class="busy"/>
+    <text x="344" y="247" text-anchor="middle" class="blk" fill="var(--accent)">train</text>
+    <rect x="364" y="230" width="14" height="26" class="idle"/>
+    <rect x="378" y="230" width="160" height="26" class="busy"/>
+    <text x="458" y="247" text-anchor="middle" class="blk" fill="var(--accent)">generate</text>
+    <rect x="538" y="230" width="14" height="26" class="idle"/>
+    <rect x="552" y="230" width="40" height="26" class="busy"/>
+    <text x="572" y="247" text-anchor="middle" class="blk" fill="var(--accent)">train</text>
+  </g>
+
+  <g data-anim="4">
+    <line x1="317" y1="256" x2="317" y2="270" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="317" y="284" text-anchor="middle" class="callout">reshape / free KV</text>
+    <text x="317" y="296" text-anchor="middle" class="sub">&lt;-&gt; optimizer</text>
+    <text x="480" y="284" text-anchor="middle" class="callout" fill="var(--good,#2f9e6e)">no idle second pool</text>
+    <text x="480" y="296" text-anchor="middle" class="sub">pay a local weight+memory reshape</text>
+  </g>
+
+
+  <line x1="20" y1="320" x2="780" y2="320" class="divider"/>
+  <g data-anim="1">
+    <text x="20" y="342" text-anchor="start" class="stitle">C. ASYNC</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="150" y="358" width="75" height="80" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="4 3"/>
+
+    <text x="140" y="372" text-anchor="end" class="lane">INFER pool</text>
+    <rect x="150" y="358" width="300" height="26" class="busy"/>
+    <text x="300" y="375" text-anchor="middle" class="blk" fill="var(--accent)">generate (step k+1)</text>
+
+    <text x="140" y="410" text-anchor="end" class="lane">TRAIN pool</text>
+    <rect x="150" y="396" width="75" height="26" class="busy"/>
+    <text x="187" y="413" text-anchor="middle" class="blk" fill="var(--accent)">train (k)</text>
+    <rect x="225" y="396" width="225" height="26" class="idle"/>
+  </g>
+
+  <g data-anim="6">
+    <text x="187" y="452" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">overlap: generation of step k+1</text>
+    <text x="187" y="465" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">hidden behind training of step k</text>
+    <text x="187" y="478" text-anchor="middle" class="sub">-&gt; data now slightly off-policy (stale by ~1 step)</text>
+  </g>
+
+
+  <line x1="20" y1="495" x2="780" y2="495" class="divider"/>
+  <g data-anim="6">
+    <text x="400" y="513" text-anchor="middle" class="strap">Generation is 60-80% of the step, so the fix is to overlap it (colocate / async) so no pool sits idle.</text>
+  </g>
+</svg>
+<figcaption><b>The synchronous relay race leaves a GPU pool idle for most of every step.</b> Colocation removes the second idle pool by time-slicing one pool between generate and train; asynchronous RL overlaps the next generation with the current training, trading a little on-policy-ness for a lot of utilization.</figcaption>
+</figure>

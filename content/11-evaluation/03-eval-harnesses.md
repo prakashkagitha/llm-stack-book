@@ -20,6 +20,8 @@ All of these choices are legitimate, but they produce incomparable numbers. An *
 
 The secondary benefit is velocity: a well-designed harness lets a practitioner add a new task in ~50 lines of YAML/Python rather than re-implementing tokenization, batching, log-likelihood computation, and result aggregation from scratch.
 
+{{fig:evalharness-why-harness-pins-knobs}}
+
 ## lm-evaluation-harness: Architecture and Mechanics
 
 The [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) (Gao et al.) is the de facto standard for open-model evaluation. It supports hundreds of tasks and is the backend for most open leaderboards, including the Open LLM Leaderboard on Hugging Face.
@@ -57,6 +59,8 @@ lm_eval \
 ```
 
 ### How Log-Likelihood Scoring Works
+
+{{fig:evalharness-loglikelihood-acc-vs-accnorm}}
 
 For multiple-choice tasks like MMLU, the harness does **not** generate text. Instead, for each answer choice $c_i$ it computes the log-likelihood of that choice given the context:
 

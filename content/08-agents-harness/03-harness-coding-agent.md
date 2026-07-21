@@ -146,6 +146,8 @@ There is a direct cost dimension here too. Because the harness resends the whole
 
 ## Anatomy III: The Agent Loop
 
+{{fig:agent-loop-structural-termination}}
+
 The loop is the beating heart of the harness. Conceptually it is the ReAct cycle from [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html) — *reason, act, observe* — but a production coding loop has to handle multiple parallel tool calls, errors, permissions, budget limits, and a clean termination condition. Let us build it.
 
 ```python
@@ -363,6 +365,8 @@ Some sub-tasks are *exploratory* and context-hungry: "find every place in this 5
 This is **context isolation as a design primitive**: each agent gets a context budget sized to its job, and expensive exploration is firewalled off from the precious main thread. It is the single-machine, single-user analogue of the multi-agent orchestration patterns in [Multi-Agent Systems & Orchestration](../08-agents-harness/07-multi-agent-systems.html). The trade-off: sub-agents add latency (a whole nested loop) and cannot share intermediate state with the parent, so you use them for *parallelizable, summarizable* work — search, investigation, independent edits — not for tightly coupled reasoning.
 
 ### Verification: the dividing line between good and bad harnesses
+
+{{fig:verification-the-dividing-line}}
 
 Here is the thesis of the chapter, stated plainly: **the largest single quality gap between coding harnesses is whether the agent verifies its own work before claiming success.** A weak harness edits a file and says "Done!" A strong harness edits, then *runs the test*, *runs the linter*, *checks the build*, reads the actual output, and only declares success when the verifier passes — and if it fails, feeds the failure back and tries again. This is the agentic embodiment of the verifiable-reward idea from [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html): a ground-truth signal the agent cannot talk its way around.
 

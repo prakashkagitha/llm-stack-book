@@ -157,6 +157,8 @@ Key properties:
 
 The forward KL $D_{\text{KL}}(p\|q)$ is called **inclusive** — minimizing it forces $q$ to cover all modes of $p$. The reverse KL $D_{\text{KL}}(q\|p)$ is **exclusive** — minimizing it lets $q$ concentrate on one mode of $p$. This asymmetry is critical in variational inference and in RLHF/DPO, where we penalize the KL between the fine-tuned policy and the reference model.
 
+{{fig:kl-asymmetry-mode-covering-vs-seeking}}
+
 ### Cross-Entropy
 
 **Cross-entropy** between distribution $p$ (true) and $q$ (model) is:
@@ -180,6 +182,8 @@ H(p_{\text{one-hot}}, q) = -\log q(x^*)
 $$
 
 The cross-entropy loss is simply the negative log-probability the model assigns to the correct token. No sum needed — one-hot $p$ kills all other terms.
+
+{{fig:softmax-categorical-crossentropy-anatomy}}
 
 ---
 

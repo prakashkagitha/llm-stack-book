@@ -33,6 +33,8 @@ Scalable oversight is the research program that asks: **can we use AI to amplify
 
 ## Three Scalable-Oversight Mechanisms
 
+{{fig:three-oversight-mechanisms}}
+
 ### Debate
 
 The **debate** proposal (Irving, Christiano, and Amodei, *AI Safety via Debate*, 2018) turns oversight into a zero-sum game between two copies of the model. Given a question, two AI debaters argue for opposing answers, taking turns. A human judge reads the transcript and declares a winner; each debater is trained to win. The bet is that **it is harder to convincingly defend a lie against a capable adversary who can point out its flaws than to defend the truth**. If true, the equilibrium of the game favors honesty, and the judge — who could not answer the question alone — can nonetheless reliably pick the winner.
@@ -303,6 +305,8 @@ The key building blocks of a control protocol:
 - **Trusted monitoring.** The trusted model rates each untrusted action for suspiciousness; high-suspicion actions are routed to expensive human audit.
 - **Auditing budget.** Human review is scarce, so the protocol must allocate a limited audit budget (say, audit the top $2\%$ most-suspicious actions) to maximize the chance of catching a betrayal.
 - **Defer-to-trusted / resampling.** When suspicion is high but the audit budget is spent, fall back to the trusted model's (weaker but safe) output, or resample the untrusted model and take a less-suspicious draw.
+
+{{fig:trusted-monitoring-control-loop}}
 
 ```python
 import numpy as np

@@ -1,0 +1,122 @@
+<figure class="viz" id="fig-agent-loop-structural-termination">
+<svg viewBox="0 0 820 650" role="img" aria-label="Cycle diagram of the agent loop: REASON flows into a decision diamond asking whether the assistant message contains a tool_use block. Yes routes down into ACT, which executes tool calls; both normal and is_error tool results feed through the same channel into OBSERVE, annotated that errors are information, not crashes. OBSERVE loops back up to REASON, and a small message stack beside REASON shows one row added per turn. No routes sideways out of the cycle to a TERMINATE / DONE box, the only arrow that leaves the loop.">
+<defs>
+  <marker id="alt-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" class="v-stroke" fill="currentColor" style="color:var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="alt-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+<style>
+  #fig-agent-loop-structural-termination .ttl   { font: 700 14px var(--sans,sans-serif); }
+  #fig-agent-loop-structural-termination .sub   { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-agent-loop-structural-termination .lbl   { font: 600 11px var(--sans,sans-serif); }
+  #fig-agent-loop-structural-termination .lbl-sm{ font: 600 9.5px var(--sans,sans-serif); }
+  #fig-agent-loop-structural-termination .lbl-xs{ font: 400 8.5px var(--sans,sans-serif); }
+  #fig-agent-loop-structural-termination .mono  { font: 400 9.5px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+  #fig-agent-loop-structural-termination .mantra{ font: 600 italic 11px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-agent-loop-structural-termination .branch{ font: 700 10.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-agent-loop-structural-termination text   { fill: var(--ink-soft,#45413a); }
+</style>
+
+
+<rect x="170" y="40" width="340" height="66" rx="12" class="v-fill v-stroke" stroke-width="2"/>
+<rect x="170" y="40" width="340" height="7" rx="4" fill="var(--ink-soft,#45413a)" opacity="0.35"/>
+<text x="340" y="70" text-anchor="middle" class="ttl">REASON</text>
+<text x="340" y="89" text-anchor="middle" class="sub">one forward pass over the ENTIRE transcript</text>
+
+
+<text x="340" y="130" text-anchor="middle" class="mantra">&#8220;acts to continue, speaks to finish&#8221;</text>
+
+
+<polygon points="340,148 492,220 340,292 188,220" class="v-fill v-stroke" stroke-width="2"/>
+<text x="340" y="212" text-anchor="middle" class="lbl-sm">assistant message contains</text>
+<text x="340" y="228" text-anchor="middle" class="lbl-sm">a tool_use block?</text>
+
+
+<line x1="492" y1="220" x2="538" y2="220" stroke="var(--accent,#c15b39)" stroke-width="2.2" marker-end="url(#alt-arr-acc)"/>
+<text x="515" y="207" text-anchor="middle" class="branch">NO</text>
+<text x="608" y="243" text-anchor="middle" class="branch">speaks to finish</text>
+
+
+<rect x="542" y="176" width="220" height="88" rx="14" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="2.4"/>
+<rect x="550" y="184" width="204" height="72" rx="9" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+<text x="652" y="214" text-anchor="middle" class="ttl" fill="var(--good,#2f9e6e)">TERMINATE / DONE</text>
+<text x="652" y="232" text-anchor="middle" class="lbl-xs">no tool_use block -></text>
+<text x="652" y="245" text-anchor="middle" class="lbl-xs">nothing left to execute</text>
+
+
+<line x1="340" y1="292" x2="340" y2="342" stroke="var(--accent,#c15b39)" stroke-width="2.2" marker-end="url(#alt-arr-acc)"/>
+<text x="352" y="312" class="branch">YES</text>
+<text x="352" y="328" class="branch">acts to continue</text>
+
+
+<rect x="170" y="346" width="340" height="66" rx="12" class="v-fill v-stroke" stroke-width="2"/>
+<rect x="170" y="346" width="340" height="7" rx="4" fill="var(--ink-soft,#45413a)" opacity="0.35"/>
+<text x="340" y="376" text-anchor="middle" class="ttl">ACT</text>
+<text x="340" y="395" text-anchor="middle" class="sub">execute the requested tool calls (possibly in parallel)</text>
+
+
+<line x1="280" y1="412" x2="280" y2="434" class="v-stroke" stroke-width="1.6" marker-end="url(#alt-arr)"/>
+<line x1="400" y1="412" x2="400" y2="434" class="v-stroke" stroke-width="1.6" marker-end="url(#alt-arr)"/>
+
+<rect x="208" y="436" width="144" height="42" rx="9" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+<text x="280" y="454" text-anchor="middle" class="lbl-sm">tool_result</text>
+<text x="280" y="468" text-anchor="middle" class="lbl-xs">(ok)</text>
+
+<rect x="328" y="436" width="144" height="42" rx="9" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+<text x="400" y="454" text-anchor="middle" class="lbl-sm">tool_result</text>
+<text x="400" y="468" text-anchor="middle" class="lbl-xs">is_error=true</text>
+
+<text x="480" y="450" class="lbl-xs" font-style="italic">e.g. failing test /</text>
+<text x="480" y="462" class="lbl-xs" font-style="italic">blocked cmd / bad edit</text>
+
+
+<line x1="280" y1="478" x2="340" y2="504" class="v-stroke" stroke-width="1.6"/>
+<line x1="400" y1="478" x2="340" y2="504" class="v-stroke" stroke-width="1.6"/>
+<line x1="340" y1="504" x2="340" y2="540" class="v-stroke" stroke-width="1.8" marker-end="url(#alt-arr)"/>
+
+<text x="418" y="500" class="lbl-xs">errors feed back as information;</text>
+<text x="418" y="513" class="lbl-xs">they do not crash the loop -&gt;</text>
+<text x="418" y="526" class="lbl-xs">the model self-corrects next turn.</text>
+
+
+<rect x="170" y="545" width="340" height="66" rx="12" class="v-fill v-stroke" stroke-width="2"/>
+<rect x="170" y="545" width="340" height="7" rx="4" fill="var(--ink-soft,#45413a)" opacity="0.35"/>
+<text x="340" y="575" text-anchor="middle" class="ttl">OBSERVE</text>
+<text x="340" y="594" text-anchor="middle" class="sub">append all results as the next user message</text>
+
+
+<path d="M170,578 L118,578 Q88,578 88,548 L88,103 Q88,73 118,73 L170,73"
+      fill="none" class="v-stroke" stroke-width="2" marker-end="url(#alt-arr)"/>
+<text x="70" y="330" text-anchor="middle" class="lbl-xs" transform="rotate(-90,70,330)">next turn: same messages list, resent whole</text>
+
+
+<text x="662" y="44" text-anchor="middle" class="lbl">messages</text>
+<text x="662" y="57" text-anchor="middle" class="lbl-xs">(single source of truth, re-sent every turn)</text>
+
+<rect x="558" y="64" width="208" height="17" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+<text x="566" y="76" class="mono" font-size="8.5">user task</text>
+<text x="758" y="76" text-anchor="end" class="lbl-xs">t=0</text>
+
+<rect x="558" y="83" width="208" height="17" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+<text x="566" y="95" class="mono" font-size="8.5">assistant + tool_call</text>
+<text x="758" y="95" text-anchor="end" class="lbl-xs">t=0</text>
+
+<rect x="558" y="102" width="208" height="17" rx="4" class="v-fill v-stroke" stroke-width="1"/>
+<text x="566" y="114" class="mono" font-size="8.5">tool_result (observe)</text>
+<text x="758" y="114" text-anchor="end" class="lbl-xs">t=0</text>
+
+<rect x="558" y="121" width="208" height="17" rx="4" class="v-fill" stroke="var(--ink-soft,#45413a)" stroke-width="1" stroke-dasharray="3 3" opacity="0.85"/>
+<text x="662" y="133" text-anchor="middle" class="lbl-xs">...</text>
+
+<rect x="558" y="140" width="208" height="17" rx="4" class="v-fill v-stroke" stroke-width="1.6"/>
+<text x="566" y="152" class="mono" font-size="8.5">assistant + tool_call</text>
+<text x="758" y="152" text-anchor="end" class="lbl-xs">t=2</text>
+
+<text x="662" y="167" text-anchor="middle" class="lbl-xs">grows by one row every cycle</text>
+
+</svg>
+<figcaption><b>The loop terminates structurally, not lexically: it ends exactly when an assistant turn contains no tool_use block, not when the model says a magic phrase.</b> Tool results and errors return through the same OBSERVE channel — a failing test or blocked command is just another observation the model reads and self-corrects from next turn, never a crash. The full message list is resent every turn, growing by one row per cycle, which is why termination discipline and prefix caching matter for cost.</figcaption>
+</figure>

@@ -259,6 +259,8 @@ RLAIF (Lee et al., Google, 2023) is a direct, controlled comparison between huma
 
 ### The Labeling Protocol
 
+{{fig:rlaif-judge-debiasing}}
+
 The AI judge is typically a model that is at least as capable as the policy being trained — often the same scale or larger. The judge is prompted with the comparison task and asked to reason before deciding. Two important practical choices:
 
 1. **Position bias mitigation.** LLMs systematically prefer the first response they read. Swap the order of A and B for a fraction of examples, and take the average (or the majority vote).
@@ -377,6 +379,8 @@ The virtuous cycle is that as the policy improves, the judge also improves (sinc
 ---
 
 ## Rejection Sampling, STaR & ReST
+
+{{fig:self-improvement-signal-map}}
 
 ### Rejection Sampling Fine-Tuning (RFT)
 

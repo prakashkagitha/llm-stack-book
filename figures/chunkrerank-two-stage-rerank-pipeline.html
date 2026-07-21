@@ -1,6 +1,6 @@
 <figure class="viz" id="fig-chunkrerank-two-stage-rerank-pipeline">
 <button class="viz-replay" type="button">↻ replay</button>
-<svg viewBox="0 0 720 560" role="img" aria-label="Two-stage retrieve-then-rerank pipeline: a fast hybrid retriever (BM25 plus dense) returns 100 candidates in about 10 ms, then an expensive cross-encoder reranker rescores those 100 and keeps the top 5 in about 200 ms, feeding the LLM context window.">
+<svg viewBox="0 0 720 560" role="img" aria-label="Two-stage retrieve-then-rerank pipeline: a fast, cheap hybrid retriever (BM25 plus dense) returns 100 candidates, then a slower, expensive cross-encoder reranker rescores those 100 candidates one pass each and keeps the top 5, feeding the LLM context window.">
 <defs>
   <marker id="trp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
     <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
@@ -15,10 +15,10 @@
 </defs>
 
 <style>
-  #fig-chunkrerank-two-stage-rerank-pipeline text { fill: var(--ink-soft,#333); }
+  #fig-chunkrerank-two-stage-rerank-pipeline text { fill: var(--ink-soft); }
   #fig-chunkrerank-two-stage-rerank-pipeline .lbl { font: 600 13px var(--sans,sans-serif); }
   #fig-chunkrerank-two-stage-rerank-pipeline .lbl-sm { font: 400 11.5px var(--sans,sans-serif); }
-  #fig-chunkrerank-two-stage-rerank-pipeline .lbl-xs { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-chunkrerank-two-stage-rerank-pipeline .lbl-xs { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted); }
   #fig-chunkrerank-two-stage-rerank-pipeline .hero-lbl { font: 700 14px var(--sans,sans-serif); fill: #fff; }
   #fig-chunkrerank-two-stage-rerank-pipeline .hero-sub { font: 400 11px var(--sans,sans-serif); fill: rgba(255,255,255,0.88); }
   #fig-chunkrerank-two-stage-rerank-pipeline .badge-lbl { font: 700 11px var(--sans,sans-serif); fill: #fff; }
@@ -74,7 +74,7 @@
 <g data-anim="2">
   <rect x="632" y="108" width="64" height="28" rx="14" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
   <text x="664" y="121" text-anchor="middle" class="pill-lbl" style="fill:var(--good,#2f9e6e); font-size:10px">fast</text>
-  <text x="664" y="133" text-anchor="middle" class="pill-lbl" style="fill:var(--good,#2f9e6e); font-size:10px">~10 ms</text>
+  <text x="664" y="133" text-anchor="middle" class="pill-lbl" style="fill:var(--good,#2f9e6e); font-size:10px">cheap recall</text>
 </g>
 
 
@@ -112,7 +112,7 @@
 <g data-anim="3">
   <rect x="590" y="228" width="70" height="30" rx="14" fill="var(--warn,#e0a106)" fill-opacity="0.15" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
   <text x="625" y="241" text-anchor="middle" class="pill-lbl" style="fill:var(--warn,#e0a106); font-size:10px">slower</text>
-  <text x="625" y="254" text-anchor="middle" class="pill-lbl" style="fill:var(--warn,#e0a106); font-size:10px">~200 ms</text>
+  <text x="625" y="254" text-anchor="middle" class="pill-lbl" style="fill:var(--warn,#e0a106); font-size:10px">~1 pass each</text>
 </g>
 
 
@@ -146,10 +146,10 @@
 
   
   <rect x="88" y="415" width="14" height="14" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.2" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
-  <text x="108" y="426" class="lbl-xs" style="font-size:11px; fill:var(--ink-soft,#333)">Stage 1: fast, broad recall (100 candidates)</text>
+  <text x="108" y="426" class="lbl-xs" style="font-size:11px; fill:var(--ink-soft)">Stage 1: fast, cheap, broad recall (100 candidates)</text>
 
   <rect x="88" y="435" width="14" height="14" rx="2" fill="var(--accent,#4f46e5)" fill-opacity="0.2" stroke="var(--accent,#4f46e5)" stroke-width="1.2"/>
-  <text x="108" y="446" class="lbl-xs" style="font-size:11px; fill:var(--ink-soft,#333)">Stage 2: slow, precise scoring (top-5)</text>
+  <text x="108" y="446" class="lbl-xs" style="font-size:11px; fill:var(--ink-soft)">Stage 2: slower, expensive, precise scoring (top-5)</text>
 
   <text x="360" y="475" text-anchor="middle" class="lbl-xs" style="font-size:11px">
     Cost/precision trade-off: cheap bi-encoder recall then expensive cross-encoder precision
@@ -161,5 +161,5 @@
 
 
 </svg>
-<figcaption><b>Two-stage retrieve-then-rerank narrows 100 candidates to 5 with a cost-conscious funnel.</b> The fast first stage (bi-encoder hybrid BM25 + dense, ~10 ms) casts a wide net for recall; the expensive second stage (cross-encoder, ~200 ms) runs only on the shortlist to achieve high precision. Only the 5 winning chunks reach the LLM context window, keeping prompt costs low while the cross-encoder's joint query–passage attention ensures relevance quality.</figcaption>
+<figcaption><b>Two-stage retrieve-then-rerank narrows 100 candidates to 5 with a cost-conscious funnel.</b> The fast, cheap first stage (bi-encoder hybrid BM25 + dense) casts a wide net for recall; the slower, expensive second stage (cross-encoder, one pass per candidate) runs only on the shortlist to achieve high precision. Only the 5 winning chunks reach the LLM context window, keeping prompt costs low while the cross-encoder's joint query-passage attention ensures relevance quality.</figcaption>
 </figure>

@@ -299,6 +299,8 @@ There are three escapes, each a later chapter:
 
 A second, sneakier source of idle time is the **long-tail of generation**: in a batch of $N{\times}G$ responses, a few will run to the full `max_tokens` while most finish early. Synchronous designs must wait for the slowest response before scoring and training. This "straggler" problem motivates continuous batching in the rollout engine and partial/streaming rollout consumption — see [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
 
+{{fig:rlanat-relay-idle-timeline}}
+
 ### Tension 3: weight sync — keeping two copies of a moving target consistent
 
 After every optimizer step, the policy moves. The inference engine now holds stale weights. To keep the loop on-policy you must propagate the new $\theta$ to the generator *before* the next rollout. For a 70B model in bf16 that is ~140 GB of parameters to move, every step. The hard parts:
@@ -344,6 +346,8 @@ Abstract tensions become concrete the moment you try to put a real run on real G
     **The lever.** To cut wall-clock you attack the 40 s first: faster/quantized rollout engine, more inference parallelism, shorter responses (or remove the length-inflating GRPO biases — see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)), or overlap generation of step $k{+}1$ with training of step $k$ (async). Optimizing the 10 s training phase is almost pointless until generation is handled. *In RL, generation is the budget.*
 
 The example crystallizes the part's whole thesis: in RL-for-LLM, **memory is dominated by the multiplicity of model copies, and time is dominated by generation.** Optimize for those two facts and you have understood 80% of RL infrastructure.
+
+{{fig:rlanat-budget-memory-and-time}}
 
 ## The mental model for Part VI
 

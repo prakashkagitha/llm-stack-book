@@ -19,6 +19,8 @@ The chunking decision controls a fundamental quality–recall trade-off:
 
 Getting chunking wrong is probably the single most common cause of poor RAG performance in the wild. The optimal chunk size is domain-dependent, but the strategies below give you a principled path through the search space.
 
+{{fig:chunkrerank-chunk-size-tradeoff}}
+
 ---
 
 ## 2. Chunking Strategies
@@ -376,6 +378,8 @@ $$
 where $k = 60$ is the smoothing constant (documents that don't appear in a ranking are simply omitted from that term). The document with the highest combined RRF score wins.
 
 RRF does not require score normalization — it only uses the rank ordinal, which makes it immune to the scale mismatch between BM25 scores (roughly 0–20) and cosine similarities (roughly 0.5–1.0).
+
+{{fig:chunkrerank-rrf-fusion}}
 
 ```python
 # hybrid_search.py — BM25 + dense retrieval with RRF fusion
