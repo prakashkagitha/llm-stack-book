@@ -79,6 +79,8 @@ The LIMA hypothesis is sometimes called the *superficial alignment hypothesis*: 
 !!! note "Implications for practitioners"
     Before scaling your SFT dataset to millions of examples, invest heavily in data quality metrics: deduplication, response length distribution, instruction diversity, and human spot-checking. Starting with 1–5k meticulously verified examples often beats starting with 100k noisy ones.
 
+{{fig:superficial-alignment-quality-over-quantity}}
+
 ## Data Quality > Quantity: Practical Data Engineering
 
 Given the LIMA insight, how do you build high-quality SFT data in practice?
@@ -196,6 +198,8 @@ One of the central risks of fine-tuning a pretrained model is catastrophic forge
 During pretraining, the model's weights settle into a configuration that is jointly optimal for a huge variety of tasks. SFT data is a narrow sample of that space. If the learning rate is too large, or the SFT distribution is too far from the pretraining distribution, gradient descent will "forget" the pretraining solution in favor of the fine-tuning target.
 
 The phenomenon is well-studied in continual learning: when a neural network is trained sequentially on task A then task B, performance on task A degrades roughly in proportion to the distance between the loss landscapes of A and B.
+
+{{fig:catastrophic-forgetting-loss-landscape}}
 
 ### Mitigation Strategies
 

@@ -39,6 +39,8 @@ The mechanistic explanation: CoT *externalises intermediate state* into the cont
 
 This is directly analogous to the difference between a bounded-depth circuit (a single-pass model) and an unbounded sequential program. CoT effectively converts the fixed-depth network into a variable-depth one, governed by the length of the reasoning trace rather than the number of transformer layers.
 
+{{fig:cot-depth-unrolling}}
+
 ```python
 import openai  # or any compatible client
 
@@ -320,6 +322,8 @@ r_\text{PRM}(x, y_{1:t}) = r_\theta(\text{problem}=x, \text{steps so far}=y_1, \
 $$
 
 Lightman et al. (*Let's Verify Step by Step*, 2023) trained a step-level verifier on human-annotated mathematics solutions and showed it substantially outperforms ORM for guiding best-of-N search. The intuition: a bad reasoning step early can doom a solution even if the final answer is guessed correctly, and PRM catches this.
+
+{{fig:orm-vs-prm-scoring}}
 
 ```python
 import torch

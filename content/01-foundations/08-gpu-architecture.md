@@ -86,6 +86,8 @@ Each block is assigned to exactly one **streaming multiprocessor (SM)** for its 
 
 A kernel launch creates a **grid** of blocks. You choose the grid dimensions and block dimensions. The GPU's global scheduler hands blocks out to SMs as they free up. Because there are usually far more blocks than SMs, this gives automatic load balancing and forward scalability: the same kernel runs on a small GPU (few SMs) or a large one (many SMs) with no code change — bigger GPUs simply chew through more blocks concurrently.
 
+{{fig:execution-model-warp-simt}}
+
 ```python
 # A from-scratch mental model of the GPU execution hierarchy in pure Python.
 # This is NOT how you run on a GPU (you'd use CUDA/Triton) -- it is a faithful
@@ -308,6 +310,8 @@ This is the **roofline** ([The Roofline Model & Performance Engineering](../04-k
 
 - If $I < I_{\text{ridge}}$, the kernel is **memory-bound**: it would finish faster if HBM were faster, and adding more FLOPs (e.g. recomputation) is "free." You are bandwidth-limited.
 - If $I > I_{\text{ridge}}$, the kernel is **compute-bound**: it is limited by the arithmetic units. You are FLOP-limited.
+
+{{fig:roofline-intensity-decode-vs-matmul}}
 
 For an A100, $\pi \approx 312\,\text{TFLOP/s}$ (BF16) and $\beta \approx 2.0\,\text{TB/s}$, so $I_{\text{ridge}} \approx 156$ FLOP/byte. For an H100 with $\pi \approx 990\,\text{TFLOP/s}$ (BF16, dense) and $\beta \approx 3.35\,\text{TB/s}$, $I_{\text{ridge}} \approx 295$ FLOP/byte. **The ridge point has been climbing every GPU generation** — compute grows faster than bandwidth — which means more and more kernels fall on the memory-bound side over time. This is *the* secular trend in ML systems: we are increasingly bandwidth-starved, and techniques that trade FLOPs for bytes keep winning.
 

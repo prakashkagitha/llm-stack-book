@@ -259,6 +259,8 @@ Capacity is where the MI300X's 192 GB and the TPU/Gaudi HBM slabs earn their kee
 
 Use the ridge point $I^{*}$ from above. **Training** and **prefill** are dense GEMMs with high arithmetic intensity → **compute-bound** → you care about FP8/bf16 TFLOPS. Autoregressive **decode** streams the entire weight matrix from HBM to generate each token with tiny per-token compute → **bandwidth-bound** → you care about HBM TB/s, almost regardless of peak FLOPS. This is the single most important distinction when picking a serving chip.
 
+{{fig:accel-roofline-decode-vs-prefill}}
+
 ### Step 3: A back-of-envelope decision function
 
 ```python
@@ -321,6 +323,8 @@ The function encodes the doctrine: for **decode** serving, rank by *aggregate HB
     - On a **192 GB MI300X**, the whole 152 GB fits on **one** device. No tensor-parallel collective in the decode path at all. Because decode is **bandwidth-bound**, that single MI300X streaming weights at $\sim 5.3\ \text{TB/s}$ from one HBM stack — with zero inter-GPU communication — is a genuinely strong serving configuration despite the MI300X's raw FLOPS being a serving afterthought.
 
     The lesson is the chapter's thesis in miniature: **for decode serving you often pick the chip by HBM capacity and bandwidth, not by peak TFLOPS.** Flip the workload to *training* the same model and the calculus inverts — now it is dense, compute-bound GEMMs over a huge cluster, you care about aggregate FP8/bf16 TFLOPS and the all-reduce efficiency of the interconnect, and the TPU pod's torus + XLA collectives or a large NVLink/Infinity-Fabric domain become the deciding factors.
+
+{{fig:accel-capacity-decision-70b}}
 
 ### A comparison table to anchor the families
 

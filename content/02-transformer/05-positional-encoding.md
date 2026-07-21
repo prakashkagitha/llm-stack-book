@@ -288,6 +288,8 @@ This runs and prints two essentially identical numbers: the score from rotating 
 
     Now the key extrapolation observation: at the *original* training length 4096, the slow pairs never complete even a fraction of a turn (4096 / 54000 ≈ 0.076 of a cycle), so the model has only ever seen them in a narrow angular range. Push the context to 100,000 tokens and those slow dimensions suddenly rotate into angles the model has *never observed during training* — which is precisely why naive RoPE degrades past the training length, and exactly what NTK/YaRN scaling (next section) repairs by adjusting the frequency ladder.
 
+{{fig:rope-frequency-ladder}}
+
 !!! note "Aside: why rotate Q and K but not V"
     Position should modulate *who attends to whom* (the similarity), not *what content is retrieved* (the payload). The score $q_m^\top R_\Theta(n-m) k_n$ is where relative position belongs. The value $v_n$ is the information token $n$ hands back once it has been selected; rotating it would entangle position into the retrieved content and break the clean "values are a convex blend of payloads" picture from [the attention chapter](../02-transformer/03-attention-from-scratch.html). So RoPE touches $Q$ and $K$ only.
 
@@ -346,6 +348,8 @@ A genuinely surprising 2023 result (Kazemnejad et al., *The Impact of Positional
 You have a model pretrained with RoPE at 4096 tokens. You want it to handle 32K or 128K. Retraining from scratch at long context is enormously expensive (attention is $\mathcal{O}(n^2)$; see the [long-context chapter](../03-pretraining/13-long-context-pretraining.html)). The RoPE-scaling family lets you extend context with *little or no* additional training, by manipulating the frequency ladder. This is one of the most practically important — and interview-hot — topics in the chapter.
 
 The core problem, restated from the worked example: at inference position $p > L_{\text{train}}$, the slow RoPE dimensions rotate into angles never seen in training. There are three families of fixes, best understood through the metaphor of an instrument with many strings tuned to different frequencies.
+
+{{fig:rope-scaling-methods}}
 
 ### Position Interpolation (PI)
 

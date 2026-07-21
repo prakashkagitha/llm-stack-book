@@ -1,0 +1,171 @@
+<figure class="viz" id="fig-gptq-error-compensation">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 490" role="img" aria-label="A single weight row shown as ten columns swept left to right. Columns left of the sweep are quantized and locked onto grid levels. The current column snaps to its nearest grid level, opening a rounding error d, which is compensated by nudging the not-yet-quantized columns to the right proportional to the inverse Hessian, so the layer output stays close to the original even though every weight moved.">
+<defs>
+  <marker id="gec-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-gptq-error-compensation text{ font:400 10.5px var(--sans,sans-serif); fill:var(--ink-soft,#374151); }
+  #fig-gptq-error-compensation .title{ font:700 14px var(--sans,sans-serif); fill:var(--ink-soft,#1f2937); }
+  #fig-gptq-error-compensation .hdr{ font:700 11.5px var(--sans,sans-serif); }
+  #fig-gptq-error-compensation .legend{ font:400 10px var(--sans,sans-serif); }
+  #fig-gptq-error-compensation .tick{ font:600 10px var(--mono,monospace); fill:var(--muted,#6b7280); }
+  #fig-gptq-error-compensation .idx{ font:500 9.5px var(--mono,monospace); fill:var(--muted,#6b7280); }
+  #fig-gptq-error-compensation .axis{ font:400 10px var(--sans,sans-serif); fill:var(--muted,#6b7280); }
+  #fig-gptq-error-compensation .mono-eq{ font:600 10.5px var(--mono,monospace); }
+  #fig-gptq-error-compensation .mono-eq2{ font:400 9.5px var(--mono,monospace); fill:var(--muted,#6b7280); }
+  #fig-gptq-error-compensation .panel-t{ font:700 10.5px var(--sans,sans-serif); }
+  #fig-gptq-error-compensation .small{ font:400 9px var(--sans,sans-serif); fill:var(--muted,#6b7280); }
+  #fig-gptq-error-compensation .dlabel{ font:700 11px var(--mono,monospace); }
+
+  #fig-gptq-error-compensation.in-view [data-anim="6"]{ animation-delay:1.55s; }
+</style>
+
+<text x="390" y="22" text-anchor="middle" class="title">GPTQ: quantize one column, compensate the rest to protect the layer output</text>
+
+<g data-anim="1">
+  <line x1="14" y1="44" x2="34" y2="44" stroke="var(--ink-soft,#64748b)" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="40" y="48" class="legend">grid levels (allowed quantized values)</text>
+
+  <text x="196" y="72" text-anchor="middle" class="hdr">quantized &amp; locked</text>
+  <text x="366" y="72" text-anchor="middle" class="hdr">current column</text>
+  <text x="570" y="72" text-anchor="middle" class="hdr">not-yet-quantized (gets compensated)</text>
+  <line x1="60" y1="86" x2="332" y2="86" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <line x1="332" y1="86" x2="400" y2="86" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+  <line x1="400" y1="86" x2="740" y2="86" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+  <line x1="54" y1="160" x2="746" y2="160" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+  <line x1="54" y1="200" x2="746" y2="200" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+  <line x1="54" y1="240" x2="746" y2="240" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+  <text x="48" y="164" text-anchor="end" class="tick">+q</text>
+  <text x="48" y="204" text-anchor="end" class="tick">0</text>
+  <text x="48" y="244" text-anchor="end" class="tick">-q</text>
+
+  <rect x="400" y="140" width="340" height="120" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="4 3"/>
+  <rect x="60" y="140" width="272" height="120" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+
+  <g class="idx">
+    <text x="94" y="274" text-anchor="middle">i=0</text>
+    <text x="162" y="274" text-anchor="middle">i=1</text>
+    <text x="230" y="274" text-anchor="middle">i=2</text>
+    <text x="298" y="274" text-anchor="middle">i=3</text>
+    <text x="366" y="274" text-anchor="middle">i=4</text>
+    <text x="434" y="274" text-anchor="middle">i=5</text>
+    <text x="502" y="274" text-anchor="middle">i=6</text>
+    <text x="570" y="274" text-anchor="middle">i=7</text>
+    <text x="638" y="274" text-anchor="middle">i=8</text>
+    <text x="706" y="274" text-anchor="middle">i=9</text>
+  </g>
+  <text x="400" y="310" text-anchor="middle" class="axis">input feature (column) index, left -&gt; right</text>
+</g>
+
+<g data-anim="2">
+  <g fill="var(--surface-3,#ece7da)" opacity="0.6">
+    <rect x="60" y="140" width="68" height="120"/>
+    <rect x="128" y="140" width="68" height="120"/>
+    <rect x="196" y="140" width="68" height="120"/>
+    <rect x="264" y="140" width="68" height="120"/>
+  </g>
+  <g stroke="var(--ink-soft,#374151)" stroke-width="1">
+    <rect x="89" y="160" width="10" height="40" fill="var(--ink-soft,#374151)"/>
+    <rect x="157" y="200" width="10" height="40" fill="var(--ink-soft,#374151)"/>
+    <rect x="225" y="160" width="10" height="40" fill="var(--ink-soft,#374151)"/>
+    <rect x="293" y="200" width="10" height="40" fill="var(--ink-soft,#374151)"/>
+  </g>
+  <g fill="var(--surface,#fff)" stroke="var(--muted,#6b7280)" stroke-width="1.3">
+    <rect x="89" y="146" width="10" height="7" rx="1.5"/>
+    <path d="M91 146 A3 4 0 0 1 97 146" fill="none"/>
+    <rect x="157" y="146" width="10" height="7" rx="1.5"/>
+    <path d="M159 146 A3 4 0 0 1 165 146" fill="none"/>
+    <rect x="225" y="146" width="10" height="7" rx="1.5"/>
+    <path d="M227 146 A3 4 0 0 1 233 146" fill="none"/>
+    <rect x="293" y="146" width="10" height="7" rx="1.5"/>
+    <path d="M295 146 A3 4 0 0 1 301 146" fill="none"/>
+  </g>
+</g>
+
+<g data-anim="3">
+  <rect x="332" y="140" width="68" height="120" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+  <line x1="366" y1="128" x2="366" y2="272" stroke="var(--accent,#c15b39)" stroke-width="2" stroke-dasharray="5 3"/>
+  <path d="M366 272 l9 5 l-9 5 z" fill="var(--accent,#c15b39)"/>
+  <rect x="361" y="178" width="10" height="22" fill="none" stroke="var(--muted,#6b7280)" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.85"/>
+  <text x="376" y="192" class="small">w_i (float, unsnapped)</text>
+</g>
+
+<g data-anim="4">
+  <rect x="361" y="160" width="10" height="40" fill="var(--accent,#c15b39)" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+  <line x1="384" y1="160" x2="390" y2="160" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <line x1="384" y1="178" x2="390" y2="178" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <line x1="387" y1="160" x2="387" y2="178" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <text x="396" y="172" class="dlabel" fill="var(--accent,#c15b39)">d</text>
+  <text x="366" y="292" text-anchor="middle" class="mono-eq" fill="var(--accent,#c15b39)">rounding error d = w_i - q_i</text>
+</g>
+
+<g data-anim="5">
+  <g stroke="var(--ink-soft,#64748b)" stroke-width="1.1" fill="none" opacity="0.7" marker-end="url(#gec-arrow)">
+    <path d="M366 124 Q400 118 428 138"/>
+    <path d="M366 124 Q470 112 496 138"/>
+    <path d="M366 124 Q540 108 564 138"/>
+    <path d="M366 124 Q610 108 632 138"/>
+    <path d="M366 124 Q660 112 700 138"/>
+  </g>
+  <text x="570" y="100" text-anchor="middle" class="mono-eq">compensate: -d / [H^-1]_ii * H^-1_:,i</text>
+  <text x="570" y="112" text-anchor="middle" class="mono-eq2">(compensation proportional to H^-1)</text>
+
+  <g stroke="var(--muted,#6b7280)" fill="none">
+    <line x1="429" y1="218" x2="439" y2="218" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="434" y1="218" x2="434" y2="208" stroke-width="1.1" marker-end="url(#gec-arrow)"/>
+    <line x1="497" y1="182" x2="507" y2="182" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="502" y1="182" x2="502" y2="190" stroke-width="1.1" marker-end="url(#gec-arrow)"/>
+    <line x1="565" y1="232" x2="575" y2="232" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="570" y1="232" x2="570" y2="224" stroke-width="1.1" marker-end="url(#gec-arrow)"/>
+    <line x1="633" y1="168" x2="643" y2="168" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="638" y1="168" x2="638" y2="174" stroke-width="1.1" marker-end="url(#gec-arrow)"/>
+    <line x1="701" y1="210" x2="711" y2="210" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="706" y1="210" x2="706" y2="203" stroke-width="1.1" marker-end="url(#gec-arrow)"/>
+  </g>
+  <g fill="var(--surface-3,#ece7da)" fill-opacity="0.35" stroke="var(--muted,#6b7280)" stroke-width="1.2">
+    <rect x="429" y="200" width="10" height="8"/>
+    <rect x="497" y="190" width="10" height="10"/>
+    <rect x="565" y="200" width="10" height="24"/>
+    <rect x="633" y="174" width="10" height="26"/>
+    <rect x="701" y="200" width="10" height="3"/>
+  </g>
+</g>
+
+<g data-anim="6">
+  <line x1="20" y1="324" x2="760" y2="324" stroke="var(--border-2,#cbd5e1)" stroke-width="1" stroke-dasharray="2 3" opacity="0.7"/>
+  <text x="390" y="340" text-anchor="middle" class="axis">output meter: y = sum_i w_i x_i, tracked as the sweep advances</text>
+
+  <text x="200" y="357" text-anchor="middle" class="panel-t" fill="var(--warn,#e0a106)">RTN: round each independently, errors accumulate</text>
+  <rect x="40" y="368" width="330" height="80" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <line x1="40" y1="408" x2="370" y2="408" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="44" y="404" class="small">true output (target)</text>
+  <polyline points="40,408 73,409 107,406 140,412 173,404 207,416 240,401 273,420 307,397 340,425 370,420"
+            fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+  <g fill="var(--warn,#e0a106)">
+    <circle cx="40" cy="408" r="2"/><circle cx="73" cy="409" r="2"/><circle cx="107" cy="406" r="2"/>
+    <circle cx="140" cy="412" r="2"/><circle cx="173" cy="404" r="2"/><circle cx="207" cy="416" r="2"/>
+    <circle cx="240" cy="401" r="2"/><circle cx="273" cy="420" r="2"/><circle cx="307" cy="397" r="2"/>
+    <circle cx="340" cy="425" r="2"/><circle cx="370" cy="420" r="2"/>
+  </g>
+
+  <text x="580" y="357" text-anchor="middle" class="panel-t" fill="var(--good,#2f9e6e)">GPTQ: running compensation keeps output ~ true</text>
+  <rect x="420" y="368" width="320" height="80" fill="none" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <line x1="420" y1="408" x2="730" y2="408" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="424" y="404" class="small">true output (target)</text>
+  <polyline points="420,408 451,407 482,409 513,406 544,408 575,409 606,407 637,408 668,406 699,408 730,407"
+            fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+  <g fill="var(--good,#2f9e6e)">
+    <circle cx="420" cy="408" r="2"/><circle cx="451" cy="407" r="2"/><circle cx="482" cy="409" r="2"/>
+    <circle cx="513" cy="406" r="2"/><circle cx="544" cy="408" r="2"/><circle cx="575" cy="409" r="2"/>
+    <circle cx="606" cy="407" r="2"/><circle cx="637" cy="408" r="2"/><circle cx="668" cy="406" r="2"/>
+    <circle cx="699" cy="408" r="2"/><circle cx="730" cy="407" r="2"/>
+  </g>
+</g>
+
+</svg>
+<figcaption><b>GPTQ quantizes one weight column at a time and compensates the not-yet-quantized columns for the error it just made.</b> When column <i>i</i> snaps to its nearest grid level, the rounding error d = w_i - q_i is fanned out to every remaining column, scaled by H^-1, so their bars shift slightly before their turn comes; round-to-nearest (RTN) instead rounds every weight independently and the output error simply accumulates, while GPTQ's running compensation keeps the layer output y = sum_i w_i x_i close to the original throughout the sweep.</figcaption>
+</figure>

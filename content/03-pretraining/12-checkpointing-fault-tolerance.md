@@ -55,6 +55,8 @@ There are two canonical approaches:
 
 PyTorch's `torch.distributed.checkpoint` (DCP), introduced in PyTorch 2.x, implements the third strategy. It uses a uniform storage layout where parameters are saved as named chunks that can be remapped to any new device layout on load.
 
+{{fig:ckpt-topology-agnostic-reshard}}
+
 ### Checkpoint Storage Layout
 
 A well-designed sharded checkpoint directory looks like this:
@@ -507,6 +509,8 @@ $$
     $$
 
     This motivates more frequent checkpoints and faster (async) saves.
+
+{{fig:ckpt-failure-waste-and-daly}}
 
 The optimal checkpoint interval $T^*$ that minimises expected wasted compute can be derived (Young 1974, commonly called "Daly's formula" in HPC):
 

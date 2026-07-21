@@ -39,6 +39,8 @@ A worked feel for the magnitudes:
 
 The contrast is the whole point: matrix multiplication has *reuse* (each loaded element participates in many FLOPs), while element-wise ops have none. The transformer is a tug-of-war between big reuse-heavy GEMMs and a swarm of tiny reuse-free element-wise and normalization ops.
 
+{{fig:intensity-reuse-ladder}}
+
 ## The Roofline Model
 
 Now we combine the two machine limits and the kernel's intensity into one diagram. Plot achievable performance $P$ (FLOP/s, $y$-axis, log scale) against arithmetic intensity $I$ (FLOP/B, $x$-axis, log scale). The peak attainable performance is:
@@ -184,6 +186,8 @@ FLOPs alone don't tell you where a kernel lands on the roofline — you need byt
 **Decode** generates one token at a time. Each step multiplies a single activation vector ($1\times d$) against every weight matrix. That is a matrix-*vector* product (GEMV): you stream the entire weight matrix from HBM to produce one output vector, with essentially no reuse. For a weight matrix of $d\times k$ in bf16, you do $2dk$ FLOPs but move $2dk$ bytes — intensity $\approx 1$ FLOP/B. Far below any modern ridge point, so single-stream decode is brutally **memory-bound**.
 
 This is why decode throughput is governed by *how fast you can read the weights*, and why the only way to make decode efficient is to **batch** many requests so the same loaded weights serve many tokens at once — raising the effective intensity. It is also why the KV cache, not the weights, often becomes the bandwidth bottleneck at long context; see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+
+{{fig:decode-batching-amortization}}
 
 !!! example "Worked example: how many tokens/sec can a single decode stream produce?"
 

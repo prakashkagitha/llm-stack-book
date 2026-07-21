@@ -1,0 +1,153 @@
+<figure class="viz" id="fig-decode-batching-amortization">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 572" role="img" aria-label="Two panels compared: single-stream decode streams all model weights from HBM to produce one output token, giving arithmetic intensity around 1 FLOP per byte on the memory roof; batched decode streams the exact same weights once but produces B output tokens, raising intensity to about B FLOP per byte and crossing the ridge onto the compute roof.">
+  <defs>
+    <marker id="dba-arr-mem" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+    </marker>
+    <marker id="dba-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+    <marker id="dba-arr-mut" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6d675d)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-decode-batching-amortization text{ fill: var(--ink-soft); font-family: var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .ttl  { font: 700 15px var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .sub  { font: 500 11px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-decode-batching-amortization .hdr  { font: 700 13px var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .lbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-decode-batching-amortization .lbl2 { font: 500 9.5px var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .verdict { font: 600 12px var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .verdictB { font: 700 13px var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .tick  { font: 500 8px var(--mono,monospace); fill: var(--muted); }
+    #fig-decode-batching-amortization .cap   { font: 400 9px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-decode-batching-amortization .capB  { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-decode-batching-amortization .panelbg { fill: var(--surface); stroke: var(--border-2); stroke-width: 1; }
+    #fig-decode-batching-amortization .wblock { fill: var(--surface-3); stroke: var(--border-2); stroke-width: 1; }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Batching turns a memory-bound GEMV into a compute-bound GEMM</text>
+  <text x="390" y="39" text-anchor="middle" class="sub">the SAME weight bytes, read once, now amortized across B output tokens</text>
+
+
+  <rect x="10" y="54" width="370" height="440" rx="10" class="panelbg"/>
+  <rect x="400" y="54" width="370" height="440" rx="10" class="panelbg"/>
+
+
+  <g data-anim="1">
+    <text x="195" y="76" text-anchor="middle" class="hdr">single-stream decode (batch = 1)</text>
+    <text x="135" y="94" text-anchor="middle" class="lbl">all weights, ~2N bytes</text>
+    <g class="wblock">
+      <rect x="60" y="102" width="150" height="24"/>
+      <rect x="60" y="130" width="150" height="24"/>
+      <rect x="60" y="158" width="150" height="24"/>
+      <rect x="60" y="186" width="150" height="24"/>
+    </g>
+
+
+    <path d="M120 214 L150 214 L150 226 L165 226 L135 252 L105 226 L120 226 Z"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.25" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="180" y="228" class="lbl2" fill="var(--accent2,#3b82f6)">stream every weight</text>
+    <text x="180" y="240" class="lbl2" fill="var(--accent2,#3b82f6)">from HBM</text>
+
+
+    <rect x="105" y="262" width="60" height="9" fill="var(--accent2,#3b82f6)"/>
+    <text x="135" y="285" text-anchor="middle" class="lbl">1&#215;d activation</text>
+
+
+    <line x1="165" y1="266" x2="245" y2="262" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#dba-arr-mem)"/>
+    <rect x="248" y="253" width="18" height="18" fill="var(--accent2,#3b82f6)"/>
+    <text x="257" y="285" text-anchor="middle" class="lbl">1 token out</text>
+
+
+    <text x="40" y="316" class="verdict" fill="var(--accent2,#3b82f6)">bytes moved = all weights</text>
+    <text x="40" y="336" class="verdict" fill="var(--accent2,#3b82f6)">FLOPs = 2N</text>
+    <text x="40" y="360" class="verdictB" fill="var(--accent2,#3b82f6)">I ~= 1 FLOP/B</text>
+
+
+    <line x1="45" y1="456" x2="185" y2="456" class="v-stroke" stroke-width="1" marker-end="url(#dba-arr-mut)"/>
+    <line x1="45" y1="406" x2="45" y2="456" class="v-stroke" stroke-width="1"/>
+    <path d="M45 456 L110 420 L185 420" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <line x1="110" y1="406" x2="110" y2="456" class="v-stroke" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+    <circle cx="55" cy="450" r="5" fill="var(--accent2,#3b82f6)"/>
+    <text x="115" y="470" text-anchor="middle" class="tick">I* ridge</text>
+    <text x="195" y="484" text-anchor="middle" class="cap">I ~= 1 sits ON the memory roof, left of the ridge</text>
+  </g>
+
+
+  <g data-anim="2">
+    <text x="585" y="76" text-anchor="middle" class="hdr">batched decode (batch = B)</text>
+    <text x="515" y="94" text-anchor="middle" class="lbl">all weights, ~2N bytes &#8212; SAME</text>
+    <g class="wblock">
+      <rect x="440" y="102" width="150" height="24"/>
+      <rect x="440" y="130" width="150" height="24"/>
+      <rect x="440" y="158" width="150" height="24"/>
+      <rect x="440" y="186" width="150" height="24"/>
+    </g>
+
+
+    <path d="M500 214 L530 214 L530 226 L545 226 L515 252 L485 226 L500 226 Z"
+          fill="var(--accent2,#3b82f6)" fill-opacity="0.25" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="560" y="228" class="lbl2" fill="var(--accent2,#3b82f6)">stream every weight</text>
+    <text x="560" y="240" class="lbl2" fill="var(--accent2,#3b82f6)">ONCE (same bytes)</text>
+
+
+    <g fill="var(--good,#2f9e6e)">
+      <rect x="485" y="260" width="60" height="4.5"/>
+      <rect x="485" y="267" width="60" height="4.5"/>
+      <rect x="485" y="274" width="60" height="4.5"/>
+      <rect x="485" y="281" width="60" height="4.5"/>
+      <rect x="485" y="288" width="60" height="4.5"/>
+      <rect x="485" y="295" width="60" height="4.5"/>
+      <rect x="485" y="302" width="60" height="4.5"/>
+      <rect x="485" y="309" width="60" height="4.5"/>
+    </g>
+    <text x="515" y="326" text-anchor="middle" class="lbl">B &#215; (1&#215;d) activations, e.g. B=8</text>
+
+
+    <path d="M545 287 C 590 287, 600 270, 628 264" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6" marker-end="url(#dba-arr-good)"/>
+    <g fill="var(--good,#2f9e6e)">
+      <rect x="630" y="258" width="12" height="12"/>
+      <rect x="645" y="258" width="12" height="12"/>
+      <rect x="660" y="258" width="12" height="12"/>
+      <rect x="675" y="258" width="12" height="12"/>
+      <rect x="630" y="273" width="12" height="12"/>
+      <rect x="645" y="273" width="12" height="12"/>
+      <rect x="660" y="273" width="12" height="12"/>
+      <rect x="675" y="273" width="12" height="12"/>
+    </g>
+    <text x="657" y="300" text-anchor="middle" class="lbl">B tokens out</text>
+
+
+    <text x="420" y="344" class="verdict">bytes moved = all weights (UNCHANGED)</text>
+    <text x="420" y="364" class="verdict">FLOPs = B &#215; 2N</text>
+    <text x="420" y="388" class="verdictB" fill="var(--good,#2f9e6e)">I ~= B FLOP/B</text>
+
+
+    <line x1="425" y1="456" x2="565" y2="456" class="v-stroke" stroke-width="1" marker-end="url(#dba-arr-mut)"/>
+    <line x1="425" y1="406" x2="425" y2="456" class="v-stroke" stroke-width="1"/>
+    <path d="M425 456 L490 420 L565 420" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <line x1="490" y1="406" x2="490" y2="456" class="v-stroke" stroke-width="0.8" stroke-dasharray="2 2" opacity="0.5"/>
+    <circle cx="435" cy="450" r="4.5" fill="var(--accent2,#3b82f6)" opacity="0.45"/>
+    <path d="M437 447 C 465 435, 490 425, 522 420" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3" stroke-dasharray="2 2" marker-end="url(#dba-arr-good)"/>
+    <text x="478" y="440" text-anchor="middle" class="tick" fill="var(--good,#2f9e6e)">batch B</text>
+    <circle cx="528" cy="420" r="5" fill="var(--good,#2f9e6e)"/>
+    <text x="495" y="470" text-anchor="middle" class="tick">I* ridge</text>
+    <text x="585" y="484" text-anchor="middle" class="cap">I ~= B climbs onto the compute roof, past the ridge</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="376" y1="235" x2="404" y2="235" class="v-stroke" stroke-width="1" stroke-dasharray="3 2" opacity="0.6" marker-start="url(#dba-arr-mut)" marker-end="url(#dba-arr-mut)"/>
+    <text x="390" y="217" text-anchor="middle" class="tick" transform="rotate(0 390 217)">same</text>
+    <text x="390" y="257" text-anchor="middle" class="tick">bytes</text>
+  </g>
+
+  <line x1="20" y1="506" x2="760" y2="506" class="v-grid" stroke-width="1"/>
+  <text x="390" y="528" text-anchor="middle" class="capB">One weight read now serves B tokens &#8212; intensity rises ~B&#215; &#8212; decode crosses the ridge.</text>
+  <text x="390" y="548" text-anchor="middle" class="cap">(Until per-request KV-cache traffic takes over.)</text>
+</svg>
+<figcaption><b>Batching does not change how many bytes decode reads — it changes how many tokens that read pays for.</b> Single-stream decode (left) streams every weight from HBM to produce one token, so intensity is pinned near 1 FLOP/B on the memory roof; batching B requests (right) reuses that exact same weight read across B tokens, multiplying intensity by roughly B and pushing decode past the ridge onto the compute roof — the economic argument for continuous batching.</figcaption>
+</figure>

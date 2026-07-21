@@ -1,0 +1,259 @@
+<figure class="viz" id="fig-intensity-reuse-ladder">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 920" role="img" aria-label="Three panels showing why arithmetic intensity differs by operation: element-wise add reuses each loaded byte zero times and is memory-bound; matrix-vector GEMV (decode) reuses the activation but each weight byte is read once, also memory-bound; matrix-matrix GEMM (FFN, prefill) reuses one loaded tile across many outputs and is compute-bound. A shared log intensity axis at the bottom plots all three points relative to the ridge, tying back to the roofline.">
+  <defs>
+    <marker id="irl-arr-mem" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+    </marker>
+    <marker id="irl-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+    <marker id="irl-arr-mut" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6d675d)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-intensity-reuse-ladder text{ fill: var(--ink-soft); font-family: var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .ttl  { font: 700 15px var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .hdr  { font: 700 13px var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .lbl  { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-intensity-reuse-ladder .verdict1 { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .verdict2 { font: 600 11.5px var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .tag   { font: 700 11px var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .mono  { font: 500 10px var(--mono,monospace); fill: var(--ink-soft); }
+    #fig-intensity-reuse-ladder .tick  { font: 500 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-intensity-reuse-ladder .axlbl { font: 600 11px var(--sans,sans-serif); }
+    #fig-intensity-reuse-ladder .cap   { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-intensity-reuse-ladder .cell  { fill: var(--surface-3); stroke: var(--border-2); stroke-width: 1; }
+    #fig-intensity-reuse-ladder .cellHi-mem { fill: var(--accent2,#3b82f6); fill-opacity:0.85; stroke: var(--accent2,#3b82f6); }
+    #fig-intensity-reuse-ladder .cellHi-good { fill: var(--good,#2f9e6e); fill-opacity:0.85; stroke: var(--good,#2f9e6e); }
+    #fig-intensity-reuse-ladder .panelbg { fill: var(--surface); stroke: var(--border-2); stroke-width: 1; }
+  </style>
+
+  <text x="20" y="26" class="ttl">The reuse ladder: what "arithmetic intensity" actually counts</text>
+  <text x="20" y="42" class="lbl">read top to bottom — intensity climbs as each loaded byte feeds more FLOPs before it leaves on-chip memory</text>
+
+
+  <g data-anim="1">
+    <rect x="10" y="52" width="740" height="212" rx="10" class="panelbg"/>
+    <text x="26" y="74" class="hdr">A &#8201;&#8212;&#8201; Element-wise add&#8201; (z = x + y)</text>
+
+
+    <text x="26" y="108" class="mono">x</text>
+    <g>
+      <rect x="44" y="97" width="18" height="18" class="cell"/>
+      <rect x="65" y="97" width="18" height="18" class="cell"/>
+      <rect x="86" y="97" width="18" height="18" class="cell"/>
+      <rect x="107" y="97" width="18" height="18" class="cellHi-mem"/>
+      <rect x="128" y="97" width="18" height="18" class="cell"/>
+      <rect x="149" y="97" width="18" height="18" class="cell"/>
+    </g>
+    <text x="116" y="93" class="mono" text-anchor="middle" fill="var(--accent2,#3b82f6)">x[i]</text>
+
+    <text x="26" y="138" class="mono">y</text>
+    <g>
+      <rect x="44" y="127" width="18" height="18" class="cell"/>
+      <rect x="65" y="127" width="18" height="18" class="cell"/>
+      <rect x="86" y="127" width="18" height="18" class="cell"/>
+      <rect x="107" y="127" width="18" height="18" class="cellHi-mem"/>
+      <rect x="128" y="127" width="18" height="18" class="cell"/>
+      <rect x="149" y="127" width="18" height="18" class="cell"/>
+    </g>
+
+
+    <circle cx="116" cy="176" r="12" fill="none" class="v-stroke" stroke-width="1.6"/>
+    <text x="116" y="181" text-anchor="middle" class="mono" style="font-weight:700">+</text>
+    <line x1="116" y1="115" x2="116" y2="163" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#irl-arr-mem)"/>
+    <line x1="116" y1="145" x2="116" y2="163" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#irl-arr-mem)" opacity="0.6"/>
+
+
+    <text x="26" y="222" class="mono">z</text>
+    <g>
+      <rect x="44" y="203" width="18" height="18" class="cell"/>
+      <rect x="65" y="203" width="18" height="18" class="cell"/>
+      <rect x="86" y="203" width="18" height="18" class="cell"/>
+      <rect x="107" y="203" width="18" height="18" class="cellHi-mem"/>
+      <rect x="128" y="203" width="18" height="18" class="cell"/>
+      <rect x="149" y="203" width="18" height="18" class="cell"/>
+    </g>
+    <line x1="116" y1="188" x2="116" y2="200" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#irl-arr-mem)"/>
+    <text x="116" y="234" class="lbl" text-anchor="middle">1 add, then x[i] and y[i] are gone</text>
+
+
+    <text x="340" y="120" class="verdict1">read x, read y, write z -&gt;</text>
+    <text x="340" y="138" class="verdict1">~3 bytes moved per 1 FLOP</text>
+    <text x="340" y="162" class="verdict2" fill="var(--accent2,#3b82f6)">I ~= 0.17 FLOP/B &#8212; each byte used ONCE</text>
+    <rect x="338" y="182" width="230" height="28" rx="14" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="453" y="200" text-anchor="middle" class="tag" fill="var(--accent2,#3b82f6)">no reuse -&gt; memory-bound</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="10" y="278" width="740" height="212" rx="10" class="panelbg"/>
+    <text x="26" y="300" class="hdr">B &#8201;&#8212;&#8201; Matrix x vector, GEMV&#8201; (this is decode)</text>
+
+    <text x="70" y="316" class="lbl">W streamed row-by-row</text>
+
+    <g>
+      <rect x="60" y="322" width="20" height="20" class="cell"/>
+      <rect x="83" y="322" width="20" height="20" class="cell"/>
+      <rect x="106" y="322" width="20" height="20" class="cell"/>
+
+      <rect x="60" y="345" width="20" height="20" class="cell"/>
+      <rect x="83" y="345" width="20" height="20" class="cell"/>
+      <rect x="106" y="345" width="20" height="20" class="cell"/>
+
+      <rect x="60" y="368" width="20" height="20" class="cell"/>
+      <rect x="83" y="368" width="20" height="20" class="cell"/>
+      <rect x="106" y="368" width="20" height="20" class="cell"/>
+
+      <rect x="60" y="391" width="20" height="20" class="cellHi-mem"/>
+      <rect x="83" y="391" width="20" height="20" class="cell"/>
+      <rect x="106" y="391" width="20" height="20" class="cell"/>
+
+      <rect x="60" y="414" width="20" height="20" class="cell"/>
+      <rect x="83" y="414" width="20" height="20" class="cell"/>
+      <rect x="106" y="414" width="20" height="20" class="cell"/>
+
+      <rect x="60" y="437" width="20" height="20" class="cell"/>
+      <rect x="83" y="437" width="20" height="20" class="cell"/>
+      <rect x="106" y="437" width="20" height="20" class="cell"/>
+    </g>
+    <text x="70" y="475" class="mono" fill="var(--accent2,#3b82f6)">w</text>
+    <line x1="80" y1="401" x2="80" y2="466" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" stroke-dasharray="2 2"/>
+
+
+    <g>
+      <rect x="60" y="466" width="20" height="16" class="cell"/>
+      <rect x="83" y="466" width="20" height="16" class="cell"/>
+      <rect x="106" y="466" width="20" height="16" class="cell"/>
+    </g>
+    <path d="M60 462 A 43 14 0 0 1 146 462" fill="none" class="v-stroke" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#irl-arr-mut)"/>
+    <text x="146" y="480" class="lbl">activation a &#8212; SAME 3 values reused every row</text>
+
+
+    <circle cx="188" cy="401" r="11" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="188" y="406" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)" style="font-weight:700">x</text>
+    <line x1="126" y1="401" x2="176" y2="401" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#irl-arr-mem)"/>
+    <path d="M80 474 C 130 440, 150 415, 178 405" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" marker-end="url(#irl-arr-mem)" opacity="0.75"/>
+
+
+    <g>
+      <rect x="232" y="322" width="20" height="20" class="cell"/>
+      <rect x="232" y="345" width="20" height="20" class="cell"/>
+      <rect x="232" y="368" width="20" height="20" class="cell"/>
+      <rect x="232" y="391" width="20" height="20" class="cellHi-mem"/>
+      <rect x="232" y="414" width="20" height="20" class="cell"/>
+      <rect x="232" y="437" width="20" height="20" class="cell"/>
+    </g>
+    <text x="242" y="316" class="lbl" text-anchor="middle">out</text>
+    <line x1="199" y1="401" x2="229" y2="401" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#irl-arr-mem)"/>
+
+
+    <line x1="80" y1="332" x2="229" y2="332" class="v-stroke" stroke-width="1" opacity="0.22" marker-end="url(#irl-arr-mut)"/>
+    <line x1="80" y1="355" x2="229" y2="355" class="v-stroke" stroke-width="1" opacity="0.22" marker-end="url(#irl-arr-mut)"/>
+    <line x1="80" y1="378" x2="229" y2="378" class="v-stroke" stroke-width="1" opacity="0.22" marker-end="url(#irl-arr-mut)"/>
+    <line x1="80" y1="424" x2="229" y2="424" class="v-stroke" stroke-width="1" opacity="0.22" marker-end="url(#irl-arr-mut)"/>
+    <line x1="80" y1="447" x2="229" y2="447" class="v-stroke" stroke-width="1" opacity="0.22" marker-end="url(#irl-arr-mut)"/>
+
+
+    <text x="340" y="346" class="verdict1">2dk FLOPs, ~2dk bytes -&gt; I ~= 1 FLOP/B</text>
+    <text x="340" y="368" class="verdict2" fill="var(--accent2,#3b82f6)">each WEIGHT used once -&gt; memory-bound.</text>
+    <text x="340" y="386" class="verdict2" fill="var(--accent2,#3b82f6)">&lt;-- single-stream decode lives here.</text>
+    <rect x="338" y="404" width="230" height="28" rx="14" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="453" y="422" text-anchor="middle" class="tag" fill="var(--accent2,#3b82f6)">streaming, no weight reuse</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="10" y="500" width="740" height="212" rx="10" class="panelbg"/>
+    <text x="26" y="522" class="hdr">C &#8201;&#8212;&#8201; Matrix x matrix, GEMM&#8201; (FFN / prefill)</text>
+    <text x="200" y="540" class="lbl" text-anchor="middle">one loaded tile feeds MANY MACs (more than panel B)</text>
+
+    <text x="105" y="562" class="lbl" text-anchor="middle">on-chip SRAM</text>
+    <rect x="55" y="568" width="100" height="100" rx="6" fill="none" class="v-stroke" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <g>
+      <rect x="64" y="577" width="24" height="24" class="cellHi-good"/>
+      <rect x="92" y="577" width="24" height="24" class="cellHi-good"/>
+      <rect x="120" y="577" width="24" height="24" class="cellHi-good"/>
+      <rect x="64" y="605" width="24" height="24" class="cellHi-good"/>
+      <rect x="92" y="605" width="24" height="24" class="cellHi-good"/>
+      <rect x="120" y="605" width="24" height="24" class="cellHi-good"/>
+      <rect x="64" y="633" width="24" height="24" class="cellHi-good"/>
+      <rect x="92" y="633" width="24" height="24" class="cellHi-good"/>
+      <rect x="120" y="633" width="24" height="24" class="cellHi-good"/>
+    </g>
+    <text x="105" y="686" class="lbl" text-anchor="middle">tile of A loaded ONCE</text>
+
+
+    <g stroke="var(--good,#2f9e6e)" stroke-width="1.4" marker-end="url(#irl-arr-good)" opacity="0.9">
+      <line x1="158" y1="596" x2="252" y2="564"/>
+      <line x1="158" y1="606" x2="252" y2="584"/>
+      <line x1="158" y1="616" x2="252" y2="604"/>
+      <line x1="158" y1="626" x2="252" y2="624"/>
+      <line x1="158" y1="636" x2="252" y2="644"/>
+      <line x1="158" y1="646" x2="252" y2="664"/>
+    </g>
+    <g>
+      <rect x="256" y="556" width="18" height="16" class="cellHi-good"/>
+      <rect x="256" y="576" width="18" height="16" class="cellHi-good"/>
+      <rect x="256" y="596" width="18" height="16" class="cellHi-good"/>
+      <rect x="256" y="616" width="18" height="16" class="cellHi-good"/>
+      <rect x="256" y="636" width="18" height="16" class="cellHi-good"/>
+      <rect x="256" y="656" width="18" height="16" class="cellHi-good"/>
+    </g>
+    <text x="265" y="688" class="lbl" text-anchor="middle">n outputs</text>
+
+
+    <text x="340" y="568" class="verdict1">one loaded tile reused across n outputs -&gt;</text>
+    <text x="340" y="586" class="verdict1">I ~= m/3, grows with size</text>
+    <text x="340" y="610" class="verdict2" fill="var(--good,#2f9e6e)">high reuse -&gt; compute-bound.</text>
+    <rect x="338" y="628" width="230" height="28" rx="14" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="453" y="646" text-anchor="middle" class="tag" fill="var(--good,#2f9e6e)">reuse amortizes the read</text>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="380" y="738" text-anchor="middle" class="axlbl">same axis as the roofline: arithmetic intensity I (FLOP/B), log scale</text>
+
+
+    <rect x="60" y="790" width="348" height="22" fill="var(--accent2,#3b82f6)" fill-opacity="0.10"/>
+    <rect x="408" y="790" width="292" height="22" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+    <text x="234" y="785" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">memory roof</text>
+    <text x="554" y="785" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">compute roof</text>
+
+
+    <line x1="55" y1="801" x2="705" y2="801" class="v-stroke" stroke-width="1.6" marker-end="url(#irl-arr-mut)"/>
+    <line x1="60" y1="796" x2="60" y2="806" class="v-stroke" stroke-width="1"/>
+    <text x="60" y="822" text-anchor="middle" class="tick">0.1</text>
+    <line x1="220" y1="796" x2="220" y2="806" class="v-stroke" stroke-width="1"/>
+    <text x="220" y="822" text-anchor="middle" class="tick">1</text>
+    <line x1="380" y1="796" x2="380" y2="806" class="v-stroke" stroke-width="1"/>
+    <text x="380" y="822" text-anchor="middle" class="tick">10</text>
+    <line x1="540" y1="796" x2="540" y2="806" class="v-stroke" stroke-width="1"/>
+    <text x="540" y="822" text-anchor="middle" class="tick">100</text>
+    <line x1="700" y1="796" x2="700" y2="806" class="v-stroke" stroke-width="1"/>
+    <text x="700" y="822" text-anchor="middle" class="tick">1000</text>
+
+
+    <line x1="408" y1="772" x2="408" y2="838" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="408" y="765" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">ridge&#8201;I*</text>
+
+
+    <circle cx="97" cy="801" r="6" fill="var(--accent2,#3b82f6)"/>
+    <line x1="97" y1="807" x2="97" y2="852" class="v-stroke" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>
+    <text x="97" y="866" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">A ~= 0.17</text>
+
+    <circle cx="220" cy="801" r="6" fill="var(--accent2,#3b82f6)"/>
+    <line x1="220" y1="807" x2="220" y2="852" class="v-stroke" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>
+    <text x="220" y="866" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">B ~= 1</text>
+
+    <circle cx="616" cy="801" r="6" fill="var(--good,#2f9e6e)"/>
+    <line x1="616" y1="807" x2="616" y2="852" class="v-stroke" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>
+    <text x="616" y="866" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">C ~= m/3 (large)</text>
+
+    <text x="380" y="892" text-anchor="middle" class="cap">A and B sit on the memory roof (I &lt; I*) &#8212; B is decode; C sits on the compute roof (I &gt; I*) &#8212; reuse is the only thing that moved it there.</text>
+  </g>
+</svg>
+<figcaption><b>Arithmetic intensity is a direct readout of data reuse: how many FLOPs one loaded byte gets to feed before it leaves on-chip memory.</b> Element-wise add (A) and single-stream decode's GEMV (B) each use a loaded byte essentially once, so they sit on the memory roof; a GEMM tile (C) is read once and reused across many output columns, so it climbs onto the compute roof — the same regimes and ridge as the roofline figure above.</figcaption>
+</figure>

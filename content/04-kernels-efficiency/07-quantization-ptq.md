@@ -244,6 +244,8 @@ def accumulate_hessian(layer, calibration_inputs):
 
 GPTQ runs in **minutes to a couple of hours** for a 7B–70B model on a single GPU and reliably hits INT4 (and often INT3) with small perplexity loss. Its weakness: it is sequential per layer and Hessian-heavy, and it can struggle on the very narrowest bit-widths without a group size.
 
+{{fig:gptq-error-compensation}}
+
 ## Weight-Only Quantization II: AWQ
 
 **AWQ** — Activation-aware Weight Quantization (Lin et al., 2023) — starts from a different observation: **not all weights are equally important, and the important ones are revealed by the activations.** If a weight column multiplies an input channel that frequently carries large activations, errors in that column get amplified into the output. AWQ identifies these **salient weight channels** (typically the ~1% aligned with activation outliers) and protects them.
@@ -349,6 +351,8 @@ def apply_smoothing(weight, ln_weight, s):
     weight = weight * s.unsqueeze(0)   # weight columns multiplied by s
     return weight, ln_weight
 ```
+
+{{fig:smoothquant-migration}}
 
 ### LLM.int8(): keep the outliers in FP16
 

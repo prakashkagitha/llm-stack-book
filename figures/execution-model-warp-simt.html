@@ -1,0 +1,180 @@
+<figure class="viz" id="fig-execution-model-warp-simt">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 600" role="img" aria-label="The CUDA execution hierarchy -- grid, block, warp, thread -- mapped row by row onto GPU hardware -- GPU, SM, warp scheduler, lane. A zoom shows one warp of 32 lanes fed by a single fetch/decode and program counter, executing in lockstep (SIMT). Two side panels show warp divergence, where an if-split makes both branch paths run serially for up to 2x slower, and memory coalescing, where contiguous per-lane addresses collapse into 1-2 transactions but scattered addresses cost up to 32 transactions.">
+<defs>
+  <marker id="ews-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+</defs>
+<style>
+  #fig-execution-model-warp-simt text{ fill:var(--ink-soft); font-family:var(--sans,sans-serif); }
+  #fig-execution-model-warp-simt .col-hdr{ font:700 12px var(--sans,sans-serif); fill:var(--muted); letter-spacing:.4px; }
+  #fig-execution-model-warp-simt .lvl-big{ font:700 13px var(--sans,sans-serif); }
+  #fig-execution-model-warp-simt .lvl-sm{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-execution-model-warp-simt .note{ font:500 10.5px var(--sans,sans-serif); fill:var(--ink-soft); }
+  #fig-execution-model-warp-simt .sect{ font:700 13px var(--sans,sans-serif); }
+  #fig-execution-model-warp-simt .sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-execution-model-warp-simt .cap{ font:700 11px var(--sans,sans-serif); }
+  #fig-execution-model-warp-simt .capsm{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-execution-model-warp-simt .mono{ font:500 9px var(--mono,monospace); fill:var(--muted); }
+</style>
+
+
+<g data-anim="1">
+  <text x="150" y="26" text-anchor="middle" class="col-hdr">SOFTWARE (CUDA programming model)</text>
+  <text x="570" y="26" text-anchor="middle" class="col-hdr">HARDWARE (physical GPU)</text>
+
+  
+  <path d="M20 42 L50 88 L80 134 L110 180" fill="none" class="v-grid" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+  
+  <rect x="20" y="42" width="260" height="38" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="34" y="60" class="lvl-big" fill="var(--accent)">GRID</text>
+  <text x="34" y="73" class="lvl-sm">many blocks</text>
+  <line x1="280" y1="61" x2="418" y2="61" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ews-arr)"/>
+  <rect x="420" y="42" width="300" height="38" rx="6" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+  <text x="434" y="60" class="lvl-big" fill="var(--accent2,#3b82f6)">GPU</text>
+  <text x="434" y="73" class="lvl-sm">many SMs (e.g. 132 on H100)</text>
+
+  
+  <rect x="50" y="88" width="230" height="38" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="64" y="106" class="lvl-big" fill="var(--accent)">BLOCK / CTA</text>
+  <text x="64" y="119" class="lvl-sm">cooperative thread array</text>
+  <line x1="280" y1="107" x2="418" y2="107" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ews-arr)"/>
+  <rect x="420" y="88" width="300" height="38" rx="6" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+  <text x="434" y="106" class="lvl-big" fill="var(--accent2,#3b82f6)">SM</text>
+  <text x="434" y="119" class="lvl-sm">owns the block for its life: reg file + SMEM</text>
+
+  
+  <rect x="80" y="134" width="200" height="38" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="94" y="152" class="lvl-big" fill="var(--accent)">WARP (32)</text>
+  <text x="94" y="165" class="lvl-sm">lockstep execution unit</text>
+  <line x1="280" y1="153" x2="418" y2="153" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ews-arr)"/>
+  <rect x="420" y="134" width="300" height="38" rx="6" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+  <text x="434" y="152" class="lvl-big" fill="var(--accent2,#3b82f6)">WARP SCHEDULER</text>
+  <text x="434" y="165" class="lvl-sm">picks a ready warp each cycle</text>
+
+  
+  <rect x="110" y="180" width="170" height="38" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="124" y="198" class="lvl-big" fill="var(--accent)">THREAD</text>
+  <text x="124" y="211" class="lvl-sm">one output element</text>
+  <line x1="280" y1="199" x2="418" y2="199" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ews-arr)"/>
+  <rect x="420" y="180" width="300" height="38" rx="6" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+  <text x="434" y="198" class="lvl-big" fill="var(--accent2,#3b82f6)">LANE</text>
+  <text x="434" y="211" class="lvl-sm">one thread's ALU</text>
+</g>
+
+<g data-anim="2">
+  <text x="20" y="240" class="note"><tspan font-weight="700">Block/CTA:</tspan> threads in a block share fast SMEM and can __syncthreads().</text>
+  <text x="20" y="254" class="note">Different blocks cannot cheaply share/sync -&gt; run independently -&gt; scales to any GPU size.</text>
+</g>
+
+<line x1="20" y1="268" x2="760" y2="268" class="v-grid" stroke-width="1"/>
+
+
+<g data-anim="3">
+  <text x="20" y="292" class="sect">Zoom: inside ONE warp</text>
+  <text x="20" y="306" class="sub">32 lanes share one instruction fetch/decode unit and one program counter</text>
+
+  <rect x="20" y="316" width="140" height="50" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="90" y="338" text-anchor="middle" class="lvl-big" fill="var(--accent)">FETCH / DECODE</text>
+  <text x="90" y="353" text-anchor="middle" class="lvl-sm">+ program counter</text>
+
+  <path d="M160 341 H176 V320" fill="none" stroke="var(--muted)" stroke-width="1.4"/>
+  <line x1="176" y1="320" x2="748" y2="320" stroke="var(--muted)" stroke-width="1.4"/>
+
+  <g>
+    <rect x="176" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="194" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="212" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="230" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="248" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="266" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="284" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="302" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="320" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="338" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="356" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="374" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="392" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="410" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="428" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="446" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="464" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="482" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="500" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="518" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="536" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="554" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="572" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="590" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="608" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="626" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="644" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="662" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="680" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="698" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="716" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+    <rect x="734" y="327" width="15" height="28" rx="2" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+  </g>
+  <text x="462" y="371" text-anchor="middle" class="capsm">32 lanes = 1 warp</text>
+  <text x="390" y="388" text-anchor="middle" class="cap" fill="var(--accent)">SIMT: one instruction, 32 lanes, lockstep -- the warp is the real unit of execution.</text>
+</g>
+
+<line x1="20" y1="400" x2="760" y2="400" class="v-grid" stroke-width="1"/>
+
+
+<line x1="390" y1="412" x2="390" y2="586" class="v-grid" stroke-width="1"/>
+
+<g data-anim="4">
+  <text x="20" y="426" class="sect" fill="var(--warn,#e0a106)">DIVERGENCE</text>
+  <text x="20" y="440" class="sub">if/else splits the warp: both paths run serially</text>
+
+  <text x="20" y="456" class="capsm">path A executing (16 active / 16 masked)</text>
+  <rect x="20" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="30.6" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="41.2" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="51.8" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="62.4" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="73" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="83.6" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="94.2" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="104.8" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="115.4" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="126" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="136.6" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="147.2" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="157.8" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="168.4" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="179" y="461" width="9" height="18" fill="var(--accent2,#3b82f6)"/>
+  <rect x="189.6" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="200.2" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="210.8" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="221.4" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="232" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="242.6" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="253.2" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="263.8" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="274.4" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="285" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="295.6" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="306.2" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="316.8" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="327.4" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="338" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="348.6" y="461" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/>
+
+  <text x="358" y="474" class="mono">then</text>
+
+  <text x="20" y="497" class="capsm">path B executing (16 masked / 16 active)</text>
+  <rect x="20" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="30.6" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="41.2" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="51.8" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="62.4" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="73" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="83.6" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="94.2" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="104.8" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="115.4" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="126" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="136.6" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="147.2" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="157.8" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="168.4" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/><rect x="179" y="502" width="9" height="18" fill="var(--muted)" fill-opacity="0.28"/>
+  <rect x="189.6" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="200.2" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="210.8" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="221.4" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="232" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="242.6" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="253.2" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="263.8" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="274.4" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="285" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="295.6" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="306.2" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="316.8" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="327.4" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="338" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/><rect x="348.6" y="502" width="9" height="18" fill="var(--accent2,#3b82f6)"/>
+
+  <text x="20" y="530" class="cap" fill="var(--warn,#e0a106)">both sides run serially -&gt; up to 2x slower</text>
+</g>
+
+<g data-anim="5">
+  <text x="410" y="426" class="sect" fill="var(--good,#2f9e6e)">COALESCING</text>
+  <text x="410" y="440" class="sub">one load; lane i wants 4 bytes at base + i*4</text>
+
+  <text x="410" y="456" class="capsm">contiguous: lane i -&gt; base+i*4B (illustrative subset of 32 lanes)</text>
+  <line x1="415" y1="462" x2="415" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="458" y1="462" x2="458" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="501" y1="462" x2="501" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="544" y1="462" x2="544" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="587" y1="462" x2="587" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="630" y1="462" x2="630" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="673" y1="462" x2="673" y2="467" stroke="var(--muted)" stroke-width="1.2"/><line x1="716" y1="462" x2="716" y2="467" stroke="var(--muted)" stroke-width="1.2"/>
+  <rect x="410" y="470" width="316" height="16" rx="3" fill="var(--good,#2f9e6e)" fill-opacity="0.55" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+  <text x="416" y="497" class="cap" fill="var(--good,#2f9e6e)">-&gt; 1-2 transactions, near-peak BW</text>
+
+  <text x="410" y="516" class="capsm">scattered: lanes read unrelated addresses</text>
+  <line x1="415" y1="522" x2="415" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="458" y1="522" x2="458" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="501" y1="522" x2="501" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="544" y1="522" x2="544" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="587" y1="522" x2="587" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="630" y1="522" x2="630" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="673" y1="522" x2="673" y2="527" stroke="var(--muted)" stroke-width="1.2"/><line x1="716" y1="522" x2="716" y2="527" stroke="var(--muted)" stroke-width="1.2"/>
+
+  <line x1="415" y1="527" x2="638" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="458" y1="527" x2="418" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="501" y1="527" x2="704" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="544" y1="527" x2="466" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="587" y1="527" x2="542" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="630" y1="527" x2="582" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="673" y1="527" x2="504" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+  <line x1="716" y1="527" x2="666" y2="536" stroke="var(--muted)" stroke-width="1" stroke-opacity="0.7"/>
+
+  <rect x="630" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="410" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="696" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="458" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="534" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="574" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="496" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+  <rect x="658" y="536" width="16" height="14" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.6" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+
+  <text x="410" y="576" class="cap" fill="var(--warn,#e0a106)">-&gt; up to 32 transactions, 32x penalty</text>
+</g>
+</svg>
+<figcaption><b>Software maps onto hardware row by row, and the warp is the real unit of execution.</b> A grid of blocks runs across a GPU's SMs; each block owns one SM for its life and shares fast on-chip SMEM; each warp of 32 threads shares one instruction stream (SIMT) issued by a warp scheduler. Two consequences follow directly: a warp that diverges on a branch runs both paths serially (up to 2x slower), and a warp's memory access coalesces into 1-2 transactions when contiguous but up to 32 when scattered.</figcaption>
+</figure>

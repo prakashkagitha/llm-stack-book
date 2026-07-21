@@ -1,0 +1,148 @@
+<figure class="viz" id="fig-rope-scaling-methods">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 560" role="img" aria-label="Position Interpolation, NTK-aware scaling, and YaRN each reshape RoPE's frequency ladder differently: PI squeezes every dimension equally, NTK-aware stretches mostly the slow long-range dimensions while leaving fast local ones alone, and YaRN combines a per-dimension ramp with an attention-temperature correction.">
+  <defs>
+    <marker id="rsm-tip" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rope-scaling-methods text{ fill:var(--ink-soft); }
+    #fig-rope-scaling-methods .ttl{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-rope-scaling-methods .sm{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rope-scaling-methods .lbl{ font:600 10px var(--sans,sans-serif); }
+    #fig-rope-scaling-methods .mono{ font:500 9.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-rope-scaling-methods .cap{ font:600 11px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-rope-scaling-methods .panel{ fill:var(--v-fill); stroke:var(--border-2); stroke-width:1; }
+    #fig-rope-scaling-methods .fastc{ color:var(--accent); }
+    #fig-rope-scaling-methods .slowc{ color:var(--good,#2f9e6e); }
+  </style>
+
+  
+  <g data-anim="1">
+    <rect x="10" y="10" width="760" height="150" rx="10" class="panel"/>
+    <text x="26" y="32" class="ttl">1. Position Interpolation (uniform squeeze)</text>
+
+    
+    <line x1="90" y1="80" x2="700" y2="80" class="v-muted" stroke="currentColor" stroke-width="1"/>
+
+    
+    <circle cx="90"  cy="80" r="9" class="fastc" fill="currentColor"/>
+    <circle cx="177" cy="80" r="9" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="264" cy="80" r="9" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="351" cy="80" r="9" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="438" cy="80" r="9" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="525" cy="80" r="9" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="612" cy="80" r="9" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="700" cy="80" r="9" class="slowc" fill="currentColor"/>
+
+    
+    <g class="v-muted" stroke="currentColor" stroke-width="1.8" fill="none">
+      <path d="M90 100 L90 112" marker-end="url(#rsm-tip)"/>
+      <path d="M177 100 L177 112" marker-end="url(#rsm-tip)"/>
+      <path d="M264 100 L264 112" marker-end="url(#rsm-tip)"/>
+      <path d="M351 100 L351 112" marker-end="url(#rsm-tip)"/>
+      <path d="M438 100 L438 112" marker-end="url(#rsm-tip)"/>
+      <path d="M525 100 L525 112" marker-end="url(#rsm-tip)"/>
+      <path d="M612 100 L612 112" marker-end="url(#rsm-tip)"/>
+      <path d="M700 100 L700 112" marker-end="url(#rsm-tip)"/>
+    </g>
+    <text x="90" y="128" text-anchor="middle" class="mono">/s</text>
+    <text x="700" y="128" text-anchor="middle" class="mono">/s</text>
+    <text x="90"  y="66" text-anchor="middle" class="mono" style="font-size:8.5px">fast</text>
+    <text x="700" y="66" text-anchor="middle" class="mono" style="font-size:8.5px">slow</text>
+
+    <text x="26" y="146" class="sm">pos -&gt; pos/s (e.g. s=4): every dimension compressed equally -- even the fast local dims that were never</text>
+    <text x="26" y="158" class="sm">the problem lose resolution; usually needs a short fine-tune.</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="10" y="176" width="760" height="150" rx="10" class="panel"/>
+    <text x="26" y="198" class="ttl">2. NTK-aware (stretch the base)</text>
+
+    <line x1="90" y1="246" x2="700" y2="246" class="v-muted" stroke="currentColor" stroke-width="1"/>
+    <circle cx="90"  cy="246" r="9" class="fastc" fill="currentColor"/>
+    <circle cx="177" cy="246" r="8" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="264" cy="246" r="8" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="351" cy="246" r="8" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="438" cy="246" r="8" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="525" cy="246" r="8" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="612" cy="246" r="8" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="700" cy="246" r="9" class="slowc" fill="currentColor"/>
+
+    
+    <g class="v-muted" stroke="currentColor" fill="none">
+      <path d="M90 258 L90 261"   stroke-width="1.4" marker-end="url(#rsm-tip)"/>
+      <path d="M177 258 L177 264" stroke-width="1.5" marker-end="url(#rsm-tip)"/>
+      <path d="M264 258 L264 270" stroke-width="1.6" marker-end="url(#rsm-tip)"/>
+      <path d="M351 258 L351 277" stroke-width="1.8" marker-end="url(#rsm-tip)"/>
+      <path d="M438 258 L438 284" stroke-width="2"   marker-end="url(#rsm-tip)"/>
+      <path d="M525 258 L525 291" stroke-width="2.2" marker-end="url(#rsm-tip)"/>
+      <path d="M612 258 L612 298" stroke-width="2.4" class="slowc" color="currentColor" marker-end="url(#rsm-tip)"/>
+      <path d="M700 258 L700 305" stroke-width="2.6" class="slowc" color="currentColor" marker-end="url(#rsm-tip)"/>
+    </g>
+    <text x="90" y="215" text-anchor="middle" class="mono" style="font-size:8.5px">untouched,</text>
+    <text x="90" y="225" text-anchor="middle" class="mono" style="font-size:8.5px">local precision kept</text>
+    <text x="700" y="215" text-anchor="middle" class="mono" style="font-size:8.5px">stretched</text>
+    <text x="700" y="225" text-anchor="middle" class="mono" style="font-size:8.5px">most</text>
+
+    <text x="26" y="322" class="sm">base -&gt; base * s^(d/(d-2)): non-uniform; often training-free for 2-4x.</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="10" y="342" width="760" height="176" rx="10" class="panel"/>
+    <text x="26" y="364" class="ttl">3. YaRN (per-dim ramp + temperature)</text>
+
+    <line x1="90" y1="412" x2="560" y2="412" class="v-muted" stroke="currentColor" stroke-width="1"/>
+    
+    <rect x="90"  y="400" width="130" height="24" fill="var(--accent)" opacity="0.14"/>
+    <rect x="220" y="400" width="130" height="24" fill="var(--accent2,#3b82f6)" opacity="0.12"/>
+    <rect x="350" y="400" width="210" height="24" fill="var(--good,#2f9e6e)" opacity="0.14"/>
+
+    <circle cx="90"  cy="412" r="9" class="fastc" fill="currentColor"/>
+    <circle cx="155" cy="412" r="7" class="fastc" fill="currentColor" opacity="0.7"/>
+    <circle cx="264" cy="412" r="7" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="330" cy="412" r="7" fill="var(--accent2,#3b82f6)"/>
+    <circle cx="420" cy="412" r="7" class="slowc" fill="currentColor" opacity="0.7"/>
+    <circle cx="490" cy="412" r="8" class="slowc" fill="currentColor" opacity="0.85"/>
+    <circle cx="560" cy="412" r="9" class="slowc" fill="currentColor"/>
+
+    <text x="155" y="392" text-anchor="middle" class="mono" style="font-size:8.5px">short wavelength</text>
+    <text x="155" y="440" text-anchor="middle" class="mono" style="font-size:8.5px">untouched</text>
+    <text x="285" y="392" text-anchor="middle" class="mono" style="font-size:8.5px">blend</text>
+    <text x="285" y="440" text-anchor="middle" class="mono" style="font-size:8.5px">smooth ramp</text>
+    <text x="455" y="392" text-anchor="middle" class="mono" style="font-size:8.5px">long wavelength</text>
+    <text x="455" y="440" text-anchor="middle" class="mono" style="font-size:8.5px">interpolated (PI-style)</text>
+
+    
+    <g transform="translate(600,388)">
+      <text x="0" y="-8" class="mono" style="font-size:8.5px">flat</text>
+      <rect x="0" y="0" width="10" height="26" class="v-muted" fill="currentColor" opacity="0.55"/>
+      <rect x="14" y="4" width="10" height="22" class="v-muted" fill="currentColor" opacity="0.55"/>
+      <rect x="28" y="2" width="10" height="24" class="v-muted" fill="currentColor" opacity="0.55"/>
+      <path d="M46 13 L64 13" class="v-muted" stroke="currentColor" stroke-width="1.6" marker-end="url(#rsm-tip)"/>
+      <rect x="72" y="18" width="10" height="8"  class="slowc" fill="currentColor"/>
+      <rect x="86" y="2"  width="10" height="24" class="slowc" fill="currentColor"/>
+      <rect x="100" y="14" width="10" height="12" class="slowc" fill="currentColor"/>
+      <text x="86" y="-8" text-anchor="middle" class="mono" style="font-size:8.5px">peaked</text>
+    </g>
+    <text x="600" y="452" class="mono" style="font-size:8px">x(0.1*ln s+1)</text>
+    <text x="600" y="463" class="mono" style="font-size:8px">logit temp.</text>
+    <text x="600" y="478" class="sm" style="font-size:8px">re-sharpens</text>
+    <text x="600" y="489" class="sm" style="font-size:8px">flattened attn.</text>
+
+    <text x="26" y="486" class="sm">NTK-by-parts ramp + attention temperature: best reach, the production default.</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="10" y1="530" x2="760" y2="530" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3"/>
+    <text x="390" y="550" text-anchor="middle" class="cap">
+      PI (uniform, needs fine-tune) -&gt; NTK-aware (non-uniform, often free) -&gt; YaRN (per-dim ramp + temperature)
+    </text>
+  </g>
+</svg>
+<figcaption><b>Three ways to reshape RoPE's frequency ladder for longer context.</b> Position Interpolation squeezes every dimension by the same factor; NTK-aware scaling stretches mostly the slow, long-range dimensions while leaving fast local ones alone; YaRN combines a per-dimension ramp (short wavelengths untouched, long wavelengths interpolated) with a logit-temperature correction that re-sharpens the softmax the extra context flattens.</figcaption>
+</figure>
