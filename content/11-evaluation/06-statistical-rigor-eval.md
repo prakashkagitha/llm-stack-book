@@ -70,6 +70,8 @@ $$
 \qquad \text{CI}_{95\%} = \left[\hat\theta^{*}_{(2.5\%)},\ \hat\theta^{*}_{(97.5\%)}\right].
 $$
 
+{{fig:statrig-bootstrap-resample}}
+
 ### Bootstrap CI, Wilson, and Clopper–Pearson — from scratch
 
 Here is a complete, dependency-light implementation you can drop into an eval harness. It computes a percentile bootstrap CI, a BCa (bias-corrected and accelerated) bootstrap CI — which corrects for skew and is the one to prefer — and the two analytic intervals for binary outcomes.
@@ -282,6 +284,8 @@ $$
 $$
 
 and for small $b+c$ you should use the **exact binomial** test instead of the chi-square approximation.
+
+{{fig:statrig-pairing-discordant-cells}}
 
 ### Paired tests — from scratch
 
@@ -747,6 +751,8 @@ Bring it together with the skill this chapter exists to instill. When you look a
 3. **Ask how many evaluations.** Two models near the top of an Elo board may have played thousands of battles each (tight CIs) while a new entrant has played 200 (a $\pm 50$-point interval). Rank is meaningless until the new entrant has enough battles.
 4. **Suspect the prompt.** A 3-point swing between two papers' numbers for the *same* model is almost always prompt/harness variance, not a real capability change. Demand the prompt template and the harness version.
 5. **Check for multiple comparisons.** "Best on 9 of 12 benchmarks" with 12 noisy benchmarks is roughly what chance produces. Look for a pre-registered headline metric, not a victory lap across cherry-picked subsets.
+
+{{fig:statrig-ci-overlap-verdict}}
 
 !!! interview "Interview Corner"
 

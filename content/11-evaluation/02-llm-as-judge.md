@@ -95,6 +95,8 @@ Disadvantages: requires O(N²) queries to compare all pairs; does not yield an a
 
 In practice, production eval pipelines often use **pointwise scoring for monitoring** (cheap, daily runs) and **pairwise comparison for model selection** (milestone decisions).
 
+{{fig:judge-pointwise-vs-pairwise}}
+
 ---
 
 ## Rubric Design: Decomposing Quality
@@ -215,6 +217,8 @@ Build a **gold calibration set** of ~200–500 examples with trusted human label
 - False positive / false negative rates per criterion
 
 If calibration drops, it usually signals that your judge prompt needs updating for the new model family or that the task distribution has drifted.
+
+{{fig:judge-bias-menagerie}}
 
 ---
 
@@ -540,6 +544,8 @@ def run_automated_arena(
     The win was somewhat expected (A was already rated higher), so the rating shift is moderate — about 13 points each way.
 
     If instead B (the weaker model) had won, the update would be larger in magnitude ($32 \times (1.0 - 0.401) \approx 19.2$ for B), because upsets carry more information.
+
+{{fig:elo-battles-to-ranking}}
 
 ---
 

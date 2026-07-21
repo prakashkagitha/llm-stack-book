@@ -153,6 +153,8 @@ Why does this dominate? Because during decode, generating one token touches ever
 
     Ten gigabytes of cache for *one* user at a modest 4K context. The model weights themselves are ~140 GB in bf16, so on an 8×80 GB node you have roughly 500 GB free after weights — meaning naïve MHA caps you at on the order of ~45 concurrent 4K sequences before the cache alone exhausts memory. Push the context to 32K and a *single* sequence wants ~86 GB of cache — more than an entire 80 GB GPU. This is the wall. Now suppose we replace MHA with GQA using 8 KV groups instead of 64 (the actual Llama-2-70B choice): the cache shrinks by exactly $64/8 = 8\times$, to about **1.34 GB** at 4K — and suddenly you can serve ~8× more users or 8× longer contexts from the same hardware. *That single architectural decision is worth more than most kernel optimizations.*
 
+{{fig:kv-cache-hbm-wall}}
+
 ### Decomposing the cache: which factors can architecture actually change?
 
 Look again at $2\, B\, L_\text{layers}\, S\, h\, d_h\, P$. As a serving operator you can pick $B$ and $S$ (workload), and you can quantize the cache to shrink $P$ (covered in [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html)). As an *architect* the only knobs are $L_\text{layers}$, $h$, and $d_h$ — and you cannot freely cut layers or head dimension without hurting quality. The clever insight of MQA/GQA is that the $h$ in the cache formula need not equal the $h$ used for *queries*. **You can have many query heads but few key/value heads.** That decoupling is the entire game.
@@ -192,8 +194,6 @@ $$
 $$
 
 so choosing $g = h/8$ gives an $8\times$ cache reduction. The beauty of GQA is empirical: a small number of groups (commonly $g = 8$) recovers nearly all of MHA's quality while keeping most of MQA's memory savings. Llama-2-70B and Llama-3 use $g=8$; Mistral-7B uses $g=8$ with 32 query heads. The pattern — 8 KV heads regardless of how many query heads — is now the de facto standard, partly because $g=8$ aligns naturally with 8-way tensor parallelism (each GPU owns one KV head; see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)).
-
-{{fig:mhagqamla-headsharing-spectrum}}
 
 ### Implementing the MHA → GQA conversion
 
@@ -297,6 +297,8 @@ The two load-bearing facts in that code: (1) `W_k` and `W_v` output `n_kv_heads 
 
 !!! note "Aside: uptraining — converting an existing MHA checkpoint to GQA"
     A delightful result from the GQA paper is that you don't have to train from scratch. You can take a pretrained MHA model and *construct* a GQA model by **mean-pooling** the key/value projection weights within each group — average the $W_K$ of the heads in a group to get the group's shared $W_K$ — then "uptrain" with a small fraction (e.g. ~5%) of the original pretraining compute to recover quality. This made GQA a cheap retrofit, which is a big reason it spread so fast: model providers could ship GQA variants of existing models without a full pretrain.
+
+{{fig:gqa-projection-and-repeat}}
 
 ## Multi-head Latent Attention (MLA): Compress the Cache Itself
 

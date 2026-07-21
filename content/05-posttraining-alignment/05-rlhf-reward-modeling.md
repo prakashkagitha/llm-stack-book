@@ -12,7 +12,7 @@ InstructGPT (and ChatGPT after it) is built on a three-stage pipeline. Each stag
 
 {{fig:rlhf-pipeline}}
 
-{{fig:rlhf-three-stage-pipeline}}
+{{fig:why-rlhf-beats-sft}}
 
 The key conceptual move is **decoupling the source of supervision from the form of supervision.** Humans supply preferences — a comparison signal that is cheap, has low inter-annotator variance, and requires no expertise to author. The reward model turns those discrete comparisons into a *dense, differentiable scalar* defined on the entire space of possible responses, including responses no human has ever seen. The policy then gets to *generate its own training data*: it proposes responses, the RM grades them, and the policy is nudged toward the high-scoring region. This is why RLHF can exceed SFT — the policy explores outputs *better than any demonstration in the dataset*, and the RM, generalizing from preferences, can recognize and reward them.
 
@@ -92,6 +92,8 @@ $$
 $$
 
 So the push on the scores is proportional to *how wrong the model currently is*: if it already strongly prefers the winner ($\sigma(\Delta)\to 1$), the gradient vanishes; if it has it backwards, the gradient saturates at magnitude $1$. This self-limiting behavior is exactly the robustness property of logistic losses.
+
+{{fig:bradley-terry-loss-shape}}
 
 !!! note "Aside: the ranking generalization (Plackett–Luce)"
 
@@ -194,6 +196,8 @@ def train_step(rm, optimizer, batch):
 ```
 
 The two non-obvious lines are worth dwelling on. First, `F.softplus(-delta)` is the *numerically stable* way to compute $-\log\sigma(\Delta)$: a naive `-torch.log(torch.sigmoid(delta))` underflows to `inf` when `delta` is very negative, whereas `softplus` is stable everywhere (the same reason we use `F.binary_cross_entropy_with_logits` rather than logits-then-sigmoid-then-BCE; see [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html)). Second, both responses pass through the **same** network — the reward model is a *Siamese* / shared-encoder architecture, and only the *difference* of its two outputs ever enters the loss.
+
+{{fig:rm-siamese-comparator}}
 
 ### Batching all-pairs-from-one-prompt
 

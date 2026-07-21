@@ -1,0 +1,131 @@
+<figure class="viz" id="fig-backprop-two-sweep-dag">
+<button class="viz-replay" type="button">&#8635; replay</button>
+
+<svg viewBox="0 0 820 300" role="img" aria-label="A shared computation graph drawn as two lanes: the forward sweep on top caches each operation's inputs while flowing x through affine, ReLU, affine, and softmax-cross-entropy to the loss L; the backward sweep on bottom starts from the seed L-bar=1 and flows right to left, each operation node applying its vector-Jacobian-product rule to turn an output adjoint into an input adjoint, ending at the parameter and input gradients.">
+<defs>
+  <marker id="bpd-fwd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="0">
+    <path d="M0 1 L9 5 L0 9 z" class="v-accent"/>
+  </marker>
+  <marker id="bpd-bwd" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="0">
+    <path d="M10 1 L1 5 L10 9 z" class="v-muted"/>
+  </marker>
+</defs>
+<style>
+  #fig-backprop-two-sweep-dag .lane-lbl{ font:700 13px var(--sans,sans-serif); }
+  #fig-backprop-two-sweep-dag .op-lbl{ font:700 11.5px var(--mono,monospace); }
+  #fig-backprop-two-sweep-dag .pill-lbl{ font:700 12px var(--mono,monospace); }
+  #fig-backprop-two-sweep-dag .pill-lbl-adj{ font:700 10px var(--mono,monospace); }
+  #fig-backprop-two-sweep-dag .cache-note{ font:400 9px var(--sans,sans-serif); }
+  #fig-backprop-two-sweep-dag .vjp-h{ font:700 10px var(--mono,monospace); }
+  #fig-backprop-two-sweep-dag .vjp-l{ font:400 8px var(--mono,monospace); }
+  #fig-backprop-two-sweep-dag .seed-note{ font:600 10px var(--sans,sans-serif); }
+  #fig-backprop-two-sweep-dag .node{ stroke-width:1.3; }
+  #fig-backprop-two-sweep-dag .seed-cap{ stroke-width:2.2; }
+
+  #fig-backprop-two-sweep-dag.in-view [data-anim="6"]{ animation-delay:1.55s; }
+  #fig-backprop-two-sweep-dag.in-view [data-anim="7"]{ animation-delay:1.85s; }
+  #fig-backprop-two-sweep-dag.in-view [data-anim="8"]{ animation-delay:2.15s; }
+  #fig-backprop-two-sweep-dag.in-view [data-anim="9"]{ animation-delay:2.45s; }
+</style>
+
+
+<text x="16" y="20" class="lane-lbl v-accent">FORWARD (cache)</text>
+<line x1="16" y1="150" x2="804" y2="150" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="16" y="172" class="lane-lbl v-label">BACKWARD (apply VJP)</text>
+
+
+<g data-anim="1">
+  <circle cx="42" cy="90" r="18" class="node v-fill v-stroke"/>
+  <text x="42" y="95" text-anchor="middle" class="pill-lbl v-label">x</text>
+  <line x1="60" y1="90" x2="88" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <rect x="88" y="67" width="104" height="46" rx="8" class="node v-fill v-stroke"/>
+  <text x="140" y="94" text-anchor="middle" class="op-lbl v-label">[*W1+b1]</text>
+  <text x="140" y="132" text-anchor="middle" class="cache-note v-muted">caches: x, W1</text>
+</g>
+
+<g data-anim="2">
+  <line x1="192" y1="90" x2="222" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <circle cx="240" cy="90" r="18" class="node v-fill v-stroke"/>
+  <text x="240" y="95" text-anchor="middle" class="pill-lbl v-label">z1</text>
+  <line x1="258" y1="90" x2="276" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <rect x="276" y="67" width="72" height="46" rx="8" class="node v-fill v-stroke"/>
+  <text x="312" y="94" text-anchor="middle" class="op-lbl v-label">[ReLU]</text>
+  <text x="312" y="132" text-anchor="middle" class="cache-note v-muted">caches: sign(z1)</text>
+</g>
+
+<g data-anim="3">
+  <line x1="348" y1="90" x2="372" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <circle cx="390" cy="90" r="18" class="node v-fill v-stroke"/>
+  <text x="390" y="95" text-anchor="middle" class="pill-lbl v-label">a1</text>
+  <line x1="408" y1="90" x2="430" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <rect x="430" y="67" width="104" height="46" rx="8" class="node v-fill v-stroke"/>
+  <text x="482" y="94" text-anchor="middle" class="op-lbl v-label">[*W2+b2]</text>
+  <text x="482" y="132" text-anchor="middle" class="cache-note v-muted">caches: a1, W2</text>
+</g>
+
+<g data-anim="4">
+  <line x1="534" y1="90" x2="564" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <circle cx="582" cy="90" r="18" class="node v-fill v-stroke"/>
+  <text x="582" y="95" text-anchor="middle" class="pill-lbl v-label">z2</text>
+  <line x1="600" y1="90" x2="624" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <rect x="624" y="67" width="116" height="46" rx="8" class="node v-fill v-stroke"/>
+  <text x="682" y="94" text-anchor="middle" class="op-lbl v-label">[softmax+CE]</text>
+  <text x="682" y="132" text-anchor="middle" class="cache-note v-muted">caches: probs P</text>
+  <line x1="740" y1="90" x2="756" y2="90" class="v-accent-s" stroke-width="1.8" marker-end="url(#bpd-fwd)"/>
+  <circle cx="777" cy="90" r="18" class="node v-fill v-stroke"/>
+  <text x="777" y="95" text-anchor="middle" class="pill-lbl v-label">L</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="749" y="219" width="56" height="32" rx="16" class="seed-cap v-fill v-accent-s"/>
+  <text x="777" y="239" text-anchor="middle" class="pill-lbl-adj v-label">L-bar</text>
+  <text x="777" y="270" text-anchor="middle" class="seed-note v-accent">dL/dL = 1 (seed)</text>
+</g>
+
+<g data-anim="6">
+  <rect x="622" y="196" width="115" height="78" rx="8" class="node v-fill v-stroke"/>
+  <text x="679" y="220" text-anchor="middle" class="vjp-h v-label">[softmax+CE]</text>
+  <text x="679" y="245" text-anchor="middle" class="vjp-l v-label">z2-bar = P - Y</text>
+  <rect x="556" y="220" width="54" height="30" rx="15" class="node v-fill v-stroke"/>
+  <text x="583" y="239" text-anchor="middle" class="pill-lbl-adj v-label">z2-bar</text>
+  <line x1="749" y1="235" x2="738" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+  <line x1="622" y1="235" x2="610" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+</g>
+
+<g data-anim="7">
+  <rect x="426" y="196" width="118" height="78" rx="8" class="node v-fill v-stroke"/>
+  <text x="485" y="213" text-anchor="middle" class="vjp-h v-label">[*W2+b2]</text>
+  <text x="485" y="233" text-anchor="middle" class="vjp-l v-label">W2-bar = a1^T z2-bar</text>
+  <text x="485" y="250" text-anchor="middle" class="vjp-l v-label">a1-bar = z2-bar W2^T</text>
+  <rect x="360" y="220" width="54" height="30" rx="15" class="node v-fill v-stroke"/>
+  <text x="387" y="239" text-anchor="middle" class="pill-lbl-adj v-label">a1-bar</text>
+  <line x1="556" y1="235" x2="544" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+  <line x1="426" y1="235" x2="414" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+</g>
+
+<g data-anim="8">
+  <rect x="250" y="196" width="98" height="78" rx="8" class="node v-fill v-stroke"/>
+  <text x="299" y="213" text-anchor="middle" class="vjp-h v-label">[ReLU]</text>
+  <text x="299" y="233" text-anchor="middle" class="vjp-l v-label">z1-bar = a1-bar *</text>
+  <text x="299" y="250" text-anchor="middle" class="vjp-l v-label">1[z1&gt;0]  (gate)</text>
+  <rect x="184" y="220" width="54" height="30" rx="15" class="node v-fill v-stroke"/>
+  <text x="211" y="239" text-anchor="middle" class="pill-lbl-adj v-label">z1-bar</text>
+  <line x1="360" y1="235" x2="348" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+  <line x1="250" y1="235" x2="238" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+</g>
+
+<g data-anim="9">
+  <rect x="80" y="196" width="92" height="78" rx="8" class="node v-fill v-stroke"/>
+  <text x="126" y="213" text-anchor="middle" class="vjp-h v-label">[*W1+b1]</text>
+  <text x="126" y="233" text-anchor="middle" class="vjp-l v-label">W1-bar =</text>
+  <text x="126" y="250" text-anchor="middle" class="vjp-l v-label">x^T z1-bar</text>
+  <rect x="20" y="220" width="48" height="30" rx="15" class="node v-fill v-stroke"/>
+  <text x="44" y="239" text-anchor="middle" class="pill-lbl-adj v-label" font-size="9">x-bar</text>
+  <line x1="184" y1="235" x2="172" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+  <line x1="80" y1="235" x2="68" y2="235" class="v-stroke" stroke-width="1.8" marker-end="url(#bpd-bwd)"/>
+</g>
+
+</svg>
+<figcaption><b>One DAG, walked twice.</b> The forward sweep (top) flows left to right, caching whatever each node's backward rule will need; the backward sweep (bottom) starts from the seeded adjoint <code>L-bar = dL/dL = 1</code> and flows right to left, each node turning an output adjoint into input adjoints via its local vector-Jacobian product.</figcaption>
+</figure>

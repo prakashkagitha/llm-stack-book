@@ -87,6 +87,22 @@ def render(name, theme):
     if not m:
         print(f"✗ no <svg> in {name}"); return None
     svg = m.group(0)
+    if "xmlns=" not in svg[:200]:
+        # Without an explicit xmlns, cairosvg silently drops the whole <style>
+        # block (fill AND font-size/family) -- fine in real browsers (HTML5
+        # infers the SVG namespace) but it makes this preview misleading, so
+        # inject it only for rasterization.
+        svg = svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"', 1)
+    if "<svg" in svg[:20] and ' id="' not in svg[:200]:
+        # The figures' scoped <style> selectors are prefixed "#fig-<name> ..."
+        # but that id lives on the outer <figure>, not on <svg> itself -- once
+        # we isolate just the <svg>...</svg> fragment those selectors match
+        # nothing at all (real browsers are fine since <figure id="fig-..">
+        # wraps the <svg> there). Recover the id from the <figure> tag so the
+        # rules actually apply here too.
+        fig_id = re.search(r'<figure\b[^>]*\bid="([^"]+)"', raw)
+        if fig_id:
+            svg = svg.replace("<svg", f'<svg id="{fig_id.group(1)}"', 1)
     pal = PALETTE[theme]
     svg = bake_classes(svg, pal)
     svg = resolve_vars(svg, pal)

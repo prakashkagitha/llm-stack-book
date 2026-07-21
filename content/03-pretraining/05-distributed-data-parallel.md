@@ -529,6 +529,8 @@ Stage 3 takes the final step and partitions the **parameters themselves**. Now n
 
 Memory per GPU: $16\Psi/N$ for model state — it shards linearly with the number of GPUs. The cost is an **extra all-gather**: ZeRO-3 communicates roughly $3\Psi$ worth (all-gather params in forward, all-gather params in backward, reduce-scatter grads) versus $2\Psi$ for ZeRO-1/2 — about **1.5× the communication** of DDP. That extra all-gather is the price of never storing the full model.
 
+{{fig:zero3-jit-param-sweep}}
+
 {{fig:zero-stages-sharding-ladder}}
 
 ### ZeRO-Offload and ZeRO-Infinity
@@ -905,6 +907,8 @@ The right choice is a function of how the model and its state fit relative to on
 | Inter-node network is the bottleneck | **HYBRID_SHARD** | Shard within node, replicate across nodes |
 
 The general principle: **use the least sharding that fits.** Each step from DDP toward ZeRO-3 trades communication for memory. If DDP fits, sharding only adds overhead. The moment it doesn't fit, climb the ladder exactly as far as needed.
+
+{{fig:hybrid-shard-device-mesh}}
 
 ### Composing With Model Parallelism
 

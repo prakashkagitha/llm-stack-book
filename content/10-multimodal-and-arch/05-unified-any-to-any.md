@@ -36,6 +36,8 @@ $$
 
 where $\text{sg}(\cdot)$ is the stop-gradient operator. After training, each image becomes a 1-D token sequence of length $h \times w$, with each token in $\{0, \ldots, K-1\}$. A 256×256 image with $f=8$ yields a $32 \times 32 = 1024$-token sequence — the same length as a medium-length paragraph of text.
 
+{{fig:vqvae-image-to-tokens-pipeline}}
+
 VQ-GAN (Esser et al., 2021) improves reconstruction fidelity by adding an adversarial loss, producing crisper tokens better suited to autoregressive generation. It became the tokenizer of choice for early image-generation transformers.
 
 **FSQ and lookup-free quantisation.** More recent work like Finite Scalar Quantisation (FSQ, Mentzer et al., 2023) replaces the learned codebook with a simple per-channel rounding scheme, removing the training instability of codebook collapse and dead codes. Each dimension of the latent is independently rounded to a small set of values; the codebook is implicit. This matters for unified training because VQ-VAE codebooks can degrade when exposed to multi-domain data; FSQ is more robust.
@@ -240,6 +242,8 @@ where $\lambda$ is a scalar balancing the two (often around 1 after normalising 
 ### Attention Masking in Transfusion
 
 Text tokens are causal — each attends only to previous tokens. Image patch tokens within one image attend to each other with **bidirectional** attention (the diffusion objective does not require causal structure within an image), but each image block still causally follows all preceding tokens. This creates a block-causal mask:
+
+{{fig:transfusion-block-causal-mask}}
 
 ```python
 import torch

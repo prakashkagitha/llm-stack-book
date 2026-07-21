@@ -1,0 +1,238 @@
+<figure class="viz" id="fig-zero3-jit-param-sweep">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 940 520" role="img" aria-label="ZeRO-3/FSDP just-in-time parameter sweep, one rank's view: a row of 6 units L0 through L5 sit at rest as thin hatched slivers, this rank's permanent 1/N slice of each. A forward sweep left to right all-gathers each unit just before compute then frees it immediately after, shown in detail for example unit L2. A backward sweep right to left re-gathers each unit, computes, then reduce-scatters its gradient so only this rank's shard remains, shown in detail for example unit L3. A memory gauge on the right stays flat throughout at roughly one-N-th of the model plus one full unit, with a ghost dashed line marking where full-replication DDP memory would sit, far off the useful scale.">
+  <defs>
+    <marker id="zp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="zp-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#6366f1)"/>
+    </marker>
+    <marker id="zp-arr-acc2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+    </marker>
+    <pattern id="zp-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="currentColor" class="v-muted" fill-opacity="0.08"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="currentColor" class="v-muted" stroke-width="2" stroke-opacity="0.5"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-zero3-jit-param-sweep text { fill: var(--ink-soft); }
+    #fig-zero3-jit-param-sweep .lbl  { font: 700 11px var(--sans,sans-serif); }
+    #fig-zero3-jit-param-sweep .sm   { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-zero3-jit-param-sweep .mono { font: 600 10px var(--mono,monospace); }
+    #fig-zero3-jit-param-sweep .hdr  { font: 700 14px var(--sans,sans-serif); }
+    #fig-zero3-jit-param-sweep .sub  { font: 500 11px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-zero3-jit-param-sweep .band-hdr { font: 700 11px var(--sans,sans-serif); }
+
+    /* data-anim groups start invisible and fade in, staying visible (end state = complete diagram) */
+    #fig-zero3-jit-param-sweep [data-anim] { opacity: 0; }
+    #fig-zero3-jit-param-sweep [data-anim="1"]  { animation: zp-in 0.4s ease-out 0.2s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="2"]  { animation: zp-in 0.4s ease-out 0.8s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="3"]  { animation: zp-in 0.4s ease-out 1.3s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="4"]  { animation: zp-in 0.4s ease-out 1.8s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="5"]  { animation: zp-in 0.4s ease-out 2.4s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="6"]  { animation: zp-in 0.4s ease-out 3.0s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="7"]  { animation: zp-in 0.4s ease-out 3.6s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="8"]  { animation: zp-in 0.4s ease-out 4.1s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="9"]  { animation: zp-in 0.4s ease-out 4.6s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="10"] { animation: zp-in 0.4s ease-out 5.2s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="11"] { animation: zp-in 0.4s ease-out 5.8s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="12"] { animation: zp-in 0.4s ease-out 6.4s forwards; }
+    #fig-zero3-jit-param-sweep [data-anim="13"] { animation: zp-in 0.5s ease-out 7.0s forwards; }
+
+    #fig-zero3-jit-param-sweep .zp-pulse { animation: zp-pulse 0.7s ease-in-out infinite alternate; }
+    @keyframes zp-in    { from { opacity:0; } to { opacity:1; } }
+    @keyframes zp-pulse { from { opacity:0.65; } to { opacity:1; } }
+  </style>
+
+  
+  <text x="450" y="20" text-anchor="middle" class="hdr">ZeRO-3 / FSDP just-in-time parameter sweep -- one rank's view</text>
+  <text x="450" y="36" text-anchor="middle" class="sub">The gather window slides across units; only the active unit is ever fully materialized.</text>
+
+  
+  <g data-anim="1">
+    <text x="450" y="56" text-anchor="middle" class="sm">This rank's resident state (always held): a 1/N slice of every unit</text>
+    <g transform="translate(85,64)">
+      <rect width="110" height="42" rx="4" fill="url(#zp-hatch)" stroke="currentColor" class="v-stroke" stroke-width="1.1"/>
+      <text x="55" y="18" text-anchor="middle" class="lbl">L0</text>
+      <text x="55" y="33" text-anchor="middle" class="sm">1/N slice</text>
+    </g>
+    <g transform="translate(209,64)">
+      <rect width="110" height="42" rx="4" fill="url(#zp-hatch)" stroke="currentColor" class="v-stroke" stroke-width="1.1"/>
+      <text x="55" y="18" text-anchor="middle" class="lbl">L1</text>
+      <text x="55" y="33" text-anchor="middle" class="sm">1/N slice</text>
+    </g>
+    <g transform="translate(333,64)">
+      <rect width="110" height="42" rx="4" fill="url(#zp-hatch)" stroke="var(--accent,#6366f1)" stroke-width="1.6"/>
+      <text x="55" y="18" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">L2</text>
+      <text x="55" y="33" text-anchor="middle" class="sm">1/N slice</text>
+    </g>
+    <g transform="translate(457,64)">
+      <rect width="110" height="42" rx="4" fill="url(#zp-hatch)" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+      <text x="55" y="18" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">L3</text>
+      <text x="55" y="33" text-anchor="middle" class="sm">1/N slice</text>
+    </g>
+    <g transform="translate(581,64)">
+      <rect width="110" height="42" rx="4" fill="url(#zp-hatch)" stroke="currentColor" class="v-stroke" stroke-width="1.1"/>
+      <text x="55" y="18" text-anchor="middle" class="lbl">L4</text>
+      <text x="55" y="33" text-anchor="middle" class="sm">1/N slice</text>
+    </g>
+    <g transform="translate(705,64)">
+      <rect width="110" height="42" rx="4" fill="url(#zp-hatch)" stroke="currentColor" class="v-stroke" stroke-width="1.1"/>
+      <text x="55" y="18" text-anchor="middle" class="lbl">L5</text>
+      <text x="55" y="33" text-anchor="middle" class="sm">1/N slice</text>
+    </g>
+  </g>
+
+  
+  <g data-anim="2">
+    <text x="450" y="120" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">forward sweep: L0 -&gt; L5 (each unit gathered, computed, freed in turn)</text>
+    <line x1="85" y1="128" x2="815" y2="128" stroke="var(--accent,#6366f1)" stroke-width="1.6" marker-end="url(#zp-arr-acc)"/>
+    <line x1="388" y1="106" x2="388" y2="128" stroke="var(--accent,#6366f1)" stroke-width="1.2"/>
+    <circle cx="388" cy="128" r="3.5" fill="var(--accent,#6366f1)"/>
+    <line x1="388" y1="128" x2="150" y2="152" stroke="var(--accent,#6366f1)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#zp-arr-acc)"/>
+    <text x="392" y="146" class="sm" fill="var(--accent,#6366f1)">example detailed below</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="15" y="152" width="615" height="148" rx="8" fill="var(--accent,#6366f1)" fill-opacity="0.045" stroke="var(--accent,#6366f1)" stroke-width="1" stroke-dasharray="4 3"/>
+    <rect x="25" y="160" width="190" height="22" rx="11" fill="var(--accent,#6366f1)" fill-opacity="0.85"/>
+    <text x="120" y="175" text-anchor="middle" class="band-hdr" fill="var(--surface,#fff)">FORWARD SWEEP</text>
+    <text x="225" y="176" class="sm">example: unit L2 -- all-gather -&gt; compute -&gt; free</text>
+  </g>
+
+  <g data-anim="4">
+    
+    <circle cx="45" cy="200" r="4" fill="none" stroke="currentColor" class="v-muted" stroke-width="1.2"/>
+    <circle cx="60" cy="192" r="4" fill="none" stroke="currentColor" class="v-muted" stroke-width="1.2"/>
+    <circle cx="75" cy="200" r="4" fill="none" stroke="currentColor" class="v-muted" stroke-width="1.2"/>
+    <text x="60" y="214" text-anchor="middle" class="sm">peers</text>
+    <g stroke="currentColor" class="v-muted" stroke-width="1" opacity="0.7">
+      <line x1="47" y1="203" x2="98" y2="235"/>
+      <line x1="60" y1="196" x2="100" y2="233"/>
+      <line x1="73" y1="203" x2="102" y2="231"/>
+    </g>
+    <rect x="25" y="222" width="70" height="36" rx="4" fill="url(#zp-hatch)" stroke="var(--accent,#6366f1)" stroke-width="1.3"/>
+    <text x="60" y="243" text-anchor="middle" class="mono" font-size="9" fill="var(--accent,#6366f1)">L2</text>
+    <text x="60" y="270" text-anchor="middle" class="sm">rest</text>
+    <line x1="100" y1="238" x2="150" y2="238" stroke="var(--accent,#6366f1)" stroke-width="1.6" marker-end="url(#zp-arr-acc)"/>
+    <text x="125" y="228" text-anchor="middle" class="sm" fill="var(--accent,#6366f1)">all-gather</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="155" y="200" width="135" height="78" rx="6" fill="var(--accent,#6366f1)" fill-opacity="0.16" stroke="var(--accent,#6366f1)" stroke-width="1.6" class="zp-pulse"/>
+    <text x="222" y="220" text-anchor="middle" class="lbl" fill="var(--accent,#6366f1)">unit L2: full params</text>
+    <text x="222" y="233" text-anchor="middle" class="sm">(materialized)</text>
+    <g transform="translate(172,242)" fill="var(--accent,#6366f1)" fill-opacity="0.4" stroke="var(--accent,#6366f1)" stroke-width="0.6">
+      <rect width="100" height="7" rx="2"/><rect y="10" width="100" height="7" rx="2"/><rect y="20" width="100" height="7" rx="2"/>
+    </g>
+  </g>
+
+  <g data-anim="6">
+    <line x1="296" y1="238" x2="358" y2="238" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#zp-arr)"/>
+    <text x="327" y="228" text-anchor="middle" class="sm" font-size="9">compute</text>
+    <rect x="364" y="205" width="80" height="66" rx="6" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="404" y="230" text-anchor="middle" class="lbl">run block</text>
+    <text x="404" y="244" text-anchor="middle" class="lbl">forward</text>
+    <circle cx="404" cy="258" r="4" class="zp-pulse" fill="var(--accent,#6366f1)"/>
+  </g>
+
+  <g data-anim="7">
+    <line x1="450" y1="238" x2="500" y2="238" stroke="currentColor" class="v-muted" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#zp-arr)"/>
+    <text x="475" y="228" text-anchor="middle" class="sm">free</text>
+    <rect x="505" y="222" width="90" height="36" rx="4" fill="none" stroke="currentColor" class="v-stroke" stroke-width="1.1" stroke-dasharray="3 2" opacity="0.55"/>
+    <text x="550" y="244" text-anchor="middle" class="sm" opacity="0.7">L2 freed</text>
+    <text x="550" y="272" text-anchor="middle" class="sm">back to 1/N slice</text>
+  </g>
+
+  
+  <g data-anim="8">
+    <text x="450" y="322" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">backward sweep: L5 -&gt; L0 (re-gather, compute, reduce-scatter grads)</text>
+    <line x1="815" y1="330" x2="85" y2="330" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#zp-arr-acc2)"/>
+    <line x1="512" y1="330" x2="512" y2="308" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <circle cx="512" cy="330" r="3.5" fill="var(--accent2,#3b82f6)"/>
+    <line x1="512" y1="330" x2="150" y2="354" stroke="var(--accent2,#3b82f6)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#zp-arr-acc2)"/>
+    <text x="392" y="348" class="sm" fill="var(--accent2,#3b82f6)">example detailed below</text>
+  </g>
+
+  
+  <g data-anim="9">
+    <rect x="15" y="354" width="615" height="156" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.045" stroke="var(--accent2,#3b82f6)" stroke-width="1" stroke-dasharray="4 3"/>
+    <rect x="25" y="362" width="205" height="22" rx="11" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="127" y="377" text-anchor="middle" class="band-hdr" fill="var(--surface,#fff)">BACKWARD SWEEP</text>
+    <text x="240" y="378" class="sm">example: unit L3 -- re-gather -&gt; compute -&gt; reduce-scatter</text>
+  </g>
+
+  <g data-anim="10">
+    <rect x="25" y="424" width="70" height="36" rx="4" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.1" stroke-dasharray="3 2" opacity="0.6"/>
+    <text x="60" y="445" text-anchor="middle" class="sm">L3 (was freed)</text>
+    <line x1="100" y1="440" x2="150" y2="440" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#zp-arr-acc2)"/>
+    <text x="125" y="430" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">all-gather</text>
+  </g>
+
+  <g data-anim="11">
+    <rect x="155" y="402" width="135" height="78" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.16" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+    <text x="222" y="422" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">unit L3: full params</text>
+    <text x="222" y="435" text-anchor="middle" class="sm">(re-gathered)</text>
+    <line x1="296" y1="440" x2="358" y2="440" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#zp-arr)"/>
+    <text x="327" y="430" text-anchor="middle" class="sm" font-size="9">compute</text>
+    <rect x="364" y="407" width="66" height="66" rx="6" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="397" y="432" text-anchor="middle" class="lbl">run block</text>
+    <text x="397" y="446" text-anchor="middle" class="lbl">backward</text>
+    <circle cx="397" cy="460" r="4" class="zp-pulse" fill="var(--accent2,#3b82f6)"/>
+  </g>
+
+  <g data-anim="12">
+    <line x1="436" y1="440" x2="482" y2="440" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" stroke-dasharray="5 2" marker-end="url(#zp-arr-acc2)"/>
+    <text x="459" y="428" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">reduce-</text>
+    <text x="459" y="452" text-anchor="middle" class="sm" fill="var(--accent2,#3b82f6)">scatter</text>
+    <g stroke="var(--accent2,#3b82f6)" stroke-width="1" opacity="0.65">
+      <line x1="487" y1="435" x2="512" y2="410"/>
+      <line x1="487" y1="440" x2="512" y2="440"/>
+      <line x1="487" y1="445" x2="512" y2="465"/>
+    </g>
+    <circle cx="515" cy="408" r="4" fill="none" stroke="currentColor" class="v-muted" stroke-width="1.2"/>
+    <circle cx="515" cy="440" r="4" fill="none" stroke="currentColor" class="v-muted" stroke-width="1.2"/>
+    <circle cx="515" cy="466" r="4" fill="none" stroke="currentColor" class="v-muted" stroke-width="1.2"/>
+    <rect x="546" y="422" width="80" height="36" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.8"/>
+    <text x="586" y="440" text-anchor="middle" class="mono" font-size="8.5" fill="var(--surface,#fff)">grad shard</text>
+    <text x="586" y="452" text-anchor="middle" class="mono" font-size="8.5" fill="var(--surface,#fff)">(this rank)</text>
+    <text x="586" y="472" text-anchor="middle" class="sm">kept -- rest gone</text>
+    <text x="515" y="497" text-anchor="middle" class="sm">to peers (other ranks)</text>
+  </g>
+
+  
+  <g data-anim="13">
+    <rect x="650" y="152" width="275" height="345" rx="8" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.35"/>
+    <text x="787" y="172" text-anchor="middle" class="band-hdr">PEAK MEMORY</text>
+    <text x="787" y="186" text-anchor="middle" class="sm">(this rank, over time)</text>
+
+    <rect x="700" y="200" width="34" height="255" rx="3" class="v-fill v-stroke" stroke-width="1" fill-opacity="0.25"/>
+
+    
+    <line x1="690" y1="212" x2="744" y2="212" stroke="currentColor" class="v-muted" stroke-width="1.2" stroke-dasharray="5 3" opacity="0.75"/>
+    <text x="750" y="209" class="sm">DDP: full replication</text>
+    <text x="750" y="222" class="sm">(off-scale, far above)</text>
+
+    
+    <g stroke="currentColor" class="v-muted" stroke-width="1.2" opacity="0.7">
+      <line x1="700" y1="240" x2="710" y2="248"/>
+      <line x1="710" y1="240" x2="720" y2="248"/>
+      <line x1="724" y1="240" x2="734" y2="248"/>
+      <line x1="734" y1="240" x2="734" y2="248"/>
+    </g>
+
+    
+    <rect x="700" y="428" width="34" height="27" fill="var(--accent,#6366f1)" fill-opacity="0.55" stroke="var(--accent,#6366f1)" stroke-width="1"/>
+    <text x="750" y="435" class="sm">actual: flat</text>
+    <text x="750" y="448" class="sm">1/N model +</text>
+    <text x="750" y="461" class="sm">one full unit</text>
+
+    <text x="787" y="480" text-anchor="middle" class="sm" font-style="italic">flat throughout -- independent</text>
+    <text x="787" y="493" text-anchor="middle" class="sm" font-style="italic">of model depth</text>
+  </g>
+</svg>
+<figcaption><b>Only one unit is ever unsharded; the window slides, peak memory stays flat.</b> This rank permanently holds a 1/N slice of every unit; the gather window all-gathers one unit just before it is needed (example: L2 in the forward sweep), computes, and frees it -- then in the backward sweep re-gathers the same unit, computes its gradient, and reduce-scatters so only this rank's grad shard remains. The memory gauge stays flat at roughly (1/N of the whole model) + (one full unit) throughout, nowhere near the off-scale ghost line marking where full-replication DDP memory would sit -- this is how a model far larger than one GPU trains.</figcaption>
+</figure>

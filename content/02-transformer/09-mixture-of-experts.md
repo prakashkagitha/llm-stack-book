@@ -31,6 +31,8 @@ where $\mathcal{T}(x) \subseteq \{1,\dots,E\}$ is the (small) set of selected ex
 
 Two vocabulary items you will see constantly. **Total parameters** counts every expert's weights — this is the model's "size on disk" and its capacity. **Active parameters** counts only what a single token actually uses — this drives the FLOPs and therefore latency. Mixtral 8×7B, for instance, has on the order of 47B total parameters but activates roughly 13B per token (it is *not* 8×7=56B, because attention and embeddings are shared and only the FFNs are replicated). That ratio — total-to-active — is the sparsity dial, and it is the headline of every MoE model card. The whole bet of MoE is that **a model's quality tracks total parameters while its cost tracks active parameters**, so you want that ratio large.
 
+{{fig:moe-total-vs-active-resource-split}}
+
 !!! note "Aside: 'expert' is a misnomer worth unlearning"
     The word *expert* suggests each FFN specializes in a human-legible domain — one for French, one for Python, one for poetry. Reality is messier. Learned experts specialize along axes that are mostly *not* interpretable: token frequency, surface n-gram patterns, position, sometimes syntactic role. You will occasionally find an expert that fires on numbers or on whitespace, but do not expect a "biology expert." Think of routing as a *learned, load-balanced hash* of tokens to sub-networks, not a panel of domain specialists. This reframing predicts the real failure modes (imbalance, collapse) far better than the marketing name does.
 
@@ -193,6 +195,8 @@ A few details in that code are load-bearing and worth dwelling on. The `index_ad
 ## Load Balancing: The Make-or-Break Problem
 
 Left to its own devices, a sparse router **collapses**. Early in training, one expert is — by random initialization — slightly better. The router sends it more tokens, so it gets more gradient, so it improves faster, so it attracts even more tokens. This is a textbook rich-get-richer feedback loop, and its fixed point is a model that routes (almost) everything to one expert while the rest atrophy, never receiving gradient. You have then paid for $E$ experts and trained one. Worse, in a distributed setting, the favored expert's GPU is saturated while the others idle — the slowest device sets the pace, so imbalance directly *wastes wall-clock time*. Load balancing is therefore not a nicety; it is the difference between MoE working and MoE failing.
+
+{{fig:moe-router-collapse-and-aux-loss}}
 
 ### The auxiliary load-balancing loss
 

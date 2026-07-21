@@ -1,6 +1,6 @@
 <figure class="viz" id="fig-moe-routing">
 <button class="viz-replay" type="button">↻ replay</button>
-<svg viewBox="0 0 760 392" role="img" aria-label="A token enters a router that scores six expert FFNs; only the top-2 highest-scoring experts run, and their outputs are combined in a weighted sum that returns to the residual stream.">
+<svg viewBox="0 0 760 402" role="img" aria-label="A token enters a router that computes six raw logits; only the top-2 highest logits are kept and renormalized with a softmax into gate weights that sum to one, and the two selected experts run and are combined in a weighted sum that returns to the residual stream.">
   <defs>
     <marker id="moe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
@@ -16,9 +16,9 @@
     #fig-moe-routing .ex{ font:600 12px var(--sans,sans-serif); }
   </style>
 
-  
+
   <text x="404" y="24" text-anchor="middle" class="sm">E = 6 experts — a bank of FFNs</text>
-  <text x="612" y="24" text-anchor="middle" class="sm">routing score</text>
+  <text x="590" y="24" text-anchor="middle" class="sm">raw logit -&gt; renorm -&gt; gate wt</text>
 
   
   <g data-anim="1">
@@ -64,44 +64,46 @@
     <text x="420" y="181" text-anchor="middle" class="ex sm">FFN&#8323;</text>
     <text x="420" y="239" text-anchor="middle" class="ex sm">FFN&#8324;</text>
     <text x="420" y="355" text-anchor="middle" class="ex sm">FFN&#8326;</text>
-    <text x="494" y="65"  class="score sm">0.05</text>
-    <text x="494" y="181" class="score sm">0.07</text>
-    <text x="494" y="239" class="score sm">0.11</text>
-    <text x="494" y="355" class="score sm">0.04</text>
+    <text x="494" y="65"  class="score sm">0.4</text>
+    <text x="494" y="181" class="score sm">0.7</text>
+    <text x="494" y="239" class="score sm">-0.3</text>
+    <text x="494" y="355" class="score sm">-0.6</text>
   </g>
 
-  
+
   <g data-anim="4">
     <rect x="360" y="100" width="120" height="36" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
     <rect x="360" y="100" width="120" height="36" rx="6" class="viz-pulse" fill="var(--accent)" fill-opacity="0.16"/>
     <text x="420" y="123" text-anchor="middle" class="ex v-accent" fill="var(--accent)">FFN&#8322; active</text>
-    <text x="494" y="123" class="score v-accent" fill="var(--accent)">0.62</text>
+    <text x="494" y="123" class="score sm">1.5</text>
 
     <rect x="360" y="274" width="120" height="36" rx="6" class="v-fill" stroke="var(--accent)" stroke-width="2"/>
     <rect x="360" y="274" width="120" height="36" rx="6" class="viz-pulse" fill="var(--accent)" fill-opacity="0.16"/>
     <text x="420" y="297" text-anchor="middle" class="ex v-accent" fill="var(--accent)">FFN&#8325; active</text>
-    <text x="494" y="297" class="score v-accent" fill="var(--accent)">0.38</text>
+    <text x="494" y="297" class="score sm">1.0</text>
   </g>
 
-  
-  <text x="540" y="119" class="sm" fill="var(--accent)">top-2</text>
-  <text x="540" y="297" class="sm" fill="var(--accent)">top-2</text>
 
-  
+  <text x="524" y="112" class="sm" fill="var(--muted)">top-2,</text>
+  <text x="524" y="124" class="sm" fill="var(--muted)">renorm:</text>
+  <text x="524" y="286" class="sm" fill="var(--muted)">top-2,</text>
+  <text x="524" y="298" class="sm" fill="var(--muted)">renorm:</text>
+  <text x="580" y="118" class="score v-accent" fill="var(--accent)">0.62</text>
+  <text x="580" y="292" class="score v-accent" fill="var(--accent)">0.38</text>
+
+
   <g data-anim="5">
-    <path d="M540 118 C 560 118, 575 150, 588 175" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#moe-arrow)"/>
-    <path d="M540 292 C 560 292, 575 230, 588 205" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#moe-arrow)"/>
-    <text x="560" y="150" class="score v-accent" fill="var(--accent)">×0.62</text>
-    <text x="560" y="252" class="score v-accent" fill="var(--accent)">×0.38</text>
+    <path d="M614 118 C 620 130, 622 150, 620 172" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#moe-arrow)"/>
+    <path d="M614 292 C 620 280, 622 250, 620 208" fill="none" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#moe-arrow)"/>
 
-    
+
     <circle cx="610" cy="190" r="24" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
     <text x="610" y="197" text-anchor="middle" class="op" fill="var(--good,#2f9e6e)">&#931;</text>
-    <text x="610" y="232" text-anchor="middle" class="sm">weighted sum</text>
+    <text x="610" y="246" text-anchor="middle" class="sm">weighted sum</text>
 
     <line x1="634" y1="190" x2="668" y2="190" class="v-muted" stroke="currentColor" stroke-width="1.5" marker-end="url(#moe-arrow)"/>
 
-    
+
     <rect x="670" y="168" width="60" height="44" rx="7" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.7"/>
     <rect x="670" y="168" width="60" height="44" rx="7" class="viz-pulse" fill="var(--good,#2f9e6e)" fill-opacity="0.16"/>
     <text x="700" y="197" text-anchor="middle" class="op" fill="var(--good,#2f9e6e)">y</text>
