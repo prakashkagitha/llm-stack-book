@@ -105,6 +105,8 @@ This single correction, highlighted by veRL/AReaL practitioners, is frequently t
 
 **3. Sequence-level masking / regularized IS.** Some systems (e.g. GSPO-style sequence-level objectives) avoid the multiplicative product entirely by using a *geometric-mean* or length-normalized sequence ratio, or by simply **dropping** rollouts whose sequence-level ratio falls outside a trust band. Dropping is crude but robust: a rollout that is wildly off-policy contributes more noise than signal, so discard it.
 
+{{fig:offpolicy-importance-ratio-correction}}
+
 ### A from-scratch async off-policy loss
 
 Here is a compact, correct implementation of the corrected loss. It takes log-probs from *both* the behavior policy (logged at generation, from the inference engine) and the current policy (recomputed by the trainer), applies PPO clipping plus truncated importance sampling, and masks stale or degenerate samples.
@@ -290,6 +292,8 @@ The core difficulty is *non-determinism*. Re-running the exact same model on the
 1. **The prover (worker)** runs the forward pass during generation. For the committed layer(s), it computes a small set of features from the activations — concretely, it identifies the **top-$k$ activation values and their indices** for each token's hidden state (the largest-magnitude components dominate the geometry and are the most stable), and forms a compact commitment over them. This commitment is tiny — on the order of bytes per token, not the full hidden state — and ships alongside the completion.
 2. **The verifier (trusted)** takes the prompt and the claimed output tokens and runs a forward pass *in a single batched prefill* — crucially, this is **far cheaper than autoregressive generation**, because it processes all tokens in parallel (one big matmul) rather than one-at-a-time with a growing KV cache. The verifier recomputes the same top-$k$ activation features and checks them against the prover's commitment.
 3. **The robust comparison.** The verifier does not demand exact equality. It checks that the prover's top-$k$ indices/values **agree within a tolerance**: the same large components show up in roughly the same places with roughly the same magnitudes. Benign hardware/kernel noise perturbs the low bits and occasionally swaps near-ties in the ranking, but the *dominant structure* is preserved. A different model, a different precision (fp8 vs bf16), or fabricated tokens shifts the activation geometry enough that the top-$k$ structure diverges beyond tolerance — the proof fails.
+
+{{fig:toploc-verification-mechanism}}
 
 ```python
 import torch

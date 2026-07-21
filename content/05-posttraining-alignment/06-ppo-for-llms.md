@@ -119,6 +119,8 @@ $$
 
 using the same log-derivative identity in reverse ($\sum_a \pi \nabla \log\pi = \sum_a \nabla\pi = \nabla\sum_a\pi = \nabla 1 = 0$). So baselines change variance but not the mean — they are a free lunch. The **variance-minimizing** baseline is (approximately) the expected reward from state $s_t$, which is exactly the *value function*.
 
+{{fig:reinforce-baseline-variance}}
+
 ### The value function and the advantage
 
 Define the **state-value function** as the expected return (sum of future rewards) from state $s_t$ under the current policy:
@@ -180,6 +182,8 @@ GAE is computed by a single **backward recursion** over the sequence — start a
 $$
 \hat A_t = \delta_t + \gamma\lambda\, \hat A_{t+1}.
 $$
+
+{{fig:gae-bias-variance-dial}}
 
 ```python
 import torch

@@ -74,6 +74,8 @@ On-policy distillation is closely related to methods like [RLHF](../05-posttrain
 
 On-policy distillation typically outperforms off-policy on longer generations and tasks that require multi-step reasoning, at the cost of running the student (and evaluating the teacher) online during training.
 
+{{fig:distill-onpolicy-vs-offpolicy}}
+
 ### Imitation-Gap and Capacity Gap
 
 A practical tension: if the teacher is vastly larger than the student, the student cannot represent the teacher's distribution accurately. Hinton et al. called this the *capacity gap*. Empirically, distilling a 70B teacher into a 1B student often underperforms distilling a 13B teacher into the same 1B student, because the 70B model's distribution is "too complex" for the student to model. Progressive distillation — chaining 70B → 13B → 3B → 1B — often produces better final results.
@@ -159,6 +161,8 @@ $$
 $$
 
 where $\|x_j\|_2$ is the RMS magnitude of the $j$-th input feature computed over calibration data. The score combines weight magnitude (what OBS uses) with activation magnitude (how important that feature actually is at runtime). Wanda requires no Hessian inversion — just one forward pass — making it extremely fast to apply even to 70B models.
+
+{{fig:distill-wanda-vs-magnitude}}
 
 ### Structured Pruning
 

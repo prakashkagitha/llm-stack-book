@@ -32,6 +32,8 @@ The canonical RLVR task is mathematical reasoning: generate a chain-of-thought a
 
 Consider: `1/2`, `0.5`, `\frac{1}{2}`, `50\%`, and `0.50` all represent the same value. A naive string comparison gives sparse reward and introduces arbitrary formatting bias. We need symbolic or numeric normalization.
 
+{{fig:math-equivalence-ladder}}
+
 ```python
 """
 math_verifier.py — robust math answer checker for RL training.
@@ -622,6 +624,8 @@ A common technique in RLVR is to give a small positive reward for using the expe
 $$
 r_{\text{total}} = r_{\text{correctness}} + \lambda_f \cdot r_{\text{format}}
 $$
+
+{{fig:format-vs-correctness-shaping}}
 
 where $r_{\text{format}} \in \{0, 1\}$ indicates whether the output satisfies the format, and $\lambda_f$ is typically small (on the order of 0.1 to 0.2) to avoid the model gaming format at the expense of correctness.
 

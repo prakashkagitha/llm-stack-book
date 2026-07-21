@@ -1,0 +1,183 @@
+<figure class="viz" id="fig-ray-dynamic-vs-megatron-static-orchestration">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 620" role="img" aria-label="Side by side comparison of Ray's dynamic task graph, where a Python controller dispatches remote futures to differently sized policy, critic, reference, and reward role blocks that serialize data at every crossing, versus Megatron's static SPMD grid of identical worker cells wired together with pre-established NCCL communicators and no controller, framed as two ends of a flexibility versus communication-efficiency trade-off.">
+  <style>
+    #fig-ray-dynamic-vs-megatron-static-orchestration .ttl{ font:700 14.5px var(--sans,sans-serif); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .panel-ttl{ font:700 13px var(--sans,sans-serif); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .lbl{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .sub{ font:500 10px var(--sans,sans-serif); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .tiny{ font:500 9px var(--sans,sans-serif); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .cap{ font:500 10.5px var(--sans,sans-serif); font-style:italic; }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .axis{ font:700 11px var(--sans,sans-serif); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration text{ fill: var(--ink-soft); }
+    #fig-ray-dynamic-vs-megatron-static-orchestration .dim{ fill: var(--muted); }
+  </style>
+
+  <text x="400" y="22" text-anchor="middle" class="ttl">Two points in one design space: dynamic task graph vs. static SPMD</text>
+
+  
+  <line x1="400" y1="34" x2="400" y2="500" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+
+  
+  <g data-anim="1">
+    <text x="200" y="52" text-anchor="middle" class="panel-ttl">Ray: dynamic task graph (OpenRLHF)</text>
+    <rect x="16" y="60" width="368" height="382" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+
+    
+    <rect x="120" y="74" width="160" height="34" rx="6" fill="none" stroke="var(--v-stroke)" stroke-width="1.6"/>
+    <text x="200" y="95" text-anchor="middle" class="lbl">Python controller (CPU driver)</text>
+
+    
+    
+    <rect x="30" y="150" width="110" height="82" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <text x="85" y="184" text-anchor="middle" class="sub">Policy</text>
+    <text x="85" y="198" text-anchor="middle" class="tiny dim">16 GPU</text>
+    <text x="85" y="210" text-anchor="middle" class="tiny dim">ZeRO-3</text>
+
+    
+    <rect x="160" y="164" width="82" height="54" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <text x="201" y="188" text-anchor="middle" class="sub">Critic</text>
+    <text x="201" y="200" text-anchor="middle" class="tiny dim">4 GPU</text>
+
+    
+    <rect x="262" y="164" width="82" height="54" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <text x="303" y="188" text-anchor="middle" class="sub">Reference</text>
+    <text x="303" y="200" text-anchor="middle" class="tiny dim">8 GPU</text>
+
+    
+    <rect x="278" y="240" width="66" height="40" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <text x="311" y="260" text-anchor="middle" class="sub">Reward</text>
+    <text x="311" y="271" text-anchor="middle" class="tiny dim">2 GPU</text>
+
+    
+    <path d="M170 108 C 140 128, 100 138, 85 148" fill="none" class="v-accent-s viz-draw" style="--len:110" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#ray-fut)"/>
+    <path d="M195 108 C 198 128, 200 140, 201 162" fill="none" class="v-accent-s viz-draw" style="--len:80" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#ray-fut)"/>
+    <path d="M230 108 C 260 128, 290 138, 303 162" fill="none" class="v-accent-s viz-draw" style="--len:110" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#ray-fut)"/>
+    <path d="M250 108 C 290 140, 320 180, 311 238" fill="none" class="v-accent-s viz-draw" style="--len:180" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#ray-fut)"/>
+    <text x="200" y="128" text-anchor="middle" class="tiny" fill="var(--v-accent)">.remote() future</text>
+
+    
+    <g>
+      <path d="M140 190 h20" class="v-grid" stroke-width="1.2"/>
+      <path d="M150 178 l10 12 -10 12 -10 -12 z" class="v-fill" stroke="var(--v-muted)" stroke-width="1.2"/>
+      <text x="150" y="215" text-anchor="middle" class="tiny dim">serialize</text>
+
+      <path d="M242 190 h20" class="v-grid" stroke-width="1.2"/>
+      <path d="M252 178 l10 12 -10 12 -10 -12 z" class="v-fill" stroke="var(--v-muted)" stroke-width="1.2"/>
+      <text x="252" y="215" text-anchor="middle" class="tiny dim">object store</text>
+
+      <path d="M303 218 v20" class="v-grid" stroke-width="1.2"/>
+      <path d="M291 238 l12 -10 12 10 -12 10 z" class="v-fill" stroke="var(--v-muted)" stroke-width="1.2"/>
+      <text x="303" y="300" text-anchor="middle" class="tiny dim">serialize / object store</text>
+    </g>
+
+    <line x1="30" y1="316" x2="354" y2="316" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="200" y="336" text-anchor="middle" class="cap dim">roles can differ in size and</text>
+    <text x="200" y="350" text-anchor="middle" class="cap dim">parallelism; controller coordinates;</text>
+    <text x="200" y="364" text-anchor="middle" class="cap dim">every crossing serializes.</text>
+
+    <rect x="30" y="382" width="324" height="46" rx="6" fill="var(--v-accent)" fill-opacity="0.10" stroke="var(--v-accent)" stroke-width="1.2"/>
+    <text x="192" y="401" text-anchor="middle" class="tiny" fill="var(--v-accent)">heterogeneous roles: 16+4+8+2 = 30 GPUs,</text>
+    <text x="192" y="416" text-anchor="middle" class="tiny" fill="var(--v-accent)">each sized to its own model, not to a shared grid</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <text x="600" y="52" text-anchor="middle" class="panel-ttl">Megatron: static SPMD (NeMo-Aligner)</text>
+    <rect x="416" y="60" width="368" height="382" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+
+    <text x="600" y="86" text-anchor="middle" class="sub dim">no controller process --</text>
+    <text x="600" y="100" text-anchor="middle" class="sub dim">all ranks launched together (torchrun / mpirun)</text>
+
+    
+    <rect x="452" y="114" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="518" y="114" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="584" y="114" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="650" y="114" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    
+    <rect x="452" y="172" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="518" y="172" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="584" y="172" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="650" y="172" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    
+    <rect x="452" y="230" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="518" y="230" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="584" y="230" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="650" y="230" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    
+    <rect x="452" y="288" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="518" y="288" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="584" y="288" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <rect x="650" y="288" width="56" height="42" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+
+    
+    <g class="v-stroke" stroke-width="3.4" opacity="0.85">
+      <line x1="480" y1="135" x2="546" y2="135"/>
+      <line x1="546" y1="135" x2="612" y2="135"/>
+      <line x1="612" y1="135" x2="678" y2="135"/>
+      <line x1="480" y1="193" x2="546" y2="193"/>
+      <line x1="546" y1="193" x2="612" y2="193"/>
+      <line x1="612" y1="193" x2="678" y2="193"/>
+      <line x1="480" y1="251" x2="546" y2="251"/>
+      <line x1="546" y1="251" x2="612" y2="251"/>
+      <line x1="612" y1="251" x2="678" y2="251"/>
+      <line x1="480" y1="309" x2="546" y2="309"/>
+      <line x1="546" y1="309" x2="612" y2="309"/>
+      <line x1="612" y1="309" x2="678" y2="309"/>
+
+      <line x1="480" y1="156" x2="480" y2="172"/>
+      <line x1="546" y1="156" x2="546" y2="172"/>
+      <line x1="612" y1="156" x2="612" y2="172"/>
+      <line x1="678" y1="156" x2="678" y2="172"/>
+      <line x1="480" y1="214" x2="480" y2="230"/>
+      <line x1="546" y1="214" x2="546" y2="230"/>
+      <line x1="612" y1="214" x2="612" y2="230"/>
+      <line x1="678" y1="214" x2="678" y2="230"/>
+      <line x1="480" y1="272" x2="480" y2="288"/>
+      <line x1="546" y1="272" x2="546" y2="288"/>
+      <line x1="612" y1="272" x2="612" y2="288"/>
+      <line x1="678" y1="272" x2="678" y2="288"/>
+    </g>
+
+    <text x="600" y="346" text-anchor="middle" class="tiny" fill="var(--ink-soft)">pre-established NCCL communicators</text>
+    <text x="600" y="359" text-anchor="middle" class="tiny" fill="var(--ink-soft)">(all-reduce / send-recv)</text>
+
+    <line x1="452" y1="372" x2="748" y2="372" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="600" y="390" text-anchor="middle" class="cap dim">comm plan fixed at init; no Python</text>
+    <text x="600" y="404" text-anchor="middle" class="cap dim">in the hot path.</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="416" y="416" width="368" height="26" rx="6" fill="var(--v-stroke)" fill-opacity="0.08" stroke="var(--v-stroke)" stroke-width="1.2"/>
+    <text x="600" y="433" text-anchor="middle" class="tiny">every role must share the same parallelism config</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <line x1="30" y1="470" x2="770" y2="470" class="v-stroke" stroke-width="2" marker-start="url(#ray-tri-l)" marker-end="url(#ray-tri-r)"/>
+    <text x="120" y="494" text-anchor="middle" class="axis" fill="var(--v-accent)">Flexibility</text>
+    <text x="120" y="510" text-anchor="middle" class="tiny dim">(heterogeneous roles, rapid iteration)</text>
+    <text x="680" y="494" text-anchor="middle" class="axis" fill="var(--ink-soft)">Communication efficiency</text>
+    <text x="680" y="510" text-anchor="middle" class="tiny dim">(low latency, no serialization)</text>
+
+    
+    <circle cx="500" cy="470" r="5" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6"/>
+    <line x1="500" y1="470" x2="500" y2="530" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="500" y="546" text-anchor="middle" class="tiny">veRL / HybridFlow:</text>
+    <text x="500" y="560" text-anchor="middle" class="tiny">Ray orchestration + NCCL intra-group</text>
+  </g>
+
+  <defs>
+    <marker id="ray-fut" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-accent"/>
+    </marker>
+    <marker id="ray-tri-l" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M10 0 L0 5 L10 10 z" class="v-stroke"/>
+    </marker>
+    <marker id="ray-tri-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-stroke"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption><b>Ray and Megatron sit at opposite ends of one flexibility-versus-communication-efficiency trade.</b> OpenRLHF's Python controller dispatches dashed <code>.remote()</code> futures to differently sized role actors, serializing every tensor that crosses an actor boundary through the object store; NeMo-Aligner instead launches one uniform grid of identical workers wired by pre-established NCCL communicators with no controller in the hot path, at the cost of forcing every role into the same parallelism config. veRL's HybridFlow design sits between the two, using Ray for orchestration but raw NCCL inside each resource pool.</figcaption>
+</figure>

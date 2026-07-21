@@ -1,0 +1,231 @@
+<figure class="viz" id="fig-offpolicy-importance-ratio-correction">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 620" role="img" aria-label="Three panel infographic: per-token importance ratios near 1.0 compound multiplicatively into an exploding sequence ratio; the ratio has two independent sources of drift, staleness between trainer and old policy, and engine mismatch between inference and training engines; PPO clipping, truncated importance sampling, and dropping rollouts tame the variance.">
+<defs>
+  <style>
+    #fig-offpolicy-importance-ratio-correction .panel-title { font: 700 14px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-offpolicy-importance-ratio-correction .lbl { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-offpolicy-importance-ratio-correction .lbl-sm { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-offpolicy-importance-ratio-correction .mono { font: 500 10.5px var(--mono,monospace); fill: var(--ink-soft,#333); }
+    #fig-offpolicy-importance-ratio-correction .cap { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-offpolicy-importance-ratio-correction .cap-b { font: 700 11px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-offpolicy-importance-ratio-correction .warm { fill: var(--accent,#c0392b); }
+    #fig-offpolicy-importance-ratio-correction .warm-s { stroke: var(--accent,#c0392b); }
+    #fig-offpolicy-importance-ratio-correction .cool { fill: var(--accent2,#3b82f6); }
+    #fig-offpolicy-importance-ratio-correction .cool-s { stroke: var(--accent2,#3b82f6); }
+    #fig-offpolicy-importance-ratio-correction .good { fill: var(--good,#2f9e6e); }
+    #fig-offpolicy-importance-ratio-correction .good-s { stroke: var(--good,#2f9e6e); }
+    #fig-offpolicy-importance-ratio-correction .divider { stroke: var(--border-2,#ccc); stroke-width: 1; }
+    #fig-offpolicy-importance-ratio-correction [data-anim] { opacity: 0; animation: figfade .5s ease forwards; }
+    #fig-offpolicy-importance-ratio-correction [data-anim="1"] { animation-delay: .05s; }
+    #fig-offpolicy-importance-ratio-correction [data-anim="2"] { animation-delay: .5s; }
+    #fig-offpolicy-importance-ratio-correction [data-anim="3"] { animation-delay: .95s; }
+    #fig-offpolicy-importance-ratio-correction [data-anim="4"] { animation-delay: 1.4s; }
+    #fig-offpolicy-importance-ratio-correction [data-anim="5"] { animation-delay: 1.85s; }
+    @keyframes figfade { to { opacity: 1; } }
+  </style>
+</defs>
+
+
+<g data-anim="1">
+<rect x="10" y="10" width="760" height="180" rx="10" class="v-fill" fill="var(--surface-3,#f4f4f4)" fill-opacity="0.35" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="26" y="30" class="panel-title">1. Why the ratio explodes</text>
+<text x="26" y="46" class="lbl-sm">one response, tokens o_1 ... o_8</text>
+
+
+<line x1="26" y1="96" x2="330" y2="96" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="336" y="100" class="lbl-sm">1.0</text>
+
+
+
+<g>
+  
+  <g class="lbl-sm" text-anchor="middle">
+    <rect x="30" y="128" width="30" height="20" rx="3" fill="none" class="v-stroke" stroke="var(--border-2,#ccc)"/>
+    <text x="45" y="142">o1</text>
+    <rect x="68" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="83" y="142">o2</text>
+    <rect x="106" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="121" y="142">o3</text>
+    <rect x="144" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="159" y="142">o4</text>
+    <rect x="182" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="197" y="142">o5</text>
+    <rect x="220" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="235" y="142">o6</text>
+    <rect x="258" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="273" y="142">o7</text>
+    <rect x="296" y="128" width="30" height="20" rx="3" fill="none" stroke="var(--border-2,#ccc)"/>
+    <text x="311" y="142">o8</text>
+  </g>
+
+  
+  <rect x="41" y="92" width="8" height="8" rx="1" fill="var(--muted,#888)"/>
+  <rect x="79" y="90" width="8" height="10" rx="1" fill="var(--muted,#888)"/>
+  <rect x="117" y="52" width="8" height="44" rx="1" class="warm"/>
+  <rect x="155" y="91" width="8" height="9" rx="1" fill="var(--muted,#888)"/>
+  <rect x="193" y="93" width="8" height="7" rx="1" fill="var(--muted,#888)"/>
+  <rect x="231" y="96" width="8" height="24" rx="1" class="warm"/>
+  <rect x="269" y="89" width="8" height="11" rx="1" fill="var(--muted,#888)"/>
+  <rect x="307" y="91" width="8" height="9" rx="1" fill="var(--muted,#888)"/>
+
+</g>
+<text x="175" y="164" text-anchor="middle" class="lbl-sm">per-token rho_t = pi_theta(o_t) / pi_theta_old(o_t)</text>
+<text x="175" y="178" text-anchor="middle" class="lbl-sm">most sit right at ~1.0; two clearly deviate (shaded)</text>
+</g>
+
+
+<g data-anim="2">
+<path d="M 360 96 L 400 96" class="v-stroke" stroke="var(--ink-soft,#333)" stroke-width="1.6" marker-end="url(#arrow1-off)"/>
+<defs>
+  <marker id="arrow1-off" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-soft,#333)"/>
+  </marker>
+</defs>
+
+
+<clipPath id="clip-panel1-off"><rect x="10" y="10" width="760" height="180"/></clipPath>
+<g clip-path="url(#clip-panel1-off)">
+  <rect x="424" y="-30" width="20" height="146" class="warm" fill-opacity="0.85"/>
+</g>
+
+<path d="M 412 42 L 420 48 L 428 40 L 436 48 L 444 40 L 452 46" fill="none" class="v-stroke" stroke="var(--ink-soft,#333)" stroke-width="1.6"/>
+
+<rect x="398" y="17" width="72" height="17" rx="8" fill="var(--surface,#fff)" fill-opacity="0.92" stroke="var(--border-2,#ccc)" stroke-width="0.75"/>
+<text x="434" y="29" text-anchor="middle" class="lbl-sm warm">off the chart</text>
+<line x1="424" y1="136" x2="444" y2="136" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="450" y="140" class="lbl-sm">1.0</text>
+<text x="434" y="160" text-anchor="middle" class="lbl">sequence ratio</text>
+</g>
+
+<g data-anim="2">
+<text x="470" y="58" class="lbl">= product of rho_t</text>
+<text x="470" y="78" class="cap">tiny per-token gaps</text>
+<text x="470" y="92" class="cap"><tspan class="cap-b warm">COMPOUND</tspan> multiplicatively</text>
+<text x="470" y="106" class="cap">-&gt; variance unbounded</text>
+<text x="470" y="126" class="cap">near-1 ratios, multiplied over a</text>
+<text x="470" y="140" class="cap">long sequence, balloon.</text>
+</g>
+
+
+<g data-anim="3">
+<rect x="10" y="204" width="760" height="180" rx="10" class="v-fill" fill="var(--surface-3,#f4f4f4)" fill-opacity="0.35" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="26" y="226" class="panel-title">2. The ratio has two independent sources of drift</text>
+
+
+<rect x="26" y="238" width="356" height="132" rx="8" fill="none" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="204" y="256" text-anchor="middle" class="lbl-b cap-b">STALENESS ratio</text>
+
+
+<rect x="40" y="266" width="160" height="92" rx="6" class="cool-s" fill="var(--accent2,#3b82f6)" fill-opacity="0.08" stroke-width="1.4"/>
+<circle cx="58" cy="284" r="8" fill="none" class="cool-s" stroke-width="1.4"/>
+<path d="M53,284 L63,284 M58,279 L58,289" class="cool-s" stroke-width="1.4"/>
+<text x="72" y="288" class="mono">pi_theta</text>
+<text x="48" y="304" class="lbl-sm">NUMERATOR</text>
+<text x="48" y="318" class="cap">recomputed by the</text>
+<text x="48" y="330" class="cap"><tspan class="cap-b">TRAINER</tspan> on current wts</text>
+<text x="48" y="344" class="cap">must be differentiable</text>
+
+
+<rect x="208" y="266" width="164" height="92" rx="6" fill="var(--muted,#888)" fill-opacity="0.08" stroke="var(--muted,#888)" stroke-width="1.4"/>
+<rect x="222" y="278" width="14" height="12" rx="2" fill="none" stroke="var(--muted,#888)" stroke-width="1.4"/>
+<line x1="225" y1="282" x2="233" y2="282" stroke="var(--muted,#888)" stroke-width="1"/>
+<line x1="225" y1="286" x2="233" y2="286" stroke="var(--muted,#888)" stroke-width="1"/>
+<text x="242" y="288" class="mono">pi_theta_old</text>
+<text x="218" y="304" class="lbl-sm">DENOMINATOR</text>
+<text x="218" y="318" class="cap">LOGGED once by the</text>
+<text x="218" y="330" class="cap"><tspan class="cap-b">INFERENCE</tspan> engine</text>
+<text x="218" y="344" class="cap">travels with the rollout</text>
+
+
+<rect x="398" y="238" width="356" height="132" rx="8" fill="var(--accent,#c0392b)" fill-opacity="0.08" class="warm-s" stroke-width="1.6"/>
+
+<path d="M416,254 L426,270 L406,270 Z" fill="none" class="warm-s" stroke-width="1.6" stroke-linejoin="round"/>
+<line x1="416" y1="259" x2="416" y2="264" class="warm-s" stroke-width="1.6"/>
+<circle cx="416" cy="267" r="0.8" class="warm" stroke="none"/>
+<text x="432" y="266" class="cap-b warm">ENGINE MISMATCH (2nd ratio)</text>
+<text x="414" y="286" class="cap">inference engine (fp8, fused kernels)</text>
+<text x="414" y="299" class="cap">vs training engine (bf16, FSDP)</text>
+<text x="414" y="312" class="cap">on the <tspan class="cap-b">SAME</tspan> weights &amp; tokens</text>
+<rect x="414" y="322" width="326" height="36" rx="5" fill="var(--surface,#fff)" fill-opacity="0.5" stroke="var(--accent,#c0392b)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="426" y="338" class="mono warm">pi^infer != pi^train</text>
+<text x="426" y="352" class="cap">so ratio != 1 even at s = 0 (the silent bug)</text>
+</g>
+
+
+<g data-anim="4">
+<rect x="10" y="398" width="760" height="212" rx="10" class="v-fill" fill="var(--surface-3,#f4f4f4)" fill-opacity="0.35" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+<text x="26" y="420" class="panel-title">3. Three clamps that tame it</text>
+
+
+<g>
+<text x="26" y="444" class="cap-b">(1) PPO clip</text>
+<line x1="30" y1="530" x2="240" y2="530" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="246" y="534" class="lbl-sm">1.0</text>
+
+<rect x="30" y="518" width="210" height="24" fill="var(--good,#2f9e6e)" fill-opacity="0.14" class="good-s" stroke-width="1" stroke-dasharray="2 2"/>
+<text x="135" y="516" text-anchor="middle" class="lbl-sm good">[1-eps, 1+eps]</text>
+
+<rect x="40" y="524" width="8" height="14" rx="1" fill="var(--muted,#888)"/>
+<rect x="70" y="522" width="8" height="16" rx="1" fill="var(--muted,#888)"/>
+<rect x="100" y="518" width="8" height="24" rx="1" class="good"/>
+<rect x="130" y="523" width="8" height="15" rx="1" fill="var(--muted,#888)"/>
+<rect x="160" y="525" width="8" height="13" rx="1" fill="var(--muted,#888)"/>
+<rect x="190" y="518" width="8" height="24" rx="1" class="good"/>
+<rect x="220" y="521" width="8" height="17" rx="1" fill="var(--muted,#888)"/>
+<text x="135" y="556" text-anchor="middle" class="cap">outliers flattened to the band edge</text>
+<text x="135" y="570" text-anchor="middle" class="cap">bounds how far each token can move</text>
+</g>
+
+<line x1="264" y1="440" x2="264" y2="592" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+
+
+<g>
+<text x="284" y="444" class="cap-b">(2) Truncated IS (cap C)</text>
+
+<line x1="290" y1="480" x2="500" y2="480" class="cool-s" stroke-width="2"/>
+<text x="506" y="484" class="lbl-sm cool">C (typ. 2-10)</text>
+
+<line x1="290" y1="540" x2="500" y2="540" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="506" y="544" class="lbl-sm">1.0</text>
+
+<rect x="300" y="480" width="16" height="60" fill="var(--muted,#888)"/>
+<clipPath id="clip-is-chop"><rect x="295" y="480" width="26" height="60"/></clipPath>
+<rect x="300" y="440" width="16" height="40" class="warm" fill-opacity="0.85" clip-path="url(#clip-is-chop)"/>
+<path d="M296,478 L304,484 L296,490 L304,496" fill="none" class="warm-s" stroke-width="1.4"/>
+<text x="380" y="518" text-anchor="middle" class="cap">caps engine-mismatch</text>
+<text x="380" y="532" text-anchor="middle" class="cap">outliers</text>
+<text x="380" y="570" text-anchor="middle" class="cap">chops the behavior-side ratio</text>
+</g>
+
+<line x1="524" y1="440" x2="524" y2="592" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+
+
+<g>
+<text x="544" y="444" class="cap-b">(3) Drop</text>
+
+<rect x="550" y="456" width="130" height="26" rx="6" fill="none" stroke="var(--border-2,#ccc)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="615" y="472" text-anchor="middle" class="lbl-sm">trust band</text>
+
+<rect x="588" y="494" width="70" height="36" rx="6" fill="var(--accent,#c0392b)" fill-opacity="0.08" class="warm-s" stroke-width="1.4"/>
+<text x="623" y="509" text-anchor="middle" class="lbl-sm">rollout</text>
+<text x="623" y="522" text-anchor="middle" class="mono warm">ratio: 8.4x</text>
+<line x1="590" y1="496" x2="656" y2="528" class="warm-s" stroke-width="1.6"/>
+<line x1="656" y1="496" x2="590" y2="528" class="warm-s" stroke-width="1.6"/>
+
+<path d="M 623 532 L 623 548" class="warm-s" stroke-width="1.4" marker-end="url(#arrow2-off)"/>
+<defs>
+  <marker id="arrow2-off" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+    <path d="M0,0 L5,3 L0,6 Z" class="warm" stroke="none"/>
+  </marker>
+</defs>
+<rect x="605" y="550" width="36" height="20" rx="3" fill="none" class="warm-s" stroke-width="1.4"/>
+<path d="M609,550 L637,550 M611,554 L611,568 M623,554 L623,568 M635,554 L635,568" class="warm-s" stroke-width="1.2"/>
+<text x="623" y="586" text-anchor="middle" class="cap">wildly off-policy -&gt;</text>
+<text x="623" y="600" text-anchor="middle" class="cap">discard, more noise than signal</text>
+</g>
+</g>
+
+</svg>
+<figcaption><b>Tiny per-token drifts multiply into an exploding sequence ratio, and two independent effects drive that drift: staleness (trainer vs. logged old policy) and engine mismatch (inference vs. training numerics).</b> PPO clipping bounds each token's move, truncated importance sampling caps the behavior-side ratio at a constant C to contain engine mismatch, and dropping wildly off-policy rollouts removes what would otherwise be pure noise.</figcaption>
+</figure>

@@ -1,0 +1,151 @@
+<figure class="viz" id="fig-distill-onpolicy-vs-offpolicy">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 545" role="img" aria-label="Off-policy distillation trains a student only on points along the teacher's own fixed trajectories inside a shaded region of sequence space; at test time the student's own dashed path wanders outside that shaded region into space the teacher signal never covered, causing distribution mismatch. On-policy distillation instead lets the student generate its own dashed rollout trajectory first, and the teacher scores that same rollout, so training coverage matches the test-time distribution.">
+<style>
+  #fig-distill-onpolicy-vs-offpolicy text        { fill: var(--ink-soft,#45413a); }
+  #fig-distill-onpolicy-vs-offpolicy .ttl        { font: 700 15px var(--sans,sans-serif); fill: currentColor; }
+  #fig-distill-onpolicy-vs-offpolicy .sub        { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-distill-onpolicy-vs-offpolicy .hdr        { font: 700 13px var(--sans,sans-serif); fill: currentColor; }
+  #fig-distill-onpolicy-vs-offpolicy .hdr2       { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-distill-onpolicy-vs-offpolicy .small      { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-distill-onpolicy-vs-offpolicy .tiny       { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); font-style: italic; }
+  #fig-distill-onpolicy-vs-offpolicy .lbl-teach  { font: 700 9.5px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+  #fig-distill-onpolicy-vs-offpolicy .lbl-warn   { font: 700 9.5px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+  #fig-distill-onpolicy-vs-offpolicy .lbl-good   { font: 700 10.5px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-distill-onpolicy-vs-offpolicy .step-n     { font: 700 10px var(--mono,monospace); fill: var(--surface,#fff); }
+  #fig-distill-onpolicy-vs-offpolicy .step-t     { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-distill-onpolicy-vs-offpolicy .panel      { fill: var(--surface-3,#ece7da); fill-opacity: 0.28; stroke: var(--border-2,#d8d1c0); stroke-width: 1.1; }
+  #fig-distill-onpolicy-vs-offpolicy .backdrop   { fill: var(--surface,#fff); stroke: var(--border-2,#d8d1c0); stroke-width: 1; }
+  #fig-distill-onpolicy-vs-offpolicy .teach-region { fill: var(--accent2,#3b82f6); fill-opacity: 0.14; stroke: var(--accent2,#3b82f6); stroke-width: 1.3; }
+  #fig-distill-onpolicy-vs-offpolicy .teach-line { stroke: var(--accent2,#3b82f6); stroke-width: 1.6; fill: none; }
+  #fig-distill-onpolicy-vs-offpolicy .student-line { stroke: var(--accent,#c15b39); stroke-width: 1.6; fill: none; stroke-dasharray: 5 3; }
+  #fig-distill-onpolicy-vs-offpolicy .student-dot { fill: var(--accent,#c15b39); stroke: var(--surface,#fff); stroke-width: 1.3; }
+  #fig-distill-onpolicy-vs-offpolicy .kd-arrow   { stroke: var(--accent,#c15b39); stroke-width: 1.2; fill: none; marker-end: url(#onp-arr-acc); }
+  #fig-distill-onpolicy-vs-offpolicy .score-arrow{ stroke: var(--accent2,#3b82f6); stroke-width: 1.2; fill: none; marker-end: url(#onp-arr-acc2); }
+  #fig-distill-onpolicy-vs-offpolicy .score-ring { fill: var(--surface,#fff); stroke: var(--accent2,#3b82f6); stroke-width: 1.6; }
+  #fig-distill-onpolicy-vs-offpolicy .warn-tri   { fill: var(--warn,#e0a106); fill-opacity: 0.22; stroke: var(--warn,#e0a106); stroke-width: 1.3; }
+  #fig-distill-onpolicy-vs-offpolicy .chip-warn  { fill: var(--surface,#fff); stroke: var(--warn,#e0a106); stroke-width: 1.3; }
+  #fig-distill-onpolicy-vs-offpolicy .chip-good  { fill: var(--surface,#fff); stroke: var(--good,#2f9e6e); stroke-width: 1.3; }
+  #fig-distill-onpolicy-vs-offpolicy .stepdot    { fill: var(--accent2,#3b82f6); }
+  #fig-distill-onpolicy-vs-offpolicy .axis       { stroke: var(--border-2,#d8d1c0); stroke-width: 1.1; }
+</style>
+
+<text x="18" y="22" class="ttl">Off-policy vs. on-policy distillation: whose trajectory gets trained on?</text>
+<text x="18" y="38" class="sub">Off-policy trains on the teacher's fixed sequences; on-policy trains on the student's own rollout, matching test-time coverage.</text>
+
+<defs>
+  <marker id="onp-arr-acc" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="onp-arr-acc2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+</defs>
+
+
+<g data-anim="1">
+<rect class="panel" x="18" y="52" width="358" height="434" rx="10"/>
+<text x="197" y="76" text-anchor="middle" class="hdr">Off-policy (teacher-guided)</text>
+<text x="197" y="91" text-anchor="middle" class="hdr2">trains only on the teacher's own fixed trajectories</text>
+
+<rect class="backdrop" x="32" y="104" width="330" height="212" rx="8"/>
+<text x="40" y="118" class="tiny">space of sequences (abstract)</text>
+
+
+<ellipse class="teach-region" cx="155" cy="222" rx="98" ry="70"/>
+<text x="155" y="150" text-anchor="middle" class="lbl-teach">teacher-preferred sequences</text>
+
+
+<path class="teach-line" d="M75,205 C110,185 130,240 165,218 C190,203 210,222 232,203"/>
+<path class="teach-line" d="M80,258 C115,273 150,238 190,260 C208,270 222,252 228,258"/>
+
+
+<circle class="student-dot" cx="150" cy="220" r="6"/>
+<text x="161" y="212" class="small" font-weight="700">S (student)</text>
+<path class="kd-arrow" d="M144,216 C128,206 118,200 111,193"/>
+<path class="kd-arrow" d="M153,226 C165,240 178,250 192,258"/>
+<text x="103" y="185" class="small">KD</text>
+<text x="196" y="270" class="small">KD</text>
+
+
+<path class="student-line" d="M150,220 C188,198 226,176 264,152 C284,140 300,131 316,122"/>
+<text x="205" y="172" class="lbl-warn">test time -&gt;</text>
+<path class="warn-tri" d="M316,110 L330,132 L302,132 Z"/>
+<text x="316" y="127" text-anchor="middle" class="lbl-warn" font-size="10">!</text>
+
+
+<rect class="chip-warn" x="32" y="330" width="330" height="60" rx="6"/>
+<path class="warn-tri" d="M55,352 L67,372 L43,372 Z"/>
+<text x="55" y="367" text-anchor="middle" class="lbl-warn" font-size="9">!</text>
+<text x="197" y="354" text-anchor="middle" class="small" font-weight="700">student drifts at test time --</text>
+<text x="197" y="369" text-anchor="middle" class="small" font-weight="700">teacher signal never covered here</text>
+<text x="197" y="384" text-anchor="middle" class="small" fill="var(--warn,#e0a106)" font-weight="700">(distribution mismatch)</text>
+
+<text x="197" y="410" text-anchor="middle" class="small">solid = fixed teacher trajectories (trained on)</text>
+<text x="197" y="424" text-anchor="middle" class="small">dashed = student's own path (never trained on)</text>
+</g>
+
+
+<g data-anim="2">
+<rect class="panel" x="404" y="52" width="358" height="434" rx="10"/>
+<text x="583" y="76" text-anchor="middle" class="hdr">On-policy</text>
+<text x="583" y="91" text-anchor="middle" class="hdr2">student generates first, teacher scores the rollout</text>
+
+<rect class="backdrop" x="418" y="104" width="330" height="212" rx="8"/>
+<text x="426" y="118" class="tiny">space of sequences (abstract)</text>
+
+
+<path class="student-line" d="M448,268 C488,228 508,278 548,228 C578,193 608,228 638,173 C663,138 688,158 718,138"/>
+<circle class="student-dot" cx="448" cy="268" r="6"/>
+<text x="425" y="284" class="small" font-weight="700">S generates</text>
+
+
+<circle class="score-ring" cx="548" cy="228" r="5"/>
+<circle class="score-ring" cx="638" cy="173" r="5"/>
+<circle class="score-ring" cx="718" cy="138" r="5"/>
+<path class="score-arrow" d="M540,196 C544,208 546,216 548,222"/>
+<path class="score-arrow" d="M628,145 C633,155 636,163 638,168"/>
+<text x="560" y="196" class="lbl-teach">teacher scores</text>
+<text x="560" y="208" class="lbl-teach">each token on the</text>
+<text x="560" y="220" class="lbl-teach">student's own path</text>
+
+<rect class="chip-good" x="418" y="330" width="330" height="34" rx="6"/>
+<text x="583" y="345" text-anchor="middle" class="lbl-good">train on the student's own generations --</text>
+<text x="583" y="358" text-anchor="middle" class="lbl-good">coverage matches test-time distribution</text>
+
+
+<g>
+  <circle class="stepdot" cx="432" cy="384" r="9"/>
+  <text x="432" y="388" text-anchor="middle" class="step-n">1</text>
+  <text x="450" y="388" class="step-t">sample prompt x ~ D</text>
+
+  <circle class="stepdot" cx="432" cy="410" r="9"/>
+  <text x="432" y="414" text-anchor="middle" class="step-n">2</text>
+  <text x="450" y="414" class="step-t">student generates y-hat ~ p_S</text>
+
+  <circle class="stepdot" cx="432" cy="436" r="9"/>
+  <text x="432" y="440" text-anchor="middle" class="step-n">3</text>
+  <text x="450" y="440" class="step-t">teacher scores each token (q_tau)</text>
+
+  <circle class="stepdot" cx="432" cy="462" r="9"/>
+  <text x="432" y="466" text-anchor="middle" class="step-n">4</text>
+  <text x="450" y="466" class="step-t">minimize KD loss on the rollout</text>
+</g>
+</g>
+
+
+<g data-anim="3">
+  <line x1="18" y1="500" x2="762" y2="500" class="axis"/>
+  <circle class="student-dot" cx="35" cy="520" r="6"/>
+  <text x="47" y="524" class="small">student</text>
+  <circle class="score-ring" cx="115" cy="520" r="6"/>
+  <text x="127" y="524" class="small">teacher-scored point</text>
+  <line x1="255" y1="520" x2="285" y2="520" class="teach-line"/>
+  <text x="291" y="524" class="small">solid = fixed teacher trajectory</text>
+  <line x1="470" y1="520" x2="500" y2="520" class="student-line"/>
+  <text x="506" y="524" class="small">dashed = student-generated path (rollout or test time)</text>
+</g>
+
+</svg>
+<figcaption><b>Off-policy distillation trains only on points along the teacher's fixed trajectories, so a student that drifts elsewhere at test time gets no signal there; on-policy distillation lets the student generate its own rollout first and scores that rollout with the teacher.</b> Because the training distribution in the on-policy loop is literally the student's own output distribution, coverage automatically matches what the student encounters at test time -- the same consistency argument that motivates on-policy RL methods like PPO.</figcaption>
+</figure>

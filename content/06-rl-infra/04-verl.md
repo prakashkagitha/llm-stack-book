@@ -172,6 +172,8 @@ class WorkerGroupProxy:
 
 So when the driver writes `actor_rollout_wg.generate_sequences(batch)`, under the hood the proxy (1) consults the dispatch mode registered on `generate_sequences`, (2) splits the batch across DP groups and replicates within TP, (3) launches the method on all ranks via Ray, (4) gathers, and (5) concatenates. The driver wrote one line; 8 GPUs ran an SPMD generation. **That is HybridFlow.**
 
+{{fig:verl-dispatch-fanout}}
+
 ### DataProto: the typed batch that flows between stages
 
 The object passed around — `DataProto` — is veRL's batch container: a dict of named tensors (`prompts`, `responses`, `attention_mask`, `old_log_probs`, `ref_log_probs`, `rewards`, `advantages`, …) plus non-tensor metadata. It supports `chunk` (for dispatch), `concat` (for collect), and `union` (to merge in new columns each stage produces). It is the *only* thing that crosses the single-/multi-controller boundary, and it is deliberately small: logical batch data, never activations or optimizer state. Keeping the boundary data minimal is what prevents the single-controller bottleneck that sinks naive designs.
@@ -247,6 +249,8 @@ def reshard_column_parallel(local_shard: torch.Tensor,
 ```
 
 The thing to internalize: resharding is **gather-within-a-small-group, then re-split** — purely arithmetic on the partition boundaries — and the *engineering* is making sure (a) the gather is intra-node, (b) only one TP group's worth of extra memory is ever live, and (c) the optimizer state and gradients are *not* gathered (they stay in the training layout untouched; only the bf16 parameters are copied into the rollout engine's weight buffers). After resharding, vLLM's weight tensors are *updated in place* via its `load_weights` / `update_weights` API — no disk, no checkpoint.
+
+{{fig:verl-reshard-p-to-q}}
 
 ### Weight synchronization, in place
 

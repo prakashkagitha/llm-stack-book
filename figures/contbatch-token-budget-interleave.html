@@ -1,0 +1,111 @@
+<figure class="viz" id="fig-contbatch-token-budget-interleave">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 430" role="img" aria-label="Three per-iteration token budget bars. In steady state, decode tokens fill most of the budget with slack left over. A monolithic 4000-token prefill overflows the budget, stalling every decode and spiking inter-token latency. Chunked prefill schedules decode tokens first, then backfills a 512-token prefill chunk into the remaining budget, keeping the iteration under budget while the rest of the prompt spreads across future iterations.">
+  <defs>
+    <pattern id="ctbi-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="var(--warn,#e0a106)" fill-opacity="0.12"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-opacity="0.55"/>
+    </pattern>
+    <marker id="ctbi-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-contbatch-token-budget-interleave text{ fill:var(--ink-soft); }
+    #fig-contbatch-token-budget-interleave .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-contbatch-token-budget-interleave .hdr{ font:700 12px var(--sans,sans-serif); letter-spacing:.02em; }
+    #fig-contbatch-token-budget-interleave .cell{ font:600 9.5px var(--mono,monospace); }
+    #fig-contbatch-token-budget-interleave .tag{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-contbatch-token-budget-interleave .cap{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-contbatch-token-budget-interleave .mk{ font:600 10.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-contbatch-token-budget-interleave .ghost{ font:500 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-contbatch-token-budget-interleave .warnlbl{ font:700 9.5px var(--mono,monospace); letter-spacing:.03em; }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Per-iteration token budget: decode tokens first, prefill backfills the rest</text>
+
+
+  <g data-anim="1">
+    <line x1="620" y1="46" x2="620" y2="362" class="v-accent-s" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="4 4"/>
+    <text x="614" y="40" text-anchor="end" class="mk">max_num_batched_tokens (budget cap)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <text x="100" y="60" class="hdr">STEADY STATE</text>
+    <text x="295" y="78" text-anchor="middle" class="cap">decode: 1 tok per running request (6 shown)</text>
+
+    <rect x="100" y="92" width="390" height="34" rx="2" class="v-fill v-accent-s" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1"/>
+    <g class="v-grid" stroke-width="1">
+      <line x1="165" y1="92" x2="165" y2="126"/><line x1="230" y1="92" x2="230" y2="126"/>
+      <line x1="295" y1="92" x2="295" y2="126"/><line x1="360" y1="92" x2="360" y2="126"/>
+      <line x1="425" y1="92" x2="425" y2="126"/>
+    </g>
+    <g class="cell" text-anchor="middle">
+      <text x="132.5" y="113">1 tok</text><text x="197.5" y="113">1 tok</text><text x="262.5" y="113">1 tok</text>
+      <text x="327.5" y="113">1 tok</text><text x="392.5" y="113">1 tok</text><text x="457.5" y="113">1 tok</text>
+    </g>
+    <rect x="490" y="92" width="130" height="34" rx="2" class="v-grid" fill="none" stroke-width="1" stroke-dasharray="2 3"/>
+    <text x="555" y="113" text-anchor="middle" class="cap" font-style="italic">slack</text>
+
+    <text x="100" y="148" class="cap">steady state: one decode token per running request each step -- smooth ITL.</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="100" y="174" class="hdr">MONOLITHIC PREFILL -- the problem</text>
+    <text x="360" y="192" text-anchor="middle" class="cap">prefill 4000 toks in one iteration</text>
+
+    <g class="v-grid" opacity="0.5" stroke-width="1">
+      <rect x="100" y="206" width="520" height="34" fill="none"/>
+      <line x1="165" y1="206" x2="165" y2="240"/><line x1="230" y1="206" x2="230" y2="240"/>
+      <line x1="295" y1="206" x2="295" y2="240"/><line x1="360" y1="206" x2="360" y2="240"/>
+      <line x1="425" y1="206" x2="425" y2="240"/><line x1="490" y1="206" x2="490" y2="240"/>
+      <line x1="555" y1="206" x2="555" y2="240"/>
+    </g>
+
+    <rect x="100" y="206" width="520" height="34" class="v-accent-s" fill="var(--accent)" fill-opacity="0.30" stroke="var(--accent)" stroke-width="1"/>
+    <rect x="620" y="206" width="120" height="34" fill="url(#ctbi-hatch)" stroke="var(--accent)" stroke-width="1"/>
+    <line x1="620" y1="203" x2="620" y2="243" class="v-accent-s" stroke="var(--accent)" stroke-width="2.4"/>
+    <text x="680" y="227" text-anchor="middle" class="warnlbl" fill="var(--warn)">OVER BUDGET</text>
+
+    <text x="100" y="262" class="cap">all decodes stall behind it -&gt; inter-token-latency (ITL) spike / stream stutters.</text>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="100" y="288" class="hdr">CHUNKED PREFILL -- the fix</text>
+    <text x="197.5" y="306" text-anchor="middle" class="cap">decodes first: reserved slice</text>
+
+    <rect x="100" y="320" width="195" height="34" rx="2" class="v-fill v-accent-s" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1"/>
+    <g class="v-grid" stroke-width="1">
+      <line x1="165" y1="320" x2="165" y2="354"/><line x1="230" y1="320" x2="230" y2="354"/>
+    </g>
+    <g class="cell" text-anchor="middle">
+      <text x="132.5" y="341">1 tok</text><text x="197.5" y="341">1 tok</text><text x="262.5" y="341">1 tok</text>
+    </g>
+
+    <rect x="295" y="320" width="325" height="34" rx="2" class="v-accent-s" fill="var(--accent)" fill-opacity="0.38" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="457.5" y="341" text-anchor="middle" class="tag">prefill chunk 512</text>
+
+    <g class="ghost" opacity="0.85">
+      <rect x="635" y="322" width="50" height="9" rx="1.5" fill="none" class="v-muted" stroke-width="1" stroke-dasharray="2 2"/>
+      <rect x="635" y="333" width="50" height="9" rx="1.5" fill="none" class="v-muted" stroke-width="1" stroke-dasharray="2 2"/>
+      <rect x="635" y="344" width="50" height="9" rx="1.5" fill="none" class="v-muted" stroke-width="1" stroke-dasharray="2 2"/>
+      <line x1="620" y1="337" x2="631" y2="337" class="v-muted" stroke-width="1.2" marker-end="url(#ctbi-arrow)"/>
+      <text x="660" y="314" text-anchor="middle">rest of prompt -&gt;</text>
+      <text x="660" y="368" text-anchor="middle">next iterations</text>
+    </g>
+
+    <text x="100" y="378" class="cap">chunked prefill: decodes first, prefill backfills the remainder each step --</text>
+    <text x="100" y="392" class="cap">ITL stays smooth, and the prefill still finishes in a few iterations.</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="270" y1="412" x2="330" y2="412" class="v-accent-s" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#ctbi-arrow)"/>
+    <text x="340" y="416" class="tag">ordering rule: decode tokens, then prefill chunks</text>
+  </g>
+</svg>
+<figcaption><b>Every scheduler iteration has a fixed token budget, and decode tokens claim it first.</b> A monolithic 4000-token prefill blows straight through the budget in one step, stalling every running decode and spiking inter-token latency; chunked prefill instead reserves the budget for decodes and backfills only a 512-token slice of the prompt each step, so the iteration always stays under the cap and the rest of the prompt spreads across the following iterations.</figcaption>
+</figure>

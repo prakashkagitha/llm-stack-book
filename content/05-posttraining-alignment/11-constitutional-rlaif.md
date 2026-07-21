@@ -486,6 +486,8 @@ Critically, the threshold $\tau_t$ is raised each iteration — the bar gets hig
 
     Concrete magnitudes: a 7B model on MATH training problems might consume about 200 MB of training text per iteration (a few tens of thousands of accepted completions at ~1,000 tokens each). Each GPU-hour of generation produces on the order of 50,000 completions at temperature 0.8 on an H100.
 
+{{fig:rft-capability-ratchet}}
+
 ---
 
 ## Self-Play & Iterative Self-Improvement
@@ -528,6 +530,8 @@ def build_spin_pairs(
 ---
 
 ## Weak-to-Strong Generalization
+
+{{fig:weak-to-strong-generalization}}
 
 Weak-to-strong generalization (Burns et al., OpenAI, 2023) addresses a different but related problem: what happens when the student model is *stronger* than the supervisor? This is directly relevant to the scalable oversight problem: future models will likely surpass human raters in many domains, making human feedback unreliable.
 

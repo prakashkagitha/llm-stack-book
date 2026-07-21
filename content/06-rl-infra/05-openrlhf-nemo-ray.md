@@ -195,6 +195,10 @@ class VLLMRolloutActor:
                 for o in outputs]
 ```
 
+
+{{fig:weight-sync-two-copies-bandwidth}}
+
+
 ### The PPO Training Loop in OpenRLHF
 
 Here is the high-level controller logic. Notice how it is a plain Python loop — no custom distributed runtime, just Ray futures:
@@ -519,6 +523,10 @@ Megatron's static NCCL topology amortizes this: all processes are launched toget
 ### Where veRL Sits
 
 For completeness: **veRL** (Volcano Engine RL, covered in [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) attempts a middle ground with its "HybridFlow" design — a single-controller architecture that uses Ray for orchestration but NCCL for intra-group communication, with explicit "resource pools" that can mix tensor-parallel groups from different model instances.
+
+
+{{fig:ray-dynamic-vs-megatron-static-orchestration}}
+
 
 ---
 

@@ -1,0 +1,221 @@
+<figure class="viz" id="fig-distill-wanda-vs-magnitude">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 500" role="img" aria-label="The same small weight matrix pruned two ways: magnitude-only pruning crosses out the smallest-magnitude weights regardless of which input feature they multiply, mistakenly dropping a small weight that sits on a busy, high-activation feature; Wanda scores weight magnitude times that column's activation norm, so it keeps the small-but-busy weight and instead drops a large-magnitude weight that sits on a nearly dead feature.">
+<style>
+  #fig-distill-wanda-vs-magnitude text          { fill: var(--ink-soft,#45413a); }
+  #fig-distill-wanda-vs-magnitude .ttl          { font: 700 15px var(--sans,sans-serif); fill: currentColor; }
+  #fig-distill-wanda-vs-magnitude .sub          { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-distill-wanda-vs-magnitude .hdr          { font: 700 13px var(--sans,sans-serif); fill: currentColor; }
+  #fig-distill-wanda-vs-magnitude .hdr2         { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-distill-wanda-vs-magnitude .small        { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-distill-wanda-vs-magnitude .tick         { font: 600 9px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-distill-wanda-vs-magnitude .mono         { font: 700 10px var(--mono,monospace); fill: currentColor; }
+  #fig-distill-wanda-vs-magnitude .callout      { font: 600 9.5px var(--sans,sans-serif); }
+  #fig-distill-wanda-vs-magnitude .panel        { fill: var(--surface-3,#ece7da); fill-opacity: 0.28; stroke: var(--border-2,#d8d1c0); stroke-width: 1.1; }
+  #fig-distill-wanda-vs-magnitude .cell         { fill: var(--ink-soft,#45413a); stroke: var(--border-2,#d8d1c0); stroke-width: 1; }
+  #fig-distill-wanda-vs-magnitude .bar          { fill: var(--accent2,#3b82f6); fill-opacity: 0.55; stroke: var(--accent2,#3b82f6); stroke-width: 1; }
+  #fig-distill-wanda-vs-magnitude .axis         { stroke: var(--border-2,#d8d1c0); stroke-width: 1.1; }
+  #fig-distill-wanda-vs-magnitude .chip         { fill: var(--surface,#fff); stroke: var(--border-2,#d8d1c0); stroke-width: 1; }
+  #fig-distill-wanda-vs-magnitude .chip-acc     { fill: var(--surface,#fff); stroke: var(--accent,#c15b39); stroke-width: 1.4; }
+  #fig-distill-wanda-vs-magnitude .ring         { fill: none; stroke: var(--accent,#c15b39); stroke-width: 1.6; stroke-dasharray: 3 2; }
+  #fig-distill-wanda-vs-magnitude .arrow        { stroke: var(--accent,#c15b39); stroke-width: 1.3; fill: none; marker-end: url(#dwv-arr); }
+  #fig-distill-wanda-vs-magnitude .prunedX      { stroke: var(--warn,#e0a106); stroke-width: 2.4; stroke-linecap: round; }
+  #fig-distill-wanda-vs-magnitude .keepC        { fill: none; stroke: var(--good,#2f9e6e); stroke-width: 2.2; }
+</style>
+
+<text x="18" y="22" class="ttl">Wanda vs. magnitude-only pruning: same weights, different verdicts</text>
+<text x="18" y="38" class="sub">Magnitude-only prunes the smallest |w| regardless of context; Wanda weighs each column by its activation norm, so activity changes what survives.</text>
+
+
+<g data-anim="1">
+<rect class="panel" x="18" y="52" width="368" height="368" rx="10"/>
+<text x="202" y="76" text-anchor="middle" class="hdr">Magnitude only: prune smallest |w|</text>
+<text x="202" y="91" text-anchor="middle" class="hdr2">ignores which column (feature) the weight sits in</text>
+<rect class="chip" x="127" y="99" width="150" height="19" rx="4"/>
+<text x="202" y="112" text-anchor="middle" class="mono">score(w) = |w|</text>
+
+<text x="202" y="140" text-anchor="middle" class="small">activation norm ||x_j|| per input feature (unused here)</text>
+
+
+<g opacity="0.4">
+<rect class="bar" x="61"  y="136" width="16" height="42"/>
+<rect class="bar" x="97"  y="150" width="16" height="28"/>
+<rect class="bar" x="133" y="172" width="16" height="6"/>
+<rect class="bar" x="169" y="145" width="16" height="33"/>
+<rect class="bar" x="205" y="156" width="16" height="22"/>
+<rect class="bar" x="241" y="161" width="16" height="17"/>
+</g>
+<text x="141" y="169" class="small" font-size="8" font-style="italic">dead</text>
+
+<text x="69"  y="190" text-anchor="middle" class="tick">x1</text>
+<text x="105" y="190" text-anchor="middle" class="tick">x2</text>
+<text x="141" y="190" text-anchor="middle" class="tick">x3</text>
+<text x="177" y="190" text-anchor="middle" class="tick">x4</text>
+<text x="213" y="190" text-anchor="middle" class="tick">x5</text>
+<text x="249" y="190" text-anchor="middle" class="tick">x6</text>
+
+
+<g>
+  
+  <rect class="cell" x="97"  y="198" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="133" y="198" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="169" y="198" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="205" y="198" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="241" y="198" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="277" y="198" width="30" height="26" fill-opacity="0.15"/>
+  
+  <rect class="cell" x="97"  y="230" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="133" y="230" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="169" y="230" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="205" y="230" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="241" y="230" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="277" y="230" width="30" height="26" fill-opacity="0.55"/>
+  
+  <rect class="cell" x="97"  y="262" width="30" height="26" fill-opacity="0.15"/>
+  <rect class="cell" x="133" y="262" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="169" y="262" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="205" y="262" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="241" y="262" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="277" y="262" width="30" height="26" fill-opacity="0.35"/>
+  
+  <rect class="cell" x="97"  y="294" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="133" y="294" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="169" y="294" width="30" height="26" fill-opacity="0.15"/>
+  <rect class="cell" x="205" y="294" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="241" y="294" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="277" y="294" width="30" height="26" fill-opacity="0.35"/>
+</g>
+
+
+<g>
+  <line class="prunedX" x1="281" y1="202" x2="303" y2="220"/>
+  <line class="prunedX" x1="303" y1="202" x2="281" y2="220"/>
+
+  <line class="prunedX" x1="101" y1="266" x2="123" y2="284"/>
+  <line class="prunedX" x1="123" y1="266" x2="101" y2="284"/>
+  <rect class="ring" x="95" y="260" width="34" height="30" rx="4"/>
+
+  <line class="prunedX" x1="173" y1="298" x2="195" y2="316"/>
+  <line class="prunedX" x1="195" y1="298" x2="173" y2="316"/>
+</g>
+
+
+<path class="arrow" d="M84,340 C84,320 90,300 96,282"/>
+<rect class="chip-acc" x="30" y="340" width="150" height="34" rx="5"/>
+<text x="105" y="353" text-anchor="middle" class="callout">small |w|, busy feature</text>
+<text x="105" y="366" text-anchor="middle" class="callout" fill="var(--accent,#c15b39)">-&gt; dropped anyway (mistake)</text>
+
+<text x="202" y="404" text-anchor="middle" class="small">X = globally-smallest |w|; column</text>
+<text x="202" y="415" text-anchor="middle" class="small">context never enters the decision.</text>
+</g>
+
+
+<g data-anim="2">
+<rect class="panel" x="414" y="52" width="368" height="368" rx="10"/>
+<text x="598" y="76" text-anchor="middle" class="hdr">Wanda: score = |w| . ||x_j||_2</text>
+<text x="598" y="91" text-anchor="middle" class="hdr2">activation-aware: same weights, context-adjusted verdicts</text>
+<rect class="chip-acc" x="490" y="99" width="216" height="19" rx="4"/>
+<text x="598" y="112" text-anchor="middle" class="mono">score(w_ij) = |w_ij| . ||x_j||_2</text>
+
+<text x="598" y="140" text-anchor="middle" class="small">activation norm ||x_j|| per input feature (calibration data)</text>
+
+
+<rect class="bar" x="457" y="136" width="16" height="42"/>
+<rect class="bar" x="493" y="150" width="16" height="28"/>
+<rect class="bar" x="529" y="172" width="16" height="6"/>
+<rect class="bar" x="565" y="145" width="16" height="33"/>
+<rect class="bar" x="601" y="156" width="16" height="22"/>
+<rect class="bar" x="637" y="161" width="16" height="17"/>
+<text x="537" y="169" class="small" font-size="8" font-style="italic">dead</text>
+
+<text x="465" y="190" text-anchor="middle" class="tick">x1</text>
+<text x="501" y="190" text-anchor="middle" class="tick">x2</text>
+<text x="537" y="190" text-anchor="middle" class="tick">x3</text>
+<text x="573" y="190" text-anchor="middle" class="tick">x4</text>
+<text x="609" y="190" text-anchor="middle" class="tick">x5</text>
+<text x="645" y="190" text-anchor="middle" class="tick">x6</text>
+
+
+<g>
+  
+  <rect class="cell" x="493" y="198" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="529" y="198" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="565" y="198" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="601" y="198" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="637" y="198" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="673" y="198" width="30" height="26" fill-opacity="0.15"/>
+  
+  <rect class="cell" x="493" y="230" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="529" y="230" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="565" y="230" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="601" y="230" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="637" y="230" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="673" y="230" width="30" height="26" fill-opacity="0.55"/>
+  
+  <rect class="cell" x="493" y="262" width="30" height="26" fill-opacity="0.15"/>
+  <rect class="cell" x="529" y="262" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="565" y="262" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="601" y="262" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="637" y="262" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="673" y="262" width="30" height="26" fill-opacity="0.35"/>
+  
+  <rect class="cell" x="493" y="294" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="529" y="294" width="30" height="26" fill-opacity="0.35"/>
+  <rect class="cell" x="565" y="294" width="30" height="26" fill-opacity="0.15"/>
+  <rect class="cell" x="601" y="294" width="30" height="26" fill-opacity="0.55"/>
+  <rect class="cell" x="637" y="294" width="30" height="26" fill-opacity="0.80"/>
+  <rect class="cell" x="673" y="294" width="30" height="26" fill-opacity="0.35"/>
+</g>
+
+
+<g>
+  <line class="prunedX" x1="677" y1="202" x2="699" y2="220"/>
+  <line class="prunedX" x1="699" y1="202" x2="677" y2="220"/>
+
+  <line class="prunedX" x1="569" y1="298" x2="591" y2="316"/>
+  <line class="prunedX" x1="591" y1="298" x2="569" y2="316"/>
+
+  <circle class="keepC" cx="508" cy="275" r="15"/>
+  <rect class="ring" x="491" y="260" width="34" height="30" rx="4"/>
+
+  <line class="prunedX" x1="569" y1="234" x2="591" y2="252"/>
+  <line class="prunedX" x1="591" y1="234" x2="569" y2="252"/>
+  <rect class="ring" x="563" y="228" width="34" height="30" rx="4"/>
+</g>
+
+
+<path class="arrow" d="M475,340 C480,320 495,300 505,290"/>
+<rect class="chip-acc" x="422" y="340" width="146" height="34" rx="5"/>
+<text x="495" y="353" text-anchor="middle" class="callout">small weight, busy feature</text>
+<text x="495" y="366" text-anchor="middle" class="callout" fill="var(--good,#2f9e6e)">-&gt; keep</text>
+
+<path class="arrow" d="M690,340 C670,320 600,270 588,246"/>
+<rect class="chip-acc" x="628" y="340" width="146" height="34" rx="5"/>
+<text x="701" y="353" text-anchor="middle" class="callout">big weight, dead feature</text>
+<text x="701" y="366" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">-&gt; drop</text>
+
+<text x="598" y="404" text-anchor="middle" class="small">Same |w| shading as the left grid; verdicts</text>
+<text x="598" y="415" text-anchor="middle" class="small">flip only where activation changes the score.</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="18" y1="430" x2="782" y2="430" class="axis"/>
+  <circle class="keepC" cx="330" cy="452" r="8"/>
+  <text x="345" y="456" class="small">kept</text>
+  <line class="prunedX" x1="410" y1="446" x2="424" y2="460"/>
+  <line class="prunedX" x1="424" y1="446" x2="410" y2="460"/>
+  <text x="435" y="456" class="small">pruned</text>
+  <text x="18" y="456" class="small">cell shade = |w_ij| (more opaque = larger magnitude)</text>
+  <text x="782" y="456" text-anchor="end" class="small">bar height = ||x_j||_2 (activation norm)</text>
+</g>
+
+<defs>
+  <marker id="dwv-arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+    <path d="M0,0 L6,3 L0,6 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+
+</svg>
+<figcaption><b>Wanda's score multiplies weight magnitude by the input feature's activation norm, so the same weight matrix gets pruned differently once you account for which features are actually active.</b> Magnitude-only pruning drops a small weight sitting on a busy, high-activation feature (a mistake) while keeping a large weight on a nearly-dead feature; Wanda's <code>|w_ij| . ||x_j||_2</code> score reverses both calls without needing any Hessian computation.</figcaption>
+</figure>

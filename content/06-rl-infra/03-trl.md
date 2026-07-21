@@ -324,6 +324,8 @@ PPO is expensive: at inference time you need the policy, the value head, and the
 
 Total can easily exceed 100 GB for a 7B model, requiring at least two A100-80GB cards. This cost motivated the GRPO and DPO approaches that eliminate the value head.
 
+{{fig:rl-trainer-memory-footprint}}
+
 ## GRPOTrainer: The DeepSeek-R1 Recipe
 
 GRPO (Group Relative Policy Optimization, Shao et al., 2024) eliminates the value function entirely. Instead of estimating the advantage for each response with a critic, it generates a group of $G$ responses to the same prompt and uses the group's mean reward as a baseline:
@@ -331,6 +333,8 @@ GRPO (Group Relative Policy Optimization, Shao et al., 2024) eliminates the valu
 $$
 A_i = r_i - \frac{1}{G}\sum_{j=1}^{G} r_j
 $$
+
+{{fig:grpo-group-relative-advantage}}
 
 The policy gradient objective is then:
 

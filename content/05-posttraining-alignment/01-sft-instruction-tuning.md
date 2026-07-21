@@ -129,6 +129,8 @@ If you only build harm-axis pairs, the reward model learns that refusing is alwa
 !!! warning "The over-refusal failure mode"
     A naive "add more refusals" approach reliably produces a model that refuses benign requests. It happens by default because refusal examples are cheap to write and comply examples on adjacent benign topics are easy to forget. The contrast set (comply examples outnumbering refusals per cluster) and the over-refusal preference pairs are what keep the operating point calibrated — without them, safety training silently trades helpfulness for a false sense of security.
 
+{{fig:refusal-calibration-contrast-set}}
+
 ## The Three-Stage Post-Training Recipe
 
 Modern instruction-following models are not trained in one step. The standard recipe, used across frontier labs, involves three stages:
@@ -188,6 +190,8 @@ See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignmen
     - AdamW states for LoRA ≈ 0.6 GB
     - Activations: ~4–8 GB
     - **Total: ~10–15 GB** → fits on a single 24 GB RTX 3090 or 4090
+
+{{fig:sft-memory-budget-full-vs-qlora}}
 
 ## Catastrophic Forgetting
 

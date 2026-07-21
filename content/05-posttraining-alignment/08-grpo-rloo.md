@@ -433,11 +433,15 @@ The takeaways for an engineer: (1) a tiny **cold-start SFT** dramatically stabil
 !!! tip "Practitioner tip: pass@k as your north star, not pass@1"
     GRPO can only learn from a prompt if the group contains *both* successes and failures — otherwise every advantage is zero and the gradient vanishes. So the right difficulty band for your prompt set is "hard but not impossible at $G$ samples." Track the fraction of prompts with mixed outcomes; if most groups are all-correct or all-wrong, the run is wasting compute. Curriculum (start easy, raise difficulty) and large $G$ both help keep groups informative.
 
+{{fig:grpo-dead-groups}}
+
 ## The 2025 fixes: Dr. GRPO, token-level loss, and clip-higher
 
 GRPO as originally written has two now-well-documented **optimization biases** — places where the loss does not faithfully estimate the policy gradient and instead silently rewards or punishes *length*. The 2025 literature (notably Liu et al., *Understanding R1-Zero-like Training* / "Dr. GRPO", and the Qwen team's *DAPO*) diagnosed and fixed them. These are favorite interview topics because they require you to actually look at the loss algebra.
 
 ### Bias 1: the response-level length normalization
+
+{{fig:grpo-length-bias}}
 
 Recall the inner term $\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}(\cdot)$. Dividing each response's summed token loss by its own length $|o_i|$ means **each response contributes equally regardless of length**, which sounds fair but isn't, gradient-wise. Consider two responses with the *same* positive advantage. The gradient signal per token is scaled by $1/|o_i|$, so a *long correct* response gets a *smaller per-token* push than a *short correct* one. Conversely, for negative advantage, long *wrong* responses are penalized *less per token* than short wrong ones. The net effect of this asymmetry is a systematic pressure that, combined with std-normalization, **inflates response length** — the model learns that rambling is cheap when wrong and reinforced when right. This is a major driver of the "GRPO models get longer and longer" phenomenon, separate from genuine reasoning gains.
 

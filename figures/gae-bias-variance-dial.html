@@ -1,0 +1,137 @@
+<figure class="viz" id="fig-gae-bias-variance-dial">
+<svg viewBox="0 0 780 650" role="img" aria-label="GAE as a bias-variance dial between one-step TD and Monte Carlo advantage estimation, built by summing exponentially-decaying TD residuals via a backward recursion; with terminal-only reward it nearly collapses to the return minus the value at each token.">
+<defs>
+  <style>
+    #fig-gae-bias-variance-dial .band-lbl { font: 700 11px var(--sans,sans-serif); letter-spacing: 0.06em; }
+    #fig-gae-bias-variance-dial .end-hdr { font: 700 13px var(--sans,sans-serif); }
+    #fig-gae-bias-variance-dial .end-line { font: 400 10.5px var(--sans,sans-serif); }
+    #fig-gae-bias-variance-dial .marker-lbl { font: 600 10.5px var(--sans,sans-serif); }
+    #fig-gae-bias-variance-dial .wedge-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-gae-bias-variance-dial .eq { font: 700 13px var(--mono,monospace); }
+    #fig-gae-bias-variance-dial .tok { font: 700 12px var(--mono,monospace); }
+    #fig-gae-bias-variance-dial .delta-lbl { font: 700 12px var(--mono,monospace); }
+    #fig-gae-bias-variance-dial .barnum { font: 600 10px var(--mono,monospace); }
+    #fig-gae-bias-variance-dial .note { font: 400 10px var(--sans,sans-serif); }
+    #fig-gae-bias-variance-dial .recur-lbl { font: 600 11px var(--mono,monospace); }
+    #fig-gae-bias-variance-dial .inset-hdr { font: 700 11.5px var(--sans,sans-serif); letter-spacing: 0.04em; }
+    #fig-gae-bias-variance-dial .inset-line { font: italic 10.5px var(--sans,sans-serif); }
+    #fig-gae-bias-variance-dial text { fill: var(--ink-soft,#444); }
+    #fig-gae-bias-variance-dial .muted-text { fill: var(--muted,#888); }
+    #fig-gae-bias-variance-dial .accent-text { fill: var(--accent,#c0392b); }
+    #fig-gae-bias-variance-dial .warn-text { fill: var(--warn,#e0a106); }
+    #fig-gae-bias-variance-dial .good-text { fill: var(--good,#2f9e6e); }
+  </style>
+  <marker id="gae-arrBack" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+    <path d="M0,0 L8,4 L0,8 Z" fill="var(--accent,#c0392b)"/>
+  </marker>
+</defs>
+
+
+<g data-anim="1">
+  <text x="15" y="20" class="band-lbl muted-text">THE DIAL: BIAS VS. VARIANCE</text>
+
+  
+  <text x="15" y="42" class="end-hdr">lambda = 0</text>
+  <text x="15" y="58" class="end-line">one-step TD:  A_t = delta_t</text>
+  <text x="15" y="72" class="end-line">LOW variance, BIASED when V is wrong</text>
+
+  
+  <text x="765" y="42" text-anchor="end" class="end-hdr">lambda = 1</text>
+  <text x="765" y="58" text-anchor="end" class="end-line">Monte Carlo:  A_t = (full return) - V(s_t)</text>
+  <text x="765" y="72" text-anchor="end" class="end-line">UNBIASED, HIGH variance</text>
+
+  
+  <line x1="100" y1="112" x2="680" y2="112" stroke="var(--v-grid,#ccc)" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="100" cy="112" r="5.5" fill="var(--surface,#fff)" stroke="var(--ink-soft,#444)" stroke-width="2"/>
+  <text x="100" y="132" text-anchor="middle" class="marker-lbl muted-text">0</text>
+  <circle cx="680" cy="112" r="5.5" fill="var(--surface,#fff)" stroke="var(--ink-soft,#444)" stroke-width="2"/>
+  <text x="680" y="132" text-anchor="middle" class="marker-lbl muted-text">1</text>
+
+  
+  <circle cx="651" cy="112" r="7.5" fill="var(--accent,#c0392b)" stroke="var(--surface,#fff)" stroke-width="1.5"/>
+  <line x1="640" y1="103" x2="600" y2="92" stroke="var(--accent,#c0392b)" stroke-width="1.2" stroke-dasharray="2 2"/>
+  <text x="595" y="95" text-anchor="end" class="marker-lbl accent-text">lambda ~ 0.95</text>
+  <text x="595" y="108" text-anchor="end" class="marker-lbl accent-text">(typical for LLMs)</text>
+
+  
+  <polygon points="100,150 100,175 680,168 680,175" fill="var(--warn,#e0a106)" fill-opacity="0.28" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="108" y="167" class="wedge-lbl warn-text">bias</text>
+
+  
+  <polygon points="100,208 100,213 680,182 680,213" fill="var(--accent2,#3b82f6)" fill-opacity="0.28" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+  <text x="620" y="203" text-anchor="end" class="wedge-lbl" fill="var(--accent2,#3b82f6)">variance</text>
+</g>
+
+<line x1="15" y1="232" x2="765" y2="232" stroke="var(--border-2,#ccc)" stroke-width="1" opacity="0.5"/>
+
+
+<g data-anim="2">
+  <text x="15" y="252" class="band-lbl muted-text">HOW GAE IS BUILT (let gl = gamma * lambda)</text>
+
+  <text x="390" y="278" text-anchor="middle" class="eq">A_t = delta_t + gl*delta_(t+1) + gl^2*delta_(t+2) + ...</text>
+
+  
+  <line x1="90" y1="352" x2="670" y2="352" stroke="var(--v-grid,#ccc)" stroke-width="1"/>
+  <g>
+    <rect x="115" y="292" width="50" height="60" rx="3" fill="var(--accent,#c0392b)" fill-opacity="0.45" stroke="var(--accent,#c0392b)" stroke-width="1.3"/>
+    <text x="140" y="284" text-anchor="middle" class="barnum">1.00</text>
+    <rect x="275" y="316" width="50" height="36" rx="3" fill="var(--accent,#c0392b)" fill-opacity="0.35" stroke="var(--accent,#c0392b)" stroke-width="1.3"/>
+    <text x="300" y="308" text-anchor="middle" class="barnum">0.95</text>
+    <rect x="435" y="332" width="50" height="20" rx="3" fill="var(--accent,#c0392b)" fill-opacity="0.28" stroke="var(--accent,#c0392b)" stroke-width="1.3"/>
+    <text x="460" y="324" text-anchor="middle" class="barnum">0.90</text>
+    <rect x="595" y="342" width="50" height="10" rx="3" fill="var(--accent,#c0392b)" fill-opacity="0.20" stroke="var(--accent,#c0392b)" stroke-width="1.3"/>
+    <text x="620" y="334" text-anchor="middle" class="barnum">0.86</text>
+  </g>
+  <text x="390" y="368" text-anchor="middle" class="note muted-text">weight per step decays geometrically: 1, gl, gl^2, gl^3, ... (heights illustrative, not to scale)</text>
+
+  
+  <g>
+    <rect x="105" y="388" width="70" height="34" rx="6" class="v-fill" fill="var(--surface-3,#f4f4f4)" stroke="var(--ink-soft,#444)" stroke-width="1.3"/>
+    <text x="140" y="410" text-anchor="middle" class="delta-lbl">delta_t</text>
+
+    <rect x="265" y="388" width="70" height="34" rx="6" class="v-fill" fill="var(--surface-3,#f4f4f4)" stroke="var(--ink-soft,#444)" stroke-width="1.3"/>
+    <text x="300" y="410" text-anchor="middle" class="delta-lbl">delta_t+1</text>
+
+    <rect x="425" y="388" width="70" height="34" rx="6" class="v-fill" fill="var(--surface-3,#f4f4f4)" stroke="var(--ink-soft,#444)" stroke-width="1.3"/>
+    <text x="460" y="410" text-anchor="middle" class="delta-lbl">delta_t+2</text>
+
+    <rect x="585" y="388" width="70" height="34" rx="6" class="v-fill" fill="var(--surface-3,#f4f4f4)" stroke="var(--ink-soft,#444)" stroke-width="1.3"/>
+    <text x="620" y="410" text-anchor="middle" class="delta-lbl">delta_t+3</text>
+  </g>
+
+  
+  <text x="140" y="440" text-anchor="middle" class="note">= reward you got</text>
+  <text x="140" y="453" text-anchor="middle" class="note">+ critic value of where you landed</text>
+  <text x="140" y="466" text-anchor="middle" class="note">- critic value of where you were</text>
+
+  
+  <g>
+    <rect x="112" y="486" width="56" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--muted,#888)" stroke-width="1.3"/>
+    <text x="140" y="505" text-anchor="middle" class="tok">t</text>
+
+    <rect x="272" y="486" width="56" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--muted,#888)" stroke-width="1.3"/>
+    <text x="300" y="505" text-anchor="middle" class="tok">t+1</text>
+
+    <rect x="432" y="486" width="56" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--muted,#888)" stroke-width="1.3"/>
+    <text x="460" y="505" text-anchor="middle" class="tok">t+2</text>
+
+    <rect x="592" y="486" width="56" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--muted,#888)" stroke-width="1.3"/>
+    <text x="620" y="505" text-anchor="middle" class="tok">t+3</text>
+  </g>
+
+  
+  <path d="M 620 522 C 500 552, 260 552, 148 524" fill="none" stroke="var(--accent,#c0392b)" stroke-width="2" marker-end="url(#gae-arrBack)"/>
+  <text x="390" y="572" text-anchor="middle" class="recur-lbl accent-text">one backward recursion:  A_t = delta_t + gl * A_(t+1)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="15" y="592" width="750" height="48" rx="8" fill="var(--surface-3,#f4f4f4)" fill-opacity="0.6" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+  <text x="390" y="608" text-anchor="middle" class="inset-hdr muted-text">LLM PAYOFF: TERMINAL-ONLY REWARD</text>
+  <text x="390" y="623" text-anchor="middle" class="inset-line">Reward is terminal-only, so interior delta_t = gl*V(s_t+1) - V(s_t) is pure critic bootstrapping; as lambda -&gt; 1, GAE collapses</text>
+  <text x="390" y="636" text-anchor="middle" class="inset-line">to (terminal R) - V(s_t) shared across tokens -- which is why critic-free methods (GRPO/RLOO) lose so little.</text>
+</g>
+
+</svg>
+<figcaption><b>GAE dials continuously between one-step TD (low variance, biased) and Monte Carlo (unbiased, high variance) via an exponentially-decaying sum of TD residuals, computed in one backward pass.</b> Each residual delta_t is a one-step correction ("reward you got + critic's value of where you landed - critic's value of where you were"); lambda controls how much of the future's residuals get folded in. Because RLHF reward is terminal-only, interior residuals are pure critic bootstrapping, so as lambda -&gt; 1 the advantage nearly collapses to (terminal reward) - V(s_t) shared across the whole response -- the reason critic-free estimators like GRPO lose so little by dropping V entirely.</figcaption>
+</figure>

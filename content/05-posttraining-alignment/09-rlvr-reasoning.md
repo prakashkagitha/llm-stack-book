@@ -75,6 +75,8 @@ There is a deeper, somewhat humbling caveat that the 2025 literature surfaced an
 !!! warning "Common pitfall: R1-Zero needs a base model that *can* sometimes succeed"
     The emergent-reasoning loop only turns if the group of $G$ samples contains *both* successes and failures — otherwise every advantage is zero and there is no gradient (the "dead group" problem from [GRPO](../05-posttraining-alignment/08-grpo-rloo.html)). On a base model too weak to ever solve a problem (pass@G $\approx 0$), RLVR produces *nothing* — flat reward, no learning. This is why R1-Zero worked on a very strong base (DeepSeek-V3) and why people who tried "R1-Zero on a small base model" with hard problems often saw no emergence. The fix is curriculum: start with problems the base solves ~20–60% of the time and ramp difficulty as the policy improves.
 
+{{fig:rlvr-dead-group-sweet-spot}}
+
 ## Building real verifiers I: math equivalence
 
 The accuracy reward is only as good as the checker. Naive string equality is *catastrophically* wrong: it would mark `0.5` incorrect against gold `1/2`, mark `x=2` incorrect against `2`, and mark `\frac{1}{2}` incorrect against `0.5`. A real math verifier must (1) **extract** the final answer from a long chain of thought, then (2) **normalize and compare** with numeric/symbolic equivalence. Here is a compact but realistic implementation.
@@ -404,6 +406,8 @@ A crucial nuance, and a favorite interview trap: people say verifiable rewards "
 - **Sandbox escapes / resource abuse.** `os.system`, `eval` of attacker-controlled strings, fork-bombs to crash the grader (so it returns a default), or `sys.setrecursionlimit` tricks. Defense: real isolation (container/microVM), strict rlimits, treat a crashed grader as reward **0**, never as "skip."
 - **Format farming.** Covered above: if format/length bonuses are too large, the model optimizes them instead of correctness. Defense: keep shaping rewards small and *contingent* on attempting the task.
 - **Length / "thinking" inflation.** Partly a genuine emergent behavior, partly a [loss bias](../05-posttraining-alignment/08-grpo-rloo.html) and partly the model padding to look like it is reasoning. Defense: the Dr. GRPO/token-level fixes, plus capping or mildly penalizing over-budget length.
+
+{{fig:rlvr-hacking-moved-statistics-to-software}}
 
 The mental model: **RLVR converts statistical reward-hacking into software security.** Your verifier and sandbox are now an *adversarial* interface — the policy is a relentless fuzzer that will execute your grader millions of times looking for the cheapest path to reward. Threat-model them as you would a public API taking untrusted input. The full taxonomy is in [Reward Hacking, Over-Optimization & Alignment Failures](../05-posttraining-alignment/13-reward-hacking-failures.html).
 

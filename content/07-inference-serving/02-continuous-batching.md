@@ -101,6 +101,8 @@ $$
 
 The curve rises steeply with $B$ at first (you are amortizing the fixed $\tau_0$ over more requests) and then flattens toward the compute roofline $1/\beta$ (see [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)). The scheduler's job is to keep $B$ as large as the KV-cache budget allows, so you operate on the flat, high-throughput part of the curve rather than the starved low-$B$ part. Static batching keeps $B$ *high on average but low at the tail* (the batch drains down to one straggler running at $B=1$); continuous batching keeps $B$ pinned near the maximum continuously by backfilling. That gap is where the throughput multiplier comes from.
 
+{{fig:contbatch-throughput-vs-batchsize}}
+
 ## A toy continuous-batching scheduler, from scratch
 
 {{fig:continuous-batching}}
@@ -347,6 +349,8 @@ The two things to study in this code are (a) `schedule()` re-deriving the runnin
     Our toy preempts by *dropping* the victim's KV cache and re-prefilling it on resume (recomputation). Real systems offer a choice: **recompute** (cheap memory, costs a redundant prefill) or **swap** the KV blocks out to CPU/host memory and copy them back on resume (no recompute, costs PCIe bandwidth and host RAM). vLLM supports both. Recomputation usually wins when prompts are short or prefill is cheap relative to the swap copy; swapping wins for very long contexts where re-prefilling is expensive.
 
 ## Prefill/decode interleaving and its scheduling tension
+
+{{fig:contbatch-token-budget-interleave}}
 
 Prefill and decode are different beasts. **Prefill** processes the whole prompt in parallel — it is *compute-bound* and short-lived (one big iteration). **Decode** processes one token per request — it is *memory-bound* and long-lived (many small iterations). Mixing them in one continuous-batching loop creates a real tension.
 

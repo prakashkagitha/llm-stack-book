@@ -1,0 +1,145 @@
+<figure class="viz" id="fig-rl-trainer-memory-footprint">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 490" role="img" aria-label="Stacked bars comparing relative memory for a 7B bf16 model under PPO, DPO, and GRPO training: all three pay for policy weights, Adam optimizer states at about four times the weights, and a frozen reference model, but only PPO additionally pays for a value head and its optimizer, making it the tallest bar. A side inset shows that with LoRA the reference model forward pass reuses the same frozen base tensors as the policy, so it costs almost no extra memory - only a tiny trained adapter is toggled on or off.">
+  <defs>
+    <marker id="rtmf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+    <pattern id="rtmf-hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <rect width="6" height="6" fill="var(--surface)" fill-opacity="0.15"/>
+      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--muted)" stroke-width="1.3"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-rl-trainer-memory-footprint text{ fill:var(--ink-soft); }
+    #fig-rl-trainer-memory-footprint .lbl{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-rl-trainer-memory-footprint .sm{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rl-trainer-memory-footprint .xs{ font:500 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rl-trainer-memory-footprint .seg{ font:600 9.5px var(--sans,sans-serif); }
+    #fig-rl-trainer-memory-footprint .head{ font:700 13.5px var(--sans,sans-serif); }
+    #fig-rl-trainer-memory-footprint .barname{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-rl-trainer-memory-footprint .mono{ font:600 10.5px var(--mono,monospace); }
+    #fig-rl-trainer-memory-footprint .seg-policy{ fill:var(--surface-3); stroke:var(--v-stroke,var(--ink-soft)); stroke-width:1.3; }
+    #fig-rl-trainer-memory-footprint .seg-opt{ fill:var(--accent); fill-opacity:0.24; stroke:var(--accent); stroke-width:1.3; }
+    #fig-rl-trainer-memory-footprint .seg-ref{ fill:var(--accent2); fill-opacity:0.20; stroke:var(--accent2); stroke-width:1.3; }
+    #fig-rl-trainer-memory-footprint .seg-vh{ fill:url(#rtmf-hatch); stroke:var(--muted); stroke-width:1.3; }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="14" y="18" class="head">7B bf16 policy: memory by trainer (relative units, not to scale)</text>
+
+    <rect x="14" y="26" width="15" height="12" rx="2" class="seg-policy"/>
+    <text x="34" y="36" class="xs">policy weights (1x)</text>
+    <rect x="184" y="26" width="15" height="12" rx="2" class="seg-opt"/>
+    <text x="204" y="36" class="xs">optimizer states, Adam (~4x)</text>
+    <rect x="14" y="44" width="15" height="12" rx="2" class="seg-vh"/>
+    <text x="34" y="54" class="xs">value head + its optimizer (PPO only)</text>
+    <rect x="330" y="44" width="15" height="12" rx="2" class="seg-ref"/>
+    <text x="350" y="54" class="xs">frozen reference model (1x)</text>
+  </g>
+
+  
+  <g data-anim="2">
+    
+    <line x1="30" y1="420" x2="540" y2="420" class="v-grid" stroke="var(--border-2)" stroke-width="1.3"/>
+
+    
+    <rect x="40" y="380" width="110" height="40" class="seg-policy"/>
+    <text x="95" y="396" text-anchor="middle" class="seg">policy</text>
+    <text x="95" y="408" text-anchor="middle" class="seg">weights</text>
+
+    <rect x="40" y="220" width="110" height="160" class="seg-opt"/>
+    <text x="95" y="290" text-anchor="middle" class="seg" fill="var(--accent)">optimizer</text>
+    <text x="95" y="304" text-anchor="middle" class="seg" fill="var(--accent)">states</text>
+    <text x="95" y="318" text-anchor="middle" class="seg" fill="var(--accent)">(Adam, ~4x)</text>
+
+    <rect x="40" y="200" width="110" height="20" class="seg-vh"/>
+
+    <rect x="40" y="160" width="110" height="40" class="seg-ref"/>
+    <text x="95" y="176" text-anchor="middle" class="seg" fill="var(--accent2)">frozen</text>
+    <text x="95" y="188" text-anchor="middle" class="seg" fill="var(--accent2)">reference</text>
+
+    <text x="95" y="440" text-anchor="middle" class="barname">PPO</text>
+
+    
+    <path d="M150 200 q6 0 6 5 v5 q0 5 -6 5" fill="none" class="v-muted" stroke="currentColor" stroke-width="1.3"/>
+    <line x1="156" y1="210" x2="188" y2="145" class="v-muted" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 2"/>
+    <text x="192" y="122" class="sm">GRPO &amp; DPO</text>
+    <text x="192" y="136" class="sm">drop the critic</text>
+
+    
+    <rect x="230" y="380" width="110" height="40" class="seg-policy"/>
+    <text x="285" y="396" text-anchor="middle" class="seg">policy</text>
+    <text x="285" y="408" text-anchor="middle" class="seg">weights</text>
+
+    <rect x="230" y="220" width="110" height="160" class="seg-opt"/>
+    <text x="285" y="290" text-anchor="middle" class="seg" fill="var(--accent)">optimizer</text>
+    <text x="285" y="304" text-anchor="middle" class="seg" fill="var(--accent)">states</text>
+    <text x="285" y="318" text-anchor="middle" class="seg" fill="var(--accent)">(Adam, ~4x)</text>
+
+    <rect x="230" y="180" width="110" height="40" class="seg-ref"/>
+    <text x="285" y="196" text-anchor="middle" class="seg" fill="var(--accent2)">frozen</text>
+    <text x="285" y="208" text-anchor="middle" class="seg" fill="var(--accent2)">reference</text>
+
+    <text x="285" y="440" text-anchor="middle" class="barname">DPO</text>
+
+    
+    <rect x="420" y="380" width="110" height="40" class="seg-policy"/>
+    <text x="475" y="396" text-anchor="middle" class="seg">policy</text>
+    <text x="475" y="408" text-anchor="middle" class="seg">weights</text>
+
+    <rect x="420" y="220" width="110" height="160" class="seg-opt"/>
+    <text x="475" y="290" text-anchor="middle" class="seg" fill="var(--accent)">optimizer</text>
+    <text x="475" y="304" text-anchor="middle" class="seg" fill="var(--accent)">states</text>
+    <text x="475" y="318" text-anchor="middle" class="seg" fill="var(--accent)">(Adam, ~4x)</text>
+
+    <rect x="420" y="180" width="110" height="40" class="seg-ref"/>
+    <text x="475" y="196" text-anchor="middle" class="seg" fill="var(--accent2)">frozen</text>
+    <text x="475" y="208" text-anchor="middle" class="seg" fill="var(--accent2)">reference</text>
+
+    <text x="475" y="440" text-anchor="middle" class="barname">GRPO</text>
+
+    <text x="285" y="458" text-anchor="middle" class="xs">value-head segment shown at a fixed schematic height for legibility, not to scale</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="558" y="14" width="228" height="450" rx="12" class="v-fill v-grid" stroke-width="1.2"/>
+    <text x="672" y="38" text-anchor="middle" class="head">LoRA: reference model</text>
+    <text x="672" y="54" text-anchor="middle" class="head">is (nearly) free</text>
+
+    
+    <rect x="578" y="150" width="188" height="90" rx="8" class="seg-policy"/>
+    <text x="672" y="188" text-anchor="middle" class="lbl">base weights</text>
+    <text x="672" y="204" text-anchor="middle" class="sm">(frozen, shared</text>
+    <text x="672" y="218" text-anchor="middle" class="sm">tensors)</text>
+
+    
+    <rect x="578" y="132" width="188" height="15" rx="4" class="seg-opt"/>
+    <text x="672" y="143" text-anchor="middle" class="xs" fill="var(--accent)">adapter delta (LoRA, trained)</text>
+
+    
+    <line x1="630" y1="240" x2="606" y2="278" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#rtmf-arrow)"/>
+    <line x1="714" y1="240" x2="738" y2="278" class="v-muted" stroke="currentColor" stroke-width="1.3" marker-end="url(#rtmf-arrow)"/>
+
+    <rect x="574" y="282" width="94" height="60" rx="7" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="621" y="302" text-anchor="middle" class="seg">policy</text>
+    <text x="621" y="315" text-anchor="middle" class="seg">forward =</text>
+    <text x="621" y="328" text-anchor="middle" class="seg">base + adapter</text>
+
+    <rect x="676" y="282" width="94" height="60" rx="7" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="723" y="298" text-anchor="middle" class="seg">reference</text>
+    <text x="723" y="311" text-anchor="middle" class="seg">forward =</text>
+    <text x="723" y="324" text-anchor="middle" class="seg">base only</text>
+    <text x="723" y="337" text-anchor="middle" class="xs">(no adapter)</text>
+
+    <text x="672" y="368" text-anchor="middle" class="sm">both passes reuse the same</text>
+    <text x="672" y="384" text-anchor="middle" class="sm">base tensors -&gt; the reference</text>
+    <text x="672" y="400" text-anchor="middle" class="sm">adds ~no extra memory, only</text>
+    <text x="672" y="416" text-anchor="middle" class="sm">the tiny adapter is toggled</text>
+    <text x="672" y="438" text-anchor="middle" class="xs">(disable_adapter_layers)</text>
+  </g>
+</svg>
+<figcaption><b>Dropping the value head and sharing the base model both cut RL memory, in different ways.</b> All three trainers pay for policy weights, roughly four times that for Adam optimizer states, and a frozen reference model — but only PPO also carries a value head and its own optimizer, so its bar is the tallest. With LoRA, the policy and reference forward passes share the same frozen base tensors and differ only by toggling a tiny trained adapter, so the reference model adds almost no memory at all.</figcaption>
+</figure>

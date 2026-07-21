@@ -1,0 +1,129 @@
+<figure class="viz" id="fig-weight-sync-two-copies-bandwidth">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 560" role="img" aria-label="Diagram showing the trainer pushing an updated 140 gigabyte bf16 policy into the rollout engine's read-only weight copy after every PPO update, plus a bar comparison showing that the same transfer is fastest over NVLink, medium over InfiniBand, and slowest over PCIe.">
+  <style>
+    #fig-weight-sync-two-copies-bandwidth .ttl{ font:700 14.5px var(--sans,sans-serif); }
+    #fig-weight-sync-two-copies-bandwidth .band-ttl{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-weight-sync-two-copies-bandwidth .lbl{ font:600 12px var(--sans,sans-serif); }
+    #fig-weight-sync-two-copies-bandwidth .sub{ font:500 10.5px var(--sans,sans-serif); }
+    #fig-weight-sync-two-copies-bandwidth .tiny{ font:500 9.5px var(--sans,sans-serif); }
+    #fig-weight-sync-two-copies-bandwidth .mono{ font:600 10.5px var(--mono,monospace); }
+    #fig-weight-sync-two-copies-bandwidth .take{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-weight-sync-two-copies-bandwidth text{ fill: var(--ink-soft); }
+    #fig-weight-sync-two-copies-bandwidth .dim{ fill: var(--muted); }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Two copies of the policy: the trainer must push weights into the engine's read-only copy</text>
+
+  
+  <g data-anim="1">
+    <text x="30" y="46" class="band-ttl">Two copies of the policy</text>
+
+    
+    <rect x="30" y="58" width="230" height="120" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <text x="145" y="80" text-anchor="middle" class="lbl">Policy TRAINER</text>
+    <circle cx="60" cy="106" r="12" fill="none" stroke="var(--v-muted)" stroke-width="2"/>
+    <circle cx="60" cy="106" r="4" fill="var(--v-muted)"/>
+    <path d="M60 94 v-5 M60 118 v5 M48 106 h-5 M72 106 h5 M51.5 97.5 l-3.5 -3.5 M68.5 97.5 l3.5 -3.5 M51.5 114.5 l-3.5 3.5 M68.5 114.5 l3.5 3.5" stroke="var(--v-muted)" stroke-width="1.6"/>
+    <text x="145" y="112" text-anchor="middle" class="sub">trainable: fwd + bwd</text>
+    <text x="145" y="126" text-anchor="middle" class="sub">+ Adam state</text>
+    <text x="145" y="150" text-anchor="middle" class="tiny dim">DeepSpeed ZeRO / Megatron</text>
+    <text x="145" y="164" text-anchor="middle" class="tiny dim">shards params + grads + opt</text>
+
+    
+    <rect x="520" y="58" width="230" height="120" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4"/>
+    <text x="635" y="80" text-anchor="middle" class="lbl">Rollout ENGINE (vLLM)</text>
+    <rect x="555" y="94" width="160" height="26" rx="4" fill="none" stroke="var(--v-muted)" stroke-width="1.4"/>
+    <text x="635" y="111" text-anchor="middle" class="tiny">read-only weights</text>
+    <text x="635" y="140" text-anchor="middle" class="sub">generation only</text>
+    <text x="635" y="164" text-anchor="middle" class="tiny dim">PagedAttention + KV cache</text>
+
+    
+    <path d="M262 100 H 516" class="v-accent-s viz-draw" style="--len:260" stroke-width="7" fill="none" marker-end="url(#wsync-arrow)"/>
+    <text x="390" y="90" text-anchor="middle" class="sub" fill="var(--v-accent)">sync: load updated weights</text>
+    <text x="390" y="104" text-anchor="middle" class="sub" fill="var(--v-accent)">after each PPO update</text>
+    <rect x="330" y="112" width="120" height="18" rx="9" class="v-fill" stroke="var(--v-accent)" stroke-width="1"/>
+    <text x="390" y="125" text-anchor="middle" class="mono" fill="var(--v-accent)">~140 GB bf16</text>
+
+    
+    <path d="M516 152 H 262" fill="none" class="v-grid" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#wsync-arrow-thin)"/>
+    <text x="390" y="146" text-anchor="middle" class="tiny dim">rollout tokens + old logprobs</text>
+
+    <text x="390" y="196" text-anchor="middle" class="tiny dim">the engine's KV cache is discarded and generation restarts fresh</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <text x="390" y="216" text-anchor="middle" class="tiny dim">illustrative: 70B params x 2 bytes (bf16) = 140 GB payload moved on every sync</text>
+  </g>
+
+  <line x1="20" y1="232" x2="760" y2="232" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+
+  
+  <g data-anim="3">
+    <text x="30" y="258" class="band-ttl">The cost is bandwidth, and it competes with the update step</text>
+
+    
+    <text x="30" y="292" class="lbl">NVLink (intra-node)</text>
+    <rect x="230" y="278" width="90" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.28" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="330" y="293" class="tiny" fill="var(--good,#2f9e6e)">fastest</text>
+
+    <text x="30" y="330" class="lbl">InfiniBand (multi-node)</text>
+    <rect x="230" y="316" width="260" height="22" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2"/>
+    <text x="500" y="331" class="tiny dim">mid</text>
+
+    <text x="30" y="368" class="lbl">PCIe</text>
+    <rect x="230" y="354" width="470" height="22" rx="4" fill="var(--warn,#e0a106)" fill-opacity="0.24" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="710" y="369" class="tiny" fill="var(--warn,#e0a106)">slowest</text>
+
+    <text x="230" y="392" class="tiny dim">bar length = relative transfer time for the same 140 GB payload (illustrative, not measured)</text>
+
+    <text x="30" y="418" class="sub">sync overhead = transfer time / update-step time;</text>
+    <text x="30" y="434" class="sub">large models amortize it, small models do not -- hence sync every N steps.</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="30" y="452" width="720" height="90" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+    <text x="50" y="474" class="lbl">Sync-frequency knob</text>
+
+    <text x="50" y="498" class="tiny dim">sync every step</text>
+    <line x1="180" y1="494" x2="600" y2="494" class="v-grid" stroke-width="1.4"/>
+    <g stroke="var(--v-accent)" stroke-width="3">
+      <line x1="190" y1="486" x2="190" y2="502"/>
+      <line x1="230" y1="486" x2="230" y2="502"/>
+      <line x1="270" y1="486" x2="270" y2="502"/>
+      <line x1="310" y1="486" x2="310" y2="502"/>
+      <line x1="350" y1="486" x2="350" y2="502"/>
+      <line x1="390" y1="486" x2="390" y2="502"/>
+      <line x1="430" y1="486" x2="430" y2="502"/>
+      <line x1="470" y1="486" x2="470" y2="502"/>
+      <line x1="510" y1="486" x2="510" y2="502"/>
+      <line x1="550" y1="486" x2="550" y2="502"/>
+      <line x1="590" y1="486" x2="590" y2="502"/>
+    </g>
+
+    <text x="50" y="524" class="tiny dim">sync every N steps</text>
+    <line x1="180" y1="520" x2="600" y2="520" class="v-grid" stroke-width="1.4"/>
+    <g stroke="var(--v-accent)" stroke-width="3">
+      <line x1="190" y1="512" x2="190" y2="528"/>
+      <line x1="330" y1="512" x2="330" y2="528"/>
+      <line x1="470" y1="512" x2="470" y2="528"/>
+    </g>
+
+    <text x="630" y="510" class="tiny dim">less sync =</text>
+    <text x="630" y="524" class="tiny dim">staler rollout</text>
+    <text x="630" y="536" class="tiny dim">policy</text>
+  </g>
+
+  <defs>
+    <marker id="wsync-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-accent"/>
+    </marker>
+    <marker id="wsync-arrow-thin" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption><b>Two live copies of the same policy must stay in lockstep, and keeping them in sync is a bandwidth problem.</b> After every PPO update the trainer pushes the full parameter tensor (~140 GB bf16 for a 70B policy) into the engine's read-only weight buffer, discarding its KV cache in the process; the same transfer is fast over NVLink, slower over InfiniBand, and slowest over PCIe, so whether that cost is negligible or dominant depends on the interconnect and on how many update steps you let pass between syncs.</figcaption>
+</figure>

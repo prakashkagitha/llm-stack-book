@@ -1,0 +1,154 @@
+<figure class="viz" id="fig-sft-memory-budget-full-vs-qlora">
+<svg viewBox="0 0 800 560" role="img" aria-label="Two stacked bar charts on a shared GB axis comparing GPU memory for fine-tuning a 7B model. Full fine-tuning stacks weights 14GB, gradients 28GB, AdamW optimizer states 56GB, and activations 16GB for a total of about 114GB, needing 2 to 4 80GB A100s. QLoRA stacks a 4-bit quantized base 3.5GB, LoRA adapters 0.3GB, adapter optimizer states 0.6GB, and activations 6GB for a total of about 10.4GB, fitting a single 24GB GPU. A dashed line marks the 24GB level; the QLoRA bar sits under it while the full fine-tuning bar towers far above it, because freezing and quantizing the base removes the gradient and optimizer-state memory almost entirely.">
+  <defs>
+    <marker id="smb-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="smb-arr-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-sft-memory-budget-full-vs-qlora text { fill: var(--ink-soft); }
+    #fig-sft-memory-budget-full-vs-qlora .hdr    { font: 700 14px var(--sans,sans-serif); }
+    #fig-sft-memory-budget-full-vs-qlora .lbl    { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-sft-memory-budget-full-vs-qlora .sub    { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-sft-memory-budget-full-vs-qlora .seg    { font: 700 10.5px var(--sans,sans-serif); }
+    #fig-sft-memory-budget-full-vs-qlora .segv   { font: 600 10px var(--mono,monospace); }
+    #fig-sft-memory-budget-full-vs-qlora .axis   { font: 500 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-sft-memory-budget-full-vs-qlora .leg    { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-sft-memory-budget-full-vs-qlora .total  { font: 700 13px var(--mono,monospace); }
+    #fig-sft-memory-budget-full-vs-qlora .note   { font: 600 11px var(--sans,sans-serif); fill: var(--warn,#e0a106); }
+    #fig-sft-memory-budget-full-vs-qlora .callout{ font: 500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+  </style>
+
+  <text x="400" y="24" text-anchor="middle" class="hdr">Where 7B fine-tuning memory goes -- and what QLoRA removes</text>
+
+  
+  <g data-anim="1">
+    <line x1="140" y1="140" x2="140" y2="460" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <g class="axis" text-anchor="end">
+      <line x1="134" y1="460" x2="140" y2="460" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="463">0</text>
+      <line x1="134" y1="406.7" x2="140" y2="406.7" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="409.7">20</text>
+      <line x1="134" y1="353.3" x2="140" y2="353.3" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="356.3">40</text>
+      <line x1="134" y1="300" x2="140" y2="300" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="303">60</text>
+      <line x1="134" y1="246.7" x2="140" y2="246.7" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="249.7">80</text>
+      <line x1="134" y1="193.3" x2="140" y2="193.3" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="196.3">100</text>
+      <line x1="134" y1="140" x2="140" y2="140" stroke="currentColor" class="v-muted"/>
+      <text x="130" y="143">120 GB</text>
+    </g>
+    
+    <g stroke="currentColor" class="v-grid" stroke-width="0.5" opacity="0.4">
+      <line x1="140" y1="406.7" x2="790" y2="406.7"/>
+      <line x1="140" y1="353.3" x2="790" y2="353.3"/>
+      <line x1="140" y1="300" x2="790" y2="300"/>
+      <line x1="140" y1="246.7" x2="790" y2="246.7"/>
+      <line x1="140" y1="193.3" x2="790" y2="193.3"/>
+      <line x1="140" y1="140" x2="790" y2="140"/>
+    </g>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="140" y1="396" x2="790" y2="396" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-dasharray="6 4" opacity="0.85"/>
+    <text x="345" y="392" class="axis" fill="var(--warn,#e0a106)" text-anchor="start" font-size="10.5">24 GB -- single consumer GPU</text>
+  </g>
+
+  
+  <g data-anim="3">
+    
+    <rect x="144" y="198.7" width="132" height="224.0" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.08" stroke="var(--warn,#e0a106)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+
+    
+    <rect x="150" y="422.7" width="120" height="37.3" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+    <text x="210" y="437" text-anchor="middle" class="seg" fill="var(--surface,#fff)">Weights bf16</text>
+    <text x="210" y="449" text-anchor="middle" class="segv" fill="var(--surface,#fff)">~14 GB</text>
+
+    <rect x="150" y="348.0" width="120" height="74.7" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="210" y="380" text-anchor="middle" class="seg" fill="var(--surface,#fff)">Gradients fp32</text>
+    <text x="210" y="393" text-anchor="middle" class="segv" fill="var(--surface,#fff)">~28 GB</text>
+
+    <rect x="150" y="198.7" width="120" height="149.3" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+    <text x="210" y="264" text-anchor="middle" class="seg" fill="var(--surface,#fff)">AdamW m1+m2 fp32</text>
+    <text x="210" y="277" text-anchor="middle" class="segv" fill="var(--surface,#fff)">~56 GB</text>
+
+    <rect x="150" y="156.0" width="120" height="42.7" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+    <text x="210" y="171" text-anchor="middle" class="seg" fill="var(--surface,#fff)">Activations</text>
+    <text x="210" y="183" text-anchor="middle" class="segv" fill="var(--surface,#fff)">~16 GB</text>
+
+    
+    <rect x="150" y="156.0" width="120" height="304.0" fill="none" stroke="currentColor" class="v-stroke" stroke-width="1.2"/>
+
+    
+    <path d="M 278 198.7 L 286 198.7 L 286 422.7 L 278 422.7" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <line x1="286" y1="310.7" x2="320" y2="310.7" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="324" y="300" class="callout" fill="var(--warn,#e0a106)">Gradients + optimizer =</text>
+    <text x="324" y="314" class="callout" fill="var(--warn,#e0a106)">84 GB of ~114 GB total --</text>
+    <text x="324" y="328" class="callout" fill="var(--warn,#e0a106)">this is what freezing +</text>
+    <text x="324" y="342" class="callout" fill="var(--warn,#e0a106)">quantizing removes.</text>
+
+    
+    <line x1="210" y1="152" x2="210" y2="100" stroke="currentColor" class="v-muted" stroke-width="1.2" marker-end="url(#smb-arr)"/>
+    <text x="210" y="90" text-anchor="middle" class="note" fill="var(--ink-soft)">needs 2-4x 80 GB A100</text>
+
+    
+    <text x="210" y="478" text-anchor="middle" class="total">~114 GB total</text>
+    <text x="210" y="500" text-anchor="middle" class="lbl">Full fine-tuning</text>
+    <text x="210" y="514" text-anchor="middle" class="sub">bf16 params + fp32 optimizer</text>
+  </g>
+
+  
+  <g data-anim="4">
+    
+    <rect x="460" y="452.05" width="100" height="7.95" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+    <rect x="460" y="447.71" width="100" height="4.34" fill="var(--accent,#c15b39)" fill-opacity="0.4"/>
+    <rect x="460" y="443.03" width="100" height="4.68" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+    <rect x="460" y="432.26" width="100" height="10.77" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+    <rect x="460" y="432.26" width="100" height="27.74" fill="none" stroke="currentColor" class="v-stroke" stroke-width="1.2"/>
+
+    
+    <line x1="560" y1="437.65" x2="600" y2="270" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <text x="605" y="266" class="callout">Activations ~6 GB</text>
+
+    <line x1="560" y1="445.37" x2="600" y2="308" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <text x="605" y="304" class="callout">Adapter optimizer ~0.6 GB</text>
+
+    <line x1="560" y1="449.88" x2="600" y2="346" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <text x="605" y="342" class="callout">LoRA adapters ~0.3 GB</text>
+
+    <line x1="560" y1="456.03" x2="600" y2="384" stroke="currentColor" class="v-muted" stroke-width="1"/>
+    <text x="605" y="380" class="callout">4-bit quantized base ~3.5 GB</text>
+
+    <text x="605" y="410" class="sub" font-style="italic">(stripes use a minimum height for</text>
+    <text x="605" y="423" class="sub" font-style="italic">visibility; bar height is to scale)</text>
+
+    
+    <line x1="510" y1="428" x2="510" y2="330" stroke="var(--good,#2f9e6e)" stroke-width="1.2" marker-end="url(#smb-arr)"/>
+    <text x="510" y="318" text-anchor="middle" class="note" fill="var(--good,#2f9e6e)">fits one 24 GB GPU</text>
+
+    
+    <text x="510" y="478" text-anchor="middle" class="total">~10 GB total</text>
+    <text x="510" y="500" text-anchor="middle" class="lbl">QLoRA</text>
+    <text x="510" y="514" text-anchor="middle" class="sub">4-bit frozen base, r=64</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="150" y="530" width="14" height="12" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+    <text x="169" y="540" class="leg">base / weight params</text>
+    <rect x="330" y="530" width="14" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="349" y="540" class="leg">gradients</text>
+    <rect x="450" y="530" width="14" height="12" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+    <text x="469" y="540" class="leg">optimizer states</text>
+    <rect x="600" y="530" width="14" height="12" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+    <text x="619" y="540" class="leg">activations</text>
+  </g>
+</svg>
+<figcaption><b>Freezing and quantizing the base collapses fine-tuning memory by roughly 10x.</b> For a 7B model, full fine-tuning needs bf16 weights (~14 GB) plus fp32 gradients (~28 GB) plus AdamW's two fp32 moments (~56 GB) plus activations -- about 114 GB, spilling across multiple 80 GB A100s. QLoRA freezes and 4-bit-quantizes the base so gradients and optimizer states are computed only for a small LoRA adapter, dropping the total to roughly 10-15 GB and fitting on a single 24 GB consumer GPU.</figcaption>
+</figure>
