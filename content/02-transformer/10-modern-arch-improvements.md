@@ -619,6 +619,8 @@ Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attent
 
 We now have enough pieces to assemble a complete reference. The table below summarizes the consensus choices circa 2024–2026, distinguishing "near-universal" (adopted by nearly all recent models) from "model-specific" (used by some, absent in others).
 
+{{fig:modarch-recipe-gpt2-vs-modern}}
+
 | Component | GPT-2 (2019) | Modern Consensus | Notes |
 |---|---|---|---|
 | Normalization | LayerNorm (post) | RMSNorm (pre) | Zhang & Sennrich 2019 |

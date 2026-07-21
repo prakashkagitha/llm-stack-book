@@ -883,6 +883,8 @@ $N_s$ denotes SSM state dimension (e.g., 16 in Mamba). Note that Mamba/SSM state
 
     This is the fundamental inference memory advantage of SSM/recurrent models: they can handle arbitrarily long sequences at deployment time with a fixed memory footprint.
 
+{{fig:kv-cache-vs-state-decode-memory}}
+
 ---
 
 ## Hybrid Architectures: Jamba, Zamba & Beyond

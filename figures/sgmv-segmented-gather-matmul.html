@@ -1,0 +1,198 @@
+<figure class="viz" id="fig-sgmv-segmented-gather-matmul">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 900 690" role="img"
+     aria-label="Diagram showing a continuous batch of tokens tagged with adapter ids sorted into contiguous per-adapter segments; each segment gathers its own low-rank A and B matrices once and applies a shrink-then-expand matmul through a rank-r waist, running in parallel with one dense base GEMM over the whole batch, the two summing into the output Y; a bottom note contrasts BGMV in decode versus SGMV in prefill.">
+  <defs>
+    <marker id="sg-arr" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+    <marker id="sg-arr-a" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+    <marker id="sg-arr-a2" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#b04e2d)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-sgmv-segmented-gather-matmul text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-sgmv-segmented-gather-matmul .ttl  { font:700 14px var(--sans,sans-serif); }
+    #fig-sgmv-segmented-gather-matmul .lbl  { font:700 12px var(--sans,sans-serif); }
+    #fig-sgmv-segmented-gather-matmul .sub  { font:400 10.5px var(--sans,sans-serif); fill:var(--muted,#888); }
+    #fig-sgmv-segmented-gather-matmul .mono { font:700 12px var(--mono,monospace); }
+    #fig-sgmv-segmented-gather-matmul .cell { font:700 12px var(--mono,monospace); fill:var(--ink-soft,#333); }
+    #fig-sgmv-segmented-gather-matmul .cap  { font:400 10px var(--sans,sans-serif); fill:var(--muted,#888); }
+    #fig-sgmv-segmented-gather-matmul .note { font:400 10.5px var(--sans,sans-serif); fill:var(--ink-soft,#333); }
+
+    #fig-sgmv-segmented-gather-matmul [data-anim] { opacity:0; }
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-sgmv-segmented-gather-matmul [data-anim="1"] { animation: sg-fade 0.6s 0.2s ease forwards; }
+      #fig-sgmv-segmented-gather-matmul [data-anim="2"] { animation: sg-fade 0.6s 1.0s ease forwards; }
+      #fig-sgmv-segmented-gather-matmul [data-anim="3"] { animation: sg-fade 0.6s 1.9s ease forwards; }
+      #fig-sgmv-segmented-gather-matmul [data-anim="4"] { animation: sg-fade 0.6s 2.9s ease forwards; }
+      #fig-sgmv-segmented-gather-matmul [data-anim="5"] { animation: sg-fade 0.6s 3.7s ease forwards; }
+      @keyframes sg-fade { from { opacity:0; transform:translateY(6px);} to { opacity:1; transform:translateY(0);} }
+      #fig-sgmv-segmented-gather-matmul .sg-waist { animation: sg-pulse 1s 2.1s ease-in-out 2 alternate; }
+      @keyframes sg-pulse { from { fill-opacity:0.35; } to { fill-opacity:0.7; } }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #fig-sgmv-segmented-gather-matmul [data-anim] { opacity:1; }
+    }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="450" y="24" text-anchor="middle" class="ttl">unsorted continuous batch (token order = arrival order)</text>
+    <g class="cell">
+      <rect x="96"  y="36" width="90" height="48" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="141" y="65" text-anchor="middle">a3</text>
+      <rect x="200" y="36" width="90" height="48" rx="6" fill="var(--accent-2,#b04e2d)" fill-opacity="0.35" stroke="var(--accent-2,#b04e2d)" stroke-width="1.4"/>
+      <text x="245" y="65" text-anchor="middle">a7</text>
+      <rect x="304" y="36" width="90" height="48" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="349" y="65" text-anchor="middle">a3</text>
+      <rect x="408" y="36" width="90" height="48" rx="6" fill="var(--surface,#fff)" fill-opacity="0.4" stroke="var(--muted,#94a3b8)" stroke-width="1.4" stroke-dasharray="4 3"/>
+      <text x="453" y="65" text-anchor="middle" fill="var(--muted,#888)">a0</text>
+      <rect x="512" y="36" width="90" height="48" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="557" y="65" text-anchor="middle">a2</text>
+      <rect x="616" y="36" width="90" height="48" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="661" y="65" text-anchor="middle">a3</text>
+      <rect x="720" y="36" width="90" height="48" rx="6" fill="var(--accent-2,#b04e2d)" fill-opacity="0.35" stroke="var(--accent-2,#b04e2d)" stroke-width="1.4"/>
+      <text x="765" y="65" text-anchor="middle">a7</text>
+    </g>
+    <text x="453" y="97" text-anchor="middle" class="cap">reserved slot a0 = base only (no adapter), drawn dashed</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="450" y1="104" x2="450" y2="130" stroke="var(--muted,#94a3b8)" stroke-width="1.8" marker-end="url(#sg-arr)"/>
+    <text x="466" y="112" text-anchor="start" class="sub">sort batch by</text>
+    <text x="466" y="126" text-anchor="start" class="sub">adapter id</text>
+  </g>
+
+
+  <g data-anim="2">
+    <text x="450" y="150" text-anchor="middle" class="ttl">sorted into contiguous per-adapter segments</text>
+
+
+    <rect x="90"  y="156" width="290" height="56" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.06" stroke="var(--accent,#c15b39)" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <rect x="390" y="156" width="196" height="56" rx="8" fill="var(--accent-2,#b04e2d)" fill-opacity="0.06" stroke="var(--accent-2,#b04e2d)" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <rect x="596" y="156" width="102" height="56" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.04" stroke="var(--accent,#c15b39)" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <rect x="708" y="156" width="102" height="56" rx="8" fill="none" stroke="var(--muted,#94a3b8)" stroke-width="1.2" stroke-dasharray="3 2"/>
+
+    <g class="cell">
+      <rect x="96"  y="162" width="90" height="44" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="141" y="189" text-anchor="middle">a3</text>
+      <rect x="190" y="162" width="90" height="44" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="235" y="189" text-anchor="middle">a3</text>
+      <rect x="284" y="162" width="90" height="44" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.35" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="329" y="189" text-anchor="middle">a3</text>
+
+      <rect x="396" y="162" width="90" height="44" rx="6" fill="var(--accent-2,#b04e2d)" fill-opacity="0.35" stroke="var(--accent-2,#b04e2d)" stroke-width="1.4"/>
+      <text x="441" y="189" text-anchor="middle">a7</text>
+      <rect x="490" y="162" width="90" height="44" rx="6" fill="var(--accent-2,#b04e2d)" fill-opacity="0.35" stroke="var(--accent-2,#b04e2d)" stroke-width="1.4"/>
+      <text x="535" y="189" text-anchor="middle">a7</text>
+
+      <rect x="602" y="162" width="90" height="44" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="647" y="189" text-anchor="middle">a2</text>
+
+      <rect x="714" y="162" width="90" height="44" rx="6" fill="var(--surface,#fff)" fill-opacity="0.4" stroke="var(--muted,#94a3b8)" stroke-width="1.4" stroke-dasharray="4 3"/>
+      <text x="759" y="189" text-anchor="middle" fill="var(--muted,#888)">a0</text>
+    </g>
+
+    <text x="235" y="228" text-anchor="middle" class="mono" style="font-size:10.5px">seg_start = [0, 3, 5, 6]</text>
+    <text x="450" y="246" text-anchor="middle" class="cap">each segment = one adapter's rows, contiguous in memory</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="450" y1="252" x2="450" y2="262" stroke="var(--muted,#94a3b8)" stroke-width="1.6" marker-end="url(#sg-arr)"/>
+    <rect x="40" y="264" width="770" height="42" rx="8"
+          fill="var(--accent,#c15b39)" fill-opacity="0.10" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+    <text x="425" y="284" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">base GEMM:  X . W0^T</text>
+    <text x="425" y="300" text-anchor="middle" class="sub">one dense op over the ENTIRE batch, adapter-agnostic, ~99% of FLOPs</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="40" y="322" width="770" height="178" rx="10"
+          fill="var(--surface,#fff)" fill-opacity="0.5" stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+    <text x="425" y="342" text-anchor="middle" class="ttl">zoom: one segment (adapter 3, 3 rows)</text>
+
+
+    <rect x="70" y="364" width="90" height="72" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.10" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+    <line x1="70" y1="388" x2="160" y2="388" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-opacity="0.5"/>
+    <line x1="70" y1="412" x2="160" y2="412" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-opacity="0.5"/>
+    <text x="115" y="356" text-anchor="middle" class="mono" style="font-size:11px">X_seg</text>
+    <text x="115" y="452" text-anchor="middle" class="cap">[3 rows, d_in]</text>
+
+    <line x1="160" y1="400" x2="180" y2="400" stroke="var(--muted,#94a3b8)" stroke-width="1.6" marker-end="url(#sg-arr)"/>
+
+
+    <polygon points="182,364 182,436 256,409 256,391" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="219" y="356" text-anchor="middle" class="mono" style="font-size:11px">A_3^T</text>
+    <text x="219" y="452" text-anchor="middle" class="cap">shrink: d_in -&gt; r</text>
+
+    <line x1="256" y1="400" x2="268" y2="400" stroke="var(--muted,#94a3b8)" stroke-width="1.6" marker-end="url(#sg-arr)"/>
+
+
+    <rect class="sg-waist" x="268" y="391" width="28" height="18" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.55" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+    <text x="282" y="382" text-anchor="middle" class="mono" style="font-size:10.5px">V</text>
+
+    <line x1="296" y1="400" x2="310" y2="400" stroke="var(--muted,#94a3b8)" stroke-width="1.6" marker-end="url(#sg-arr)"/>
+
+
+    <polygon points="312,391 312,409 386,436 386,364" fill="var(--accent-2,#b04e2d)" fill-opacity="0.25" stroke="var(--accent-2,#b04e2d)" stroke-width="1.6"/>
+    <text x="349" y="356" text-anchor="middle" class="mono" style="font-size:11px">B_3^T</text>
+    <text x="349" y="452" text-anchor="middle" class="cap">expand: r -&gt; d_out</text>
+
+    <line x1="386" y1="400" x2="400" y2="400" stroke="var(--muted,#94a3b8)" stroke-width="1.6" marker-end="url(#sg-arr-a2)"/>
+
+
+    <rect x="400" y="364" width="90" height="72" rx="6" fill="var(--accent-2,#b04e2d)" fill-opacity="0.10" stroke="var(--accent-2,#b04e2d)" stroke-width="1.4"/>
+    <line x1="400" y1="388" x2="490" y2="388" stroke="var(--accent-2,#b04e2d)" stroke-width="1" stroke-opacity="0.5"/>
+    <line x1="400" y1="412" x2="490" y2="412" stroke="var(--accent-2,#b04e2d)" stroke-width="1" stroke-opacity="0.5"/>
+    <text x="445" y="356" text-anchor="middle" class="mono" style="font-size:10.5px">correction</text>
+    <text x="445" y="452" text-anchor="middle" class="cap">x (alpha/r), [3, d_out]</text>
+
+
+    <text x="520" y="356" class="sub" style="font-weight:700">other segments (same kernel, in parallel):</text>
+    <rect x="520" y="364" width="270" height="72" rx="6" fill="none" stroke="var(--border-2,#ccc)" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <text x="532" y="382" class="note">adapter 7 segment: A_7, B_7</text>
+    <text x="532" y="400" class="note">adapter 2 segment: A_2, B_2</text>
+    <text x="532" y="418" class="note">adapter 0 segment: base only,</text>
+    <text x="532" y="432" class="note">   no correction added</text>
+
+
+    <rect x="70" y="462" width="710" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.06"/>
+    <text x="425" y="474" text-anchor="middle" class="note">the r-wide waist (A_a -&gt; V -&gt; B_a) is the low-rank bottleneck --</text>
+    <text x="425" y="487" text-anchor="middle" class="note">A_3, B_3 are gathered ONCE per segment and reused across all its rows</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M 800,285 L 838,285 L 838,528 L 480,528"
+          fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#sg-arr-a)"/>
+    <line x1="425" y1="500" x2="450" y2="524"
+          stroke="var(--accent-2,#b04e2d)" stroke-width="1.6" marker-end="url(#sg-arr-a2)"/>
+
+    <circle cx="450" cy="530" r="20" fill="var(--surface,#fff)" stroke="var(--ink-soft,#333)" stroke-width="1.8"/>
+    <text x="450" y="537" text-anchor="middle" style="font:700 18px var(--sans,sans-serif)">+</text>
+
+    <rect x="350" y="562" width="200" height="44" rx="8" fill="var(--surface,#fff)" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+    <text x="450" y="582" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">Y</text>
+    <text x="450" y="598" text-anchor="middle" class="cap">base output + segment corrections</text>
+    <line x1="450" y1="550" x2="450" y2="560" stroke="var(--ink-soft,#333)" stroke-width="1.6" marker-end="url(#sg-arr)"/>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="40" y="618" width="820" height="56" rx="8"
+          fill="var(--surface-3,#eee)" fill-opacity="0.5" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+    <text x="450" y="638" text-anchor="middle" class="note">BGMV (decode): each request = 1 token -&gt; each segment is a single row -&gt; matrix-vector, bandwidth-bound</text>
+    <text x="450" y="658" text-anchor="middle" class="note">SGMV (prefill): each request = many prompt tokens -&gt; segment is a real small GEMM, compute-bound</text>
+  </g>
+</svg>
+<figcaption><b>SGMV turns a heterogeneous, per-token-tagged batch into an efficient segmented matmul by sorting rows into contiguous per-adapter segments before computing.</b> Each segment gathers its adapter's low-rank pair once and pushes its rows through a shrink (d_in&#8594;r) then expand (r&#8594;d_out) matmul around the rank-r "waist," while a single dense base GEMM runs over the whole batch independent of adapter identity; the two sum into Y. The same layout underlies both kernels: BGMV (decode, one row per request, bandwidth-bound matrix-vector) and SGMV (prefill, many rows per request, compute-bound small GEMMs).</figcaption>
+</figure>

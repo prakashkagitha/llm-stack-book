@@ -278,6 +278,8 @@ ref_lp = token_logprobs(ref,    input_ids)               # for KL penalty (if be
 resp_mask = response_mask[:, 1:]                          # shift to align with targets
 ```
 
+{{fig:gtloop-logprob-numerics-consistency}}
+
 ### Advantage computation
 
 For **GRPO** the advantage is the per-group z-score of the reward, broadcast to every token of the response (derived in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)). For **PPO** it is GAE over the critic's value estimates. The infrastructure-level subtleties — whitening, KL-in-reward vs KL-in-loss, clipping the advantage — live in [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html). Here is the GRPO path, which needs no critic:

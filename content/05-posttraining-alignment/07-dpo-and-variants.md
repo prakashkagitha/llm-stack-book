@@ -67,6 +67,8 @@ $$
 
 A reward model is normally trained by maximizing the likelihood of the observed human preferences under this model — a binary cross-entropy on reward *differences*. The crucial structural fact: **only the reward difference matters**, never the absolute reward.
 
+{{fig:dpo-reward-model-cancellation}}
+
 Now substitute the implicit reward into the Bradley–Terry difference. Watch the magic:
 
 $$

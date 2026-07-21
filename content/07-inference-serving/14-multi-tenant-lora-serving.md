@@ -86,6 +86,8 @@ The kernel is launched as a 2-D grid: one axis over segments, one over output ti
 
 This split is what makes the scheme cheap: 99% of the FLOPs (the base GEMM) are a dense batched operation independent of adapters, and the 1% LoRA correction is handled by a specialized grouped kernel.
 
+{{fig:sgmv-segmented-gather-matmul}}
+
 ### Two variants: BGMV vs SGMV
 
 Punica distinguishes the decode and prefill regimes:

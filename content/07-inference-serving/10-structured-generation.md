@@ -84,6 +84,8 @@ The loop continues until an EOS token is sampled *and* the FSM is in an acceptin
     through intermediate states). This is why the token-level pre-computation
     matters: character-by-character simulation handles multi-char tokens correctly.
 
+{{fig:structgen-mask-decode-loop}}
+
 ### FSM Compilation Complexity
 
 For a regex with $s$ states and vocabulary size $V$:

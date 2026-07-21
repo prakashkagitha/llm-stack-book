@@ -1,0 +1,217 @@
+<figure class="viz" id="fig-gtloop-logprob-numerics-consistency">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 700" role="img" aria-label="Two panel diagram: in the bug, the ratio denominator comes from the sampler's inference engine and the numerator from the trainer, two different numeric pipelines, so the importance ratio drifts away from 1.0 at step zero even though the policy has not moved. In the fix, both the old and new log-probs are computed by the same trainer forward pass, so the ratio is pinned exactly at 1.0.">
+<defs>
+  <marker id="gt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" class="v-muted" fill="var(--muted,#888)"/>
+  </marker>
+  <marker id="gt-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="gt-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <style>
+    #fig-gtloop-logprob-numerics-consistency text { fill: var(--ink-soft,#444); }
+    #fig-gtloop-logprob-numerics-consistency .lead {
+      font: 700 13.5px var(--sans,sans-serif);
+    }
+    #fig-gtloop-logprob-numerics-consistency .sub {
+      font: 400 11px var(--sans,sans-serif); fill: var(--muted,#888);
+    }
+    #fig-gtloop-logprob-numerics-consistency .tok {
+      font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#444);
+    }
+    #fig-gtloop-logprob-numerics-consistency .paneltitle {
+      font: 700 13px var(--sans,sans-serif);
+    }
+    #fig-gtloop-logprob-numerics-consistency .boxlabel {
+      font: 700 12px var(--sans,sans-serif);
+    }
+    #fig-gtloop-logprob-numerics-consistency .boxsub {
+      font: 400 10.5px var(--sans,sans-serif); fill: var(--ink-soft,#444);
+    }
+    #fig-gtloop-logprob-numerics-consistency .boxtag {
+      font: 400 9.5px var(--mono,monospace); fill: var(--muted,#888);
+    }
+    #fig-gtloop-logprob-numerics-consistency .flowlabel {
+      font: 600 10px var(--mono,monospace);
+    }
+    #fig-gtloop-logprob-numerics-consistency .rationode {
+      font: 700 11px var(--mono,monospace);
+    }
+    #fig-gtloop-logprob-numerics-consistency .axislabel {
+      font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#888);
+    }
+    #fig-gtloop-logprob-numerics-consistency .caption-text {
+      font: italic 11px var(--sans,sans-serif); fill: var(--ink-soft,#444);
+    }
+    #fig-gtloop-logprob-numerics-consistency .greytext {
+      font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888);
+    }
+    #fig-gtloop-logprob-numerics-consistency .bottomline {
+      font: 600 12.5px var(--sans,sans-serif); fill: var(--ink-soft,#444);
+    }
+  </style>
+</defs>
+
+
+<g data-anim="1">
+  <text x="400" y="22" text-anchor="middle" class="lead">the SAME response, the SAME policy weights theta</text>
+  <text x="400" y="36" text-anchor="middle" class="sub">nothing about the policy differs below -- only the arithmetic pipeline that scores it</text>
+
+  
+  <g transform="translate(175,46)">
+    
+    <rect x="0" y="0" width="54" height="30" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)"/>
+    <text x="27" y="20" text-anchor="middle" class="tok">o_1</text>
+    <rect x="66" y="0" width="54" height="30" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)"/>
+    <text x="93" y="20" text-anchor="middle" class="tok">o_2</text>
+    <rect x="132" y="0" width="54" height="30" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)"/>
+    <text x="159" y="20" text-anchor="middle" class="tok">o_3</text>
+    <rect x="198" y="0" width="54" height="30" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" opacity="0.6"/>
+    <text x="225" y="20" text-anchor="middle" class="tok" opacity="0.6">...</text>
+    <rect x="264" y="0" width="54" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+    <text x="291" y="20" text-anchor="middle" class="tok" fill="var(--accent,#c15b39)">o_t</text>
+    <rect x="330" y="0" width="54" height="30" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" opacity="0.6"/>
+    <text x="357" y="20" text-anchor="middle" class="tok" opacity="0.6">...</text>
+    <rect x="396" y="0" width="54" height="30" rx="6" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)"/>
+    <text x="423" y="20" text-anchor="middle" class="tok">o_T</text>
+  </g>
+
+  
+  <line x1="400" y1="82" x2="400" y2="98" stroke="var(--muted,#888)" stroke-width="1.3"/>
+  <line x1="400" y1="98" x2="205" y2="122" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#gt-arrow)"/>
+  <line x1="400" y1="98" x2="595" y2="122" stroke="var(--muted,#888)" stroke-width="1.3" marker-end="url(#gt-arrow)"/>
+</g>
+
+
+<line x1="400" y1="108" x2="400" y2="642" stroke="var(--border-2,#d8d1c0)" stroke-width="1.3" stroke-dasharray="5 4"/>
+
+
+<g data-anim="2">
+  <text x="205" y="130" text-anchor="middle" class="paneltitle" fill="var(--warn,#e0a106)">PANEL A -- the bug (trusting the sampler's logprobs)</text>
+
+  
+  <rect x="30" y="143" width="340" height="76" rx="9" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <text x="200" y="163" text-anchor="middle" class="boxlabel" fill="var(--warn,#e0a106)">SAMPLER pipeline</text>
+  <text x="200" y="180" text-anchor="middle" class="boxsub">inference engine (vLLM / SGLang)</text>
+  <text x="200" y="196" text-anchor="middle" class="boxtag">attn kernel * fp8 / quantized path * its own reduction order</text>
+  <text x="200" y="211" text-anchor="middle" class="flowlabel" fill="var(--warn,#e0a106)">emits log pi_behavior (DENOMINATOR)</text>
+
+  <text x="200" y="234" text-anchor="middle" class="axislabel">different numerics -&gt;</text>
+
+  
+  <rect x="30" y="245" width="340" height="76" rx="9" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+  <text x="200" y="265" text-anchor="middle" class="boxlabel" fill="var(--accent,#c15b39)">TRAINER pipeline</text>
+  <text x="200" y="282" text-anchor="middle" class="boxsub">trainer (FSDP, full bf16)</text>
+  <text x="200" y="298" text-anchor="middle" class="boxtag">different attention kernel * different dtype path</text>
+  <text x="200" y="313" text-anchor="middle" class="flowlabel" fill="var(--accent,#c15b39)">emits log pi_theta (NUMERATOR)</text>
+
+  
+  <path d="M110,219 C110,330 150,338 178,343" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#gt-arrow-warn)"/>
+  <path d="M290,321 C290,335 260,340 232,343" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#gt-arrow-accent)"/>
+
+  <rect x="88" y="333" width="234" height="26" rx="13" class="v-fill" fill="var(--surface,#fff)" stroke="var(--muted,#888)" stroke-width="1.2"/>
+  <text x="205" y="350" text-anchor="middle" class="rationode">r = exp(new_lp - old_lp)</text>
+
+  
+  <text x="14" y="450" class="axislabel" transform="rotate(-90,14,450)">ratio r</text>
+
+  <rect x="45" y="427" width="320" height="36" fill="var(--muted,#888)" fill-opacity="0.10"/>
+  <line x1="45" y1="427" x2="365" y2="427" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+  <line x1="45" y1="463" x2="365" y2="463" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+  <text x="370" y="431" class="axislabel">1+eps</text>
+  <text x="370" y="467" class="axislabel">1-eps</text>
+
+  <line x1="45" y1="445" x2="365" y2="445" stroke="var(--muted,#888)" stroke-width="1.4" stroke-dasharray="6 3"/>
+  <text x="40" y="449" text-anchor="end" class="axislabel">1.0</text>
+
+  <polyline points="50,445 95,448 140,441 185,455 230,431 275,469 320,415 365,483"
+            fill="none" stroke="var(--warn,#e0a106)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <g fill="var(--warn,#e0a106)">
+    <circle cx="50" cy="445" r="2.6"/><circle cx="95" cy="448" r="2.6"/><circle cx="140" cy="441" r="2.6"/>
+    <circle cx="185" cy="455" r="2.6"/><circle cx="230" cy="431" r="2.6"/><circle cx="275" cy="469" r="3.2"/>
+    <circle cx="320" cy="415" r="3.2"/><circle cx="365" cy="483" r="3.2"/>
+  </g>
+  <text x="298" y="500" text-anchor="middle" class="axislabel" fill="var(--warn,#e0a106)">clip engages here (phantom drift)</text>
+  <line x1="278" y1="472" x2="290" y2="491" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+
+  <text x="50" y="518" text-anchor="middle" class="axislabel">t=1</text>
+  <text x="365" y="518" text-anchor="middle" class="axislabel">t=T</text>
+  <text x="205" y="518" text-anchor="middle" class="axislabel">token position within the response -&gt;</text>
+
+  
+  <rect x="30" y="535" width="340" height="88" rx="9" class="v-fill" fill="var(--warn,#e0a106)" fill-opacity="0.07" stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="200" y="556" text-anchor="middle" class="caption-text">step 0, policy has NOT moved -&gt;</text>
+  <text x="200" y="572" text-anchor="middle" class="caption-text">ratio SHOULD be exactly 1.0, but</text>
+  <text x="200" y="588" text-anchor="middle" class="caption-text">numerics make it drift. Clip engages</text>
+  <text x="200" y="604" text-anchor="middle" class="caption-text">on phantom off-policyness.</text>
+  <text x="200" y="618" text-anchor="middle" class="caption-text" font-weight="700">Silent bug.</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="595" y="130" text-anchor="middle" class="paneltitle" fill="var(--accent,#c15b39)">PANEL B -- the fix (recompute old logprobs on the trainer)</text>
+
+  
+  <rect x="425" y="143" width="340" height="82" rx="9" class="v-fill" fill="var(--accent,#c15b39)" fill-opacity="0.08" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="595" y="163" text-anchor="middle" class="boxlabel" fill="var(--accent,#c15b39)">TRAINER pipeline (shared)</text>
+  <text x="595" y="180" text-anchor="middle" class="boxsub">trainer (FSDP, full bf16) -- one set of kernels, one dtype</text>
+  <text x="595" y="197" text-anchor="middle" class="boxtag">no_grad forward -&gt; old_lp   (DENOMINATOR)</text>
+  <text x="595" y="212" text-anchor="middle" class="boxtag">grad forward    -&gt; new_lp   (NUMERATOR)</text>
+
+  
+  <rect x="605" y="234" width="160" height="46" rx="8" class="v-fill" fill="var(--muted,#888)" fill-opacity="0.08" stroke="var(--muted,#888)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="685" y="250" text-anchor="middle" class="greytext">sampler logprobs</text>
+  <text x="685" y="263" text-anchor="middle" class="greytext">(demoted) -- diagnostics /</text>
+  <text x="685" y="275" text-anchor="middle" class="greytext">off-policy term only</text>
+  <path d="M700,225 C715,229 700,232 685,234" fill="none" stroke="var(--muted,#888)" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#gt-arrow)" opacity="0.8"/>
+
+  
+  <line x1="595" y1="225" x2="595" y2="329" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#gt-arrow-accent)"/>
+
+  <rect x="478" y="333" width="234" height="26" rx="13" class="v-fill" fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="595" y="350" text-anchor="middle" class="rationode" fill="var(--accent,#c15b39)">r = exp(new_lp - old_lp)</text>
+
+  
+  <text x="404" y="450" class="axislabel" transform="rotate(-90,404,450)">ratio r</text>
+
+  <rect x="435" y="427" width="320" height="36" fill="var(--muted,#888)" fill-opacity="0.10"/>
+  <line x1="435" y1="427" x2="755" y2="427" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+  <line x1="435" y1="463" x2="755" y2="463" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+  <text x="760" y="431" class="axislabel">1+eps</text>
+  <text x="760" y="467" class="axislabel">1-eps</text>
+
+  <line x1="435" y1="445" x2="755" y2="445" stroke="var(--good,#2f9e6e)" stroke-width="2.6"/>
+  <text x="430" y="449" text-anchor="end" class="axislabel">1.0</text>
+
+  <g fill="var(--good,#2f9e6e)">
+    <circle cx="440" cy="445" r="3"/><circle cx="485" cy="445" r="3"/><circle cx="530" cy="445" r="3"/>
+    <circle cx="575" cy="445" r="3"/><circle cx="620" cy="445" r="3"/><circle cx="665" cy="445" r="3"/>
+    <circle cx="710" cy="445" r="3"/><circle cx="755" cy="445" r="3"/>
+  </g>
+  <text x="688" y="500" text-anchor="middle" class="axislabel" fill="var(--good,#2f9e6e)">flat at 1.0 -- clip fraction ~ 0</text>
+
+  <text x="440" y="518" text-anchor="middle" class="axislabel">t=1</text>
+  <text x="755" y="518" text-anchor="middle" class="axislabel">t=T</text>
+  <text x="595" y="518" text-anchor="middle" class="axislabel">token position within the response -&gt;</text>
+
+  
+  <rect x="420" y="535" width="340" height="88" rx="9" class="v-fill" fill="var(--accent,#c15b39)" fill-opacity="0.07" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="590" y="556" text-anchor="middle" class="caption-text">numerator and denominator share the</text>
+  <text x="590" y="572" text-anchor="middle" class="caption-text">SAME kernels + dtype -&gt;</text>
+  <text x="590" y="592" text-anchor="middle" class="caption-text" font-weight="700">r = exp(new_lp - old_lp) = 1.0</text>
+  <text x="590" y="608" text-anchor="middle" class="caption-text">exactly, at step 0.</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="30" y1="642" x2="770" y2="642" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="400" y="665" text-anchor="middle" class="bottomline">It is not the POLICIES that differ -- it is the ARITHMETIC.</text>
+  <text x="400" y="684" text-anchor="middle" class="bottomline">Make the ratio's top and bottom come from the same pipeline.</text>
+</g>
+
+</svg>
+<figcaption><b>The importance-ratio drift bug: numerator and denominator must share one numeric pipeline.</b> If the ratio's denominator (old log-probs) comes from the inference engine's kernels while the numerator (new log-probs) comes from the trainer's, the ratio wanders away from 1.0 purely from floating-point and kernel differences &amp;mdash; even at step 0, before the policy has moved at all &amp;mdash; and the clip starts firing on phantom off-policyness. The fix is to recompute the old log-probs with a <code>no_grad</code> forward through the same trainer pipeline that computes the new log-probs, demoting the sampler's own log-probs to a diagnostic signal.</figcaption>
+</figure>

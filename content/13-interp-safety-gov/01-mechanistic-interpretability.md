@@ -44,6 +44,8 @@ A transformer "wants" to represent far more features than it has dimensions. A l
 
 The geometry is the Johnson–Lindenstrauss insight: in high dimensions you can fit exponentially many *almost*-orthogonal unit vectors. With pairwise interference bounded by $\langle v_i, v_j\rangle \le \epsilon$, the number of features you can pack grows roughly like $\exp(\epsilon^2 d_\text{model})$. The price is **interference**: each feature reads a little noise from every other co-active feature. Sparsity keeps that noise manageable — if only $k$ of $n$ features fire at once, the expected squared interference scales with $k$, not $n$.
 
+{{fig:mechinterp-superposition-geometry}}
+
 The direct, painful consequence for interpretability is **polysemanticity**: an individual neuron (one coordinate of the MLP hidden activation) responds to a *mix* of unrelated features — it might fire for academic citations, for HTTP headers, *and* for Korean text. The neuron is not the unit of computation; the *feature direction*, which is spread across many neurons, is. This is precisely why we cannot interpret a network by reading neurons one at a time, and precisely the problem sparse autoencoders (§6) are built to solve — they attempt to **decompose superposition** back into a larger set of sparse, monosemantic features.
 
 !!! note "Aside: privileged vs. non-privileged bases"

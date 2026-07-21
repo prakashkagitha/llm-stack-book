@@ -1,0 +1,112 @@
+<figure class="viz" id="fig-kv-cache-vs-state-decode-memory">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 400" role="img" aria-label="During decoding, a transformer's KV cache grows by one block every step, becoming unbounded, while an SSM or RWKV keeps a single fixed-size state as tokens stream through it, using constant memory regardless of sequence length.">
+<defs>
+  <marker id="kvsd-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="kvsd-arrow-accent2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-kv-cache-vs-state-decode-memory text{ fill:var(--ink-soft,#374151); font-family:var(--sans,sans-serif); }
+  #fig-kv-cache-vs-state-decode-memory .ticklbl{ font:700 10px var(--sans,sans-serif); fill:var(--muted,#9ca3af); letter-spacing:.02em; }
+  #fig-kv-cache-vs-state-decode-memory .dotlbl{ font:600 8px var(--mono,monospace); fill:var(--muted,#9ca3af); }
+  #fig-kv-cache-vs-state-decode-memory .headline{ font:700 13px var(--sans,sans-serif); }
+  #fig-kv-cache-vs-state-decode-memory .hdr{ font:700 13px var(--sans,sans-serif); }
+  #fig-kv-cache-vs-state-decode-memory .callout{ font:700 10px var(--sans,sans-serif); }
+  #fig-kv-cache-vs-state-decode-memory .formula{ font:600 10.5px var(--mono,monospace); fill:var(--ink-soft,#374151); }
+  #fig-kv-cache-vs-state-decode-memory .complexity{ font:700 10.5px var(--sans,sans-serif); }
+  #fig-kv-cache-vs-state-decode-memory .sm{ font:500 8.5px var(--sans,sans-serif); fill:var(--muted,#9ca3af); }
+  #fig-kv-cache-vs-state-decode-memory .footer{ font:400 9px var(--sans,sans-serif); font-style:italic; fill:var(--muted,#9ca3af); }
+  #fig-kv-cache-vs-state-decode-memory .boxtxt{ font:700 12px var(--mono,monospace); fill:var(--good,#2f9e6e); }
+</style>
+
+
+<text x="390" y="18" text-anchor="middle" class="ticklbl">DECODE STEP t --&gt;</text>
+<line x1="55" y1="30" x2="705" y2="30" stroke="var(--muted,#9ca3af)" stroke-width="1"/>
+<text x="735" y="34" text-anchor="middle" class="sm">&gt;&gt;</text>
+
+<g data-anim="1"><circle cx="60" cy="30" r="4" fill="var(--muted,#9ca3af)"/>
+  <text x="60" y="44" text-anchor="middle" class="dotlbl">t=1</text></g>
+<g data-anim="2"><circle cx="165" cy="30" r="4" fill="var(--muted,#9ca3af)"/></g>
+<g data-anim="3"><circle cx="270" cy="30" r="4" fill="var(--muted,#9ca3af)"/></g>
+<g data-anim="4"><circle cx="375" cy="30" r="4" fill="var(--muted,#9ca3af)"/></g>
+<g data-anim="5"><circle cx="480" cy="30" r="4" fill="var(--muted,#9ca3af)"/></g>
+<g data-anim="6"><circle cx="585" cy="30" r="4" fill="var(--muted,#9ca3af)"/></g>
+<g data-anim="7"><circle cx="690" cy="30" r="4" fill="var(--muted,#9ca3af)"/>
+  <text x="690" y="44" text-anchor="middle" class="dotlbl">t=now</text></g>
+
+
+<text x="390" y="58" text-anchor="middle" class="headline">same tokens generated, very different memory</text>
+
+
+<line x1="390" y1="70" x2="390" y2="336" stroke="var(--border-2,#d1d5db)" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+
+
+<text x="205" y="94" text-anchor="middle" class="hdr">Transformer (attention)</text>
+<text x="575" y="94" text-anchor="middle" class="hdr">SSM / Mamba (and RWKV)</text>
+
+
+<g data-anim="7">
+  <text x="205" y="136" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">keeps growing -&gt; unbounded</text>
+  <text x="575" y="136" text-anchor="middle" class="callout" fill="var(--good,#2f9e6e)">state size never changes</text>
+</g>
+
+
+
+<line x1="148" y1="265" x2="262" y2="265" stroke="var(--muted,#9ca3af)" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.8"/>
+<line x1="148" y1="260" x2="148" y2="270" stroke="var(--muted,#9ca3af)" stroke-width="1.2" opacity="0.8"/>
+<line x1="262" y1="260" x2="262" y2="270" stroke="var(--muted,#9ca3af)" stroke-width="1.2" opacity="0.8"/>
+<text x="141" y="269" text-anchor="end" class="sm">earlier size (t=3)</text>
+
+<g fill="var(--warn,#e0a106)" fill-opacity="0.22" stroke="var(--warn,#e0a106)" stroke-width="1.4">
+  <rect data-anim="1" x="178" y="305" width="54" height="20" rx="3"/>
+  <rect data-anim="2" x="178" y="285" width="54" height="20" rx="3"/>
+  <rect data-anim="3" x="178" y="265" width="54" height="20" rx="3"/>
+  <rect data-anim="4" x="178" y="245" width="54" height="20" rx="3"/>
+  <rect data-anim="5" x="178" y="225" width="54" height="20" rx="3"/>
+  <rect data-anim="6" x="178" y="205" width="54" height="20" rx="3"/>
+  <rect data-anim="7" x="178" y="185" width="54" height="20" rx="3"/>
+</g>
+
+<g data-anim="7">
+  <line x1="205" y1="184" x2="205" y2="146" stroke="var(--warn,#e0a106)" stroke-width="1.6"
+        marker-end="url(#kvsd-arrow-warn)" class="viz-draw" style="--len:38"/>
+</g>
+
+
+<rect x="520" y="220" width="110" height="70" rx="8"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+<text x="575" y="248" text-anchor="middle" class="boxtxt">state</text>
+<text x="575" y="266" text-anchor="middle" class="boxtxt">d x N_s</text>
+
+<line x1="404" y1="255" x2="519" y2="255" stroke="var(--muted,#9ca3af)" stroke-width="1"
+      stroke-dasharray="3 3" marker-end="url(#kvsd-arrow-accent2)"/>
+<text x="398" y="259" text-anchor="end" class="sm">...</text>
+<text x="460" y="278" text-anchor="middle" class="sm">identical tokens streaming in</text>
+
+<g fill="var(--accent2,#3b82f6)" fill-opacity="0.85" stroke="var(--accent2,#3b82f6)" stroke-width="1">
+  <rect data-anim="1" x="409" y="249" width="12" height="12" rx="3"/>
+  <rect data-anim="2" x="426" y="249" width="12" height="12" rx="3"/>
+  <rect data-anim="3" x="443" y="249" width="12" height="12" rx="3"/>
+  <rect data-anim="4" x="459" y="249" width="12" height="12" rx="3"/>
+  <rect data-anim="5" x="476" y="249" width="12" height="12" rx="3"/>
+  <rect data-anim="6" x="493" y="249" width="12" height="12" rx="3"/>
+  <rect data-anim="7" x="510" y="249" width="12" height="12" rx="3"/>
+</g>
+
+
+<g data-anim="8">
+  <text x="205" y="345" text-anchor="middle" class="formula">KV cache: 2 x N x d</text>
+  <text x="205" y="360" text-anchor="middle" class="complexity" fill="var(--warn,#e0a106)">O(N d), grows every step -- unbounded</text>
+  <text x="575" y="345" text-anchor="middle" class="formula">state: d x N_s</text>
+  <text x="575" y="360" text-anchor="middle" class="complexity" fill="var(--good,#2f9e6e)">O(d N_s), constant -- independent of N</text>
+  <text x="390" y="380" text-anchor="middle" class="footer">schematically: tens of GB (transformer KV cache) vs a few MB (SSM / RWKV state) at long context</text>
+</g>
+
+</svg>
+<figcaption><b>Decode-time memory diverges sharply between the two families.</b> A transformer's KV cache appends one new block every generated token, so it grows without bound as O(N d); an SSM like Mamba (or RWKV) keeps a single fixed-size state that identical tokens stream through and get absorbed into, so its memory stays O(d N_s) — constant — no matter how long the sequence gets.</figcaption>
+</figure>
