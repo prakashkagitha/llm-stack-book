@@ -30,6 +30,8 @@ This single idea — a **fixed-size vocabulary of variable-length pieces, optimi
 !!! note "Aside: the tokenizer is trained, but not by backprop"
     A tokenizer has a *training* phase — it learns its merges/vocabulary from a text corpus by counting statistics — but this is a **one-time, gradient-free** procedure that happens *before* model pretraining. Once frozen, the same tokenizer is used for the model's entire life. Changing it later means you cannot reuse the embedding table at all, because integer ID 4{,}521 now means something completely different. This is why tokenizers are chosen carefully and rarely changed.
 
+{{fig:granularity-spectrum}}
+
 ## Byte-Pair Encoding From Scratch
 
 BPE was originally a **data-compression** algorithm (Gage, 1994) and was adapted for NLP by Sennrich, Haddow & Birch (*Neural Machine Translation of Rare Words with Subword Units*, 2016). The idea is beautifully simple and greedy:
@@ -217,6 +219,8 @@ The key subtlety in `encode_word` is the **rank-based priority**: we do not just
 Character-level BPE has a quiet problem: what is your base alphabet? If you initialize from the characters seen in training, then a brand-new Unicode character at inference time — an emoji you never saw, a rare CJK glyph, a mathematical symbol — has no base token and becomes `<unk>`. For a frontier model that must ingest *anything*, that is unacceptable.
 
 **Byte-level BPE** (introduced with GPT-2, Radford et al., 2019) solves this elegantly. Instead of starting from *characters*, start from the **256 possible byte values**. Every string, in any language, encodes to UTF-8 bytes, and every byte is one of 256 values — so the base alphabet is *complete and finite*. BPE merges then operate over bytes. There is **provably no OOV**: in the absolute worst case a novel character falls back to its individual UTF-8 bytes, each of which is a guaranteed token.
+
+{{fig:byte-level-no-oov}}
 
 There is one wrinkle. We want to run BPE over a *string-like* representation (the algorithm above manipulates symbols as text), but raw bytes include control characters and whitespace that break tooling. GPT-2's trick is a reversible **bytes-to-unicode** map: assign each of the 256 byte values a distinct, *printable* Unicode character. Printable ASCII bytes map to themselves; the rest (control chars, space, etc.) map to code points starting at U+0100. This is where the famous `Ġ` comes from — byte `0x20` (space) maps to `Ġ` (U+0120), so in GPT-2 output a leading space looks like `Ġthe`.
 

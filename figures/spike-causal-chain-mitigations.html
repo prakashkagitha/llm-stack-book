@@ -1,0 +1,109 @@
+<figure class="viz" id="fig-spike-causal-chain-mitigations">
+<svg viewBox="0 0 800 440" role="img" aria-label="The spike causal chain runs left to right from bad batch or bad state, to large gradient, to large parameter update, to bad model state, to elevated loss, and each mitigation is shown as a valve cutting one specific link: architectural techniques and data audits act at the source, gradient clipping and skip-step logic act on the gradient and update.">
+<defs>
+  <marker id="scm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+<style>
+  #fig-spike-causal-chain-mitigations text     { fill: var(--ink-soft,#45413a); }
+  #fig-spike-causal-chain-mitigations .ttl     { font: 700 16px var(--sans,sans-serif); fill: currentColor; }
+  #fig-spike-causal-chain-mitigations .sub     { font: 500 11.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-spike-causal-chain-mitigations .box     { font: 700 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-spike-causal-chain-mitigations .badge   { font: 600 9.5px var(--sans,sans-serif); }
+  #fig-spike-causal-chain-mitigations .cat     { font: 700 8px var(--sans,sans-serif); letter-spacing: 0.4px; }
+  #fig-spike-causal-chain-mitigations .callout { font: 600 10px var(--mono,monospace); }
+  #fig-spike-causal-chain-mitigations .legend  { font: 500 10.5px var(--sans,sans-serif); }
+  #fig-spike-causal-chain-mitigations .chainbox{ fill: var(--surface-3,#ece7da); stroke: var(--ink-soft,#45413a); stroke-width: 1.4; }
+  #fig-spike-causal-chain-mitigations .arrow   { stroke: var(--ink-soft,#45413a); stroke-width: 2.4; marker-end: url(#scm-arrow); }
+  #fig-spike-causal-chain-mitigations .leader  { stroke: var(--muted,#6d675d); stroke-width: 1.2; fill: none; }
+  #fig-spike-causal-chain-mitigations .archB   { fill: var(--accent,#c15b39); fill-opacity: 0.12; stroke: var(--accent,#c15b39); stroke-width: 1.2; }
+  #fig-spike-causal-chain-mitigations .trainB  { fill: var(--good,#2f9e6e); fill-opacity: 0.14; stroke: var(--good,#2f9e6e); stroke-width: 1.2; }
+  #fig-spike-causal-chain-mitigations .dataB   { fill: var(--border-2,#d8d1c0); fill-opacity: 0.4; stroke: var(--muted,#6d675d); stroke-width: 1.3; }
+</style>
+
+<text x="20" y="26" class="ttl">The spike causal chain, and which link each mitigation severs</text>
+<text x="20" y="44" class="sub">Reading left to right: cause becomes gradient becomes update becomes bad state becomes loss. Every mitigation is a valve on one specific link.</text>
+
+
+<rect class="chainbox" x="15" y="90" width="140" height="68" rx="8"/>
+<text x="85" y="118" text-anchor="middle" class="box">bad batch</text>
+<text x="85" y="134" text-anchor="middle" class="box">OR bad state</text>
+
+<rect class="chainbox" x="170" y="90" width="140" height="68" rx="8"/>
+<text x="240" y="128" text-anchor="middle" class="box">large gradient</text>
+
+<rect class="chainbox" x="325" y="90" width="140" height="68" rx="8"/>
+<text x="395" y="118" text-anchor="middle" class="box">large parameter</text>
+<text x="395" y="134" text-anchor="middle" class="box">update</text>
+
+<rect class="chainbox" x="480" y="90" width="140" height="68" rx="8"/>
+<text x="550" y="118" text-anchor="middle" class="box">bad model state</text>
+<text x="550" y="134" text-anchor="middle" class="box">(wrong basin)</text>
+
+<rect class="chainbox" x="635" y="90" width="140" height="68" rx="8"/>
+<text x="705" y="128" text-anchor="middle" class="box">elevated loss</text>
+
+<line class="arrow" x1="157" y1="124" x2="167" y2="124"/>
+<line class="arrow" x1="312" y1="124" x2="322" y2="124"/>
+<line class="arrow" x1="467" y1="124" x2="477" y2="124"/>
+<line class="arrow" x1="622" y1="124" x2="632" y2="124"/>
+
+
+<rect x="210" y="52" width="215" height="34" rx="7" fill="var(--warn,#e0a106)" fill-opacity="0.10" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+<text x="317" y="65" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)">Adam amplifies here:</text>
+<text x="317" y="78" text-anchor="middle" class="callout" fill="var(--warn,#e0a106)" font-size="9">|dtheta| ~ g / sqrt(v_hat) -- stale denom</text>
+<path class="leader" d="M317,86 L317,122" stroke="var(--warn,#e0a106)"/>
+
+
+<path class="leader" d="M85,158 L85,180"/>
+<line x1="80" y1="167" x2="90" y2="175" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+<line x1="80" y1="175" x2="90" y2="167" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+
+<rect class="dataB" x="10" y="180" width="168" height="26" rx="5"/>
+<text x="94" y="197" text-anchor="middle" class="badge" font-size="8.6">skip anomalous batch (data audit)</text>
+
+<rect class="archB" x="10" y="214" width="168" height="26" rx="5"/>
+<text x="94" y="231" text-anchor="middle" class="badge">QK-Norm -- bounds attn logits</text>
+
+<rect class="archB" x="10" y="248" width="168" height="26" rx="5"/>
+<text x="94" y="265" text-anchor="middle" class="badge">z-loss -- bounds output logits</text>
+
+<rect class="archB" x="10" y="282" width="168" height="38" rx="5"/>
+<text x="94" y="298" text-anchor="middle" class="badge">careful init: depth-scale</text>
+<text x="94" y="311" text-anchor="middle" class="badge">1/sqrt(2L), small embedding</text>
+
+<rect class="archB" x="10" y="330" width="168" height="26" rx="5"/>
+<text x="94" y="347" text-anchor="middle" class="badge">embedding-norm clip</text>
+
+
+<path class="leader" d="M317,124 L317,180"/>
+<line x1="312" y1="147" x2="322" y2="155" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+<line x1="312" y1="155" x2="322" y2="147" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+
+<rect class="trainB" x="218" y="180" width="200" height="38" rx="5"/>
+<text x="318" y="196" text-anchor="middle" class="badge">gradient clipping, tau=1.0</text>
+<text x="318" y="209" text-anchor="middle" class="badge">(rescale global norm, keep direction)</text>
+
+
+<path class="leader" d="M460,158 L460,226"/>
+<line x1="455" y1="185" x2="465" y2="193" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+<line x1="455" y1="193" x2="465" y2="185" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+
+<rect class="trainB" x="365" y="226" width="190" height="26" rx="5"/>
+<text x="460" y="243" text-anchor="middle" class="badge">skip-step if grad_norm &gt; 5x tau</text>
+
+
+<line x1="10" y1="368" x2="790" y2="368" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+<rect x="15" y="378" width="14" height="14" rx="3" class="archB"/>
+<text x="35" y="389" class="legend">Architectural (acts at the source)</text>
+<rect x="300" y="378" width="14" height="14" rx="3" class="trainB"/>
+<text x="320" y="389" class="legend">Training-time (acts on gradient / update)</text>
+<rect x="610" y="378" width="14" height="14" rx="3" class="dataB"/>
+<text x="630" y="389" class="legend">Data (acts on the batch)</text>
+
+<text x="15" y="415" class="sub">Note: the "bad batch OR bad state" box also covers LR-too-high and fp16 overflow (see Root Causes), which architectural fixes address indirectly.</text>
+
+</svg>
+<figcaption><b>Every mitigation is a valve on one specific link of the spike causal chain.</b> Architectural techniques (QK-Norm, z-loss, careful initialization, embedding-norm clipping) and data audits act at the source, before a large gradient ever forms; gradient clipping intercepts the gradient before Adam's stale denominator amplifies it into a large update; skip-step logic catches whatever gets through by discarding the update outright. The causal chain itself never changes &amp;mdash; only where you choose to interrupt it.</figcaption>
+</figure>

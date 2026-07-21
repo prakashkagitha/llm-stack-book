@@ -38,6 +38,8 @@ A CPT schedule has three phases, mirroring a from-scratch run but compressed:
 
 Two decisions dominate outcomes: **how high to re-warm** ($\eta_{\text{cpt}}$) and **how to decay**.
 
+{{fig:cpt-rewarm-schedule-and-spike}}
+
 **How high?** The peak controls the stability–plasticity tradeoff directly. Empirically, re-warming to the *original pretraining peak* learns the new domain fastest but forgets the most. Re-warming to roughly $10\%$–$30\%$ of the original peak is the common sweet spot for domain adaptation; for a large *distribution shift* (e.g., a brand-new language) you push higher, toward $50\%$+; for a gentle *freshness* update (new web crawl, same distribution) you stay lower. A crucial subtlety from the Ibrahim et al. study: the *transient* loss spike caused by re-warming is temporary — the loss on both old and new data jumps up when you raise the LR, then recovers below the starting point. Do not panic at the spike; judge the run by where it settles after re-decay.
 
 **How to decay?** You must re-decay to a low floor at the end, because — exactly as in the Warmup-Stable-Decay (WSD) schedule — most of the *committed* loss reduction happens during the decay phase. A CPT run held at high LR and never decayed looks unconverged. If you plan to do *several* CPT rounds (a streaming scenario), the WSD-style "decay only at the end" or "infinite LR schedule" of Ibrahim et al. is attractive: hold a constant high LR across rounds and only spend a short decay when you need a deployable checkpoint.
@@ -227,6 +229,8 @@ This is the pretraining-side analogue of the production [Data Flywheels & Contin
 ## Model Growth & Weight Reuse
 
 So far we kept the architecture fixed. The more ambitious form of "don't retrain from scratch" *changes the architecture* but **reuses the trained weights** as initialization. The premise — validated by Net2Net (Chen et al., 2015), bert2BERT, Gong et al.'s progressive stacking, and the dense-to-MoE *sparse upcycling* of Komatsuzaki et al. (2022) — is that a smaller trained model is a far better initialization for a larger one than random init, so you can "grow" into a bigger model and finish with a short CPT pass.
+
+{{fig:cpt-function-preserving-growth}}
 
 ### Depth growth (layer stacking)
 

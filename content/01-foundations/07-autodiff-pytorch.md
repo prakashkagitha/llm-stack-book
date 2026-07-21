@@ -107,6 +107,8 @@ print(e.grad_fn.next_functions[0][0].next_functions)
 
 Notice that `a` appears twice in the graph (once as an input to `c = a*b` and once as the second input to `d = c+a`). PyTorch correctly accumulates both gradient contributions into `a.grad`.
 
+{{fig:autograd-graph-leaf-accumulate}}
+
 ### Gradient Accumulation and `.grad_fn` Ownership
 
 By default, `.grad` accumulates (adds) across multiple `.backward()` calls. This is intentional and exploited by gradient accumulation in training:
@@ -398,6 +400,8 @@ The schema specifies input/output types and is used by the dispatcher, `torch.fx
 ## Views, Copies, Contiguity, and Memory Layout
 
 ### Views vs Copies
+
+{{fig:tensor-storage-strides-views}}
 
 A **view** of a tensor shares the same underlying storage (memory buffer). Operations like `reshape`, `view`, `transpose`, `narrow`, `expand`, and indexing with slices typically return views:
 

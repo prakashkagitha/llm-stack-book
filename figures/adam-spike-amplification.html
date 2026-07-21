@@ -1,0 +1,160 @@
+<figure class="viz" id="fig-adam-spike-amplification">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 680" role="img" aria-label="Timeline showing Adam's fast numerator reacting immediately to a spiked gradient while the slow second-moment denominator stays stale, producing a 100x parameter update that gradient clipping reduces to 10x and that fades over subsequent steps as the denominator catches up.">
+<style>
+  #fig-adam-spike-amplification text        { fill: var(--ink-soft,#45413a); }
+  #fig-adam-spike-amplification .ttl        { font: 700 16px var(--sans,sans-serif); fill: currentColor; }
+  #fig-adam-spike-amplification .sub        { font: 500 11.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-adam-spike-amplification .hdr        { font: 700 12.5px var(--sans,sans-serif); fill: currentColor; }
+  #fig-adam-spike-amplification .lbl        { font: 600 10px var(--sans,sans-serif); }
+  #fig-adam-spike-amplification .small      { font: 500 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-adam-spike-amplification .mono       { font: 700 14px var(--mono,monospace); }
+  #fig-adam-spike-amplification .monoSm     { font: 600 9.5px var(--mono,monospace); }
+  #fig-adam-spike-amplification .step       { font: 600 9.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-adam-spike-amplification .val        { font: 700 10px var(--mono,monospace); }
+  #fig-adam-spike-amplification .guide      { stroke: var(--border-2,#d8d1c0); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.55; }
+  #fig-adam-spike-amplification .axis       { stroke: var(--border-2,#d8d1c0); stroke-width: 1.3; }
+  #fig-adam-spike-amplification .refline    { stroke: var(--muted,#6d675d); stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.7; }
+</style>
+
+<text x="20" y="26" class="ttl">Why one bad batch becomes a 100x update</text>
+<text x="20" y="46" class="sub">Adam's numerator reacts this very step; its denominator sqrt(v_hat) is a slow average and hasn't absorbed the spike yet.</text>
+
+
+<g data-anim="1">
+
+  
+  <line class="guide" x1="150" y1="90"  x2="150" y2="596"/>
+  <line class="guide" x1="220" y1="90"  x2="220" y2="596"/>
+  <line class="guide" x1="290" y1="90"  x2="290" y2="596"/>
+  <line class="guide" x1="365" y1="90"  x2="365" y2="596"/>
+  <line class="guide" x1="460" y1="90"  x2="460" y2="596"/>
+  <line class="guide" x1="530" y1="90"  x2="530" y2="596"/>
+  <line class="guide" x1="600" y1="90"  x2="600" y2="596"/>
+
+  
+  <text x="20" y="68" class="hdr">1. incoming gradient g (per-parameter)</text>
+  <line class="axis" x1="128" y1="190" x2="622" y2="190"/>
+  <line class="refline" x1="128" y1="180" x2="622" y2="180"/>
+  <text x="132" y="176" class="small">g ~ 0.01 (historical RMS)</text>
+
+  <rect x="130" y="180" width="40" height="10" class="v-fill" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="200" y="180" width="40" height="10" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="270" y="180" width="40" height="10" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+
+  
+  <text x="150" y="206" text-anchor="middle" class="step">t-3</text>
+  <text x="220" y="206" text-anchor="middle" class="step">t-2</text>
+  <text x="290" y="206" text-anchor="middle" class="step">t-1</text>
+  <text x="365" y="206" text-anchor="middle" class="step" fill="var(--warn,#e0a106)" font-weight="700">t (spike)</text>
+  <text x="460" y="206" text-anchor="middle" class="step">t+1</text>
+  <text x="530" y="206" text-anchor="middle" class="step">t+2</text>
+  <text x="600" y="206" text-anchor="middle" class="step">t+3</text>
+
+  
+  <rect x="628" y="62" width="160" height="128" rx="7" fill="var(--surface-3,#ece7da)" fill-opacity="0.35" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="638" y="78" class="lbl">loss (inset)</text>
+  <polyline points="638,148 662,143 686,140 708,136" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+
+  
+  <text x="20" y="244" class="hdr">2. Adam's update rule: numerator reacts now, denominator lags</text>
+  <text x="140" y="268" class="mono">|dtheta| ~</text>
+  <text x="250" y="268" class="mono" fill="var(--accent,#c15b39)">alpha (1-beta1) g</text>
+  <text x="430" y="268" text-anchor="middle" class="mono" fill="var(--muted,#6d675d)">/</text>
+  <text x="445" y="268" class="mono" fill="var(--accent2,#3b82f6)">sqrt(v_hat)</text>
+
+  <line x1="248" y1="276" x2="404" y2="276" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <line x1="248" y1="276" x2="248" y2="271" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <line x1="404" y1="276" x2="404" y2="271" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="326" y="290" text-anchor="middle" class="small" fill="var(--accent,#c15b39)">reacts NOW (1-beta1 = 0.1)</text>
+
+  <line x1="443" y1="276" x2="541" y2="276" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <line x1="443" y1="276" x2="443" y2="271" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <line x1="541" y1="276" x2="541" y2="271" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <text x="492" y="290" text-anchor="middle" class="small" fill="var(--accent2,#3b82f6)">slow / stale</text>
+  <text x="492" y="302" text-anchor="middle" class="small" fill="var(--accent2,#3b82f6)">(beta2=0.999, 1-beta2 ~ 1e-3)</text>
+
+  <text x="20" y="322" class="hdr">sqrt(v_hat): the denominator, tracked over the same steps</text>
+  <line class="axis" x1="128" y1="408" x2="622" y2="408"/>
+  <text x="150" y="342" text-anchor="start" class="small">flat &amp; stale</text>
+  <polyline points="150,400 220,400 290,400 365,400" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2.4"/>
+  <circle cx="150" cy="400" r="3" fill="var(--accent2,#3b82f6)"/>
+  <circle cx="220" cy="400" r="3" fill="var(--accent2,#3b82f6)"/>
+  <circle cx="290" cy="400" r="3" fill="var(--accent2,#3b82f6)"/>
+
+  
+  <text x="20" y="446" class="hdr">3. resulting update |dtheta| (bar height ~ sqrt(ratio); labels give exact numbers)</text>
+  <line class="refline" x1="128" y1="584" x2="622" y2="584"/>
+  <text x="132" y="580" class="small">3e-5 (1x baseline)</text>
+  <rect x="130" y="584" width="40" height="12" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="200" y="584" width="40" height="12" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="270" y="584" width="40" height="12" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+
+  
+  <rect x="128" y="632" width="14" height="14" fill="var(--warn,#e0a106)"/>
+  <text x="148" y="643" class="small">bad batch / spike step (denominator still stale)</text>
+  <rect x="430" y="632" width="14" height="14" fill="var(--accent,#c15b39)"/>
+  <text x="450" y="643" class="small">Adam mechanism (numerator reacts, sqrt(v_hat) lags)</text>
+  <rect x="128" y="656" width="14" height="14" fill="var(--good,#2f9e6e)"/>
+  <text x="148" y="667" class="small">grad clip tau=1.0, and recovery as v_hat catches up</text>
+  <rect x="430" y="656" width="14" height="14" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <text x="450" y="667" class="small">normal steps / axes / guides</text>
+</g>
+
+
+<g data-anim="2">
+  
+  <rect x="345" y="90" width="40" height="100" fill="var(--warn,#e0a106)" fill-opacity="0.85" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="365" y="80" text-anchor="middle" class="val" fill="var(--warn,#e0a106)">g = 1.0 = 100x historical RMS (bad batch)</text>
+
+  
+  <circle cx="365" cy="400" r="5" fill="var(--warn,#e0a106)" stroke="var(--surface,#fff)" stroke-width="1.2"/>
+  <text x="365" y="336" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">still stale here!</text>
+  <text x="365" y="347" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">(hasn't seen the spike yet)</text>
+
+  
+  <rect x="345" y="474" width="40" height="122" fill="var(--warn,#e0a106)" fill-opacity="0.85" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="365" y="466" text-anchor="middle" class="val" fill="var(--warn,#e0a106)">3e-3 -&gt; ~100x</text>
+
+  
+  <polyline points="708,136 724,98" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <circle cx="724" cy="98" r="2.6" fill="var(--warn,#e0a106)"/>
+</g>
+
+
+<g data-anim="3">
+  <rect x="398" y="557" width="30" height="39" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2" stroke-dasharray="4 3"/>
+  <text x="413" y="549" text-anchor="middle" class="val" fill="var(--good,#2f9e6e)" font-size="9.5">~10x</text>
+  <text x="413" y="606" text-anchor="middle" class="small" fill="var(--good,#2f9e6e)">tau=1.0: |g| rescaled ~0.1x</text>
+  <text x="413" y="617" text-anchor="middle" class="small" fill="var(--good,#2f9e6e)">-&gt; update ~3e-4 (~10x, not 100x)</text>
+</g>
+
+
+<g data-anim="4">
+  
+  <rect x="440" y="180" width="40" height="10" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="510" y="180" width="40" height="10" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="580" y="180" width="40" height="10" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <text x="460" y="220" text-anchor="middle" class="small">back to ~0.01</text>
+
+  
+  <polyline points="365,400 460,388 530,370 600,352" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2.4" stroke-dasharray="1 0"/>
+  <circle cx="460" cy="388" r="3" fill="var(--accent2,#3b82f6)"/>
+  <circle cx="530" cy="370" r="3" fill="var(--accent2,#3b82f6)"/>
+  <circle cx="600" cy="352" r="3" fill="var(--accent2,#3b82f6)"/>
+  <text x="600" y="402" text-anchor="end" class="small" fill="var(--accent2,#3b82f6)">-&gt; v_hat climbs, catches up</text>
+
+  
+  <rect x="440" y="535" width="40" height="61" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="510" y="565" width="40" height="31" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <rect x="580" y="580" width="40" height="16" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1"/>
+  <text x="530" y="522" text-anchor="middle" class="small">amplification fades as v_hat catches up</text>
+
+  
+  <polyline points="724,98 745,119 765,125 780,127" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="780" y="118" text-anchor="end" class="small" fill="var(--good,#2f9e6e)">transient</text>
+</g>
+
+</svg>
+<figcaption><b>Adam's numerator reacts to a spike immediately; its denominator does not &amp;mdash; that mismatch is the 100x update.</b> A bad batch produces a gradient 100x its historical RMS, but <code>sqrt(v_hat)</code> is a slow average (&amp;beta;<sub>2</sub>=0.999) that still reflects the old, small gradient scale on the very step the spike arrives, so the update jumps from ~3e-5 to ~3e-3. Gradient clipping at &amp;tau;=1.0 rescales the spike before Adam sees it, cutting the damage to ~10x instead of 100x, and over the next steps <code>sqrt(v_hat)</code> catches up on its own, which is why most spikes are transient.</figcaption>
+</figure>

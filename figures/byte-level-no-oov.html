@@ -1,0 +1,418 @@
+<figure class="viz" id="fig-byte-level-no-oov">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 700" role="img" aria-label="Top-to-bottom pipeline showing byte-level BPE guarantees no unk. Stage 1: the input string cafe with an accented e and a robot emoji. Stage 2: UTF-8 encoding expands each character into one or more bytes, with the accented e taking two bytes and the emoji taking four bytes. Stage 3: a 16 by 16 grid of all 256 possible byte values, with the bytes from stage 2 highlighted, showing the base alphabet is complete and finite so any byte is a guaranteed token. Stage 4: frequent byte pairs merge into subword tokens, while the novel emoji in the worst case simply stays as its four individual byte tokens, still valid and lossless.">
+  <style>
+    #fig-byte-level-no-oov text{ fill:var(--ink-soft); }
+    #fig-byte-level-no-oov .stage{ font:700 13px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-byte-level-no-oov .stage-num{ font:700 11px var(--sans,sans-serif); fill:var(--accent); }
+    #fig-byte-level-no-oov .ch{ font:600 15px var(--mono,monospace); }
+    #fig-byte-level-no-oov .byte{ font:600 9px var(--mono,monospace); }
+    #fig-byte-level-no-oov .ann{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-byte-level-no-oov .ann-good{ font:600 11px var(--sans,sans-serif); fill:var(--good,#2f9e6e); }
+    #fig-byte-level-no-oov .callout{ font:500 10px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-byte-level-no-oov .divider{ stroke:var(--border-2); stroke-width:1; }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="20" y="26" class="stage-num">STAGE 1</text>
+    <text x="90" y="26" class="stage">input string (never seen at training time)</text>
+    <rect x="20" y="36" width="740" height="46" rx="8" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="370" y="66" text-anchor="end" class="ch">caf&#233; [robot emoji]</text>
+    <text x="380" y="66" class="ann">(accented e, robot emoji -- glyphs a training run may never have seen)</text>
+  </g>
+
+  <line x1="20" y1="96" x2="760" y2="96" class="divider"/>
+
+  
+  <g data-anim="2">
+    <text x="20" y="122" class="stage-num">STAGE 2</text>
+    <text x="90" y="122" class="stage">UTF-8 encode -&gt; each character expands into one or more bytes</text>
+
+    
+    <g class="v-fill v-stroke" stroke-width="1.1">
+      <rect x="20" y="136" width="40" height="30" rx="5"/>
+      <rect x="64" y="136" width="40" height="30" rx="5"/>
+      <rect x="108" y="136" width="40" height="30" rx="5"/>
+    </g>
+    <g class="byte" text-anchor="middle">
+      <text x="40" y="156">0x63</text><text x="84" y="156">0x61</text><text x="128" y="156">0x66</text>
+    </g>
+    <text x="84" y="180" text-anchor="middle" class="ann">c a f: 1 byte each</text>
+
+    
+    <path d="M156 132 h64 v-6 M156 132 v6 M220 132 v-6" fill="none" class="v-muted" stroke="currentColor" stroke-width="1"/>
+    <g class="v-fill" stroke="var(--accent)" stroke-width="1.5">
+      <rect x="156" y="136" width="40" height="30" rx="5"/>
+      <rect x="200" y="136" width="40" height="30" rx="5"/>
+    </g>
+    <g class="byte" text-anchor="middle" fill="var(--accent)">
+      <text x="176" y="156">0xC3</text><text x="220" y="156">0xA9</text>
+    </g>
+    <text x="188" y="180" text-anchor="middle" class="ann" fill="var(--accent)">&#233;: 2 bytes</text>
+
+    
+    <g class="v-fill v-stroke" stroke-width="1.1">
+      <rect x="252" y="136" width="40" height="30" rx="5"/>
+    </g>
+    <text x="272" y="156" text-anchor="middle" class="byte">0x20</text>
+    <text x="272" y="180" text-anchor="middle" class="ann">space: 1 byte</text>
+
+    
+    <path d="M300 132 h176 v-6 M300 132 v6 M476 132 v-6" fill="none" class="v-muted" stroke="currentColor" stroke-width="1"/>
+    <g class="v-fill" stroke="var(--accent)" stroke-width="1.5">
+      <rect x="300" y="136" width="42" height="30" rx="5"/>
+      <rect x="346" y="136" width="42" height="30" rx="5"/>
+      <rect x="392" y="136" width="42" height="30" rx="5"/>
+      <rect x="438" y="136" width="42" height="30" rx="5"/>
+    </g>
+    <g class="byte" text-anchor="middle" fill="var(--accent)">
+      <text x="321" y="156">0xF0</text><text x="367" y="156">0x9F</text>
+      <text x="413" y="156">0xA4</text><text x="459" y="156">0x96</text>
+    </g>
+    <text x="388" y="180" text-anchor="middle" class="ann" fill="var(--accent)">robot emoji: 4 bytes</text>
+
+    <text x="620" y="156" class="ann-good">1 char -&gt; several bytes</text>
+  </g>
+
+  <line x1="20" y1="200" x2="760" y2="200" class="divider"/>
+
+  
+  <g data-anim="3">
+    <text x="20" y="226" class="stage-num">STAGE 3</text>
+    <text x="90" y="226" class="stage">every byte is one of exactly 256 values</text>
+
+    
+    <g>
+    <rect x="18" y="238" width="260" height="260" rx="4" fill="none" class="v-grid" stroke-width="1"/>
+    <rect x="20" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="240" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="256" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="272" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="36" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="272" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="288" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="304" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="320" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="336" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="52" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="336" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="84" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="336" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="132" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="336" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="352" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="368" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="384" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="132" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="384" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="384" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="20" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="400" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="100" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="400" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="180" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="400" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="416" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="432" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="84" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="432" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="448" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="36" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="464" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="20" y="480" width="15" height="15" class="v-accent" opacity="0.85"/>
+    <rect x="36" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="52" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="68" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="84" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="100" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="116" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="132" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="148" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="164" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="180" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="196" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="212" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="228" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="244" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    <rect x="260" y="480" width="15" height="15" class="v-fill v-grid" stroke-width="0.7"/>
+    </g>
+
+    
+    <text x="380" y="260" class="callout" font-weight="700" fill="var(--accent)">base alphabet is complete</text>
+    <text x="380" y="276" class="callout" font-weight="700" fill="var(--accent)">and finite</text>
+    <text x="380" y="298" class="callout">-&gt; any byte is a guaranteed token</text>
+    <text x="380" y="318" class="ann-good" font-size="12">-&gt; provably no &#60;unk&#62;</text>
+
+    <text x="380" y="350" class="ann">highlighted cells: the bytes</text>
+    <text x="380" y="364" class="ann">from stage 2 (0x20, 0x61, 0x63,</text>
+    <text x="380" y="378" class="ann">0x66, 0x96, 0x9F, 0xA4, 0xA9,</text>
+    <text x="380" y="392" class="ann">0xC3, 0xF0)</text>
+
+    
+    <rect x="380" y="410" width="360" height="66" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.1"/>
+    <text x="392" y="430" class="callout" font-weight="700">bytes-to-unicode trick:</text>
+    <text x="392" y="446" class="callout" font-family="var(--mono,monospace)">byte 0x20 (space) -&gt; printable glyph &#288;</text>
+    <text x="392" y="462" class="ann">this is why GPT-2 output shows &#288;the</text>
+    <text x="392" y="474" class="ann">for a leading-space "the"</text>
+  </g>
+
+  <line x1="20" y1="500" x2="760" y2="500" class="divider"/>
+
+  
+  <g data-anim="4">
+    <text x="20" y="526" class="stage-num">STAGE 4</text>
+    <text x="90" y="526" class="stage">merges glue frequent byte pairs; novel bytes fall back safely</text>
+
+    
+    <text x="20" y="552" class="ann">frequent ASCII bytes merge:</text>
+    <g class="v-fill v-stroke" stroke-width="1.1">
+      <rect x="20" y="560" width="40" height="30" rx="5" opacity="0.5"/>
+      <rect x="64" y="560" width="40" height="30" rx="5" opacity="0.5"/>
+      <rect x="108" y="560" width="40" height="30" rx="5" opacity="0.5"/>
+    </g>
+    <g class="byte" text-anchor="middle" fill="var(--muted)">
+      <text x="40" y="580">c</text><text x="84" y="580">a</text><text x="128" y="580">f</text>
+    </g>
+    <line x1="84" y1="596" x2="84" y2="612" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#bl-arrow)"/>
+    <rect x="34" y="616" width="100" height="30" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="84" y="636" text-anchor="middle" class="ch" font-size="13" fill="var(--good,#2f9e6e)">"caf"</text>
+    <text x="150" y="636" class="ann">merged into a single subword token</text>
+
+    
+    <text x="440" y="552" class="ann">novel emoji, worst case: no merge rule applies</text>
+    <g class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4">
+      <rect x="440" y="560" width="42" height="30" rx="5"/>
+      <rect x="486" y="560" width="42" height="30" rx="5"/>
+      <rect x="532" y="560" width="42" height="30" rx="5"/>
+      <rect x="578" y="560" width="42" height="30" rx="5"/>
+    </g>
+    <g class="byte" text-anchor="middle" fill="var(--warn,#e0a106)">
+      <text x="461" y="580">0xF0</text><text x="507" y="580">0x9F</text>
+      <text x="553" y="580">0xA4</text><text x="599" y="580">0x96</text>
+    </g>
+    <text x="440" y="602" class="ann">stays as 4 individual byte tokens</text>
+    <text x="440" y="616" class="ann-good">still valid, still lossless -- no &#60;unk&#62;</text>
+  </g>
+
+  <defs>
+    <marker id="bl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <line x1="20" y1="658" x2="760" y2="658" class="divider"/>
+
+  
+  <g data-anim="5">
+    <rect x="20" y="670" width="740" height="26" rx="7" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="390" y="688" text-anchor="middle" class="ann" font-weight="600" fill="var(--ink-soft)">char-level BPE would emit &#60;unk&#62; on an unseen glyph; byte-level cannot.</text>
+  </g>
+</svg>
+<figcaption><b>Byte-level BPE starts from the 256 possible byte values, so the base alphabet is provably complete.</b> Any string first becomes UTF-8 bytes; frequent byte sequences merge into subword tokens, but even a character never seen in training falls back to its individual bytes losslessly — there is no escape hatch to <span class="v-mono">&#60;unk&#62;</span>.</figcaption>
+</figure>

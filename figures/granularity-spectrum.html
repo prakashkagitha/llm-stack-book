@@ -1,0 +1,198 @@
+<figure class="viz" id="fig-granularity-spectrum">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 560" role="img" aria-label="Three-panel comparison of words, subwords, and characters as the tokenizer's atomic unit, tokenizing the same phrase tokenization is running in each panel. Words: whole-word tokens but unbounded vocabulary and out-of-vocabulary collapse for novel words. Subwords, the sweet spot in the center: a fixed vocabulary of about 30 thousand to 256 thousand pieces, no out-of-vocabulary, about 1.3 tokens per word. Characters or bytes: a tiny vocabulary of about 256 symbols and never any out-of-vocabulary, but sequences 4 to 5 times longer, which blows up the quadratic attention cost. Below the panels, two opposing gradient bars show vocabulary size growing toward words and sequence length growing toward characters, with subwords sitting at the crossover valley where both are moderate.">
+  <style>
+    #fig-granularity-spectrum text{ fill:var(--ink-soft); }
+    #fig-granularity-spectrum .title{ font:700 13px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-granularity-spectrum .sub{ font:600 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-granularity-spectrum .tok{ font:600 12px var(--mono,monospace); }
+    #fig-granularity-spectrum .tok-sm{ font:600 10px var(--mono,monospace); }
+    #fig-granularity-spectrum .ann{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-granularity-spectrum .ann-good{ font:600 10px var(--sans,sans-serif); fill:var(--good,#2f9e6e); }
+    #fig-granularity-spectrum .ann-bad{ font:600 10px var(--sans,sans-serif); fill:var(--warn,#e0a106); }
+    #fig-granularity-spectrum .axis-lbl{ font:600 11px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-granularity-spectrum .panel-bg{ fill:var(--surface-3,#ece7da); opacity:0.35; }
+    #fig-granularity-spectrum .panel-bg-hi{ fill:var(--accent); opacity:0.10; }
+    #fig-granularity-spectrum .panel-border{ stroke:var(--border-2); fill:none; }
+    #fig-granularity-spectrum .panel-border-hi{ stroke:var(--accent); fill:none; }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="390" y="24" text-anchor="middle" class="title">Choosing the tokenizer's atomic unit</text>
+    <line x1="20" y1="36" x2="760" y2="36" class="v-grid" stroke="currentColor" stroke-width="1"/>
+    <text x="20" y="50" class="sub">coarse (whole words)</text>
+    <text x="760" y="50" text-anchor="end" class="sub">fine (raw bytes)</text>
+    <line x1="20" y1="56" x2="760" y2="56" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#gs-arrow)"/>
+  </g>
+
+  <defs>
+    <marker id="gs-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  
+  <g data-anim="2">
+    <rect x="20" y="70" width="230" height="228" rx="10" class="panel-bg panel-border" stroke-width="1.2"/>
+    <text x="135" y="92" text-anchor="middle" class="title">Words</text>
+
+    
+    <g class="v-fill v-stroke" stroke-width="1.1">
+      <rect x="32" y="102" width="80" height="26" rx="5"/>
+      <rect x="116" y="102" width="26" height="26" rx="5"/>
+      <rect x="146" y="102" width="72" height="26" rx="5"/>
+    </g>
+    <g class="tok-sm" text-anchor="middle">
+      <text x="72" y="119">tokenization</text>
+      <text x="129" y="119">is</text>
+      <text x="182" y="119">running</text>
+    </g>
+
+    
+    <text x="32" y="150" class="ann">novel/typo word:</text>
+    <text x="32" y="163" class="tok-sm">tokenizatoin</text>
+    <line x1="100" y1="170" x2="100" y2="182" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#gs-arrow)"/>
+    <rect x="70" y="184" width="60" height="24" rx="5" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="100" y="200" text-anchor="middle" class="tok-sm" fill="var(--warn,#e0a106)">&#60;unk&#62;</text>
+
+    
+    <text x="32" y="228" class="ann-bad">vocabulary 100k+, unbounded</text>
+    <text x="32" y="243" class="ann-bad">OOV: novel words lost</text>
+    <text x="32" y="258" class="ann">run / runs / running get</text>
+    <text x="32" y="271" class="ann">unrelated IDs (morphology</text>
+    <text x="32" y="284" class="ann">wasted)</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="270" y="66" width="240" height="236" rx="10" class="panel-bg-hi panel-border-hi" stroke-width="2"/>
+    <text x="390" y="88" text-anchor="middle" class="title" fill="var(--accent)">Subwords</text>
+    <text x="390" y="102" text-anchor="middle" class="ann-good">the sweet spot</text>
+
+    
+    <g class="v-fill" stroke="var(--accent)" stroke-width="1.4">
+      <rect x="282" y="112" width="46" height="26" rx="5"/>
+      <rect x="330" y="112" width="52" height="26" rx="5"/>
+      <rect x="384" y="112" width="30" height="26" rx="5"/>
+      <rect x="416" y="112" width="46" height="26" rx="5"/>
+      <rect x="464" y="112" width="34" height="26" rx="5"/>
+    </g>
+    <g class="tok-sm" text-anchor="middle" fill="var(--accent)">
+      <text x="305" y="129">token</text>
+      <text x="356" y="129">ization</text>
+      <text x="399" y="129">&#183;is</text>
+      <text x="439" y="129">&#183;runn</text>
+      <text x="481" y="129">ing</text>
+    </g>
+    <text x="282" y="150" class="ann">&#183; marks a leading-space piece</text>
+
+    
+    <text x="282" y="176" class="ann-good">fixed vocab ~30k-256k</text>
+    <text x="282" y="192" class="ann">frequent words whole, rare</text>
+    <text x="282" y="205" class="ann">words split into reusable</text>
+    <text x="282" y="218" class="ann">pieces</text>
+    <text x="282" y="236" class="ann-good">no OOV</text>
+    <text x="282" y="252" class="ann-good">~1.3 tokens/word</text>
+
+    
+    <g>
+      <rect x="282" y="264" width="204" height="28" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.3"/>
+      <text x="384" y="282" text-anchor="middle" class="ann-good">moderate vocab, moderate length</text>
+    </g>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="530" y="70" width="230" height="228" rx="10" class="panel-bg panel-border" stroke-width="1.2"/>
+    <text x="645" y="92" text-anchor="middle" class="title">Characters / bytes</text>
+
+    
+    <g class="v-fill v-stroke" stroke-width="1">
+      <rect x="537" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="554.3" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="571.6" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="588.9" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="606.2" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="623.5" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="640.8" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="658.1" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="675.4" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="692.7" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="710" y="102" width="17.3" height="24" rx="3"/>
+      <rect x="727.3" y="102" width="17.3" height="24" rx="3"/>
+    </g>
+    <g class="tok-sm" text-anchor="middle" font-size="9.5">
+      <text x="545.7" y="118">t</text><text x="563" y="118">o</text><text x="580.3" y="118">k</text>
+      <text x="597.6" y="118">e</text><text x="614.9" y="118">n</text><text x="632.2" y="118">i</text>
+      <text x="649.5" y="118">z</text><text x="666.8" y="118">a</text><text x="684.1" y="118">t</text>
+      <text x="701.4" y="118">i</text><text x="718.7" y="118">o</text><text x="736" y="118">n</text>
+    </g>
+    <text x="537" y="140" class="ann">"tokenization" -&gt; 12 tokens</text>
+
+    
+    <text x="537" y="165" class="ann-good">vocabulary ~256 (tiny)</text>
+    <text x="537" y="180" class="ann-good">no OOV ever</text>
+    <text x="537" y="200" class="ann-bad">sequences 4-5x longer</text>
+    <text x="537" y="213" class="ann-bad">-&gt; attention cost O(n^2)</text>
+    <text x="537" y="226" class="ann-bad">blows up</text>
+
+    
+    <g>
+      <rect x="537" y="240" width="204" height="46" rx="7" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+      <text x="639" y="257" text-anchor="middle" class="ann" fill="var(--ink-soft)" font-weight="600">effective context shrinks,</text>
+      <text x="639" y="271" text-anchor="middle" class="ann" fill="var(--ink-soft)" font-weight="600">inference bill grows</text>
+    </g>
+  </g>
+
+  
+  <g data-anim="5">
+    <text x="390" y="330" text-anchor="middle" class="title">the tradeoff, geometrically</text>
+
+    
+    <text x="20" y="358" class="axis-lbl">&lt;- vocabulary size increases</text>
+    <defs>
+      <linearGradient id="gs-vocab-grad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.85"/>
+        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.06"/>
+      </linearGradient>
+      <linearGradient id="gs-len-grad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.06"/>
+        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.85"/>
+      </linearGradient>
+    </defs>
+    <rect x="20" y="366" width="740" height="16" rx="8" fill="url(#gs-vocab-grad)"/>
+    <text x="24" y="378" class="ann-sm" font-size="9" fill="var(--surface,#fff)" font-weight="700">large</text>
+    <text x="736" y="378" text-anchor="end" class="ann" font-size="9" fill="var(--muted)">small</text>
+
+    
+    <text x="760" y="404" text-anchor="end" class="axis-lbl">sequence length increases -&gt;</text>
+    <rect x="20" y="412" width="740" height="16" rx="8" fill="url(#gs-len-grad)"/>
+    <text x="24" y="424" class="ann" font-size="9" fill="var(--muted)">short</text>
+    <text x="736" y="424" text-anchor="end" class="ann-sm" font-size="9" fill="var(--surface,#fff)" font-weight="700">long</text>
+
+    
+    <line x1="135" y1="382" x2="135" y2="440" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3,3"/>
+    <line x1="390" y1="428" x2="390" y2="440" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3,3"/>
+    <line x1="645" y1="382" x2="645" y2="440" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3,3"/>
+
+    <text x="135" y="454" text-anchor="middle" class="sub">words</text>
+    <text x="645" y="454" text-anchor="middle" class="sub">chars/bytes</text>
+
+    
+    <g>
+      <circle cx="390" cy="428" r="7" fill="var(--accent)"/>
+      <text x="390" y="454" text-anchor="middle" class="ann-good">subwords: crossover valley</text>
+      <text x="390" y="468" text-anchor="middle" class="ann">(both moderate)</text>
+    </g>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="20" y1="484" x2="760" y2="484" class="v-grid" stroke="currentColor" stroke-width="1"/>
+    <text x="390" y="504" text-anchor="middle" class="ann" font-size="11">Same phrase, three granularities: words maximize vocabulary risk,</text>
+    <text x="390" y="519" text-anchor="middle" class="ann" font-size="11">characters maximize sequence-length risk, subwords minimize both at once.</text>
+  </g>
+</svg>
+<figcaption><b>Subwords sit at the crossover valley between two costs that trade off in opposite directions.</b> Word tokenizers keep an unbounded vocabulary and lose novel words to <span class="v-mono">&#60;unk&#62;</span>; character/byte tokenizers eliminate OOV but blow up sequence length (and quadratic attention cost); subwords keep frequent words whole and split rare ones into reusable pieces, landing on a fixed ~30k-256k vocabulary with no OOV and roughly 1.3 tokens per word.</figcaption>
+</figure>

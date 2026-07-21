@@ -28,6 +28,8 @@ where $\mathbf{W}_E \in \mathbb{R}^{d \times V}$ is the **embedding matrix**. Th
 
 We have replaced a $V$-dimensional sparse vector with a $d$-dimensional dense one. The ratio $V/d$ is often $10\times$–$100\times$, so the representation is radically more compact.
 
+{{fig:one-hot-vs-embedding-geometry}}
+
 ---
 
 ## The Embedding Matrix in Detail
@@ -170,6 +172,8 @@ assert model.embed.weight.data_ptr() == model.embed.weight.data_ptr()
 
 !!! warning "Common pitfall: copying instead of sharing"
     A frequent mistake is doing `self.unembed = nn.Linear(d_model, vocab_size); self.unembed.weight = self.embed.weight`. This looks right but `nn.Linear` initializes its own weight before you reassign it — you waste memory for a moment and, more dangerously, the `bias` is still separate. Use `F.linear(hidden, self.embed.weight)` (no `nn.Linear` at all) to avoid any ambiguity. Also be careful: if you serialize the model and reload it, ensure the saved checkpoint does not store two copies of the weight.
+
+{{fig:weight-tying-shared-matrix}}
 
 ---
 

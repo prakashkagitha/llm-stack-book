@@ -189,6 +189,8 @@ Repeating data is not free — multiple passes over the same text lead to memori
 
     The practical implication: if you reduce $N$ (train shorter, e.g., 1T tokens), you cut every epoch count proportionally, meaning Wikipedia moves to ~10 epochs and you may see slightly more memorization of Wikipedia text.
 
+{{fig:mixture-weights-to-epochs}}
+
 ---
 
 ## Open Dataset Case Studies
@@ -269,6 +271,8 @@ The standard architecture uses a distributed compute layer (Apache Spark, or cus
 ```
 
 The key design principle is **embarrassing parallelism**: each WET file (typically 400–700 MB compressed) is an independent processing unit. Workers download, decompress, and process one file at a time, emitting filtered documents to an output bucket. No inter-worker coordination is needed until the deduplication stage.
+
+{{fig:pretraining-data-funnel}}
 
 ### Streaming Data Pipeline in Python
 

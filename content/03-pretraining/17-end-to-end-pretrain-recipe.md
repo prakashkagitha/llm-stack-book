@@ -27,6 +27,8 @@ Here is the entire path from bytes on disk to a sampled sentence, as eight stage
 
 We do not re-derive any internal here; every stage links to the chapter that builds it from scratch.
 
+{{fig:pretrain-pipeline-spine}}
+
 What we *do* provide is concrete configs at **four scales** — a laptop/CPU toy (~10M params), a single GPU (~124M, GPT-2-small-sized), an 8-GPU node (~1-2B), and a multi-node cluster (~7B) — with the exact `torchrun` invocation, the exact hyperparameters, and the exact order-of-magnitude numbers you should expect to see at each one. By the end you will have run (or at least be able to run, verbatim) the smallest of these on a laptop in an afternoon, and understand precisely which three flags change to scale the same code to a cluster.
 
 Here is the stage-to-deep-chapter map you'll use throughout:
@@ -305,6 +307,8 @@ torchrun --nnodes=2 --node_rank=$RANK --nproc_per_node=8 \
 `--parallel {ddp,fsdp}` is the entire switch between "replicate the model" and "shard it." Under `fsdp`, `ShardingStrategy.FULL_SHARD` gives you ZeRO-3 semantics (parameters, gradients, and optimizer state all sharded across the group), and bf16 arrives via FSDP's `MixedPrecision` config rather than a separate autocast call — see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for why bf16, not fp16, is the default here (its wider dynamic range avoids the overflow failure mode in Stage 7 below).
 
 **Resuming.** `--ckpt-dir` and `--ckpt-every` control a full (unsharded) state-dict checkpoint, gathered onto rank 0 and written every `ckpt-every` steps — simple, and correct at the 8-GPU scale, but it pays a memory spike on rank 0 and does not save optimizer state. For a real multi-day run you want a *sharded* checkpoint (each rank writes only its slice, no single-host memory spike) that also captures the AdamW moment buffers and the data-loader's RNG position, so a restart is bit-continuous rather than restarting the LR schedule and optimizer momentum from cold — that machinery, built with `torch.distributed.checkpoint` and `FSDP.optim_state_dict`, is the subject of [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
+
+{{fig:pretrain-four-scale-ladder}}
 
 The multi-node command above is still pure data parallelism — every GPU still runs the *whole* forward/backward, just on a shard of the model's storage. At the point where a single node's aggregate memory can no longer hold even a `FULL_SHARD`-ed model comfortably, or the inter-node link becomes the bottleneck, you compose FSDP with tensor and pipeline parallelism (`HYBRID_SHARD` plus a device mesh with TP/PP axes) — developed in [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html) and made concrete with the Megatron-LM and DeepSpeed configuration files in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
 

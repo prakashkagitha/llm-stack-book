@@ -1,0 +1,216 @@
+<figure class="viz" id="fig-pretrain-four-scale-ladder">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 400" role="img" aria-label="The same train.py, same uint16 shard format, and same GPT/loss/cosine schedule run at four hardware scales -- laptop CPU, single GPU, 8-GPU node, and multi-node cluster -- with only the launch flags and the memory-sharding strategy changing: replicated model state on the first two scales, sharded 1/8 slivers per rank on the 8-GPU node with activations still unsharded, and shard-within-node plus slow inter-node gradient sync on the multi-node cluster.">
+<defs>
+  <marker id="pfsl-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#6b7280)"/>
+  </marker>
+  <marker id="pfsl-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-pretrain-four-scale-ladder text { fill: var(--ink-soft,#374151); font-family: var(--sans,sans-serif); }
+  #fig-pretrain-four-scale-ladder .hdr   { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-pretrain-four-scale-ladder .sub   { font: 500 7.4px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-pretrain-four-scale-ladder .rowlbl{ font: 700 7.4px var(--sans,sans-serif); fill: var(--muted,#9ca3af); text-transform: uppercase; letter-spacing: .3px; }
+  #fig-pretrain-four-scale-ladder .mono  { font: 500 6.6px var(--mono,monospace); fill: var(--ink-soft,#374151); }
+  #fig-pretrain-four-scale-ladder .seg   { font: 700 6.6px var(--mono,monospace); fill: var(--surface,#fff); }
+  #fig-pretrain-four-scale-ladder .cap   { font: 500 7px var(--sans,sans-serif); fill: var(--ink-soft,#374151); }
+  #fig-pretrain-four-scale-ladder .note  { font: 400 6.6px var(--sans,sans-serif); fill: var(--muted,#9ca3af); }
+  #fig-pretrain-four-scale-ladder .brk   { font: 600 7px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-pretrain-four-scale-ladder .hollow{ fill: var(--surface-3,#f3f4f6); stroke: var(--border-2,#d1d5db); stroke-width: 0.8; stroke-dasharray: 2 1.5; }
+  #fig-pretrain-four-scale-ladder .devbox{ fill: var(--surface,#fff); stroke: var(--border-2,#d1d5db); stroke-width: 1; }
+</style>
+
+
+<g data-anim="1">
+  <rect x="12" y="8" width="796" height="26" rx="7" fill="var(--surface-3,#f3f4f6)"/>
+  <text x="410" y="25" text-anchor="middle" style="font:700 9px var(--mono,monospace);fill:var(--ink-soft,#374151)">same train.py -- same uint16 shard format -- same GPT / loss / cosine schedule</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="12" y="40" width="10" height="10" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <text x="26" y="49" class="note">params</text>
+  <rect x="76" y="40" width="10" height="10" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+  <text x="90" y="49" class="note">grads</text>
+  <rect x="140" y="40" width="10" height="10" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <text x="154" y="49" class="note">optimizer state</text>
+  <rect x="252" y="40" width="10" height="10" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.8"/>
+  <text x="266" y="49" class="note">activations</text>
+  <rect x="352" y="40" width="10" height="10" rx="2" class="hollow"/>
+  <text x="366" y="49" class="note">not held by this rank</text>
+</g>
+
+
+<text x="9" y="230" text-anchor="middle" transform="rotate(-90 9 230)"
+      style="font:600 7.6px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">least sharding that fits: climb only as far as memory / network forces you</text>
+
+
+<g data-anim="2">
+  <text x="90" y="70" text-anchor="middle" class="hdr">Laptop / CPU toy</text>
+  <text x="90" y="80" text-anchor="middle" class="sub">1x device (CPU or MPS)</text>
+
+  <text x="20" y="94" class="rowlbl">launch</text>
+  <rect x="20" y="98" width="140" height="40" rx="6" class="devbox"/>
+  <text x="26" y="110" class="mono">torchrun</text>
+  <text x="26" y="119" class="mono">--nproc_per_node=1</text>
+  <text x="26" y="128" class="mono">--parallel ddp</text>
+  <text x="26" y="137" class="mono">--backend gloo</text>
+
+  <text x="20" y="150" class="rowlbl">what this device holds</text>
+  <rect x="24" y="154" width="132" height="66" rx="8" class="devbox"/>
+  <text x="30" y="164" class="note">model state (full copy)</text>
+  <rect x="30" y="168" width="120" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <text x="90" y="177" text-anchor="middle" class="seg">P</text>
+  <rect x="30" y="183" width="120" height="12" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+  <text x="90" y="192" text-anchor="middle" class="seg">G</text>
+  <rect x="30" y="198" width="120" height="12" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <text x="90" y="207" text-anchor="middle" class="seg">O</text>
+  <rect x="24" y="226" width="132" height="16" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.75"/>
+  <text x="90" y="237" text-anchor="middle" style="font:600 6.8px var(--sans,sans-serif);fill:var(--surface,#fff)">activations</text>
+
+  <text x="90" y="255" text-anchor="middle" class="cap">replicated: full copy</text>
+  <text x="90" y="264" text-anchor="middle" class="cap">per process</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="162" y1="185" x2="182" y2="185" stroke="var(--ink-soft,#6b7280)" stroke-width="1.3" marker-end="url(#pfsl-arrow)"/>
+</g>
+
+
+<g data-anim="2">
+  <text x="256" y="70" text-anchor="middle" class="hdr">Single GPU</text>
+  <text x="256" y="80" text-anchor="middle" class="sub">1x GPU</text>
+
+  <text x="186" y="94" class="rowlbl">launch</text>
+  <rect x="186" y="98" width="140" height="40" rx="6" class="devbox"/>
+  <text x="192" y="110" class="mono">torchrun</text>
+  <text x="192" y="119" class="mono">--nproc_per_node=1</text>
+  <text x="192" y="128" class="mono">--parallel ddp</text>
+
+  <text x="186" y="150" class="rowlbl">what this device holds</text>
+  <rect x="190" y="154" width="132" height="66" rx="8" class="devbox"/>
+  <text x="196" y="164" class="note">model state (full copy)</text>
+  <rect x="196" y="168" width="120" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <text x="256" y="177" text-anchor="middle" class="seg">P</text>
+  <rect x="196" y="183" width="120" height="12" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+  <text x="256" y="192" text-anchor="middle" class="seg">G</text>
+  <rect x="196" y="198" width="120" height="12" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <text x="256" y="207" text-anchor="middle" class="seg">O</text>
+  <rect x="190" y="226" width="132" height="16" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.75"/>
+  <text x="256" y="237" text-anchor="middle" style="font:600 6.8px var(--sans,sans-serif);fill:var(--surface,#fff)">activations</text>
+
+  <text x="256" y="255" text-anchor="middle" class="cap">replicated: full copy</text>
+  <text x="256" y="264" text-anchor="middle" class="cap">per process</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="328" y1="185" x2="419" y2="185" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#pfsl-arrow-accent)"/>
+  <text x="373" y="160" text-anchor="middle" class="brk">model state no longer fits</text>
+  <text x="373" y="170" text-anchor="middle" class="brk">one GPU -&gt; shard it</text>
+  <text x="373" y="200" text-anchor="middle" class="note">(DDP -&gt; FSDP)</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="491" y="70" text-anchor="middle" class="hdr">8-GPU node</text>
+  <text x="491" y="80" text-anchor="middle" class="sub">8x GPUs (NVLink)</text>
+
+  <text x="421" y="94" class="rowlbl">launch</text>
+  <rect x="421" y="98" width="140" height="40" rx="6" class="devbox"/>
+  <text x="427" y="110" class="mono">torchrun</text>
+  <text x="427" y="119" class="mono">--nproc_per_node=8</text>
+  <text x="427" y="128" class="mono">--parallel fsdp</text>
+  <text x="427" y="137" class="mono">(FULL_SHARD)</text>
+
+  <text x="421" y="150" class="rowlbl">what 1 of 8 ranks holds</text>
+  <rect x="425" y="154" width="132" height="66" rx="8" class="devbox"/>
+  <text x="431" y="164" class="note">model state (1/8 shard)</text>
+  
+  <rect x="431" y="168" width="120" height="12" rx="2" class="hollow"/>
+  <rect x="431" y="168" width="15" height="12" rx="2" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  
+  <rect x="431" y="183" width="120" height="12" rx="2" class="hollow"/>
+  <rect x="431" y="183" width="15" height="12" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+  
+  <rect x="431" y="198" width="120" height="12" rx="2" class="hollow"/>
+  <rect x="431" y="198" width="15" height="12" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <text x="551" y="177" text-anchor="end" style="font:600 6.4px var(--mono,monospace);fill:var(--muted,#9ca3af)">1/8</text>
+  
+  <rect x="425" y="226" width="132" height="16" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.75"/>
+  <text x="491" y="237" text-anchor="middle" style="font:600 6.8px var(--sans,sans-serif);fill:var(--surface,#fff)">activations (full, per-rank)</text>
+
+  <text x="491" y="255" text-anchor="middle" class="cap">sharded across 8 ranks</text>
+  <text x="491" y="264" text-anchor="middle" class="cap">(FULL_SHARD)</text>
+  <text x="491" y="276" text-anchor="middle" style="font:600 6.6px var(--sans,sans-serif);fill:var(--warn,#e0a106)">activations are NOT sharded by</text>
+  <text x="491" y="285" text-anchor="middle" style="font:600 6.6px var(--sans,sans-serif);fill:var(--warn,#e0a106)">data parallelism -- the usual OOM culprit</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="563" y1="185" x2="654" y2="185" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#pfsl-arrow-accent)"/>
+  <text x="608" y="152" text-anchor="middle" class="brk">inter-node all-gather</text>
+  <text x="608" y="162" text-anchor="middle" class="brk">becomes the bottleneck</text>
+  <text x="608" y="198" text-anchor="middle" class="note">keep param-gathers on NVLink</text>
+  <text x="608" y="207" text-anchor="middle" class="note">(FULL_SHARD -&gt; HYBRID_SHARD)</text>
+</g>
+
+
+<g data-anim="4">
+  <text x="726" y="70" text-anchor="middle" class="hdr">Multi-node cluster</text>
+  <text x="726" y="80" text-anchor="middle" class="sub">N nodes x 8 GPUs (InfiniBand)</text>
+
+  <text x="656" y="94" class="rowlbl">launch</text>
+  <rect x="656" y="98" width="140" height="40" rx="6" class="devbox"/>
+  <text x="662" y="110" class="mono">torchrun --nnodes=N</text>
+  <text x="662" y="119" class="mono">--node_rank=$RANK</text>
+  <text x="662" y="128" class="mono">--parallel fsdp</text>
+  <text x="662" y="137" class="mono">(HYBRID_SHARD)</text>
+
+  <text x="656" y="150" class="rowlbl">what each node holds</text>
+  <rect x="660" y="154" width="132" height="66" rx="8" class="devbox"/>
+
+  
+  <rect x="666" y="160" width="56" height="50" rx="5" fill="none" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="694" y="169" text-anchor="middle" style="font:600 5.8px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">node A</text>
+  <rect x="670" y="172" width="48" height="7" rx="1.5" class="hollow"/>
+  <rect x="670" y="172" width="6" height="7" rx="1.5" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <rect x="670" y="181" width="48" height="7" rx="1.5" class="hollow"/>
+  <rect x="670" y="181" width="6" height="7" rx="1.5" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+  <rect x="670" y="190" width="48" height="7" rx="1.5" class="hollow"/>
+  <rect x="670" y="190" width="6" height="7" rx="1.5" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="670" y="200" width="48" height="7" rx="1.5" fill="var(--good,#2f9e6e)" fill-opacity="0.75"/>
+
+  
+  <rect x="730" y="160" width="56" height="50" rx="5" fill="none" stroke="var(--border-2,#d1d5db)" stroke-width="1"/>
+  <text x="758" y="169" text-anchor="middle" style="font:600 5.8px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">node B</text>
+  <rect x="734" y="172" width="48" height="7" rx="1.5" class="hollow"/>
+  <rect x="734" y="172" width="6" height="7" rx="1.5" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <rect x="734" y="181" width="48" height="7" rx="1.5" class="hollow"/>
+  <rect x="734" y="181" width="6" height="7" rx="1.5" fill="var(--warn,#e0a106)" fill-opacity="0.9"/>
+  <rect x="734" y="190" width="48" height="7" rx="1.5" class="hollow"/>
+  <rect x="734" y="190" width="6" height="7" rx="1.5" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <rect x="734" y="200" width="48" height="7" rx="1.5" fill="var(--good,#2f9e6e)" fill-opacity="0.75"/>
+
+  
+  <line x1="722" y1="184.5" x2="730" y2="184.5" stroke="var(--warn,#e0a106)" stroke-width="1.4" stroke-dasharray="2 1.5"/>
+
+  <text x="726" y="255" text-anchor="middle" class="cap">shard intra-node (NVLink),</text>
+  <text x="726" y="264" text-anchor="middle" class="cap">sync grads across nodes</text>
+  <text x="726" y="276" text-anchor="middle" style="font:600 6.6px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">HYBRID_SHARD: only the lighter</text>
+  <text x="726" y="285" text-anchor="middle" style="font:600 6.6px var(--sans,sans-serif);fill:var(--muted,#9ca3af)">grad sync crosses the slow inter-node link</text>
+</g>
+
+<style>
+@media (prefers-reduced-motion: reduce) {
+  #fig-pretrain-four-scale-ladder [data-anim] { opacity: 1 !important; animation: none !important; }
+}
+</style>
+</svg>
+<figcaption><b>One <code>train.py</code>, four hardware tiers: only the launch flags and the sharding strategy change, never the code.</b> Model state (params/grads/optimizer-state) stays fully replicated as long as it fits one GPU; past that, DDP gives way to FSDP <code>FULL_SHARD</code> (1/N slivers per rank, while activations stay unsharded and are the usual OOM culprit); past one node, <code>HYBRID_SHARD</code> keeps the expensive parameter all-gathers on fast intra-node NVLink and only syncs the cheaper gradients across the slow inter-node link — climb only as far as memory or network actually force you.</figcaption>
+</figure>

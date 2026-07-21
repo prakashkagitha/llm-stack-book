@@ -85,6 +85,8 @@ If the large gradient is *new* (not predicted by the historical $\hat{v}_t$), th
 
     **With gradient clipping** at global norm $\tau = 1.0$: during the spike the *global* gradient norm is large — say $\|g\| \approx 10$ — so clipping rescales every gradient by $\tau/\|g\| \approx 0.1$, dropping this parameter's gradient from $1.0$ to $\approx 0.1$. The update becomes $\alpha\,(1-\beta_1)\times 0.1 / \sqrt{\hat{v}} = 3\times10^{-4}$, i.e. **~10x normal** instead of 100x — an order of magnitude of damage removed, survivable in most cases.
 
+{{fig:adam-spike-amplification}}
+
 ---
 
 ## Root Causes of Instability
@@ -181,6 +183,8 @@ The input embedding matrix is updated on every step via the language model head 
 ## Architectural Mitigations
 
 Modern LLM architectures have baked in a portfolio of stability techniques. Understanding each one individually helps you reason about which to apply when you start from scratch or debug an existing run.
+
+{{fig:spike-causal-chain-mitigations}}
 
 ### QK-Norm
 

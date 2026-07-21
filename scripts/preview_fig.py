@@ -42,13 +42,20 @@ text{{fill:{ink_soft};}}
 
 
 def resolve_vars(s, pal):
-    # var(--name, fallback) -> fallback ; var(--name) -> palette[name] or currentColor
+    # var(--name, fallback) -> palette[name] if name is a known theme token
+    # (in real CSS the var is always defined by the site stylesheet, so the
+    # fallback never actually fires -- using it unconditionally here would
+    # make every themed color render identically in both light and dark
+    # previews); var(--name) with no fallback, or an unrecognized name, ->
+    # palette[name] or the literal fallback or "#888".
     def repl(m):
         name = m.group(1).strip()
         fb = m.group(2)
+        if name in pal:
+            return pal[name]
         if fb is not None:
             return fb.strip()
-        return pal.get(name, "#888")
+        return "#888"
     s = re.sub(r"var\(\s*--([a-z0-9\-]+)\s*(?:,\s*([^)]+))?\)", repl, s)
     return s
 

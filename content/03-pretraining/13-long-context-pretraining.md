@@ -167,6 +167,8 @@ print(f"YaRN freq range at pos 32768:    [{yarn_freqs[-1].min():.4f}, {yarn_freq
 
     **YaRN** with $\beta_{\text{fast}} = 32$ applies *no scaling* to the highest-frequency dimension (its wavelength $\lambda_0 = 2\pi \approx 6.3$ is far below the original context 4096), so nearby tokens remain distinguishable. It applies full NTK-style scaling only to low-frequency dimensions that actually need longer range. The result is the best of both worlds.
 
+{{fig:longctx-rope-extension-spectrum}}
+
 ---
 
 ## Continued Pretraining on Long Documents
@@ -381,6 +383,8 @@ Step 2: Repeat for N-1 total rounds.
 After N rounds, each GPU has accumulated the full softmax-normalised
 attention output for its Q chunk.
 ```
+
+{{fig:longctx-ring-attention-rotation}}
 
 The key algorithmic insight is that FlashAttention's *online softmax accumulation* is associative: you can accumulate the numerator sums and the log-sum-exp denominators independently across rounds and produce the exact same result as if all KV blocks were available at once. No approximation is involved.
 
