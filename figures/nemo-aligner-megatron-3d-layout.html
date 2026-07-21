@@ -1,5 +1,5 @@
 <figure class="viz" id="fig-nemo-aligner-megatron-3d-layout">
-<svg viewBox="0 0 860 530" role="img" aria-label="NeMo-Aligner process layout: a Policy Trainer using Megatron 3D parallelism with TP=4, PP=4, DP=4 across 64 GPUs sits above a separate TRT-LLM Rollout Engine GPU partition. An NCCL broadcast arrow transfers weights from the policy trainer down to the rollout engine after each update epoch.">
+<svg viewBox="0 0 860 440" role="img" aria-label="NeMo-Aligner process layout: a Policy Trainer using Megatron 3D parallelism with TP=4, PP=4, DP=4 across 64 GPUs sits above a separate TRT-LLM Rollout Engine GPU partition. An NCCL broadcast arrow transfers weights from the policy trainer down to the rollout engine after each update epoch.">
 <defs>
   <marker id="nma-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
     <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#d97706)"/>
@@ -117,24 +117,17 @@
 <line x1="430" y1="252" x2="430" y2="305"
       stroke="var(--accent,#d97706)" stroke-width="3.2"
       marker-end="url(#nma-arr-acc)"/>
-<text x="438" y="269" class="acc-lbl">NCCL broadcast</text>
-<text x="438" y="284" class="acc-lbl" style="font-size:9.5px; font-weight:400">weights copied after each update epoch</text>
-<text x="438" y="298" class="cap" style="font-size:9px">send/recv activations via NCCL</text>
+<text x="422" y="274" text-anchor="end" class="acc-lbl" style="font-size:11.5px">NCCL broadcast</text>
+<text x="422" y="288" text-anchor="end" class="cap" style="font-size:9.5px">policy weights copied after each update epoch</text>
 
 
-<rect x="22" y="308" width="816" height="184" rx="12"
+<rect x="22" y="308" width="816" height="106" rx="12"
       fill="var(--accent2,#3b82f6)" fill-opacity="0.08"
       stroke="var(--accent2,#3b82f6)" stroke-width="2"/>
 <text x="36" y="332" class="lbl">TRT-LLM ROLLOUT ENGINE  (separate GPU partition)</text>
-<text x="430" y="358" text-anchor="middle" class="sub">Weights copied via NCCL broadcast from policy trainer</text>
-<text x="430" y="375" text-anchor="middle" class="sub">after each update epoch — topology fixed at initialization</text>
-<text x="430" y="394" text-anchor="middle" class="sub">Generates with FP16 / INT8; compiled TensorRT engine</text>
-<text x="430" y="413" text-anchor="middle" class="sub" style="font-style:italic">No dynamic Ray task graph — static SPMD NCCL topology</text>
-<text x="430" y="432" text-anchor="middle" class="sub" style="font-style:italic">Lower gradient-sync latency; less flexibility for heterogeneous roles</text>
-
-
-<text x="430" y="460" text-anchor="middle" class="cap" style="font-style:italic; font-size:10px">STATIC TOPOLOGY: vs. OpenRLHF — NeMo-Aligner uses NCCL only, no Ray object store, communication plan known at init</text>
-<text x="430" y="478" text-anchor="middle" class="cap" style="font-style:italic; font-size:10px">This trades dynamic flexibility for deterministic NCCL latency — all four components (policy, critic, RM, ref) share this topology</text>
+<text x="430" y="358" text-anchor="middle" class="sub">Compiled TensorRT-LLM engine (FP16 / INT8)</text>
+<text x="430" y="378" text-anchor="middle" class="sub">Weights copied via NCCL broadcast after each update epoch</text>
+<text x="430" y="398" text-anchor="middle" class="sub">Static SPMD topology — fixed at initialization</text>
 
 </svg>
 <figcaption><b>NeMo-Aligner uses a static Megatron-LM 3D parallel topology: tensor parallelism (TP=4) splits within each layer, pipeline parallelism (PP=4) splits across layers, and data parallelism (DP=4) replicates the whole grid across 64 GPUs.</b> After each policy update, weights are broadcast via NCCL (amber arrow) to a separate TRT-LLM Rollout Engine partition. Unlike OpenRLHF's dynamic Ray actor graph, this communication topology is fixed at initialization — providing lower gradient-sync latency at the cost of flexibility for heterogeneous role layouts.</figcaption>
