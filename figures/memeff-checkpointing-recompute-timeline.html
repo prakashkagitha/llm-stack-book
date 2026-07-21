@@ -1,0 +1,184 @@
+<figure class="viz" id="fig-memeff-checkpointing-recompute-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 548" role="img" aria-label="Two stacked charts of activation memory versus time across forward and backward pass. Top: storing every layer's activations rises step by step to a peak of O(L) memory at the forward/backward boundary then drains back down, piercing a GPU memory limit line. Bottom: checkpointing only sqrt(L) layer boundaries keeps memory low and roughly flat, with small bumps during forward and larger recompute bumps during backward as each checkpointed segment is re-run before its gradients flow, staying under the same memory limit. A shared layer track below shows checkpoint pins at layers 3, 6 and 9.">
+<style>
+  #fig-memeff-checkpointing-recompute-timeline text { fill: var(--ink-soft); }
+  #fig-memeff-checkpointing-recompute-timeline .ttl   { font: 700 15px var(--sans,sans-serif); }
+  #fig-memeff-checkpointing-recompute-timeline .panel-hdr { font: 700 13px var(--sans,sans-serif); }
+  #fig-memeff-checkpointing-recompute-timeline .note  { font: 600 11px var(--sans,sans-serif); }
+  #fig-memeff-checkpointing-recompute-timeline .note-sm { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-memeff-checkpointing-recompute-timeline .axis-lbl { font: 600 12px var(--sans,sans-serif); }
+  #fig-memeff-checkpointing-recompute-timeline .track-num { font: 700 10px var(--mono,monospace); }
+  #fig-memeff-checkpointing-recompute-timeline .rot { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-memeff-checkpointing-recompute-timeline .legend { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+
+<text x="410" y="20" text-anchor="middle" class="ttl">Activation memory across forward + backward: store everything vs. checkpoint at sqrt(L)</text>
+
+
+<text x="70" y="52" class="panel-hdr">Store everything (baseline)</text>
+<text x="26" y="130" text-anchor="middle" class="rot" transform="rotate(-90 26 130)">memory</text>
+
+<g data-anim="1">
+  <path d="M 70,190 L 70,176.7 L 104,176.7 L 104,163.3 L 138,163.3 L 138,150.0 L 172,150.0 L 172,136.7 L 206,136.7 L 206,123.3 L 240,123.3 L 240,110.0 L 274,110.0 L 274,96.7 L 308,96.7 L 308,83.3 L 342,83.3 L 342,70.0 L 376,70.0 L 376,83.3 L 410,83.3 L 410,96.7 L 444,96.7 L 444,110.0 L 478,110.0 L 478,123.3 L 512,123.3 L 512,136.7 L 546,136.7 L 546,150.0 L 580,150.0 L 580,163.3 L 614,163.3 L 614,176.7 L 648,176.7 L 648,190.0 L 682,190.0 L 682,190 Z"
+        fill="var(--v-fill,#ece7da)" fill-opacity="0.85" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+</g>
+
+
+<line x1="60" y1="103.3" x2="700" y2="103.3" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="706" y="99" class="note-sm" fill="var(--warn,#e0a106)">GPU memory</text>
+<text x="706" y="111" class="note-sm" fill="var(--warn,#e0a106)">limit</text>
+
+
+<g data-anim="2">
+  <line x1="690" y1="58" x2="368" y2="72" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="3 2"/>
+  <rect x="690" y="40" width="122" height="38" rx="6" fill="var(--v-fill,#ece7da)" fill-opacity="0.7" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="751" y="55" text-anchor="middle" class="note">O(L) memory,</text>
+  <text x="751" y="69" text-anchor="middle" class="note">0 extra compute</text>
+</g>
+
+<line x1="60" y1="196" x2="700" y2="196" stroke="var(--v-grid,#d8d1c0)" stroke-width="1"/>
+
+
+<text x="70" y="244" class="panel-hdr">Checkpoint at sqrt(L)  (k = 3 checkpoints, at layers 3, 6, 9)</text>
+<text x="26" y="320" text-anchor="middle" class="rot" transform="rotate(-90 26 320)">memory</text>
+
+<g data-anim="3">
+  <path d="M 70,380 L 70,380.0 L 104,380.0 L 104,380.0 L 138,380.0 L 138,380.0 L 172,380.0 L 172,366.7 L 206,366.7 L 206,366.7 L 240,366.7 L 240,366.7 L 274,366.7 L 274,353.3 L 308,353.3 L 308,353.3 L 342,353.3 L 342,353.3 L 376,353.3 L 376,340.0 L 410,340.0 L 410,340.0 L 444,340.0 L 444,340.0 L 478,340.0 L 478,353.3 L 512,353.3 L 512,353.3 L 546,353.3 L 546,353.3 L 580,353.3 L 580,366.7 L 614,366.7 L 614,366.7 L 648,366.7 L 648,366.7 L 682,366.7 L 682,380 Z"
+        fill="var(--v-fill,#ece7da)" fill-opacity="0.85" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+</g>
+
+
+<g data-anim="4">
+  <path d="M 138,380.0 L 155,366.7 L 172,366.7" fill="none" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+  <path d="M 240,366.7 L 257,353.3 L 274,353.3" fill="none" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+  <path d="M 342,353.3 L 359,340.0 L 376,340.0" fill="none" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+</g>
+
+
+<g data-anim="5">
+  <path d="M 376,340.0 L 393,313.3 L 410,340.0 Z" fill="var(--accent,#c15b39)" fill-opacity="0.75" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <path d="M 478,353.3 L 495,326.7 L 512,353.3 Z" fill="var(--accent,#c15b39)" fill-opacity="0.75" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <path d="M 580,366.7 L 597,340.0 L 614,366.7 Z" fill="var(--accent,#c15b39)" fill-opacity="0.75" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+</g>
+
+
+<line x1="60" y1="293.3" x2="700" y2="293.3" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="706" y="289" class="note-sm" fill="var(--warn,#e0a106)">GPU memory</text>
+<text x="706" y="301" class="note-sm" fill="var(--warn,#e0a106)">limit</text>
+
+
+<g data-anim="4">
+  <line x1="150" y1="300" x2="100" y2="374" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="3 2"/>
+  <rect x="94" y="266" width="150" height="36" rx="6" fill="var(--v-fill,#ece7da)" fill-opacity="0.7" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="169" y="281" text-anchor="middle" class="note">O(sqrt(L)) memory:</text>
+  <text x="169" y="295" text-anchor="middle" class="note">low and roughly flat</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="520" y1="272" x2="398" y2="316" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+  <rect x="520" y="248" width="150" height="36" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.1" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+  <text x="595" y="263" text-anchor="middle" class="note" fill="var(--accent,#c15b39)">recompute segment</text>
+  <text x="595" y="277" text-anchor="middle" class="note" fill="var(--accent,#c15b39)">(+~33% compute)</text>
+</g>
+
+<line x1="60" y1="386" x2="700" y2="386" stroke="var(--v-grid,#d8d1c0)" stroke-width="1"/>
+
+
+<text x="220" y="404" text-anchor="middle" class="axis-lbl">forward pass -&gt;</text>
+<text x="530" y="404" text-anchor="middle" class="axis-lbl">&lt;- backward pass</text>
+<line x1="60" y1="414" x2="700" y2="414" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+
+
+<line x1="376" y1="60" x2="376" y2="482" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="4 4" opacity="0.4"/>
+
+
+<g data-anim="5">
+  <path d="M 376,450 Q 427,430 478,450" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#mrt-arrow)"/>
+</g>
+<defs>
+  <marker id="mrt-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+
+
+<g font-family="var(--mono,monospace)">
+  
+  <g>
+    <rect x="70"  y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="87" y="474" text-anchor="middle" class="track-num">1</text>
+    <rect x="104" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="121" y="474" text-anchor="middle" class="track-num">2</text>
+    <rect x="138" y="456" width="34" height="28" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="155" y="474" text-anchor="middle" class="track-num" fill="var(--accent,#c15b39)">3</text>
+    <rect x="172" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="189" y="474" text-anchor="middle" class="track-num">4</text>
+    <rect x="206" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="223" y="474" text-anchor="middle" class="track-num">5</text>
+    <rect x="240" y="456" width="34" height="28" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="257" y="474" text-anchor="middle" class="track-num" fill="var(--accent,#c15b39)">6</text>
+    <rect x="274" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="291" y="474" text-anchor="middle" class="track-num">7</text>
+    <rect x="308" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="325" y="474" text-anchor="middle" class="track-num">8</text>
+    <rect x="342" y="456" width="34" height="28" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="359" y="474" text-anchor="middle" class="track-num" fill="var(--accent,#c15b39)">9</text>
+  </g>
+  
+  <g>
+    <rect x="376" y="456" width="34" height="28" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="393" y="474" text-anchor="middle" class="track-num" fill="var(--accent,#c15b39)">9</text>
+    <rect x="410" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="427" y="474" text-anchor="middle" class="track-num">8</text>
+    <rect x="444" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="461" y="474" text-anchor="middle" class="track-num">7</text>
+    <rect x="478" y="456" width="34" height="28" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="495" y="474" text-anchor="middle" class="track-num" fill="var(--accent,#c15b39)">6</text>
+    <rect x="512" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="529" y="474" text-anchor="middle" class="track-num">5</text>
+    <rect x="546" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="563" y="474" text-anchor="middle" class="track-num">4</text>
+    <rect x="580" y="456" width="34" height="28" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="597" y="474" text-anchor="middle" class="track-num" fill="var(--accent,#c15b39)">3</text>
+    <rect x="614" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="631" y="474" text-anchor="middle" class="track-num">2</text>
+    <rect x="648" y="456" width="34" height="28" class="v-fill" fill-opacity="0.5" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="665" y="474" text-anchor="middle" class="track-num">1</text>
+  </g>
+</g>
+
+
+<g fill="var(--accent,#c15b39)">
+  <path d="M 172,456 L 172,438 L 179,438 L 179,450 L 172,456 L 165,450 L 165,438 L 172,438" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+</g>
+<g transform="translate(102,0)" fill="var(--accent,#c15b39)">
+  <path d="M 172,456 L 172,438 L 179,438 L 179,450 L 172,456 L 165,450 L 165,438 L 172,438" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+</g>
+<g transform="translate(204,0)" fill="var(--accent,#c15b39)">
+  <path d="M 172,456 L 172,438 L 179,438 L 179,450 L 172,456 L 165,450 L 165,438 L 172,438" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+</g>
+<g transform="translate(306,0)" fill="var(--accent,#c15b39)">
+  <path d="M 172,456 L 172,438 L 179,438 L 179,450 L 172,456 L 165,450 L 165,438 L 172,438" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+</g>
+<g transform="translate(408,0)" fill="var(--accent,#c15b39)">
+  <path d="M 172,456 L 172,438 L 179,438 L 179,450 L 172,456 L 165,450 L 165,438 L 172,438" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+</g>
+
+
+<g class="legend">
+  <path d="M 76,510 L 76,496 L 83,496 L 83,504 L 76,510 L 69,504 L 69,496 L 76,496" fill="var(--accent,#c15b39)" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+  <text x="92" y="507">checkpoint pin (stored tensor)</text>
+  <path d="M 330,508 L 344,492 L 358,508 Z" fill="var(--accent,#c15b39)" fill-opacity="0.75" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+  <text x="366" y="507">recompute bump</text>
+  <line x1="510" y1="501" x2="534" y2="501" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="540" y="505">GPU memory limit</text>
+
+  <path d="M 62,530 Q 80,516 98,530" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+  <text x="106" y="533">recompute arc: segment re-run forward before its grads flow</text>
+</g>
+
+</svg>
+<figcaption><b>Checkpointing trades a low, flat memory footprint for a burst of recompute in backward.</b> Storing every layer's activations (top) climbs step by step to a peak of O(L) memory at the forward/backward boundary and pierces the GPU memory limit; checkpointing only sqrt(L) layer boundaries (bottom, pins at layers 3, 6, 9) keeps memory low and roughly flat, paying for it with a recompute bump each time backward re-runs a checkpointed segment before its gradients can flow.</figcaption>
+</figure>

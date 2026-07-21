@@ -1,0 +1,144 @@
+<figure class="viz" id="fig-memeff-lora-memory-collapse">
+<svg viewBox="0 0 820 580" role="img" aria-label="Left: LoRA factorization geometry showing a large frozen weight matrix W with a small side path of tall B and wide A meeting at a narrow rank-r waist, only B and A trainable. Right: three stacked bars comparing memory of full fine-tuning, LoRA, and QLoRA, showing the optimizer-state slab collapsing to a sliver once the base model is frozen.">
+  <style>
+    #fig-memeff-lora-memory-collapse text { fill: var(--ink-soft); }
+    #fig-memeff-lora-memory-collapse .hdr    { font: 700 14px var(--sans,sans-serif); }
+    #fig-memeff-lora-memory-collapse .lbl    { font: 700 13px var(--mono,monospace); }
+    #fig-memeff-lora-memory-collapse .dim    { font: 500 11px var(--mono,monospace); fill: var(--muted,#6d675d); }
+    #fig-memeff-lora-memory-collapse .note   { font: 500 11.5px var(--sans,sans-serif); }
+    #fig-memeff-lora-memory-collapse .note-b { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-memeff-lora-memory-collapse .badge  { font: 700 9.5px var(--sans,sans-serif); }
+    #fig-memeff-lora-memory-collapse .bar-lbl{ font: 700 12px var(--sans,sans-serif); }
+    #fig-memeff-lora-memory-collapse .slab-t { font: 700 10px var(--mono,monospace); }
+    #fig-memeff-lora-memory-collapse .legend { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-memeff-lora-memory-collapse .frozen-stamp { font: 800 13px var(--sans,sans-serif); letter-spacing: 1px; }
+  </style>
+  <defs>
+    <marker id="lc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+
+  
+  <text x="195" y="24" text-anchor="middle" class="hdr">Delta W = B A  (rank-r factorization)</text>
+
+  
+  <g data-anim="1">
+    <rect x="40" y="46" width="190" height="190" rx="6" class="v-fill" fill-opacity="0.6" stroke="var(--v-stroke,#45413a)" stroke-width="1.6"/>
+    
+    <rect x="55" y="120" width="160" height="30" rx="5" fill="var(--v-stroke,#45413a)" fill-opacity="0.12" stroke="var(--v-stroke,#45413a)" stroke-width="1" transform="rotate(-14 135 135)"/>
+    <text x="135" y="141" text-anchor="middle" class="frozen-stamp" fill="var(--muted,#6d675d)" transform="rotate(-14 135 135)">FROZEN</text>
+    <text x="135" y="76" text-anchor="middle" class="lbl">W</text>
+    <text x="135" y="94" text-anchor="middle" class="dim">d x k</text>
+    <text x="135" y="212" text-anchor="middle" class="note" fill="var(--muted,#6d675d)">no grad</text>
+  </g>
+
+  
+  <g data-anim="2">
+    
+    <rect x="300" y="52" width="122" height="18" rx="9" fill="var(--accent,#c15b39)" fill-opacity="0.16" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+    <text x="361" y="65" text-anchor="middle" class="badge" fill="var(--accent,#c15b39)">trainable / has grad</text>
+
+    <rect x="256" y="66" width="22" height="130" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+    <text x="267" y="90" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">B</text>
+    <text x="300" y="112" text-anchor="start" class="dim" fill="var(--accent,#c15b39)">d x r</text>
+
+    <rect x="256" y="196" width="140" height="22" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+    <text x="326" y="233" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">A</text>
+    <text x="326" y="249" text-anchor="middle" class="dim" fill="var(--accent,#c15b39)">r x k</text>
+
+    
+    <line x1="278" y1="196" x2="300" y2="170" stroke="var(--muted,#6d675d)" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="330" y="176" class="note" fill="var(--muted,#6d675d)">waist = r, r &lt;&lt; d</text>
+  </g>
+
+  
+  <g data-anim="2" opacity="0.85">
+    <path d="M 240,256 L 267,256 L 267,218" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.4" marker-end="url(#lc-arrow)"/>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="30" y="252" width="360" height="60" rx="7" fill="var(--v-fill,#ece7da)" fill-opacity="0.55" stroke="var(--border-2,#d8d1c0)" stroke-width="1.1"/>
+    <text x="46" y="272" class="note-b">Trainable params: r(d+k)  vs.  dk for full fine-tuning</text>
+    <text x="46" y="292" class="note">Compression: rho = r(d+k)/dk ~ r/d  (~0.4% for typical r, d)</text>
+  </g>
+
+  <text x="30" y="336" class="hdr" font-size="13">Only B and A are trained -- W never receives a gradient.</text>
+
+  
+  <line x1="404" y1="16" x2="404" y2="564" stroke="var(--v-grid,#d8d1c0)" stroke-width="1" stroke-dasharray="4 4"/>
+
+  
+  <text x="612" y="24" text-anchor="middle" class="hdr">Training memory: same slab coding as the 16P budget</text>
+
+  
+  <g class="legend">
+    <rect x="425" y="38" width="12" height="10" rx="2" class="v-fill" fill-opacity="0.6" stroke="var(--v-stroke,#45413a)" stroke-width="1"/>
+    <text x="441" y="47">weights / master / grads</text>
+    <rect x="605" y="38" width="12" height="10" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.85" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+    <text x="621" y="47">optimizer state (Adam)</text>
+  </g>
+
+  
+  <line x1="420" y1="460" x2="800" y2="460" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+
+  
+  <g data-anim="4">
+    <rect x="440" y="430" width="80" height="30"  class="v-fill" fill-opacity="0.7" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+    <text x="480" y="450" text-anchor="middle" class="slab-t">2P</text>
+    <rect x="440" y="370" width="80" height="60"  class="v-fill" fill-opacity="0.7" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+    <text x="480" y="404" text-anchor="middle" class="slab-t">4P</text>
+    <rect x="440" y="340" width="80" height="30"  class="v-fill" fill-opacity="0.7" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+    <text x="480" y="360" text-anchor="middle" class="slab-t">2P</text>
+    <rect x="440" y="220" width="80" height="120" fill="var(--accent,#c15b39)" fill-opacity="0.85" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="480" y="285" text-anchor="middle" class="slab-t" fill="var(--surface,#fff)">8P</text>
+    <text x="480" y="475" text-anchor="middle" class="bar-lbl">Full fine-tune</text>
+    <text x="480" y="491" text-anchor="middle" class="dim">16P total</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="580" y="430" width="80" height="30" class="v-fill" fill-opacity="0.35" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+    <text x="620" y="450" text-anchor="middle" class="slab-t" fill="var(--muted,#6d675d)">2P frozen</text>
+
+    <rect x="580" y="422" width="80" height="8" fill="var(--accent,#c15b39)" fill-opacity="0.45" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+    <rect x="580" y="412" width="80" height="10" fill="var(--accent,#c15b39)" fill-opacity="0.65" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+    <rect x="580" y="392" width="80" height="20" fill="var(--accent,#c15b39)" fill-opacity="0.9" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+
+    <text x="620" y="475" text-anchor="middle" class="bar-lbl">LoRA</text>
+    <text x="620" y="491" text-anchor="middle" class="dim">base + tiny slivers</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <rect x="720" y="452" width="80" height="8" class="v-fill" fill-opacity="0.35" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+
+    <rect x="720" y="444" width="80" height="8" fill="var(--accent,#c15b39)" fill-opacity="0.45" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+    <rect x="720" y="434" width="80" height="10" fill="var(--accent,#c15b39)" fill-opacity="0.65" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+    <rect x="720" y="414" width="80" height="20" fill="var(--accent,#c15b39)" fill-opacity="0.9" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+
+    <text x="760" y="475" text-anchor="middle" class="bar-lbl">QLoRA</text>
+    <text x="760" y="491" text-anchor="middle" class="dim" font-size="9.5">P/2, 4-bit base</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <path d="M 664 422 Q 676 422 676 412 L 676 396 Q 676 386 688 386"
+          fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="694" y="388" class="note" fill="var(--accent,#c15b39)" font-size="10.5">2*|theta_LoRA| +</text>
+    <text x="694" y="400" class="note" fill="var(--accent,#c15b39)" font-size="10.5">8*|theta_LoRA|</text>
+    <text x="694" y="412" class="note" fill="var(--accent,#c15b39)" font-size="10.5">~ (r/d) of full</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <path d="M 524,280 Q 552,330 578,404" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" stroke-dasharray="2 3" marker-end="url(#lc-arrow)"/>
+    <rect x="420" y="520" width="300" height="40" rx="7" fill="var(--accent,#c15b39)" fill-opacity="0.1" stroke="var(--accent,#c15b39)" stroke-width="1.1"/>
+    <text x="570" y="536" text-anchor="middle" class="note-b" fill="var(--accent,#c15b39)">frozen =&gt; 0 optimizer state:</text>
+    <text x="570" y="552" text-anchor="middle" class="note-b" fill="var(--accent,#c15b39)">~99.6% of it gone</text>
+  </g>
+
+</svg>
+<figcaption><b>Freezing the base collapses the optimizer state, not just the parameter count.</b> LoRA leaves the large matrix W untouched (left) and trains only the rank-r factors B and A, whose parameter count scales as r(d+k) instead of dk. On the memory side (right), because W never gets a gradient, the massive 8P Adam slab of full fine-tuning shrinks to a sliver sized by the adapter parameters alone; QLoRA compounds this by quantizing the frozen base itself to 4-bit NF4.</figcaption>
+</figure>

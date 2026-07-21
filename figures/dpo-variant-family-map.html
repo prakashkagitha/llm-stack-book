@@ -1,0 +1,128 @@
+<figure class="viz" id="fig-dpo-variant-family-map">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 800" role="img" aria-label="Hub-and-spoke map with DPO at the center, tagged with its reward, loss, reference-model, and paired-data attributes, and five spokes -- IPO, KTO, ORPO, SimPO, CPO -- each showing only what changes relative to DPO, with a dividing guide separating the methods that keep a reference model (DPO, IPO, KTO) from those that drop it (ORPO, SimPO, CPO), and a decision-tree ribbon along the bottom.">
+<defs>
+  <marker id="dvf-dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4">
+    <circle cx="5" cy="5" r="4" fill="var(--muted,#888)"/>
+  </marker>
+</defs>
+<style>
+  #fig-dpo-variant-family-map text        { fill: var(--ink-soft,#333); }
+  #fig-dpo-variant-family-map .ttl        { font: 700 15px var(--sans,sans-serif); }
+  #fig-dpo-variant-family-map .hub-t      { font: 700 18px var(--sans,sans-serif); }
+  #fig-dpo-variant-family-map .hub-sub    { font: 400 10px var(--sans,sans-serif); font-style: italic; fill: var(--muted,#777); }
+  #fig-dpo-variant-family-map .hub-row    { font: 600 10px var(--mono,monospace); }
+  #fig-dpo-variant-family-map .node-t     { font: 700 14px var(--sans,sans-serif); }
+  #fig-dpo-variant-family-map .node-badge { font: 700 9.5px var(--sans,sans-serif); font-style: italic; fill: var(--accent,#c15b39); }
+  #fig-dpo-variant-family-map .row-chg    { font: 700 9px var(--mono,monospace); fill: var(--accent,#c15b39); }
+  #fig-dpo-variant-family-map .row-grey   { font: 500 9px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-dpo-variant-family-map .div-lbl    { font: 700 11px var(--sans,sans-serif); }
+  #fig-dpo-variant-family-map .rib-h      { font: 700 12px var(--sans,sans-serif); }
+  #fig-dpo-variant-family-map .rib-txt    { font: 600 9.5px var(--sans,sans-serif); }
+  #fig-dpo-variant-family-map .rib-ans    { font: 700 9.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-dpo-variant-family-map .node-box   { fill: var(--surface,#fff); stroke: var(--border-2,#ccc); stroke-width: 1.3; }
+  #fig-dpo-variant-family-map .hub-box    { fill: var(--surface,#fff); stroke: var(--accent,#c15b39); stroke-width: 2; }
+  #fig-dpo-variant-family-map .spoke-line { stroke: var(--muted,#999); stroke-width: 1.3; }
+  #fig-dpo-variant-family-map .kto-unpaired { font: 700 8.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+</style>
+
+<text x="400" y="20" text-anchor="middle" class="ttl">DPO's family: five orthogonal design choices, one hub</text>
+
+
+<line x1="535" y1="42" x2="535" y2="655" stroke="var(--border-2,#bbb)" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="270" y="248" text-anchor="middle" class="div-lbl">&lt;- KEEP a reference model (pi_ref)</text>
+<text x="665" y="248" text-anchor="middle" class="div-lbl">DROP the reference (reference-free) -&gt;</text>
+
+
+<g data-anim="2">
+  <line class="spoke-line" x1="280" y1="300" x2="250" y2="156" marker-end="url(#dvf-dot)" marker-start="url(#dvf-dot)"/>
+  <rect x="20" y="90" width="230" height="132" rx="10" class="node-box"/>
+  <text x="35" y="112" class="node-t">IPO</text>
+  <text x="35" y="127" class="node-badge">finite margin, noise-robust</text>
+  <text x="35" y="147" class="row-grey">reward: same log-ratio as DPO</text>
+  <text x="35" y="163" class="row-chg">loss: squared error to 1/(2 beta)</text>
+  <text x="35" y="179" class="row-grey">reference: YES</text>
+  <text x="35" y="195" class="row-grey">paired: YES</text>
+
+  <line class="spoke-line" x1="280" y1="410" x2="250" y2="500" marker-end="url(#dvf-dot)" marker-start="url(#dvf-dot)"/>
+  <rect x="20" y="430" width="230" height="140" rx="10" class="node-box" stroke-dasharray="6 3"/>
+  <text x="35" y="452" class="node-t">KTO</text>
+  <text x="215" y="452" text-anchor="end" class="kto-unpaired">UNPAIRED</text>
+  <text x="35" y="467" class="node-badge">unpaired thumbs up/down</text>
+  <text x="35" y="487" class="row-grey">reward: beta log(pi/pi_ref)</text>
+  <text x="35" y="503" class="row-chg">loss: prospect-theory value vs z0</text>
+  <text x="35" y="519" class="row-grey">reference: YES</text>
+  <text x="35" y="535" class="row-chg">paired: NO (thumbs up/down)</text>
+</g>
+
+
+<g data-anim="3">
+  <line class="spoke-line" x1="520" y1="300" x2="550" y2="96" marker-end="url(#dvf-dot)" marker-start="url(#dvf-dot)"/>
+  <rect x="550" y="30" width="230" height="132" rx="10" class="node-box"/>
+  <text x="565" y="52" class="node-t">ORPO</text>
+  <text x="565" y="67" class="node-badge">single stage, fused with SFT</text>
+  <text x="565" y="87" class="row-chg">reward: log-odds ratio</text>
+  <text x="565" y="103" class="row-chg">loss: SFT NLL + log-sigmoid(OR)</text>
+  <text x="565" y="119" class="row-chg">reference: NO</text>
+  <text x="565" y="135" class="row-grey">paired: YES</text>
+
+  <line class="spoke-line" x1="520" y1="355" x2="550" y2="336" marker-end="url(#dvf-dot)" marker-start="url(#dvf-dot)"/>
+  <rect x="550" y="270" width="230" height="132" rx="10" class="node-box"/>
+  <text x="565" y="292" class="node-t">SimPO</text>
+  <text x="565" y="307" class="node-badge">no length bias</text>
+  <text x="565" y="327" class="row-chg">reward: (beta/|y|) logpi + gamma</text>
+  <text x="565" y="343" class="row-grey">loss: log-sigmoid (Bradley-Terry)</text>
+  <text x="565" y="359" class="row-chg">reference: NO</text>
+  <text x="565" y="375" class="row-grey">paired: YES</text>
+
+  <line class="spoke-line" x1="520" y1="410" x2="550" y2="576" marker-end="url(#dvf-dot)" marker-start="url(#dvf-dot)"/>
+  <rect x="550" y="510" width="230" height="132" rx="10" class="node-box"/>
+  <text x="565" y="532" class="node-t">CPO</text>
+  <text x="565" y="547" class="node-badge">memory-light</text>
+  <text x="565" y="567" class="row-chg">reward: beta logpi, summed</text>
+  <text x="565" y="583" class="row-chg">loss: log-sigmoid + SFT anchor</text>
+  <text x="565" y="599" class="row-chg">reference: NO</text>
+  <text x="565" y="615" class="row-grey">paired: YES</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="280" y="270" width="240" height="170" rx="12" class="hub-box"/>
+  <text x="400" y="298" text-anchor="middle" class="hub-t" fill="var(--accent,#c15b39)">DPO</text>
+  <text x="400" y="313" text-anchor="middle" class="hub-sub">the reference point</text>
+  <text x="296" y="333" class="hub-row">reward: beta log(pi/pi_ref), summed</text>
+  <text x="296" y="349" class="hub-row">loss: log-sigmoid (Bradley-Terry)</text>
+  <text x="296" y="365" class="hub-row">reference: YES</text>
+  <text x="296" y="381" class="hub-row">paired: YES</text>
+  <text x="400" y="425" text-anchor="middle" class="hub-sub">all five spokes vary one or two of these</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="15" y="672" width="770" height="112" rx="10" fill="var(--surface-3,#f2f0ea)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+  <text x="35" y="694" class="rib-h">Practitioner's decision tree</text>
+
+  <rect x="30"  y="706" width="178" height="62" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="119" y="726" text-anchor="middle" class="rib-txt">paired + can afford</text>
+  <text x="119" y="739" text-anchor="middle" class="rib-txt">a reference model</text>
+  <text x="119" y="756" text-anchor="middle" class="rib-ans">-&gt; DPO (beta=0.1)</text>
+
+  <rect x="222" y="706" width="178" height="62" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="311" y="726" text-anchor="middle" class="rib-txt">noisy / near-deterministic</text>
+  <text x="311" y="739" text-anchor="middle" class="rib-txt">preference labels</text>
+  <text x="311" y="756" text-anchor="middle" class="rib-ans">-&gt; IPO</text>
+
+  <rect x="414" y="706" width="178" height="62" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="503" y="726" text-anchor="middle" class="rib-txt">only unpaired ratings</text>
+  <text x="503" y="739" text-anchor="middle" class="rib-txt">(thumbs up/down)</text>
+  <text x="503" y="756" text-anchor="middle" class="rib-ans">-&gt; KTO</text>
+
+  <rect x="606" y="706" width="178" height="62" rx="8" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="695" y="726" text-anchor="middle" class="rib-txt">one stage / no reference /</text>
+  <text x="695" y="739" text-anchor="middle" class="rib-txt">tight memory</text>
+  <text x="695" y="756" text-anchor="middle" class="rib-ans">-&gt; ORPO or SimPO</text>
+</g>
+
+</svg>
+<figcaption><b>DPO and its descendants differ along just four axes: reward read-off, loss shape, reference model, and paired data.</b> Each spoke keeps everything from the DPO hub (greyed) except the one or two attributes it changes (accent): IPO caps the margin with a squared-error loss, KTO drops pairing entirely for unpaired thumbs up/down (dashed border), and ORPO, SimPO, and CPO all drop the reference model. The dividing guide separates the reference-based methods (left) from the reference-free ones (right); the bottom ribbon mirrors the chapter's practitioner decision tree.</figcaption>
+</figure>

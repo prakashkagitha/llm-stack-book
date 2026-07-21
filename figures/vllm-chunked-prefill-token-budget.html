@@ -1,0 +1,111 @@
+<figure class="viz" id="fig-vllm-chunked-prefill-token-budget">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-vllm-chunked-prefill-token-budget text { fill: var(--ink-soft); }
+  #fig-vllm-chunked-prefill-token-budget .panel-title { font: 700 13px var(--sans,sans-serif); }
+  #fig-vllm-chunked-prefill-token-budget .bar-lbl    { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-vllm-chunked-prefill-token-budget .lbl-sm     { font: 500 10.5px var(--sans,sans-serif); }
+  #fig-vllm-chunked-prefill-token-budget .lbl-xs     { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-vllm-chunked-prefill-token-budget .cap-it     { font: italic 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-vllm-chunked-prefill-token-budget .box-title  { font: 700 12px var(--sans,sans-serif); }
+  #fig-vllm-chunked-prefill-token-budget .note-box   { font: 500 11px var(--sans,sans-serif); }
+  #fig-vllm-chunked-prefill-token-budget .muted      { fill: var(--muted); }
+</style>
+<svg viewBox="0 0 800 310" role="img" aria-label="Two-panel contrast of one forward pass under a fixed token budget. Left: a naive prefill-only step where one long 32k-token prompt fills the whole pass, leaving three decode requests D1, D2, D3 stalled a full step, causing head-of-line blocking. Right: vLLM V1's chunked prefill, where the same token budget mixes a small chunk of that long prompt with many single-token decodes in one pass, processing the prompt one chunk per step while decodes never wait. A shared caption notes this smooths inter-token latency and raises arithmetic intensity.">
+
+<defs>
+  <marker id="ctb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+  </marker>
+</defs>
+
+<line x1="400" y1="18" x2="400" y2="222" stroke="var(--border-2)" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+
+<g data-anim="1">
+  <text x="205" y="28" text-anchor="middle" class="panel-title" fill="var(--warn)">Naive: prefill-only step</text>
+
+  <rect x="40" y="40" width="330" height="42" rx="6" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.8"/>
+  <text x="205" y="66" text-anchor="middle" class="bar-lbl" fill="var(--accent)">32k-token prefill (one long prompt)</text>
+
+  <text x="205" y="98" text-anchor="middle" class="lbl-xs muted">a long 32k prefill monopolizes the pass</text>
+  <text x="205" y="111" text-anchor="middle" class="lbl-xs" fill="var(--warn)">= head-of-line blocking</text>
+</g>
+
+<g data-anim="2">
+  <rect x="40" y="124" width="95" height="50" rx="8" fill="var(--warn)" fill-opacity="0.10" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <circle cx="118" cy="134" r="5.5" fill="none" stroke="var(--warn)" stroke-width="1.2"/>
+  <line x1="118" y1="134" x2="118" y2="130" stroke="var(--warn)" stroke-width="1.1"/>
+  <line x1="118" y1="134" x2="121" y2="136" stroke="var(--warn)" stroke-width="1.1"/>
+  <text x="87" y="152" text-anchor="middle" class="box-title" fill="var(--warn)">D1</text>
+  <text x="87" y="166" text-anchor="middle" class="lbl-xs muted">waiting...</text>
+
+  <rect x="147" y="124" width="95" height="50" rx="8" fill="var(--warn)" fill-opacity="0.10" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <circle cx="225" cy="134" r="5.5" fill="none" stroke="var(--warn)" stroke-width="1.2"/>
+  <line x1="225" y1="134" x2="225" y2="130" stroke="var(--warn)" stroke-width="1.1"/>
+  <line x1="225" y1="134" x2="228" y2="136" stroke="var(--warn)" stroke-width="1.1"/>
+  <text x="194" y="152" text-anchor="middle" class="box-title" fill="var(--warn)">D2</text>
+  <text x="194" y="166" text-anchor="middle" class="lbl-xs muted">waiting...</text>
+
+  <rect x="254" y="124" width="95" height="50" rx="8" fill="var(--warn)" fill-opacity="0.10" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <circle cx="332" cy="134" r="5.5" fill="none" stroke="var(--warn)" stroke-width="1.2"/>
+  <line x1="332" y1="134" x2="332" y2="130" stroke="var(--warn)" stroke-width="1.1"/>
+  <line x1="332" y1="134" x2="335" y2="136" stroke="var(--warn)" stroke-width="1.1"/>
+  <text x="301" y="152" text-anchor="middle" class="box-title" fill="var(--warn)">D3</text>
+  <text x="301" y="166" text-anchor="middle" class="lbl-xs muted">waiting...</text>
+</g>
+
+<g data-anim="2">
+  <text x="205" y="198" text-anchor="middle" class="lbl-xs muted">D1, D2, D3 wait a full step -&gt;</text>
+  <text x="205" y="211" text-anchor="middle" class="lbl-xs" fill="var(--warn)">inter-token latency spikes for everyone</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="595" y="28" text-anchor="middle" class="panel-title" fill="var(--good)">Chunked prefill (V1 default): unified token budget</text>
+
+  <rect x="430" y="40" width="330" height="42" rx="6" fill="none" stroke="var(--border-2)" stroke-width="1.2"/>
+  <rect x="430" y="40" width="110" height="42" rx="6" fill="var(--accent)" fill-opacity="0.30" stroke="var(--accent)" stroke-width="1.8"/>
+  <text x="485" y="65" text-anchor="middle" class="bar-lbl" fill="var(--accent)" style="font-size:9.5px">prefill chunk</text>
+
+  <g fill="var(--accent2)" fill-opacity="0.35" stroke="var(--accent2)" stroke-width="1.3">
+    <rect x="548" y="44" width="22" height="34" rx="3"/>
+    <rect x="573" y="44" width="22" height="34" rx="3"/>
+    <rect x="598" y="44" width="22" height="34" rx="3"/>
+    <rect x="623" y="44" width="22" height="34" rx="3"/>
+    <rect x="648" y="44" width="22" height="34" rx="3"/>
+    <rect x="673" y="44" width="22" height="34" rx="3"/>
+    <rect x="698" y="44" width="22" height="34" rx="3"/>
+    <rect x="723" y="44" width="22" height="34" rx="3"/>
+  </g>
+  <text x="595" y="98" text-anchor="middle" class="lbl-xs muted">many 1-token decodes, packed alongside</text>
+</g>
+
+<g data-anim="4">
+  <rect x="430" y="120" width="150" height="9" rx="2" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.2"/>
+  <rect x="430" y="132" width="150" height="9" rx="2" fill="var(--muted)" fill-opacity="0.20" stroke="var(--border-2)" stroke-width="1"/>
+  <rect x="430" y="144" width="150" height="9" rx="2" fill="var(--muted)" fill-opacity="0.20" stroke="var(--border-2)" stroke-width="1"/>
+  <rect x="430" y="156" width="150" height="9" rx="2" fill="var(--muted)" fill-opacity="0.20" stroke="var(--border-2)" stroke-width="1"/>
+  <rect x="430" y="168" width="150" height="9" rx="2" fill="var(--muted)" fill-opacity="0.20" stroke="var(--border-2)" stroke-width="1"/>
+
+  <line x1="582" y1="124" x2="600" y2="124" stroke="var(--accent)" stroke-width="1.3" marker-end="url(#ctb-arrow)"/>
+  <text x="606" y="128" class="lbl-xs" fill="var(--accent)">this step</text>
+
+  <text x="590" y="150" class="lbl-xs muted">prompt split into chunks;</text>
+  <text x="590" y="163" class="lbl-xs muted">1 chunk processed per step</text>
+</g>
+
+<g data-anim="4">
+  <text x="580" y="198" text-anchor="middle" class="lbl-xs muted">one pass mixes a prefill slice + many 1-token decodes;</text>
+  <text x="580" y="211" text-anchor="middle" class="lbl-xs" fill="var(--good)">long prompt advances a chunk/step, interleaved</text>
+</g>
+
+<g data-anim="5">
+  <rect x="20" y="228" width="760" height="60" rx="10" fill="var(--good)" fill-opacity="0.10" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="400" y="250" text-anchor="middle" class="note-box" fill="var(--good)">Smooths inter-token latency (decodes never wait a whole long prefill) AND</text>
+  <text x="400" y="266" text-anchor="middle" class="note-box" fill="var(--good)">raises arithmetic intensity (decode alone is memory-bound; adding prefill tokens fills the compute).</text>
+</g>
+
+</svg>
+<figcaption><b>V1 replaces the "prefill batch vs. decode batch" split with one unified per-step token budget.</b> A naive scheduler lets a single long prefill monopolize a forward pass, stalling every decoding request for a full step (head-of-line blocking); chunked prefill instead slices that same prompt into budget-sized chunks and packs one chunk, per step, alongside many one-token decodes — smoothing inter-token latency and, as a side effect, raising arithmetic intensity since decode alone is memory-bound.</figcaption>
+</figure>

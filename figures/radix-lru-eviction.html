@@ -1,0 +1,168 @@
+<figure class="viz" id="fig-radix-lru-eviction">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 460" role="img" aria-label="A radix tree evicts leaves oldest-first from a min-heap ordered by last access, skipping any locked node, while a hot pinned system-prompt prefix near the root survives, and freeing a node's last child promotes its parent into a newly evictable leaf.">
+  <defs>
+    <marker id="rle-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <g id="rle-lock">
+      <path d="M-6 -1 L-6 -5 A6 6 0 0 1 6 -5 L6 -1" fill="none" stroke="currentColor" stroke-width="2"/>
+      <rect x="-8" y="-1" width="16" height="12" rx="2.5" fill="currentColor"/>
+    </g>
+  </defs>
+  <style>
+    #fig-radix-lru-eviction text{ fill:var(--ink-soft); }
+    #fig-radix-lru-eviction .node{ font:700 11px var(--mono,monospace); }
+    #fig-radix-lru-eviction .edge{ font:600 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-radix-lru-eviction .role{ font:700 11px var(--sans,sans-serif); }
+    #fig-radix-lru-eviction .tag{ font:700 9.5px var(--sans,sans-serif); }
+    #fig-radix-lru-eviction .note{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-radix-lru-eviction .ts{ font:700 10.5px var(--mono,monospace); }
+    #fig-radix-lru-eviction .panel{ font:700 10.5px var(--sans,sans-serif); fill:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+    #fig-radix-lru-eviction .legend{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-radix-lru-eviction .stamp{ font:800 12px var(--sans,sans-serif); }
+    #fig-radix-lru-eviction .chip{ fill:var(--surface); stroke:var(--v-stroke); stroke-width:1.1; }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="400" y="20" text-anchor="middle" class="legend">evict oldest, unlocked, LEAF nodes first &#183; pinned nodes are skipped &#183; hot prefix survives</text>
+  </g>
+
+  <g data-anim="1">
+    <text x="20" y="46" class="panel">radix tree under memory pressure</text>
+    <text x="780" y="46" text-anchor="end" class="panel">min-heap by last_access (oldest on top)</text>
+  </g>
+
+
+  <g data-anim="1">
+    <circle cx="70" cy="78" r="13" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="70" y="82" text-anchor="middle" class="node">rt</text>
+    <path d="M70 91 L70 108" fill="none" stroke="var(--v-stroke)" stroke-width="2" marker-end="url(#rle-arrow)"/>
+  </g>
+
+  <g data-anim="1">
+    <rect x="20" y="108" width="410" height="52" rx="9" class="v-fill v-accent-s" stroke-width="2.2"/>
+    <use href="#rle-lock" x="42" y="130" fill="var(--accent)"/>
+    <text x="235" y="128" text-anchor="middle" class="role" fill="var(--accent)">"system prompt" &#183; shared prefix</text>
+    <text x="235" y="147" text-anchor="middle" class="tag" fill="var(--accent)">lock_ref &gt; 0 &#183; PINNED &#183; never evicted</text>
+    <path d="M225 160 L225 178" fill="none" stroke="var(--v-stroke)" stroke-width="2" marker-end="url(#rle-arrow)"/>
+  </g>
+
+  <g data-anim="1">
+    <circle cx="225" cy="190" r="13" class="v-fill v-accent-s" stroke-width="1.6"/>
+    <text x="225" y="194" text-anchor="middle" class="node" fill="var(--accent)">P</text>
+  </g>
+
+
+  <g data-anim="1" fill="none" stroke="var(--v-stroke)" stroke-width="1.6">
+    <path d="M225 203 C 225 224, 90 224, 90 250" marker-end="url(#rle-arrow)"/>
+    <path d="M225 203 C 225 224, 255 224, 255 250" marker-end="url(#rle-arrow)"/>
+    <path d="M225 203 C 225 220, 410 220, 410 250" marker-end="url(#rle-arrow)"/>
+  </g>
+  <g data-anim="1">
+    <rect x="58" y="234" width="64" height="17" rx="5" class="chip"/>
+    <text x="90" y="246" text-anchor="middle" class="edge">"long chat"</text>
+    <rect x="221" y="234" width="68" height="17" rx="5" class="chip"/>
+    <text x="255" y="246" text-anchor="middle" class="edge">"session D"</text>
+    <rect x="376" y="234" width="68" height="17" rx="5" class="chip"/>
+    <text x="410" y="246" text-anchor="middle" class="edge">"session C"</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="20" y="262" width="140" height="84" rx="9" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6"/>
+    <use href="#rle-lock" x="38" y="284" fill="var(--v-stroke)"/>
+    <text x="98" y="290" text-anchor="middle" class="role">long-running chat</text>
+    <text x="98" y="308" text-anchor="middle" class="ts">t = 2 &#183; old</text>
+    <text x="98" y="325" text-anchor="middle" class="note">a running request</text>
+    <text x="98" y="337" text-anchor="middle" class="note">holds this path</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="185" y="262" width="140" height="76" rx="9" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6"/>
+    <text x="255" y="292" text-anchor="middle" class="role">session D</text>
+    <text x="255" y="312" text-anchor="middle" class="ts">t = 9 &#183; fresh</text>
+    <text x="255" y="329" text-anchor="middle" class="note">recently used &#183; safe</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="350" y="262" width="120" height="36" rx="8" class="v-fill v-stroke" stroke-width="1.4" id="rle-node-m"/>
+    <text x="410" y="284" text-anchor="middle" class="node">M (interior)</text>
+    <path d="M410 298 L410 314" fill="none" stroke="var(--v-stroke)" stroke-width="1.8" marker-end="url(#rle-arrow)"/>
+  </g>
+  <g data-anim="1">
+    <rect x="350" y="314" width="120" height="72" rx="9" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6" id="rle-leaf-oldest"/>
+    <text x="410" y="340" text-anchor="middle" class="role">stale session</text>
+    <text x="410" y="360" text-anchor="middle" class="ts" fill="var(--warn)">t = 1 &#183; oldest</text>
+    <text x="410" y="376" text-anchor="middle" class="note">unlocked leaf</text>
+  </g>
+
+
+  <g data-anim="1">
+    <rect x="520" y="60" width="260" height="40" rx="8" class="v-fill" stroke="var(--warn)" stroke-width="1.8" id="rle-heap-1"/>
+    <text x="650" y="84" text-anchor="middle" class="ts" fill="var(--warn)">t=1 &#183; stale session</text>
+  </g>
+  <g data-anim="1">
+    <rect x="520" y="108" width="260" height="40" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6" id="rle-heap-2"/>
+    <text x="650" y="132" text-anchor="middle" class="ts">t=2 &#183; long-running chat</text>
+  </g>
+  <g data-anim="1">
+    <rect x="520" y="156" width="260" height="40" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6"/>
+    <text x="650" y="180" text-anchor="middle" class="ts">t=9 &#183; session D</text>
+  </g>
+
+  <g data-anim="1">
+    <path d="M650 204 L650 236" fill="none" stroke="var(--v-stroke)" stroke-width="2" marker-end="url(#rle-arrow)"/>
+    <text x="662" y="222" class="note">free KV -&gt; pool</text>
+    <rect x="560" y="238" width="180" height="42" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+    <text x="650" y="263" text-anchor="middle" class="role">paged KV pool</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="580" y="46" width="60" height="17" rx="5" class="v-fill" stroke="var(--warn)" stroke-width="1.3"/>
+    <text x="610" y="58" text-anchor="middle" class="tag" fill="var(--warn)">pop top</text>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="520" y="60" width="260" height="40" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.8"/>
+    <text x="650" y="84" text-anchor="middle" class="tag" fill="var(--warn)">popped &amp; evicted -&gt; freed</text>
+
+    <rect x="350" y="314" width="120" height="72" rx="9" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.8" stroke-dasharray="4 3"/>
+    <text x="410" y="344" text-anchor="middle" class="stamp" fill="var(--warn)">FREED</text>
+    <text x="410" y="363" text-anchor="middle" class="note">KV -&gt; pool (t=1)</text>
+
+    <path d="M474 340 C 510 320, 530 300, 566 268" fill="none" stroke="var(--warn)" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#rle-arrow)"/>
+    <text x="742" y="263" class="note" fill="var(--warn)">+3 slots</text>
+  </g>
+
+
+  <g data-anim="4">
+    <rect x="595" y="90" width="80" height="17" rx="5" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.3"/>
+    <text x="635" y="102" text-anchor="middle" class="tag">SKIP: locked</text>
+    <rect x="20" y="262" width="140" height="84" rx="9" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
+    <rect x="40" y="348" width="116" height="17" rx="5" class="v-fill" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="98" y="360" text-anchor="middle" class="tag" fill="var(--accent)">checked, but stays</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="345" y="257" width="130" height="46" rx="10" fill="none" stroke="var(--accent)" stroke-width="2" class="viz-pulse"/>
+    <rect x="480" y="270" width="150" height="17" rx="5" class="v-fill" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="555" y="282" text-anchor="middle" class="tag" fill="var(--accent)">now a leaf -&gt; evictable</text>
+
+    <rect x="520" y="288" width="260" height="36" rx="8" class="v-fill" stroke="var(--accent)" stroke-width="1.8" stroke-dasharray="5 3"/>
+    <text x="650" y="310" text-anchor="middle" class="tag" fill="var(--accent)">M &#183; just pushed (cascade)</text>
+  </g>
+
+  <g data-anim="5">
+    <text x="400" y="425" text-anchor="middle" class="note">Eviction peels the tree tip-inward: freeing a leaf can promote its childless parent into the next evictable leaf,</text>
+    <text x="400" y="441" text-anchor="middle" class="note">but the pinned, interior hot prefix at the root is never touched.</text>
+  </g>
+</svg>
+<figcaption><b>LRU eviction pops the oldest unlocked leaf off a min-heap, skips anything pinned, and cascades upward when a parent runs out of children.</b> Here the oldest leaf ("stale session", t=1) is freed straight back to the paged KV pool; the next-oldest leaf is locked by a running request and is skipped, not evicted; and freeing the stale leaf leaves <code>M</code> childless, so <code>M</code> itself becomes a new evictable leaf and is pushed onto the heap. The hot, pinned system-prompt prefix at the root is untouched throughout.</figcaption>
+</figure>

@@ -114,6 +114,8 @@ where $\text{SiLU}(z) = z \cdot \sigma(z)$ (also called Swish), and $\otimes$ de
 
 The gating mechanism is important: $xV$ produces a "content" projection and $\text{SiLU}(xW)$ produces a soft gate. The gate dynamically suppresses or amplifies each dimension of the content, giving the MLP a multiplicative interaction it lacked before.
 
+{{fig:modarch-swiglu-gating}}
+
 Because SwiGLU has **three** weight matrices ($W$, $V$, $W_2$) instead of two, to keep parameter count equal to a standard 4x MLP, the hidden dimension is reduced to $\frac{2}{3} \cdot 4d = \frac{8d}{3}$. In practice most models round to a multiple of 256 for hardware alignment; Llama 2 70B uses an intermediate size of 28,672 for a model dimension of 8,192.
 
 ```python
@@ -360,6 +362,8 @@ class GroupedQueryAttention(nn.Module):
 
 In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ can grow to very large values. Once the logits are large in magnitude, the softmax saturates: one token gets weight ~1 and all others get weight ~0. This "attention collapse" degrades the model's ability to attend to multiple positions, and the large pre-softmax logits create numerical instability, especially in bf16 where the dynamic range is narrow. See also [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) for why bf16 overflow is a real concern.
 
+{{fig:modarch-logit-taming}}
+
 ### QK-norm: normalize Q and K before attention
 
 The fix, used in models like Gemma 2 and DeepSeek-V3, is to apply RMSNorm to the query and key vectors *before* computing the attention scores:
@@ -498,6 +502,8 @@ print("Capped :", [f"{v:.2f}" for v in capped.tolist()])
 Xiao et al. ("Efficient Streaming LLMs with Attention Sinks", 2023) made an empirical observation: attention maps in trained autoregressive models show that some tokens — almost always the first few tokens in the context (especially BOS, Beginning-Of-Sequence) — receive anomalously high attention weights regardless of their content relevance. These are called **attention sinks**.
 
 Why does this happen? Attention weights must sum to 1 via softmax. When no other token is relevant, the model needs somewhere to "dump" the probability mass so it can attend to nothing useful without the softmax distribution becoming uniform (which would average together all values and potentially corrupt the output). The initial tokens, having been seen in every context, become the designated garbage-collector for probability mass.
+
+{{fig:modarch-attention-sink-mass}}
 
 ### Implications for model design and inference
 

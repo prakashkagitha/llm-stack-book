@@ -71,6 +71,8 @@ So we cache them. The **KV cache** is exactly the running collection of all $k_j
 
 This turns the per-step attention from "recompute everything" into "compute one new KV and read the rest." The recomputation is gone; the price is the memory to hold the cache. We have made the classic systems trade: **spend memory to save compute.**
 
+{{fig:kv-cache-append-vs-recompute}}
+
 ### A from-scratch KV-cached attention step
 
 ```python
@@ -171,6 +173,8 @@ print(f"{gib:.2f} GiB per 8k-token sequence")   # ~1.0 GiB
     Now budget an 80 GB A100. The weights take $8\text{B} \times 2\,\text{bytes} = 16$ GB. Leave ~4 GB for activations, CUDA context, and fragmentation. That leaves roughly $80 - 16 - 4 = 60$ GB for KV cache. At 1 GiB per full 8k context, you can hold about **60 concurrent 8k sequences** — or many more short ones, or fewer long ones.
 
     Contrast with a model that used full Multi-Head Attention with 32 KV heads instead of 8: the per-token cost would be $4\times$ larger, ~512 KiB/token, and you would fit only ~15 concurrent sequences. **This single ratio is why every modern serving model uses GQA or MLA.** The KV cache, not the weights, is usually what limits how many users you can serve at once.
+
+{{fig:kv-cache-vs-weights-budget}}
 
 The collapse from "weights are the big thing" to "the KV cache is the big thing" is the central surprise of inference engineering. For long contexts and high concurrency, the cache can dwarf the model itself. Managing it well — packing it tightly, paging it, reusing shared prefixes — is the subject of [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html). This chapter just establishes *why* it matters so much.
 
@@ -283,6 +287,8 @@ Streaming LLM applications (a chat UI typing tokens at you) are not characterize
 | **TPOT** | Time Per Output Token | Average time between subsequent tokens | Decode (memory-bound) |
 | **ITL** | Inter-Token Latency | Per-step gap between tokens (often used interchangeably with TPOT, but ITL is the per-step value while TPOT is the mean) | Decode + scheduling jitter |
 | **E2E** | End-to-End Latency | Arrival → last token | $\text{TTFT} + (T-1)\cdot\text{TPOT}$ |
+
+{{fig:latency-timeline-ttft-tpot}}
 
 The decomposition is clean and worth memorizing:
 

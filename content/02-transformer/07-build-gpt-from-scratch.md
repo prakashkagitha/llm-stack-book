@@ -301,6 +301,8 @@ Two non-obvious lines in that constructor carry real weight (pun intended).
 
     **Grand total:** $\approx 10.74\text{M}$ parameters. The blocks dominate ($\sim 99\%$); embeddings are a rounding error here *because the vocab is tiny*. Flip to a 50k BPE vocab and the (tied) embedding becomes $50{,}000 \times 384 \approx 19\text{M}$ — now larger than the entire transformer body. The general rule: $N \approx 12 \, n_\text{layer}\, n_\text{embd}^2$ for the body, a formula worth memorizing for [scaling-law](../03-pretraining/04-scaling-laws.html) and [FLOP](../04-kernels-efficiency/01-roofline-performance.html) estimates.
 
+{{fig:gpt-parameter-budget}}
+
 ## Data, the Training Loop, and a Real Run on Tiny Shakespeare
 
 A model is inert without a loss surface to descend. We now build the smallest honest training setup: a character-level dataset, a batching function, an optimizer with the standard weight-decay split, and a loop that actually drives the loss down. We use the classic **Tiny Shakespeare** corpus (a ~1 MB text file of Shakespeare's plays) at the character level, so the tokenizer is trivial — every distinct character is a token — and we can watch the model learn from gibberish to plausible-looking English in minutes.
@@ -341,6 +343,8 @@ The "shift by one" labelling is the entire supervised signal of language modelin
 $$
 \mathcal{L} = -\frac{1}{BT}\sum_{b=1}^{B}\sum_{t=1}^{T} \log p_\theta\big(y_{b,t} \mid x_{b, 1:t}\big).
 $$
+
+{{fig:next-token-training-signal}}
 
 ### The optimizer with a weight-decay split
 
@@ -558,6 +562,8 @@ print(decode(out_ids[0].tolist()))
 **Temperature** $\tau$ divides the logits before softmax: $p_i \propto \exp(z_i / \tau)$. As $\tau \to 0$ the distribution collapses onto the single most likely token (greedy, deterministic); as $\tau \to \infty$ it approaches uniform (maximally random). $\tau = 1$ samples from the model's exact distribution. Practitioners use $\tau \approx 0.7$–$1.0$ for creative text and lower for factual or code generation.
 
 **Top-k** keeps only the $k$ highest-probability tokens and renormalizes, hard-truncating the long tail of garbage tokens. **Top-p (nucleus)** sampling, from Holtzman et al., instead keeps the smallest set of tokens whose cumulative probability reaches $p$ (e.g. 0.9) — an *adaptive* cutoff that keeps many tokens when the model is uncertain and few when it is confident. Top-p generally produces more natural text than a fixed top-k because the truncation adapts to the local entropy of the distribution.
+
+{{fig:sampling-temperature-topk-topp}}
 
 !!! example "Worked example: temperature on a 4-token distribution"
     Suppose the model emits logits $z = [3.0,\ 1.0,\ 0.5,\ -1.0]$ for four candidate next characters.

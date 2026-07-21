@@ -1,0 +1,224 @@
+<figure class="viz" id="fig-four-parallelism-axes">
+<svg viewBox="0 0 772 712" role="img" aria-label="Four panels showing the same tiny four-layer transformer distributed across two GPUs under each parallelism axis: tensor parallel slices every weight matrix and all-reduces; pipeline parallel splits the layer stack and passes activations one way; expert parallel spreads MoE experts across GPUs with two all-to-all exchanges; data parallel copies the full model onto each GPU with no cross-GPU traffic.">
+<style>
+  #fig-four-parallelism-axes text { font: 12px var(--sans, sans-serif); fill: var(--ink-soft, #45413a); }
+  #fig-four-parallelism-axes .p-title { font: 700 14px var(--sans, sans-serif); }
+  #fig-four-parallelism-axes .p-sub   { font: 600 10.5px var(--sans, sans-serif); font-style: italic; fill: var(--muted); }
+  #fig-four-parallelism-axes .p-cap   { font: 500 11px var(--sans, sans-serif); font-style: italic; fill: var(--muted); }
+  #fig-four-parallelism-axes .lbl-g0  { font: 700 10.5px var(--sans, sans-serif); fill: var(--accent2, #3b82f6); }
+  #fig-four-parallelism-axes .lbl-g1  { font: 700 10.5px var(--sans, sans-serif); fill: var(--muted); }
+  #fig-four-parallelism-axes .tiny    { font: 500 7.5px var(--mono, monospace); fill: var(--muted); }
+  #fig-four-parallelism-axes .badge   { font: 700 9.5px var(--sans, sans-serif); fill: var(--warn, #e0a106); }
+  #fig-four-parallelism-axes .footer  { font: 700 12.5px var(--sans, sans-serif); fill: var(--ink-soft); }
+</style>
+
+<defs>
+  <marker id="tpa-ah-r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="tpa-ah-l" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M10 0 L0 5 L10 10 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="tpa-ah-neutral" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke)"/>
+  </marker>
+</defs>
+
+
+<g transform="translate(16,16)">
+  <rect x="0" y="0" width="360" height="300" rx="10" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4" fill-opacity="0.35"/>
+  <text x="14" y="26" class="p-title">TP -- Tensor Parallel</text>
+  <text x="14" y="43" class="p-sub">splits WITHIN a layer</text>
+  <line x1="14" y1="52" x2="346" y2="52" stroke="var(--v-grid)" stroke-width="1"/>
+
+  
+  <rect x="14" y="64" width="50" height="124" fill="var(--accent2,#3b82f6)" fill-opacity="0.14"/>
+  <rect x="64" y="64" width="50" height="124" fill="var(--muted)" fill-opacity="0.14"/>
+  <line x1="64" y1="64" x2="64" y2="188" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="39" y="60" text-anchor="middle" class="lbl-g0">GPU0</text>
+  <text x="89" y="60" text-anchor="middle" class="lbl-g1">GPU1</text>
+  <g stroke="var(--v-stroke)" stroke-width="1" fill="none">
+    <rect x="14" y="64"  width="100" height="28" rx="3"/>
+    <rect x="14" y="94"  width="100" height="28" rx="3"/>
+    <rect x="14" y="124" width="100" height="28" rx="3" stroke-width="1.8"/>
+    <rect x="14" y="154" width="100" height="28" rx="3"/>
+  </g>
+  <g class="tiny">
+    <text x="64" y="75"  text-anchor="middle">attn</text>
+    <text x="64" y="88"  text-anchor="middle">MLP</text>
+    <text x="64" y="105" text-anchor="middle">attn</text>
+    <text x="64" y="118" text-anchor="middle">MLP</text>
+    <text x="64" y="135" text-anchor="middle">attn</text>
+    <text x="64" y="148" text-anchor="middle">MLP</text>
+    <text x="64" y="165" text-anchor="middle">attn</text>
+    <text x="64" y="178" text-anchor="middle">MLP</text>
+  </g>
+
+  
+  <line x1="114" y1="138" x2="140" y2="118" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="2,2"/>
+
+  
+  <rect x="140" y="70" width="206" height="120" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2" fill-opacity="0.5"/>
+  <text x="243" y="86" text-anchor="middle" style="font:700 10.5px var(--sans,sans-serif)">one layer's weight matrix W</text>
+  <rect x="150" y="96" width="186" height="40" rx="3" fill="none" stroke="var(--v-stroke)" stroke-width="1"/>
+  <rect x="150" y="96" width="93" height="40" fill="var(--accent2,#3b82f6)" fill-opacity="0.18"/>
+  <rect x="243" y="96" width="93" height="40" fill="var(--muted)" fill-opacity="0.18"/>
+  <line x1="243" y1="96" x2="243" y2="136" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="196" y="113" text-anchor="middle" style="font:600 8.5px var(--sans,sans-serif)">W1 (cols 1..k/2)</text>
+  <text x="290" y="113" text-anchor="middle" style="font:600 8.5px var(--sans,sans-serif)">W2 (cols k/2..k)</text>
+  <text x="196" y="128" text-anchor="middle" class="lbl-g0">GPU0</text>
+  <text x="290" y="128" text-anchor="middle" class="lbl-g1">GPU1</text>
+
+  <rect x="160" y="146" width="50" height="20" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.15" stroke="var(--v-stroke)" stroke-width="1"/>
+  <text x="185" y="159" text-anchor="middle" style="font:700 9px var(--sans,sans-serif)">GPU0</text>
+  <rect x="270" y="146" width="50" height="20" rx="3" fill="var(--muted)" fill-opacity="0.15" stroke="var(--v-stroke)" stroke-width="1"/>
+  <text x="295" y="159" text-anchor="middle" style="font:700 9px var(--sans,sans-serif)">GPU1</text>
+
+  <line x1="210" y1="156" x2="270" y2="156" stroke="var(--warn,#e0a106)" stroke-width="2.2" marker-start="url(#tpa-ah-l)" marker-end="url(#tpa-ah-r)"/>
+  <text x="243" y="180" text-anchor="middle" class="badge">all-reduce per layer</text>
+
+  <text x="180" y="212" text-anchor="middle" class="p-cap">each GPU holds a slice of every weight matrix</text>
+</g>
+
+
+<g transform="translate(396,16)">
+  <rect x="0" y="0" width="360" height="300" rx="10" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4" fill-opacity="0.35"/>
+  <text x="14" y="26" class="p-title">PP -- Pipeline Parallel</text>
+  <text x="14" y="43" class="p-sub">splits the STACK</text>
+  <line x1="14" y1="52" x2="346" y2="52" stroke="var(--v-grid)" stroke-width="1"/>
+
+  <rect x="100" y="64" width="160" height="72" fill="var(--accent2,#3b82f6)" fill-opacity="0.14"/>
+  <rect x="100" y="140" width="160" height="72" fill="var(--muted)" fill-opacity="0.14"/>
+  <text x="108" y="78" class="lbl-g0">GPU0</text>
+  <text x="108" y="200" class="lbl-g1">GPU1</text>
+
+  <g stroke="var(--v-stroke)" stroke-width="1" fill="none">
+    <rect x="100" y="66"  width="160" height="30" rx="3"/>
+    <rect x="100" y="104" width="160" height="30" rx="3"/>
+    <rect x="100" y="142" width="160" height="30" rx="3"/>
+    <rect x="100" y="180" width="160" height="30" rx="3"/>
+  </g>
+  <g class="tiny" style="font-size:9px">
+    <text x="180" y="84"  text-anchor="middle">layer 1 -- attn / MLP</text>
+    <text x="180" y="122" text-anchor="middle">layer 2 -- attn / MLP</text>
+    <text x="180" y="160" text-anchor="middle">layer 3 -- attn / MLP</text>
+    <text x="180" y="198" text-anchor="middle">layer 4 -- attn / MLP</text>
+  </g>
+
+  <line x1="90" y1="138" x2="278" y2="138" stroke="var(--v-stroke)" stroke-width="1.4" stroke-dasharray="4,3"/>
+
+  <line x1="278" y1="100" x2="278" y2="175" stroke="var(--warn,#e0a106)" stroke-width="2.2" marker-end="url(#tpa-ah-r)"/>
+  <text x="284" y="120" class="badge" text-anchor="start">activations</text>
+  <text x="284" y="133" class="badge" text-anchor="start">(one way)</text>
+
+  <text x="180" y="235" text-anchor="middle" class="p-cap">each GPU holds a contiguous range of layers</text>
+</g>
+
+
+<g transform="translate(16,336)">
+  <rect x="0" y="0" width="360" height="300" rx="10" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4" fill-opacity="0.35"/>
+  <text x="14" y="26" class="p-title">EP -- Expert Parallel</text>
+  <text x="14" y="43" class="p-sub">spreads the EXPERTS</text>
+  <line x1="14" y1="52" x2="346" y2="52" stroke="var(--v-grid)" stroke-width="1"/>
+
+  
+  <g stroke="var(--v-stroke)" stroke-width="1" fill="none">
+    <rect x="14" y="64"  width="90" height="24" rx="3"/>
+    <rect x="14" y="94"  width="90" height="24" rx="3"/>
+    <rect x="14" y="124" width="90" height="24" rx="3" stroke-width="1.8"/>
+    <rect x="14" y="154" width="90" height="24" rx="3"/>
+  </g>
+  <g class="tiny">
+    <text x="59" y="76"  text-anchor="middle">attn / MLP</text>
+    <text x="59" y="106" text-anchor="middle">attn / MLP</text>
+    <text x="59" y="136" text-anchor="middle">attn / MoE</text>
+    <text x="59" y="166" text-anchor="middle">attn / MLP</text>
+  </g>
+  <line x1="104" y1="136" x2="135" y2="128" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="2,2"/>
+
+  
+  <circle cx="235" cy="82" r="14" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2" fill-opacity="0.6"/>
+  <text x="235" y="86" text-anchor="middle" style="font:700 8.5px var(--sans,sans-serif)">router</text>
+
+  <rect x="135" y="106" width="100" height="46" fill="var(--accent2,#3b82f6)" fill-opacity="0.14"/>
+  <rect x="235" y="106" width="100" height="46" fill="var(--muted)" fill-opacity="0.14"/>
+
+  <g stroke="var(--v-stroke)" stroke-width="1">
+    <line x1="235" y1="96" x2="160" y2="112"/>
+    <line x1="235" y1="96" x2="210" y2="112"/>
+    <line x1="235" y1="96" x2="260" y2="112"/>
+    <line x1="235" y1="96" x2="310" y2="112"/>
+  </g>
+
+  <g fill="none" stroke="var(--v-stroke)" stroke-width="1.3">
+    <rect x="140" y="112" width="40" height="34" rx="4"/>
+    <rect x="190" y="112" width="40" height="34" rx="4"/>
+    <rect x="240" y="112" width="40" height="34" rx="4"/>
+    <rect x="290" y="112" width="40" height="34" rx="4"/>
+  </g>
+  <g style="font:700 10px var(--sans,sans-serif)" text-anchor="middle">
+    <text x="160" y="133">E0</text>
+    <text x="210" y="133">E1</text>
+    <text x="260" y="133">E2</text>
+    <text x="310" y="133">E3</text>
+  </g>
+
+  <text x="185" y="164" text-anchor="middle" class="lbl-g0">GPU0</text>
+  <text x="285" y="164" text-anchor="middle" class="lbl-g1">GPU1</text>
+
+  <line x1="200" y1="182" x2="270" y2="182" stroke="var(--warn,#e0a106)" stroke-width="2.2" marker-start="url(#tpa-ah-l)" marker-end="url(#tpa-ah-r)"/>
+  <text x="235" y="198" text-anchor="middle" class="badge">all-to-all</text>
+
+  <text x="180" y="225" text-anchor="middle" class="p-cap">MoE experts partitioned across GPUs</text>
+</g>
+
+
+<g transform="translate(396,336)">
+  <rect x="0" y="0" width="360" height="300" rx="10" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.4" fill-opacity="0.35"/>
+  <text x="14" y="26" class="p-title">DP -- Data Parallel</text>
+  <text x="14" y="43" class="p-sub">REPLICATES everything</text>
+  <line x1="14" y1="52" x2="346" y2="52" stroke="var(--v-grid)" stroke-width="1"/>
+
+  <rect x="155" y="60" width="50" height="20" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2" fill-opacity="0.6"/>
+  <text x="180" y="73" text-anchor="middle" style="font:700 9px var(--sans,sans-serif)">router</text>
+
+  <line x1="167" y1="80" x2="75" y2="94" stroke="var(--v-stroke)" stroke-width="1.2" marker-end="url(#tpa-ah-neutral)"/>
+  <line x1="193" y1="80" x2="285" y2="94" stroke="var(--v-stroke)" stroke-width="1.2" marker-end="url(#tpa-ah-neutral)"/>
+
+  <rect x="30" y="94" width="90" height="115" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.10" stroke="var(--v-stroke)" stroke-width="1"/>
+  <rect x="240" y="94" width="90" height="115" rx="6" fill="var(--muted)" fill-opacity="0.10" stroke="var(--v-stroke)" stroke-width="1"/>
+  <text x="75" y="90" text-anchor="middle" class="lbl-g0">GPU0 (full copy)</text>
+  <text x="285" y="90" text-anchor="middle" class="lbl-g1">GPU1 (full copy)</text>
+
+  <g fill="none" stroke="var(--v-stroke)" stroke-width="1">
+    <rect x="40" y="100" width="70" height="22" rx="3"/>
+    <rect x="40" y="127" width="70" height="22" rx="3"/>
+    <rect x="40" y="154" width="70" height="22" rx="3"/>
+    <rect x="40" y="181" width="70" height="22" rx="3"/>
+    <rect x="250" y="100" width="70" height="22" rx="3"/>
+    <rect x="250" y="127" width="70" height="22" rx="3"/>
+    <rect x="250" y="154" width="70" height="22" rx="3"/>
+    <rect x="250" y="181" width="70" height="22" rx="3"/>
+  </g>
+  <g class="tiny">
+    <text x="75" y="114" text-anchor="middle">attn / MLP</text>
+    <text x="75" y="141" text-anchor="middle">attn / MLP</text>
+    <text x="75" y="168" text-anchor="middle">attn / MLP</text>
+    <text x="75" y="195" text-anchor="middle">attn / MLP</text>
+    <text x="285" y="114" text-anchor="middle">attn / MLP</text>
+    <text x="285" y="141" text-anchor="middle">attn / MLP</text>
+    <text x="285" y="168" text-anchor="middle">attn / MLP</text>
+    <text x="285" y="195" text-anchor="middle">attn / MLP</text>
+  </g>
+
+  <text x="180" y="153" text-anchor="middle" style="font:600 10px var(--sans,sans-serif); font-style:italic" fill="var(--muted)">no cross-GPU comms</text>
+
+  <text x="180" y="230" text-anchor="middle" class="p-cap">full model copied; no cross-GPU comms</text>
+</g>
+
+
+<rect x="16" y="656" width="740" height="40" rx="8" class="v-fill" stroke="var(--v-grid)" stroke-width="1" fill-opacity="0.4"/>
+<text x="386" y="680" text-anchor="middle" class="footer">TP / PP / EP reduce per-GPU memory  &#8226;  DP only multiplies throughput</text>
+</svg>
+<figcaption><b>The same tiny four-layer model, cut four different ways across two GPUs.</b> Tensor parallelism (TP) and expert parallelism (EP) each shard a piece <i>inside</i> every layer (a weight matrix, a set of experts) and pay for it with a synchronous collective (all-reduce, all-to-all); pipeline parallelism (PP) cuts the model into contiguous stages joined by one-way activation traffic; data parallelism (DP) makes no cut at all — it just duplicates the whole model and needs no cross-GPU communication in the forward pass. TP, PP, and EP each shrink per-GPU memory; only DP multiplies throughput by adding independent replicas.</figcaption>
+</figure>

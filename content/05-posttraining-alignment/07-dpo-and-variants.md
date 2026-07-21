@@ -38,6 +38,8 @@ $$
 
 This is a **Gibbs / Boltzmann distribution**: tilt the reference policy by the exponentiated reward, then renormalize. It is intuitive — the optimal aligned policy is the reference *reweighted* toward high reward, with $\beta$ as a temperature that controls how aggressively. The only problem is $Z(x)$: it sums over *all possible responses*, an astronomically large set, so we cannot compute $\pi^*$ directly. That intractable partition function is exactly why classical RLHF resorts to sampling-based RL (PPO) instead of just writing down the answer.
 
+{{fig:dpo-boltzmann-tilt}}
+
 ### Inverting the relationship: the implicit reward
 
 DPO's trick is to refuse to compute $Z(x)$ and instead **solve for the reward in terms of the policy.** Take the log of the boxed equation and rearrange:
@@ -379,6 +381,8 @@ CPO is essentially "DPO without the reference, plus an explicit SFT term to comp
 
 ### A unified view
 
+{{fig:dpo-variant-family-map}}
+
 Almost every method here is a choice of **(a)** what reward to read off the policy, **(b)** what loss shape contrasts winner vs. loser, and **(c)** whether/how to anchor to a reference.
 
 | Method | Reward / score | Loss shape | Reference model? | Paired data? | Killer feature |
@@ -425,6 +429,8 @@ The community's rough 2024–2025 consensus: **DPO is the better default** — s
     **Q:** Your DPO run shows reward accuracy climbing nicely, but the chosen *and* rejected log-probabilities are *both* falling, and the model's outputs are getting worse / more repetitive. What's going on?
 
     **A:** This is the well-known DPO failure where the *margin* improves while *both* absolute log-probs decline — DPO only constrains the *difference* $\Delta$, so it can satisfy the loss by pushing the rejected log-prob down faster than the chosen, dragging the chosen down too. The policy is moving probability mass off *both* in-distribution responses and onto unseen (often degenerate) outputs, which the loss never penalizes. Fixes: (1) **raise $\beta$** to tighten the KL leash to $\pi_{\text{ref}}$; (2) add an **SFT / NLL term on the chosen** response (this is exactly what CPO and ORPO bake in, and what DPO+SFT mixing does) so the chosen log-prob is held up in absolute terms; (3) switch to a loss with an absolute anchor like **KTO** (value relative to a reference point) or **IPO** (finite target margin prevents the runaway); (4) check data quality — if many "rejected" responses are actually fine, you're teaching the model to suppress good behavior. Always log absolute chosen/rejected log-probs, not just reward accuracy.
+
+{{fig:dpo-degeneration-footgun}}
 
 !!! tip "Practitioner tip: precompute reference log-probs and watch your metrics"
 

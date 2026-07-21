@@ -1,0 +1,122 @@
+<figure class="viz" id="fig-gpt-parameter-budget">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 650" role="img" aria-label="Two-panel infographic on where GPT parameters live. Panel A: inside one transformer block, attention is 4 d-squared (c_attn 3 d-squared plus c_proj d-squared) and the MLP is 8 d-squared (c_fc 4 d-squared plus c_proj 4 d-squared), so the MLP holds twice attention's parameters, and the whole block is 12 d-squared, giving body size approximately 12 times n_layer times n_embd-squared. Panel B: the tied embedding is a rounding error next to the transformer body at a tiny character-level vocabulary of 65, but at a large 50 thousand token BPE vocabulary the same-size body now sits under an embedding block that is larger than the body itself, while tying the lm_head to the embedding always costs zero extra parameters.">
+<defs>
+  <style>
+    #fig-gpt-parameter-budget text            { fill: var(--ink-soft,#333); }
+    #fig-gpt-parameter-budget .title          { font: 700 15px var(--sans,sans-serif); }
+    #fig-gpt-parameter-budget .panel-lbl      { font: 700 13px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-gpt-parameter-budget .seg-lbl        { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-gpt-parameter-budget .sub-lbl        { font: 400 11px var(--mono,monospace); fill: var(--muted,#777); }
+    #fig-gpt-parameter-budget .in-lbl         { font: 700 11px var(--mono,monospace); }
+    #fig-gpt-parameter-budget .note           { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-gpt-parameter-budget .note-strong    { font: 600 11.5px var(--sans,sans-serif); }
+    #fig-gpt-parameter-budget .tag            { font: 600 12px var(--mono,monospace); }
+    #fig-gpt-parameter-budget .chart-title    { font: 600 12.5px var(--sans,sans-serif); }
+    #fig-gpt-parameter-budget .zero-tag       { font: 400 10px var(--mono,monospace); fill: var(--muted,#777); }
+    #fig-gpt-parameter-budget .bracket        { stroke: var(--muted,#777); stroke-width: 1.2; fill: none; }
+  </style>
+</defs>
+
+
+<g data-anim="1">
+  <text x="380" y="26" text-anchor="middle" class="title">Panel A -- Inside one block: where 12&#183;d&#178; parameters go</text>
+  <text x="380" y="42" text-anchor="middle" class="sub-lbl">(d = n_embd, one bar = the full parameter budget of a single Block)</text>
+
+  
+  <text x="186.7" y="60" text-anchor="middle" class="seg-lbl" fill="var(--accent2,#3b82f6)">Attention -- 4&#183;d&#178;</text>
+  <text x="476.7" y="60" text-anchor="middle" class="seg-lbl" fill="var(--accent,#c15b39)">MLP -- 8&#183;d&#178;</text>
+
+  
+  <g class="viz-draw" style="--len:1160">
+    <rect x="90" y="66" width="580" height="48" rx="4" fill="none" stroke="var(--v-stroke,#333)" stroke-width="1.5"/>
+  </g>
+  
+  <rect x="90" y="66" width="193.3" height="48" fill="var(--accent2,#3b82f6)" fill-opacity="0.28"/>
+  
+  <rect x="283.3" y="66" width="386.7" height="48" fill="var(--accent,#c15b39)" fill-opacity="0.28"/>
+  
+  <rect x="90" y="66" width="580" height="48" rx="4" fill="none" stroke="var(--v-stroke,#333)" stroke-width="1.5"/>
+  
+  <line x1="283.3" y1="66" x2="283.3" y2="114" stroke="var(--v-stroke,#333)" stroke-width="1.8"/>
+  
+  <line x1="235" y1="66" x2="235" y2="114" stroke="var(--v-stroke,#333)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+  <line x1="476.7" y1="66" x2="476.7" y2="114" stroke="var(--v-stroke,#333)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>
+
+  
+  <text x="162.5" y="94" text-anchor="middle" class="in-lbl" fill="var(--accent2,#3b82f6)">3d&#178;</text>
+  <text x="380" y="94" text-anchor="middle" class="in-lbl" fill="var(--accent,#c15b39)">4d&#178;</text>
+  <text x="573.3" y="94" text-anchor="middle" class="in-lbl" fill="var(--accent,#c15b39)">4d&#178;</text>
+
+  
+  <text x="186.7" y="130" text-anchor="middle" class="sub-lbl">c_attn 3d&#178; + c_proj d&#178;</text>
+  <text x="476.7" y="130" text-anchor="middle" class="sub-lbl">c_fc 4d&#178; + c_proj 4d&#178;</text>
+
+  
+  <path d="M 90 146 L 90 152 L 283.3 152 L 283.3 146" class="bracket"/>
+  <text x="186.7" y="166" text-anchor="middle" class="sub-lbl">1x</text>
+  <path d="M 283.3 146 L 283.3 152 L 670 152 L 670 146" class="bracket"/>
+  <text x="476.7" y="166" text-anchor="middle" class="sub-lbl">2x</text>
+
+  <text x="380" y="184" text-anchor="middle" class="note-strong">MLP holds 2x attention's parameters, every block.</text>
+
+  
+  <rect x="185" y="196" width="390" height="24" rx="12" fill="none" stroke="var(--muted,#777)" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="380" y="212" text-anchor="middle" class="tag">x n_layer blocks -&gt; body ~= 12&#183;n_layer&#183;n_embd&#178;</text>
+</g>
+
+
+<line x1="30" y1="234" x2="730" y2="234" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+
+
+<g data-anim="2">
+  <text x="380" y="256" text-anchor="middle" class="title">Panel B -- Where the (tied) embedding sits: the vocab crossover</text>
+
+  <text x="230" y="278" text-anchor="middle" class="chart-title">tiny vocab (char-level, V=65)</text>
+  <text x="530" y="278" text-anchor="middle" class="chart-title">large vocab (BPE, V~50k)</text>
+</g>
+
+
+<line x1="120" y1="590" x2="640" y2="590" stroke="var(--v-stroke,#333)" stroke-width="1.3"/>
+
+
+<g data-anim="3">
+  
+  <rect x="175" y="558.3" width="110" height="31.7" fill="var(--accent2,#3b82f6)" fill-opacity="0.28" stroke="var(--v-stroke,#333)" stroke-width="1"/>
+  <rect x="175" y="495" width="110" height="63.3" fill="var(--accent,#c15b39)" fill-opacity="0.28" stroke="var(--v-stroke,#333)" stroke-width="1"/>
+  
+  <rect x="175" y="491" width="110" height="4" fill="var(--surface-3,#ddd)" stroke="var(--v-stroke,#333)" stroke-width="1"/>
+
+  
+  <path d="M 260 490 L 230 440" class="bracket" stroke-dasharray="2 2"/>
+  <circle cx="260" cy="491" r="2.4" fill="var(--muted,#777)"/>
+  <text x="230" y="410" text-anchor="middle" class="note-strong">embedding ~ rounding error</text>
+  <text x="230" y="425" text-anchor="middle" class="note">(V&#183;d = 65&#183;d, sliver-thin)</text>
+  <text x="230" y="440" text-anchor="middle" class="zero-tag">lm_head tied w/ wte -&gt; +0 params</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="475" y="558.3" width="110" height="31.7" fill="var(--accent2,#3b82f6)" fill-opacity="0.28" stroke="var(--v-stroke,#333)" stroke-width="1"/>
+  <rect x="475" y="495" width="110" height="63.3" fill="var(--accent,#c15b39)" fill-opacity="0.28" stroke="var(--v-stroke,#333)" stroke-width="1"/>
+  
+  <rect x="475" y="323" width="110" height="172" fill="var(--surface-3,#ddd)" stroke="var(--v-stroke,#333)" stroke-width="1"/>
+
+  <text x="530" y="395" text-anchor="middle" class="note-strong">tied embedding</text>
+  <text x="530" y="411" text-anchor="middle" class="note-strong">now dominates</text>
+  <text x="530" y="430" text-anchor="middle" class="zero-tag">(V&#183;d = 50k&#183;d)</text>
+  <text x="530" y="445" text-anchor="middle" class="zero-tag">lm_head tied w/ wte -&gt; +0 params</text>
+</g>
+
+
+<g data-anim="2">
+  <path d="M 108 590 L 100 590 L 100 495 L 108 495" class="bracket"/>
+  <text x="70" y="546" text-anchor="middle" class="sub-lbl" transform="rotate(-90,70,546)">body (attn+MLP)</text>
+</g>
+
+<text x="380" y="620" text-anchor="middle" class="note" data-anim="5">Same body height in both charts (same n_layer, n_embd) -- only the vocabulary changed.</text>
+
+</svg>
+
+<figcaption><b>Most GPT parameters live in the MLP, not attention -- and the embedding only matters when the vocabulary is large.</b> Inside one block the MLP (<code>c_fc</code> + <code>c_proj</code>, 8d&#178;) holds exactly twice the parameters of attention (<code>c_attn</code> + <code>c_proj</code>, 4d&#178;), so the whole body scales as 12&#183;n_layer&#183;n_embd&#178;. The tied embedding is negligible at a 65-character vocabulary but, at the same body size, dwarfs the entire transformer once the vocabulary reaches BPE scale (&#126;50k) -- and tying it to <code>lm_head</code> is always free.</figcaption>
+</figure>

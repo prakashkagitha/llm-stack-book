@@ -1,0 +1,203 @@
+<figure class="viz" id="fig-vllm-prefix-cache-rolling-hash">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-vllm-prefix-cache-rolling-hash text { fill: var(--ink-soft); }
+  #fig-vllm-prefix-cache-rolling-hash .title    { font: 700 14px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .formula  { font: 600 11px var(--mono,monospace); fill: var(--muted); }
+  #fig-vllm-prefix-cache-rolling-hash .row-lbl  { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .blk-title{ font: 700 12px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .blk-sub  { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .chip-lbl { font: 700 11px var(--mono,monospace); }
+  #fig-vllm-prefix-cache-rolling-hash .phys-lbl { font: 700 10.5px var(--mono,monospace); }
+  #fig-vllm-prefix-cache-rolling-hash .phys-sub { font: 400 9px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .lbl-sm   { font: 500 10.5px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .lbl-xs   { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-vllm-prefix-cache-rolling-hash .cap-it   { font: italic 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-vllm-prefix-cache-rolling-hash .note-box { font: 500 11px var(--sans,sans-serif); }
+</style>
+<svg viewBox="0 0 800 510" role="img" aria-label="Infographic: Request A and Request B each have a left-to-right chain of KV blocks. Blocks 0 and 1 hold identical tokens in both requests and, because the rolling hash folds in the hash of all preceding blocks, produce identical hashes h0 and h1 in both -- so both requests' block tables point at the SAME physical blocks (shared, refcount 2). Block 2 onward has different tokens in each request, so the hash chain diverges and each request gets its own fresh physical blocks. The trailing partial block in each request is dashed and not hashable yet.">
+
+<defs>
+  <marker id="pch-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+  </marker>
+  <marker id="pch-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good)"/>
+  </marker>
+  <marker id="pch-arrow-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+  </marker>
+  <marker id="pch-arrow-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2)"/>
+  </marker>
+</defs>
+
+<text x="400" y="20" text-anchor="middle" class="title">Rolling per-block hash: identical prefixes -&gt; identical physical blocks</text>
+<text x="400" y="37" text-anchor="middle" class="formula">hash(block_i) = f( hash(block_i-1), tokens_in_block_i )</text>
+<text x="705" y="47" text-anchor="middle" class="cap-it">not hashed yet</text>
+
+
+<g data-anim="1">
+  <line x1="355" y1="54" x2="355" y2="344" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="355" y="135" text-anchor="middle" class="lbl-xs" fill="var(--warn)">&lt;- identical  |  diverge -&gt;</text>
+</g>
+
+
+<text x="15" y="80" class="row-lbl" fill="var(--accent)">Request A</text>
+
+
+<g data-anim="1">
+  <rect x="90" y="54" width="110" height="44" rx="8" fill="var(--good)" fill-opacity="0.16" stroke="var(--good)" stroke-width="1.6"/>
+  <text x="145" y="72" text-anchor="middle" class="blk-title">block 0</text>
+  <text x="145" y="86" text-anchor="middle" class="blk-sub">sys prompt</text>
+
+  <rect x="230" y="54" width="110" height="44" rx="8" fill="var(--good)" fill-opacity="0.16" stroke="var(--good)" stroke-width="1.6"/>
+  <text x="285" y="72" text-anchor="middle" class="blk-title">block 1</text>
+  <text x="285" y="86" text-anchor="middle" class="blk-sub">(shared)</text>
+
+  <rect x="370" y="54" width="110" height="44" rx="8" fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="425" y="72" text-anchor="middle" class="blk-title" fill="var(--accent)">block 2</text>
+  <text x="425" y="86" text-anchor="middle" class="blk-sub">A's own tail</text>
+
+  <rect x="510" y="54" width="110" height="44" rx="8" fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="565" y="72" text-anchor="middle" class="blk-title" fill="var(--accent)">block 3</text>
+  <text x="565" y="86" text-anchor="middle" class="blk-sub">A's own tail</text>
+
+  <rect x="650" y="54" width="110" height="44" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <text x="705" y="72" text-anchor="middle" class="blk-title muted">partial</text>
+  <text x="705" y="86" text-anchor="middle" class="blk-sub muted">uncommitted</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="180" y1="115" x2="220" y2="115" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#pch-arrow)"/>
+  <line x1="320" y1="115" x2="360" y2="115" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#pch-arrow)"/>
+  <line x1="460" y1="115" x2="500" y2="115" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#pch-arrow)"/>
+
+  <rect x="110" y="103" width="70" height="24" rx="11" fill="var(--good)" fill-opacity="0.22" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="145" y="119" text-anchor="middle" class="chip-lbl" fill="var(--good)">h0</text>
+
+  <rect x="250" y="103" width="70" height="24" rx="11" fill="var(--good)" fill-opacity="0.22" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="285" y="119" text-anchor="middle" class="chip-lbl" fill="var(--good)">h1</text>
+
+  <rect x="390" y="103" width="70" height="24" rx="11" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.4"/>
+  <text x="425" y="119" text-anchor="middle" class="chip-lbl" fill="var(--accent)">h2</text>
+
+  <rect x="530" y="103" width="70" height="24" rx="11" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.4"/>
+  <text x="565" y="119" text-anchor="middle" class="chip-lbl" fill="var(--accent)">h3</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="145" y1="127" x2="145" y2="177" stroke="var(--good)" stroke-width="1.5" marker-end="url(#pch-arrow-good)"/>
+  <line x1="285" y1="127" x2="285" y2="177" stroke="var(--good)" stroke-width="1.5" marker-end="url(#pch-arrow-good)"/>
+  <line x1="425" y1="127" x2="425" y2="148" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#pch-arrow-a)"/>
+  <line x1="565" y1="127" x2="565" y2="148" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#pch-arrow-a)"/>
+</g>
+
+
+<g data-anim="3">
+  <text x="705" y="119" text-anchor="middle" class="lbl-xs muted">hash -&gt; physical block</text>
+
+  <rect x="100" y="179" width="90" height="40" rx="8" fill="var(--good)" fill-opacity="0.24" stroke="var(--good)" stroke-width="1.8"/>
+  <text x="145" y="196" text-anchor="middle" class="phys-lbl" fill="var(--good)">P0</text>
+  <text x="145" y="210" text-anchor="middle" class="phys-sub muted">shared, refcount 2</text>
+
+  <rect x="240" y="179" width="90" height="40" rx="8" fill="var(--good)" fill-opacity="0.24" stroke="var(--good)" stroke-width="1.8"/>
+  <text x="285" y="196" text-anchor="middle" class="phys-lbl" fill="var(--good)">P1</text>
+  <text x="285" y="210" text-anchor="middle" class="phys-sub muted">shared, refcount 2</text>
+
+  <rect x="380" y="150" width="90" height="32" rx="8" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="425" y="171" text-anchor="middle" class="phys-lbl" fill="var(--accent)">P2 (A)</text>
+
+  <rect x="520" y="150" width="90" height="32" rx="8" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="565" y="171" text-anchor="middle" class="phys-lbl" fill="var(--accent)">P3 (A)</text>
+
+  <rect x="380" y="216" width="90" height="32" rx="8" fill="var(--accent2)" fill-opacity="0.22" stroke="var(--accent2)" stroke-width="1.6"/>
+  <text x="425" y="237" text-anchor="middle" class="phys-lbl" fill="var(--accent2)">P5 (B, fresh)</text>
+
+  <rect x="520" y="216" width="90" height="32" rx="8" fill="var(--accent2)" fill-opacity="0.22" stroke="var(--accent2)" stroke-width="1.6"/>
+  <text x="565" y="237" text-anchor="middle" class="phys-lbl" fill="var(--accent2)">P6 (B, fresh)</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="145" y1="271" x2="145" y2="221" stroke="var(--good)" stroke-width="1.5" marker-end="url(#pch-arrow-good)"/>
+  <line x1="285" y1="271" x2="285" y2="221" stroke="var(--good)" stroke-width="1.5" marker-end="url(#pch-arrow-good)"/>
+  <line x1="425" y1="271" x2="425" y2="250" stroke="var(--accent2)" stroke-width="1.5" marker-end="url(#pch-arrow-b)"/>
+  <line x1="565" y1="271" x2="565" y2="250" stroke="var(--accent2)" stroke-width="1.5" marker-end="url(#pch-arrow-b)"/>
+</g>
+
+
+<g data-anim="4">
+  <line x1="180" y1="283" x2="220" y2="283" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#pch-arrow)"/>
+  <line x1="320" y1="283" x2="360" y2="283" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#pch-arrow)"/>
+  <line x1="460" y1="283" x2="500" y2="283" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#pch-arrow)"/>
+
+  <rect x="110" y="271" width="70" height="24" rx="11" fill="var(--good)" fill-opacity="0.22" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="145" y="287" text-anchor="middle" class="chip-lbl" fill="var(--good)">h0</text>
+
+  <rect x="250" y="271" width="70" height="24" rx="11" fill="var(--good)" fill-opacity="0.22" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="285" y="287" text-anchor="middle" class="chip-lbl" fill="var(--good)">h1</text>
+
+  <rect x="390" y="271" width="70" height="24" rx="11" fill="var(--accent2)" fill-opacity="0.22" stroke="var(--accent2)" stroke-width="1.4"/>
+  <text x="425" y="287" text-anchor="middle" class="chip-lbl" fill="var(--accent2)">h2'</text>
+
+  <rect x="530" y="271" width="70" height="24" rx="11" fill="var(--accent2)" fill-opacity="0.22" stroke="var(--accent2)" stroke-width="1.4"/>
+  <text x="565" y="287" text-anchor="middle" class="chip-lbl" fill="var(--accent2)">h3'</text>
+</g>
+
+
+<text x="15" y="326" class="row-lbl" fill="var(--accent2)">Request B</text>
+
+
+<g data-anim="4">
+  <rect x="90" y="300" width="110" height="44" rx="8" fill="var(--good)" fill-opacity="0.16" stroke="var(--good)" stroke-width="1.6"/>
+  <text x="145" y="318" text-anchor="middle" class="blk-title">block 0</text>
+  <text x="145" y="332" text-anchor="middle" class="blk-sub">sys prompt</text>
+
+  <rect x="230" y="300" width="110" height="44" rx="8" fill="var(--good)" fill-opacity="0.16" stroke="var(--good)" stroke-width="1.6"/>
+  <text x="285" y="318" text-anchor="middle" class="blk-title">block 1</text>
+  <text x="285" y="332" text-anchor="middle" class="blk-sub">(shared)</text>
+
+  <rect x="370" y="300" width="110" height="44" rx="8" fill="var(--accent2)" fill-opacity="0.18" stroke="var(--accent2)" stroke-width="1.6"/>
+  <text x="425" y="318" text-anchor="middle" class="blk-title" fill="var(--accent2)">block 2</text>
+  <text x="425" y="332" text-anchor="middle" class="blk-sub">B's own tail</text>
+
+  <rect x="510" y="300" width="110" height="44" rx="8" fill="var(--accent2)" fill-opacity="0.18" stroke="var(--accent2)" stroke-width="1.6"/>
+  <text x="565" y="318" text-anchor="middle" class="blk-title" fill="var(--accent2)">block 3</text>
+  <text x="565" y="332" text-anchor="middle" class="blk-sub">B's own tail</text>
+
+  <rect x="650" y="300" width="110" height="44" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <text x="705" y="318" text-anchor="middle" class="blk-title muted">partial</text>
+  <text x="705" y="332" text-anchor="middle" class="blk-sub muted">uncommitted</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="90" y="358" width="14" height="14" rx="3" fill="var(--good)" fill-opacity="0.24" stroke="var(--good)"/>
+  <text x="110" y="369" class="lbl-xs">same hash -&gt; shared block (cache hit)</text>
+  <rect x="430" y="358" width="14" height="14" rx="3" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)"/>
+  <text x="450" y="369" class="lbl-xs">Request A's own divergent tail</text>
+
+  <rect x="90" y="378" width="14" height="14" rx="3" fill="var(--accent2)" fill-opacity="0.22" stroke="var(--accent2)"/>
+  <text x="110" y="389" class="lbl-xs">Request B's own divergent tail</text>
+  <rect x="430" y="378" width="14" height="14" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2"/>
+  <text x="450" y="389" class="lbl-xs">partial block (uncommitted, not hashable)</text>
+</g>
+
+<g data-anim="5">
+  <rect x="60" y="404" width="680" height="42" rx="10" fill="var(--good)" fill-opacity="0.10" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="400" y="422" text-anchor="middle" class="note-box" fill="var(--good)">B reuses blocks 0-1 for free (no compute, no new memory -- just refcount++)</text>
+  <text x="400" y="438" text-anchor="middle" class="note-box" fill="var(--good)">and prefills ONLY its divergent tail (blocks 2 onward).</text>
+</g>
+
+<g data-anim="5">
+  <rect x="60" y="454" width="680" height="40" rx="10" fill="var(--accent2)" fill-opacity="0.08" stroke="var(--accent2)" stroke-width="1.3"/>
+  <text x="400" y="471" text-anchor="middle" class="lbl-xs">Correctness: the hash also folds in the LoRA adapter id and a tenant cache-salt --</text>
+  <text x="400" y="485" text-anchor="middle" class="lbl-xs">so one tenant's cached KV can never be served to another.</text>
+</g>
+
+</svg>
+<figcaption><b>vLLM hashes each full KV block together with the hash of every block before it, so identical prefixes hash identically block-for-block.</b> Because Request A and B's first two blocks contain the same tokens and start the same chain, they land on the same physical blocks (refcount 2, no extra memory) — the moment token content diverges, the hash chain diverges too, and only the divergent tail needs fresh blocks and fresh compute. Only full, committed blocks are hashable; the trailing partial block is never looked up in the cache.</figcaption>
+</figure>

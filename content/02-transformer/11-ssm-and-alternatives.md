@@ -141,6 +141,8 @@ q5  X X X X X X .    q5  . . . X X X .      q5  X X . X X X .    q5  G . . . X X
 q6  X X X X X X X    q6  . . . . X X X      q6  X . . X . X X    q6  G . . . X X X
 ```
 
+{{fig:sparse-attention-mask-family}}
+
 | Pattern | Keys per query | Cost per layer |
 |---------|----------------|----------------|
 | Full (causal) | $\sim N$ | $O(N^2 d)$ |
@@ -171,6 +173,8 @@ $$
 $$
 
 The key: compute $\phi(K)^\top V$ first. This is an $r \times d_v$ matrix that requires $O(N r d_v)$ operations and can be computed once. Then multiplying by $\phi(Q)$ (shape $N \times r$) costs another $O(N r d_v)$. Total is $O(N)$ rather than $O(N^2)$.
+
+{{fig:linear-attention-reassociation}}
 
 The price: vanilla linear attention drops the softmax normalization, losing the "focusing" ability that makes attention heads specialize. Empirically, models trained with simple linear attention tend to underperform transformers on tasks requiring selective copying of distant tokens.
 
@@ -1033,6 +1037,8 @@ where $G_t \in (0,1)^{d_k \times d_v}$ is a data-dependent gate (or decay) matri
 - $G_t = \text{diag}(\exp(-\exp(w)))$ (input-dependent scalar per channel) → RWKV-style
 - $G_t = \text{diag}(\exp(\Delta_t A))$ (Mamba-style discretization) → Mamba / selective SSM
 - $G_t = I$ (no decay) → linear attention
+
+{{fig:gated-linear-recurrence-convergence}}
 
 This convergence has practical implications: hardware-efficient kernels developed for one variant (e.g., GLA's chunked parallel scan) can be adapted for others, and model designers can tune the gate expressiveness/cost tradeoff without changing the high-level architecture.
 

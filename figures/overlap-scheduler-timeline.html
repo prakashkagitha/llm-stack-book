@@ -1,0 +1,146 @@
+<figure class="viz" id="fig-overlap-scheduler-timeline">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 420" role="img" aria-label="Gantt comparison of the decode loop: without overlap the CPU and GPU alternate and the GPU sits idle during every scheduling gap; with overlap scheduling the CPU prepares the next step under the GPU's current forward pass, so GPU kernels launch back-to-back with no idle bubble and the same three steps finish sooner.">
+  <defs>
+    <marker id="ost-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+    </marker>
+    <pattern id="ost-idle-hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <rect width="7" height="7" fill="var(--surface-3)"/>
+      <line x1="0" y1="0" x2="0" y2="7" stroke="var(--border-2)" stroke-width="2.4"/>
+    </pattern>
+    <pattern id="ost-cpu-hatch" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="var(--surface-3)"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--muted)" stroke-width="1.4" opacity="0.8"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-overlap-scheduler-timeline text{ fill:var(--ink-soft); }
+    #fig-overlap-scheduler-timeline .title{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-overlap-scheduler-timeline .lane{ font:700 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-overlap-scheduler-timeline .blk{ font:700 11px var(--mono,monospace); }
+    #fig-overlap-scheduler-timeline .idlelbl{ font:600 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-overlap-scheduler-timeline .tag{ font:700 10px var(--sans,sans-serif); }
+    #fig-overlap-scheduler-timeline .note{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-overlap-scheduler-timeline .util{ font:700 9px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+
+  <g>
+    <text x="14" y="26" class="title">WITHOUT OVERLAP (serial)</text>
+    <rect x="590" y="12" width="196" height="18" rx="5" class="v-fill v-stroke" stroke-width="1.2"/>
+    <text x="688" y="25" text-anchor="middle" class="tag">CPU is in the critical path</text>
+  </g>
+
+  <g>
+    <text x="14" y="60" class="lane">CPU</text>
+    <text x="14" y="72" class="lane">(sched)</text>
+    <rect x="100" y="40" width="630" height="32" fill="var(--surface-3)" opacity="0.4"/>
+    <rect x="100" y="40" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="135" y="60" text-anchor="middle" class="blk">sched t</text>
+    <rect x="310" y="40" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="345" y="60" text-anchor="middle" class="blk">sched t+1</text>
+    <rect x="520" y="40" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="555" y="60" text-anchor="middle" class="blk">sched t+2</text>
+  </g>
+
+  <g>
+    <text x="14" y="102" class="lane">GPU</text>
+    <text x="14" y="114" class="lane">(fwd)</text>
+    <rect x="100" y="84" width="630" height="44" fill="var(--surface-3)" opacity="0.4"/>
+    <rect x="100" y="84" width="70" height="44" fill="url(#ost-idle-hatch)" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="3 2"/>
+    <rect x="170" y="84" width="140" height="44" rx="4" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="240" y="110" text-anchor="middle" class="blk" fill="var(--surface)">fwd t</text>
+    <rect x="310" y="84" width="70" height="44" fill="url(#ost-idle-hatch)" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="3 2"/>
+    <rect x="380" y="84" width="140" height="44" rx="4" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="450" y="110" text-anchor="middle" class="blk" fill="var(--surface)">fwd t+1</text>
+    <rect x="520" y="84" width="70" height="44" fill="url(#ost-idle-hatch)" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="3 2"/>
+    <rect x="590" y="84" width="140" height="44" rx="4" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="660" y="110" text-anchor="middle" class="blk" fill="var(--surface)">fwd t+2</text>
+  </g>
+
+  <g>
+    <path d="M312 132 L378 132 L378 138 L312 138 Z" fill="none" stroke="var(--muted)" stroke-width="1.1"/>
+    <path d="M312 132 L306 140 M378 132 L384 140" fill="none" stroke="var(--muted)" stroke-width="1.1"/>
+    <text x="345" y="152" text-anchor="middle" class="idlelbl">GPU idle: waiting on the CPU</text>
+  </g>
+
+
+  <g>
+    <rect x="742" y="40" width="16" height="88" rx="3" fill="none" stroke="var(--border-2)" stroke-width="1.2"/>
+    <rect x="742" y="88" width="16" height="40" rx="2" class="v-fill" fill="var(--accent)" opacity="0.55"/>
+    <text x="750" y="142" text-anchor="middle" class="util">GPU util</text>
+  </g>
+
+
+  <line x1="14" y1="172" x2="786" y2="172" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="5 4"/>
+
+
+  <g>
+    <text x="14" y="196" class="title">WITH OVERLAP SCHEDULING</text>
+    <rect x="606" y="182" width="180" height="18" rx="5" class="v-fill v-stroke" stroke-width="1.2"/>
+    <text x="696" y="195" text-anchor="middle" class="tag">t+1 prepared under fwd t</text>
+  </g>
+
+  <g>
+    <text x="14" y="224" class="lane">CPU</text>
+    <text x="14" y="236" class="lane">(sched)</text>
+    <rect x="100" y="204" width="630" height="32" fill="var(--surface-3)" opacity="0.4"/>
+    <rect x="100" y="204" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="135" y="224" text-anchor="middle" class="blk">sched t</text>
+    <rect x="170" y="204" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="205" y="224" text-anchor="middle" class="blk">sched t+1</text>
+    <rect x="240" y="204" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="275" y="224" text-anchor="middle" class="blk">sched t+2</text>
+    <rect x="310" y="204" width="70" height="32" rx="4" fill="url(#ost-cpu-hatch)" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="345" y="224" text-anchor="middle" class="blk">sched t+3</text>
+  </g>
+
+  <g>
+    <text x="14" y="266" class="lane">GPU</text>
+    <text x="14" y="278" class="lane">(fwd)</text>
+    <rect x="100" y="248" width="630" height="44" fill="var(--surface-3)" opacity="0.4"/>
+    <rect x="170" y="248" width="140" height="44" rx="4" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="240" y="274" text-anchor="middle" class="blk" fill="var(--surface)">fwd t</text>
+    <rect x="310" y="248" width="140" height="44" rx="4" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="380" y="274" text-anchor="middle" class="blk" fill="var(--surface)">fwd t+1</text>
+    <rect x="450" y="248" width="140" height="44" rx="4" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="520" y="274" text-anchor="middle" class="blk" fill="var(--surface)">fwd t+2</text>
+  </g>
+
+
+  <g stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="3 2">
+    <line x1="170" y1="236" x2="170" y2="248"/>
+    <line x1="240" y1="236" x2="240" y2="248"/>
+  </g>
+  <text x="205" y="306" text-anchor="middle" class="idlelbl">CPU step t+1 runs under GPU step t -&gt; no bubble</text>
+
+
+  <g>
+    <line x1="590" y1="240" x2="590" y2="292" stroke="var(--border-2)" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <line x1="730" y1="40" x2="730" y2="292" stroke="var(--border-2)" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <path d="M594 258 L726 258" fill="none" stroke="var(--good)" stroke-width="1.4" marker-end="url(#ost-arrow)"/>
+    <path d="M726 258 L594 258" fill="none" stroke="var(--good)" stroke-width="1.4" marker-end="url(#ost-arrow)"/>
+    <text x="660" y="248" text-anchor="middle" class="idlelbl" fill="var(--good)">same 3 steps finish sooner</text>
+  </g>
+
+  <g>
+    <rect x="742" y="204" width="16" height="88" rx="3" fill="none" stroke="var(--border-2)" stroke-width="1.2"/>
+    <rect x="742" y="212" width="16" height="80" rx="2" class="v-fill" fill="var(--accent)" opacity="0.9"/>
+    <text x="750" y="306" text-anchor="middle" class="util">GPU util</text>
+  </g>
+
+
+  <g>
+    <rect x="60" y="336" width="680" height="40" rx="9" class="v-fill v-stroke" stroke-width="1.4"/>
+    <text x="400" y="352" text-anchor="middle" class="note" fill="var(--ink-soft)">overlap removes a serial dependency -&gt; the decode loop becomes near-pure GPU work</text>
+    <text x="400" y="368" text-anchor="middle" class="note">(compounds with CUDA graphs)</text>
+  </g>
+
+  <g>
+    <line x1="100" y1="396" x2="730" y2="396" stroke="var(--v-stroke)" stroke-width="1.4" marker-end="url(#ost-arrow)"/>
+    <text x="742" y="400" class="lane">time</text>
+  </g>
+</svg>
+<figcaption><b>Without overlap the GPU sits idle every time the CPU schedules the next step; with overlap scheduling that preparation happens under the GPU's current forward pass, so kernels launch back-to-back.</b> Both panels share the same time scale starting at the same origin: the top panel's three forward passes finish only after three serialized CPU/GPU handoffs, while the bottom panel's three forward passes — with <code>sched t+1</code> prepared while <code>fwd t</code> is still running — complete measurably sooner, with no idle bubble in the GPU lane.</figcaption>
+</figure>

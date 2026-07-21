@@ -147,6 +147,11 @@ def main():
     ap.add_argument("--long-allow",
                     help="file listing figure names allowed to stay 'long-animation'; all other "
                          "long-animations are downgraded to a lighter 'animated' staged reveal")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="drop NEW figures whose figures/<name>.html already exists (already drawn) — "
+                         "use for the P2/P3 densification pass so P1 figures are not redrawn")
+    ap.add_argument("--new-only", action="store_true",
+                    help="ignore refine/replace edits; only draw NEW figures (for the densification pass)")
     a = ap.parse_args()
 
     # Curated flagship long-animation allowlist (selective, per user).
@@ -156,16 +161,22 @@ def main():
 
     def discipline(plan):
         """Draw priority<=max_prio new figures PLUS any flagship-allowlisted figure (even if
-        lower priority); downgrade every non-flagship long-animation to a lighter staged reveal."""
+        lower priority); downgrade every non-flagship long-animation to a lighter staged reveal.
+        With --skip-existing, drop figures already on disk; with --new-only, drop refine/replace."""
         kept = []
         for f in plan.get("new_figures", []):
             is_flagship = long_allow is not None and f["name"] in long_allow
-            if f.get("priority", 2) > a.max_prio and not is_flagship:
+            pr = f.get("priority")
+            pr = 2 if pr is None else pr          # absent/null priority -> treat as P2
+            if pr > a.max_prio and not is_flagship:
                 continue
+            if a.skip_existing and os.path.exists(os.path.join(ROOT, "figures", f["name"] + ".html")):
+                continue                          # already drawn (e.g. in the P1 pass)
             if f.get("kind") == "long-animation" and long_allow is not None and not is_flagship:
                 f = {**f, "kind": "animated"}
             kept.append(f)
-        plan = {**plan, "new_figures": kept}
+        existing = [] if a.new_only else plan.get("existing", [])
+        plan = {**plan, "new_figures": kept, "existing": existing}
         return plan
 
     plans = []

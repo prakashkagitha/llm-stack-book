@@ -200,6 +200,8 @@ Difficulty-targeted selection is the throughput rescue for dynamic sampling: by 
 
     Now you generate $256/0.73 \approx 351$ groups — you have cut the oversampling tax from $\sim$2× down to $\sim$1.37×, saving about **30% of generation compute** for the same informative batch. On a run where generation is 75% of wall-clock, that is a $\sim$20% end-to-end speedup, for free, from data-side bookkeeping.
 
+{{fig:rldata-dynamic-sampling-sieve}}
+
 ## Prompt curriculum: walking the policy up the difficulty ladder
 
 Difficulty-targeted selection keeps you near $p=0.5$ *at each step*. A **curriculum** is the trajectory of that band over the whole run. Three flavors, increasingly automatic:
@@ -224,6 +226,8 @@ The figure is the whole idea: each tier rises and saturates; the *band* (the pro
 
 Generation is the dominant cost ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)). A rollout you used once and discarded is money burned. **Replay** reuses past rollouts — but RL-for-LLMs is *on-policy* by nature (the policy gradient is an expectation under the *current* policy), so naive replay is off-policy and biased. Replay in this setting comes in two distinct flavors that solve different problems.
 
+{{fig:rldata-three-buffers}}
+
 ### Prompt-level replay (revisiting tasks)
 
 The cheap, safe kind: replay *which prompts to attempt*, not the old completions. A **prioritized prompt buffer** stores tasks with a priority equal to their current informativeness (e.g. $|\bar p_t - p^\star|^{-1}$, or recent learning progress) and re-samples high-priority prompts more often — this is exactly the prioritized-experience-replay idea (Schaul et al.) applied at the *task* level rather than the transition level. The completions are always freshly generated under the current policy, so it stays on-policy. This is just difficulty-targeted selection with persistence and is essentially free.
@@ -238,6 +242,8 @@ L = \min\!\big(\rho_t A_t,\; \operatorname{clip}(\rho_t, 1-\epsilon, 1+\epsilon)
 $$
 
 This is the mechanism behind **asynchronous / off-policy RL** (the generator runs ahead of the trainer; rollouts are 1–4 steps stale by the time they are consumed — [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)). The replay "buffer" here is shallow — a few steps of staleness, not a DQN-style million-transition reservoir — because the importance weights blow up and the clipped gradient goes to zero once $\pi_\theta$ has drifted too far from $\pi_{\text{old}}$. **Staleness is the half-life of a stored trajectory.** Beyond a few steps the IS weights are so far from 1 that clipping zeroes the contribution, so the trajectory is dead weight. A practical buffer evicts trajectories older than a staleness bound $\tau_{\max}$ (e.g. 2–4 policy versions) and tracks the *fraction of tokens being clipped* as a health metric — if most tokens are clipped, your buffer is too stale and you are training on noise.
+
+{{fig:rldata-replay-halflife}}
 
 A third, increasingly important pattern is the **experience / success buffer for agentic RL**: store *successful* trajectories (especially for hard, rarely-solved tasks) and replay them as on-policy-ish positive examples or as SFT-style anchors, to keep the policy from forgetting a hard-won capability. This blurs into expert iteration / rejection-sampling fine-tuning (the policy generates, you keep the winners, you train on them) and is a robust way to bank progress on sparse-reward agentic tasks ([Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html)).
 

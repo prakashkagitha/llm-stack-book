@@ -200,11 +200,15 @@ The subtlety in step 1 is **preemption**. Decode is monotonic: every running seq
 !!! warning "Preemption storms degrade tail latency"
     If you admit more requests than the KV pool can sustain, the scheduler thrashes: requests are admitted, partly decoded, preempted, recomputed, preempted again. Throughput collapses and p99 latency explodes. The cure is `max_num_seqs` and `max_num_batched_tokens` sized so steady-state demand fits the pool — see the tuning section. Watch the `num_preemptions` counter in the logs.
 
+{{fig:vllm-scheduler-budget-preemption}}
+
 ### Prefill, decode, and chunked prefill
 
 A naive scheduler runs either a batch of prefills or a batch of decodes. The trouble: a long prefill (say a 32k-token prompt) monopolizes a forward pass and stalls every decoding request, spiking inter-token latency for everyone — a head-of-line blocking problem.
 
 **Chunked prefill** fixes this by splitting a long prompt into chunks of at most `max_num_batched_tokens` and processing one chunk per step, *interleaved with decodes of other requests in the same batch*. A single forward pass thus mixes a slice of prefill tokens with many one-token decodes. This smooths inter-token latency and keeps the GPU busy (decode alone is memory-bound and under-utilizes compute; mixing in prefill tokens raises arithmetic intensity — see the roofline view in [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)). In V1 chunked prefill is on by default and the prefill/decode distinction largely dissolves into a single "token budget" per step. The disaggregation alternative — running prefill and decode on *separate* machines — is covered in [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
+
+{{fig:vllm-chunked-prefill-token-budget}}
 
 ## The engine and executor stack
 
@@ -322,6 +326,8 @@ The block manager keeps a map from `block_hash -> physical_block_id` for blocks 
 3. At the first block that misses, stop matching; allocate fresh blocks for the remaining (uncached) tokens and prefill only those.
 
 A new request with a 4000-token cached system prompt and 50 new tokens prefills only ~50 tokens instead of 4050 — a roughly $80\times$ reduction in prefill work for that request, and a large drop in time-to-first-token.
+
+{{fig:vllm-prefix-cache-rolling-hash}}
 
 ### Eviction and correctness
 

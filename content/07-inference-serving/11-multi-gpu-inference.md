@@ -21,6 +21,8 @@ Serving a large model across $N$ devices decomposes into four independent (and c
 
 The total GPU count satisfies $N = \text{TP} \times \text{PP} \times \text{DP}$, plus any EP expansion on top of TP. Each axis interacts differently with the two phases of inference — prefill (compute-bound, processes the full prompt in one pass) and decode (memory-bandwidth-bound, processes one token per step). We cover both phases throughout.
 
+{{fig:four-parallelism-axes}}
+
 ---
 
 ## Tensor Parallelism
@@ -35,6 +37,8 @@ Y_i = X W_i \quad \text{on GPU } i
 $$
 
 After the column-parallel layer, each GPU holds $Y_i \in \mathbb{R}^{B \times k/T}$. A subsequent row-parallel layer $Z = Y W'$ is arranged as $W' = \begin{bmatrix} W'_1 \\ \vdots \\ W'_T \end{bmatrix}$ so that GPU $i$ computes $Z_i = Y_i W'_i$ and the full result is $Z = \sum_i Z_i$, recovered by an **all-reduce**.
+
+{{fig:tensor-parallel-allreduce}}
 
 In the attention layer, the $Q, K, V$ projections are column-parallel (each GPU owns a disjoint set of attention heads) and the output projection is row-parallel, requiring one all-reduce per attention block. The MLP block follows the same pattern: up-project column-parallel, down-project row-parallel, one all-reduce.
 
@@ -233,6 +237,8 @@ $$
 $$
 
 With two all-to-alls (dispatch and gather) per MoE layer, and 61 MoE layers in DeepSeek-V3, that is about 1.8 GB of network traffic per forward pass — significant but manageable on InfiniBand HDR/NDR at 400 Gb/s.
+
+{{fig:expert-parallel-scatter-gather}}
 
 ### Wide Expert Parallelism (Wide-EP): DeepSeek-V3 / DeepSeek-R1
 

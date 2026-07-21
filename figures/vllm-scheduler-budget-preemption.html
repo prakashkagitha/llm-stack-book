@@ -1,0 +1,162 @@
+<figure class="viz" id="fig-vllm-scheduler-budget-preemption">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-vllm-scheduler-budget-preemption text { fill: var(--ink-soft); }
+  #fig-vllm-scheduler-budget-preemption .hdr     { font: 700 13px var(--sans,sans-serif); }
+  #fig-vllm-scheduler-budget-preemption .title   { font: 700 14px var(--sans,sans-serif); }
+  #fig-vllm-scheduler-budget-preemption .lbl     { font: 600 11px var(--sans,sans-serif); }
+  #fig-vllm-scheduler-budget-preemption .lbl-sm  { font: 500 10px var(--sans,sans-serif); }
+  #fig-vllm-scheduler-budget-preemption .lbl-xs  { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-vllm-scheduler-budget-preemption .mono    { font: 500 10.5px var(--mono,monospace); }
+  #fig-vllm-scheduler-budget-preemption .muted   { fill: var(--muted); }
+  #fig-vllm-scheduler-budget-preemption .cap-it  { font: italic 10.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-vllm-scheduler-budget-preemption .node-title { font: 700 13px var(--sans,sans-serif); }
+</style>
+<svg viewBox="0 0 800 610" role="img" aria-label="Infographic: a KV block pool meter shows a fixed number of blocks mostly used by two sequences with a few free; below, a three-state diagram shows WAITING, RUNNING, and SWAPPED sequences, with the scheduler admitting WAITING into RUNNING, RUNNING looping on each decode step, RUNNING finishing and freeing blocks back to the pool, and a POOL FULL trigger firing preemption from RUNNING back to WAITING (recompute, the V1 default) or to SWAPPED (swap, the V0 path); a bottom caption warns that oversubscribing the pool causes preemption thrashing.">
+
+<defs>
+  <marker id="sbp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+  </marker>
+  <marker id="sbp-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn)"/>
+  </marker>
+  <marker id="sbp-arrow-accent2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2)"/>
+  </marker>
+  <marker id="sbp-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+  </marker>
+</defs>
+
+<text x="20" y="24" class="hdr">KV block pool (num_gpu_blocks) -- a hard ceiling shared by every running sequence</text>
+
+<g data-anim="1">
+  <rect x="20" y="34" width="760" height="52" rx="10" class="v-fill" stroke="var(--border-2)" stroke-width="1.5" fill-opacity="0.5"/>
+  
+  <g stroke-width="1.4">
+    <rect x="32" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="69" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="106" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="143" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="180" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="217" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="254" y="42" width="33" height="36" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+
+    <rect x="291" y="42" width="33" height="36" rx="4" fill="var(--accent2)" fill-opacity="0.55" stroke="var(--accent2)"/>
+    <rect x="328" y="42" width="33" height="36" rx="4" fill="var(--accent2)" fill-opacity="0.55" stroke="var(--accent2)"/>
+    <rect x="365" y="42" width="33" height="36" rx="4" fill="var(--accent2)" fill-opacity="0.55" stroke="var(--accent2)"/>
+    <rect x="402" y="42" width="33" height="36" rx="4" fill="var(--accent2)" fill-opacity="0.55" stroke="var(--accent2)"/>
+    <rect x="439" y="42" width="33" height="36" rx="4" fill="var(--accent2)" fill-opacity="0.55" stroke="var(--accent2)"/>
+
+    <rect x="476" y="42" width="33" height="36" rx="4" fill="var(--muted)" fill-opacity="0.35" stroke="var(--muted)"/>
+    <rect x="513" y="42" width="33" height="36" rx="4" fill="var(--muted)" fill-opacity="0.35" stroke="var(--muted)"/>
+    <rect x="550" y="42" width="33" height="36" rx="4" fill="var(--muted)" fill-opacity="0.35" stroke="var(--muted)"/>
+    <rect x="587" y="42" width="33" height="36" rx="4" fill="var(--muted)" fill-opacity="0.35" stroke="var(--muted)"/>
+
+    <rect x="624" y="42" width="33" height="36" rx="4" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+    <rect x="661" y="42" width="33" height="36" rx="4" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+    <rect x="698" y="42" width="33" height="36" rx="4" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+    <rect x="735" y="42" width="33" height="36" rx="4" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+  </g>
+
+  
+  <rect x="32" y="96" width="14" height="14" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+  <text x="52" y="107" class="lbl-sm">sequence A (running)</text>
+  <rect x="235" y="96" width="14" height="14" rx="3" fill="var(--accent2)" fill-opacity="0.55" stroke="var(--accent2)"/>
+  <text x="255" y="107" class="lbl-sm">sequence B (running)</text>
+  <rect x="438" y="96" width="14" height="14" rx="3" fill="var(--muted)" fill-opacity="0.35" stroke="var(--muted)"/>
+  <text x="458" y="107" class="lbl-sm">other running seqs</text>
+  <rect x="636" y="96" width="14" height="14" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+  <text x="656" y="107" class="lbl-sm">free</text>
+
+  <text x="400" y="130" text-anchor="middle" class="lbl-sm muted">Total KV blocks = hard ceiling (num_gpu_blocks).</text>
+  <text x="400" y="146" text-anchor="middle" class="lbl-sm muted">Every running sequence draws from this one pool.</text>
+</g>
+
+<text x="20" y="178" class="hdr">Request lifecycle: three states, with preemption when the pool is full</text>
+
+<g data-anim="2">
+  
+  <path d="M 696 86 C 696 140 630 155 600 190" fill="none" stroke="var(--warn)" stroke-width="1.4"
+        stroke-dasharray="4 3" marker-end="url(#sbp-arrow-warn)"/>
+
+  <rect x="520" y="192" width="200" height="32" rx="16" fill="var(--warn)" fill-opacity="0.14" stroke="var(--warn)" stroke-width="1.5"/>
+  <text x="620" y="213" text-anchor="middle" class="lbl" fill="var(--warn)">POOL FULL -&gt; preempt</text>
+  <text x="620" y="238" text-anchor="middle" class="lbl-xs muted">evict tail of the RUNNING list first</text>
+
+  
+  <path d="M 560 226 C 520 260 460 285 400 320" fill="none" stroke="var(--warn)" stroke-width="1.3"
+        stroke-dasharray="4 3" marker-end="url(#sbp-arrow-warn)"/>
+  <path d="M 680 226 C 640 260 590 285 545 320" fill="none" stroke="var(--warn)" stroke-width="1.3"
+        stroke-dasharray="4 3" marker-end="url(#sbp-arrow-warn)"/>
+</g>
+
+<g data-anim="3">
+  
+  <path d="M 360 320 C 370 268 440 268 450 320" fill="none" stroke="var(--ink-soft)" stroke-width="1.6"
+        marker-end="url(#sbp-arrow)"/>
+  <text x="405" y="256" text-anchor="middle" class="lbl-sm">each decode step:</text>
+  <text x="405" y="269" text-anchor="middle" class="lbl-sm">+1 block only at a block boundary</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="20" y="320" width="160" height="100" rx="12" class="v-fill" stroke="var(--ink-soft)" stroke-width="1.6" fill-opacity="0.5"/>
+  <text x="100" y="350" text-anchor="middle" class="node-title">WAITING</text>
+  <text x="100" y="368" text-anchor="middle" class="lbl-xs muted">admitted,</text>
+  <text x="100" y="382" text-anchor="middle" class="lbl-xs muted">no KV blocks yet</text>
+
+  <rect x="300" y="320" width="210" height="100" rx="12" class="v-fill" stroke="var(--accent)" stroke-width="1.8" fill-opacity="0.5"/>
+  <text x="405" y="382" text-anchor="middle" class="node-title" fill="var(--accent)">RUNNING</text>
+  <text x="405" y="398" text-anchor="middle" class="lbl-xs muted">has KV blocks;</text>
+  <text x="405" y="411" text-anchor="middle" class="lbl-xs muted">in the next forward pass</text>
+
+  <rect x="630" y="320" width="150" height="100" rx="12" class="v-fill" stroke="var(--accent2)" stroke-width="1.6" fill-opacity="0.5"/>
+  <text x="705" y="350" text-anchor="middle" class="node-title" fill="var(--accent2)">SWAPPED</text>
+  <text x="705" y="368" text-anchor="middle" class="lbl-xs muted">KV evicted to CPU</text>
+  <text x="705" y="382" text-anchor="middle" class="lbl-xs muted">RAM, V0 path</text>
+</g>
+
+<g data-anim="2">
+  
+  <line x1="180" y1="357" x2="298" y2="357" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#sbp-arrow)"/>
+  <text x="239" y="333" text-anchor="middle" class="lbl-sm">admit:</text>
+  <text x="239" y="346" text-anchor="middle" class="lbl-sm">allocate blocks</text>
+
+  
+  <line x1="298" y1="398" x2="180" y2="398" stroke="var(--warn)" stroke-width="1.8" marker-end="url(#sbp-arrow-warn)"/>
+  <text x="247" y="372" text-anchor="middle" class="lbl-sm" fill="var(--warn)">preempt: RECOMPUTE</text>
+  <text x="247" y="386" text-anchor="middle" class="lbl-xs muted">(drop KV, re-prefill)</text>
+</g>
+
+<g data-anim="2">
+  
+  <line x1="512" y1="357" x2="628" y2="357" stroke="var(--accent2)" stroke-width="1.8" marker-end="url(#sbp-arrow-accent2)"/>
+  <text x="565" y="333" text-anchor="middle" class="lbl-sm" fill="var(--accent2)">preempt: SWAP (V0)</text>
+  <text x="565" y="346" text-anchor="middle" class="lbl-xs muted">copy KV out &amp; back</text>
+
+  
+  <line x1="628" y1="398" x2="512" y2="398" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#sbp-arrow-muted)"/>
+  <text x="570" y="384" text-anchor="middle" class="lbl-xs muted">resume: copy KV back</text>
+</g>
+
+<g data-anim="3">
+  
+  <line x1="405" y1="420" x2="405" y2="453" stroke="var(--good)" stroke-width="1.6" marker-end="url(#sbp-arrow)"/>
+  <rect x="300" y="455" width="210" height="40" rx="10" fill="var(--good)" fill-opacity="0.10" stroke="var(--good)" stroke-width="1.4"/>
+  <text x="405" y="479" text-anchor="middle" class="lbl-sm" fill="var(--good)">finish: free blocks back to pool</text>
+
+  <path d="M 300 475 C 130 475 45 300 45 86" fill="none" stroke="var(--good)" stroke-width="1.2"
+        stroke-dasharray="4 3" marker-end="url(#sbp-arrow)"/>
+</g>
+
+<g data-anim="4">
+  <rect x="20" y="515" width="760" height="62" rx="10" fill="var(--warn)" fill-opacity="0.08" stroke="var(--warn)" stroke-width="1.3"/>
+  <text x="400" y="540" text-anchor="middle" class="lbl-sm cap-it">Oversubscribe the pool -&gt; admit, decode, preempt, recompute, preempt again = thrashing:</text>
+  <text x="400" y="558" text-anchor="middle" class="lbl-sm cap-it">throughput collapses, p99 explodes (watch num_preemptions).</text>
+</g>
+
+</svg>
+<figcaption><b>The scheduler runs continuous batching over three request states under one fixed KV-block budget.</b> WAITING sequences are admitted into RUNNING as blocks allow, RUNNING sequences grow one block per decode step at block boundaries and free their blocks on finish &#8212; but when the pool is full, the scheduler preempts a RUNNING sequence by recompute (drop KV, default in V1: cheap to trigger, pays with a later re-prefill) or by swap (V0: copy KV to CPU and back, paying PCIe bandwidth twice). Admitting more concurrent load than the pool can sustain causes preemption thrashing, collapsing throughput and blowing up tail latency.</figcaption>
+</figure>

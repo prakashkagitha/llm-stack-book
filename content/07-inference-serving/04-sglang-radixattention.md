@@ -126,6 +126,8 @@ after:   (root) --"You are a helpful assistant. "--> (S)
                                   --"Be concise."--> (A, original KV preserved)
 ```
 
+{{fig:radix-match-split-insert}}
+
 `_split_node` creates the new intermediate node `S`, gives it the shared KV slots (`child.value[:split_len]`), re-parents the old node `A` under it with the remaining slots (`child.value[split_len:]`), and rewires children. No KV is recomputed — we only re-slice index tensors. The new request then attaches its divergent suffix as a fresh child of `S`. **Insertion is just matching plus, if a suffix is left over, allocating new KV and adding a child.**
 
 A subtlety: matching and splitting happen at **page granularity** (`page_size`, default 1 token, but commonly a small power of two). Pages are the same allocation unit as in PagedAttention; the radix key uses `child_key(page_size)` so two requests share a node only when they agree on whole pages. With `page_size > 1`, a divergence mid-page cannot be shared — a deliberate trade of a little reuse for cheaper, block-aligned bookkeeping.
@@ -157,6 +159,8 @@ Three properties make this correct and effective:
 - **Leaf-only eviction.** You can never evict an interior node while its children live, because evicting a prefix would orphan the suffixes that depend on it. By construction, evicting leaves peels the tree from its tips inward — exactly the cold prefixes.
 - **Lock-awareness.** `lock_ref > 0` nodes are skipped, so you never reclaim KV a running kernel is reading.
 - **Cache-aware order.** Recently used prefixes (your hot system prompt) have fresh `last_access_time` and sit at the bottom of the heap; they survive. SGLang also supports alternative strategies (LFU, priority-aware) via `EvictionStrategy`, but LRU is the default and the one to reason about.
+
+{{fig:radix-lru-eviction}}
 
 Beyond GPU, SGLang has a **hierarchical** variant (`hiradix_cache.py`, `memory_pool_host.py`) that backs evicted nodes to host/CPU memory (and even disk or a remote KV store) so a prefix that falls out of GPU can be paged back in faster than recomputing it — the same spirit as the multi-tier caches discussed in [Caching, Routing & Cost Control in Production](../12-production-mlops/03-caching-routing-cost.html).
 
@@ -406,6 +410,8 @@ With overlap scheduling (CPU step t+1 runs UNDER GPU step t):
   CPU: [sched t][sched t+1][sched t+2][sched t+3]
   GPU:          [  fwd t  ][ fwd t+1 ][ fwd t+2 ]   <- GPU never waits on the CPU
 ```
+
+{{fig:overlap-scheduler-timeline}}
 
 Combined with **CUDA graphs** (capturing the decode forward pass once and replaying it to eliminate per-kernel launch overhead — see [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)), the steady-state decode loop becomes almost pure GPU work. This is why SGLang's decode throughput is competitive-to-leading: the scheduler stops being the bottleneck. The implementation realizes this by running model execution and the next batch's preparation on separate streams/threads so their timelines overlap; conceptually:
 

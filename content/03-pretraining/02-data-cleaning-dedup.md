@@ -379,6 +379,8 @@ if __name__ == "__main__":
 
 This is exactly the mechanism `allenai/dolma` uses (a Rust Bloom filter) for both exact-document and paragraph-level dedup: it streams the corpus once, keeping only a bit array in memory rather than a growing hash set, which is what makes single-machine dedup of trillion-token corpora feasible. The trade-off versus MinHash is that a Bloom filter tests *exact* (normalized) equality -- it replaces the SHA-256 set, not the fuzzy near-dedup that follows.
 
+{{fig:bloom-filter-dedup-asymmetry}}
+
 ## Fuzzy Deduplication: MinHash and LSH
 
 Exact deduplication misses documents that are "almost" the same — two scraped copies of the same news article with slightly different HTML rendering, two forum threads with a shared boilerplate header, or a Wikipedia article and its mirror. For these we need *fuzzy* near-deduplication.
@@ -409,6 +411,8 @@ $$
 
 So the fraction of matching entries in two signatures is an unbiased estimator of Jaccard similarity.
 
+{{fig:minhash-jaccard-estimator}}
+
 ### Locality Sensitive Hashing (LSH)
 
 With $k=128$ hash functions and $N=10^9$ documents, we still cannot check every pair. LSH solves this by organizing signatures into *bands*: divide the 128-row signature into $b$ bands of $r$ rows each ($b \times r = 128$). Two documents are candidate pairs if their signatures agree on *all* $r$ rows in *at least one band*. The probability that a pair with true similarity $s$ becomes a candidate is:
@@ -436,6 +440,8 @@ This is an S-shaped function: pairs with similarity below a threshold $t^* \appr
     If you instead wanted the inflection right at 0.8, pick fewer, longer bands -- e.g. $b = 8, r = 16$ gives $t^* = 8^{-1/16} = 2^{-3/16} \approx 0.878$, catching only very close duplicates. The $(b, r)$ split is the knob that trades recall against verification cost.
 
     With $N = 10^9$ documents, the number of (band, hash-bucket) entries is $N \times b = 1.6 \times 10^{10}$. Collisions in a bucket trigger the expensive Jaccard verification step — but because the threshold is high, the number of buckets with more than one document is small.
+
+{{fig:lsh-banding-scurve}}
 
 ```python
 import hashlib
@@ -964,6 +970,8 @@ For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, a
     - [google-research/deduplicate-text-datasets](https://github.com/google-research/deduplicate-text-datasets) — reference Rust + Python implementation of suffix-array exact-substring dedup from Lee et al.
     - [allenai/dolma](https://github.com/allenai/dolma) — production-grade data curation toolkit (Bloom-filter dedup, Gopher/C4 taggers, PII removal) used to build the OLMo pretraining corpus.
     - [huggingface/datatrove](https://github.com/huggingface/datatrove) — modular pipeline library (filtering, MinHash dedup, extraction) that runs locally or on SLURM/Ray; used to build FineWeb.
+
+{{fig:data-cleaning-cascade-funnel}}
 
 ## Further Reading
 

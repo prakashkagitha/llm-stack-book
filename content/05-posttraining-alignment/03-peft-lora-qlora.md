@@ -69,6 +69,8 @@ So $BA = B \cdot A = 0 \cdot A = 0$ at step 0: the LoRA path contributes nothing
 
     **Optimizer-memory effect.** Full fine-tuning with Adam in mixed precision costs $\approx 16$ bytes/param (fp32 master weight 4, two Adam moments 8, plus the bf16 weight 2 and bf16 grad 2). For 6.7B that is $\approx 107$ GB just for weights+states. LoRA pays the 16 bytes/param *only on the 16.8M trainable params* — $\approx 270$ MB — plus the **frozen** base weights, which need only their bf16 copy ($\approx 13.4$ GB) and **no** gradient, **no** moments, **no** fp32 master copy. The optimizer-state line item drops from $\sim 80$ GB to well under 1 GB.
 
+{{fig:lora-qlora-training-memory-breakdown}}
+
 ## Where to apply LoRA, and how merging works
 
 ### Which layers? The targeting decision
@@ -259,6 +261,8 @@ Standard 4-bit integer quantization splits a weight's range into 16 evenly space
 
 **NF4 (4-bit NormalFloat)** is an *information-theoretically optimal* quantization for normally distributed data. The 16 quantization levels are placed at the *quantiles* of a standard normal distribution, so each bin holds roughly the same *probability mass* rather than the same *width*. Concretely: estimate the quantiles of $\mathcal{N}(0,1)$ that split it into 16 equal-mass regions, take the bin midpoints as the codebook, and make it symmetric with an exact zero. Because weights are first normalized to $[-1, 1]$ (by dividing by their block-wise absmax), they match the standard-normal assumption well, and NF4 reproduces them with markedly less error than INT4 at the same 4 bits. The dequantization is just a 16-entry lookup. See [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html) for the broader quantization toolbox.
 
+{{fig:nf4-quantile-bins-vs-uniform}}
+
 ```python
 import torch
 
@@ -372,6 +376,8 @@ This typically improves both convergence speed and final quality at no extra par
 $$
 W = m \cdot \frac{V}{\lVert V \rVert_c},
 $$
+
+{{fig:dora-magnitude-direction-decomposition}}
 
 where $\lVert \cdot \rVert_c$ is the column-wise norm. DoRA then trains the magnitude $m$ (a small trainable vector, one scalar per column) **directly**, while adapting the *direction* with a LoRA-style low-rank update:
 

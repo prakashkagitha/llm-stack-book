@@ -1,0 +1,128 @@
+<figure class="viz" id="fig-dpo-degeneration-footgun">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 700" role="img" aria-label="Diagnostic figure contrasting the healthy-looking DPO metrics of rising reward accuracy and reward margin against the underlying trap: chosen and rejected sequence log-probabilities both falling, with rejected falling faster so the gap between them widens, while probability mass leaks from chosen and rejected onto unseen degenerate outputs that the loss never penalizes. A footer lists four fixes: raise beta, add an SFT anchor, switch to KTO or IPO, and check rejected data quality.">
+<defs>
+  <marker id="ddf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9z" fill="var(--ink-soft,#555)"/>
+  </marker>
+  <marker id="ddf-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+<style>
+  #fig-dpo-degeneration-footgun text        { fill: var(--ink-soft,#333); }
+  #fig-dpo-degeneration-footgun .ttl        { font: 700 15px var(--sans,sans-serif); }
+  #fig-dpo-degeneration-footgun .sec-h      { font: 700 13px var(--sans,sans-serif); }
+  #fig-dpo-degeneration-footgun .axis-lbl   { font: 600 10.5px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-dpo-degeneration-footgun .tick       { font: 400 9.5px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-dpo-degeneration-footgun .curve-tag  { font: 700 11px var(--sans,sans-serif); }
+  #fig-dpo-degeneration-footgun .ann        { font: 400 10.5px var(--sans,sans-serif); }
+  #fig-dpo-degeneration-footgun .ann-b      { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-dpo-degeneration-footgun .check-lbl  { font: 700 11.5px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-dpo-degeneration-footgun .chip-txt   { font: 600 9.5px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-dpo-degeneration-footgun .panel-box  { fill: var(--surface,#fff); stroke: var(--border-2,#ccc); stroke-width: 1.2; }
+  #fig-dpo-degeneration-footgun .grid       { stroke: var(--v-grid,#ddd); stroke-width: 1; }
+  #fig-dpo-degeneration-footgun .axis       { stroke: var(--v-grid,#ccc); stroke-width: 1.3; }
+</style>
+
+<text x="390" y="20" text-anchor="middle" class="ttl">Rising reward margin can hide both log-probs collapsing</text>
+
+
+<g data-anim="1">
+  <rect x="15" y="36" width="750" height="150" rx="10" class="panel-box"/>
+  <text x="35" y="58" class="sec-h">Looks healthy: the usual metrics</text>
+
+  <text x="35" y="118" class="axis-lbl">reward accuracy</text>
+  <line class="axis" x1="185" y1="128" x2="365" y2="128"/>
+  <line class="grid" x1="185" y1="90" x2="365" y2="90" stroke-dasharray="3 3"/>
+  <text x="180" y="93" text-anchor="end" class="tick">0.7</text>
+  <text x="180" y="131" text-anchor="end" class="tick">0.5</text>
+  <path d="M 185,126 L 215,120 L 245,112 L 275,104 L 305,98 L 335,93 L 365,90"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="365" cy="90" r="3.2" fill="var(--good,#2f9e6e)"/>
+  <text x="275" y="146" text-anchor="middle" class="ann" fill="var(--good,#2f9e6e)">climbs past the 0.5 coin-flip toward ~0.7</text>
+
+  <text x="420" y="118" class="axis-lbl">reward margin (r_w - r_l)</text>
+  <line class="axis" x1="420" y1="128" x2="600" y2="128"/>
+  <path d="M 420,126 L 450,116 L 480,105 L 510,94 L 540,84 L 570,76 L 600,70"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="600" cy="70" r="3.2" fill="var(--good,#2f9e6e)"/>
+  <text x="510" y="146" text-anchor="middle" class="ann" fill="var(--good,#2f9e6e)">margin steadily grows</text>
+
+  <circle cx="668" cy="98" r="15" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.2"/>
+  <path d="M 661,98 L 666,104 L 676,91" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="668" y="128" text-anchor="middle" class="check-lbl">margin</text>
+  <text x="668" y="142" text-anchor="middle" class="check-lbl">improving</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="15" y="200" width="750" height="270" rx="10" class="panel-box" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <text x="35" y="222" class="sec-h" fill="var(--warn,#e0a106)">The trap: absolute sequence log-prob</text>
+
+  <line class="axis" x1="70" y1="410" x2="600" y2="410"/>
+  <line class="axis" x1="70" y1="248" x2="70" y2="410"/>
+  <text x="30" y="256" text-anchor="middle" class="tick">less</text>
+  <text x="30" y="268" text-anchor="middle" class="tick">negative</text>
+  <text x="30" y="404" text-anchor="middle" class="tick">more</text>
+  <text x="30" y="416" text-anchor="middle" class="tick">negative</text>
+  <text x="335" y="428" text-anchor="middle" class="axis-lbl">training step -&gt;</text>
+
+  <path d="M 70,258 220,272 370,290 520,312 600,326" fill="none" stroke="var(--muted,#888)" stroke-width="2.8" stroke-linecap="round"/>
+  <path d="M 70,264 220,300 370,340 520,378 600,400" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2.8" stroke-linecap="round"/>
+
+  <path d="M 600,326 L 600,400 L 520,378 L 520,312 L 370,290 L 370,340 L 220,272 L 220,300 L 70,258 L 70,264 Z"
+        fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="none"/>
+
+  <text x="612" y="322" class="curve-tag" fill="var(--muted,#888)">chosen</text>
+  <text x="612" y="404" class="curve-tag" fill="var(--warn,#e0a106)">rejected</text>
+
+  <line x1="440" y1="300" x2="440" y2="358" stroke="var(--ink-soft,#555)" stroke-width="1" stroke-dasharray="2 2"/>
+  <rect x="330" y="330" width="140" height="34" rx="6" fill="var(--surface,#fff)" fill-opacity="0.92" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="400" y="343" text-anchor="middle" class="ann-b" fill="var(--warn,#e0a106)">Delta = the only thing</text>
+  <text x="400" y="357" text-anchor="middle" class="ann-b" fill="var(--warn,#e0a106)">the loss constrains</text>
+
+  <line x1="330" y1="347" x2="230" y2="286" stroke="var(--warn,#e0a106)" stroke-width="1.4" marker-end="url(#ddf-arrow-warn)"/>
+  <rect x="60" y="440" width="500" height="20" rx="4" fill="none"/>
+  <text x="330" y="452" text-anchor="middle" class="ann" fill="var(--warn,#e0a106)">margin grows because rejected drops faster -- not because chosen improves</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="35" y="500" class="sec-h">Where the probability mass actually goes</text>
+
+  <rect x="35" y="516" width="710" height="60" rx="8" class="panel-box"/>
+  <rect x="40"  y="521" width="150" height="50" fill="var(--v-fill,#eee)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="115" y="551" text-anchor="middle" class="chip-txt">chosen (shrinking)</text>
+
+  <rect x="192" y="521" width="220" height="50" fill="var(--warn,#e0a106)" fill-opacity="0.30" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="302" y="551" text-anchor="middle" class="chip-txt">rejected (shrinking fast)</text>
+
+  <rect x="414" y="521" width="325" height="50" fill="var(--warn,#e0a106)" fill-opacity="0.55" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <text x="576" y="544" text-anchor="middle" class="chip-txt" font-weight="700">UNSEEN / degenerate outputs</text>
+  <text x="576" y="558" text-anchor="middle" class="chip-txt">never in the data, never penalized</text>
+
+  <path d="M 150,577 Q 295,612 440,577" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#ddf-arrow-warn)" stroke-dasharray="4 3"/>
+  <path d="M 302,577 Q 400,600 500,577" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8" marker-end="url(#ddf-arrow-warn)" stroke-dasharray="4 3"/>
+  <text x="330" y="628" text-anchor="middle" class="ann" fill="var(--warn,#e0a106)">mass leaks out of both, into the unseen bucket</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="15" y="644" width="750" height="48" rx="10" fill="var(--surface-3,#f2f0ea)" stroke="var(--border-2,#ccc)" stroke-width="1"/>
+  <rect x="26"  y="654" width="150" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="101" y="672" text-anchor="middle" class="chip-txt">raise beta (tighter KL leash)</text>
+
+  <rect x="184" y="654" width="220" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="294" y="672" text-anchor="middle" class="chip-txt">add SFT/NLL anchor on chosen (CPO/ORPO)</text>
+
+  <rect x="412" y="654" width="185" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="504" y="672" text-anchor="middle" class="chip-txt">switch to KTO/IPO (absolute anchor)</text>
+
+  <rect x="605" y="654" width="150" height="28" rx="14" fill="var(--surface,#fff)" stroke="var(--border-2,#999)" stroke-width="1"/>
+  <text x="680" y="672" text-anchor="middle" class="chip-txt">check rejected data quality</text>
+</g>
+
+</svg>
+<figcaption><b>Reward accuracy and margin can rise while both chosen and rejected log-probabilities fall.</b> The DPO loss only constrains the difference Delta = beta &amp;middot; (log-ratio_w - log-ratio_l), so it is satisfied whenever the rejected log-prob falls faster than the chosen one -- even while both decline in absolute terms and probability mass leaks onto unseen, never-penalized outputs. Always log absolute chosen/rejected log-probs alongside reward accuracy and margin; the four standard fixes are raising beta, adding an SFT/NLL anchor on the chosen response, switching to an absolute-anchor loss like KTO or IPO, or auditing rejected-response data quality.</figcaption>
+</figure>

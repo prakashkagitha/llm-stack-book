@@ -29,6 +29,8 @@ $$
 M_{\text{static}} = 16P \text{ bytes}
 $$
 
+{{fig:memeff-training-memory-budget-16p}}
+
 So for a 7B model: $16 \times 7 \times 10^9 = 112\,\text{GB}$ — already beyond a single 80 GB H100. And we haven't counted activations yet.
 
 ### The Activation Memory Equation
@@ -98,6 +100,8 @@ M_{\text{act}} = O\!\left(\frac{L}{k}\right), \quad \text{FLOPs}_{\text{extra}} 
 $$
 
 where $k$ is the number of "checkpoints" (layer boundaries where you store a tensor). Choosing $k = \sqrt{L}$ minimizes the product, giving $O(\sqrt{L})$ memory and $O(\sqrt{L})$ extra cost — the classic sublinear memory result.
+
+{{fig:memeff-checkpointing-recompute-timeline}}
 
 In practice, modern frameworks let you checkpoint at the granularity of an entire transformer block, so the +33% compute overhead estimate is approximately correct for full-checkpointing of all blocks.
 
@@ -341,6 +345,8 @@ $$
 $$
 
 For a 7B model with $d = k = 4096$ and rank $r = 16$: $\rho \approx 16/4096 = 0.4\%$. Only 0.4% of each weight matrix's parameters are trained.
+
+{{fig:memeff-lora-memory-collapse}}
 
 ### Memory Impact: Exact Accounting
 
