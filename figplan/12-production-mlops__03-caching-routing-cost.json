@@ -1,0 +1,70 @@
+{
+  "chapter": "content/12-production-mlops/03-caching-routing-cost.md",
+  "core_intuitions": [
+    "Cost per request is tokens x price, and output tokens dominate (3-5x pricier because decode is sequential/memory-bandwidth-bound) - so reduce generated length before input length.",
+    "The cheapening levers form an ordered ladder applied in cost order: short-circuit with a cache before you compute, route to the cheapest capable model, and fill idle GPU time - and the ordering of the stack matters.",
+    "Semantic caching replaces exact-match with similarity-match; choosing the cosine threshold tau is a precision/recall calibration - too low admits wrong (even dangerous) hits, too high collapses the hit rate back to exact matching.",
+    "Provider-side prompt-prefix caching reuses the KV tensors only up to the first differing token, so restructuring the prompt to put stable content first maximises the cheaply-billed reused region.",
+    "Routing cascades (sequential or classifier-based) pay the cheap model on the easy majority and escalate only the hard fraction, yielding multiplicative cost cuts; speculative routing spends extra compute to buy latency by firing both tiers and cancelling the loser.",
+    "GPU cost is amortised by utilisation: higher effective batch size means more tokens per GPU-hour and lower cost per token, and spot fleets slash price if workers are stateless and drain gracefully on preemption."
+  ],
+  "existing": [
+    {
+      "name": "cost-semantic-cache-flow",
+      "verdict": "keep",
+      "issue": "Clear request->embed->ANN->threshold->hit/miss flow with fast-path vs LLM-call latencies contrasted, and a populate-index feedback loop. Reads correctly in both themes; the 'tau approx 0.92-0.95' caption sits near the dashed loop but stays legible.",
+      "improvement": "Optional: nudge the 'tau approx' caption clear of the dashed feedback arrow so it never visually collides in the dark theme."
+    },
+    {
+      "name": "cost-routing-cascade",
+      "verdict": "keep",
+      "issue": "The cheaper->more-expensive top axis plus three escalating tiers (classify -> small -> large) with return-directly branches and the E[cost] formula footer conveys the cascade economics crisply in both themes."
+    },
+    {
+      "name": "cost-speculative-routing",
+      "verdict": "keep",
+      "issue": "Concurrent fan-out to small+large, gate check, cancel-large-on-pass (dashed) vs use-large-on-fail, with the latency payoff annotated. Both themes legible; the parallel-fire-and-cancel idea lands."
+    },
+    {
+      "name": "cost-spot-resilience-fleet",
+      "verdict": "keep",
+      "issue": "Health-aware LB fanning to two dashed spot pools plus a solid on-demand floor, with the dashed=reclaimable / solid=guaranteed legend, captures the mixed-fleet economics well in both themes. It does not depict the SIGTERM->drain->reroute lifecycle, but that operational detail is well served by the code and is secondary to the cost-mix intuition this figure owns.",
+      "improvement": "Optional: a small inline caption on the on-demand pool noting it also absorbs retries during a spot shortage, tying the floor to resilience."
+    },
+    {
+      "name": "cost-control-stack-layers",
+      "verdict": "keep",
+      "issue": "Excellent capstone: layered short-circuit stack (exact cache -> semantic cache -> router -> three tiers -> async batch -> return+fill) with per-layer latencies, hit exits, and the fill-caches feedback loop. Reads cleanly in both themes and directly embodies the 'ordered ladder' intuition."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "cost-prefix-cache-reuse-layout",
+      "concept": "Provider-side prompt-prefix (KV) caching reuses tensors up to the first differing token; putting stable content first maximises the cheaply-billed reused region.",
+      "rationale": "Prompt-prefix caching is a full major section with a worked dollar example and real 'restructure your prompt' advice, yet has no figure. The single most actionable intuition - 'the cache hit ends at the first token that differs, so stable-first wins' - is inherently spatial and currently only in prose. A side-by-side layout comparison makes the prefix boundary and the reused-vs-recomputed billing visceral.",
+      "kind": "static",
+      "placement": "Prompt-Prefix Caching (Provider-Side KV Reuse)",
+      "priority": 1,
+      "brief": "Two stacked horizontal 'prompt bars', each broken into token segments, contrasting a GOOD and a BAD layout. TOP bar labelled 'Stable-first (cache-friendly)': a long left segment 'stable prefix: system instructions + few-shot + retrieved context' (illustrative ~2000 tokens) followed by a short right segment 'variable: user message' (illustrative ~500 tokens). A vertical dashed line at the segment join labelled 'cache breakpoint = first differing token'. Directly beneath this bar, draw a 'KV cache' strip mirroring the segments: the long left region tinted green and labelled 'reused KV - billed ~10% of input price', the short right region neutral and labelled 'recomputed - full input price'. BOTTOM bar labelled 'Variable-first (cache-hostile)': the variable/user segment sits at the LEFT (or is interleaved), so the first differing token appears early; its KV strip below is almost entirely neutral 'recomputed - full price' with only a tiny green sliver. A concise takeaway caption: 'The cache hit begins at the first token that differs. Everything before it is near-free; everything after is recomputed - so put the stable content on top.' Use small illustrative integer token counts and RELATIVE prices only (full price vs ~10%); invent no dollar totals. Theme-safe: green = reused/cached, neutral fill = recomputed; both themes must keep all labels legible and nothing may overflow the viewBox. Fully understandable as a single static frame."
+    },
+    {
+      "name": "cost-semantic-threshold-tradeoff",
+      "concept": "Selecting the semantic-cache cosine threshold tau is a precision/recall calibration - low tau admits wrong/dangerous hits, high tau collapses the hit rate toward exact match.",
+      "rationale": "The chapter explicitly frames tau as 'a calibration problem', gives a numbered precision/recall sweep procedure, and uses the memorable aspirin-vs-ibuprofen-dosage danger example - but the existing flow figure only shows the s>=tau gate mechanism, not the trade-off itself. Visualising precision rising and recall falling as tau moves, with labelled danger and dead zones, teaches the actual decision the reader must make.",
+      "kind": "static",
+      "placement": "Similarity threshold selection",
+      "priority": 1,
+      "brief": "A horizontal axis for the cosine-similarity threshold tau spanning ~0.85 (left) to 1.00 (right). Overlay two SCHEMATIC monotonic curves against tau (y-axis just 'low -> high', no numbers): 'precision (fraction of cache hits that are correct)' rising toward the right, and 'recall / cache hit rate' falling toward the right - illustrative shapes only, no benchmark values. Draw a horizontal dashed 'precision floor (e.g. 0.97)' line; shade the vertical band where precision first clears the floor as the 'chosen tau' zone, and annotate it with the chapter's guidance: 'general chat ~0.92-0.95; medical / legal / financial ~0.97+'. Shade the LOW-tau region (left) red-ish/'danger' and label 'false hits: \"aspirin dosage\" ~ \"ibuprofen dosage\" -> wrong & unsafe'. Shade the HIGH-tau region (right) as 'hit rate collapses toward exact match - cache barely fires'. Add one benign near-miss annotation in the acceptable middle ('\"cancel subscription\" ~ \"delete my account\" -> tolerable'). Theme-safe: no hardcoded brand colors, use semantic tinting (danger vs safe) that works in light and dark; keep curves, floor line, zone labels, and example callouts non-overlapping and inside the viewBox. Must be fully readable as a static frame."
+    },
+    {
+      "name": "cost-request-anatomy-levers",
+      "concept": "Where the money goes in one request - input vs output token cost, output priced 3-5x higher - and the four levers that map onto the rest of the chapter.",
+      "rationale": "The opening 'Why does this problem exist' section motivates the entire chapter with the cost formula and the four levers, but has no visual. An anchoring infographic that shows output tokens dominating the bill despite being fewer, and routes each lever to its later section, orients the reader for everything that follows. Nice-to-have because the raw formula is simple and partly cross-referenced, but valuable as chapter scaffolding.",
+      "kind": "static",
+      "placement": "Why Does This Problem Exist?",
+      "priority": 3,
+      "brief": "Left side: decompose one request as an AREA (tokens x unit-price) so cost, not token count, is what the eye reads. Draw a wide-but-short block 'input / prompt tokens (n_p ~628) x 1x unit price' and a narrow-but-tall block 'output / generated tokens (n_g ~300) x ~5x unit price', sized so the output block's area visibly rivals or exceeds the input block despite fewer tokens; caption 'output tokens are 3-5x pricier - decode is sequential & memory-bandwidth-bound'. Show the formula cost = C_in * n_p + C_out * n_g above the blocks. Right side: four labelled levers as knobs/arrows pointing at the bill, each tagged with the section it maps to: (a) 'call fewer tokens', (b) 'reuse computed results -> exact / semantic / prefix caching', (c) 'route to a cheaper model -> cascades / speculative / quantised', (d) 'fill idle GPU time -> batching / spot fleets'. Use the chapter's own illustrative unit prices as RELATIVE multiples (1x input, ~5x output) or its illustrative $0.003/$0.015 - invent no new numbers. Theme-safe, single static frame, all labels legible and within the viewBox in both light and dark."
+    }
+  ],
+  "summary": "Chapter is already strong on figures (5, all kept): the semantic-cache flow, routing cascade, speculative routing, spot-resilience fleet, and the capstone layered cost-control stack all read correctly in both themes and each owns a distinct intuition. The clear gaps are two major figure-less sections. Priority-1: a prompt-prefix cache-reuse layout figure making the 'first differing token breaks the cache -> put stable content first' idea spatial, and a semantic-threshold precision/recall trade-off figure that teaches the tau calibration the chapter frames as a calibration problem but never draws. Priority-3: an optional opening request-anatomy figure showing output tokens dominating the bill and mapping the four levers to their sections."
+}

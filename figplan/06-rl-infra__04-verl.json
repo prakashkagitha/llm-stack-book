@@ -1,0 +1,49 @@
+{
+  "chapter": "06-rl-infra/04-verl",
+  "summary": "veRL/HybridFlow chapter. Three existing figures cover the two-architecture contrast, resource-pool colocation, and the colocated RL step's memory peaks. Colocation figure is excellent and theme-safe (keep). The other two are conceptually strong but have a dark-theme regression: their secondary/annotation labels use a hardcoded dark-gray fill that disappears against the dark background (refine, theme-safe text). Two of the chapter's most mechanical ideas are still only in prose+code and unillustrated: (a) the DP_COMPUTE_PROTO dispatch that splits a batch across DP ranks while REPLICATING within TP ranks, then collects one representative per DP group; and (b) the 3D-HybridEngine's per-layer resharding that gathers a p-way training shard within a small TP group and re-splits it q ways for rollout, in GPU memory, with optimizer state untouched. Both are foundational 'make the mechanism click' visuals -> propose as two new static figures.",
+  "core_intuitions": [
+    "Two failure modes: pure single-controller funnels all batch data through one driver (bottleneck) and can't express intra-stage collectives; pure multi-controller SPMD is fast but buries the RL control flow in replicated distributed code that's painful to change.",
+    "HybridFlow's resolution: single-controller BETWEEN stages (one readable driver loop over small logical batches) + multi-controller SPMD WITHIN each stage (heavy collectives stay inside a WorkerGroup, never touch the driver).",
+    "The dispatch decorator turns ONE driver call into N: DP_COMPUTE_PROTO shards the batch across data-parallel ranks but REPLICATES it within tensor-parallel ranks, runs the SPMD method on all ranks, then collects one representative per DP group and concatenates.",
+    "The 3D-HybridEngine reshards the actor's weights from the training layout (TP=p, FSDP/Megatron) to the rollout layout (TP=q, vLLM) by gathering within a small TP group then re-splitting p->q, all in GPU memory; only bf16 params move, optimizer state and gradients never leave the training layout.",
+    "Colocation time-slices actor, rollout, critic, and reference on the SAME GPUs; it fits because the rollout memory peak (KV cache) and the training memory peak (activations) occur at different times, not simultaneously."
+  ],
+  "existing": [
+    {
+      "name": "verl-single-vs-multi-controller",
+      "verdict": "refine",
+      "issue": "Core layout (driver+workers vs SPMD ranks) reads well and the white rank boxes are legible in both themes, but several secondary labels use a dark-gray fill that nearly vanishes on the dark background: the right-edge 'algorithm replicated + collectives everywhere' note, the 'all-reduce / all-gather' text inside the blue bar, and the '(efficient, but the RL logic is buried in here)' caption. The bottom banner tagline is also very dim in dark mode.",
+      "improvement": "Make every annotation/caption/edge-label text theme-aware (currentColor or the figure's foreground token) instead of a fixed dark gray, so all secondary text stays legible in dark theme. Ensure the text overlaid on the blue all-reduce bar has enough contrast in both themes (e.g. bar uses a translucent fill with foreground-colored text). No structural change needed."
+    },
+    {
+      "name": "verl-resourcepool-colocation",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "verl-colocated-rl-step",
+      "verdict": "refine",
+      "issue": "The two big TRAIN/ROLLOUT boxes and the bottom body caption are legible, but the figure leans heavily on free-floating annotation text that is rendered in a dark-gray fill and becomes illegible in dark theme: the '3D-HybridEngine: gather within TP group, re-split to rollout TP...' label, 'vLLM generates G samples/prompt with PagedAttention KV cache', 'mutates TRAIN-LAYOUT state never moved', the tiny 'optimizer step' label, 'next step', and the faint blue caption title 'The two peaks happen at DIFFERENT times:'. In dark mode these effectively disappear, gutting the figure's message.",
+      "improvement": "Convert all free-floating annotation and edge-label text to a theme-aware foreground color; give the caption title adequate contrast in both themes. Optionally reduce annotation density slightly so labels don't crowd the arrows, but the load-bearing fix is theme-safe text so the two-peaks-at-different-times story survives in dark mode."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "verl-dispatch-fanout",
+      "concept": "How @register(dispatch=DP_COMPUTE_PROTO) turns one driver call into N SPMD executions: split the batch across DP groups, replicate within each TP group, run, then collect one representative per DP group and concatenate back.",
+      "rationale": "The chapter literally says 'That is HybridFlow' about this fan-out/fan-in, and its cleverest, least-obvious detail -- split across data-parallel ranks but REPLICATE within tensor-parallel ranks -- is currently conveyed only by dense code. A single diagram of the two axes (batch splits horizontally over DP, duplicates within a TP pair) makes the mechanism click and explains why the driver 'never sees TP'.",
+      "kind": "static",
+      "placement": "### The dispatch decorator: how one call becomes N",
+      "brief": "Vertical, top-to-bottom reading order in five bands. BAND 1 (driver): a single 'driver (single controller)' box holding one DataProto drawn as a row of four small sample tiles labeled a, b, c, d; beneath it the one line of code 'actor_rollout_wg.generate_sequences(batch)'. BAND 2: a full-width band labeled 'DISPATCH  (DP_COMPUTE_PROTO)'. BAND 3 (WorkerGroup, world_size=4 = 2 DP groups x 2 TP ranks): four rank boxes rank0..rank3, visually bracketed into two DP groups {rank0,rank1} and {rank2,rank3}, each bracket labeled 'TP group (TP=2)'. Draw arrows from the driver batch so that DP group 0 receives the first half {a,b} and DP group 1 receives the second half {c,d} -- the batch is SPLIT across DP groups. Within each TP group, show that BOTH ranks hold the SAME chunk (rank0 and rank1 each show {a,b}; rank2 and rank3 each show {c,d}) -- the chunk is REPLICATED within TP. Each rank box also carries a small label 'runs SPMD slice: forward'. Use two distinct axis annotations: a horizontal caption 'data-parallel axis: batch is split' under the ranks, and a small note on one TP bracket 'tensor-parallel: same data, cooperate on one micro-batch (replicated)'. BAND 4: a full-width band labeled 'COLLECT'; arrows take ONE representative per DP group (rank0 and rank2 highlighted; rank1 and rank3 marked 'TP duplicate -> dropped') and concatenate them. BAND 5: back to the driver, showing the reassembled DataProto {a,b,c,d} as 'one batch returned'. Anchor annotation near the driver: 'driver hands a batch, gets a batch -- it never sees the TP collectives.' Constraints: small illustrative integers only (world_size 4, DP 2, TP 2); no benchmark numbers; theme-safe colors (distinguish the two DP chunks by shade/pattern, not hardcoded primaries); everything inside the viewBox with no overlapping labels; clear single downward flow driver -> dispatch -> ranks -> collect -> driver."
+    },
+    {
+      "name": "verl-reshard-p-to-q",
+      "concept": "The 3D-HybridEngine's per-layer resharding: a column-parallel weight sharded p ways for training is all-gathered within its small TP group and re-split into q rollout shards, in GPU memory, while optimizer state and gradients stay put and only bf16 params move.",
+      "rationale": "The chapter calls this 'the most technically interesting' part and the source of veRL's performance, yet the existing colocated-step figure treats resharding as a single opaque box. Showing one weight matrix's column boundaries actually change from p shards to q shards -- via a bounded intra-group gather then a re-split -- is exactly the intuition the from-scratch code is trying to build, and it makes 'gather-within-a-small-group then re-split' concrete.",
+      "kind": "static",
+      "placement": "### A from-scratch resharding routine",
+      "brief": "Three panels left-to-right, each showing the SAME single weight matrix W (a wide horizontal rectangle representing the out_dim of a column-parallel weight). PANEL 1 'TRAIN LAYOUT (TP=p, p=4)': W divided into 4 vertical column-stripes, each on its own GPU labeled rank0..rank3, each stripe a distinct shade/pattern. Beside each stripe draw a small stacked block labeled 'optimizer state + grads (fp32 Adam)' carrying a lock/anchor glyph and the note 'STAYS in train layout -- never gathered'. PANEL 2 'GATHER within TP group': arrows from the 4 stripes converging to reconstruct the full W on the group; annotate 'all-gather WITHIN the TP group (intra-node) -> full weight'; add a callout 'transient extra memory = ONE TP group of weights, not the whole model'. Show only the bf16 params flowing (label the moving thing 'bf16 params only'), with the optimizer-state blocks explicitly left behind (grayed, still anchored). PANEL 3 'ROLLOUT LAYOUT (TP=q, q=2)': the full W re-split into 2 wider column-stripes assigned to rank0 and rank1 (the vLLM TP ranks); rank2 and rank3 drawn faded and labeled 'idle during rollout -- gathered weights freed'. Make the changing column boundaries visually obvious (4 thin stripes -> 2 wide stripes over the same total width). Bottom full-width callouts: 'gather-within-small-group, then re-split -- pure partition arithmetic' and 'injected into vLLM in place via update_weights -- device-to-device, no disk checkpoint'. Constraints: small illustrative integers only (p=4, q=2); invent no benchmark/byte numbers; theme-safe shading via opacity/pattern rather than hardcoded primary colors; all labels legible with no overlap; clear left-to-right reading train -> gather -> rollout."
+    }
+  ]
+}

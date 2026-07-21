@@ -1,0 +1,64 @@
+{
+  "chapter": "content/10-multimodal-and-arch/03-audio-speech-multimodal.md",
+  "core_intuitions": [
+    "Audio becomes machine-learnable in two ways: a continuous Mel spectrogram (STFT + Mel filterbank, ~200x shorter than the waveform) for encoder models like Whisper, or discrete codec tokens for generative LMs.",
+    "Residual Vector Quantization is a coarse-to-fine approximation: each successive codebook quantizes only the RESIDUAL left by the previous one, so the sum of K nearest entries reconstructs the encoder vector and level-1 alone already captures coarse structure.",
+    "The token-budget tension: faithful codec audio costs ~600 tokens/s (~200x the transcript), forcing hierarchy, coarse-only modeling, or continuous inputs.",
+    "Semantic vs acoustic disentanglement: level-1 (or semantic) tokens encode WHAT is said, higher levels encode HOW it sounds, which lets level-1 stand in for text in a speech LM.",
+    "Speech LMs treat audio codec tokens and text tokens as one shared token stream through a single transformer, differing only by vocabulary slice / embedding table.",
+    "Real-time full-duplex dialogue needs a temporal hierarchy: a slow causal inner LM over coarse tokens plus fast per-frame depth transformers for fine levels, keeping latency bounded."
+  ],
+  "existing": [
+    {
+      "name": "audio-rvq-interleave-patterns",
+      "verdict": "keep",
+      "improvement": "Two-panel flatten-vs-delay comparison is clear and correct in both themes; the bottom caption line sits close to the frame edge in dark mode but stays legible. No change needed."
+    },
+    {
+      "name": "whisper-encoder-decoder-pipeline",
+      "verdict": "keep"
+    },
+    {
+      "name": "tts-vocoder-pipeline",
+      "verdict": "keep"
+    },
+    {
+      "name": "valle-ar-nar-architecture",
+      "verdict": "keep"
+    },
+    {
+      "name": "moshi-temporal-hierarchy",
+      "verdict": "keep"
+    },
+    {
+      "name": "latency-budget-decomposition",
+      "verdict": "keep"
+    },
+    {
+      "name": "multimodal-shared-token-stream",
+      "verdict": "keep"
+    },
+    {
+      "name": "unified-avl-fusion-architecture",
+      "verdict": "keep"
+    },
+    {
+      "name": "audio-llm-transfer-curriculum",
+      "verdict": "refine",
+      "issue": "The bottom legend row is cramped: the green 'LoRA' badge glyph collides with the legend labels ('frozen (muted + lock)' and 'RLHF / preference badge'), reading as overlapping clutter in both themes.",
+      "improvement": "Give the legend row more horizontal room and clear separators so the three legend items (trainable-lit swatch, frozen-muted+lock swatch, LoRA/RLHF badge) are visually distinct and non-overlapping. Keep everything inside the viewBox."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "rvq-residual-cascade",
+      "concept": "How Residual Vector Quantization turns one continuous encoder frame into K integer codes by repeatedly quantizing the leftover residual, coarse-to-fine.",
+      "rationale": "This is THE mechanism that makes audio a token stream, yet no existing figure shows it. The interleave figure shows the token LAYOUT (that there are K levels, L1 coarse) but never HOW the levels arise, leaving a reader to assume the K codes are independent parallel encodings rather than a coarse-to-fine residual approximation. The chapter presents RVQ only as an equation and code, and later draws an explicit analogy to BPE merges (coarse structure first, fine surface form later) that only lands if the reader has internalized the subtract-and-requantize loop. Showing the residual shrinking and the reconstruction accumulating is foundational for the whole 'audio-as-tokens' pivot and for the semantic/acoustic disentanglement discussed later.",
+      "kind": "static",
+      "placement": "Neural Audio Codecs (immediately after the Residual Vector Quantization (RVQ) paragraph and its code block, before 'Token Rate and Sequence Length')",
+      "priority": 1,
+      "brief": "A left-to-right cascade of K=3 quantization stages (label as levels k=1,2,3 with '... up to K' implied) that turns ONE encoder frame vector z_t into 3 integer codes, showing the residual mechanism. Far left: a labeled input 'encoder frame z_t (D-dim vector)' drawn as a small vector or a single tall bar representing its magnitude. Stage 1 box: 'Codebook 1 (C entries)' shown as a tiny grid/row of candidate entries with one highlighted as the nearest (arg min ||r - e||); output an integer index chip 'i1' and a residual arrow r1 = z_t - e_i1 flowing to stage 2. Stage 2: 'Codebook 2' quantizes r1, emits index chip 'i2', passes residual r2 = r1 - e_i2 onward. Stage 3: 'Codebook 3' quantizes r2, emits 'i3', residual r3 continues (fade to '...'). Above or below the cascade, a shrinking RESIDUAL MAGNITUDE indicator: three or four small bars of decreasing height labeled |z_t|, |r1|, |r2|, |r3| making visually explicit that the error shrinks as levels are added (use small illustrative heights only, no numbers on an axis). On the right, an accumulator: 'reconstruction z_hat = e_i1 + e_i2 + e_i3' drawn as stacked contributions (a big coarse chunk for level 1, progressively thinner refinements for 2 and 3) approaching z_t. Collect the emitted chips into a bracketed output '[i1, i2, i3] = K integer codes for this one frame' and annotate 'each index picks 1 of C entries (C ~ 1024)'. A one-line caption tying it together: 'Level 1 is a coarse guess; each further codebook quantizes only what the previous ones missed, so the codes are coarse-to-fine, not independent.' Keep a clear top-to-bottom / left-to-right reading order, theme-safe colors (use the coarse/fine hue pairing already used elsewhere in the chapter so level-1=coarse reads consistently), small illustrative integers only, and ensure the residual-bar row and the reconstruction stack do not overlap the cascade boxes. Must be fully understandable as a single static frame."
+    }
+  ],
+  "summary": "The chapter is figure-rich (9 existing figures) and unusually well-served: 8 of 9 are keep verdicts, correct and legible in both light and dark themes. The transfer-curriculum figure needs a minor refine (its bottom legend row has an overlapping LoRA/RLHF badge). The single genuine intuition gap is the RVQ residual mechanism itself: existing figures show the K-level token LAYOUT but never the subtract-and-requantize cascade that produces those levels and underlies the coarse-to-fine / semantic-vs-acoustic themes and the explicit BPE analogy. I propose one foundational static figure (rvq-residual-cascade). No animation is warranted; a single frame with a shrinking-residual indicator and an accumulating reconstruction conveys the process fully."
+}

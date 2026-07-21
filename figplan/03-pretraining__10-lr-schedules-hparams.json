@@ -1,0 +1,59 @@
+{
+  "chapter": "content/03-pretraining/10-lr-schedules-hparams.md",
+  "core_intuitions": [
+    "Warmup is mandatory at scale because Adam's second-moment v_t is cold-started at zero while step-0 gradients are large and erratic; applying full LR immediately produces oversized updates that saturate softmax logits and diverge. Ramping LR gives the moments time to calibrate.",
+    "The schedule shape trades exploration against convergence: cosine spends most of the budget near peak LR (aggressive steps for exploration) then softly anneals; WSD decouples training length from schedule shape by holding a stable plateau you can extend, then decaying only to 'polish'.",
+    "Batch size and LR are coupled: below the critical batch size B* larger batches cut steps proportionally (linear scaling rule); above B* gradient noise is already averaged out and extra data-per-step is wasted (sqrt / saturated regime).",
+    "muP's payoff: under standard parameterization the optimal LR shifts as width grows so you must re-tune at every scale; muP reparameterizes the net so the optimal LR is width-invariant — sweep once on a tiny proxy, transfer to the full model.",
+    "muP's mechanism/diagnostic: keeping per-layer feature updates O(1) at every width is what makes HPs transfer; the coordinate check verifies it — activation-scale-vs-width curves are flat under correct muP and drift under SP.",
+    "Global-norm gradient clipping only ever scales the whole gradient vector DOWN, preserving direction while bounding magnitude; it is a spike guardrail, not a substitute for a correct schedule."
+  ],
+  "existing": [
+    {
+      "name": "lr-schedule",
+      "verdict": "keep",
+      "improvement": "Correctly conveys the cosine+warmup shape with clean annotations ('flat near the peak, then a soft tail', floor at eta_max/10). Reads well in both light and dark themes; the warmup ramp, peak dot, and floor endpoint are all legible. No change needed."
+    },
+    {
+      "name": "lrsched-wsd-shape",
+      "verdict": "refine",
+      "issue": "The 'eta_min' label at the bottom-right sits directly on top of the decaying curve's tail in both themes, so the glyphs are crossed by the plotted line and slightly hard to read; the composite tick label 'T_w+T_s+T_d' is also cramped against the axis.",
+      "improvement": "Nudge the eta_min label up and to the left of the curve endpoint (or place it left of the dashed floor line) so no plotted line crosses the text; give the final composite x-tick a touch more breathing room. Otherwise the three-phase warmup/stable/decay story is excellent — keep the shape and labels."
+    },
+    {
+      "name": "lrsched-critical-batch-size",
+      "verdict": "keep",
+      "improvement": "Strong figure: steps-to-converge vs batch size (both log), the two regimes labeled, B* marked at the knee, the serial-time floor as a horizontal asymptote, and a faint diagonal for the ideal linear-speedup reference. Both themes are clear and uncluttered. No change needed."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "lrsched-mup-transfer",
+      "concept": "Why muP matters: optimal LR drifts with width under standard parameterization but is width-invariant under muP, so you tune once on a small proxy and transfer.",
+      "rationale": "muP is the largest and hardest-to-grok section of the chapter and currently has zero figures. This is THE canonical muP intuition — the payoff that justifies the whole reparameterization. A reader who sees the SP minima marching left while the muP minima stack on one vertical line instantly understands 'tune once, transfer to any width' in a way the prose and the parameterization table cannot deliver.",
+      "kind": "static",
+      "placement": "muP: What Changes",
+      "priority": 1,
+      "brief": "Two side-by-side panels sharing the same axes. X-axis: peak learning rate on a LOG scale (label 'peak LR (log scale)'). Y-axis: 'final training loss' (lower is better; leave the y-axis without benchmark numbers — a small down-arrow 'better' near the origin is enough). Each panel draws 4 gentle U-shaped (parabola-like) curves, one per model width, using increasing line weight or a light-to-strong shade of a SINGLE theme accent color, with a compact legend: w=256 (proxy), w=512, w=1024, w=2048. Mark the minimum of each U with a filled dot. LEFT panel titled 'Standard Parameterization (SP)': the minima DRIFT — each wider curve's optimum sits at a smaller LR (dots march leftward) and the curves also spread apart; draw a dashed guide arrow threading the four minima to make the leftward march obvious; sub-caption under the panel: 'optimum moves with width -> must re-tune at every scale'. RIGHT panel titled 'muP': all four minima sit at the SAME x-position; draw one vertical dashed line through the shared optimum so the alignment is unmistakable; sub-caption: 'optimum is width-invariant -> tune once, transfer to any width'. On the right panel, highlight the w=256 (proxy) curve slightly and add a small annotation: a short arrow labeled 'sweep here (cheap)' pointing at the proxy curve's minimum, and a 'transfer ->' arrow pointing along the vertical line up to the w=2048 curve. Everything must fit inside the viewBox with no overlapping text; keep both panels the same height with a shared baseline. Theme-safe: derive all strokes/fills from theme variables, no hardcoded primary hex; widths are the only integers and they are illustrative. Static single frame is fully sufficient."
+    },
+    {
+      "name": "lrsched-why-warmup",
+      "concept": "Warmup prevents the cold-start blowup: with full LR from step 0, cold Adam moments plus large erratic gradients cause an early loss spike/divergence; ramping the LR keeps training smooth.",
+      "rationale": "Warmup is the chapter's opening and titular concept, and the existing lr-schedule figure shows only the ramp SHAPE, not WHY it is mandatory. The failure mode — a run that spikes and diverges in the first few hundred steps without warmup — is the intuition. Seeing the diverging trajectory next to the smooth one, with the danger zone shaded and the cold-moment cause annotated, makes 'warmup is not optional at scale' click.",
+      "kind": "static",
+      "placement": "Why Schedules and Warmup Exist",
+      "priority": 2,
+      "brief": "A main loss-vs-step panel with a slim LR strip aligned above it (shared x-axis = training step, early portion only — the first ~T_w plus a bit more). Shade the first T_w steps of BOTH strips lightly and label the band 'cold-start danger zone: Adam v_t still ~0, gradients large & erratic'. TOP LR strip: two lines — a 'no warmup' line flat at eta_max from step 0, and a 'with warmup' line that ramps linearly from near-zero to eta_max over T_w then holds. MAIN loss panel, two trajectories from the same starting loss at step 0: (1) 'no warmup' — rises into a sharp spike within the danger zone and breaks off with an X marker labeled 'diverged / NaN' (or stays pinned high); draw it in a muted/warning treatment. (2) 'with warmup' — descends smoothly and monotonically, clearly the healthy curve. Add one concise callout arrow to the no-warmup spike: 'full LR x random weights -> update overshoots, logits saturate'. Y-axes carry no benchmark numbers (qualitative 'loss' and 'LR' with eta_max / eta_min ticks on the LR strip only). Keep the two curves clearly distinguishable by style, not by relying on color alone, so it survives both themes. Everything inside the viewBox, no text crossing plotted lines. Static frame is sufficient; do not animate."
+    },
+    {
+      "name": "lrsched-coordinate-check",
+      "concept": "The coordinate check: per-layer activation/update scale plotted against width is flat under correct muP and drifts under standard parameterization.",
+      "rationale": "The chapter devotes a full subsection and runnable code to the coordinate check and calls it the single test that catches most muP bugs. It is the mechanism/diagnostic complement to the transfer figure: it shows HOW muP achieves width-invariance (keeping feature scale O(1)) and what a bug looks like. A clean flat-vs-drifting plot is far more memorable than the printed table of numbers in the code output.",
+      "kind": "static",
+      "placement": "Verifying muP: The Coordinate Check",
+      "priority": 3,
+      "brief": "A single plot. X-axis: model width on a LOG scale with ticks 256, 512, 1024, 2048. Y-axis: 'per-layer activation scale  mean|h|' on a LOG scale (no benchmark numbers needed; qualitative). Two connected-dot series: (1) muP — a FLAT horizontal line across all widths, dots on it, labeled 'muP: flat = feature updates stay O(1) at every width  [check]'. (2) SP — a line that DRIFTS monotonically across widths (show it shrinking several-fold from left to right, e.g. steadily downward, consistent with the chapter's note that SP activation scale collapses as width grows), labeled 'SP: drifts -> optimal HPs will NOT transfer  [x]'. Distinguish the two series by line style AND label, not color alone. Add a short caption strip beneath: 'Flat curves = correct muP. Any drift means a bug in init std, per-layer LR multiplier, or attention/readout scaling.' Keep labels off the plotted lines; everything inside the viewBox. Theme-safe via theme variables; the only numbers are the illustrative width ticks. Static single frame."
+    }
+  ],
+  "summary": "The chapter is already well-served on schedule shapes (cosine+warmup, WSD) and batch-size scaling (critical batch size) — all three existing figures are strong and render cleanly in both themes (keep two as-is; one minor label-overlap refine on the WSD figure). The real gap is muP, the chapter's most conceptually demanding section, which has no figures at all, plus the opening 'why warmup' concept which is shown only as a shape, not as the failure it prevents. I propose three static infographics: (1) priority-1 muP HP-transfer plot (SP minima drift with width vs muP minima aligned) — the payoff intuition that justifies the whole muP framework; (2) priority-2 why-warmup failure-mode plot (diverging no-warmup trajectory vs smooth warmup, with the cold-moment cause annotated); (3) priority-3 coordinate-check plot (flat muP vs drifting SP activation scale) as the muP mechanism/diagnostic complement. All are single-frame-clear; no animation warranted."
+}

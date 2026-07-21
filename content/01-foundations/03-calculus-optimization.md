@@ -22,6 +22,8 @@ The directional derivative of $f$ along unit vector $\mathbf{u}$ is $D_\mathbf{u
 
 For a modern language model, $\theta \in \mathbb{R}^n$ with $n$ on the order of $10^9$ to $10^{12}$. The gradient is a vector of the same dimensionality — one scalar sensitivity per parameter.
 
+{{fig:gradient-contour-steepest-descent}}
+
 ### The Jacobian: Gradient for Vector-Valued Maps
 
 When the function maps $\mathbb{R}^n \to \mathbb{R}^m$, the first-order derivative is the **Jacobian matrix** $J \in \mathbb{R}^{m \times n}$:
@@ -141,6 +143,8 @@ Loss                        Loss
  +--x*-----------> θ        +--------------------> θ
    one global min            many local min + saddles
 ```
+
+{{fig:loss-landscape-convex-vs-nonconvex}}
 
 ---
 
@@ -298,6 +302,8 @@ For strongly convex functions (Hessian eigenvalues bounded below by $\mu > 0$), 
 A condition number of $\kappa = 100$ means GD takes about $100 \ln(1/\epsilon)$ steps while Nesterov takes $10 \ln(1/\epsilon)$ — a $10\times$ speedup.
 
 For neural networks, the condition number of the loss Hessian can be in the thousands or higher, which is one reason adaptive methods like Adam work better in practice: they implicitly precondition the gradient by the square root of the second moment, effectively rescaling each parameter direction to have condition number closer to 1.
+
+{{fig:optimizer-paths-conditioning}}
 
 ### Layer-Wise Conditioning
 

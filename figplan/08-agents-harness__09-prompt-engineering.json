@@ -1,0 +1,62 @@
+{
+  "chapter": "content/08-agents-harness/09-prompt-engineering.md",
+  "core_intuitions": [
+    "A prompt is a layered structured document (system / few-shot / runtime context / user), where each layer sets priors the later layers inherit — not a flat string.",
+    "Why chain-of-thought works: it factorizes a hard direct mapping P(y|x) into a marginalization over an explicit reasoning scratchpad, P(y|x)=Σ_z P(z|x)·P(y|x,z) — many easy conditional hops instead of one strained leap.",
+    "Self-consistency is majority voting over k diverse CoT samples: independent reasoning paths rarely share the same mistake, so the mode is usually right — the simplest form of test-time compute scaling.",
+    "Decomposition splits plan / execute / synthesize into separate autoregressive passes so the model isn't forced to plan, reason, and generate simultaneously.",
+    "Prompt optimization is a real optimization loop (propose → score on held-out → keep best), and evals-driven iteration must keep the test set untouched — dev drives changes, test is one-way.",
+    "Prompt caching keys on an exact byte-for-byte prefix, so ordering static-before-dynamic content is what unlocks the cache-hit cost savings."
+  ],
+  "existing": [
+    {
+      "name": "prompt-anatomy-layers",
+      "verdict": "keep"
+    },
+    {
+      "name": "promptdecomp-plan-execute-synthesize",
+      "verdict": "refine",
+      "issue": "The stage header bars use dark title text on a medium-purple fill, which is low-contrast in both themes and muddy in dark mode. The bottom caption and the inline 'subtasks' / 'final answer' labels slightly overlap the outer EXECUTE boxes and connector arrows.",
+      "improvement": "Give the header-bar titles a light/white fill so 'STAGE 1 · PLAN' etc. read clearly on the purple bars in both themes; nudge the 'subtasks'/'final answer' inline labels and the bottom caption clear of the subtask boxes and arrows so nothing overlaps."
+    },
+    {
+      "name": "ape-optimization-loop",
+      "verdict": "keep"
+    },
+    {
+      "name": "evalstack-four-layers",
+      "verdict": "keep"
+    },
+    {
+      "name": "promptiter-eval-loop",
+      "verdict": "keep"
+    },
+    {
+      "name": "promptcache-prefix-ordering",
+      "verdict": "refine",
+      "issue": "In dark mode the 'cacheable prefix = ⬜' badge renders a missing-glyph box (the emoji is not in the figure font). The right-side annotations 'static, thousands of tokens' and 'changes per request' clip against the viewBox right edge in dark mode.",
+      "improvement": "Replace the emoji in the badge with a glyph/text that renders reliably in the figure font (an SVG-drawn ✗/✓ or the plain words 'none' / 'full block'). Pull the right-side annotations inward or wrap them so 'thousands of tokens' and 'changes per request' no longer touch or clip at the right edge."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "cot-reasoning-scratchpad",
+      "concept": "Chain-of-thought turns one hard direct jump from question to answer into a chain of easy conditional steps on a scratchpad — the visual form of the marginalization P(y|x)=Σ_z P(z|x)·P(y|x,z).",
+      "rationale": "Section 8.3 is the chapter's most-cited, most mechanistic material (it even carries the marginalization equation) yet has NO figure. This is the single clearest intuition gap: readers must feel WHY inserting reasoning tokens factorizes a hard distribution into easy steps, not just memorize the phrase 'let's think step by step'.",
+      "kind": "static",
+      "placement": "### Standard Chain-of-Thought (CoT)",
+      "priority": 1,
+      "brief": "Two-panel contrast, both panels sharing the same start box x = a small arithmetic question (e.g. 'Roger: 5 balls + 2 cans of 3'). LEFT panel titled 'Direct': the x box with ONE long, strained, dashed curved arrow labelled 'one giant leap' jumping straight to a small answer box y ('?'), with a caption underneath 'must estimate P(y | x) directly — a hard distribution' and a small stress/error mark on the arrow. RIGHT panel titled 'Chain-of-thought': the same x box, then a horizontal SCRATCHPAD strip of three short reasoning chips connected by short SOLID arrows — z1 '5 balls', z2 '2×3 = 6', z3 '5+6 = 11' — ending in a clean answer box y '11'. A thin bracket over the chips labels them 'scratchpad: later tokens attend back to these'. Caption under the right chain: 'each hop is short and easy'. Across the bottom, render the intuition equation once: P(y|x) = Σ_z P(z|x) · P(y|x,z), with a small brace tying P(z|x) to 'generate the reasoning' and P(y|x,z) to 'read off the answer'. The whole point must land visually: left = one long strained arrow, right = several short confident arrows. Use only the small illustrative integers 5, 6, 11 — invent no benchmark numbers. Theme-safe: no hardcoded primary colors, keep all text inside the viewBox with clear left-to-right reading order."
+    },
+    {
+      "name": "self-consistency-majority-vote",
+      "concept": "Sample k diverse CoT chains at nonzero temperature, extract each chain's final answer, and take the majority vote; different paths rarely share the same error so the mode is usually correct, at k× inference cost.",
+      "rationale": "Self-consistency is called out in the Key Takeaways as 'the simplest form of test-time compute scaling' and has its own subsection and vote equation, but no visual. The fan-out-then-vote idea — divergent reasoning, one bad chain outvoted — is exactly the kind of thing a picture makes obvious and prose makes abstract.",
+      "kind": "static",
+      "placement": "### Self-Consistency",
+      "priority": 1,
+      "brief": "Left: a single prompt box 'Q + ‘Let’s think step by step’, temperature > 0' with k=5 arrows fanning out to 5 parallel CoT chains stacked vertically. Each chain is a short row of 2–3 reasoning chips ending in a boxed final answer; make the intermediate chips VISIBLY DIFFERENT across chains (different phrasing / different route to the number) so divergence is legible — that divergence is the whole point. Final answers: chains 1, 2, 4, 5 end in '11'; chain 3 takes a visibly faulty middle step and ends in '9'. On the right, a vote-tally box showing '11 ×4' and '9 ×1', with the winning row '11' highlighted as argmax. Draw the one wrong chain in a muted/struck style so the reader sees a single outlier being outvoted. Caption: 'independent paths rarely share the same mistake — the majority is usually right; cost = k× inference'. Optionally place the small vote identity ŷ = argmax_y Σ_i 1[answer(z_i)=y] at the bottom. Small illustrative integers only (k=5, answers 11 and 9); no benchmark numbers. Theme-safe, top-to-bottom reading order for the five chains, everything inside the viewBox with no overlap."
+    }
+  ],
+  "summary": "The chapter is broadly well-served: five of six existing figures are strong keeps (anatomy, APE loop, four-layer eval stack, iteration loop) and two need only light refinement (decomposition header-text contrast + label overlap; cache figure's missing-glyph badge + right-edge clipping in dark mode). The one real gap is Section 8.3, Chain-of-Thought — the chapter's most mechanistic and most-cited material carries zero figures despite an explicit marginalization equation and a self-consistency vote equation. I propose two disciplined static figures for exactly that section: cot-reasoning-scratchpad (direct hard leap vs stepwise scratchpad, tied to P(y|x)=Σ_z P(z|x)P(y|x,z)) and self-consistency-majority-vote (k diverse chains fanning out, one outlier outvoted). No new figures elsewhere — DSPy, few-shot ordering, and injection defenses are adequately handled by existing figures and prose."
+}

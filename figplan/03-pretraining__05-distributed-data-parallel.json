@@ -1,0 +1,64 @@
+{
+  "chapter": "content/03-pretraining/05-distributed-data-parallel.md",
+  "core_intuitions": [
+    "The mean of the per-worker local gradients equals the true full-batch gradient, so DP's synchronization is an all-reduce-with-mean and every replica applies the identical update, staying bit-for-bit in lockstep.",
+    "Backprop produces gradients last-layer-first; DDP buckets them and fires an async all-reduce the instant a bucket fills, so communication overlaps the still-running backward and only the final bucket's all-reduce is exposed.",
+    "Mixed-precision Adam costs ~16 bytes/param (2 bf16 params + 2 bf16 grads + 4 fp32 master + 4+4 Adam moments); 12 of those bytes are optimizer state touched only at optimizer.step(), so replicating them on every GPU is pure redundancy.",
+    "ZeRO shards that redundancy in cumulative stages (optimizer -> +grads -> +params), shrinking per-GPU state 16 -> 4+12/N -> 2+14/N -> 16/N; stages 1-2 keep DDP's ~2Psi comm, stage 3 adds a param all-gather (~1.5x comm).",
+    "ZeRO-3/FSDP never store the full model at rest: they all-gather one unit's params just-in-time, compute, free them, and reduce-scatter grads, so peak param memory is only one unit + this rank's 1/N shard as a window sweeps the layers.",
+    "HYBRID_SHARD maps the shard axis onto the fast intra-node link and the replicate axis onto the slow inter-node link of a 2-D device mesh, keeping the bandwidth-heavy param all-gathers off the bottleneck."
+  ],
+  "existing": [
+    {
+      "name": "data-parallel",
+      "verdict": "keep",
+      "issue": "Clean and legible in both themes; clearly conveys replicate-model / shard-batch / all-reduce-mean / lockstep. Slight conceptual overlap with ddp-dp-allreduce-mean (both show the same core flow), but it reads well and anchors the DDP-internals bridge.",
+      "improvement": "No change required. If ever trimming for redundancy, this is the one to keep over ddp-dp-allreduce-mean because it is the cleaner rendering."
+    },
+    {
+      "name": "ddp-dp-allreduce-mean",
+      "verdict": "refine",
+      "issue": "The averaging formula renders the summation symbol as an empty box ('ḡ = (1/N) □ g_i') and the arrows in the header ('B = 256 □ local batch') and 'ḡ -> ...' also render as □ boxes in both themes — a genuine legibility bug on the load-bearing equation. It also overlaps heavily with data-parallel (same replicate/shard/all-reduce flow within ~30 lines of text).",
+      "improvement": "Replace the Unicode Sigma and arrow glyphs with rendered forms that survive the font (spell out 'sum of g_i' or draw a proper summation, and use real arrowheads or the word 'gives'). Lean into what this figure uniquely owns vs data-parallel — the global-batch box literally splitting into per-GPU shards and the 'optimizer.step() with SAME ḡ -> lockstep' framing — and de-emphasize the parts data-parallel already shows, so the two figures feel complementary rather than duplicative."
+    },
+    {
+      "name": "ddp-bucketed-overlap-timeline",
+      "verdict": "keep",
+      "issue": "Excellent, the clearest possible depiction of the overlap intuition: GRAD readiness reverse order, buckets A-D, all-reduces launched while backward still runs on the GPU lane, and the exposed final bucket. Legible in both themes. Only nit: the '->' in 'L12 -> L0' and 'time ->' render as □ boxes, and the all-reduce(B)/all-reduce(C) labels sit close together.",
+      "improvement": "Optional: swap the two arrow glyphs for real arrowheads and add a hair of horizontal space between the adjacent all-reduce(B)/all-reduce(C) labels. Not blocking."
+    },
+    {
+      "name": "zero-stages-sharding-ladder",
+      "verdict": "refine",
+      "issue": "The strongest figure in the chapter — the stacked memory bars (2B|2B|12B) shrinking DDP -> ZeRO-1 -> 2 -> 3 alongside the comm column is exactly the payoff. But several captions render arrows as □ boxes: '120 GB □ 31 □ 17 □ 1.9 GB' and 'ZeRO-3: 16/N □ 0 as N □ inf' lose their meaning as boxes. The top legend swatches for params/grads/optim are small and a bit hard to distinguish, especially in dark.",
+      "improvement": "Fix the arrow glyphs (use real arrowheads or the word 'to') so the progression captions read correctly, and 'as N -> infinity'. Slightly enlarge or add outline contrast to the three legend swatches so params vs grads vs optim state are distinguishable in dark theme. Content and layout otherwise perfect — do not restructure."
+    },
+    {
+      "name": "fsdp-unit-lifecycle",
+      "verdict": "refine",
+      "issue": "Conveys the forward/backward/optimizer lifecycle well, but has real layout defects: the right-edge 'free gathered params + full grads' box is clipped (shows 'free gathered param' in dark, running off the viewBox), and in the OPTIMIZER row the 'step()' label overlaps the 'updated param shard' box while 'no cross-rank comm' text crowds the right edge. Arrows again render as □ boxes ('entering block □', 'params freed □ gather again', '□ full grads').",
+      "improvement": "Reflow the right column so the 'free gathered params + full grads' box sits fully inside the viewBox in both themes; separate the 'step()' arrow label from the 'updated param shard' box so they don't overlap; give 'no cross-rank comm' its own clear space. Replace the box-rendered arrows with real arrowheads. Keep the three-band FORWARD/BACKWARD/OPTIMIZER structure — it is good."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "hybrid-shard-device-mesh",
+      "concept": "How HYBRID_SHARD lays sharding on the fast intra-node axis and replication on the slow inter-node axis of a 2-D device mesh.",
+      "rationale": "HYBRID_SHARD is invoked repeatedly (decision-guide table, the slow-network worked example, and the interview corner) as THE fix for multi-node FSDP, yet no figure shows the node topology that makes it work. The intuition is inherently spatial: it is about which collective crosses which physical link. A 2-D mesh picture makes 'shard on the fast axis, replicate on the slow axis' click instantly in a way prose cannot.",
+      "kind": "static",
+      "placement": "A Decision Guide (place immediately after the decision-guide table, before 'Composing With Model Parallelism')",
+      "priority": 1,
+      "brief": "Draw a DeviceMesh as a 2-row by 4-column grid of GPU tiles: two rows labeled 'Node 0' and 'Node 1', four columns GPU0..GPU3 within each node (small illustrative integers only: 2 nodes x 4 GPUs). Horizontal (within-node) axis = the SHARD axis, connected by THICK links labeled 'intra-node NVLink (fast, high beta)'; vertical (across-node) axis = the REPLICATE axis, connected by a THIN/DASHED link labeled 'inter-node InfiniBand (slow, low beta)'. Distinguish fast vs slow links by line weight and dash pattern, NOT color alone (theme-safe). Inside each node's row, show one FSDP unit's FlatParameter split into 4 contiguous shards, one small hatched slice per GPU (GPU0=slice0 ... GPU3=slice3); make Node 1's row an identical mirror of the same 4-way sharding to signal it is a replica. Two callout arrows/notes: (1) along the fast horizontal axis, 'all-gather reconstructs a unit's full params over NVLink — cheap, hidden by compute'; (2) along the slow vertical axis, 'once-per-step all-reduce of gradients only — the bandwidth-heavy param all-gather never crosses IB'. Add a small contrast inset or ghost note: 'FULL_SHARD would all-gather across BOTH axes -> param gather crosses slow IB -> exposed'. Bottom caption: 'Shard on the fast axis, replicate on the slow axis; the expensive all-gathers never touch the bottleneck. Requires the model to fit in one node's aggregate memory.' Everything inside the viewBox, top-to-bottom reading order, no illegible overlaps. Use real arrowheads (avoid Unicode arrow glyphs that may render as boxes)."
+    },
+    {
+      "name": "zero3-jit-param-sweep",
+      "concept": "The just-in-time parameter sweep of ZeRO-3/FSDP: one unit is all-gathered, computed, and freed as a window slides across the layers, holding peak memory flat regardless of model depth.",
+      "rationale": "The single most counterintuitive claim of ZeRO-3 is that a model far larger than one GPU trains while per-GPU peak param memory stays flat. The existing fsdp-unit-lifecycle shows ONE unit's phases statically; it cannot show the SWEEP across many units nor the flat memory gauge that is the actual payoff. That 'window slides, memory stays flat' is a temporal fact a single frame cannot convey — motion is essential here, which justifies a long-animation.",
+      "kind": "long-animation",
+      "placement": "ZeRO-3: Also Shard Parameters (place after the forward/backward bullet list, near {{fig:zero-stages-sharding-ladder}})",
+      "priority": 2,
+      "brief": "One rank's-eye view. Top: a horizontal row of ~6 unit blocks L0..L5, each drawn at REST as a thin hatched sliver (this rank permanently holds only its 1/N slice). A left-to-right 'gather window' highlights one unit at a time. FORWARD sweep (L0->L5): as the window enters a unit, animate an all-gather — thin slivers converging from abstract peers — inflating THAT one block to FULL height labeled 'materialized full params'; a short compute tick runs on it; then it deflates back to a sliver labeled 'freed' as the window advances. BACKWARD sweep (L5->L0): each unit is all-gathered again (it had been freed), computed, then a reduce-scatter (arrows fanning OUT to peers) leaves only this rank's grad shard. Right side: a MEMORY GAUGE (vertical bar) that stays visibly FLAT the entire time at roughly '(1/N of whole model) + (one full unit)', with a faint dashed ghost line far above it marking where full-replication (DDP) memory would sit, off the useful scale — this contrast is the whole point. Every frame must stand alone as a static: always label which unit is currently materialized, which collective is in flight (all-gather in fwd, reduce-scatter in bwd), and show the flat gauge with its ghost reference. Small integers only (6 units; peers abstract, do not invent an N). Theme-safe (no hardcoded primary colors; distinguish sliver vs full by height/hatch, not color alone). Caption: 'Only one unit is ever unsharded; the window slides, peak memory stays flat — how a model far larger than one GPU trains.' Keep all elements inside the viewBox at every keyframe; use real arrowheads."
+    }
+  ],
+  "summary": "The chapter is figure-rich (5 existing) and its core mechanisms are well-served. The DDP overlap timeline and the ZeRO memory-ladder are standout figures (keep). Three refinements are needed: a systemic glyph bug where summation and arrow symbols render as empty boxes hits the load-bearing averaging equation (ddp-dp-allreduce-mean) and several captions (zero-stages-sharding-ladder), and fsdp-unit-lifecycle has genuine right-edge clipping and a label overlap. Two figures (data-parallel, ddp-dp-allreduce-mean) mildly duplicate the replicate/shard/all-reduce-mean flow; keep both but differentiate the latter's framing. Two genuine gaps warrant new figures: a static 2-D device-mesh showing HYBRID_SHARD's fast-axis-shard / slow-axis-replicate topology (priority 1, a spatial idea invoked repeatedly with no visual), and a long-animation of the ZeRO-3 just-in-time param sweep with a flat memory gauge (priority 2, a temporal payoff the static per-unit lifecycle cannot show)."
+}

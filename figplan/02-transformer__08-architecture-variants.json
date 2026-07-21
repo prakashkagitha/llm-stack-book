@@ -1,0 +1,46 @@
+{
+  "chapter": "content/02-transformer/08-architecture-variants.md",
+  "core_intuitions": [
+    "The attention MASK is the single defining characteristic of each family: bidirectional (encoder), lower-triangular causal (decoder), and the hybrid prefix-LM block. The mask decides what information can flow where.",
+    "Encoder-only is bidirectional and therefore great for understanding but structurally incapable of autoregressive generation (predicting token t+1 would require attending to t+1 itself).",
+    "Encoder-decoder pairs a bidirectional encoder with a causal decoder joined by cross-attention (decoder queries, encoder keys/values), at the cost of two stacks and a cross-attention KV cache.",
+    "Decoder-only factorizes p(x) autoregressively with a causal mask and is trained to predict every next token, so training extracts a loss signal at EVERY position.",
+    "Prefix-LM is the middle ground: the prompt attends to itself bidirectionally while generation stays causal, giving richer prompt representations from a single shared-weight stack.",
+    "The pre-training OBJECTIVE (MLM vs span-corruption vs CLM) determines learning efficiency: CLM's every-position signal (~T per sequence vs MLM's ~0.15T) is a core reason the field converged on decoder-only."
+  ],
+  "existing": [
+    {
+      "name": "archvar-mask-shapes",
+      "verdict": "keep",
+      "improvement": "Renders cleanly and correctly in both themes. The three side-by-side grids (bidirectional / causal / prefix-LM) with the highlighted prefix block and the causal-vs-bidirectional annotations make the defining intuition of the chapter crisp. No changes needed."
+    },
+    {
+      "name": "archvar-encoder-only-stack",
+      "verdict": "refine",
+      "issue": "The right-hand annotation 'every token <-> every token' inside each Encoder Block box overflows past the box's right border in both themes (it spills into the margin), and the 'o<->o<->o<->o' ASCII glyph is a weak, slightly noisy metaphor for bidirectionality.",
+      "improvement": "Keep the annotation text fully within the block box bounds (shorten to 'every token <-> every token' fitting inside, or move it to a single centered caption line). Replace the raw 'o<->o<->o' ASCII with a cleaner mini-motif of a few nodes with double-headed arrows between ALL pairs (or drop it and rely on the label), so bidirectionality reads at a glance without clutter."
+    },
+    {
+      "name": "archvar-encoder-decoder-crossattn",
+      "verdict": "refine",
+      "issue": "In the lower-middle region the 'Decoder output' label collides with the two-line caption 'cross-attn: Q from decoder / K/V from H_enc', and the caption sits awkwardly under the decoder-output token row so the reading order there is muddy in both themes.",
+      "improvement": "Separate the 'Decoder output' row label from the cross-attn caption with vertical spacing so they no longer overlap; consider anchoring the 'cross-attn: Q from decoder, K/V from H_enc' caption directly beside the dashed cross-attention arrows (mid-canvas between the two stacks) where those arrows already point, so the label explains the arrows it describes."
+    },
+    {
+      "name": "archvar-decoder-only-causal",
+      "verdict": "keep",
+      "improvement": "Strong and correct in both themes: the input row, the backward-only attention rail, the shifted-by-one predicted row, and the 'CLM loss on every token' captions together nail the autoregressive/every-position intuition. Minor: the 'Token + pos. embeddings' and 'Predicted next tokens' section labels lie over the faint diagonal guide-lines, but they remain legible; acceptable as-is."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "archvar-objective-signal-comparison",
+      "concept": "Side-by-side comparison of the three pre-training objectives (MLM, span-corruption, CLM) showing, for the same short sentence, what the model sees as input and — crucially — which positions produce a loss/gradient signal.",
+      "rationale": "This is the chapter's key quantitative argument for the decoder-only convergence: CLM extracts a gradient signal from ~T positions per sequence while MLM uses only ~0.15T. The prose states it and a table lists it, but the 'signal per position' idea is inherently visual and is currently unillustrated. Seeing lit-up vs dark positions across all three objectives makes 'more learning signal per FLOP' click instantly and ties the whole architecture-convergence section together.",
+      "kind": "static",
+      "placement": "Comparing the Pre-training Objectives",
+      "brief": "A horizontal three-panel infographic, one panel per objective, sharing a common legend. Use the SAME illustrative sentence across all three, e.g. tokens ['the','cat','sat','on','the','mat'] (6 small boxes). LEGEND (one shared row at bottom): a filled/glowing token cell = 'loss computed here (gradient signal)'; an outlined/dim cell = 'seen as context, no loss'; a hatched or [MASK]/sentinel-labeled cell = 'corrupted input'. PANEL 1 — 'Masked LM (MLM) - Encoder-only': show the input row with ~1 of the 6 tokens replaced by a '[MASK]' cell (label it ~15% selected); an upward arrow to a single lit prediction cell over ONLY that masked position; caption 'loss on masked positions only (~15% of tokens)'. Emphasize that only 1 of 6 cells is lit. PANEL 2 — 'Span corruption - Encoder-decoder': show encoder input row where a contiguous 2-token span is collapsed into one sentinel cell '<extra_id_0>'; a small arrow from encoder to a compact decoder row that regenerates just the span ('<extra_id_0>','cat','sat') with those decoder-output cells lit; caption 'decoder reconstructs masked spans (~15% of tokens)'. PANEL 3 — 'Causal LM (CLM) - Decoder-only': show the input row and a shifted-by-one prediction row where EVERY next-token cell is lit (all 6, with the last predicting a next/[EOS] token); a small causal-attention hint (each cell an arrow pointing only backward) is optional; caption 'loss on EVERY position (T signals per sequence)'. Below the three panels add a single summarizing strip comparing signal density: three tiny bars or fraction labels reading approx '~0.15T', '~0.15T', and 'T' respectively, making the CLM bar clearly the fullest. Do NOT invent benchmark numbers — use only the illustrative fractions 0.15T and T that the chapter already states, and the small integer token counts. Keep all text inside the viewBox, consistent cell sizing across panels, and make lit vs dim distinguishable by BOTH fill AND an icon/outline (not color alone) so it survives light and dark themes. Title: 'What Each Objective Learns From: Loss Signal per Position'."
+    }
+  ],
+  "summary": "The chapter is genuinely figure-rich and well-served: four existing figures cleanly cover the mask taxonomy and each of the three architecture families, all rendering correctly in both themes. Two get 'keep' (mask-shapes, decoder-only-causal) and two get light 'refine' for text-overflow/overlap polish only (encoder-only-stack annotation spills its box; encoder-decoder-crossattn has a label collision near the decoder-output row). The one foundational gap is the pre-training-objective comparison: the chapter's central efficiency argument for the decoder-only convergence -- CLM gets a loss signal at every position (~T) while MLM/span-corruption get only ~0.15T -- is stated in prose and a table but never drawn. I propose ONE new static figure that shows, for the same sentence, which positions light up under MLM vs span-corruption vs CLM, making 'more signal per FLOP' visually obvious. Disciplined result: 1 new figure, 2 keep, 2 minor refine."
+}

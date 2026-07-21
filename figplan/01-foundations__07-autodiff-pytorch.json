@@ -1,0 +1,45 @@
+{
+  "chapter": "content/01-foundations/07-autodiff-pytorch.md",
+  "core_intuitions": [
+    "Reverse-mode autodiff propagates vector-Jacobian products (VJPs) backward through a recorded tape and never materializes the Jacobian, so ONE backward pass yields all N gradients regardless of parameter count.",
+    "The forward pass does two jobs at once: it builds the graph AND stashes the activations each op will need; backward then walks the graph in reverse topological order applying x-bar = y-bar^T J at every node.",
+    "Only leaf tensors accumulate .grad (through an AccumulateGrad node); intermediate-tensor gradients are discarded. When one tensor feeds multiple ops, its gradient contributions SUM at the leaf -- this is the same accumulation that gradient-accumulation training exploits.",
+    "Every op is routed through the dispatcher (autograd layer -> dispatch key -> ATen -> hardware kernel); that clean boundary is why torch.compile, vmap, and new backends plug in without touching user code.",
+    "A tensor is just (shape, strides, offset) metadata over a shared storage buffer: transpose and broadcast merely rewrite strides (zero copy, stride-0 for broadcast), and contiguity is what decides whether a kernel silently forces a copy."
+  ],
+  "existing": [
+    {
+      "name": "autodiff-tape-forward-backward",
+      "verdict": "keep"
+    },
+    {
+      "name": "autodiff-pytorch-stack-layers",
+      "verdict": "keep"
+    },
+    {
+      "name": "autodiff-mm-fullstack-trace",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "autograd-graph-leaf-accumulate",
+      "concept": "The real grad_fn DAG for a tensor used twice: how gradients fork, sum at the leaf's AccumulateGrad, and why non-leaf grads vanish.",
+      "rationale": "The existing tape figure shows a clean linear chain, but the chapter's hardest intuitions -- leaf vs non-leaf, why only leaves get .grad, and how a reused tensor's gradients ACCUMULATE -- all hinge on the branching structure the linear picture cannot show. This is the mental model that explains the zero_grad() bug, gradient accumulation across micro-batches, and the exact next_functions output the chapter prints. It is genuinely foundational and currently unserved.",
+      "kind": "static",
+      "placement": "After the 'The grad_fn Graph' subsection (the code block where 'a appears twice' and next_functions shows (MulBackward0, AccumulateGrad)).",
+      "priority": 1,
+      "brief": "Draw the grad_fn DAG for the chapter's own example: a and b are leaves; c = a*b (MulBackward0); d = c + a (AddBackward0); e = d**2 (PowBackward0). Lay it out top-to-bottom as the graph backward() actually walks. TOP: a small node for the scalar output e labeled 'e  (seed grad = 1.0)'. Below it a vertical stack of grad_fn nodes drawn as rounded rectangles in the accent-2/orange family (these are Function/backward nodes): PowBackward0 -> AddBackward0 -> MulBackward0. Edges point downward (backward direction) and are labeled 'next_functions'. THE KEY FEATURE: the tensor a is used twice, so show TWO distinct paths reaching a's leaf: one edge from AddBackward0 (the '+ a' term) and one edge from MulBackward0 (the 'a*b' term). Both edges converge on a single AccumulateGrad node attached to leaf a, and at that convergence draw a small '+' / sum glyph with a short caption 'contributions summed -> a.grad'. BOTTOM ROW: the two leaf tensors a and b, drawn in the primary accent (blue) as tensor cards, each with its own dashed 'AccumulateGrad' node beneath it that holds '.grad'. Visually DISTINGUISH the intermediates c, d (draw them faintly, greyed, tagged 'non-leaf: .grad discarded (grad_fn only)') from the leaves a, b (solid, tagged 'leaf: requires_grad -> .grad'). Include a compact legend: solid box = grad_fn (backward op), blue card = leaf tensor, dashed = AccumulateGrad sink. Add one short callout line: 'backward() seeds e=1, walks nodes in reverse topological order, and adds each node's VJP into its inputs -- fork => sum at the leaf.' Keep small illustrative labels only, no invented numbers. Everything must fit the viewBox with clear top-to-bottom reading order; the two converging edges into a must be unmistakable as the accumulation point. Must read fully as a static frame; if animated, reveal in reverse-topo order (e first, leaves last), but do not rely on motion. Theme-safe: use var(--accent), var(--accent-2), var(--muted), currentColor -- no hardcoded primaries."
+    },
+    {
+      "name": "tensor-storage-strides-views",
+      "concept": "One storage buffer, many tensors: shape+strides+offset as an addressing scheme showing why transpose and broadcast are free and contiguity decides copies.",
+      "rationale": "The entire second half of the chapter (views vs copies, contiguity, strides, broadcasting via stride-0, silent .contiguous() copies) rests on one picture the prose keeps gesturing at but never draws: a shared 1-D storage buffer that several (shape, stride, offset) tuples index into. Seeing transpose swap strides with zero data movement, and broadcast use stride-0, collapses four separate subsections into a single intuition and explains the performance warnings. Foundational and unserved; a single static frame nails it.",
+      "kind": "static",
+      "placement": "At the start of 'Views, Copies, Contiguity, and Memory Layout' (anchor after the 'Views vs Copies' heading), so it grounds the whole section including broadcasting.",
+      "priority": 1,
+      "brief": "Center the figure on ONE horizontal 1-D storage buffer: a strip of 12 contiguous cells indexed 0..11 holding values 0..11, labeled 'Storage -- one contiguous memory buffer (12 elements)'. Around it, draw four small 'tensor = (shape, strides, offset)' metadata cards, each with a thin connector showing HOW it reads the same buffer -- no card owns its own data. Card 1 'x = arange(12).reshape(3,4)': shape (3,4), stride (4,1), offset 0, badge 'contiguous ✓'; show its 3x4 logical grid with an arrow noting 'row-major: last dim varies fastest'. Card 2 'x.T (transpose)': shape (4,3), stride (1,4), offset 0, badge 'contiguous ✗', caption 'strides swapped -- ZERO data moved'. Card 3 'x[0:2, :] (slice)': shape (2,4), stride (4,1), offset 0, caption 'a sub-window of the same buffer'. Card 4 'broadcast: v.expand(4,3)' where v is a length-3 vector: shape (4,3), stride (0,1), caption 'stride 0 = re-read the SAME 3 cells; storage stays 3 elements'. Draw the stride-0 dimension explicitly as multiple logical rows all pointing back to the identical 3 cells. Include the addressing formula prominently: 'offset(i,j) = base + i*s0 + j*s1'. Add a short contrast strip: '.contiguous() is the ONLY one of these that allocates a fresh buffer and copies' with a small new-buffer glyph, tying to the chapter's 'silent contiguous copy' warning. Use a green check for contiguous, a muted/orange mark for non-contiguous. Small illustrative integers only; invent no benchmark numbers. Single static frame, left-to-right / buffer-centric reading order, everything inside the viewBox, no overlapping labels. Theme-safe via var(--accent), var(--accent-2), var(--good), var(--muted), currentColor."
+    }
+  ],
+  "summary": "Chapter is already well-served on the autograd-engine half: three existing figures (the two-phase tape, the six-layer PyTorch stack, and the end-to-end mm trace) all render correctly and legibly in both light and dark themes and earn KEEP. Two core intuitions carry zero coverage and are the highest-value additions: (1) the branching grad_fn DAG that makes leaf vs non-leaf and gradient ACCUMULATION at a fork concrete -- the linear tape figure structurally cannot show this; and (2) the shared storage buffer + (shape, strides, offset) picture that underlies the entire views/contiguity/strides/broadcasting section, showing why transpose and broadcast are zero-copy and where .contiguous() actually copies. Both are best as crisp static infographics; no new animation is warranted. Result: 3 keeps, 2 new priority-1 static figures."
+}

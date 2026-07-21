@@ -1,0 +1,48 @@
+{
+  "chapter": "content/01-foundations/04-numerics-precision.md",
+  "core_intuitions": [
+    "Exponent bits buy dynamic range; mantissa bits buy relative precision — the two are independent knobs and every format is a different bargain between them.",
+    "bf16 is literally the top 16 bits of fp32: same 8-bit exponent, so identical range and no overflow where fp32 wouldn't overflow — which is why it displaced fp16 as the training default.",
+    "Floating-point numbers are NOT evenly spaced: the grid doubles in coarseness at every power-of-two boundary, so absolute precision (ULP) scales with magnitude — this is the root cause of rounding error, catastrophic cancellation, and underflow-to-zero.",
+    "fp16 has a hard ceiling at ~65504; a value that climbs past it becomes inf, which then poisons the whole forward/backward pass — bf16 removes this wall because its range matches fp32.",
+    "The max-subtraction (logsumexp) trick makes softmax numerically stable for free: subtracting the max logit turns overflowing exponentials into values in (0,1] while leaving the result mathematically identical — the seed of FlashAttention's online softmax."
+  ],
+  "existing": [
+    {
+      "name": "float-formats",
+      "verdict": "refine",
+      "issue": "The core content is excellent and reads clearly in both themes (bit-layout rows aligned to a shared per-bit scale, the shared-exponent dashed line, and the 'bf16 = top 16 bits of fp32' note all land). But the two bottom legend arrows are drawn as horizontal lines at y=312 that pass straight through the tails of the label text at y=316, so 'precision' and 'range' render with an accidental strikethrough — a distracting visual bug visible in both light and dark previews.",
+      "improvement": "Separate the arrow lines from the label text: either drop the arrow lines to a lower baseline (e.g. y=322) so they sit under the words, start each line only after its label text ends, or replace the two long horizontal arrows with short arrowheads appended directly after the words. Keep everything else as-is."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "float-number-line",
+      "concept": "A floating-point number line showing that representable values are not evenly spaced — spacing (ULP) doubles at every power-of-two boundary, and a subnormal cluster fills the gap down to zero.",
+      "rationale": "This is the single deepest 'what IS a float' intuition in the chapter and it currently has no visual. Understanding that the grid coarsens with magnitude makes machine-epsilon, ULP, catastrophic cancellation, underflow-to-zero, and 'precision scales with magnitude' all click at once. The chapter states these facts verbally (ULP ~1.2e-7 near 1.0 vs ~1.2e-3 near 1e4) but never shows the non-uniform ruler that explains WHY.",
+      "kind": "static",
+      "placement": "Machine epsilon and ULP",
+      "priority": 1,
+      "brief": "Draw a single horizontal number line spanning several power-of-two binades, e.g. tick regions labelled [0.25–0.5], [0.5–1], [1–2], [2–4], [4–8]. Within each binade place the SAME small count of representable tick marks (say 8 evenly spaced ticks), but because each binade is twice as wide as the previous, the ticks visibly spread apart as you move right — dense on the left, sparse on the right. This is the whole point: constant number of ticks per binade, doubling width, so absolute spacing (ULP) doubles at each boundary marked 2^-1, 2^0, 2^1, 2^2. Annotate one narrow gap on the left 'small ULP = fine precision' and one wide gap on the right 'large ULP = coarse precision', with a caption line 'same relative precision everywhere; absolute spacing grows with magnitude'. At the far left, just above zero, draw a distinct evenly-spaced cluster of ticks in a muted/secondary style labelled 'subnormals — fixed spacing, fill the gap down to 0 (or flush to zero)'. Optionally show the mirror on the negative side compressed or just note symmetry. Use the accent color for the mantissa/precision idea consistent with the sibling figure, keep integers only (2^-1..2^2, tick counts), invent no benchmark numbers. Everything inside the viewBox, one clear left-to-right reading order. A static frame fully conveys it; no animation needed."
+    },
+    {
+      "name": "stable-softmax-two-lanes",
+      "concept": "Naive softmax vs max-subtracted (stable) softmax on the same logits, shown as two parallel pipelines: one overflows to inf/inf=NaN, the other stays in (0,1] and lands on the correct answer.",
+      "rationale": "The logsumexp / max-subtraction trick is the most important algorithm in the chapter and is explicitly the seed of FlashAttention's online softmax, yet there's no figure — only prose, math, and a code block. A side-by-side before/after makes the 'mathematically identical but numerically safe' insight visceral: readers see the exact same result reached via a path that never leaves representable range. This is the highest-leverage new figure.",
+      "kind": "static",
+      "placement": "Stable Softmax and the LogSumExp Identity",
+      "priority": 1,
+      "brief": "Two vertical lanes side by side, sharing the same input at top: logits z = [1000, 1001] (small illustrative integers from the chapter's worked example). LEFT lane titled 'Naive': stage 1 exp(z) → show e^1000, e^1001 with a bold 'inf' / overflow badge (values exceed max ~3.4×10^38); stage 2 inf / inf → a 'NaN' result badge in a warning/danger style. Mark this lane as broken (e.g. a break glyph or struck arrow). RIGHT lane titled 'Stable (subtract max m = 1001)': stage 1 shift z−m = [−1, 0], annotate 'all ≤ 0'; stage 2 exp → [0.368, 1.0], annotate 'all in (0,1] — no overflow'; stage 3 normalize by sum 1.368 → result [0.268, 0.732] shown as a small correct/valid badge. Between the two result badges draw a short connector labelled 'identical result — the e^{−m} factor cancels' to nail that the rewrite is exact, not an approximation. Add a small side note tying to the range wall: 'even fp32 overflows at exp(≈88); the max-shift is mandatory, not optional.' Use a danger/warning accent for the NaN path and the good/accent color for the safe path, theme-safe via CSS vars (no hardcoded reds/greens). Numbers used (1000,1001,-1,0,0.368,1.0,1.368,0.268,0.732) are all from the chapter's worked example — do not invent others. Fully legible as a static frame."
+    },
+    {
+      "name": "format-range-ruler",
+      "concept": "A log-magnitude ruler placing each format's overflow ceiling and underflow floor on one axis, so fp16's low wall (~65504) sits far below the shared fp32/bf16 ceiling (~3.4×10^38), with a value climbing past the fp16 wall turning into inf.",
+      "rationale": "The flagship narrative of the chapter is 'why bf16 won training', and the mechanism is range, not precision. The bit-layout figure shows range as exponent WIDTH but never as actual reachable MAGNITUDE. A magnitude ruler makes '65504 is tiny next to 3.4×10^38' viscerally obvious and dramatizes the overflow-to-inf event that causes NaN training crashes — the exact failure mode the Interview Corner and warning box hinge on. Complements rather than duplicates float-formats.",
+      "kind": "static",
+      "placement": "Overflow, underflow, and subnormals",
+      "priority": 2,
+      "brief": "A horizontal log-scale magnitude axis running from very small (near 10^-38, underflow) on the left through 1 in the middle to very large (10^38, overflow) on the right; label decade gridlines sparsely (10^-38, 10^-5, 1, 10^5, 10^38). Draw three stacked horizontal range bars, one per format, each spanning from its min-normal to its max: fp32 and bf16 bars reach the SAME far-right ceiling ~3.4×10^38 (draw them the same length, visually coincident on the right, with bf16 noted 'coarser steps, same reach'); the fp16 bar STOPS abruptly at ~65504 with a bold vertical 'wall' marker labelled 'fp16 max — overflow → inf beyond here'. Above the fp16 wall draw a small upward arrow of a value climbing (e.g. a rising gradient spike) that crosses the wall and turns into an 'inf' badge, with a one-line consequence caption 'inf → NaN poisons the pass'. At the far left, shade a thin 'subnormals / flush-to-zero' zone near 0. Bottom takeaway strip: 'bf16 keeps fp32's reach (no loss scaling needed); fp16 trades reach for mantissa bits and hits a wall.' Use theme-safe CSS vars, a warning accent only for the fp16 wall/inf. Only the IEEE facts already in the chapter (65504, 3.4×10^38, ~1.2×10^-38) — invent no benchmarks. Static frame conveys it fully; the climbing-value arrow is a drawn glyph, not required animation."
+    }
+  ],
+  "summary": "The chapter is concept-rich but figure-poor: a single strong bit-layout figure (float-formats) carries the range-vs-precision and 'bf16 = top 16 bits of fp32' intuitions well and only needs a small refine (the bottom legend arrows strike through their own labels). Three core intuitions have no visual: (1) floats are non-uniformly spaced with ULP doubling per binade — the root of all rounding/cancellation/underflow behavior; (2) the max-subtraction / logsumexp trick that makes softmax stable and seeds FlashAttention; and (3) the magnitude reality of the fp16 overflow wall vs the shared fp32/bf16 ceiling that explains why bf16 won training. I propose three static figures for these — no animation is essential here since each is a single-frame insight (the online-softmax animation properly belongs to the FlashAttention chapter). Priorities: stable-softmax and float-number-line are must-haves (P1); the range ruler is a strong complement (P2)."
+}

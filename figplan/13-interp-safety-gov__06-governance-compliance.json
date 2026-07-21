@@ -1,0 +1,65 @@
+{
+  "chapter": "13.6 AI Governance, Compliance & Regulation",
+  "core_intuitions": [
+    "The three frameworks are complementary/nested: the EU AI Act is the legal floor (WHAT you must do and by when), the NIST AI RMF is the process (HOW to run governance via GOVERN/MAP/MEASURE/MANAGE), and ISO/IEC 42001 is the proof (HOW to demonstrate to an auditor that you run that process consistently).",
+    "The EU AI Act classifies systems into four escalating risk tiers (prohibited / high-risk / limited-risk / minimal-risk); the tier you land in determines the entire weight of your compliance programme, and most LLM apps sit at limited-risk while enterprise use-cases (hiring, credit, triage) tip into high-risk.",
+    "The 1e25-FLOP training-compute threshold is a hard gate: every GPAI provider owes the Article 53 base obligations, but crossing 1e25 FLOPs (estimated as C ~= 6*N*D) unlocks four ADDITIONAL Article 55 systemic-risk obligations.",
+    "High-risk deployment triggers a fixed set of Annex-III technical controls (risk management, data governance, technical documentation, logging, transparency, human oversight, accuracy, cybersecurity), of which append-only Article 12 logging is the operationally heaviest.",
+    "Serious-incident reporting is triggered by HARM (or potential harm) to people, not by outages or breaches; severity maps to a reporting deadline and recipient (SYSTEMIC -> EU AI Office in 2 days; SERIOUS -> national authority in 15 days), so AI-Act triage must be a separate path from ordinary SRE incident response.",
+    "Compliance artefacts (model card, rights register, eval report, audit log, FLOP flag) should be auto-generated from metadata emitted during training/eval, not reconstructed post-hoc."
+  ],
+  "existing": [
+    {
+      "name": "gov-regulatory-landscape-map",
+      "verdict": "refine",
+      "issue": "Overlapping/colliding text in the top EU-AI-Act cluster: the row title 'General-Purpose AI Model rules (Title VIII)' visually overlaps the subtitle 'all large pre-trained models'. The date badges ('from 2 Aug 2025', 'enforcement Aug 2026', 'from 2 Feb 2025') sit on a rounded highlight pill that is narrower than the text, so glyphs are clipped at the pill edges and read as smudged. In dark mode the NIST, ISO/IEC 42001 and sector-specific section labels plus the bottom WHAT/HOW/PROVE captions render at very low contrast (dim grey on near-black) and are hard to read.",
+      "improvement": "Give the GPAI title and its 'all large pre-trained models' subtitle separate baselines with clear vertical spacing (no overlap). Size each date badge/pill to fully contain its text with padding, or drop the pill and use a plain right-aligned date column. Raise dark-theme text fill to a high-contrast token for the framework section labels (NIST AI RMF, ISO/IEC 42001, Sector-specific rules) and the three bottom captions so they read as clearly as the EU AI Act block."
+    },
+    {
+      "name": "gov-high-risk-requirements-grid",
+      "verdict": "keep",
+      "issue": "Clean 2x4 grid, article tags legible, 'Logging & Audit Trail / Art. 12' correctly emphasised as the key obligation. Reads clearly in both light and dark."
+    },
+    {
+      "name": "gov-iso-42001-clause-stack",
+      "verdict": "keep",
+      "issue": "Clear PLAN/SUPPORT/DO/CHECK/ACT rail mapped to Clauses 4-10, with Clause 8 and 9 correctly flagged 'critical for LLM dev'. Legible and correct in both themes."
+    },
+    {
+      "name": "gov-compliance-engineering-stack",
+      "verdict": "refine",
+      "issue": "In dark mode the left-card title lines (e.g. 'Training pipeline (pretraining / SFT)', 'Compute accounting', 'Eval harness', 'Model registry') and several right-card parenthetical second lines ('(copyright & data-source provenance)', '(signed & versioned alongside the model)', '(triggers Art. 55 ...)') render in a dim purple-grey with poor contrast against the dark card fill, so the source/artefact pairing is hard to read.",
+      "improvement": "Bump the dark-theme fill for card title lines and the parenthetical detail lines to a high-contrast theme token (match the brightness of the right-card artefact titles, which read well). Verify every source->artefact pair is equally legible in both themes; keep the light-mode version unchanged."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "gov-eu-ai-act-risk-pyramid",
+      "concept": "The four EU AI Act risk tiers as an escalating pyramid, showing where LLM applications land and how obligation weight grows with tier.",
+      "rationale": "The very first governance question an engineer must answer is 'which tier is my system in' because the tier sets the entire compliance burden. The chapter devotes a whole section to the four tiers, but no existing figure presents the canonical risk pyramid. A single static frame makes the escalation (and the fact that most consumer LLM apps are limited-risk while hiring/credit/triage tip into high-risk) click instantly.",
+      "kind": "static",
+      "placement": "The EU AI Act: Structure and Timeline -> Risk Tiers",
+      "priority": 1,
+      "brief": "A four-band pyramid (widest at the bottom, narrowest at the top) representing the EU AI Act risk classification, with obligation weight increasing UP the pyramid. From TOP to BOTTOM: (1) 'Prohibited' -- narrow apex, strongest visual weight/emphasis token -- label 'No compliance path; simply illegal', examples 'social scoring, real-time public biometric surveillance, exploitation of vulnerable groups'. (2) 'High-risk (Annex III)' -- label 'Full compliance programme: conformity assessment, Art. 9-15 controls', examples 'biometric ID, hiring, credit scoring, medical triage, law enforcement'. (3) 'Limited-risk' -- label 'Transparency only: disclose AI-generated content', examples 'chatbots, deepfakes, emotion recognition'. (4) 'Minimal-risk' -- widest base -- label 'No mandatory obligations', examples 'spam filters, AI in video games'. On the right side, a vertical arrow or gradient rail labelled 'compliance burden increases' pointing upward. Add a small callout bracket spanning the Limited-risk and High-risk bands reading 'Most LLM apps land here -- consumer chat = limited-risk; enterprise hiring / credit / triage tip into high-risk'. Theme-safe: use emphasis via weight/opacity and a single accent for the highest tier, no hardcoded reds; ensure all band labels and example lists fit inside their band with no overlap; readable in both themes. No invented numbers."
+    },
+    {
+      "name": "gov-flop-systemic-risk-gate",
+      "concept": "The 1e25-FLOP training-compute threshold as a gate on a log compute axis: below it a provider owes only Article 53 base obligations, crossing it adds the four Article 55 systemic-risk obligations.",
+      "rationale": "This is the single most quantitatively concrete idea in the chapter -- the compute gate that splits every GPAI provider into two obligation regimes, computed from the worked example C ~= 6*N*D. A static number-line-plus-gate visual turns the two-tier Article 53 vs Article 55 structure and the placement of real model classes into one glance, which prose and a worked example alone cannot do as vividly.",
+      "kind": "static",
+      "placement": "General-Purpose AI (GPAI) Model Obligations -> GPAI Systemic-Risk Obligations (Article 55)",
+      "priority": 1,
+      "brief": "A horizontal logarithmic training-compute axis (label 'training compute C (FLOPs), C ~= 6 * N * D') running left to right, with a bold vertical GATE line at 10^25 FLOPs labelled 'systemic-risk threshold (Art. 51)'. Below/along the axis place a few illustrative model markers as dots with C values from the chapter's worked examples: a '70B x 2T tokens' marker at ~8e23 (well LEFT of the gate) and a '400B x 15T tokens' marker at ~3.6e25 (just RIGHT of the gate); optionally one more small research-scale dot far left. Split the figure into two regions separated by the gate. LEFT region header 'Every GPAI provider (Art. 53)' with a compact stacked list: 'Technical documentation', 'Training-data summary', 'Copyright policy', 'Downstream-deployer info'. RIGHT region header '+ Systemic-risk (Art. 55) -- these ADD to Art. 53' with a stacked list, visually emphasised as additive (e.g. a '+' badge or brighter accent): 'Adversarial testing / red-team', 'Serious-incident report to EU AI Office in 2 days', 'Cybersecurity measures', 'Energy consumption reporting (MWh)'. Make clear via an arrow or bracket that the RIGHT obligations are IN ADDITION to the LEFT ones (they stack), not a replacement. Theme-safe: only the small illustrative exponents shown (10^25, ~8e23, ~3.6e25) which come straight from the chapter -- invent no benchmark numbers and no real product names beyond a generic '70B/2T' and '400B/15T' descriptor. Everything inside the viewBox, no overlapping labels, clear left-to-right reading order, legible in both themes."
+    },
+    {
+      "name": "gov-incident-severity-ladder",
+      "concept": "Serious-incident triage: harm-to-people (not outages) drives a severity classification that maps to a reporting deadline and recipient.",
+      "rationale": "The chapter's 'Common pitfall' warning and the incident_reporter code hinge on two intuitions that a diagram nails: (a) AI-Act incidents are gated on HARM to people, not security/outage events, and (b) severity ladders to a hard deadline and a specific recipient. A static decision-and-ladder figure encodes the MINOR/SIGNIFICANT/SERIOUS/SYSTEMIC tiers with their 2-day vs 15-day deadlines so engineers build the correct separate triage path.",
+      "kind": "static",
+      "placement": "Serious-Incident Reporting -> Building a Compliant Incident Pipeline",
+      "priority": 2,
+      "brief": "Left third: a small 'trigger gate' -- an incoming event asks 'Harm or potential harm to PEOPLE?'. Show two diverging paths from a contrasting pair of example chips: 'DDoS on inference API' -> routed to a greyed 'Security / SRE incident (out of scope for Art. 62)' box; 'biased mental-health advice -> user self-harm' -> routed INTO the AI-Act ladder. Right two-thirds: a four-rung severity ladder rising in emphasis, each rung a row with three columns [severity | deadline | recipient]: (1) MINOR -- 'internal only' -- 'no external report'; (2) SIGNIFICANT -- '72h internal review' -- 'log, no authority'; (3) SERIOUS -- 'within 15 days' -- 'national market surveillance authority (Art. 62)'; (4) SYSTEMIC -- 'within 2 days' -- 'European AI Office (Art. 55(1)(b))'. Emphasise the top two rungs (SERIOUS, SYSTEMIC) as the externally-reportable ones, with SYSTEMIC most prominent and its '2 days' deadline visually urgent (weight/accent, not a hardcoded red). Include a one-line footer: 'Trigger = harm to people, not service outages -- keep this triage path separate from SRE.' Theme-safe, all rows fit with no overlap, clear top-down or bottom-up reading order consistent with 'rising severity', legible in both themes. Use only the deadlines/labels present in the chapter; invent no numbers."
+    }
+  ],
+  "summary": "The chapter already has four figures; two are strong keeps (high-risk requirements grid, ISO 42001 clause stack) and two need refinement (the regulatory landscape map has colliding title/subtitle text, clipped date badges, and low dark-mode contrast; the compliance engineering stack has dim, low-contrast card text in dark mode). The chapter is concept-rich but two of its most foundational ideas are unserved by any figure: the four-tier EU AI Act risk classification (proposed static risk pyramid, P1) and the 1e25-FLOP systemic-risk gate with its stacked Art. 53 vs Art. 55 obligation tiers (proposed static compute-gate, P1). A third P2 figure captures the harm-triggered incident severity->deadline ladder that anchors the chapter's key 'common pitfall'. All three are best as crisp static infographics."
+}

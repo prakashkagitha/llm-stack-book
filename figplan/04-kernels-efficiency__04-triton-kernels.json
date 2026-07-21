@@ -1,0 +1,59 @@
+{
+  "chapter": "content/04-kernels-efficiency/04-triton-kernels.md",
+  "core_intuitions": [
+    "The block/tile abstraction: a Triton program owns one TILE of the output; the compiler owns the threads, coalescing, shared memory, and Tensor Core fragment layout.",
+    "Pointer-block arithmetic is the load-bearing skill: turn 'the elements I want' into a tile of addresses via base + row[:,None]*stride_m + col[None,:]*stride_n, and use masks (other=-inf/0) for ragged edges.",
+    "Fusion is the win for memory-bound ops: load a row once, do max+exp+sum on-chip, write once (~2 HBM passes vs ~5) — memory-bound, so the ~2.5x ceiling is set by bandwidth, not compute.",
+    "Matmul is about reuse: tile M/N/K, walk K in BLOCK_K steps accumulating tl.dot in an fp32 register tile, reuse each loaded A/B tile from SRAM, and swizzle (GROUP_M) tile visitation for L2 locality.",
+    "Online softmax makes attention IO-aware: keep running m, ℓ, O over streamed K/V blocks and rescale BOTH ℓ and O by α=exp(m_old−m_new) each block, normalize once — turning O(N^2) HBM traffic into O(Nd)."
+  ],
+  "existing": [
+    {
+      "name": "triton-cuda-vs-triton-mental-model",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "triton-pointer-block-arithmetic",
+      "concept": "How a 2-D tile of pointers is built from a base pointer, two arange vectors, strides, and a mask for the ragged edge.",
+      "rationale": "The chapter names this 'the single most important skill in Triton' and it is the one mechanic that is pure code with no visual anywhere in the book. Readers who don't internalize base + row[:,None]*stride_m + col[None,:]*stride_n stall on every kernel; a picture makes the broadcast-and-stride mapping click instantly.",
+      "kind": "static",
+      "placement": "### The Anatomy of a Pointer Computation",
+      "priority": 1,
+      "brief": "Two-panel static infographic teaching the pointer-block idiom. LEFT panel 'building the tile of addresses': draw a small matrix as a grid (say 5 rows x 4 cols) stored row-major in memory; a base_ptr arrow points at element (0,0). Show a vertical column vector row = tl.arange(0,BLOCK_M) with small integer entries [0,1,2,3] drawn down the left, and a horizontal row vector col = tl.arange(0,BLOCK_N) [0,1,2] drawn across the top. Show the broadcast formula prominently: ptrs = base + row[:,None]*stride_m + col[None,:]*stride_n, and render the resulting BLOCK_M x BLOCK_N grid of addresses. Annotate 2-3 individual cells with their computed offset, e.g. cell (2,1) = base + 2*stride_m + 1*stride_n, using a small concrete stride_m (= number of columns, e.g. 4) so a reader can verify the arithmetic. Include the mantra as a caption strip: 'rows down, columns across; strides convert logical indices to memory offsets.' RIGHT panel 'the mask for the ragged tail': show the same tile overhanging the matrix's right/bottom edge; lanes whose offset >= n_elements (or col >= N) are hatched/greyed and labeled 'mask=False -> skipped, or filled with other= (0.0 for add, -inf for softmax)'. Keep only small illustrative integers; no benchmark numbers. Theme-safe: use a single accent for the base pointer + active offsets and a neutral hatch for masked lanes; both must read in light and dark. Everything inside the viewBox, clear left-to-right reading order.",
+      "concept_note": "static tile-of-pointers construction"
+    },
+    {
+      "name": "fused-softmax-hbm-passes",
+      "concept": "Naive multi-op softmax makes ~5 HBM passes over a row; the fused Triton kernel makes ~2 (read once, reduce on-chip, write once).",
+      "rationale": "The memory-bound fusion win is the conceptual heart of Kernel 2 and is re-asserted in the Interview Corner and Key Takeaways. The FA-1 figures cover attention tiling, not the plain softmax pass-count comparison — this makes 'why fusion wins and why the ceiling is ~2.5x' visible in one frame.",
+      "kind": "static",
+      "placement": "## Kernel 2: Fused Softmax — Reductions and the Memory Win",
+      "priority": 1,
+      "brief": "Static side-by-side (or stacked) comparison of HBM traffic for softmax over ONE row of an M x N matrix. A vertical divider separates 'HBM (off-chip, slow)' on one side from 'on-chip (SRAM/registers, fast)' on the other; every arrow that crosses the divider is one HBM pass. TOP lane 'Naive multi-op PyTorch — ~5 passes': five labeled crossings in sequence: (1) read x -> find max, (2) read x -> exp, (3) write exp to HBM, (4) read exp -> sum, (5) read exp -> divide & write. Emphasize that intermediates (the exponentials) round-trip to HBM. BOTTOM lane 'Fused Triton kernel — ~2 passes': just two crossings — read the row once into an on-chip box, then a single on-chip block labeled 'max -> subtract -> exp -> sum -> divide, all in SRAM/registers, no round-trip', then write the row once. Caption strip: 'softmax is memory-bound: runtime ∝ HBM bytes moved, so ~5 passes -> ~2 passes ≈ ~2.5x faster; you cannot beat 1 read + 1 write.' Use only small integer pass counts; invent no throughput/bandwidth numbers. Theme-safe accents for the crossings vs the on-chip block; legible in both themes; no overlaps.",
+      "concept_note": "HBM traffic 5 vs 2 passes"
+    },
+    {
+      "name": "matmul-tile-reuse-kloop",
+      "concept": "One program computes one BLOCK_M x BLOCK_N tile of C by walking K in BLOCK_K steps, accumulating tl.dot into an fp32 tile; plus the GROUP_M swizzle for L2 reuse.",
+      "rationale": "Matmul is the chapter's compute-bound exemplar and the reuse-from-SRAM idea (each A/B tile loaded once, reused many times) is abstract in prose. A tiling diagram makes 'why tiling gives high arithmetic intensity' and 'what the swizzle reorders' concrete — foundational for reading real GEMM/MoE kernels.",
+      "kind": "static",
+      "placement": "## Kernel 3: Matrix Multiplication — Tiling, Accumulation, and Swizzling",
+      "priority": 2,
+      "brief": "Static GEMM tiling diagram, C = A·B. Lay out A on the left, B on top, C at the intersection (bottom-right), the classic mm layout. Highlight ONE output tile C[pid_m,pid_n] of size BLOCK_M x BLOCK_N. Draw the matching horizontal strip of A (BLOCK_M rows, full K width) and vertical strip of B (full K height, BLOCK_N cols); shade only these strips. Overlay the K-loop: divide the strips into BLOCK_K chunks (show 3 chunks) and annotate one step: 'load A tile (BLOCK_M x BLOCK_K) + B tile (BLOCK_K x BLOCK_N) -> tl.dot -> acc += (fp32 register tile)'. A left-to-right arrow over the chunks: 'walk K in steps of BLOCK_K, accumulate in fp32; write C tile ONCE after the loop.' Add a short reuse note: 'each loaded A row-tile is reused across BLOCK_N output cols; each B col-tile across BLOCK_M rows — that reuse is the whole point.' Include a small INSET illustrating the GROUP_M swizzle: two mini 4x4 grids of output tiles with numbered visitation order — 'row-major (poor L2 reuse)' where consecutive programs span far-apart B columns, vs 'GROUP_M grouped (nearby programs share A rows / B cols -> better L2 hit rate)'. Use small integers only (e.g. BLOCK sizes as labels, GROUP_M=2 in the inset); no benchmark numbers. Theme-safe: distinct-but-neutral accents for the active C tile, the A/B strips, and the fp32 accumulator; keep the inset from crowding the main diagram; everything inside the viewBox.",
+      "concept_note": "tiling + K-loop accumulation + swizzle"
+    },
+    {
+      "name": "online-softmax-rescale-both",
+      "concept": "As K/V blocks stream in, the running max jumps and α=exp(m_old−m_new) must rescale BOTH the running sum ℓ AND the output accumulator O before the new block is added.",
+      "rationale": "This is the chapter's climax and its single most-emphasized pitfall ('forgetting to rescale the accumulator'). The FA-1 chapter has a STATIC dataflow figure; here motion is what teaches the mechanic — the max ticking up and α simultaneously shrinking two running quantities is exactly what a static frame cannot convey. Scoped to the rescale step so it complements rather than duplicates the FA-1 figure.",
+      "kind": "long-animation",
+      "placement": "### The Online Softmax Recurrence",
+      "priority": 2,
+      "brief": "Long-animation of the online-softmax update for ONE query row as key/value blocks j=1,2,3 stream in, focused on the 'rescale BOTH' mechanic. Persistent RUNNING-STATE panel with three registers: m (running max, a number), ℓ (running sum, a number), O (running output accumulator, drawn as a short horizontal bar of d entries). A queue of incoming score blocks S^(1), S^(2), S^(3) feeds in from the left one at a time. Per block, animate the steps in order: (1) block S^(j) arrives; compute its block max m_j. (2) m_new = max(m, m_j): when m_j exceeds the old m, animate m ticking UP and flash this jump as the trigger. (3) α = exp(m_old − m_new) appears as a correction factor ≤ 1. (4) THE FOCAL MOMENT: BOTH ℓ and O visibly shrink by α with a single synchronized pulse; overlay 'rescale BOTH — the #1 bug is rescaling ℓ but forgetting O (or vice versa)'. (5) add new mass: ℓ += Σ exp(S^(j) − m_new) and O += exp(S^(j) − m_new)·V^(j), shown as the bar growing. After the final block, a distinct closing frame: 'O ÷ ℓ once' normalizes the accumulator to the final output. Every frame must be legible as a static snapshot: show current j and current m/ℓ values as small illustrative integers/decimals (e.g. m: 2 -> 5, α ≈ 0.05) — invent NO benchmark numbers. Keep a persistent caption: 'both ℓ and O were exponentiated against the OLD max, so both must be multiplied by α before adding the new block.' The animated focal points are the running-max jump and the synchronized α pulse on ℓ and O. Theme-safe; the first frame (empty running state) and last frame (normalized O) each stand alone as clear stills.",
+      "concept_note": "animated α rescale of both ℓ and O"
+    }
+  ],
+  "summary": "The chapter is code-rich and concept-dense with only one existing figure (the CUDA-vs-Triton mental model, which is clear in both themes and kept). It is under-served on its three most foundational mechanics: (1) pointer-block arithmetic, the chapter's self-declared most-important skill, with no visual anywhere; (2) the fused-softmax HBM pass-count win that drives the memory-bound intuition and recurs in the interview corner; (3) matmul tiling/reuse and the L2 swizzle. A fourth figure animates the online-softmax rescale-BOTH pitfall — scoped narrowly to complement, not duplicate, the FA-1 chapter's static dataflow figure. Priorities: pointer arithmetic and softmax passes are P1 (foundational); matmul tiling and the online-softmax animation are P2."
+}

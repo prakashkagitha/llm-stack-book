@@ -1,0 +1,52 @@
+{
+  "chapter": "03-pretraining/12-checkpointing-fault-tolerance",
+  "core_intuitions": [
+    "A complete checkpoint is FOUR things (weights, optimizer moments, per-rank RNG, training metadata); dropping optimizer state or the data cursor does not crash — it SILENTLY diverges.",
+    "Optimizer state dwarfs the weights: Adam keeps ~16P bytes vs 2P for bf16 weights, so most of a checkpoint's size and save time is optimizer moments, not parameters.",
+    "The topology-agnostic sharded format (DCP) saves parameters as named byte-range chunks in a normalized store, so a run saved on N ranks can be remapped and resumed on a DIFFERENT number of ranks M — this is what makes elastic resume possible.",
+    "Async checkpointing decouples the fast GPU->pinned-CPU snapshot (the only blocking step, ~seconds) from the slow CPU->disk write (minutes), which overlaps with subsequent training steps.",
+    "Cluster MTBF shrinks as 1/(N*lambda): more nodes means failures every hour or less, and each failure wastes the work done since the last checkpoint — so the optimal interval trades save cost against lost-work risk (Daly's formula).",
+    "The COMPLETE sentinel written LAST makes a checkpoint atomic: a crash mid-save leaves a directory without the sentinel, so it is never mistaken for a loadable checkpoint."
+  ],
+  "existing": [
+    {
+      "name": "ckpt-sharded-dir-layout",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "ckpt-async-vs-sync-timeline",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "ckpt-gfs-retention-timeline",
+      "verdict": "refine",
+      "issue": "In the dark theme the section headers (Recent / Daily / Weekly / Permanent) and their subtitles collide with each other and with the horizontal rule, reading as muddy overlapping text; the bottom caption is also very low-contrast in dark. Light theme is fine, so it is purely a dark-mode legibility/spacing problem, not a concept problem.",
+      "improvement": "Add vertical breathing room so each section's subtitle sits clearly BELOW the rule/header rather than overprinting it, and use theme-aware muted-foreground tokens (not a dim gray) for subtitles and the caption so contrast holds in dark mode. Keep the metaphor and layout otherwise unchanged."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "ckpt-topology-agnostic-reshard",
+      "concept": "How a DCP sharded checkpoint saved on N ranks is remapped through a normalized named-chunk store and reloaded onto a DIFFERENT number of ranks M.",
+      "rationale": "This is the single most important 'why DCP' intuition in the chapter and it currently lives only in prose ('remapped to any new device layout on load') and elastic-training text. Readers cannot picture how a checkpoint written by 4 GPUs loads onto 2 GPUs. Making the normalized chunk store the pivot — logical tensor -> byte ranges, independent of device count — turns an abstract claim into a mechanism they can see, and directly grounds both section 3.12.2 (the sharding problem) and 3.12.6 (elastic resume on a different GPU count).",
+      "kind": "static",
+      "placement": "3.12.2 The Sharding Problem — after the strategy table, anchored on the paragraph beginning 'PyTorch's torch.distributed.checkpoint (DCP)'",
+      "priority": 1,
+      "brief": "A three-column left-to-right flow with a clear pivot in the middle. LEFT column titled 'Save on N=4 ranks': four small stacked GPU boxes (rank 0..3), each holding a disjoint SHARD of one logical parameter tensor W. Show W conceptually as a horizontal bar split into 8 illustrative chunks numbered 0..7; each rank owns 2 chunks (rank0: chunks 0,1; rank1: 2,3; rank2: 4,5; rank3: 6,7). Use one accent hue to tint chunks by which rank wrote them, but rely on chunk NUMBERS as the primary identity so it reads in grayscale. Arrows from all four ranks converge into the MIDDLE column: a single 'Normalized chunk store (on disk)' panel — draw it as an index table mapping logical name -> byte range, e.g. rows 'W[0:1k] -> shard_A @ off 0', 'W[1k:2k] -> shard_A @ off 4096', ... 'W[7k:8k] -> ...', plus a note 'chunks are addressed by LOGICAL tensor offset, NOT by device'. The key visual point: the store has NO notion of rank count. RIGHT column titled 'Load on M=2 ranks (elastic resume)': two GPU boxes (rank 0..1); rank0 pulls chunks 0,1,2,3 and rank1 pulls chunks 4,5,6,7 — i.e. the SAME 8 chunks, re-partitioned into 2 groups instead of 4. Draw fan-out arrows from the store to the two ranks, and label the reassembled bar under each rank so the reader sees the identical W reconstituted with a new split. Add a one-line takeaway strip at the bottom: 'Same bytes, any device count — no manual resharding.' Include a tiny caption noting N and M are illustrative. Keep everything inside the viewBox, generous spacing, no color hardcoding — use theme tokens for panels/text and a single accent for chunk tint. Small integers only (4, 2, 8 chunks); invent no benchmark numbers."
+    },
+    {
+      "name": "ckpt-failure-waste-and-daly",
+      "concept": "Why fault tolerance is unavoidable at scale and how the checkpoint interval trades save cost against lost-work risk: a progress-vs-time sawtooth with a failure that rolls back to the last checkpoint, paired with the U-shaped waste-vs-interval curve whose minimum is Daly's T*.",
+      "rationale": "Section 3.12.5 is the quantitative heart of the chapter — MTBF = 1/(N*lambda), the waste fraction, and Daly's T* — but it is ALL equations with zero visual support. The two ideas that must click intuitively are (1) a failure destroys the work done since the last checkpoint (the sawtooth), so on average you lose ~half an interval plus the save time, and (2) there is an OPTIMUM interval: too frequent wastes time saving, too rare wastes time re-doing lost work. A static two-panel infographic makes both land in one glance and motivates the whole chapter's push toward frequent, fast, async checkpoints.",
+      "kind": "static",
+      "placement": "3.12.5 Hardware Failure Rates at Scale: The Math — after the '1024-node cluster' example box, anchored on the sentence introducing Daly's formula (T* ~ sqrt(2 * T_save * T_MTBF))",
+      "priority": 1,
+      "brief": "Two side-by-side panels sharing a clean, theme-aware style. LEFT panel 'What a failure costs': an x-axis = wall-clock time, y-axis = useful training progress (monotonic ideal line as a faint dashed diagonal 'ideal, no failures'). Overlay the REAL progress as a rising line punctuated by checkpoint markers (small solid dots labeled 'ckpt') at even intervals of width T_ckpt. At one point draw a jagged 'FAILURE' burst; from there drop the progress line vertically back DOWN to the height of the last checkpoint (the rollback), then resume rising. Shade the wedge between the failure point and the last checkpoint and label it 'lost work (avg ~ T_ckpt / 2)'. Also mark a short flat segment at each checkpoint labeled 'T_save (save cost)'. The reader should see: bigger interval => taller lost-work wedge on failure; every checkpoint also costs a little flat T_save. RIGHT panel 'Choosing the interval': a U-shaped curve, x-axis = checkpoint interval T_ckpt (short -> long), y-axis = expected wasted compute fraction. Decompose it visibly: a DECREASING dashed component labeled 'save overhead ~ T_save / T_ckpt' (frequent saves cost more) and an INCREASING dashed component labeled 'lost-work risk ~ T_ckpt / (2*T_MTBF)'; their sum is the solid U curve. Mark the minimum with a vertical drop line to the axis labeled 'T* ~ sqrt(2 * T_save * T_MTBF)' and annotate 'sweet spot: frequent + fast wins'. Include a small header strip tying the panels together: 'More nodes -> MTBF = 1/(N*lambda) shrinks -> failures every hour or less.' Use only illustrative axis ticks, no invented benchmark numbers; keep both panels fully legible as static frames, theme-safe tokens, single accent for the failure/optimum highlights, everything within the viewBox."
+    }
+  ],
+  "summary": "The chapter is code- and prose-heavy but figure-poor on its two most conceptual pillars: the topology-agnostic sharded format (only described in text) and the failure/checkpoint-interval math (section 3.12.5 is all equations). Existing figures are strong: the directory-layout and async-vs-sync timeline are clear in both themes (keep); the GFS retention timeline is conceptually good but has dark-theme spacing/contrast collisions (refine). I propose two foundational static figures — a topology-agnostic reshard flow (save on N ranks -> normalized chunk store -> load on M ranks) and a two-panel failure-cost sawtooth + Daly U-curve — that convert the chapter's two abstract mechanisms into visual intuition. Both work as static frames; no long-animation is warranted."
+}

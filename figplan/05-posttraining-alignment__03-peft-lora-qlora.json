@@ -1,0 +1,60 @@
+{
+  "chapter": "content/05-posttraining-alignment/03-peft-lora-qlora.md",
+  "core_intuitions": [
+    "The FINE-TUNING UPDATE (not the weight) is low-rank: W0 stays full-rank and frozen; only the delta is constrained to rank r, factored as BA, turning d*k parameters into d*r+r*k (a ~128x cut for a 4096x4096 layer at r=16).",
+    "The forward pass is a PARALLEL path: h = W0 x + (alpha/r) B A x. The frozen base is untouched; the low-rank bottleneck (down to r, up to d) is summed in and can later be FOLDED into W0 for zero inference overhead.",
+    "The real training saving is on OPTIMIZER STATE + GRADIENTS, not the base: the frozen base needs no grad, no Adam moments, no fp32 master copy. Activation memory is unchanged. QLoRA then shrinks the last big term - the frozen base itself - to 4-bit.",
+    "NF4 is optimal for GAUSSIAN weights because its 16 levels are placed at quantiles (equal probability MASS per bin), spending precision on the dense center instead of on equal-WIDTH bins that waste resolution in the tails, as plain INT4 does.",
+    "alpha/r is an effective-SCALE knob that decouples magnitude from rank, so a learning rate tuned at one rank transfers across ranks; editing alpha alone is just changing the LoRA path's learning rate.",
+    "DoRA splits each weight into MAGNITUDE (a trained vector m) and DIRECTION (a LoRA-updated, column-normalized matrix), so its learning dynamics resemble full fine-tuning and it beats LoRA at the same rank."
+  ],
+  "existing": [
+    {
+      "name": "lora",
+      "verdict": "refine",
+      "issue": "Strong core figure - clean parallel-path anatomy, param counts, formula, works in both themes. One legibility bug: the label 'r ≪ d' uses U+226A (much-less-than), which the mono font lacks, so it renders as a tofu/box glyph between A and B in both light and dark.",
+      "improvement": "Replace the U+226A character with mono-safe text 'r << d' (or 'r much less than d') so the rank-bottleneck relation is legible. No other change needed."
+    },
+    {
+      "name": "lora-fullft-vs-lora-parallel-path",
+      "verdict": "keep",
+      "issue": "Side-by-side of full FT (one big ALL-trained block) vs LoRA (frozen base + tiny parallel A,B) reads clearly in both themes and cleanly conveys 'freeze the giant, add a small parallel path.' Minor: it leans on a hardcoded blue accent and overlaps a little conceptually with fig:lora, but the explicit contrast against full fine-tuning is a distinct, useful payload.",
+      "improvement": "Optional only: ensure the blue accent derives from the theme accent variable rather than a hardcoded hex, for consistency with the rest of the book."
+    },
+    {
+      "name": "lora-transformer-block-attach-points",
+      "verdict": "keep"
+    },
+    {
+      "name": "lora-multi-lora-batched-serving",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "lora-qlora-training-memory-breakdown",
+      "concept": "Bytes-per-parameter training-memory composition for Full FT vs LoRA vs QLoRA, showing exactly which terms vanish.",
+      "rationale": "This is THE reason PEFT exists and the entire subject of the chapter's Interview Corner ('what shrinks, what does NOT, and why QLoRA fits 65B on one GPU'). No current figure shows the memory story - the single most load-bearing intuition. A structural bytes-per-param decomposition makes 'LoRA kills optimizer+grad, QLoRA kills the base term' click instantly, and it is built from structural facts (bf16=2, grad=2, fp32 master=4, Adam moments=8; 4-bit base~0.5), not invented benchmarks.",
+      "kind": "static",
+      "placement": "Worked example: parameter and memory savings on a 7B model (end of the 'LoRA mechanics' section, right after the memory worked example), OR at the top of the QLoRA section.",
+      "brief": "Three vertical stacked bars side by side, one per regime: 'Full fine-tuning', 'LoRA (bf16 base)', 'QLoRA (4-bit base)'. Each bar is a stack of labeled bands measured in BYTES PER PARAMETER (label the y-axis 'memory, bytes / parameter' - this is a structural framework, not a benchmark). FULL FT bar = a tall stack of four bands over ALL params: 'base weight (bf16) 2' + 'base gradient 2' + 'fp32 master copy 4' + 'Adam moments (2x) 8' = 16 B/param, every band drawn full-width to signal 'applied to 100% of params'. LoRA bar: keep only the 'base weight (bf16) 2' band full width, and GREY-OUT / strike-through the gradient, fp32-master, and Adam bands with a small 'x - not allocated (base is frozen)' callout; then add a thin sliver on top labeled 'adapter + its Adam/grad/master (<1% of params) ~ tiny' to show the 16 B/param cost is paid only on the adapter. QLoRA bar: shrink the surviving base band to a short 'base weight (NF4 4-bit) ~0.5' block (about one quarter the height of LoRA's base band) with a tiny '+ scale overhead' note, keep the same tiny adapter sliver, and the same greyed-out frozen-base optimizer bands. Add a separate hatched band labeled 'activations - UNCHANGED across all three (pair with gradient checkpointing)' shown identically on every bar so the reader sees LoRA/QLoRA do NOT touch activation memory. Caption: 'LoRA removes gradient + optimizer state on the frozen 99%+; QLoRA then compresses the frozen base itself to 4-bit. Activation memory is unchanged.' Theme-safe: use the accent only to highlight the surviving/paid bands, muted/greyed fill for the vanished ones; small integers only (2, 4, 8, 16, ~0.5); no total GB numbers on the figure."
+    },
+    {
+      "name": "nf4-quantile-bins-vs-uniform",
+      "concept": "Why NF4 beats INT4 on Gaussian weights: equal-mass quantile bins vs equal-width uniform bins under a bell curve.",
+      "rationale": "NF4 is the first of QLoRA's three innovations and the chapter argues it verbally ('information-theoretically optimal for normally distributed data') plus a code demo, but the idea is inherently visual and clicks in one glance as a picture: precision should follow where the probability mass is. A static overlay of the two bin layouts on one Gaussian is the canonical, high-intuition figure for this and nothing currently serves it.",
+      "kind": "static",
+      "placement": "1. NF4 - the 4-bit NormalFloat data type (right under that heading, before or after the NF4 code block).",
+      "brief": "A single standard-normal bell curve N(0,1) drawn once, spanning roughly [-1,1] after normalization (label the x-axis 'normalized weight value, [-1,1] after dividing by block absmax'). Below (or overlaid on) the SAME curve, show TWO rows of 16 quantization levels. TOP ROW 'INT4 - uniform (equal width)': 16 tick marks / bin boundaries evenly spaced along x; shade to show that many bins land out in the low-density tails where almost no weights live, while only a few ticks fall in the tall dense center - annotate 'wasted precision in the tails, coarse in the dense center'. BOTTOM ROW 'NF4 - quantile (equal probability mass)': 16 tick marks placed at the quantiles of the normal, so they bunch tightly near 0 (dense center) and spread out in the tails; shade the area between adjacent ticks to show each slice under the curve has roughly EQUAL AREA - annotate 'each bin holds ~equal probability mass; levels crowd where the weights are'. Mark an exact level at 0 on the NF4 row ('exact zero'). A small side note: 'both use 16 levels / 4 bits - only the placement differs'. Optionally a tiny inset showing reconstruction error being smaller for NF4 (lower RMSE) - but keep it schematic, NO specific error numbers. Theme-safe: curve stroke in currentColor/muted, the equal-mass slices lightly tinted with the accent; small counts only (16 levels). Everything inside the viewBox, the two rows clearly separated with their own labels."
+    },
+    {
+      "name": "dora-magnitude-direction-decomposition",
+      "concept": "DoRA decomposes a weight into a trained magnitude vector m and a LoRA-updated, column-normalized direction.",
+      "rationale": "DoRA is called out as 'the most important post-LoRA refinement' and the magnitude/direction split is a genuinely geometric idea that a diagram conveys far better than the two normalization equations in the text. It shows WHY DoRA's dynamics resemble full FT (which changes magnitude a lot) where plain LoRA cannot. Nice-to-have rather than foundational, hence lower priority.",
+      "kind": "static",
+      "placement": "DoRA - decomposing weight magnitude and direction (under that heading, after the W = m * V/||V||_c equation).",
+      "brief": "Left panel 'plain LoRA': a weight column vector drawn as an arrow W0, with W0 + (alpha/r)BA drawn as a second arrow at a slightly different angle AND different length - annotate that LoRA changes direction and length together in one coupled low-rank move, and that it tends to under-change magnitude. Right panel 'DoRA': decompose the same weight into TWO explicitly separated controls: (1) a DIRECTION - a unit-length arrow (column-normalized V/||V||_c) whose ANGLE is steered by the low-rank BA update (show a small BA nudging the unit arrow's direction), and (2) a MAGNITUDE - a scalar length gauge / slider labeled 'm (trained directly, one scalar per column)' that scales the unit direction back up to the final weight W' = m * (V/||V||_c). Use a dashed circle (unit sphere) to make the normalization visible: the direction lives on the circle, m is the radius. Caption: 'DoRA separates HOW BIG (m, trained directly) from WHICH WAY (direction, low-rank adapted) - so magnitude changes freely, matching full-FT dynamics that plain LoRA struggles to express.' Add a small note 'at init BA=0 -> direction=W0, m=||W0||_c -> W'=W0 (no-op).' Theme-safe: arrows in currentColor, the trained pieces (m gauge, BA nudge) in the accent; keep both panels inside the viewBox with clear left/right separation."
+    }
+  ],
+  "summary": "The chapter is already well served on the low-rank/parallel-path front (fig:lora, fig:lora-fullft-vs-lora, attach-points) and on multi-adapter serving. All four existing figures render correctly in both themes and are kept; the only fix is a one-character legibility bug in fig:lora where 'r ≪ d' renders as a tofu box (swap U+226A for mono-safe 'r << d'). The two biggest UNSERVED foundational intuitions are (1) the TRAINING-MEMORY story - the whole reason PEFT exists and the entire subject of the Interview Corner - proposed as a bytes-per-param stacked-bar breakdown (Full FT vs LoRA vs QLoRA) showing exactly which terms vanish; and (2) NF4's equal-mass quantile bins vs INT4's equal-width bins under a Gaussian, the canonical one-glance figure for QLoRA's first innovation. A third, lower-priority figure visualizes DoRA's magnitude/direction split. Two priority-1 figures, one priority-3."
+}

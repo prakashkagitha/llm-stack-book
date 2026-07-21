@@ -1,0 +1,58 @@
+{
+  "chapter": "content/07-inference-serving/01-anatomy-inference.md",
+  "core_intuitions": [
+    "Inference has two physically distinct phases: prefill ingests all S prompt tokens in one parallel masked matmul (N=S), decode emits one token per step in a strictly sequential loop (N=1) — same weights, opposite bottlenecks.",
+    "The KV cache trades memory for compute: the keys/values of past tokens never depend on future queries, so you compute each token's K,V once, APPEND it, and reuse it forever — killing the O(T^2) recomputation of the naive loop.",
+    "Arithmetic intensity of the dominant matmul is I ~= 2N/P FLOP/byte, so it scales purely with tokens-per-pass N: prefill (large N) sits above the GPU ridge point and is compute-bound; decode (N=1) sits ~100x below it and is memory-bound, with tensor cores idle while HBM streams the weights.",
+    "The KV-cache size is 2*B*S*L*H_kv*d_h*P bytes — linear in batch and sequence, independent of MLP width/vocab/query-head count — and it (not the weights) is usually what caps how many concurrent users fit in HBM; this is why GQA/MLA exist.",
+    "Batching decode is nearly-free throughput: one weight read serves B tokens, lifting N from 1 to B; the single-stream decode ceiling is BW/(N_params*P).",
+    "User-facing latency splits along the prefill/decode seam: TTFT (prefill-bound) then a cadence of TPOT/ITL gaps (decode-bound), with E2E = TTFT + (T-1)*TPOT; Little's law then ties fleet throughput to KV capacity (L) over time-in-system (W)."
+  ],
+  "existing": [
+    {
+      "name": "kv-cache-growth",
+      "verdict": "replace",
+      "issue": "Clips in BOTH themes: the right-hand caption box truncates its own text ('GPU saturated.' cut off, 'stream all weight[s]' loses the final letters, and the 'KV = 2*L*n_layer*n_kv*d_head*bytes' formula runs off the right edge of the viewBox). The two top titles collide ('one parallel pass' overlaps 'Decode'), and the bottom caption 'every decode step re-reads the ...' is partly hidden behind the caption box. Conceptually it also duplicates the two-phase overview already carried (better) by anatomy-prefill-decode-flow, while never cleanly delivering what its name promises: the cache GROWING one entry per step.",
+      "improvement": "Redraw as a clean, single-idea figure that shows the KV cache GROWING, matching the marker's placement at the top of 'Two Phases, One Model'. Layout: a horizontal cache strip that starts filled to length S in one shot (label 'PREFILL: all S prompt tokens' K,V written at once'), then a short row of decode steps each APPENDING exactly one new K/V cell to the right (label 'DECODE: +1 KV per step'), so the strip visibly lengthens S -> S+1 -> S+2 -> S+3. Under it, one caption line: 'every decode step must stream the WHOLE (growing) cache from HBM.' Drop the dense multi-paragraph side box entirely (that compute/memory-bound contrast is owned by the roofline figure). Use theme-token fills only; keep all text inside the viewBox with generous right/bottom margins; no overlapping captions."
+    },
+    {
+      "name": "anatomy-prefill-decode-flow",
+      "verdict": "refine",
+      "issue": "The metaphor (one wide box for prefill vs a chain of narrow boxes for decode, with the first output token feeding into the chain) is excellent and both themes are readable, but the lower-left caption 'one big parallel masked matmul over S tokens (compute-bound)' overlaps the prefill box, and the two-line subtitles under the PREFILL / DECODE titles crowd their headings.",
+      "improvement": "Add vertical breathing room: move the 'one big parallel masked matmul ... (compute-bound)' caption fully below the prefill box with a clear gap, and separate each two-line title/subtitle pair so they don't touch. No content change to the boxes or arrows — this is purely spacing/anti-overlap cleanup."
+    },
+    {
+      "name": "anatomy-roofline-intensity-numberline",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "kv-cache-append-vs-recompute",
+      "concept": "The KV-cache trick: naive decode recomputes K,V for all past tokens every step (O(T^2), redundant), while the cache computes each token's K,V once, appends it, and reuses it — trading memory for compute.",
+      "rationale": "The entire middle section ('The KV Cache: Mechanism and Math') hinges on one structural fact — past K,V do not depend on the current query, so they can be cached and reused — yet no figure shows the mechanism. This is the chapter's central 'aha' and the reason decode is even tractable; a static side-by-side of wasted recomputation vs append-and-reuse makes it click far faster than the code listing.",
+      "kind": "static",
+      "placement": "The KV Cache: Mechanism and Math (after the 'So we cache them' numbered list, near the from-scratch code block)",
+      "brief": "Two stacked panels sharing an x-axis of token positions 1..S+3 (use small illustrative counts, e.g. a prompt of 4 tokens then 3 decode steps). TOP panel labelled 'NAIVE (no cache) - O(T^2)': for each successive decode step draw the full K/V column set 1..current being recomputed, with ALL previously-seen columns shaded/hatched as 'recomputed again (wasted)' and only the newest column marked 'actually new'. Stack 3 such rows so the reader sees the wasted (hatched) area growing like a triangle — the quadratic redundancy. BOTTOM panel labelled 'KV CACHE - append & reuse': a single growing strip of K/V columns; at each step exactly ONE new column is added on the right (marked 'compute once, append', use an accent/positive token color) while all earlier columns are shown solid and dimmed as 'cached, reused unchanged, never recomputed'. A short connective label between panels: 'past K,V never depend on the current query -> cache them.' One caption at the bottom: 'spend memory to save compute.' Keep K and V distinguishable (e.g. a thin K row and V row, or a 'K/V' tag), all labels inside the viewBox, theme-token colors only, no invented numbers beyond the tiny position indices."
+    },
+    {
+      "name": "latency-timeline-ttft-tpot",
+      "concept": "A single streaming request on a time axis: queue -> prefill -> first token (TTFT), then a steady cadence of decode tokens separated by TPOT/ITL gaps, with E2E = TTFT + (T-1)*TPOT.",
+      "rationale": "The latency vocabulary (TTFT, TPOT, ITL, E2E) is defined only in a table and an equation, but it is inherently temporal and is 'the first thing an interviewer asks'. A clean horizontal timeline maps each term to a visible interval and cements that TTFT is prefill-bound while the token cadence is decode-bound — the exact mental model the chapter wants readers to leave with.",
+      "kind": "static",
+      "placement": "The Latency Vocabulary: TTFT, TPOT, ITL (after the metrics table, before the E2E decomposition equation)",
+      "brief": "A single left-to-right time axis for one request. Mark 'arrival' at the origin, then a small 'queue' segment, then a WIDE block labelled 'PREFILL (encode S tokens, compute-bound)'. The first output token pops at the end of prefill; a bracket from arrival to that first token is labelled 'TTFT (Time To First Token)'. After it, draw a row of evenly-spaced small token ticks (e.g. 5-6 of them, then an ellipsis) labelled 'DECODE (memory-bound)'; the gap between two adjacent ticks is bracketed and labelled 'TPOT / ITL (per-token gap)'. A long bracket spanning arrival to the last tick is labelled 'E2E = TTFT + (T-1)*TPOT'. Visually make the prefill block noticeably wider than a single decode gap to convey that TTFT dominates the front and each decode step is a small, repeated cost. Optional small annotations: 'longer prompt -> longer TTFT' under prefill, 'steady typing cadence' under the decode ticks. Use only tiny illustrative token counts, no ms/throughput numbers; theme-token colors; everything inside the viewBox with a clear reading order left to right."
+    },
+    {
+      "name": "kv-cache-vs-weights-budget",
+      "concept": "HBM as a fixed budget: weights take a fixed slab, and the KV cache fills the remainder one sequence at a time — so the KV cache, not the weights, caps concurrency, and GQA (few KV heads) fits many more sequences than MHA (many KV heads).",
+      "rationale": "The chapter calls the shift from 'weights are the big thing' to 'the KV cache is the big thing' the 'central surprise of inference engineering', and directly motivates why every modern serving model uses GQA/MLA. A budget bar makes both the surprise and the GQA-vs-MHA concurrency ratio visible at a glance, complementing the numeric worked example.",
+      "kind": "static",
+      "placement": "KV cache size: the formula that governs everything (after the 'Worked example: how many concurrent users fit in an A100?' admonition)",
+      "brief": "Two vertical (or horizontal) capacity bars of identical total height labelled 'HBM'. In BOTH bars, a fixed bottom slab labelled 'model weights (fixed)' occupies the same portion, plus a thin sliver 'activations / overhead'. The remaining space is 'KV cache budget', subdivided into equal slots each = one concurrent sequence's KV cache. LEFT bar labelled 'GQA (few KV heads)': many thin slots fill the budget -> annotation 'many concurrent sequences'. RIGHT bar labelled 'MHA (many KV heads)': each sequence's slot is several times fatter, so only a few fit -> annotation 'few concurrent sequences'. Use only the illustrative head counts already in the chapter (e.g. 8 KV heads vs 32) as small labels, and show the per-sequence slot roughly 4x fatter on the MHA side to convey the ratio — do NOT print GB figures. Caption: 'the KV cache, not the weights, usually limits how many users you can serve.' Theme-token colors, clear slot boundaries, all labels inside the viewBox."
+    }
+  ],
+  "summary": "The chapter is concept-dense and its two structural figures (prefill/decode flow, roofline number-line) are good — the number-line is a keep, the flow figure needs only anti-overlap spacing. The named 'kv-cache-growth' figure is broken (text clipping and title collisions in both themes) and conceptually redundant, so it should be replaced by a clean cache-growth strip. Three core intuitions are visually unserved: the KV-cache append-vs-recompute mechanism (P1), the TTFT/TPOT/ITL/E2E latency timeline (P1), and the HBM weights-vs-KV budget that motivates GQA (P2). Proposing those three new static figures plus one replace, one refine, one keep."
+}

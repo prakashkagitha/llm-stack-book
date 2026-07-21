@@ -1,0 +1,58 @@
+{
+  "chapter": "12.4 Safety, Guardrails & Content Moderation",
+  "core_intuitions": [
+    "Defense-in-depth: model-level alignment, input guardrails, output guardrails, and PII redaction are independent layers so no single failure is catastrophic — the guardrail is a separate, auditable layer from the model's own alignment.",
+    "The block threshold tau is a safety decision, not a default: benign and harmful requests form two OVERLAPPING score distributions, so any tau trades false negatives (missed harms) against false positives (blocked benign). Safety weights recall (F_beta with beta>1) so tau sits low — yet precision can still collapse and make a lower tau worse overall.",
+    "Input guardrails run cheapest-first (heuristics -> small encoder classifier -> session signals) so the main LLM never runs on a bad request; output guardrails are costlier because they fire only after generation has completed.",
+    "PII must be caught in BOTH directions — user-submitted in the prompt and model-memorized in the output — and the output direction is harder because the model can paraphrase or recombine fragments with no single matching span.",
+    "Cascade / confidence-band routing: a tiny high-recall classifier resolves the clear-safe and clear-unsafe majority in milliseconds, and only the uncertain 'gray zone' escalates to the heavy shield model — you spend the expensive model on the uncertain minority.",
+    "Shield models (Llama Guard) put the harm taxonomy IN THE PROMPT, so policy iterates without retraining; they run as sidecar services, and fail-safe means fail-closed with a fast heuristic fallback."
+  ],
+  "existing": [
+    {
+      "name": "guardrails-defense-in-depth-pipeline",
+      "verdict": "keep",
+      "issue": "Clean input-guardrail -> LLM core -> output-guardrail pipeline with block/pass branches to refusal. Correctly conveys the layered-independence idea; legible and well-balanced in both light and dark themes; no clipping or clutter.",
+      "improvement": ""
+    },
+    {
+      "name": "guardrails-shield-sidecar-router",
+      "verdict": "refine",
+      "issue": "The core placement idea (input shield / main LLM / output shield inside one Safety Router, with block branches) reads clearly in both themes. Weak spot: the vertical 'sidecar shield instances (e.g. Llama Guard 7B / 2B / 1B)' label with its dashed brace crowds the left edge of the Main LLM box (visible overlap in dark mode) and does not actually convey the scaling insight from the text (one shield replica handles limited rps; ~100 GPUs at 10k rps).",
+      "improvement": "Nudge the vertical sidecar label and its dashed brace leftward so they clear the Main LLM box outline in both themes, and tighten the label to two lines. Optionally add a one-line scaling annotation near it (e.g. '~N replicas at scale') using an illustrative small integer, not a benchmark number."
+    },
+    {
+      "name": "guardrails-production-safety-stack-5stage",
+      "verdict": "keep",
+      "issue": "Excellent five-stage numbered flow (pre-processing -> input guardrail -> main LLM -> output guardrail -> observability) with BLOCK->refusal branches and a dashed 'policy tuning / retraining' feedback loop back to stage 2. Comprehensive, correct, and legible in both themes; the numbered badges give a clear reading order.",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "guardrails-threshold-precision-recall",
+      "concept": "Two overlapping classifier-score distributions with a sliding block threshold tau, showing how tau trades missed harms (false negatives) against blocked-benign (false positives), and why safety pushes tau low.",
+      "rationale": "This is the quantitative heart of the chapter — the block-threshold tradeoff is worked out numerically TWICE (Section 2.1 and Section 5.2) and underpins refusal-policy design, tiered classifiers, and distribution-shift monitoring. Readers see the precision/recall/F_beta algebra but nothing that makes the OVERLAP visceral: that harmful and benign requests share a score range, so no threshold is free, and moving tau necessarily grows one error type while shrinking the other. Seeing the two curves and the four regions is what makes 'tau is a safety decision, not a default' click.",
+      "kind": "animated",
+      "placement": "Section 2.1, immediately after the '!!! example \"Worked example: picking the block threshold\"' admonition (anchor: the F_beta equation / worked example)",
+      "brief": "Horizontal axis labeled 'classifier score p' with ticks at 0, tau, and 1. Two overlapping probability-density curves share the axis: a taller curve centered LOW labeled 'benign / allowed', and a shorter curve centered HIGH labeled 'harmful'. A bold vertical threshold line at tau divides the plane into PASS (left, 'p < tau') and BLOCK (right, 'p >= tau'). Shade and label the four regions formed by the curves and tau: under the harmful curve RIGHT of tau = TP ('caught harm'); under the harmful curve LEFT of tau = FN ('MISSED HARM' — reserve a danger/red tint here to signal this is the costly error); under the benign curve RIGHT of tau = FP ('blocked benign — annoyed user'); under the benign curve LEFT of tau = TN. A compact side readout panel shows precision = TP/(TP+FP) and recall = TP/(TP+FN) as formulas with small up/down arrows (no invented numbers). A caption band reads: 'safety weights recall (beta>1): slide tau LEFT to miss fewer harms — but accept more false positives.' ANIMATION: tau slides from ~0.5 leftward toward ~0.3; as it moves, the FN region shrinks (recall arrow up) while the FP region grows (precision arrow down), and the PASS/BLOCK shading follows the line. The STATIC frame must be fully legible with tau at roughly 0.45, all four regions labeled, and both readout formulas visible. Theme-safe: two distinguishable neutral hues for the curves, danger tint reserved only for the FN region; only 0 / tau / 1 as axis ticks, no fabricated statistics."
+    },
+    {
+      "name": "guardrails-cascade-confidence-routing",
+      "concept": "A confidence-band cascade: a tiny cheap classifier scores every request; clear-safe and clear-unsafe bands are decided instantly on the fast path, and only the gray-zone minority escalates to a heavy shield model.",
+      "rationale": "The chapter's climax (the Interview Corner) and Section 9.3 both hinge on the cascade pattern, and Section 6.1 gives the cost math (a 7B shield at scale needs ~100 GPUs) that motivates it — but none of the three existing figures show CONFIDENCE-BASED ROUTING. The sidecar and 5-stage figures show every request flowing through the shield; the whole production insight is the opposite: route by certainty so the expensive model touches only the uncertain ~5%. A single figure mapping the score axis to three action bands makes the cost-vs-coverage tradeoff immediate and distinct from the placement diagrams.",
+      "kind": "static",
+      "placement": "Section 9.3, after the '### 9.3 Maintaining Multiple Classifiers for Different Risk Levels' heading and its tier table (just before the Interview Corner)",
+      "brief": "Left: a small box 'Tiny classifier (110M encoder, <5 ms, high recall)' that EVERY request enters, emitting a score onto a horizontal 0->1 axis. Two thresholds tau_low and tau_high split the axis into three labeled bands. Left band [0, tau_low): 'clear safe' -> a fast-path arrow labeled PASS routes to a 'Main LLM' box. Right band (tau_high, 1]: 'clear unsafe' -> a fast-path arrow labeled BLOCK (reserve danger/red tint) routes to a 'refuse + log' terminal. Middle band [tau_low, tau_high]: 'GRAY ZONE — uncertain' -> an escalation arrow rising to a larger box 'Llama Guard 8B shield (dedicated replica, ~tens of ms)' which then emits its own pass/block. Annotate the traffic split with illustrative round figures framed as examples: '~95% resolved on the fast path' across the two outer bands and '~5% escalated' on the middle band. Include a tiny cost/latency legend: fast path = a few ms, escalation = tens of ms. A key-intuition caption: 'spend the expensive model only on the uncertain minority.' Fully legible as a static frame; theme-safe hues with danger-red reserved for the block band only; the 95%/5% must be visibly labeled as illustrative, not benchmark numbers."
+    },
+    {
+      "name": "guardrails-constitutional-revision-loop",
+      "concept": "The serving-time constitutional loop: draft -> critique-against-constitution -> revise, turning a written policy into a self-correcting three-pass pipeline.",
+      "rationale": "Section 7 devotes a full mechanism and code block to inference-time constitutional revision, and the Key Takeaways call it out, yet no figure captures it. It is genuinely distinct from the classifier-based guardrails everywhere else in the chapter: instead of a binary block, the model critiques and rewrites its own draft against explicit principles. A small loop diagram makes clear why it is high-quality-but-expensive (3x inference) and why it suits low-volume, high-stakes uses. Nice-to-have rather than foundational, hence lower priority.",
+      "kind": "static",
+      "placement": "Section 7, after the intro paragraph listing the three passes and before the 'constitutional_revision.py' code block",
+      "brief": "Three stacked stages connected by arrows, with a 'Constitution (written principles)' document glyph feeding the middle stage. Stage 1 'DRAFT': user request -> model -> draft response. Stage 2 'CRITIQUE': the draft plus the constitution document flow into the model, which emits a critique listing which principle (if any) is violated. Stage 3 'REVISE': the original request + draft + critique flow into the model, which emits the final revised response (helpful, or a polite decline if the request itself violates a principle). Show the constitution as a small numbered-principles card tapped by the critique stage. Annotate the cost: '~3x inference — low-volume, high-stakes only'. Keep principle text generic/illustrative (e.g. 'P1, P2, P3...'), no invented content. Fully legible static; theme-safe neutral hues; clear top-to-bottom reading order with the constitution card visually distinct from the model-call boxes."
+    }
+  ],
+  "summary": "The chapter is already well-served on ARCHITECTURE and PLACEMENT: three existing figures (defense-in-depth pipeline, shield sidecar router, five-stage production stack) are correct and legible in both themes — two kept as-is, the sidecar router gets a minor refine to unclutter its vertical label. The genuine gaps are conceptual, not structural. (1) The block-threshold precision/recall tradeoff is the quantitative spine of the chapter, worked numerically twice, but no figure makes the OVERLAP of benign/harmful score distributions visceral — proposed as an animated sliding-tau figure with FN/FP/TP/TN regions (priority 1). (2) The confidence-band cascade — route the clear majority fast, escalate only the gray zone to the heavy shield — is the production climax (Interview Corner, Section 9.3) and is not shown by any placement diagram; proposed as a static score-axis routing figure (priority 1/2). (3) The serving-time constitutional draft->critique->revise loop is a distinct mechanism with no figure; proposed as a lower-priority static loop diagram."
+}

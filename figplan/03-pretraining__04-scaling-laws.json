@@ -1,0 +1,61 @@
+{
+  "chapter": "content/03-pretraining/04-scaling-laws.md",
+  "core_intuitions": [
+    "Loss falls as a power law toward an irreducible floor E, and the exponents are SMALL - so returns diminish but never stop, which is why halving loss-above-floor costs orders of magnitude more compute.",
+    "The joint law L = E + A/N^-alpha + B/D^-beta is two INDEPENDENT, ADDITIVE penalties (finite-model + finite-data) on top of a floor - additivity is what makes the N-vs-D trade-off tractable.",
+    "Training compute is C ~= 6ND: 2 FLOPs/param/token forward + 4 backward; this is the shared currency that lets you trade N against D.",
+    "Compute-optimal allocation is found on an ISOFLOP SLICE: fix C, sweep N (with D=C/6N), loss traces a shallow VALLEY whose minimum is N_opt(C); connect valleys across budgets to read the allocation exponent. This is the operational heart of Chinchilla.",
+    "Kaplan ('mostly grow N') vs Chinchilla ('grow N and D in lockstep, ~20 tokens/param') - the correction came from matching the LR schedule to each run's token count, not from a new law.",
+    "Inference-aware over-training: once you serve a model billions of times, minimizing lifetime compute 6ND_train + 2ND_inf shrinks N and pushes tokens/param far past 20x.",
+    "Emergent abilities are largely a metric artifact: smoothly improving per-token accuracy p becomes a sharp cliff under an all-or-nothing metric p^k - the model improved smoothly the whole time."
+  ],
+  "existing": [
+    {
+      "name": "scaling-law",
+      "verdict": "refine",
+      "issue": "The key annotation '(L - E) ~ C^-alpha' renders with a near-invisible minus sign, reading as '(L  E)', which garbles the one label that explains why a curving line is still a power law. In dark theme the 'slope = -alpha (power law)' text and its slope-tick overlap the curve and a data point, reducing legibility.",
+      "improvement": "Make the minus in 'L - E' unambiguously legible (use a proper minus glyph / bump weight) and consider rendering it as 'L minus E' shape so the reader connects the curving raw-L line to the straight power law in (L-E). Nudge the 'slope = -alpha' annotation and its tick off the curve into clear whitespace above-left so it never crosses the line or a marker in either theme."
+    },
+    {
+      "name": "scaling-loss-floor-curve",
+      "verdict": "refine",
+      "issue": "Dark-theme contrast failure: the dashed irreducible-floor line, both axes, the down-arrow, and the 'E (irreducible loss = entropy of text)' label all render in near-black/dark-gray on the dark background and are barely visible - the floor E is the whole point of the figure and it disappears in dark mode. Also the 'slope = -alpha_N' annotation with its slope-tick sits on top of a data point, looking cramped.",
+      "improvement": "Route the floor dashed line, axes, arrowhead, and the E label through theme-aware ink/accent tokens so they read with equal strength in light and dark (the floor line should be a clearly visible accent dash in both). Give the 'slope = -alpha_N' tick a little clearance from the nearest marker so the annotation reads cleanly."
+    },
+    {
+      "name": "scaling-kaplan-vs-chinchilla",
+      "verdict": "keep",
+      "issue": "Reads cleanly and correctly in both themes: the two side-by-side worldviews, the 5.2x/1.9x vs 3.16x/3.16x split bars, the GPT-3 vs Chinchilla exemplars, and the LR-schedule diagnosis are all legible and well organized. Note only that the prose at the IsoFLOP section references this figure as 'the isoFLOP-slice picture', which it is not - that mismatch is resolved by the new isoflop-valley-method figure, not by changing this one."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "isoflop-valley-method",
+      "concept": "How Chinchilla actually finds compute-optimal N: fix a compute budget, sweep model size along the isoFLOP slice, and the loss traces a valley whose minimum is N_opt; connect the valleys across budgets to get the allocation power law.",
+      "rationale": "This is the operational heart of the whole chapter - the mechanism that turns the abstract Lagrange optimization into a real experiment - and the prose explicitly points to a figure ('the isoFLOP-slice picture illustrated in {{fig:scaling-kaplan-vs-chinchilla}}') that does not actually show it. It is the single most under-served core intuition: readers can follow the algebra of N_opt but have no picture of the shallow valley, why N_opt is only weakly identified, or how multiple valleys stack into the allocation exponent.",
+      "kind": "static",
+      "placement": "The IsoFLOP Method (Chinchilla Approach 2)",
+      "priority": 1,
+      "brief": "A single static infographic, two coupled panels sharing the intuition of 'valleys line up into a power law'. LEFT PANEL - the isoFLOP valleys: x-axis 'model size N (log)', y-axis 'final loss L'. Draw 3-4 U-shaped parabola curves stacked vertically, each labeled with a fixed compute budget (use small illustrative decade labels like C1 < C2 < C3 < C4, or 10^18, 10^19, 10^20, 10^21 FLOPs; invent NO loss numbers). Higher-budget curves sit LOWER (less loss). Each curve is deliberately SHALLOW/flat-bottomed to convey weak identifiability. Mark the minimum of each with a dot ('N_opt for this budget'). Along one curve, annotate the two arms: left arm 'too big: model starved of data (D=C/6N small)', right arm 'too small: wastes compute on extra tokens' - showing every point on one curve costs the SAME compute because D=C/6N. RIGHT PANEL - the allocation law: x-axis 'compute C (log)', y-axis 'optimal N (log)'. Plot the valley-minimum dots from the left panel transported here, and draw a straight line through them labeled 'N_opt ~ C^a, a = beta/(alpha+beta) ~ 0.5'. Add a light connecting motif (dotted leader lines or matching dot colors) so the reader sees each left-panel valley bottom becomes one point on the right-panel line. A short caption strip: 'Fix C, sweep N (D follows from 6ND=C), find the valley; the valleys trace the compute-optimal frontier.' Theme-safe: use theme ink for axes/text and one accent for the curves, a second accent (or filled dots) for the minima; the valleys must be legibly shallow, all dots and the fitted line legible in both light and dark. Everything inside the viewBox, clear left-to-right reading order, no overlapping labels."
+    },
+    {
+      "name": "emergent-mirage-metric",
+      "concept": "The same smoothly-improving model looks 'emergent' or not depending only on the metric: smooth per-token accuracy p vs scale becomes a sharp cliff under an all-or-nothing exact-match metric p^k.",
+      "rationale": "The emergence-vs-mirage result is the chapter's most counterintuitive and interview-favored idea, and it is purely visual: one figure showing the SAME underlying curve producing a smooth line or a cliff depending on the ruler makes it click instantly, where prose and the p^k formula do not. It directly serves the 'predict loss, not capability thresholds' takeaway.",
+      "kind": "static",
+      "placement": "The Emergent Abilities Debate",
+      "priority": 2,
+      "brief": "A static two-panel figure driven by ONE shared underlying quantity. Center or top: a single labeled source - 'per-token correctness p improves SMOOTHLY with scale (a gentle power law)'. LEFT PANEL: x-axis 'model scale N (log)', y-axis 'per-token accuracy p (0..1)'; draw a smooth, gently rising curve from low to high, no kinks - label it 'smooth metric: per-token accuracy'. RIGHT PANEL: same x-axis 'model scale N (log)', y-axis 'exact-match accuracy (all k tokens right)'; draw the curve p^k for a multi-token task - it hugs zero across most of the range then rises STEEPLY (a cliff) near the high end - label it 'all-or-nothing metric: exact match = p^k'. Annotate the cliff region 'looks like a sudden emergent ability'. Add a connective annotation between panels: 'same model, same smooth p - only the ruler changed', and a small inset formula 'exact-match ~ (1 - p_err)^k' with 'k = number of tokens that must ALL be correct'. Use small illustrative integers only for k (e.g. k=1 vs k=30) to contrast the two panels if helpful - a faint k=1 curve overlaid on the right panel that tracks the smooth left curve, versus the k=30 cliff, drives it home; invent NO benchmark accuracy numbers, axes are schematic. Theme-safe accents: one accent for the smooth curve, a second for the cliff; ensure both curves, the cliff annotation, and the formula read clearly in light and dark. Left-to-right reading order, no overlaps, all within viewBox."
+    },
+    {
+      "name": "inference-aware-overtraining",
+      "concept": "When a model will be served heavily, minimizing lifetime compute (train once + serve forever) shifts the optimum away from Chinchilla toward a SMALLER model trained on MORE tokens.",
+      "rationale": "Most production teams live in the inference-limited regime, not the compute-limited one the '20x rule' assumes - the chapter stresses this. A figure that shows the optimum sliding as inference demand grows converts the lifetime-compute formula and the Llama over-training numbers into a single intuition: over-training is rational, not wasteful.",
+      "kind": "static",
+      "placement": "Inference-aware scaling: why you deliberately over-train",
+      "priority": 3,
+      "brief": "A static figure showing the optimum MOVING as a function of serving load. Core: a horizontal axis 'tokens per parameter (D_train / N, log)' running left (Chinchilla ~20x) to right (over-trained, 100-2000x). Place three regime markers along it: a Chinchilla-optimal point (~20 tok/param, labeled 'minimizes TRAINING compute'), and two over-trained points further right (labeled e.g. 'Llama-2-7B ~280 tok/param' and 'Llama-3-8B ~1900 tok/param' - these token/param figures are stated in the chapter, so they are allowed; do not invent others). Above the axis, show the lifetime-compute decomposition as a stacked-bar or two-term motif for three serving scenarios (light / medium / heavy inference demand D_inf): each bar = train term 6*N*D_train + serve term 2*N*D_inf, subject to hitting the SAME target loss L*. As D_inf grows across the three scenarios, annotate that the optimum shifts: N SHRINKS and D_train/N GROWS (arrow pointing right along the tok/param axis, labeled 'more serving -> smaller model, more training tokens'). Include the governing objective as a small caption: 'minimize 6 N D_train + 2 N D_inf s.t. loss = L*'. Use small illustrative integers only for any bar proportions; the point is the DIRECTION of the shift, not exact magnitudes. Theme-safe: distinct accents for the train vs serve terms in the stacked bars, theme ink for axis/labels; legible in both themes, no overlapping labels, all within viewBox. A static frame fully conveys it (three scenarios side by side); no animation needed."
+    }
+  ],
+  "summary": "Chapter is figure-rich in its first half (power-law shape, floor, Kaplan-vs-Chinchilla) but figure-poor exactly where its operational mechanisms and counterintuitive results live. The Kaplan-vs-Chinchilla comparison figure is excellent and a keep; the two curve figures need refines (a garbled 'L - E' minus glyph in scaling-law; a dark-theme contrast failure that hides the floor line, axes, and E label in scaling-loss-floor-curve). The biggest gap is the IsoFLOP valley method - the chapter's prose explicitly points to an 'isoFLOP-slice picture' that no figure actually provides, so that is the priority-1 new figure. Two further high-intuition gaps: the emergent-abilities metric artifact (smooth p vs cliff p^k, priority 2) and inference-aware over-training (priority 3)."
+}

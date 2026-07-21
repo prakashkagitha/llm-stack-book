@@ -1,0 +1,55 @@
+{
+  "chapter": "content/11-evaluation/03-eval-harnesses.md",
+  "core_intuitions": [
+    "The SAME dataset yields incomparable numbers unless a harness pins every hidden choice: prompt template, num_fewshot, log-likelihood vs generation, answer-extraction regex, chat template, normalization.",
+    "Multiple-choice is scored by log-likelihood, not generation: for each choice compute the summed log p over its tokens and take the argmax; the model never emits free text.",
+    "Length normalization (dividing the summed log-prob by token count) can FLIP which choice wins, so acc and acc_norm disagree and must each be reported explicitly.",
+    "The log-likelihood is summed over ONLY the continuation tokens; the context/continuation boundary is fragile, and a BOS double-count shifts it, leaving an empty continuation that silently pins accuracy at the chance floor.",
+    "Instruction-tuned models must be evaluated inside their chat template; raw concatenation sends them out-of-distribution.",
+    "Whether a 1-point gap is real requires a standard error / paired test, not eyeballing the leaderboard delta."
+  ],
+  "existing": [
+    {
+      "name": "evalharness-lm-eval-architecture",
+      "verdict": "keep",
+      "issue": "Clear in both themes; task-registry -> task-object -> LM-interface / metric-aggregator plumbing reads well. The dark-theme render keeps a light card (the panel does not invert) but text stays dark-on-light and fully legible, so it works as an intentional card.",
+      "improvement": "Optional only: darken the outer container fill under prefers-color-scheme: dark so the card visually belongs to the dark page instead of floating as a white block."
+    },
+    {
+      "name": "evalharness-helm-three-layer",
+      "verdict": "refine",
+      "issue": "Conveys the scenario x adaptation x metric orthogonality effectively in both themes. The one real weakness is the bottom caption ('Any scenario combines with any adaptation...') rendering as dim gray-on-black in dark mode, borderline low-contrast.",
+      "improvement": "Bump the caption text color to the theme's normal foreground token in dark mode so it reads at full contrast; leave the rest untouched."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "evalharness-loglikelihood-acc-vs-accnorm",
+      "concept": "How multiple-choice log-likelihood scoring works, and how dividing by token length flips the winning choice (acc vs acc_norm).",
+      "rationale": "This is the single most concrete, teachable mechanic in the chapter and the one most readers get wrong: the model does not generate, it scores each choice, and length normalization silently changes the answer. The chapter has a full worked MMLU example but no visual; a two-panel before/after makes the flip click instantly and explains why acc and acc_norm can differ by points.",
+      "kind": "static",
+      "placement": "How Log-Likelihood Scoring Works",
+      "priority": 1,
+      "brief": "One MMLU-style question at the top (e.g. 'Which process moves water across a semipermeable membrane?') with four answer choices A-D, each tagged with a small illustrative token count: A 'osmosis' (2), B 'active transport' (3), C 'diffusion through a lipid bilayer' (7), D 'endocytosis' (3). Below it, two side-by-side panels sharing the same choices. LEFT panel titled 'Raw log-likelihood -> acc': a horizontal bar per choice showing the summed log p over that choice's tokens using the chapter's illustrative values (A -1.2, B -3.6, C -4.9, D -1.5); all values are negative, so encode magnitude by bar length and mark 'least negative = best'. Choice A is highlighted with a crown/check: 'argmax picks A'. RIGHT panel titled 'Length-normalized -> acc_norm': show each raw score visibly divided by its token count (A -1.2/2 = -0.60, B -3.6/3 = -1.20, C -4.9/7 = -0.70, D -1.5/3 = -0.50), re-drawn as new bars; now choice D is the least negative and is highlighted: 'argmax picks D'. A punchline banner spanning both panels: 'Same model, same question -- dividing by length changes which answer wins.' Add a small side note pointing at C: 'the long choice accrued more negative mass just from having more tokens.' Include a one-line framing at top: 'The model never generates text -- it scores each choice.' Theme-safe: use an accent (not a hardcoded primary) for the winning highlight; negative bars and axis must read in both light and dark. All numbers are illustrative math, not benchmark figures."
+    },
+    {
+      "name": "evalharness-why-harness-pins-knobs",
+      "concept": "The chapter's thesis: one dataset produces incomparable scores because of hidden choices; a harness pins every knob to one fixed setting so scores become comparable.",
+      "rationale": "The whole chapter exists to answer 'why do the same dataset and same model give different numbers?' That thesis is stated in prose in the opening two sections but never visualized. A knobs-fan-out figure turns the abstract 'many legitimate choices produce incomparable numbers' into a single glance, and shows what a harness actually buys you: identical pinned settings for model A and model B.",
+      "kind": "static",
+      "placement": "Why Harnesses Exist",
+      "priority": 1,
+      "brief": "Two stacked halves sharing a left-anchored dataset node 'MMLU (same questions)'. TOP half titled 'Without a harness: hidden choices -> incomparable numbers'. From the dataset, wires pass through a vertical bank of five loose/unlocked dials, each a decision the chapter names: prompt template ('Answer:' vs 'The best answer is:'), num_fewshot (0 vs 5), scoring mode (log-likelihood vs generation), answer-extraction regex, chat template (on vs off). Draw the dials as 'loose' (a small question-mark or two divergent positions). Two different knob settings send the SAME model down two divergent paths to two different result chips labeled abstractly 'score p1' and 'score p2' with a bold '!=  incomparable' tag between them -- use placeholder score labels, NOT invented benchmark percentages. BOTTOM half titled 'With a harness: every knob pinned to one fixed setting'. The same dial bank now drawn 'locked' (a small padlock on each), all in one position. Two different models, 'Model A' and 'Model B', both flow through the IDENTICAL locked bank and land on a shared axis where their scores are now labeled 'comparable'. Visual metaphor throughout: loose/spinning dials (ambiguity) above vs locked padlocked dials (standardization) below. Keep reading order left-to-right, top-to-bottom; theme-safe colors; the '!=' vs 'comparable' contrast should be the visual payoff. No real benchmark numbers anywhere."
+    },
+    {
+      "name": "evalharness-continuation-split-bos-bug",
+      "concept": "Log-likelihood is summed only over the continuation tokens; a BOS double-count shifts the boundary, empties the continuation, and silently pins accuracy at chance.",
+      "rationale": "The chapter spends an entire section (smoke test, invariants, code comments) on this one silent failure mode, which is the most dangerous bug in a hand-rolled harness. It is inherently about a token-position boundary -- exactly the thing prose struggles with and a token-strip diagram nails. Marked priority 2 because it is a deep-dive mechanic rather than a first-glance essential.",
+      "kind": "static",
+      "placement": "Verifying the Harness: A Smoke Test",
+      "priority": 2,
+      "brief": "Two horizontal token strips, one above the other, comparing CORRECT vs BUGGED splits. TOP strip labeled 'Correct': cells in order [BOS] [ctx] [ctx] [ctx] ... [ctx] | [' A'] with a clear vertical divider at position ctx_len separating context from the single continuation token ' A'. Shade ONLY the continuation cell as the scored region and label 'score = sum of log p over continuation tokens only', with a small caret noting 'logits at position ctx_len-1 predict this token'. The context cells are visibly un-scored (grayed). BOTTOM strip labeled 'Bugged: BOS counted twice': show the boundary ctx_len shifted one cell to the RIGHT (because a separately-encoded context already included BOS and the code adds +1 again), so the divider now sits AFTER ' A' and the continuation region is EMPTY. Annotate the chain of silent consequences as a short right-pointing arrow sequence: 'empty continuation -> sum over nothing = 0.0 -> every choice ties -> argmax always picks choice 0 -> accuracy pinned at ~chance (1/4)'. Add a small warning flag: 'does not crash -- looks like a normal run.' Optionally include the two invariants that catch it as a caption line: 'the four raw log-likelihoods must be distinct and strictly negative; single-token choices make acc == acc_norm exactly.' Use small illustrative counts, theme-safe shading (scored region in an accent, unscored in muted foreground), and keep both strips aligned so the one-cell shift is unmistakable."
+    }
+  ],
+  "summary": "Chapter is figure-poor relative to its mechanic density: the two existing figures cover lm-eval's internal plumbing and HELM's scenario x adaptation x metric orthogonality (both kept; HELM gets a minor dark-mode caption-contrast refine), but the chapter's two most foundational intuitions are unvisualized. Proposed: (1) a two-panel static showing log-likelihood scoring and how length normalization flips acc vs acc_norm -- the core teachable mechanic; (2) a knobs-fan-out static making the chapter's thesis (same dataset, hidden choices -> incomparable numbers; harness pins every knob) click at a glance; and (3, priority 2) a token-strip diagram of the context/continuation split and the silent BOS-double-count bug the chapter dwells on. Statistics is left to prose to avoid inventing benchmark numbers."
+}

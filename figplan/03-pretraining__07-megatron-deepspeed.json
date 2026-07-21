@@ -1,0 +1,58 @@
+{
+  "chapter": "content/03-pretraining/07-megatron-deepspeed.md",
+  "core_intuitions": [
+    "GPUs form a DP x TP x PP (x EP) grid, and each parallelism dimension must be mapped to the network tier it can tolerate: TP all-reduce -> intra-node NVLink (on the critical path, must be fast), PP point-to-point sends -> inter-node InfiniBand (latency-tolerant), DP gradient sync -> outermost, EP all-to-all -> across EP-group boundary.",
+    "Sequence parallelism shards activations along the sequence dimension outside the TP GEMM blocks, so only one point in the dataflow holds the full replicated [B,S,H]; all-gather + reduce-scatter replaces a single all-reduce at equal comm volume, cutting steady-state activation memory by a factor of TP.",
+    "ZeRO removes redundancy progressively: stage 1 shards optimizer states, stage 2 adds gradients, stage 3 adds parameters -- each stage frees more per-GPU memory but adds communication (stage 3 needs an all-gather per forward pass).",
+    "Choosing TP/PP/DP is a constrained funnel: first fit model state (16 bytes/param) onto the smallest GPU set, then set TP = GPUs-per-node (NVLink), then PP across nodes with enough micro-batches to keep the bubble small, then DP = N/(TP*PP), then tune global batch size / gradient accumulation.",
+    "MFU counts only useful model FLOPs (forward 2P + backward 4P = 6P per token) against peak, while HFU counts every FLOP issued including recomputed forwards (+2P -> 8P); so recomputation raises HFU above MFU without doing extra useful learning.",
+    "The pipeline bubble ~ (PP-1)/(PP-1+m) shrinks with more micro-batches m, and interleaving (virtual pipeline, v chunks per GPU) divides the bubble by roughly v at the cost of v times more pipeline messages."
+  ],
+  "existing": [
+    {
+      "name": "megatron-3d-grid-layout",
+      "verdict": "keep"
+    },
+    {
+      "name": "megatron-seqparallel-dataflow",
+      "verdict": "keep"
+    },
+    {
+      "name": "zero-stages",
+      "verdict": "refine",
+      "issue": "The three stage rows (ZeRO-1/2/3) are visually IDENTICAL in both themes: parameters (blue) and gradients (yellow) render as full-width bars, and the optimizer bar shows O0..O3 per-GPU, in all three rows alike. The reader cannot see the one thing the figure exists to teach -- that gradients only become sharded at stage 2 and parameters only at stage 3. The progressive sharding is completely invisible.",
+      "improvement": "Make the sharding state read at a glance. Adopt a consistent convention: a REPLICATED component is drawn as an identical full-height bar on every one of the 4 GPUs (all four hold the same full copy), while a SHARDED component is drawn so each GPU holds only its 1/DP slice (e.g. one filled slice per GPU with the other three-quarters shown hollow/hatched/greyed to signal 'not stored here'). Then: ZeRO-1 row = params full x4, grads full x4, optimizer sharded (thin slices); ZeRO-2 row = params full x4, grads now sharded, optimizer sharded; ZeRO-3 row = all three sharded. The visible per-GPU footprint should visibly shrink top-to-bottom, matching the ~4x / ~8x / ~DPx labels already present. Keep the legend and the 'vanilla DDP holds all 16P' caption."
+    },
+    {
+      "name": "megatron-4d-moe-collectives",
+      "verdict": "refine",
+      "issue": "Very text-dense; the right 'Communication domains' panel and the bottom 'Key insight' bullet list say nearly the same four things twice. In dark mode the centered mid caption line ('EP moves token activations ... not model size') collides with the panel/divider border, and the small node labels inside EP group A/B ('Node 0 . TP grp 0 . PP stage ...') are low-contrast and hard to read.",
+      "improvement": "Cut the duplication: keep ONE authoritative per-collective list (the four rows: TP all-reduce/NVLink, PP send/IB, EP all-to-all/inter-node, DP-ZeRO/IB) and delete the redundant bottom bullet block, leaving only the single-line rule 'match each collective to its network tier'. Give the centered 'EP moves token activations' caption its own clear band with margin so it never overlaps a border in either theme. Raise the contrast/size of the in-node labels so they are legible in dark mode."
+    },
+    {
+      "name": "megatron-virtual-pipeline-interleave",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "parallelism-degree-decision-funnel",
+      "concept": "The Step 1-5 workflow for choosing TP, PP, DP as a top-to-bottom decision funnel, each step showing its governing constraint.",
+      "rationale": "The 'Choosing Parallelism Degrees' section is explicitly called the single highest-leverage decision when launching a run, yet it is entirely prose+formulas with no figure. A reader needs to internalize the ORDER and the CONSTRAINT at each step (fit -> TP by NVLink -> PP by bubble -> DP by remainder -> batch), because the whole art is that each choice narrows the next. A funnel makes the dependency chain and the reasoning behind each degree click in one glance.",
+      "kind": "static",
+      "placement": "## Choosing Parallelism Degrees: A Systematic Approach",
+      "priority": 1,
+      "brief": "A vertical decision funnel with 5 stacked stages, each a horizontal band, narrowing the choice from 'N total GPUs' down to a concrete config. Start with a top header box: 'N total GPUs (illustrative: 32)'. Stage 1 -- FIT THE MODEL: icon of a model-state bar labeled '16 bytes/param = 2 bf16 param + 2 grad + 4 fp32 master + 8 Adam'; conclusion arrow 'need >= ceil(state/HBM) GPUs just for model state; activations ~ double it'. Stage 2 -- PICK TP: constraint tag 'TP all-reduce sits on the critical path -> keep on NVLink'; rule 'TP = GPUs per node (or a divisor); never span nodes'; small inset of a node box with intra-node NVLink links highlighted. Stage 3 -- PICK PP: constraint tag 'PP sends are point-to-point, latency-tolerant -> span nodes'; show the bubble relation 'bubble ~ (PP-1)/(PP-1+m); keep <5% -> m >= 19(PP-1)'; note interleaving divides bubble by v. Stage 4 -- SET DP: equation 'DP = N / (TP x PP)' shown as the leftover after TP and PP are carved out; tag 'ZeRO-1/2 overlap gradient comm with backward -> nearly free'. Stage 5 -- TUNE BATCH: 'GBS ~ 1M-4M tokens/step; GAS = GBS / (MBS x DP x S)'. End with a result chip at the narrow bottom: 'Example landing point: TP=8, PP=8, DP=8 -> 512 GPUs' (use these small illustrative integers only, invent no benchmark numbers). Each stage should carry a short WHY on the right edge (the network tier or constraint driving it) so the reasoning, not just the numbers, is legible. Reading order strictly top-to-bottom; the funnel visibly narrows. Theme-safe: use neutral fills and a single accent for the 'constraint' tags; all text must fit inside the viewBox with no overlap in light or dark."
+    },
+    {
+      "name": "mfu-hfu-flop-accounting",
+      "concept": "Per-token FLOP budget as a stacked bar -- forward 2P + backward 4P = 6P useful (MFU) vs +2P recomputed forward = 8P issued (HFU) -- and how each maps to its utilization metric against peak.",
+      "rationale": "MFU vs HFU is the chapter's measurement backbone (targets, misconfig diagnosis, the compute_mfu code), but the crucial intuition -- that the backward pass is twice the forward, that '6P per token' is where that number comes from, and that recomputation inflates HFU by paying for a SECOND forward that does no extra learning -- is buried in three separate equations. A single accounting bar makes 2P/4P/2P and the MFU<=HFU relationship obvious, which is exactly what lets a reader reason about why HFU is always the larger, less flattering number.",
+      "kind": "static",
+      "placement": "## MFU and HFU: Measuring Real Hardware Utilization",
+      "priority": 1,
+      "brief": "Two horizontal FLOP-accounting bars, one per metric, sharing a common per-token FLOP axis so their lengths are directly comparable. Bar A (MFU, 'useful model work'): two segments -- 'forward 2P' then 'backward 4P (~2x forward: grads wrt inputs AND weights)' -- summing to a bracket labeled '= 6P FLOPs/token'. Bar B (HFU, 'all FLOPs issued to the GPU'): three segments -- 'forward 2P', 'recomputed forward +2P (gradient checkpointing)' shown in a distinct hatched/dashed style to mark it as 'paid for but not new learning', then 'backward 4P' -- summing to a bracket '= 8P FLOPs/token = (4/3) x 6P'. Align the two bars so the extra recompute segment on Bar B visibly sticks out past Bar A's 6P end. To the right of each bar, a compact formula card: MFU = (6P x tokens/s) / peak_cluster_FLOP/s ; HFU = (all issued FLOPs x tokens/s) / peak = MFU x (issued/model). Below, a one-line relation banner: 'HFU >= MFU always -- recompute trades memory for extra issued FLOPs that raise HFU but not useful throughput.' Add tiny annotations: on Bar A, a small note 'attention adds 12 * n_layers * d_model * S per token, secondary at moderate S'; a caption 'targets: dense MFU 35-55%, HFU 55-70% on H100 -- MFU below 25% => misconfig' (illustrative ranges from the text, no invented numbers beyond these). Keep P symbolic (do not plug in 70B). Theme-safe neutral fills with one accent for the recompute segment; ensure the hatched recompute segment is distinguishable in BOTH light and dark; everything inside the viewBox, no overlapping labels."
+    }
+  ],
+  "summary": "The chapter is well-served on parallelism topology and collectives (three strong figures: 3d-grid-layout, seqparallel-dataflow, virtual-pipeline-interleave all KEEP). Two existing figures need REFINE: zero-stages critically fails to visually differentiate the three ZeRO stages (all rows look identical, hiding the progressive sharding it exists to teach), and megatron-4d-moe-collectives is text-dense with a dark-mode overlap and duplicated bullet lists. Two conceptually foundational sections have NO figure and are the highest-value additions: the Step 1-5 parallelism-degree decision workflow (proposed as a narrowing decision funnel, priority 1) and the MFU-vs-HFU FLOP accounting (proposed as a 2P/4P/2P stacked-bar, priority 1) which turns three scattered equations into one legible picture of useful vs issued FLOPs."
+}

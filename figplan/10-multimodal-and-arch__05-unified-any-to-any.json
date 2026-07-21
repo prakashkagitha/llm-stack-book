@@ -1,0 +1,61 @@
+{
+  "chapter": "content/10-multimodal-and-arch/05-unified-any-to-any.md",
+  "core_intuitions": [
+    "Tokenize-everything: if every modality can be expressed as a sequence of integers from a codebook, the ordinary autoregressive next-token objective already knows how to model it — no task-specific heads required.",
+    "VQ-VAE turns a continuous image into discrete tokens by snapping each encoder feature-map cell to its nearest codebook vector, then flattening the grid into a 1-D integer sequence the same length as a paragraph.",
+    "The quantisation gap: a codebook index carries ~13 bits per cell while a raw pixel patch carries ~24 bits, so discrete tokenisation throws information away — this is the ceiling Transfusion tries to escape.",
+    "Chameleon = pure early fusion: one shared embedding table over a joint 65K vocab, a uniform causal mask over interleaved text+image tokens, and a single cross-entropy loss.",
+    "Transfusion = hybrid: AR cross-entropy for text tokens and flow-matching diffusion for continuous image patches, both flowing through one shared trunk with a block-causal mask.",
+    "The block-causal mask: text is strictly causal, image patches attend bidirectionally within their own block but only causally to everything before the block and never to the future."
+  ],
+  "existing": [
+    {
+      "name": "unified-ar-image-seq-layout",
+      "verdict": "refine",
+      "issue": "Content and reading order are good in light theme, but in dark theme the top phase labels ('PREFIX — fixed at inference', 'GENERATED autoregressively') and the two-line bottom caption render as near-black text on the near-black background and are barely legible. The two caption lines also visibly overlap vertically.",
+      "improvement": "Switch every text label and caption to a theme-safe fill (currentColor / CSS variable) so headers and captions read in both themes; increase the line spacing between the two caption sentences so they no longer collide. Keep the prefix/generated split and the orange image-token span as-is."
+    },
+    {
+      "name": "unified-chameleon-interleaved-seq",
+      "verdict": "refine",
+      "issue": "Strong content (single embedding table, uniform causal mask, joint 65K vocab). But in dark theme the top 'text / image / text' region labels, the '1024 image tokens' bracket label, the right-hand 'no separate vision encoder' note, and the bottom caption are dark-on-dark and hard to read; the 'I' glyphs inside the orange image boxes are also low-contrast.",
+      "improvement": "Move all annotation text to theme-safe fills so labels and the caption survive the dark background; raise the contrast of the token-box glyphs. No structural change — the layout and single-table message are correct."
+    },
+    {
+      "name": "unified-transfusion-arch",
+      "verdict": "refine",
+      "issue": "The core two-headed architecture (shared trunk splitting into a text/LM head and an image/diffusion head, block-causal mask noted in the trunk) reads clearly in both themes. Only the small connector annotations ('embed', 'linear patch proj', 'hidden state') are plain dark text that washes out on the dark background.",
+      "improvement": "Recolour just the small connector/annotation labels to a theme-safe fill so they stay legible in dark mode; leave the boxes, arrows, and loss equation untouched."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "vqvae-image-to-tokens-pipeline",
+      "concept": "How a continuous image becomes a 1-D sequence of discrete integer tokens via VQ-VAE nearest-codebook snapping.",
+      "rationale": "This is the mechanism the entire chapter rests on — 'tokenize everything' is abstract until the reader sees an image turn into integers. The chapter only gives it as equations (argmin over the codebook, commitment loss). A single pipeline showing the encoder feature grid snapping to codebook entries and flattening to a token sequence makes the whole autoregressive-image-generation premise concrete, and it is purely visual.",
+      "kind": "static",
+      "placement": "Section 'Discrete Image Tokens' (### Discrete Image Tokens), after the VQ-VAE equations",
+      "priority": 1,
+      "brief": "A left-to-right pipeline in five stages. (1) An input image tile (abstract: a small square with a few illustrative shapes/colour blocks, no photo). Label 'image x, H x W x 3'. (2) An arrow through a box 'Encoder E' producing a small spatial feature grid, e.g. a 4x4 grid of cells, each cell a short continuous vector shown as a tiny bar-stack or a coloured dot. Label 'feature map z_e, h x w x d  (h = H/f)'. (3) The KEY step: to the side draw a small 'Codebook C' as a short vertical list of ~5 labelled entries (C_0, C_1, C_2, ...), each a coloured swatch. Draw one representative feature-grid cell with a dashed 'nearest neighbour' arrow snapping to its closest codebook entry, annotated 'argmin_k || z_e - C_k ||'. Emphasise this snap visually — it is the quantisation. (4) The grid now redrawn as a grid of integer indices, e.g. cells reading 12, 7, 7, 40, ... Label 'z_q: each cell = one codebook index'. (5) An arrow 'flatten (row-major)' turning the 4x4 index grid into a 1-D strip of tokens: [12,7,7,40,...] with a length annotation 'h x w tokens (e.g. 32x32 = 1024 for a 256px image at f=8) — the length of a paragraph'. Below the flatten step, a faint return path: a box 'Decoder D' with an arrow back to a reconstructed image tile labelled 'x_hat = D(z_q)', to signal it is an autoencoder. Keep colours theme-safe (use the book's accent for the snap arrow and codebook), small illustrative integers only, everything inside the viewBox with clear left-to-right reading order. The one idea that must be legible: continuous cell -> nearest codebook entry -> integer -> flat sequence."
+    },
+    {
+      "name": "transfusion-block-causal-mask",
+      "concept": "Transfusion's block-causal attention mask: text causal, image bidirectional within its block, causal across blocks, never future.",
+      "rationale": "The chapter devotes an entire code block (with a battery of assertions) to this mask but shows no picture — yet an attention mask is the archetypal grid visual and the asymmetry (text causal vs image bidirectional-within-block) is exactly what distinguishes Transfusion from Chameleon's uniform causal mask. Seeing the T x T grid makes the rule click in one glance where the code cannot.",
+      "kind": "static",
+      "placement": "Section 'Attention Masking in Transfusion' (### Attention Masking in Transfusion), near the transfusion_attention_mask code",
+      "priority": 1,
+      "brief": "Center a square attention-mask grid for the exact example in the code: a 9-token sequence 'text text text | image image image image | text text' (positions 0-2 text, 3-6 one image block, 7-8 text). Rows = query position i (top to bottom, 0..8), columns = key position j (left to right, 0..8). Each cell is filled (attend = solid accent) or empty (masked = faint outline). Fill cells exactly per the rule: text query i attends all j <= i (lower-triangular within text); image query (rows 3-6) attends columns 0-2 (earlier text, causal) AND all of columns 3-6 (the whole image block, including future j>i — this is the bidirectional square); later text (rows 7-8) attends all j <= i including the image block. Draw a bright outline box around the 4x4 image-block sub-square (rows/cols 3-6) and label it 'bidirectional within image block — attends both directions'. Label the strict lower-triangular text region 'causal'. Annotate one 'future text' cell that is empty for an image query (e.g. row 3, col 7) with 'image never attends to future text'. Put a small legend: filled = attend, empty = masked. Along the top, bracket and colour the three spans (text / image / text) so the reader maps columns to modality. Optionally add one contrast line: 'Chameleon's mask would be the full lower triangle everywhere — Transfusion opens the image block into a square.' Theme-safe colours; grid, labels, and legend all inside the viewBox; the filled/empty distinction must survive both light and dark themes (use fill for attend, thin outline for masked)."
+    },
+    {
+      "name": "ar-vs-diffusion-image-generation",
+      "concept": "Two ways to generate an image with a transformer: sequential autoregressive token decode vs parallel iterative diffusion denoising — the speed/quality tradeoff.",
+      "rationale": "The AR-vs-diffusion tension is a spine of the chapter: Chameleon decodes 1024 image tokens one at a time (~seconds), Transfusion runs a handful of parallel denoising steps over the whole image; the Open Problems section frames it as an unresolved tradeoff. Motion is genuinely essential here — the intuition is precisely the difference between a sequence growing one token at a time vs a whole canvas sharpening over a few global passes. A static frame cannot convey 'sequential and long' vs 'parallel and few-step'.",
+      "kind": "long-animation",
+      "placement": "Section 'Autoregressive vs Diffusion Tradeoffs' (### Autoregressive vs Diffusion Tradeoffs)",
+      "priority": 2,
+      "brief": "Two synchronized tracks stacked vertically, each generating the same abstract image tile (a simple shape on a background — no photo). TOP track 'Autoregressive (discrete tokens)': a 1-D strip of image-token slots (show ~16 slots as a stand-in for 1024, with a '...' to imply scale). Animate a cursor filling slots strictly left-to-right, one per step; a small growing KV-cache bar underneath extends as the sequence grows; a step counter ticks up ('token 1 / 1024', 'token 2 / 1024', ...). To the right, the reconstructed image tile fills in progressively region-by-region as tokens land. Caption 'sequential: N tokens, one per step — slow, latency scales with token count'. BOTTOM track 'Diffusion / flow-matching (continuous patches)': show the FULL image tile as a noisy field that, over a small number of steps (e.g. 4-6 labelled t=1 -> t=0), sharpens globally and uniformly — every patch updates in parallel each step (indicate parallelism by having the whole tile flicker/refine at once, not region by region). A step counter ticks 'step 1 / N', with N small. Caption 'parallel: whole image per step, few steps — fast, latency set by step count not resolution'. Run both tracks on the same wall-clock so the viewer sees diffusion finish in a few big global passes while AR is still crawling through tokens. The static end-frame must still read: label the finished top tile 'AR: many sequential steps' and bottom tile 'diffusion: few parallel steps', with a one-line takeaway 'quality vs speed — the community has not converged'. Theme-safe; small illustrative integers only (no invented FID/latency numbers beyond the illustrative step counts); keep both tracks and captions inside the viewBox."
+    }
+  ],
+  "summary": "Concept-rich chapter with three existing figures, all structurally sound but two (ar-image-seq-layout, chameleon-interleaved-seq) have real dark-theme readability failures where labels and captions go dark-on-dark; the transfusion-arch figure needs only a minor recolour of small connector labels. All three are refine (theme-safe text fills), none replaced. Two foundational mechanisms are visually unserved: (1) how a continuous image actually becomes discrete integer tokens via VQ-VAE nearest-codebook snapping — the premise of the whole 'tokenize everything' paradigm, currently only equations; and (2) Transfusion's block-causal attention mask — given a full code block with assertions but no picture, despite being the archetypal grid visual. Both are proposed as priority-1 statics. A priority-2 long-animation contrasts sequential AR token decode with parallel diffusion denoising, the chapter's recurring speed/quality tension where motion genuinely carries the intuition."
+}

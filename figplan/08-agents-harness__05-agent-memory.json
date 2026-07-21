@@ -1,0 +1,49 @@
+{
+  "chapter": "content/08-agents-harness/05-agent-memory.md",
+  "core_intuitions": [
+    "The two memory horizons: everything INSIDE the context window is available on every token but is finite and costs tokens; everything OUTSIDE persists across sessions and is unbounded but must be explicitly fetched (write/read across the boundary).",
+    "Episodic vs semantic memory: timestamped situated events (append-only, grows monotonically, queried by time) versus stable general facts (upserted/overwritten, queried by content) — and why mixing them into one store poisons retrieval.",
+    "The write / read / reflect triad, with REFLECT as the highest-value, most-skipped operation: it distils many noisy episodic records into a few compact high-signal semantic facts.",
+    "Memory compaction: the in-context prefix grows unboundedly, so at a threshold the old prefix is replaced by a shorter lossy summary while recent turns are kept verbatim — recursively (rolling / hierarchical micro+macro), keeping the context bounded regardless of session length.",
+    "Session persistence: an agent survives a context wipe not via weights but via a stable session ID + bootstrap read at start + graceful shutdown write at end + periodic cross-session reflection."
+  ],
+  "existing": [
+    {
+      "name": "agentmem-two-horizons",
+      "verdict": "refine",
+      "issue": "Strong, correct framing of the in-context vs external boundary with write/read arrows, and reads well in both themes. But the small 'snippet' pill riding the upward READ arrow sits right on the top border of the EXTERNAL MEMORY box and its text is clipped by that edge; the 'summary' pill on the WRITE arrow is placed cleanly by contrast.",
+      "improvement": "Reposition the 'snippet' pill upward along the read arrow so it fully clears the EXTERNAL MEMORY box border (mirror the clean placement of the 'summary' pill on the write arrow), so both mid-arrow labels are legible. No other changes needed."
+    },
+    {
+      "name": "agentmem-file-as-memory-tree",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "agentmem-session-persistence-flow",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "agentmem-reflect-distillation",
+      "concept": "The reflect operation as a distillation funnel: many noisy timestamped episodic records go in, one LLM reflect call reads the batch, a few compact stable semantic facts come out.",
+      "rationale": "The write/read/reflect triad is the chapter's central organizing frame (8.5.4), and the text repeatedly calls reflect 'the highest-value memory operation and the most commonly skipped.' Yet no figure captures it: the two-horizons figure only shows generic write/read arrows crossing the boundary, not the many-to-few distillation that makes reflection distinct. Seeing ~10 verbose, redundant, date-stamped episodes collapse into 2-3 clean canonical facts is the single image that makes 'why reflect matters' click, and it visually reinforces the episodic-vs-semantic distinction at the same time.",
+      "kind": "static",
+      "placement": "8.5.4.3 Reflect (anchor after the reflect prompt code block / the Generative Agents sentence)",
+      "brief": "A left-to-right distillation funnel with three zones. LEFT zone, labelled 'Episodic log (append-only)': a tall stack of ~7-9 small rows, each a timestamped verbose entry, e.g. '[2025-11-04 14:32] user: can we use TypeScript here?', '[2025-11-04 15:01] user: actually prefer composable fns', '[2025-11-05 09:10] tool: tests passed', '[2025-11-05 09:40] user: keep functions small'. Make some rows visibly redundant/near-duplicate and a couple clearly low-signal (boilerplate) — tint low-signal rows as faint/greyed to signal 'noise'. Use the chapter's episodic accent (the purple/violet used for episodic in the file-tree legend) as a thin left edge on these rows. MIDDLE zone: a rounded node labelled 'reflect()' with a subtitle 'LLM reads last N episodes -> distil stable facts'; converging arrows from the whole left stack feed INTO this node (the funnel neck), visually compressing many into one pass. RIGHT zone, labelled 'Semantic store (upsert)': only 2-3 compact key-value cards, e.g. 'user.language = TypeScript', 'user.style = composable functions over classes', 'project.tests = green (2025-11-05)', tinted with the semantic accent (the blue used for semantic in the file-tree legend). A short caption strip along the bottom: 'many noisy events -> one reflect pass -> few high-signal facts'. Include a small dashed side-note arrow near the reflect node reading 'runs: every N episodes | at session end | on contradiction' (mirrors the three triggers in the text). Keep counts as small illustrative integers only; invent no benchmark numbers. Must be fully legible as a static frame; theme-safe (derive accents from theme tokens, no hardcoded page-background-dependent colors), all content inside the viewBox with clear left-to-right reading order."
+    },
+    {
+      "name": "agentmem-compaction-sliding-window",
+      "concept": "Memory compaction as a bounded context: as turns accumulate the prefix is replaced by a compact summary while recent turns stay verbatim, applied recursively so context size stays flat regardless of session length.",
+      "rationale": "Compaction (8.5.5) is a core mechanism with its own equation C_new = [system, summary(C_1:t-k), C_t-k+1:t], yet the chapter has no figure for it. The intuition that must click is the TRANSFORMATION: the window grows, hits a threshold, and the OLD prefix collapses into a small summary block while the most recent N turns are preserved untouched — and that this repeats (rolling / hierarchical), keeping total size bounded. A single before/after 'filmstrip' makes the 'context stays flat even in an infinite session' idea concrete far faster than the prose, and grounds the 'compact BEFORE the window is full' practitioner tip.",
+      "kind": "static",
+      "placement": "8.5.5 Memory Compaction (anchor after the C_new equation in 8.5.5.1)",
+      "brief": "A three-stage horizontal filmstrip of the SAME context window (draw the window as a vertical stack / bar with a fixed max-height 'capacity' guide line and a dashed threshold line at ~80% capacity). STAGE 1 'Growing': the bar is a pinned 'system prompt' block at the bottom, then many stacked verbatim turn segments (turn 1..t) filling up toward the dashed 80% threshold line; a small caption 'prefix grows every turn'. STAGE 2 'Compact at threshold': an arrow labelled 'summarise prefix' points from the older lower turns (turn 1..t-k) to a single small block labelled 'summary(C_1..t-k)'; the recent turns (t-k+1..t) are drawn unchanged and tagged 'kept verbatim'; show the discarded original prefix as faded/struck to signal 'loss is guaranteed'. Annotate the reconstructed stack top-to-bottom as [system prompt][summary][recent N turns] to visually match the equation. STAGE 3 'Bounded / recursive': the window is now well below the threshold again, with a curved 'repeat' arrow looping back, captioned 'rolling: next compaction summarises previous summary + new window -> size stays bounded'. Add a compact side inset titled 'Hierarchical' showing two nested levels: 'micro-summary (every ~20 turns)' feeding an arrow into 'macro-summary via reflect (every ~10 micro)'. Include a small margin note 'compact at ~70-80%, not 100%' near the threshold line. Use only small illustrative integers (t, k, N, ~20, ~10, ~80%), no invented benchmarks. Theme-safe accents derived from theme tokens; the 'kept verbatim' recent turns and the 'summary' block should be visually distinct but readable in both light and dark. Everything inside the viewBox, unmistakable left-to-right stage order."
+    }
+  ],
+  "summary": "The chapter is concept-rich and already has three solid figures. Existing figures render correctly in both themes: keep the file-tree and session-persistence flow as-is; apply one minor refine to two-horizons (reposition the clipped 'snippet' read-arrow pill so it clears the external-memory box edge). Two core intuitions are currently unserved by any figure: (1) the REFLECT operation as a many-noisy-episodes -> few-clean-facts distillation, which the chapter itself calls the highest-value and most-skipped operation, and (2) memory COMPACTION as a bounded sliding window where the old prefix collapses into a summary while recent turns stay verbatim. I propose one static figure for each — both priority-1 foundational, both static since a single frame (a funnel; a 3-stage filmstrip) conveys the intuition without motion. No animations warranted."
+}

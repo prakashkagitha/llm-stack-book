@@ -1,0 +1,54 @@
+{
+  "chapter": "content/07-inference-serving/02-continuous-batching.md",
+  "core_intuitions": [
+    "Decode is memory-bound, so weights are streamed once per step regardless of batch size B; adding a request is nearly free in memory traffic, which is the entire economic case for batching.",
+    "Throughput rises with B as B/(tau0 + beta*B) and flattens toward the compute roofline 1/beta; the scheduler's whole job is to keep B pinned high on the flat part instead of starved at low B.",
+    "Static/dynamic (request-level) batching freezes membership for the whole generation, leaking throughput to tail idling and latency to head-of-line blocking at admission.",
+    "Continuous batching = iteration-level scheduling: re-derive the running set every forward pass, retiring finished requests and backfilling waiting ones immediately, pinning B near its memory-limited max.",
+    "Selective batching makes heterogeneous (prefill+decode) batches possible: flatten all tokens for position-independent GEMMs, split back out per-request for attention via ragged/cu_seqlens kernels.",
+    "The scheduler is bound by KV-cache memory (block allocation) and a per-iteration token budget; prefill and decode meet here, and how you interleave them (chunked prefill: decodes first, then backfill prefill chunks) is the biggest latency/throughput lever."
+  ],
+  "existing": [
+    {
+      "name": "contbatch-static-tail-idling",
+      "verdict": "keep",
+      "improvement": "Renders cleanly and correctly in both themes: the grid of decode slots, EOS markers, hatched wasted slots, and the 28/48 ~ 58% utilization math land the Leak-1 tail-idling intuition precisely. No change needed."
+    },
+    {
+      "name": "contbatch-selective-batching-flatten",
+      "verdict": "keep",
+      "improvement": "Excellent and the standout figure of the chapter: the flatten-to-one-tall-matrix, cu_seqlens = [0,3,4,5,10], and split-back-for-attention flow reads perfectly in both themes. The dark-theme decode boxes (b0/c0) stay legible. No change needed."
+    },
+    {
+      "name": "contbatch-scheduler-state-machine",
+      "verdict": "refine",
+      "issue": "In dark theme the top region is cluttered: the solid 'admit (KV-cache room + token budget)' arrow label and the dashed 'preempt / swap-out (memory pressure)' arrow label sit almost on top of each other and both crowd the arrowheads entering RUNNING, hurting reading order. The 'free or swap KV blocks' box also floats below WAITING without an explicit arrow tying it to the preemption return path, so the preempt->WAITING loop is implicit rather than drawn.",
+      "improvement": "Add vertical separation between the two top arrows so their labels never overlap (route 'admit' along the top, 'preempt/swap-out' as a distinct lower dashed lane), and draw an explicit arrow from the 'free or swap KV blocks' box back into the front of WAITING so the preempt->re-queue->resume loop is a visible cycle. Keep all current text."
+    },
+    {
+      "name": "continuous-batching",
+      "verdict": "refine",
+      "issue": "Two layout collisions: on the continuous-batching panel the 'utilization = 48 useful / 48 slot-steps = 100%' caption runs straight into the 'freed slot reused on the very next iteration' caption ('=100%freed slot...'), and in the bottom legend the swatch/label pairs overlap ('requests A-D' overrides the green swatch, 'wasted idle slot-step' overrides the hatch swatch), most visibly in dark theme.",
+      "improvement": "Give the two bottom captions their own lines (or push the '100%' caption left and the 'freed slot reused' caption to a second line) so they never touch, and space the three legend entries so each swatch has clear room before its label. Content and the strong static-vs-continuous side-by-side stay as-is."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "contbatch-throughput-vs-batchsize",
+      "concept": "Token throughput as a function of running batch size B, B/(tau0 + beta*B), rising steeply then flattening toward the compute roofline 1/beta, with static batching starved on the low-B tail and continuous batching pinned near B_max on the flat part.",
+      "rationale": "This is the quantitative heart the whole chapter argues from: the throughput-model section and the worked example both invoke this curve, and the sentence 'that gap is where the throughput multiplier comes from' is literally a statement about two points on it. No existing figure shows WHY keeping B high matters or what 'amortizing tau0' and the roofline 1/beta mean visually. It converts the algebra into a single durable picture.",
+      "kind": "static",
+      "placement": "### A throughput model for the scheduler",
+      "brief": "A single 2D plot. X-axis: running batch size B (label 'batch size B', small integer ticks like 1, 8, 16, 32, 64, no invented benchmark values). Y-axis: 'token throughput (tokens/sec)'. Draw the curve y = B/(tau0 + beta*B): steeply rising from near the origin, bending over, and asymptotically flattening. Draw a horizontal dashed asymptote line near the top labeled 'compute roofline = 1/beta'. Annotate the steep low-B region with a bracket/callout: 'steep region: amortizing the fixed weight-load tau0 over more requests'. Annotate the flat high-B region: 'flat region: near the roofline, extra requests barely cost more'. Now overlay the two regimes: (a) a small filled dot low on the steep part labeled 'static batching at the tail: batch drains to a lone straggler (B->1), throughput collapses' with a faint arrow sliding it down-left to show it oscillates toward low B; (b) a filled dot high on the flat part near the right, labeled 'continuous batching: B pinned near B_max by backfilling', with a short double-headed vertical arrow between the two dots' throughput levels labeled 'this gap = the throughput multiplier'. Keep all numbers symbolic (tau0, beta, B_max) or tiny illustrative integers; invent NO tokens/sec figures. Theme-safe: curve and asymptote in the theme's neutral accent, the two regime dots distinguishable by shape or a callout label rather than relying on hardcoded reds/greens. Everything must sit inside the viewBox with the two callout dots clearly separated so the 'gap' arrow is unambiguous. A single static frame fully conveys it."
+    },
+    {
+      "name": "contbatch-token-budget-interleave",
+      "concept": "The per-iteration token budget as a bar that must hold decode tokens first; a monolithic 4000-token prefill blows the budget and stalls every decode (ITL spike), while chunked prefill backfills a 512-token slice into the remaining budget each iteration so decodes stay smooth.",
+      "rationale": "The 'Prefill/decode interleaving and its scheduling tension' section is the chapter's second-biggest lever and currently has no figure. The intuition 'schedule decodes first, then backfill prefill chunks under max_num_batched_tokens' and 'a big prefill stalls ongoing decodes' is inherently about filling a fixed-width budget bar over several iterations, which a picture makes click far faster than prose. It also grounds why max_num_batched_tokens exists and previews chunked prefill.",
+      "kind": "static",
+      "placement": "## Prefill/decode interleaving and its scheduling tension",
+      "brief": "Three stacked horizontal 'token budget' bars, one per scheduler iteration, each the same fixed width labeled with a capacity marker 'max_num_batched_tokens' (use a small illustrative budget like 8 slots, not a benchmark). Row 1 STEADY STATE: bar mostly filled with several small equal cells each labeled 'decode: 1 tok' (one per running request), a little slack at the right; caption 'steady state: one decode token per running request, smooth ITL'. Row 2 MONOLITHIC PREFILL (the problem): a single giant cell far wider than the budget bar, overflowing well past the capacity marker, labeled 'prefill 4000 toks in one iteration'; the small decode cells are shoved out / greyed with a caption 'all decodes stall behind it -> inter-token-latency (ITL) spike / stream stutters'. Draw the overflow crossing the capacity marker clearly (e.g. a red-free 'over budget' hatch beyond the marker, using theme-neutral emphasis not hardcoded red). Row 3 CHUNKED PREFILL (the fix): same budget bar, decode cells placed FIRST at the left (labeled 'decodes first: reserved slice'), then a single 'prefill chunk 512' cell backfilling the remaining budget up to but not past the capacity marker; to the right, a small ghosted queue of stacked cells labeled 'rest of prompt -> next iterations' showing the remaining chunks spread over future steps. Caption under row 3: 'chunked prefill: decodes first, prefill backfills the remainder each step -> ITL stays smooth, prefill still finishes in a few iterations'. Add one small arrow/annotation tying the ordering rule: 'ordering: decode tokens, then prefill chunks'. Keep it a static comparison; all quantities tiny illustrative integers except the deliberately-large '4000' and '512' which are the standard didactic values from the chapter text. Theme-safe neutral fills, legible in both themes, everything inside the viewBox with the capacity marker line vertically aligned across all three rows so the over-budget vs under-budget contrast is immediate."
+    }
+  ],
+  "summary": "The chapter is figure-rich (4 figures) and its batching-vs-continuous and selective-batching intuitions are already well served. Two existing figures (static-tail-idling, selective-batching-flatten) are keeps; the scheduler-state-machine and the static-vs-continuous side-by-side both need minor layout fixes for label/legend collisions in dark theme. The two genuinely unserved foundational intuitions are (1) the throughput-vs-batch-size roofline curve that the whole chapter argues from ('keep B pinned high on the flat part' / 'the gap is the multiplier'), and (2) the per-iteration token-budget bar that makes prefill/decode interleaving and chunked prefill concrete. I propose those two as new static figures, priority 1 and 2."
+}

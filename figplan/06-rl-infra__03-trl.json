@@ -1,0 +1,50 @@
+{
+  "chapter": "content/06-rl-infra/03-trl.md",
+  "core_intuitions": [
+    "TRL packages each alignment stage as a standalone Trainer subclass that inherits transformers.Trainer, so accelerate (FSDP/DeepSpeed/DDP), PEFT, and vLLM all compose for free without trainer-level code.",
+    "The alignment pipeline has three interchangeable Stage-3 paths off the same SFT model: PPO (online RL, needs a reward model + critic), DPO (offline, no reward model), and GRPO (critic-free online); modern reasoning recipes go SFT -> GRPO directly with a verifiable reward.",
+    "GRPO's central trick: sample a GROUP of G responses to the SAME prompt and use the group's mean reward as the baseline, so advantages A_i = r_i - mean(r) replace a learned value-function critic entirely.",
+    "Memory is the reason DPO and GRPO displaced PPO: PPO must simultaneously hold policy weights, a value head, a frozen reference model, and Adam optimizer states (>100 GB for a 7B model); dropping the critic and, with LoRA, making the reference model nearly free, collapses that footprint.",
+    "The throughput bottleneck is generation: P x G completions are produced sequentially on the very GPUs that do training; co-located vLLM overlaps rollout generation with back-prop for a wall-clock speedup.",
+    "Reward functions in TRL are plain Python callables returning one float per completion, so verifiable rewards (math check, format check, code execution) and weighted composites need zero extra infrastructure."
+  ],
+  "existing": [
+    {
+      "name": "trl-trainer-landscape-pipeline",
+      "verdict": "keep",
+      "issue": "Renders cleanly in both themes. Reading order top-to-bottom is clear, the alternative Stage-3 branch (DPO/GRPO bypassing the reward model) is well conveyed by the dashed spine, and the RewardModel -> PPOTrainer 'reward' arrow makes the RM-dependence explicit. Serves core intuition #2 well.",
+      "improvement": "Optional only: in both themes the 'Stage 3a: online RL with reward model' caption sits very close under the PPOTrainer/RewardModel row and slightly crowds the RewardModel box's baseline; nudging that caption a few px down would tidy it. Not blocking."
+    },
+    {
+      "name": "trl-grpo-train-loop-steps",
+      "verdict": "keep",
+      "issue": "Strong, comprehensive stepped diagram of the per-step GRPO loop (7 numbered stages) with the between-stage tensor-shape annotations ([P x G], per-token KL, etc.) and the 'repeat next batch' loopback. The bottleneck callout on step 1 correctly flags rollout as the throughput cost. Legible in both light and dark. Serves core intuition #5 and the loop mechanics.",
+      "improvement": "The small parenthetical '(vLLM addresses this)' inside the bottleneck callout is cramped and near-illegible at render size; enlarge it slightly or drop the parenthetical since the vLLM figure covers it. Minor."
+    },
+    {
+      "name": "trl-vllm-colocate-rollout-flow",
+      "verdict": "refine",
+      "issue": "Conveys the two-process split (training GPUs vs vLLM server) and the weights/prompts/completions message flow, but has two problems. (1) The '(shared mem / RDMA)' subtitle under 'push updated weights' collides with the top border of the vLLM Server box in both themes and overlaps the AsyncLLMEngine box in dark mode. (2) The green 'OVERLAP' callout uses dark-green text that has weak contrast on the dark-theme background, and it ASSERTS the overlap in prose rather than SHOWING it, so the figure's headline intuition (generation and back-prop happen concurrently in time) is the weakest-drawn part.",
+      "improvement": "Move the '(shared mem / RDMA)' caption down into the empty channel BETWEEN the two process columns so it no longer touches either box. Recolor the OVERLAP callout to use theme-variable text (not a fixed dark green) so it is legible in dark mode. Most importantly, add a compact horizontal timeline strip along the bottom: two parallel lanes ('train GPUs' and 'vLLM server') with tiles for steps N-1, N, N+1 offset so that 'vLLM generates rollouts for step N' sits time-aligned under 'train GPUs back-prop step N-1' -- turning the asserted overlap into a visible one."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "grpo-group-relative-advantage",
+      "concept": "Why a group of G sampled responses and their mean reward replace the value-function critic in GRPO.",
+      "rationale": "This is the single conceptual heart of the chapter's flagship trainer and of core intuition #3. The existing loop figure only lists 'A_i = r_i - mean(...)' as one text step; it never shows the geometry that makes the idea click -- that the group mean IS the baseline a critic would otherwise have to learn. Making this visual is what lets a reader truly understand why GRPO is 'critic-free' and why num_generations matters.",
+      "kind": "static",
+      "placement": "In section 'GRPOTrainer: The DeepSeek-R1 Recipe', immediately after the advantage formula A_i = r_i - (1/G) sum r_j and before the '### Configuring and running GRPOTrainer' subsection.",
+      "brief": "A single static infographic making the group-relative baseline visible. LEFT: one rounded box labeled 'prompt x' (e.g. 'What is 15 x 8?'). A fan of arrows from it to a vertical stack of G=6 short completion pills labeled y_1..y_6, each tagged with a small illustrative reward on the right edge -- use tiny verifiable-style values like r=1, r=0, r=1, r=0, r=0, r=1 (invent no benchmark numbers; these are illustrative 0/1 correctness rewards). CENTER-RIGHT: a vertical reward axis; plot each completion as a dot at its reward height. Draw a dashed horizontal line through the group mean (here mean = 3/6 = 0.5) labeled 'group mean reward = baseline'. From that baseline draw one advantage arrow to each dot: arrows to the r=1 dots point UP and are labeled 'A_i = +0.5 -> reinforce'; arrows to the r=0 dots point DOWN labeled 'A_i = -0.5 -> suppress'. Annotate the axis region 'A_i = r_i - mean(r)'. BOTTOM or a boxed side-panel CONTRAST: two mini-rows sharing the same width. Row 'PPO' shows a small neural-net box labeled 'value head / critic' feeding a predicted baseline into the same reward axis, tagged 'extra parameters + optimizer state to learn the baseline'. Row 'GRPO' shows just the horizontal mean line, tagged 'baseline is the group mean -- no critic, free'. Encode reinforce vs suppress by ARROW DIRECTION (up/down) and neutral theme-safe accents, not hardcoded red/green fills; if any hue is used it must come from theme variables. Everything inside the viewBox, one clear top-to-bottom then contrast reading order, no overlapping labels."
+    },
+    {
+      "name": "rl-trainer-memory-footprint",
+      "concept": "Why PPO is memory-heavy and how dropping the critic (GRPO) and sharing the base backbone via LoRA make the reference model nearly free.",
+      "rationale": "Memory economics is the through-line the chapter returns to in four places (PPOTrainer memory footprint, DPO memory management, PEFT reference sharing, the interview corner) and is core intuition #4 -- the actual reason the field moved from PPO to GRPO/DPO. There is currently no figure for it; the >100 GB story lives only in prose. A stacked-bar comparison plus a LoRA-sharing inset turns 'GRPO/DPO are cheaper and the reference is free' from an assertion into something a reader sees.",
+      "kind": "static",
+      "placement": "In section 'PPOTrainer: Online RL with a Reward Signal', at the end of the '### PPOTrainer's memory footprint' subsection (right after the sentence about GRPO/DPO eliminating the value head).",
+      "brief": "A static two-part infographic. PART A (left, ~two-thirds width): three side-by-side stacked vertical bars for the SAME base model (say '7B, bf16') under three trainers -- labeled PPO, DPO, GRPO. Each bar is composed of clearly labeled stacked segments, sized by RELATIVE proportion (do NOT print absolute GB axis numbers -- invent no benchmark figures; label segments by name and rough multiplier instead): 'policy weights' (base unit), 'optimizer states (Adam) ~4x weights', 'value head + its optimizer' (present ONLY in the PPO bar), and 'frozen reference model'. Result: PPO is tallest (all four segments); GRPO and DPO are visibly shorter because the value-head segment is absent. Add a bracket/callout on the PPO bar pointing at the value-head segment: 'GRPO & DPO drop the critic'. Use theme-safe fills (distinct segments via theme-variable shades or hatching, no hardcoded primaries), and a shared legend. PART B (right ~one-third, a boxed inset titled 'LoRA: reference model is (nearly) free'): draw one large shared block labeled 'base weights (frozen, shared tensors)'. On top of it draw a small thin sliver labeled 'adapter delta (LoRA, trained)'. Two labeled read-outs off the same block: 'policy forward = base + adapter' and 'reference forward = base only (disable_adapter_layers)'. A short annotation: 'both passes reuse the same base tensors -> the reference adds ~no extra memory, only the tiny adapter is toggled'. Keep the whole thing inside the viewBox, legible in both themes, clear left-then-right reading order, no overlapping text."
+    }
+  ],
+  "summary": "The chapter is already well-served on structure (trainer landscape), procedure (GRPO per-step loop), and the vLLM colocate flow. The two intuitions it explains only in prose are the ones most central to its argument: (1) WHY the group mean replaces a critic in GRPO, and (2) the memory economics that made GRPO/DPO displace PPO, including the LoRA 'free reference model' trick. I keep the trainer-landscape and GRPO-loop figures, refine the vLLM figure (fix a colliding caption, fix a low-contrast dark-theme callout, and add a timeline strip so the asserted generation/back-prop overlap is actually shown), and add two foundational static figures: grpo-group-relative-advantage and rl-trainer-memory-footprint. Total ends at 5 figures for a concept-dense flagship chapter -- disciplined, no long-animations since nothing here has an essential temporal process a static frame cannot carry."
+}

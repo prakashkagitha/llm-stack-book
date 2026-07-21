@@ -1,0 +1,158 @@
+<figure class="viz" id="fig-cuda-memory-coalescing">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 470" role="img" aria-label="A warp's 32 lanes reading consecutive addresses coalesce into one 128-byte memory transaction; the same warp reading addresses strided by 64 elements requires up to 32 separate transactions.">
+<defs>
+  <marker id="cmc-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cuda-memory-coalescing text     { fill: var(--ink-soft,#45413a); }
+  #fig-cuda-memory-coalescing .ttl     { font: 700 14px var(--sans,sans-serif); }
+  #fig-cuda-memory-coalescing .lane    { font: 600 9px var(--mono,monospace); }
+  #fig-cuda-memory-coalescing .ann     { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cuda-memory-coalescing .code    { font: 500 12px var(--mono,monospace); }
+  #fig-cuda-memory-coalescing .brk     { font: 700 12px var(--sans,sans-serif); }
+  #fig-cuda-memory-coalescing .ell     { font: 700 13px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+
+
+<g data-anim="1">
+<rect x="12" y="10" width="756" height="196" rx="10"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.06"
+      stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+<text x="30" y="32" class="ttl" fill="var(--good,#2f9e6e)">Coalesced (stride 1)</text>
+<text x="750" y="32" text-anchor="end" class="code">A[row*N + threadIdx.x]</text>
+
+
+<text x="30" y="56" class="ann">warp lanes:</text>
+
+
+<g font-family="var(--mono,monospace)">
+  <g transform="translate(120,44)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L0</text>
+  </g>
+  <g transform="translate(158,44)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L1</text>
+  </g>
+  <g transform="translate(196,44)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L2</text>
+  </g>
+  <g transform="translate(234,44)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L3</text>
+  </g>
+  <g transform="translate(272,44)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L4</text>
+  </g>
+  <text x="322" y="60" text-anchor="middle" class="ell">...</text>
+  <g transform="translate(346,44)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L31</text>
+  </g>
+</g>
+
+
+<g stroke="var(--good,#2f9e6e)" stroke-width="1.2" marker-end="url(#cmc-arr)">
+  <line x1="137" y1="66" x2="137" y2="98"/>
+  <line x1="175" y1="66" x2="175" y2="98"/>
+  <line x1="213" y1="66" x2="213" y2="98"/>
+  <line x1="251" y1="66" x2="251" y2="98"/>
+  <line x1="289" y1="66" x2="289" y2="98"/>
+  <line x1="363" y1="66" x2="363" y2="98"/>
+</g>
+
+
+<g font-family="var(--mono,monospace)">
+  <rect x="120" y="100" width="38" height="26" class="v-fill v-stroke" stroke-width="1"/>
+  <rect x="158" y="100" width="38" height="26" class="v-fill v-stroke" stroke-width="1"/>
+  <rect x="196" y="100" width="38" height="26" class="v-fill v-stroke" stroke-width="1"/>
+  <rect x="234" y="100" width="38" height="26" class="v-fill v-stroke" stroke-width="1"/>
+  <rect x="272" y="100" width="38" height="26" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="329" y="118" text-anchor="middle" class="ell">...</text>
+  <rect x="346" y="100" width="38" height="26" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="139" y="143" text-anchor="middle" class="lane" fill="var(--muted,#6d675d)">A+0</text>
+  <text x="177" y="143" text-anchor="middle" class="lane" fill="var(--muted,#6d675d)">A+1</text>
+  <text x="365" y="143" text-anchor="middle" class="lane" fill="var(--muted,#6d675d)">A+31</text>
+</g>
+
+
+<path d="M120,158 L120,150 L384,150 L384,158" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+<text x="252" y="176" text-anchor="middle" class="brk" fill="var(--good,#2f9e6e)">1 transaction = one 128-byte cache line serves all 32 lanes</text>
+
+<text x="30" y="196" class="ann">memory ribbon: consecutive 4-byte words starting at address A</text>
+</g>
+
+
+<g data-anim="2">
+<rect x="12" y="220" width="756" height="238" rx="10"
+      fill="var(--warn,#e0a106)" fill-opacity="0.07"
+      stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+<text x="30" y="242" class="ttl" fill="var(--warn,#e0a106)">Strided (stride 64)</text>
+<text x="750" y="242" text-anchor="end" class="code">A[threadIdx.x*N + col]</text>
+
+<text x="30" y="266" class="ann">warp lanes:</text>
+<g font-family="var(--mono,monospace)">
+  <g transform="translate(120,254)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L0</text>
+  </g>
+  <g transform="translate(158,254)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L1</text>
+  </g>
+  <g transform="translate(196,254)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L2</text>
+  </g>
+  <text x="290" y="270" text-anchor="middle" class="ell">...</text>
+  <g transform="translate(346,254)">
+    <rect x="0" y="0" width="34" height="22" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="17" y="15" text-anchor="middle" class="lane">L31</text>
+  </g>
+</g>
+
+
+<g stroke="var(--warn,#e0a106)" stroke-width="1.2" marker-end="url(#cmc-arr)">
+  <line x1="137" y1="276" x2="93" y2="312"/>
+  <line x1="175" y1="276" x2="222" y2="312"/>
+  <line x1="213" y1="276" x2="351" y2="312"/>
+  <line x1="363" y1="276" x2="659" y2="312"/>
+</g>
+
+
+<g font-family="var(--mono,monospace)">
+  <g transform="translate(48,314)">
+    <rect x="0" y="0" width="90" height="34" rx="5" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="45" y="21" text-anchor="middle" class="lane">line @A+0</text>
+  </g>
+  <g transform="translate(177,314)">
+    <rect x="0" y="0" width="90" height="34" rx="5" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="45" y="21" text-anchor="middle" class="lane">line @A+64</text>
+  </g>
+  <g transform="translate(306,314)">
+    <rect x="0" y="0" width="90" height="34" rx="5" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="45" y="21" text-anchor="middle" class="lane">line @A+128</text>
+  </g>
+  <text x="463" y="336" text-anchor="middle" class="ell">...</text>
+  <g transform="translate(614,314)">
+    <rect x="0" y="0" width="90" height="34" rx="5" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="45" y="21" text-anchor="middle" class="lane">line @A+31*64</text>
+  </g>
+</g>
+
+<text x="396" y="374" text-anchor="middle" class="ann">each lane lands in its own separate 128-byte cache line</text>
+
+<path d="M48,392 L48,400 L704,400 L704,392" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+<text x="376" y="420" text-anchor="middle" class="brk" fill="var(--warn,#e0a106)">32 separate transactions -&gt; up to 32x bandwidth wasted</text>
+
+<text x="30" y="446" class="ann">lane i reads address A + i*64  (each lane N floats apart in memory)</text>
+</g>
+
+</svg>
+<figcaption><b>Coalescing turns 32 loads into 1 (or 32) memory transactions, depending on the access pattern.</b> When warp lane <code>i</code> reads address <code>A + i</code> (stride 1), the hardware serves all 32 lanes from a single 128-byte cache line. When lane <code>i</code> reads <code>A + i*64</code> (the transposed / column-major access), each lane falls in a different cache line, forcing up to 32 separate transactions for the same data.</figcaption>
+</figure>

@@ -1,0 +1,48 @@
+{
+  "chapter": "content/04-kernels-efficiency/09-compilers-fusion.md",
+  "core_intuitions": [
+    "Eager PyTorch pays a hidden tax on every op: Python/dispatch overhead, a CPU kernel-launch call, and a DRAM round-trip for each intermediate — even when the arithmetic is trivial.",
+    "Kernel fusion keeps intermediates on-chip (registers/shared memory) so a chain of elementwise ops reads inputs once and writes the output once, cutting DRAM traffic ~N->1.",
+    "CUDA graphs attack a DIFFERENT bottleneck than fusion: for many small kernels the CPU cannot issue cudaLaunchKernel fast enough, so the GPU sits idle; recording the launch sequence once and replaying it with a single CPU call fills the GPU back-to-back.",
+    "torch.compile is a three-stage pipeline: TorchDynamo captures an FX graph from Python bytecode, AOTAutograd traces the joint forward+backward graph, TorchInductor lowers to fused Triton/C++.",
+    "A graph break is what happens when Dynamo hits untraceable Python (.item(), a shape-dependent if, a print, a C extension): it splits the function into separately-compiled subgraphs with eager fallback in between, and guards trigger recompiles when traced assumptions change.",
+    "Different compiler stacks (Inductor, XLA, TVM, TensorRT) share the same core move — whole-graph capture + loop fusion — but differ by hardware target and how badly they punish shape dynamism."
+  ],
+  "existing": [
+    {
+      "name": "fusion-dram-roundtrip-vs-fused",
+      "verdict": "keep",
+      "improvement": ""
+    },
+    {
+      "name": "torchcompile-three-layer-stack",
+      "verdict": "refine",
+      "issue": "In dark theme the three side callout boxes (TorchDynamo / AOTAutograd / TorchInductor) render dark-blue text on a near-transparent dark fill and are barely legible — the 'AOTAutograd differentiation ahead-of-time' label is almost invisible against the dark background. The callouts read fine in light mode only.",
+      "improvement": "Give the pass-name callout boxes a theme-aware opaque fill (a subtle accent-tint panel that has real contrast in both themes) and switch their text to a theme-aware color (currentColor / CSS var) rather than a fixed blue. Ensure the callout does not overlap the main-stage box borders in either theme. Keep the vertical Python-code -> FX graph -> joint graph -> generated kernels flow and the accent highlight on the final 'Generated Triton/CUDA kernels' box; only the callout legibility needs fixing."
+    },
+    {
+      "name": "compiler-stack-training-vs-inference",
+      "verdict": "keep",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "cuda-graph-cpu-launch-timeline",
+      "concept": "Why CUDA graphs help: eager mode leaves the GPU idle between many CPU kernel launches; a captured graph replays with one CPU call and packs kernels back-to-back.",
+      "rationale": "CUDA graphs are one of the chapter's two central mechanisms and are currently unillustrated. The intuition is specifically temporal-and-causal: the CPU is the bottleneck for short kernels, the GPU starves waiting for the next launch, and replay collapses hundreds of CPU driver round-trips into one. A CPU-lane / GPU-lane timeline makes 'the CPU cannot feed kernels fast enough' visible in a way prose cannot. This is exactly why reduce-overhead mode and decode-loop capture in vLLM/TensorRT-LLM matter.",
+      "kind": "static",
+      "placement": "CUDA Graphs: Eliminating CPU Launch Overhead (after the 'How CUDA Graphs Work' subsection heading)",
+      "brief": "A two-scenario timeline infographic, time flowing left to right, x-axis labeled 'time' with a small arrowhead. TOP scenario titled 'Eager launch (CPU-bound, small kernels)'. Draw two horizontal lanes stacked: an upper lane labeled 'CPU' and a lower lane labeled 'GPU'. In the CPU lane place a row of ~5 small identical blocks each labeled 'launch' (representing cudaLaunchKernel), separated by visible gaps. In the GPU lane, directly BELOW and slightly to the right of each CPU launch block, place a short compute block labeled with a tiny op name (k1, k2, k3, k4, k5); between consecutive GPU compute blocks draw clearly-marked IDLE gaps (hatched or dashed, labeled 'idle — waiting for next launch'). The staggering must show each GPU kernel starting only after its CPU launch, so the GPU lane has bubbles. Add a caption under this scenario: 'CPU launch latency (~microseconds each) dominates; GPU starves'. BOTTOM scenario titled 'CUDA graph replay'. First show a small one-time, visually-set-apart 'capture (once)' marker at far left — a dashed box labeled 'capture: record launch sequence' — with a subtle note '(warmup, one time)'. Then in the CPU lane a SINGLE small block labeled 'cudaGraphLaunch (1 call)'. In the GPU lane, a contiguous run of the SAME kernels k1 k2 k3 k4 k5 packed tightly back-to-back with NO idle gaps between them. Caption under this scenario: 'one CPU call submits the whole recorded DAG; GPU runs kernels back-to-back'. On the right edge, align the two GPU lanes vertically and add a bracket/annotation showing the bottom scenario finishes sooner: label 'wall-clock saved'. Use only a small handful of kernels (5) and NO numeric microsecond values on the blocks — the gaps vs no-gaps contrast carries the meaning. Theme-safe: idle regions distinguished by hatching/dashes and a text label, not by a hardcoded warning color; use theme-aware fills for CPU vs GPU lanes (e.g. two tints of the neutral/accent palette) with clear lane labels so it reads in both light and dark. Everything inside the viewBox, no overlapping labels, clear top-to-bottom then left-to-right reading order. A single static frame must fully convey it (the two stacked scenarios ARE the before/after)."
+    },
+    {
+      "name": "dynamo-graph-breaks-subgraphs",
+      "concept": "How TorchDynamo partitions a Python function into separately-compiled subgraphs at graph breaks, falling back to eager for untraceable ops, with guards that trigger recompiles.",
+      "rationale": "Graph breaks are the single most practically important concept in the torch.compile half of the chapter — the Interview Corner, the fixes table, and a whole deep-dive section revolve around them, yet nothing visualizes what a break actually IS. The key intuition is that Dynamo traces a linear stream of ops, and each untraceable Python construct SLICES the stream: traceable runs become fused compiled subgraphs, the offending op runs eager, then a fresh subgraph resumes. Making the partition visible turns an abstract term into a mental model a reader can use to reason about 'minimize graph breaks in hot paths'.",
+      "kind": "static",
+      "placement": "TorchDynamo: Safe Graph Capture via Bytecode Rewriting (right after the dynamo.explain code block, near the guard-system paragraph)",
+      "brief": "A horizontal 'ribbon' showing one Python function's execution as a left-to-right sequence of operation tokens, then how Dynamo carves it into compiled subgraphs. Top row: a strip of ~7 small op tokens in execution order, e.g. 'y = sin(x)', 'z = y + 1', 'if x.shape[0] > 10:', 'y = y * 2', 'w = matmul(...)', 'print(w)', 'return cos(w)'. Mark the untraceable ones distinctly: put a break glyph (a jagged/lightning break symbol plus a small label 'GRAPH BREAK') at the shape-dependent 'if' token and at the 'print' token, each with a tiny reason tag ('data-dependent control flow', 'side effect / host sync'). Below the strip, draw grouping brackets that partition the traceable runs into boxes: 'Subgraph 1 (compiled -> fused Triton)' covering the first traceable run before the if; a small eager-fallback pill labeled 'eager' under the if; 'Subgraph 2 (compiled)' covering the traceable ops after the if up to print; another 'eager' pill under print; 'Subgraph 3 (compiled)' covering the final return-cos run. Make clear visually that compiled subgraphs are fused/optimized (solid accent boxes) while the eager segments are plain/unoptimized (outline pills). Off to the side or beneath Subgraph 1, attach a small 'guards' note listing example recorded assumptions ('x.shape == (5,)', 'x.dtype == float32') with a caption 'if a guard fails at runtime -> recompile'. Add a one-line takeaway at the bottom: 'more breaks = smaller fusion regions + eager gaps = less speedup'. Constraints: use only the small op set shown, invent no numbers beyond the illustrative shape/dtype; theme-safe (compiled vs eager distinguished by fill style and labels, not by a fixed color that fails in one theme); keep all labels legible and non-overlapping, reading strictly left to right; fully understandable as a static frame."
+    }
+  ],
+  "summary": "The chapter is concept-rich and its two big mechanisms split cleanly: fusion (memory traffic) is well served by the kept DRAM-roundtrip figure, and the torch.compile pipeline + ecosystem are covered by two mostly-good stack figures. Two core intuitions are unillustrated and foundational: (1) CUDA graphs as a CPU-launch-overhead fix — needs a CPU/GPU timeline showing GPU starvation under eager launches vs back-to-back replay; (2) graph breaks — needs a ribbon showing a function sliced into compiled subgraphs with eager fallback and guards. Both work as static frames. One refine: the three-layer-stack figure's side callout labels are nearly illegible in dark mode (dark-blue text on dark fill) and need theme-aware opaque callout panels. Two keeps, one refine, two new static figures."
+}

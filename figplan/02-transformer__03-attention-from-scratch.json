@@ -1,0 +1,53 @@
+{
+  "chapter": "content/02-transformer/03-attention-from-scratch.md",
+  "core_intuitions": [
+    "Attention is differentiable soft retrieval: a dict lookup where exact key-match becomes dot-product similarity and hard selection becomes a softmax-weighted blend of values.",
+    "The single-query pipeline: score every key (q·k) → scale by 1/√d_k → softmax into a probability distribution over positions → return the weighted average of value vectors.",
+    "The output is a convex combination of the value vectors — it lives strictly inside their convex hull, can interpolate but never extrapolate, and approaches a single value (hard retrieval) as the weights sharpen.",
+    "Why √d_k: Var(q·k)=d_k so score std grows like √d_k; large scores saturate softmax into a near one-hot, its Jacobian diag(a)−aaᵀ collapses to 0, and query/key gradients die. Dividing by √d_k fixes score variance at 1 so the distribution stays soft and gradients flow.",
+    "Masking is a single additive bias on the score matrix (−∞ before softmax) that reshapes information flow — a lower-triangular causal mask forbids peeking at the future; a padding mask ignores <pad>.",
+    "Attention costs O(n²d) compute and O(n²) memory for the score matrix — the quadratic bottleneck that motivates FlashAttention and sub-quadratic alternatives."
+  ],
+  "existing": [
+    {
+      "name": "attn-hard-vs-soft-retrieval",
+      "verdict": "keep",
+      "improvement": "Reads cleanly in both themes: two parallel three-step columns (compare→select→return) with relax/soften/blend transitions and the non-differentiable/fully-differentiable verdict chips. This is the chapter's opening intuition and the figure nails it."
+    },
+    {
+      "name": "attention-flow",
+      "verdict": "refine",
+      "issue": "The 'softmax per row' label is placed ON TOP of the attention-weights grid, clipping into the cells ('softma…' / 'per row' collide with the grid squares) — the busiest, most information-dense spot in the figure is the one that's obscured. Secondary: in dark theme the faint grid outlines are low-contrast.",
+      "improvement": "Move the 'softmax (per row)' label out of the grid — place it cleanly above the arrow between the QKᵀ score matrix and the attention-weights matrix, so no text overlaps grid cells. Keep the nice highlighted-row-→-V-→-O 'one query's output row' thread. Nudge grid stroke contrast up slightly in dark so the matrices read as grids, not empty boxes."
+    },
+    {
+      "name": "attn-sdpa-pipeline-masked",
+      "verdict": "keep",
+      "improvement": "Clear operation-dataflow view (matmul → scale → optional mask → softmax → AV → output) with V correctly bypassing the score ops and entering only at AV, and the Q/K/V role captions. Complements attention-flow (which is the shape/matrix view) rather than duplicating it. Legible in both themes."
+    },
+    {
+      "name": "attn-causal-mask-grid",
+      "verdict": "keep",
+      "improvement": "The 4×4 OK/X(−inf) triangular grid with per-row 'sees tokens 0..i' captions makes the causal mask concrete and correct in both themes. The dark-theme X(−inf) cells are a touch muddy but the OK-vs-X distinction plus the text labels keep the triangular forbidden region unambiguous; not worth a redraw."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "scale-sqrt-dk-saturation",
+      "concept": "Why 1/√d_k matters: unscaled scores widen with d_k, saturate softmax into a one-hot, and kill the gradient; scaling keeps softmax soft and gradients alive.",
+      "rationale": "This is the most heavily emphasized idea in the chapter — it gets its own section, a worked example, an Interview Corner, and a Key Takeaway — yet has ZERO figures. The whole causal chain (score variance = d_k → saturated softmax → collapsed Jacobian → dead Q/K gradient) is abstract in prose but obvious in one picture. The single highest-value missing figure in the chapter.",
+      "kind": "static",
+      "placement": "Why Divide by √d_k? The Variance Argument",
+      "brief": "A left-to-right, three-stage causal-chain infographic telling one story: score spread → softmax shape → gradient fate. STAGE 1 'Raw score std grows as √d_k': three symmetric bell-shaped spread indicators for d_k = 8, 64, 128 (adjacent or overlaid), each labeled with its std ≈ 2.8, 8, 11 (these are just √8, √64, √128 — derived, not benchmark numbers), the d_k=128 curve visibly the widest. Caption: 'std(q·k) = √d_k'. STAGE 2 'Feed one row of scores to softmax', shown as TWO small bar charts over ~4 key positions using the chapter's own worked-example logits: (a) UNSCALED logits [20, 4, −3, 1] → softmax bars = one tall bar ≈ 1.0, the rest flat ≈ 0, labeled 'saturated ≈ hard arg-max'; (b) SCALED (÷√64) logits [2.5, 0.5, −0.375, 0.125] → softmax bars ≈ [0.77, 0.10, 0.04, 0.07], one dominant but several visibly nonzero, labeled 'soft, still peaked'. STAGE 3 'Gradient consequence': for the unscaled/one-hot case, a FADED or broken arrow to a chip 'Jacobian diag(a)−aaᵀ → 0  ⇒  no gradient to Q,K — training stalls'; for the scaled/soft case, a solid ACCENTED arrow to a chip 'Jacobian healthy  ⇒  gradient flows to Q,K'. Use theme-safe classes only (accent for the alive path, muted/grid for the dead path); the dead path should read as visually de-emphasized. All small illustrative integers already appear in the chapter. Clear reading order spread→softmax→gradient; everything inside the viewBox, no label overlaps, legible in both themes."
+    },
+    {
+      "name": "attn-output-convex-hull",
+      "concept": "The attention output is a convex combination of value vectors — a point inside their convex hull whose position is set by the attention weights; sharpening the weights slides it toward a vertex (hard retrieval).",
+      "rationale": "The chapter states twice that the output 'is a convex combination of the value vectors — it lies inside their convex hull — it can never extrapolate beyond the values it is given,' and that cranking a query recovers hard retrieval 'in the limit.' This is a crisp geometric intuition that a picture makes instantly obvious and prose does not; it also visually unifies the soft-vs-hard-retrieval theme with the actual output geometry. Not served by any existing figure.",
+      "kind": "static",
+      "placement": "Scaled Dot-Product Attention, One Query at a Time",
+      "brief": "A 2D geometric panel, ideally shown as two states side by side to make the point. Plot 5 value vectors as labeled points v1…v5 scattered in the plane; draw the convex-hull polygon around the outer points, lightly shaded (v-fill). The attention output is a distinct accented marker (v-accent) sitting STRICTLY inside the hull. Draw thin spokes from the output marker to each value point, with stroke weight/opacity encoding that value's attention weight a_j (i.e. barycentric coordinates). LEFT state 'soft weights' (e.g. a ≈ [0.30, 0.25, 0.20, 0.15, 0.10]): output sits near the weighted centroid, several spokes of comparable weight. RIGHT state 'sharp weights (large scores)' (e.g. a ≈ [0.86, 0.06, 0.04, 0.03, 0.01]): output pulled almost onto vertex v1, one bold dominant spoke (v-accent-s), the rest faint — annotate 'sharpen → hard retrieval (a single value)'. Shared caption: 'output = Σ_j a_j v_j,  a_j ≥ 0,  Σ a_j = 1  ⇒  always inside the hull: interpolate, never extrapolate.' Small illustrative weights only; theme-safe classes (hull fill v-fill, output v-accent, spokes v-grid/v-muted with the dominant one v-accent-s). Keep labels legible and non-overlapping, whole scene inside the viewBox, works in both themes."
+    }
+  ],
+  "summary": "Figure-rich chapter (4 existing figures) that is nonetheless missing a figure for its single most-emphasized concept. Existing verdicts: 3 keep, 1 refine (attention-flow has a 'softmax per row' label clipping into the attention-weights grid — relocate it above the arrow). Two new static figures proposed: (1) PRIORITY — scale-sqrt-dk-saturation, visualizing the √d_k causal chain (score spread → saturated softmax → collapsed Jacobian → dead gradient vs the scaled soft path), the chapter's most-emphasized idea with zero current coverage; (2) attn-output-convex-hull, the geometric 'output is a convex combination inside the value hull, sharpening → hard retrieval' intuition stated in prose but never drawn. No animation needed — both ideas are crisp static comparisons."
+}

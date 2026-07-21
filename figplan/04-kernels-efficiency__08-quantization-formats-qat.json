@@ -1,0 +1,59 @@
+{
+  "chapter": "content/04-kernels-efficiency/08-quantization-formats-qat.md",
+  "core_intuitions": [
+    "Quantize/dequantize is an affine map q = round(w/s) + z, w_hat = s(q - z); per-element error is bounded by s/2, so finer granularity and better calibration win by shrinking s.",
+    "Fewer bits helps because autoregressive decode is memory-bandwidth-bound: weight-only quant just moves fewer HBM bytes (arithmetic stays FP16), while W+A additionally runs the GEMM on low-precision integer units.",
+    "NF4 places its 16 code points at the quantiles of the normal distribution, spending resolution where weights actually cluster (near zero) instead of uniformly like INT4 -- optimal for normally-distributed weights.",
+    "LLM.int8 keeps the tiny fraction of outlier activation channels in FP16 and quantizes the rest to INT8 (mixed-precision decomposition), so a few huge-magnitude channels can't wreck the whole matmul.",
+    "GGUF k-quants use nested block-level mixed precision: a 256-weight super-block with two high-precision fp16 scales, split into 8 sub-blocks of 32 that each carry a 6-bit scale and min, over 4-bit weights.",
+    "Format choice trades quality vs memory vs throughput; QAT's straight-through estimator lets gradients flow through the non-differentiable rounding so the model learns to tolerate quantization noise."
+  ],
+  "existing": [
+    {
+      "name": "quant-bnb-linear-dataflow",
+      "verdict": "keep",
+      "issue": "Renders clearly in both themes; correctly conveys the weight-only story (compact weights in HBM, dequant on-chip, GEMM stays FP16/BF16). Reading order top-to-bottom is clean and the side annotation reinforces the key point without clutter."
+    },
+    {
+      "name": "quant-perplexity-quality-spectrum",
+      "verdict": "keep",
+      "issue": "The green-to-red quality gradient with the ordered format chips is an effective, legible intuition builder in both themes; the Q4_K_M highlight and annotation land the practical takeaway. The dashed annotation box sits slightly close to the chip row but stays readable -- not worth a redraw.",
+      "improvement": "Optional only: nudge the central annotation box down a few px so its top edge never grazes the Q4_K_M / Q5_K_M chips in dark mode."
+    },
+    {
+      "name": "quant-deployment-decision-tree",
+      "verdict": "keep",
+      "issue": "Clean hardware-driven decision ladder; each branch (2xH100 / 1x80GB / 24GB+RAM / CPU-only) maps to a concrete format recommendation, and the 'more/less VRAM' spine axis reinforces the ordering. Legible and correct in both themes."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "quant-nf4-vs-int4-codepoints",
+      "concept": "NF4 spends its 16 code points at the quantiles of a normal distribution, clustering resolution near zero where weights live, versus INT4's uniform spacing.",
+      "rationale": "NF4 is the headline format of this chapter (it powers QLoRA) and its 'information-theoretically optimal for normal weights' claim is purely visual -- prose and the quantile formula alone don't make it click. A bell curve with two contrasting tick grids underneath turns the whole idea into one glance and is currently unserved by any figure.",
+      "kind": "static",
+      "placement": "NF4: Normal Float 4",
+      "priority": 1,
+      "brief": "A single static infographic. TOP: a standard-normal bell curve labeled 'weight distribution within a group (normalized to [-1, 1])', with light shading under the curve so the eye sees mass concentrated near 0 and thin tails toward +/-1. BELOW the curve, two horizontal number lines spanning -1 to +1, sharing the same x-scale so ticks align vertically with the curve. TOP LINE labeled 'INT4 uniform (16 evenly-spaced levels)': 16 tick marks equally spaced; visually call out (with a small bracket or faded ticks) that the outer ticks fall in the near-empty tails -- resolution wasted where few weights live. BOTTOM LINE labeled 'NF4 (16 levels at normal quantiles)': 16 ticks placed at the quantiles of N(0,1) -- densely bunched around 0, spreading apart toward the ends, with the two endpoint ticks pinned exactly at -1 and +1. Draw a few faint drop-lines from the tall center of the bell curve down to the dense NF4 ticks to show 'more codes where the density is high'. Label a few representative NF4 values lightly (e.g. -1.0, 0.0, ~0.72, +1.0) but keep the interior uncluttered. Include a one-line caption: 'NF4 puts its 16 codes where the weights actually are, so the average rounding error is smaller at the same 4-bit budget.' Do NOT print any perplexity or benchmark numbers. Theme-safe: derive curve fill, tick, and text colors from CSS variables / currentColor; the two grids should be visually distinguishable (e.g. one solid, one via a subtle accent) without relying on hardcoded red/green. Everything inside the viewBox, no overlapping labels."
+    },
+    {
+      "name": "quant-q4km-superblock-anatomy",
+      "concept": "GGUF Q4_K_M's nested block-level mixed precision: a 256-weight super-block with two fp16 scales, 8 sub-blocks of 32 each carrying a 6-bit scale and min, over 4-bit weights, feeding the dequant formula.",
+      "rationale": "This is the most structurally dense passage in the chapter (a full paragraph mapping the ggml block_q4_K struct plus a dequant formula with five symbols from three different levels). The nesting is exactly what prose handles worst and a diagram handles best; a labeled nested-box figure with arrows from each formula symbol to its source makes the whole k-quant scheme legible and is unserved.",
+      "kind": "static",
+      "placement": "The K-Quant Family",
+      "priority": 1,
+      "brief": "A static nested-container infographic showing one Q4_K_M super-block. OUTER box labeled 'Super-block = 256 weights (12.5 KB source of truth: ggml block_q4_K)'. Along the top of the outer box, two small distinct chips labeled 'd (fp16)' and 'dmin (fp16)' with sublabel 'two high-precision super-block scales (4 bytes total)'. Below them, a horizontal row of 8 equal sub-block cells, each labeled 'sub-block = 32 weights'; each cell shows two tiny fields 's_j (6-bit scale)' and 'm_j (6-bit min)', with a bracket underneath the row annotating 'the 16 six-bit scales+mins pack into scales[12] = 12 bytes'. Pick ONE sub-block and draw an expansion/zoom to a strip of 4-bit weight cells: show ~8 cells labeled 'q in [0,15] (4-bit)' then an ellipsis and 'x32', with the annotation 'all 256 weights = qs[128] bytes'. To the side or bottom, a callout box with the dequant formula: w_hat = d * s_j * q  -  dmin * m_j. Draw thin arrows from each symbol in the formula to its origin in the diagram: d and dmin from the super-block scale chips, s_j and m_j from the highlighted sub-block, q from a 4-bit weight cell. Add a short banner conveying the core idea: 'mixed precision -- scales stored at higher precision (fp16 / 6-bit) than the 4-bit weights they govern.' Use only the small illustrative integers already given (256, 32, 8, 12 bytes, 128 bytes, 4/6/16 bits); invent no new numbers. Theme-safe colors from CSS vars/currentColor; keep the three precision tiers (fp16, 6-bit, 4-bit) visually distinguishable via weight/outline, not hardcoded hues. Clear left-to-right / top-down reading order, no overlaps, all within viewBox."
+    },
+    {
+      "name": "quant-llm-int8-outlier-decomposition",
+      "concept": "LLM.int8 splits the matmul into a tiny FP16 path for a handful of outlier activation channels and a bulk INT8 path for everything else, then sums the two.",
+      "rationale": "The insight that made INT8 practical for large models is inherently spatial -- a few columns pulled out and routed differently -- and it explains why naive per-tensor INT8 fails. It anchors the INT8 section (the chapter's 'safe harbor') and has no figure; a decomposition diagram makes the outlier-handling click immediately.",
+      "kind": "static",
+      "placement": "INT8 Weight-Only (LLM.int8)",
+      "priority": 2,
+      "brief": "A static decomposition diagram of one linear layer's matmul Y = X . W. LEFT: an activation matrix X drawn as a grid of ~16 columns (channels), with 2 of them rendered as visibly taller / emphasized bars labeled 'outlier channels (~0.1-1% of channels, huge magnitude)' and the other 14 as normal-height, quiet columns. A splitting fork routes the tensor into TWO parallel paths. TOP PATH (small): the 2 outlier columns of X and their matching rows of W, tagged 'kept in FP16', flowing into a small box 'FP16 matmul (exact, tiny)'. BOTTOM PATH (large): the remaining 14 columns, tagged 'quantized per-column to INT8', flowing into a large box 'INT8 Tensor-Core matmul (bulk of the work, cheap + low-bandwidth)'. Both partial results converge into a '+' / sum node producing the output Y. Annotate the key intuition near the join: 'the tiny FP16 side absorbs the catastrophic outliers; the big INT8 side delivers the memory and speed win.' Use only small illustrative integers (16 columns, 2 outliers) and do NOT invent accuracy/perplexity numbers. Make the outlier emphasis readable in both themes via bar height + outline weight rather than a single hardcoded color; all colors from CSS vars/currentColor. Keep the fork-then-join reading order obvious, nothing clipped, everything inside the viewBox."
+    }
+  ],
+  "summary": "The chapter is already well-served at the DECISION / TRADEOFF altitude: all three existing figures (weight-only dataflow, perplexity-quality gradient, hardware decision tree) render clearly in both light and dark themes and earn keep verdicts. The gap is MECHANISM: the chapter's three most visual, most-foundational format mechanics have no figures. I propose three static infographics -- (1) NF4 vs INT4 code points on a normal distribution (the chapter's signature 'aha', priority 1), (2) the Q4_K_M nested super-block/sub-block anatomy with the dequant formula wired to its sources (priority 1), and (3) the LLM.int8 outlier decomposition into FP16 + INT8 paths (priority 2). None need animation -- each is a structural relationship a single frame conveys. No new-figure count beyond three; discipline maintained."
+}

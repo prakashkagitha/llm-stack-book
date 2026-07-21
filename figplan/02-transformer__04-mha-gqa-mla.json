@@ -1,0 +1,64 @@
+{
+  "chapter": "content/02-transformer/04-mha-gqa-mla.md",
+  "core_intuitions": [
+    "MHA = split d_model into h subspaces, run independent scaled-dot-product heads in parallel, then concatenate and mix with W_O — many kinds of 'relevance' at once for roughly one wide head's FLOPs.",
+    "Heads are an implementation reshape: one big d_model->d_model GEMM per role, then reshape the last axis into (h, d_h); mathematically identical to h small matmuls but one large kernel.",
+    "The KV cache is the real inference bottleneck: size = 2*B*L_layers*S*(KV-head count)*d_h*P, it must be streamed from HBM every decode step (memory-bandwidth bound), and it competes with the weights for HBM so it caps concurrency and context length.",
+    "Query-head count and KV-head count can be decoupled: many query heads can share few key/value heads — the single observation that generates MQA, GQA, and MLA.",
+    "GQA mechanism: narrow W_k/W_v (output g*d_h, not d_model) shrink the parameters and the cache; a cheap repeat_kv 'expand' broadcasts the g cached KV heads back up to h to align with the query heads for the kernel — you cache g heads but feed h.",
+    "MLA compresses the cache itself: cache a small low-rank latent c^KV per token and up-project per-head K/V from it (with weight absorption to keep decode cheap and a decoupled RoPE key to stay position-aware), keeping full head diversity at a tiny cache."
+  ],
+  "existing": [
+    {
+      "name": "mha-forward-dataflow",
+      "verdict": "refine",
+      "issue": "Top-to-bottom dataflow (x -> W_Q/W_K/W_V -> reshape -> per-head SDPA -> concat -> W_O) is correct and well-sequenced, and W_Q/W_K/W_V read well. But in dark theme the inner 'reshape -> (B,h,L,d_h)' boxes and the four per-head 'softmax(QK^T/sqrt(d_h)).V' boxes render with dark fill and near-dark text, so those labels have weak contrast against the dark page.",
+      "improvement": "Make the inner reshape and per-head SDPA box fills and their text theme-adaptive so every label is as legible in dark as in light; keep the excellent overall reading order and the two callouts ('project once per role' and 'W_O mixes information across heads')."
+    },
+    {
+      "name": "mha-kvcache-append",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "gqa-kv-sharing",
+      "verdict": "refine",
+      "issue": "The three-panel MHA/GQA/MQA query->KV mapping with cache=8x/2x/1x is clear and correct in both themes. Two defects: (1) the bottom caption uses an arrow glyph that renders as a missing-glyph tofu box in both themes ('fewer KV heads [] smaller KV cache', 'MHA 8 [] GQA 2 [] MQA 1'); (2) the MQA panel's query heads are drawn as empty outlined boxes while the MHA and GQA panels label them q0..q7, an inconsistency that reads like missing labels.",
+      "improvement": "Replace the tofu arrow glyph with a rendering-safe arrow (ASCII '->' or a verified-in-font glyph). Label the MQA query heads q0..q7 to match the other two panels. Leave the layout, colors, and cache multipliers as-is."
+    },
+    {
+      "name": "mhagqamla-headsharing-spectrum",
+      "verdict": "replace",
+      "issue": "This stacked MHA/GQA/MQA head-sharing diagram conveys the same core intuition (query heads sharing few KV heads, with cache = 8x/2x/1x) that gqa-kv-sharing already conveys more compactly ~30 lines earlier in the same section. Two near-identical figures for one idea is redundant, and this one also hardcodes blue/purple fills. The chapter's GQA implementation mechanism (why W_k/W_v are narrow, what repeat_kv actually does) is meanwhile unvisualized despite being a stated core takeaway.",
+      "improvement": "Retire this figure and use its slot (the 'Implementing the MHA -> GQA conversion' subsection) for a new figure that visualizes the GQA mechanism instead of re-stating the sharing pattern: narrow W_k/W_v projections plus the repeat_kv broadcast. See new figure 'gqa-projection-and-repeat'."
+    },
+    {
+      "name": "mhagqamla-cache-layout-compare",
+      "verdict": "refine",
+      "issue": "Strong figure: the proportional-width cache bars (MHA large, GQA smaller, MLA tiny latent) plus the MLA reconstruction diagram (c^KV up-projected to per-head K/V, 'absorbed into W^Q/W^O, no materialization') nail the MLA intuition in both themes. Minor: the right-edge annotations ('(large) 2*h*d_h', '(g/h x MHA) 2*g*d_h') sit right against the bar edges and slightly crowd them.",
+      "improvement": "Nudge the right-side size annotations off the bar edges so nothing touches or overlaps; keep the K=blue / V=green role coloring (consistent and legible in both themes) and the two-part layout. No structural change."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "kv-cache-hbm-wall",
+      "concept": "GPU HBM is a fixed budget: model weights take a fixed slab, the rest holds one growing KV cache per concurrent sequence — and the cache, not the weights, is what hits the ceiling first. Shrinking it (GQA) multiplies how many users / how much context fit.",
+      "rationale": "The chapter's single most-emphasized skill is 'derive a cache size in your head' and its whole thesis is that the KV cache — not FLOPs or weights — caps concurrency and context. mha-kvcache-append shows the append/reuse mechanism but never shows the cache competing for HBM and hitting a wall. This is the missing figure that makes 'why cache is THE bottleneck' and 'why an 8x reduction is worth 8x users or 8x context' click intuitively.",
+      "kind": "static",
+      "placement": "The KV Cache: Why Inference Memory, Not FLOPs, Becomes the Bottleneck (beside the 70B worked example)",
+      "priority": 1,
+      "brief": "Two side-by-side panels sharing one identical fixed-height 'GPU memory (HBM)' budget bar, with a bold horizontal ceiling line at the top labeled 'memory wall'. In BOTH panels the bottom slab is an identical neutral block labeled 'model weights (fixed)'. Above it is the region labeled 'free for KV cache'. LEFT panel titled 'MHA': the free region is packed with a few WIDE accent-colored blocks stacked/tiled, each labeled '1 sequence's KV cache'; only a small illustrative number fit before the ceiling (e.g. 'fits ~4 sequences'). Add one small callout arrow on a block: 'grows with context length S' (show a faint taller ghost block hitting the ceiling to convey 'longer context = fewer users'). Annotate the block size as proportional to '2 * L_layers * S * (KV-head count) * d_h * P'. RIGHT panel titled 'GQA (g = h/8)': same budget, same weights slab, but each sequence's KV block is drawn ~8x narrower, so many more tile under the same ceiling (e.g. 'fits ~32 sequences'). Bottom caption spanning both: 'Shrinking the KV cache doesn't just save memory — it multiplies how many users (or how much context) fit under the same ceiling. Cache per sequence is proportional to the KV-head count.' STRICT: keep it schematic — use only small illustrative integer counts of blocks (like 4 vs 32); invent NO GB/byte benchmark numbers. Theme-safe: neutral fill for weights, one consistent accent hue for cache blocks, legible ceiling line and labels in both light and dark; everything inside the viewBox, no overlaps."
+    },
+    {
+      "name": "gqa-projection-and-repeat",
+      "concept": "The two load-bearing facts of the GQA code: W_k/W_v are NARROW projections (output g*d_h, not d_model) so you store only g KV heads, and repeat_kv is a cheap no-copy 'expand' that broadcasts those g heads back up to h to align with the query heads before scaled_dot_product_attention.",
+      "rationale": "The chapter states the mechanism explicitly ('the two load-bearing facts in that code') and it is a listed Key Takeaway, but no figure shows it — the retired spectrum figure only re-stated the sharing pattern. Seeing the projection-width asymmetry (wide Q, narrow K/V) next to the repeat_kv broadcast is exactly what turns the repeat_kv code from a mysterious reshape into an obvious memory trick: cache g, feed h.",
+      "kind": "static",
+      "placement": "Implementing the MHA -> GQA conversion (the subsection with the GroupedQueryAttention code, replacing the retired mhagqamla-headsharing-spectrum marker)",
+      "priority": 1,
+      "brief": "A left-to-right two-stage flow with h=8 query heads and g=2 KV groups (n_rep = h/g = 4). START: a single hidden vector token labeled 'h_t  (B, L, d_model)'. STAGE 1 'Projection widths differ': three projection blocks fanning out — W_q drawn WIDE, outputting eight query-head slots q0 q1 ... q7 (label '(B, h, L, d_h), h = 8'); W_k and W_v drawn visibly NARROW (about 1/4 the width of W_q), each outputting only two KV-head slots (k0 k1 for W_k, v0 v1 for W_v; label '(B, g, L, d_h), g = 2'). Annotate under W_k/W_v: 'output g*d_h, not d_model -> smaller matrix = the parameter AND cache saving; only k0,k1 / v0,v1 are cached'. STAGE 2 'repeat_kv broadcast (cheap expand, no data copied)': show k0 duplicating into [k0 k0 k0 k0] and k1 into [k1 k1 k1 k1], producing eight aligned KV slots; a small note 'query head j uses KV group j // n_rep'. Draw the alignment: the eight broadcast KV heads line up under the eight query heads. FINAL: an arrow into a box 'scaled_dot_product_attention -> (B, h, L, d_h)'. Reinforce the contrast with a compact legend: 'stored / cached = g heads (small)   ·   fed to kernel = h heads (via broadcast)'. Use consistent role coloring for Q vs K vs V that works in both themes; keep d_h a small integer conceptually (no benchmark numbers); everything inside the viewBox, clear reading order left-to-right, no overlaps in either theme."
+    }
+  ],
+  "summary": "The chapter is already reasonably well-figured: mha-kvcache-append (keep) and mhagqamla-cache-layout-compare (keep with a minor label-crowding refine) are strong, and mha-forward-dataflow + gqa-kv-sharing need only theme/legibility refines (dark-theme inner-box contrast; a tofu arrow glyph and unlabeled MQA query heads respectively). The two real gaps are both foundational and currently unserved: (1) the KV-cache-as-HBM-budget / concurrency-wall intuition that is the chapter's central thesis, and (2) the GQA implementation mechanism (narrow W_k/W_v + repeat_kv broadcast). mhagqamla-headsharing-spectrum is redundant with the cleaner gqa-kv-sharing, so I retire it and reuse its slot for the GQA-mechanism figure. Net: keep 2, refine 2, replace 1, add 2 (both priority 1)."
+}

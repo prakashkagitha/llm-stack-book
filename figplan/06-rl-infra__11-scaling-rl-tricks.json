@@ -1,0 +1,65 @@
+{
+  "chapter": "content/06-rl-infra/11-scaling-rl-tricks.md",
+  "core_intuitions": [
+    "The bubble is the whole game: heavy-tailed generation lengths mean most workers finish early and idle while one long trace gates the step; efficiency is captured by the single number eta_gen = mean(L)/max(L), which one 8x outlier can crush to ~0.12.",
+    "Oversubscription + continuous batching + a shared pull-queue attack that bubble by refilling freed slots from a deep queue, so only the final tail remains idle; overlapping generation with training (1-step off-policy) is the largest single win.",
+    "Partial rollout treats a truncated long trace as a checkpoint, amortizing it across steps, but the resumed prefix is off-policy and must be importance-corrected per token.",
+    "Group-relative advantage is exactly zero when all G rewards in a group are equal, so all-correct (easy) and all-wrong (hard) prompts cost G generations and yield no gradient; DAPO filters these and oversamples to a full useful batch, and this is only cheap on an async, oversubscribed generation layer.",
+    "Reward variance p(1-p) peaks at pass-rate 0.5, so dynamic sampling and curriculum are the same idea: spend the rollout budget on prompts the model solves ~half the time, where gradient signal is maximal.",
+    "The loss normalizer is not cosmetic: per-sequence length normalization shrinks the per-token penalty on longer wrong answers, creating a gradient incentive to ramble; token-level / constant normalization (Dr. GRPO, DAPO) makes per-token gradients length-neutral."
+  ],
+  "existing": [
+    {
+      "name": "scalingrl-sync-step-phases",
+      "verdict": "refine",
+      "issue": "Correctly conveys the four serial phases and the two idle brackets, but the right edge is cramped: the 'time' axis label clips to 'tim' in dark theme, and the narrow 'weight -> infer sync' boxes have text jammed against their borders in both themes.",
+      "improvement": "Add right-margin padding so the 'time' label and arrowhead sit fully inside the viewBox, and widen the two 'weight->infer sync' boxes (or shrink their font) so the text has breathing room. No structural change; the phase layout and generation-dominance message are correct and should stay."
+    },
+    {
+      "name": "scalingrl-overlap-pipeline",
+      "verdict": "refine",
+      "issue": "The synchronous-vs-pipelined contrast reads well, but the 'consumes gen(0) while gen(1) runs' annotation overlaps the vertical arrow and the boundary between the infer and train rows, and the small generation/training legend at top-right sits close to the 'always busy' text.",
+      "improvement": "Nudge the 'consumes gen(0) while gen(1) runs' label clear of the arrow (place it just left of or above the arrow with a small gap), and move the two-swatch legend to a spot that does not crowd the 'always busy' labels. Keep the staleness-1 framing and the diagonal consume-arrow, which are the point."
+    },
+    {
+      "name": "scalingrl-partial-rollout",
+      "verdict": "keep",
+      "improvement": "Clear and effective in both themes: the without/with panels, the accumulating 4k chunks with resume loops, and the green EOS terminus land the checkpoint intuition well. The floating IS-correction note is legible; leave as-is."
+    },
+    {
+      "name": "scalingrl-sota-recipe-stack",
+      "verdict": "keep",
+      "improvement": "Excellent summary infographic: three colored layers, right-aligned purpose tags, and the bold-bordered 'Lever 3, biggest win' highlight all render correctly and legibly in light and dark. No change needed."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "scalingrl-gen-bubble-oversubscribe",
+      "concept": "The intra-generation-phase tail bubble (eta_gen = mean/max) and how oversubscription + continuous batching refills freed slots so only the final tail idles.",
+      "rationale": "This is THE central number of the chapter ('the one number to watch'), and it drives Levers 1-2, yet no existing figure shows the actual within-phase parallel-worker bubble. The sync-phases and overlap figures operate at the macro (phase and step) level; this shows why a single heavy-tailed generation phase is mostly idle and exactly how the deep queue fixes it. Making eta_gen visual is foundational to the entire first half.",
+      "kind": "static",
+      "placement": "### Lever 1: oversubscribe the engines",
+      "priority": 1,
+      "brief": "Two stacked Gantt panels sharing one horizontal time axis (left-to-right = wall-clock). PANEL 1, titled 'Naive: one shard per engine (eta = mean(L)/max(L))': six horizontal lanes labeled Engine 1..6. Each lane holds one solid bar whose length = that sequence's generation time. Make the distribution heavy-tailed: five modest bars of similar length and ONE outlier bar about 5-6x longer. After each short bar ends, extend a hatched/faded 'idle' region to a vertical dashed line marking L_max (the moment the outlier finishes). Label the large hatched expanse 'bubble: idle GPUs waiting on the tail'. Under the axis, draw a bracket for L_max and a tick for the mean L_bar. A small caption box states eta_gen = sum(L_i) / (B * L_max) = L_bar / L_max, and notes 'one long outlier drops eta far below 1'. PANEL 2, titled 'Oversubscribe + continuous batching: deep queue refills freed slots (eta -> ~1)': same six lanes and same time axis. Now each lane is packed with several short solid segments back-to-back (a slot freed at EOS immediately admits the next queued prompt), filling each lane densely up to near L_max; one lane still carries the single long outlier. On the left, draw a 'prompt queue' as a stack of pending prompts with arrows feeding into freed slots. The only remaining idle is a small hatched sliver at the very end of the run, labeled 'only the final tail remains'. Shared legend: solid = useful decode work, hatched = idle bubble. Theme-safe: use the generation/inference accent for solid bars and a neutral gray for the hatched idle; no hardcoded primaries. Small integers only (6 lanes, outlier ~5x median). The visual punch must be that Panel 1 is mostly hatched idle area and Panel 2 is mostly solid work."
+    },
+    {
+      "name": "scalingrl-dynamic-sampling-zero-gradient",
+      "concept": "Why all-same-reward groups give zero group-relative advantage, how DAPO filters and oversamples to a full useful batch, and how this ties to reward variance p(1-p) peaking at pass-rate 0.5.",
+      "rationale": "The zero-gradient / vanishing-advantage problem is the conceptual pillar of the chapter's entire second half and unifies dynamic sampling with curriculum, but it exists only as prose and code. A single infographic that shows group degeneracy AND the p(1-p) signal curve makes the 'spend generation on prompts that move the policy' thesis click, and explains why the discarded groups are exactly the variance-zero ends of the curve.",
+      "kind": "static",
+      "placement": "### DAPO's dynamic sampling: oversample, then filter to a full effective batch",
+      "priority": 1,
+      "brief": "Left two-thirds: a vertical stack of prompt-groups, each group drawn as a row of G=4 small cells marked with a check (correct) or a cross (wrong). Show four representative groups. Group A: all four checks (easy/mastered) -> annotate 'mean(r)=1, every A_i = 0 -> zero gradient' -> tag DISCARD, rendered faded/struck-through. Group B: all four crosses (too hard) -> 'mean(r)=0, every A_i = 0 -> zero gradient' -> DISCARD faded. Group C: two checks two crosses -> 'std(r)>0, A_i != 0 -> real signal' -> tag KEEP, highlighted with the signal accent. Group D: three checks one cross -> KEEP highlighted. Below the stack, a curved loop arrow labeled 'DAPO: keep sampling new prompts and discarding degenerate groups until N useful groups survive', with a small note 'fraction discarded GROWS as the model improves'. Include a compact formula reminder box: A_i = (r_i - mean(r)) / std(r); 'if all r_i are equal the numerator is 0 for every sample'. RIGHT third: a small plot, x-axis = pass-rate p from 0 to 1, y-axis = 'reward variance p(1-p) = gradient signal', drawn as an inverted parabola peaking at p=0.5. Mark the p=0 and p=1 ends as 'degenerate (A=0), filtered out' and mark p=0.5 as 'max signal'. Draw dashed connector lines linking Group A (all-correct, p=1) and Group B (all-wrong, p=0) to the two zero ends of the curve, and Group C (mixed, p~0.5) to the peak, visually asserting 'the discarded groups ARE the variance-zero ends'. Theme-safe: signal/KEEP uses the positive accent, DISCARD uses a neutral faded gray; checks/crosses via shape or accent, not hardcoded red/green primaries. Small integers only (G=4)."
+    },
+    {
+      "name": "scalingrl-length-norm-bias",
+      "concept": "Per-sequence length normalization shrinks the per-token penalty on longer wrong answers, creating a gradient incentive to ramble; token-level / constant normalization makes per-token gradients length-neutral.",
+      "rationale": "Dr. GRPO's length-normalization bias is genuinely counterintuitive and is called out as the chapter's single practical lesson ('be deliberate about your loss normalizer', a Key Takeaway), yet it lives only as dense prose and code. A bar-height comparison makes the mechanism ('divide by a bigger length -> smaller per-token penalty -> making wrong answers longer is rewarded') immediately visible, and rebalances the figure set toward the algorithmic half.",
+      "kind": "static",
+      "placement": "### Dr. GRPO: removing GRPO's two normalization biases",
+      "priority": 2,
+      "brief": "Left: two WRONG trajectories (negative advantage, use A = -1 illustratively), both with the SAME summed loss magnitude. Trajectory SHORT = a row of 4 token cells; trajectory LONG = a row of 12 token cells; tint all cells as 'penalized' (the negative-advantage shade). Middle-to-right: two clearly separated computation panels. PANEL LEFT titled 'Vanilla GRPO: divide by |o_i| (per-sequence length norm)': per-token penalty = |A| / length, so short = 1/4 = 0.25 per token and long = 1/12 ~ 0.08 per token. Over each token cell draw a vertical penalty-magnitude bar: the SHORT trajectory gets TALL bars (0.25 each), the LONG trajectory gets SHORT bars (~0.08 each). Add a prominent flag callout: 'making a wrong answer LONGER shrinks its per-token penalty -> the gradient rewards rambling when wrong'. PANEL RIGHT titled 'Dr. GRPO / token-level loss: constant normalizer (flat mean over all tokens)': per-token penalty identical regardless of length, so BOTH short and long trajectories get equal-height bars. Callout: 'length-neutral: per-token gradient independent of length'. Footer line: 'The normalizer is not cosmetic; it encodes a length policy.' Use small illustrative integers only (lengths 4 and 12, A = -1). Bar heights are the load-bearing visual and must read at a glance: tall-then-short on the left, uniform on the right. Theme-safe: use a single neutral 'penalty' accent for the bars (not a hardcoded red primary), legible in both light and dark."
+    }
+  ],
+  "summary": "The chapter is well-served on its infra/scheduling half (four solid existing figures: serial phases, gen/train overlap, partial rollout, and a strong SOTA recipe stack) but has no figures for its two most foundational intuitions. First, the intra-generation-phase tail bubble and eta_gen = mean/max, which is literally 'the one number to watch' and drives Levers 1-2, is never drawn; I propose a two-panel Gantt (naive bubble vs oversubscribed refill). Second, the entire algorithmic half (dynamic sampling, curriculum, Dr. GRPO) is figure-poor: I propose a zero-gradient + p(1-p) infographic that unifies dynamic sampling with curriculum, and a length-normalization-bias bar comparison for Dr. GRPO's counterintuitive rambling-when-wrong mechanism. Two existing figures get minor refine verdicts for edge clipping / label crowding (sync-step-phases, overlap-pipeline); partial-rollout and recipe-stack are keeps."
+}

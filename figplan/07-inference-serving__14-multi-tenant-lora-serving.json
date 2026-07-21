@@ -1,0 +1,49 @@
+{
+  "chapter": "content/07-inference-serving/14-multi-tenant-lora-serving.md",
+  "core_intuitions": [
+    "Merging a LoRA collapses the model to ONE adapter; multi-tenancy requires keeping the LoRA path SEPARATE so a single batch can serve many adapters at once (merging or per-adapter passes wreck the batch).",
+    "The batched problem is a grouped/segmented matmul: one shared base GEMM plus a per-row low-rank correction where each row may use a different A,B,r,alpha. Sorting the batch by adapter makes each adapter's rows contiguous (a segment), so its weight tile is loaded once and reused across the segment.",
+    "The low-rank parenthesization y = W0 x + (alpha/r) B(Ax) shrinks d_in -> r then expands r -> d_out and never materializes BA: ~99% of FLOPs are the base GEMM, ~1% the LoRA correction.",
+    "In decode the LoRA correction is bandwidth-bound, not FLOP-bound: many distinct adapters' weights are each streamed to serve only a few token-vectors, so it can be <1% of FLOPs yet a ~20-30% bandwidth tax; fusing the gather so each tile loads once is what makes it affordable.",
+    "Adapters live in a tiered store (GPU HBM -> CPU DRAM -> SSD -> object store); only active adapters must be GPU-resident, async prefetch hides swaps behind compute, and cold adapters create the p99 TTFT cliff.",
+    "S-LoRA Unified Paging puts adapter weights in the SAME paged pool as the KV cache, trading DRAM fluidly between more concurrency (KV) and more resident adapters, with a registry that ref-counts and LRU-evicts."
+  ],
+  "existing": [
+    {
+      "name": "lora-serving-unified-paged-pool",
+      "verdict": "keep",
+      "improvement": "Reads clearly in both themes: resident base band above a shared pool of interleaved KV (blue) / LoRA (orange) / free (dashed) cells, with the a7-non-adjacency note nicely conveying fragmentation. Legend and caption are legible; nothing clips. Serves the Unified Paging intuition well."
+    },
+    {
+      "name": "lora-serving-tiered-storage-hierarchy",
+      "verdict": "keep",
+      "improvement": "The width-encodes-capacity pyramid (GPU HBM -> CPU DRAM -> SSD -> object store) with the orange async-prefetch arrow and per-tier role labels is clear and correct in both themes. Latency bands and the cold-start note land the SLO-cliff intuition. No clipping or illegible overlap."
+    },
+    {
+      "name": "lora-serving-unified-forward-sgmv",
+      "verdict": "keep",
+      "improvement": "Clean split-path dataflow (X -> dense base GEMM -> Y_base and X -> SGMV -> Y_lora, summed to Y), animation optional and readable statically, both themes fine. Operates at the whole-layer altitude; it deliberately abstracts the SGMV box, which the proposed segmented-gather figure zooms into (complementary, not duplicative)."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "sgmv-segmented-gather-matmul",
+      "concept": "How a heterogeneous continuous batch (each token tagged with an adapter id) becomes an efficient segmented gather matmul: sort by adapter into contiguous segments, each segment gathers its own low-rank (A_a, B_a) pair and does shrink (d_in->r) then expand (r->d_out), while one dense base GEMM runs over the whole batch.",
+      "rationale": "This is the literal heart of the chapter ('the kernel that solves this is the heart of the chapter'; 'a grouped or segmented matrix multiply'). The existing unified-forward figure shows the abstract base+LoRA split but NOT the segment structure, the sort-by-adapter step, the per-segment weight reuse, or the low-rank waist. A reader must SEE that sorting makes each adapter's rows contiguous so its tile loads once, and that the correction is shrink-then-expand through a rank-r bottleneck. It simultaneously carries the segmented-matmul, weight-reuse, and low-rank-parenthesization intuitions, and grounds the BGMV(decode)/SGMV(prefill) distinction.",
+      "kind": "static",
+      "placement": "Section 7.14.2, subsection 'What SGMV computes' — anchor after the seg_start / seg_adapter code block and before 'Two variants: BGMV vs SGMV'.",
+      "priority": 1,
+      "brief": "Wide static infographic (suggest viewBox ~0 0 900 500), left-to-right pipeline that then merges. TOP ROW: 'unsorted continuous batch' — ~8 small token cells in a row, each labeled with an adapter id (illustrative small integers), e.g. a3, a3, a7, a0, a3, a7, a2, a3. Distinguish adapters by TEXT LABEL primarily (do not rely on color alone) plus theme-safe fills using only var(--accent)/var(--accent-2) at a couple of opacities and a neutral for the base/a0 cell; the reserved 'a0 = base only' cell drawn dashed/neutral. A labeled arrow 'sort batch by adapter id' points down/right to MIDDLE ROW: the same tokens now grouped into contiguous segments with brackets and labels: [ a3 a3 a3 | a7 a7 | a2 | a0(base) ]; annotate 'seg_start = [0,3,5,6]' and 'each segment = one adapter's rows, contiguous'. Then ZOOM into ONE highlighted segment (a3, 3 rows): draw its rows entering a SHRINK block A_a drawn as a wide-to-narrow (d_in -> r) tile, producing a skinny r-wide intermediate V, then an EXPAND block B_a drawn as a narrow-to-wide (r -> d_out) tile, producing the per-row correction, scaled by (alpha/r). Visually emphasize the rank-r 'waist' (the low-rank bottleneck) and annotate 'A_a, B_a gathered ONCE, reused across all rows of the segment' (the efficiency point / why sorting matters). In PARALLEL, a full-width block spanning the whole batch labeled 'base GEMM: X . W0^T  (one dense op over the entire batch, adapter-agnostic, ~99% FLOPs)'; a '+' merges base output and the summed per-segment corrections into 'Y'. BOTTOM: a compact two-line contrast inset — 'BGMV (decode): each request = 1 token -> each segment is a single row -> matrix-vector, bandwidth-bound' vs 'SGMV (prefill): each request = many prompt tokens -> segment is a real small GEMM, compute-bound'. Theme-safe (no hardcoded primary colors; use the accent CSS vars and neutrals), small illustrative integers only, no benchmark numbers, everything inside the viewBox with a clear reading order and no illegible overlaps. Static frame must be fully understandable; any token-flow animation is enhancement only."
+    },
+    {
+      "name": "decode-lora-bandwidth-tax",
+      "concept": "In a decode step the LoRA correction is a tiny fraction of the FLOPs but a surprisingly large fraction of the memory traffic, because many distinct adapters' weights must each be streamed while being used by only a few token-vectors — so its cost is dominated by weight movement, not arithmetic.",
+      "rationale": "The '~0.6% of FLOPs yet a ~20-30% bandwidth tax' paradox is one of the chapter's Key Takeaways and the reason fusing the gather matters and why decode-time LoRA hurts more than its FLOP count suggests. It is developed only in a dense numeric worked example; a two-bar proportion picture makes the counterintuitive point instantly legible and memorable, cementing the memory-bound intuition the chapter keeps returning to.",
+      "kind": "static",
+      "placement": "Section 7.14.2 — immediately after the admonition 'Worked example: LoRA correction cost in a decode step'.",
+      "priority": 2,
+      "brief": "Static comparison of TWO stacked bars of equal total length, each normalized to 100% of one decode step, drawn side by side (or stacked). BAR A titled 'Compute (FLOPs) this step': almost the entire bar is one block 'base GEMM'; a thin sliver at the far end is 'LoRA correction (<1%)'. BAR B titled 'Memory traffic (bytes moved) this step': a large block 'base weights (loaded once for the whole batch)' PLUS a clearly visible, much wider-than-in-Bar-A slice 'LoRA adapter weights: N distinct adapters, each streamed, each used by only a few tokens'. The whole point is the visual contrast: the SAME LoRA operation is a sliver of FLOPs but a sizable slice of bytes. Draw a connective annotation/arrow linking the LoRA sliver in Bar A to the LoRA slice in Bar B, labeled 'same operation: sliver of FLOPs -> sizable slice of bytes -> bandwidth-bound'. Add a one-line mechanism caption: 'in decode each adapter's weight is loaded to multiply just a handful of token-vectors -> low arithmetic intensity -> bandwidth-bound; fusing the gather (load each tile once) is what keeps it cheap.' Tag the figure 'illustrative proportions, not to scale / not a benchmark'; a small setup tag like '~20 adapters, ~64 tokens (illustrative)' echoing the worked example is acceptable ONLY if clearly framed as illustrative. Theme-safe: base blocks in a neutral/accent fill, LoRA slices in var(--accent-2); legible labels and clear contrast in BOTH light and dark; everything inside the viewBox, no overlaps. Static and fully self-explanatory."
+    }
+  ],
+  "summary": "The chapter is already well-served on memory (Unified Paging), control plane (tiered storage + prefetch), and whole-layer dataflow (base/LoRA split) - all three existing figures render correctly and clearly in both themes and are kept. The two genuine intuition gaps are both in section 7.14.2, the chapter's stated 'heart': (1) the segmented/grouped SGMV kernel itself - sorting a heterogeneous batch by adapter into contiguous segments, gathering each segment's low-rank (A,B) pair once, and shrinking d_in->r then expanding r->d_out - which the existing forward figure abstracts away; and (2) the counterintuitive decode bandwidth tax (sliver of FLOPs, sizable slice of bytes) that explains why fusing the gather matters. I propose exactly these two new static figures (priority 1 and 2) and keep all three existing ones - disciplined, no redundancy."
+}

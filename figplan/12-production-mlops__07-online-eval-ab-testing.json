@@ -1,0 +1,64 @@
+{
+  "chapter": "12.7 Online Evaluation: A/B Testing, Canaries & Guardrail Metrics",
+  "core_intuitions": [
+    "Offline metrics are proxies, not proof: live traffic is non-IID and has failure modes (distribution shift, no-relevant-doc retrieval tail) that a frozen benchmark structurally cannot see.",
+    "Metrics form a hierarchy trading fidelity against latency-to-signal: sensitivity metrics respond in hours but are noisy proxies, primary metrics are the true north star but take days/weeks, and guardrails are hard blockers that can veto a launch regardless of the primary metric.",
+    "Interleaving is ~10-30x more sample-efficient than parallel A/B because showing both models to the SAME user turns a noisy between-user comparison into a paired within-user difference, cancelling the between-user variance that dominates A/B.",
+    "CUPED reduces variance by subtracting each user's pre-experiment behavior: regressing the in-experiment metric on a correlated pre-period covariate and keeping the residual shrinks variance by a factor (1 - rho^2), halving the required sample size when rho~0.7.",
+    "Repeated peeking inflates the false-positive rate: a fixed-horizon p-value random-walks under the null and will eventually dip below 0.05 by chance, which is why always-valid confidence sequences use a wider-then-narrowing boundary that keeps type-I error controlled at any stopping time.",
+    "Rollout is a sequence of filters (offline -> shadow -> canary -> A/B -> live judge), each catching a different failure mode, with guardrail gating that halts promotion on any violation."
+  ],
+  "existing": [
+    {
+      "name": "online-eval-ab-traffic-split",
+      "verdict": "keep",
+      "issue": "Clean Mermaid flow: traffic -> deterministic randomization layer -> 50/50 control vs treatment -> loggers -> metrics pipeline. Renders clearly in both themes; correctly conveys session-level split and the metrics-tier fan-in.",
+      "improvement": ""
+    },
+    {
+      "name": "online-eval-shadow-deployment",
+      "verdict": "keep",
+      "issue": "Clearly shows the fanout: live path (v1 served to user) vs shadow path (v2 candidate -> /dev/null, not served) branching to shadow logger -> offline judge (1% sample) -> quality dashboard. The dashed 'discarded' box is the key intuition and it reads well in both themes.",
+      "improvement": ""
+    },
+    {
+      "name": "online-eval-live-judge-pipeline",
+      "verdict": "keep",
+      "issue": "Sampler (0.5% uniform + oversampled edge cases) -> async queue -> dispatcher -> LLM-judge (high coverage/low cost) + human raters (high fidelity/low coverage) -> quality DB -> rolling dashboard. Conveys the coverage/fidelity tradeoff well. Minor cosmetic: the 'filtered' side-labels and the sampler subtitle sit close to the box edge, but nothing is illegible in either theme.",
+      "improvement": ""
+    },
+    {
+      "name": "online-eval-lifecycle-stages",
+      "verdict": "keep",
+      "issue": "Vertical stack of gated stages (offline -> shadow -> canary -> A/B -> live) each with its own gating criterion and 'passes' transitions. Correctly frames the stages as sequential filters, matching the chapter's thesis. Legible in both themes.",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "online-eval-interleaving-vs-ab-variance",
+      "concept": "Why interleaving needs ~10-30x fewer sessions: between-user variance (A/B) vs paired within-user difference (interleaving).",
+      "rationale": "This is the single most striking quantitative claim in the chapter (the 10-30x, up to 100x, efficiency gain) and it is purely a variance-decomposition intuition that NO existing figure touches. Readers accept the number without grasping WHY; the 'aha' is that A/B must average out large per-user baseline differences across two disjoint crowds, whereas interleaving compares two responses inside one user so that per-user baseline cancels and only the model-vs-model gap remains.",
+      "kind": "static",
+      "placement": "After the paragraph in 'How interleaving works for LLM outputs' that states within-user variance is eliminated (ending in the 10-30x claim), before the code block.",
+      "brief": "Two side-by-side panels sharing a caption, contrasting how A/B and interleaving estimate the same treatment effect. LEFT panel titled 'A/B: between-user comparison'. Draw ~5 small user icons on a left column all routed to 'Control (v1)' and ~5 different user icons on a right column all routed to 'Treatment (v2)'. Each user icon carries a small vertical bar representing that user's intrinsic baseline enthusiasm, drawn at visibly DIFFERENT heights (some tall, some short) to depict large between-user variance. Below each arm show its mean as a wide, fuzzy/blurred distribution bell with a broad spread; label the gap between the two bell centers 'signal delta' and annotate 'signal must be dug out of large between-user noise -> many users needed'. RIGHT panel titled 'Interleaving: within-user comparison'. Draw the SAME ~5 users, each user shown once, and from each user draw TWO short arrows to a small paired bracket labeled 'v1 vs v2 shown to the same user'; output a single per-user signed difference chip (a small +/- token) meaning 'which did this user prefer'. Show these per-user differences aggregating into a NARROW, crisp distribution centered on the same 'signal delta', annotated 'per-user baseline cancels -> only model-vs-model gap remains -> far fewer users'. Beneath both panels a shared strip: 'Var_effect(A/B) proportional to between-user variance   |   Var_effect(interleaving) proportional to within-pair variance (much smaller)' and a callout 'empirically ~10-30x fewer sessions for the same power'. Constraints: use only small illustrative counts (5 vs 5), invent NO benchmark numbers beyond the chapter's own 10-30x range which is textual not axis-labeled; the two bell curves must be theme-safe (use currentColor / opacity, not hardcoded reds/greens); the wide-vs-narrow spread contrast is the load-bearing visual and must be obvious at a glance. Everything inside the viewBox, clear left-to-right then top-to-bottom reading order."
+    },
+    {
+      "name": "online-eval-sequential-peeking",
+      "concept": "Why peeking inflates false positives, and how an always-valid confidence sequence stays honest at any stopping time.",
+      "rationale": "The peeking problem is the chapter's most counterintuitive and most consequential statistical hazard (naive daily peeking pushes a nominal 5% false-positive rate to ~20-25%), and the fix (always-valid CI that widens early, narrows late) is central to the low-traffic story. Motion is genuinely useful here: the intuition IS temporal (data accumulates day by day and the estimate random-walks), so a growing trajectory that occasionally crosses a fixed line by pure chance is the 'aha' a static table cannot deliver.",
+      "kind": "long-animation",
+      "placement": "In the 'Sequential testing (always-valid p-values)' subsection, after the paragraph explaining that daily peeking for 14 days inflates the false positive rate to ~20-25%.",
+      "brief": "A time-series panel: x-axis is 'days of experiment' (say 1..14, small illustrative integers), y-axis is the estimated treatment effect (0 line emphasized as 'no true effect / H0 is TRUE for this simulation'). Draw 3-4 pale random-walk trajectories all starting near 0 and wandering as data accumulates, converging toward 0 by the end (since the null is true). Overlay TWO boundary systems: (a) a FIXED horizontal pair of dashed lines labeled 'fixed-horizon 95% cutoff (valid only if you look ONCE at the planned end)'; (b) a FUNNEL-shaped always-valid confidence sequence boundary that is WIDE early and narrows over time, labeled 'always-valid boundary (valid at ANY stopping time)'. The teaching beat: highlight ONE trajectory that, on some intermediate day, pokes above the FIXED cutoff (a red-flag star: 'peeking here -> false ship!') even though it never breaches the wider always-valid funnel and returns to 0 by day 14. Add a small side tally: 'peek daily against the fixed line -> ~1 in 4 null experiments falsely crosses' vs 'stop anytime inside the always-valid funnel -> error stays <= alpha'. ANIMATION (enhancement only, must be legible as the final static frame): reveal the trajectories one day at a time left to right, the always-valid funnel drawing its narrowing envelope as days advance, and the false-crossing star popping in on the day it happens then the trajectory retreating. Constraints: no hardcoded significance colors that break themes (use currentColor + an accent token for the alert star, opacity for the pale walks); the 'fixed line = one look only' vs 'funnel = look anytime' contrast is load-bearing and must be readable in a single frozen frame; use only illustrative day integers, invent no p-values on-axis beyond the qualitative crossing. Keep all trajectories and both boundary systems inside the viewBox with a clear legend."
+    },
+    {
+      "name": "online-eval-cuped-variance-reduction",
+      "concept": "CUPED subtracts each user's pre-experiment behavior; the residual metric has variance Var(Y)(1 - rho^2).",
+      "rationale": "CUPED is the chapter's key lever for low-traffic products (halving sample size when rho~0.7), but the estimator formula Y_tilde = Y - theta(X - Xbar) is opaque as algebra. The geometric intuition (fit a line through the pre-vs-in-experiment scatter, keep the vertical residual, and the point cloud collapses toward its mean) makes the (1 - rho^2) shrinkage self-evident. No existing figure addresses variance reduction.",
+      "kind": "static",
+      "placement": "In the 'CUPED: Controlled-experiment Using Pre-Experiment Data' subsection, after the Var(Y_tilde) = Var(Y)(1 - rho^2) equation and before the code block.",
+      "brief": "A two-stage geometric infographic. STAGE 1 (left): a scatter plot with x-axis 'X = pre-experiment metric per user' and y-axis 'Y = in-experiment metric per user', showing a positively-correlated point cloud (rho ~ 0.7) with an upward regression line through it labeled 'slope theta* = Cov(Y,X)/Var(X)'. Mark the covariate mean Xbar as a vertical reference. STAGE 2 (right, or overlaid with an arrow labeled 'subtract the projection'): show the SAME points but now collapsed onto the residual axis, i.e. Y_tilde = Y - theta(X - Xbar); the cloud is now a tight horizontal band with visibly smaller vertical spread. To the far right stack TWO vertical distribution bells side by side sharing a y-scale: a WIDE one labeled 'Var(Y): raw metric' and a NARROW one labeled 'Var(Y_tilde) = Var(Y)(1 - rho^2)', with a bracket between them annotated 'rho = 0.7 -> variance drops ~51% -> ~half the users for the same power'. Include a tiny inset formula reminder 'residual = what the pre-period could NOT predict'. Constraints: the shrink from wide bell to narrow bell is the load-bearing payoff and must be unmistakable; keep rho and the 51% as the chapter's own illustrative values, invent no other numbers; theme-safe (regression line and bells via currentColor/opacity + one accent token, no hardcoded blue/red); all elements inside the viewBox with left-to-right reading order (scatter -> residual collapse -> variance comparison)."
+    }
+  ],
+  "summary": "The chapter is already well-served on operational plumbing: four clean Mermaid flow diagrams (A/B session-level split, shadow fanout, live-judge sampling pipeline, gated lifecycle stages) all render correctly and legibly in both light and dark themes, so all four are KEEP with no changes. The genuine intuition gap is the chapter's statistical core, which currently has zero figures. I propose three new figures, each targeting one non-obvious quantitative mechanism: (1) interleaving-vs-A/B variance decomposition explaining the 10-30x sample-efficiency claim via paired within-user comparison (priority 1, static); (2) the sequential-testing peeking hazard, showing null-hypothesis random walks that falsely cross a fixed cutoff versus an always-valid narrowing funnel (priority 1, long-animation since the intuition is inherently temporal); and (3) the CUPED variance-reduction geometry, showing how regressing out a pre-experiment covariate collapses the metric distribution by (1 - rho^2) (priority 2, static). These three fill the true 'aha' gaps without duplicating the existing flow diagrams."
+}

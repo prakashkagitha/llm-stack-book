@@ -1,0 +1,256 @@
+<figure class="viz" id="fig-dllm-serial-depth-ar-vs-diffusion">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 548" role="img" aria-label="Two lanes compare serial depth at equal output length of eight tokens: autoregressive needs eight sequential forward passes, one token each; masked diffusion needs only three sequential forward passes, each resolving several positions in parallel, even though each diffusion pass is heavier compute.">
+<defs>
+  <marker id="sd1-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <style>
+    #fig-dllm-serial-depth-ar-vs-diffusion text{ fill:var(--ink-soft); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .ttl{ font:700 14px var(--sans,sans-serif); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .lbl{ font:700 12px var(--sans,sans-serif); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sub{ font:400 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .num{ font:700 13px var(--mono,monospace); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .cap{ font:400 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .end{ font:700 12.5px var(--sans,sans-serif); fill:var(--good,#2f9e6e); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .badge{ font:600 9.5px var(--sans,sans-serif); fill:var(--warn,#e0a106); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .legend{ font:400 9.5px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-dllm-serial-depth-ar-vs-diffusion .arr{ stroke:var(--ink-soft); stroke-width:1.3; marker-end:url(#sd1-arr); fill:none; }
+
+    /* generic "cover, then fade away, holding 0" reveal: the base content underneath
+       is always fully drawn (the correct final state); this overlay hides it for a
+       while, then disappears -- giving the illusion of step-by-step commitment. */
+    @keyframes sd1-fade{ 0%,85%{ opacity:1; } 100%{ opacity:0; } }
+    @keyframes sd1-show{ to{ opacity:1; } }
+    @keyframes sd1-sweep{ 0%{ opacity:0.32; transform:scaleX(0); } 90%{ opacity:0.32; transform:scaleX(1); } 100%{ opacity:0; transform:scaleX(1); } }
+
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d0{ animation: sd1-fade 0.34s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d1{ animation: sd1-fade 0.62s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d2{ animation: sd1-fade 0.90s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d3{ animation: sd1-fade 1.18s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d4{ animation: sd1-fade 1.46s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d5{ animation: sd1-fade 1.74s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d6{ animation: sd1-fade 2.02s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-d7{ animation: sd1-fade 2.30s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-w1{ animation: sd1-fade 0.80s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-w2{ animation: sd1-fade 1.50s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sd1-w3{ animation: sd1-fade 2.20s linear forwards; }
+
+    #fig-dllm-serial-depth-ar-vs-diffusion .sweep1{ transform-box:fill-box; transform-origin:left center; opacity:0; animation: sd1-sweep 0.80s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sweep2{ transform-box:fill-box; transform-origin:left center; opacity:0; animation: sd1-sweep 0.70s 0.80s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .sweep3{ transform-box:fill-box; transform-origin:left center; opacity:0; animation: sd1-sweep 0.70s 1.50s linear forwards; }
+
+    #fig-dllm-serial-depth-ar-vs-diffusion .end-ar{ opacity:0; animation: sd1-show 0.01s 2.45s linear forwards; }
+    #fig-dllm-serial-depth-ar-vs-diffusion .end-diff{ opacity:0; animation: sd1-show 0.01s 2.35s linear forwards; }
+
+    @media (prefers-reduced-motion: reduce){
+      #fig-dllm-serial-depth-ar-vs-diffusion [class*="sd1-d"],
+      #fig-dllm-serial-depth-ar-vs-diffusion [class*="sd1-w"],
+      #fig-dllm-serial-depth-ar-vs-diffusion .sweep1,
+      #fig-dllm-serial-depth-ar-vs-diffusion .sweep2,
+      #fig-dllm-serial-depth-ar-vs-diffusion .sweep3{ animation:none !important; opacity:0 !important; }
+      #fig-dllm-serial-depth-ar-vs-diffusion .end-ar,
+      #fig-dllm-serial-depth-ar-vs-diffusion .end-diff{ animation:none !important; opacity:1 !important; }
+    }
+  </style>
+</defs>
+
+<text x="390" y="22" text-anchor="middle" class="ttl" style="font:700 14px var(--sans,sans-serif)">Same output length (L = 8 tokens): what differs is SERIAL DEPTH</text>
+
+
+<text x="20" y="54" class="lbl" style="font:700 12px var(--sans,sans-serif)">Autoregressive -- one token per forward pass</text>
+
+<rect x="20" y="66" width="112" height="48" rx="8" class="v-fill" stroke="var(--ink-soft)" stroke-width="1.4"/>
+<text x="76" y="87" text-anchor="middle" class="lbl" style="font-size:11px">forward pass</text>
+<text x="76" y="103" text-anchor="middle" class="sub" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">(memory-bound)</text>
+<line x1="132" y1="90" x2="196" y2="90" class="arr"/>
+
+
+<g>
+  <rect x="200" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="222" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">1</text>
+</g>
+<rect x="200" y="66" width="44" height="48" rx="6" class="v-fill sd1-d0" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="250" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="272" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">2</text>
+</g>
+<rect x="250" y="66" width="44" height="48" rx="6" class="v-fill sd1-d1" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="300" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="322" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">3</text>
+</g>
+<rect x="300" y="66" width="44" height="48" rx="6" class="v-fill sd1-d2" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="350" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="372" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">4</text>
+</g>
+<rect x="350" y="66" width="44" height="48" rx="6" class="v-fill sd1-d3" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="400" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="422" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">5</text>
+</g>
+<rect x="400" y="66" width="44" height="48" rx="6" class="v-fill sd1-d4" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="450" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="472" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">6</text>
+</g>
+<rect x="450" y="66" width="44" height="48" rx="6" class="v-fill sd1-d5" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="500" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="522" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">7</text>
+</g>
+<rect x="500" y="66" width="44" height="48" rx="6" class="v-fill sd1-d6" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<g>
+  <rect x="550" y="66" width="44" height="48" rx="6" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="572" y="95" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--ink)">8</text>
+</g>
+<rect x="550" y="66" width="44" height="48" rx="6" class="v-fill sd1-d7" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+<text x="200" y="128" class="cap" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">each new token conditions on the growing left context -- a fresh forward pass every step</text>
+
+<text x="20" y="151" class="cap" style="font-size:9.5px">KV cache:</text>
+<rect x="200" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="200" y="142" width="44" height="12" rx="2" class="v-fill sd1-d0" opacity="0"/>
+<rect x="244" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="244" y="142" width="44" height="12" rx="2" class="v-fill sd1-d1" opacity="0"/>
+<rect x="288" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="288" y="142" width="44" height="12" rx="2" class="v-fill sd1-d2" opacity="0"/>
+<rect x="332" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="332" y="142" width="44" height="12" rx="2" class="v-fill sd1-d3" opacity="0"/>
+<rect x="376" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="376" y="142" width="44" height="12" rx="2" class="v-fill sd1-d4" opacity="0"/>
+<rect x="420" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="420" y="142" width="44" height="12" rx="2" class="v-fill sd1-d5" opacity="0"/>
+<rect x="464" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="464" y="142" width="44" height="12" rx="2" class="v-fill sd1-d6" opacity="0"/>
+<rect x="508" y="142" width="44" height="12" rx="2" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="508" y="142" width="44" height="12" rx="2" class="v-fill sd1-d7" opacity="0"/>
+<text x="558" y="151" class="cap" style="font-size:9px">+1 col/step</text>
+
+
+<circle cx="222" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="222" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">1</text>
+<circle cx="222" cy="182" r="10" class="v-fill sd1-d0" opacity="0" stroke="var(--border-2)"/>
+<circle cx="272" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="272" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">2</text>
+<circle cx="272" cy="182" r="10" class="v-fill sd1-d1" opacity="0" stroke="var(--border-2)"/>
+<circle cx="322" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="322" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">3</text>
+<circle cx="322" cy="182" r="10" class="v-fill sd1-d2" opacity="0" stroke="var(--border-2)"/>
+<circle cx="372" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="372" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">4</text>
+<circle cx="372" cy="182" r="10" class="v-fill sd1-d3" opacity="0" stroke="var(--border-2)"/>
+<circle cx="422" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="422" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">5</text>
+<circle cx="422" cy="182" r="10" class="v-fill sd1-d4" opacity="0" stroke="var(--border-2)"/>
+<circle cx="472" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="472" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">6</text>
+<circle cx="472" cy="182" r="10" class="v-fill sd1-d5" opacity="0" stroke="var(--border-2)"/>
+<circle cx="522" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="522" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">7</text>
+<circle cx="522" cy="182" r="10" class="v-fill sd1-d6" opacity="0" stroke="var(--border-2)"/>
+<circle cx="572" cy="182" r="10" fill="var(--good,#2f9e6e)"/><text x="572" y="186" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">8</text>
+<circle cx="572" cy="182" r="10" class="v-fill sd1-d7" opacity="0" stroke="var(--border-2)"/>
+
+<text x="397" y="210" text-anchor="middle" class="end end-ar" style="font:700 12.5px var(--sans,sans-serif)" fill="var(--good,#2f9e6e)">serial depth = L = 8 sequential passes</text>
+
+
+<text x="20" y="256" class="lbl" style="font:700 12px var(--sans,sans-serif)">Masked diffusion -- all positions per forward pass</text>
+
+<rect x="10" y="268" width="134" height="74" rx="10" class="v-fill" stroke="var(--ink-soft)" stroke-width="2.4"/>
+<text x="77" y="300" text-anchor="middle" class="lbl" style="font-size:11px">forward pass</text>
+<text x="77" y="316" text-anchor="middle" class="sub" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">(whole row: 8x data)</text>
+<line x1="144" y1="305" x2="196" y2="305" class="arr"/>
+<rect x="20" y="350" width="114" height="20" rx="10" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+<text x="77" y="364" text-anchor="middle" class="badge" style="font:600 9.5px var(--sans,sans-serif)" fill="var(--warn,#e0a106)">compute-heavier/step</text>
+
+
+<rect x="200" y="281" width="394" height="48" rx="6" fill="var(--accent,#c15b39)" class="sweep1" opacity="0"/>
+<rect x="200" y="281" width="394" height="48" rx="6" fill="var(--accent,#c15b39)" class="sweep2" opacity="0"/>
+<rect x="200" y="281" width="394" height="48" rx="6" fill="var(--accent,#c15b39)" class="sweep3" opacity="0"/>
+
+
+<g>
+  <rect x="200" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="222" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">1</text>
+</g>
+<rect x="200" y="281" width="44" height="48" rx="6" class="v-fill sd1-w1" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="222" y="310" text-anchor="middle" class="num sd1-w1" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="250" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="272" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">2</text>
+</g>
+<rect x="250" y="281" width="44" height="48" rx="6" class="v-fill sd1-w2" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="272" y="310" text-anchor="middle" class="num sd1-w2" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="300" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="322" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">3</text>
+</g>
+<rect x="300" y="281" width="44" height="48" rx="6" class="v-fill sd1-w3" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="322" y="310" text-anchor="middle" class="num sd1-w3" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="350" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="372" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">4</text>
+</g>
+<rect x="350" y="281" width="44" height="48" rx="6" class="v-fill sd1-w1" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="372" y="310" text-anchor="middle" class="num sd1-w1" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="400" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="422" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">5</text>
+</g>
+<rect x="400" y="281" width="44" height="48" rx="6" class="v-fill sd1-w2" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="422" y="310" text-anchor="middle" class="num sd1-w2" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="450" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="472" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">6</text>
+</g>
+<rect x="450" y="281" width="44" height="48" rx="6" class="v-fill sd1-w3" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="472" y="310" text-anchor="middle" class="num sd1-w3" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="500" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="522" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">7</text>
+</g>
+<rect x="500" y="281" width="44" height="48" rx="6" class="v-fill sd1-w1" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="522" y="310" text-anchor="middle" class="num sd1-w1" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+<g>
+  <rect x="550" y="281" width="44" height="48" rx="6" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="572" y="310" text-anchor="middle" class="num" style="font:700 13px var(--mono,monospace)" fill="var(--accent,#c15b39)">8</text>
+</g>
+<rect x="550" y="281" width="44" height="48" rx="6" class="v-fill sd1-w2" opacity="0" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="572" y="310" text-anchor="middle" class="num sd1-w2" opacity="0" fill="var(--muted)" style="font-size:11px">M</text>
+
+
+<circle cx="337" cy="369" r="10" fill="var(--good,#2f9e6e)"/><text x="337" y="373" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">1</text>
+<circle cx="337" cy="369" r="10" class="v-fill sd1-w1" opacity="0" stroke="var(--border-2)"/>
+<circle cx="397" cy="369" r="10" fill="var(--good,#2f9e6e)"/><text x="397" y="373" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">2</text>
+<circle cx="397" cy="369" r="10" class="v-fill sd1-w2" opacity="0" stroke="var(--border-2)"/>
+<circle cx="457" cy="369" r="10" fill="var(--good,#2f9e6e)"/><text x="457" y="373" text-anchor="middle" class="num" style="font-size:10px" fill="#fff">3</text>
+<circle cx="457" cy="369" r="10" class="v-fill sd1-w3" opacity="0" stroke="var(--border-2)"/>
+
+<text x="397" y="397" text-anchor="middle" class="end end-diff" style="font:700 12.5px var(--sans,sans-serif)" fill="var(--good,#2f9e6e)">serial depth = N = 3 passes, N &lt;&lt; L</text>
+
+
+<rect x="14" y="416" width="752" height="64" rx="10" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+<text x="390" y="440" text-anchor="middle" class="lbl" style="font-size:12px">Same output length; fewer DEPENDENT steps -&gt; lower latency.</text>
+<text x="390" y="460" text-anchor="middle" class="cap" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">Latency ~ serial depth, not total FLOPs -- diffusion trades heavier per-step compute for far fewer sequential steps.</text>
+
+
+<rect x="20" y="492" width="14" height="14" rx="3" class="v-fill" stroke="var(--ink)" stroke-width="1.6"/>
+<text x="40" y="503" class="legend" style="font:400 9.5px var(--sans,sans-serif)">AR committed token</text>
+<rect x="210" y="492" width="14" height="14" rx="3" class="v-fill" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="230" y="503" class="legend" style="font:400 9.5px var(--sans,sans-serif)">diffusion [MASK] (unresolved)</text>
+<rect x="20" y="514" width="14" height="14" rx="3" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="40" y="525" class="legend" style="font:400 9.5px var(--sans,sans-serif)">diffusion token (resolved)</text>
+<circle cx="217" cy="521" r="7" fill="var(--good,#2f9e6e)"/>
+<text x="230" y="525" class="legend" style="font:400 9.5px var(--sans,sans-serif)">serial-depth step (counter)</text>
+</svg>
+<figcaption><b>Serial depth, not total compute, is what separates the two lanes.</b> Filling the same 8-token output takes an autoregressive model 8 dependent forward passes (one token each) but a masked-diffusion model only 3 (each pass resolves several positions at once, at a heavier per-step compute cost). Latency tracks the number of <i>dependent</i> steps, so cutting serial depth from L to N &lt;&lt; L is what makes diffusion decoding faster, even though it does more total FLOPs.</figcaption>
+</figure>

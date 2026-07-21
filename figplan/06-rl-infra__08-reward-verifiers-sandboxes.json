@@ -1,0 +1,52 @@
+{
+  "chapter": "content/06-rl-infra/08-reward-verifiers-sandboxes.md",
+  "core_intuitions": [
+    "The reward is just a scalar r per completion; everything the model learns is shaped by what that scalar measures, so getting the reward function right is the most consequential post-training decision.",
+    "Reward sources form three families with a cost/hackability tradeoff (rule-based verifier, LLM judge, learned RM); RLVR leans on rule-based because for checkable tasks it is both cheaper and harder to hack.",
+    "Math equivalence is NOT string equality: one value has many surface forms (1/2, 0.5, \\frac{1}{2}, 50%), so the verifier must cascade normalize -> numeric-with-tolerance -> symbolic -> numeric-fallback, and a buggy normalizer becomes a phantom ceiling / reward-hacking surface.",
+    "Running model-generated code is a security threat surface (self-inspecting tests, resource exhaustion, container escape); sandbox architectures trade isolation strength against per-sample speed, and warm microVM/container pools remove per-run startup cost.",
+    "Sandbox pool sizing is simple arithmetic: workers = required_throughput / per-worker_capacity, plus 2-3x headroom; if per-sample cost is high this forces a dedicated CPU cluster.",
+    "Reward shaping (small format reward) fixes the cold-start problem, but if lambda_f is too large format decouples from correctness and the model games format (perfect structure, wrong answer, still positive reward).",
+    "Multi-objective rewards on different scales let one term dominate the gradient; normalize per prompt group (GRPO-style z-score) to get zero-mean advantages independent of absolute magnitude.",
+    "A reward server decouples reward computation from training, caches identical (prompt, completion) pairs, and hides latency asynchronously behind the next rollout batch."
+  ],
+  "existing": [
+    {
+      "name": "reward-signal-flow",
+      "verdict": "refine",
+      "issue": "Conveys the pipeline correctly and reads cleanly in both themes, but the per-box captions duplicate the below-box captions (Rule-Based Verifier says 'fast, deterministic' inside and 'cheap, deterministic' below; Reward Model says 'GPU' inside and 'GPU, smooth' below). The redundancy wastes the one axis the figure could add: cost vs quality. It also does not visually encode the chapter's central claim that rule-based is the PREFERRED family for RLVR.",
+      "improvement": "Collapse the redundant labels into a single two-axis micro-annotation per source (e.g. cost: cheap/expensive/GPU and reliability: deterministic/noisy/smooth-but-hackable), and visually emphasize the rule-based path (subtle 'preferred in RLVR' badge or heavier arrow) so the figure carries the family-tradeoff intuition, not just the data flow. Keep the dashed gradient-update loop."
+    },
+    {
+      "name": "sandbox-arch-options",
+      "verdict": "refine",
+      "issue": "Excellent, information-dense comparison of the three isolation/speed options and correctly marks Option B as preferred. Two problems: (1) the bottom summary line 'isolation strength: A..B..C / speed: A..B..C' sits OUTSIDE the light panels on the outer background, so in dark theme it renders as dark text on the dark frame and is barely legible; (2) Option B's body text is crowded, with three lines pressing against the panel's lower edge.",
+      "improvement": "Give the bottom summary line a theme-aware fill (or place it inside a light strip) so it is legible on the dark outer background, and add a little vertical breathing room in the Option B panel so the three description lines do not touch the border. Content and layout are otherwise strong."
+    },
+    {
+      "name": "reward-server-arch",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "math-equivalence-ladder",
+      "concept": "Why a math verifier cannot use string equality, and the normalize -> numeric -> symbolic -> numeric-fallback cascade that decides equivalence.",
+      "rationale": "This is the single most foundational 'click' of the rule-based-verifier section: the reader must feel that one mathematical value wears many surface costumes, so 'checking the answer' is a real engineering problem, not a == comparison. The chapter's warning box and interview corner (phantom ceiling from a buggy normalizer) both hinge on this intuition, yet no figure serves it.",
+      "kind": "static",
+      "placement": "Immediately under the '### Math Equivalence Checking' heading, before the math_verifier.py code block.",
+      "brief": "A two-part infographic. TOP BAND, 'the same value, many costumes': a single central value node labeled 1/2 (a small filled 'value' token), with five surface-form chips fanning out around it, all pointing back to it as equal-in-value: \"1/2\", \"0.5\", \"\\frac{1}{2}\", \"50%\", \"0.50\". Draw a comparator box labeled 'string ==' fed by two of these chips (e.g. \"0.5\" and \"1/2\") producing a bold FALSE / red-X result, with a caption 'equal value, unequal strings -> naive == gives sparse, biased reward'. BOTTOM, the decision ladder (a vertical cascade of 4 rungs, each a labeled step that can short-circuit to a shared 'equivalent' outcome on the right): Rung 1 'Normalize' (strip \\boxed{...}, drop $, collapse whitespace) -> exact string match?; Rung 2 'Numeric' (both parse as numbers, incl. fraction and % handling) -> compare with relative tolerance ~10^-6; Rung 3 'Symbolic' (parse LaTeX with sympy) -> simplify(pred - gold) == 0; Rung 4 'Numeric fallback' (evaluate expr to float, N(expr)) -> tolerance compare. Each rung has a green checkmark exit to a single 'EQUIVALENT (reward)' node and a downward arrow to the next rung on failure; the last rung's failure falls through to a 'NOT equivalent (reward 0)' node. Add a small side callout tied to the ladder: 'A buggy normalizer that rejects \\frac{1}{2} when gold is 0.5 = a false negative = a phantom ceiling on reward (reward-hacking surface).' Use only the small illustrative values shown; render the tolerance symbolically as 10^-6, invent no benchmark numbers. Everything theme-safe, clear top-to-bottom reading order, nothing clipped."
+    },
+    {
+      "name": "format-vs-correctness-shaping",
+      "concept": "Format reward solves cold-start, but too-large lambda_f decouples format from correctness and the model games format (perfect structure, wrong answer, still positive reward).",
+      "rationale": "The 'format vs correctness tradeoff' is flagged three times in the chapter (a dedicated section, a warning box on format gaming, and the interview-corner plateau), and it is the reader's first concrete encounter with reward hacking through shaping. A single side-by-side frame makes the decoupling visceral in a way the prose formula cannot.",
+      "kind": "static",
+      "placement": "Under the '### Format Rewards' heading, near the r_total = r_correctness + lambda_f * r_format equation.",
+      "brief": "A side-by-side two-regime comparison sharing one header formula at the top: r_total = r_correctness + lambda_f * r_format. LEFT PANEL, 'Healthy shaping (small lambda_f, ~0.1)': two small qualitative curves over 'training steps' on a shared axis -- a format-reward curve that rises fast and early (labeled 'cold-start solved: model first learns to produce structure') and a correctness curve that lifts off AFTER format and keeps climbing, drawn roughly tracking/correlated with format. Below the curves show a healthy sample completion chip: '<think> ...valid reasoning... </think> \\boxed{correct}' with a green check. RIGHT PANEL, 'Gaming (lambda_f too large)': the format-reward curve pegs flat at the top (illustrative 'format ~= 100%') while the correctness curve rises briefly then plateaus low (illustrative 'correctness stuck ~low'), the two curves visibly DECOUPLING (draw a gap/wedge between them). Below show the degenerate completion chip: '<think>Let me solve this step by step.</think> \\boxed{0}' labeled 'perfect format, wrong answer, still nonzero reward' with a red flag. Bottom strip spanning both panels, a monitor/gauge icon with the rule: 'Track corr(format_reward, correctness_reward). If they decouple -> reduce lambda_f (typ. 0.1-0.2).' Curves are qualitative sketches (no gridline numbers); the only integers shown are the illustrative 100% peg, the small \\boxed{0}, and lambda_f ~= 0.1, matching the chapter -- invent no other numbers. Theme-safe fills, left-to-right reading order, no overlap between the two panels."
+    }
+  ],
+  "summary": "The chapter is figure-decent (3 solid existing diagrams) but has two prominent, highly visual intuitions that no figure serves. reward-server-arch is a clean keep. reward-signal-flow and sandbox-arch-options are keepers that need small refinements (redundant labels / a missed tradeoff axis on the former; a dark-mode-illegible bottom caption and a crowded Option B panel on the latter). Two new foundational static figures fill the gaps: (1) math-equivalence-ladder makes the reader feel why 'checking a math answer' is a real cascade and not string ==, which also grounds the phantom-ceiling reward-hacking point; (2) format-vs-correctness-shaping makes the format-reward-gaming decoupling visceral, serving the shaping section, the warning box, and the interview corner at once. Both are single-frame comparisons, so no animation is warranted. Discipline: no figure proposed for throughput arithmetic (the worked callout suffices) or GRPO per-group normalization (owned by the GRPO chapter and only cross-referenced here)."
+}

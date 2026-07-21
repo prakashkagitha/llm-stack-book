@@ -1,0 +1,49 @@
+{
+  "chapter": "content/11-evaluation/05-redteaming-safety-eval.md",
+  "core_intuitions": [
+    "The central tension is sensitivity vs specificity: harm rate (TPR on harmful inputs) trades off against over-refusal rate (FPR on benign inputs). Every safety policy is a threshold on one score distribution, and moving it moves both numbers together.",
+    "A single safety threshold slices two OVERLAPPING distributions (benign vs harmful) — the overlap region is exactly where over-refusal and missed-harm come from, and no threshold can eliminate both.",
+    "Two fundamentally different questions: benchmarks like ToxiGen measure DEFAULT behavior (what the model does when asked plainly), while dangerous-capability evals like WMDP measure MAXIMUM capability under the strongest adversarial elicitation. A model can be safe by default yet dangerous under attack.",
+    "Dangerous-capability risk is about UPLIFT, not raw capability: what matters is whether the model exceeds a baseline (web search + textbooks) an adversary already has.",
+    "Automated red-teaming is a closed feedback loop: an attacker LLM proposes prompts, a target answers, a judge scores harm, and the score steers the attacker — coverage/diversity, not volume, is the goal.",
+    "Jailbreak attacks form a small number of families (manual framing, gradient/optimization, multi-turn) that share the same intent but differ in surface form, which is why specification-gaming defenses generalize poorly."
+  ],
+  "existing": [
+    {
+      "name": "redteam-safety-eval-taxonomy",
+      "verdict": "keep",
+      "issue": "Two-column harm-type -> evaluation-approach map. Clean, legible, correct reading order, works in both light and dark themes. Serves 11.5.1 well as an orienting map of the whole chapter."
+    },
+    {
+      "name": "redteam-jailbreak-attack-space-tree",
+      "verdict": "refine",
+      "issue": "Tree of three attack families with technique leaves is clear and correct in light theme, but in dark theme the leaf boxes render with near-white fills that clash hard against the dark canvas and read as a different visual system from the family nodes.",
+      "improvement": "Give the leaf boxes a theme-aware muted fill (subtle surface tint, not pure white) so they read as part of the same diagram in dark mode; keep the family-node accent colors. No structural change."
+    },
+    {
+      "name": "redteam-llm-feedback-loop",
+      "verdict": "refine",
+      "issue": "Correct three-stage loop (attacker -> target -> judge -> feedback), but has a redundant 'scores harm' text label sitting directly below the Judge box that already says 'Judge / Classifier scores harm (0-1)' — pure duplication and clutter. Separately, in the dark theme the middle 'Target LLM' box uses a dark maroon fill with dark text that is low-contrast and hard to read.",
+      "improvement": "Delete the redundant 'scores harm' label under the Judge box. Fix the Target LLM box dark-theme contrast (lighter fill or lighter text) so all three stage labels are equally legible. Consider labeling the loop as iterating (a small 'repeat' cue) to emphasize it is a closed loop, not a one-pass pipeline."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "safety-operating-point-tradeoff",
+      "concept": "One safety threshold sliding across two overlapping score distributions (benign vs harmful) simultaneously sets the harm rate and the over-refusal rate — the core sensitivity/specificity tension.",
+      "rationale": "This is the spine of the entire chapter — introduced in 11.5.1 as 'the central tension', formalized as two expectations, and returned to in 11.5.5 and the worked example. The reader must FEEL that harm-recall and over-refusal are two ends of one lever, and that the overlap region is irreducible. No current figure shows this; it is the single most foundational missing intuition.",
+      "kind": "static",
+      "placement": "11.5.1 The Safety Evaluation Landscape (after the paragraph introducing sensitivity vs specificity and the two rate equations)",
+      "brief": "A two-part infographic linking a threshold on overlapping distributions to a resulting operating point. LEFT (main panel): a horizontal axis labeled 'model harm-score of a request' running low to high. Draw two overlapping smooth density humps: a 'benign requests' hump centered on the low side and a 'harmful requests' hump centered on the high side, with a clearly visible OVERLAP region in the middle where they cross. Use two theme-safe accent hues (e.g. a cool hue for benign, a warm hue for harmful) — never hardcode literal color names that break in dark mode. Draw a vertical dashed THRESHOLD line standing in the overlap region, labeled 'refuse if score > threshold'. Shade and label the four regions this creates: benign-below-threshold = 'correctly helped (TN)'; benign-above-threshold (the benign tail past the line) = 'over-refused benign (FP)' — call it out with a small warning tint; harmful-above-threshold = 'correctly refused (TP)'; harmful-below-threshold (harmful tail before the line) = 'missed harm (FN)'. Add two small arrows on the threshold line: 'slide left -> fewer misses, more over-refusal' and 'slide right -> fewer over-refusals, more missed harm', making the see-saw explicit. RIGHT (small companion panel): a compact ROC-style curve (over-refusal rate FPR on x, harm-recall TPR on y, diagonal chance line) with a single dot marking 'this operating point' that corresponds to the threshold on the left, plus a faint curved arc showing that moving the threshold traces the whole curve. Use only small illustrative shapes — NO invented benchmark numbers, no fabricated percentages; axes can be unitless 0->1. Caption: 'One threshold, two coupled error rates — the overlap is irreducible.' Must be fully legible as a static frame and theme-safe in both light and dark."
+    },
+    {
+      "name": "default-vs-max-capability-elicitation",
+      "concept": "Default-behavior benchmarks and dangerous-capability evals measure two different things: the model's ordinary output vs its maximum capability squeezed out under adversarial elicitation, judged against an uplift baseline.",
+      "rationale": "This distinction is the heart of 11.5.8 and the explicit subject of the Interview Corner, and it recurs in the Key Takeaways ('measure maximum capability under adversarial elicitation'). Readers routinely conflate 'the model refused when I asked' with 'the model is safe'. A figure that separates the default-behavior regime from the elicitation regime, and anchors 'dangerous' to uplift over a baseline rather than raw ability, fixes the most common conceptual error in this area. Not served by any existing figure.",
+      "kind": "static",
+      "placement": "11.5.8 Dangerous Capability Evaluation (after the paragraph defining capability elicitation and 'uplift')",
+      "brief": "A side-by-side comparison of two measurement regimes probing the SAME model, plus an uplift ruler. Center: a single 'model under test' node. LEFT REGIME 'Default behavior (e.g. ToxiGen, RealToxicityPrompts)': a plain user prompt arrow ('asked directly') into the model, out comes a refusal / benign output; label the axis of this regime 'what it does when asked plainly'. RIGHT REGIME 'Maximum capability under elicitation (e.g. WMDP, CBRN uplift evals)': show a STACK of adversarial pressures feeding in — 'best jailbreak', 'expert red-teamer', 'many attempts', 'tool access / scaffolding' — converging into the model, out comes the model's strongest response, revealing latent capability; label this axis 'what a determined adversary can extract'. Make visually clear these are two DIFFERENT questions about one model, not a spectrum of models. BELOW, spanning the right regime, draw a horizontal 'capability ruler' to anchor the uplift idea: mark a baseline bracket 'what an adversary already has: web search + textbooks', then the model's elicited capability as a point further along; the GAP between them is bracketed and labeled 'UPLIFT = what matters'. Add a small caption note: 'Low default-harm does not imply low uplift.' Keep all quantities schematic — no invented scores or benchmark numbers, use relative positions only. Theme-safe accents; fully readable as a static frame in light and dark."
+    }
+  ],
+  "summary": "The chapter is concept-rich across 10 sections and currently has 3 solid structural/taxonomic figures (landscape map, attack-family tree, red-team feedback loop). All three are correct and worth keeping; the tree needs a dark-theme fill fix on its leaf boxes, and the feedback-loop figure has a redundant label plus a low-contrast middle box in dark mode. The two most foundational INTUITIONS are unillustrated: (1) the sensitivity/specificity operating-point tradeoff that is the explicit spine of the chapter, and (2) the default-behavior vs maximum-capability-under-elicitation distinction (with uplift) that anchors dangerous-capability evaluation and the interview corner. I propose exactly two new static figures for these, keeping the set disciplined."
+}

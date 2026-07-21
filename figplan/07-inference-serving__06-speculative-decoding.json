@@ -1,0 +1,58 @@
+{
+  "chapter": "content/07-inference-serving/06-speculative-decoding.md",
+  "core_intuitions": [
+    "Decode is memory-bandwidth bound: a target forward pass over K tokens costs about the same wall-clock time as over 1 token, because weight movement (loading all parameters from HBM) dominates and per-token math is nearly free. This is the whole reason verification-of-many can be as cheap as decode-of-one.",
+    "Draft-then-verify: a cheap drafter proposes gamma tokens autoregressively; the expensive target verifies all gamma+1 positions in ONE parallel pass; a step emits an accepted prefix plus one corrected-or-bonus token, advancing 1..gamma+1 positions per target pass.",
+    "The accept/reject rule is EXACT: accept a drafted x~q with prob min(1,p/q), else resample from the residual (p-q)_+ and stop. The emitted mass decomposes as min(p,q) + (p-q)_+ = p for ANY drafter, so correctness is free; the drafter only affects speed via alpha = sum min(p,q) = 1 - TV(p,q).",
+    "Drafter families trade acceptance alpha against draft cost c: a smaller same-family/distilled model, Medusa parallel heads (each predicts a future token in isolation from one hidden state), EAGLE feature-space autoregression (conditions on drafted tokens for much higher alpha), and near-free n-gram/prompt-lookup drafting.",
+    "Tree attention verifies many candidate continuations at once: flatten a token tree, use an ancestor-only attention mask and depth-based position ids so one packed pass computes every node as if its root-to-leaf path were fed separately; accept the longest surviving path.",
+    "Speedup = (1 - alpha^(gamma+1)) / ((1-alpha)(1+gamma*c)): acceptance rate dominates, there is an optimal draft length gamma*, and every speculative method only helps while decode is memory-bound (small/moderate batch) - it can hurt once the GPU is compute-bound."
+  ],
+  "existing": [
+    {
+      "name": "spec-decoding",
+      "verdict": "replace",
+      "issue": "Two problems. (1) Missing-glyph tofu boxes in BOTH themes: the accept/reject checkmarks and cross render as empty squares, the prefix subscript shows as 'x[]t', and 'cost [] y*c' has a broken approx sign and gamma rendered as 'y'. (2) Redundancy: it is a compact draft/verify/accept overview placed at the top of 'The Core Idea', but the far more thorough specdec-draft-verify-pipeline figure sits just a few lines below in the SAME section and covers the identical content better. The chapter's actual opening insight - the memory-bound 'verify K for the price of 1' argument in paragraphs 1-2 and Key Takeaway #1 - is currently NOT visualized anywhere.",
+      "improvement": "Repurpose this marker into the missing #1 intuition: WHY speculative decoding can win at all. Draw a 'K tokens for the price of 1' latency comparison. Top motif: an HBM weight slab with one FAT arrow shuttling ALL weights to the compute units, and a THIN arrow for the tiny arithmetic - label 'decode is memory-bandwidth bound: we pay for weight movement, not per-token math'. Center: two horizontal time bars of IDENTICAL width. Bar 1 = plain decode step: a long [load all weights] segment + a tiny [math] segment -> yields '1 token'. Bar 2 = speculative verify step: the SAME long [load all weights] segment + a still-tiny [math x (gamma+1)] segment -> yields 'up to gamma+1 tokens' (show ~5 small token chips d1..d4 + bonus). The visual punchline: same bar length, wildly different token yield. Use only small illustrative integers (K up to 5, '1'); no benchmark numbers. Strictly ASCII-safe text - spell out 'gamma', avoid subscript glyphs and special approx/multiply symbols that produced tofu. Theme-safe semantic colors only. This becomes the section opener ('here is why it works'), and the pipeline figure below then shows the mechanism ('here is how')."
+    },
+    {
+      "name": "specdec-draft-verify-pipeline",
+      "verdict": "keep",
+      "issue": "Strong, complete, correct in both themes: PREFIX -> DRAFT -> VERIFY -> OUTPUT with the bonus-token branch, the corrected-token residual, and the memory-bound note all present. Only nit: the small 'free if all g accepted' caption slightly crowds the pos g+1 bonus box in the VERIFY row.",
+      "improvement": "Optional tidy only: nudge the 'free if all g accepted' label so it no longer overlaps the dashed bonus box outline. Not blocking."
+    },
+    {
+      "name": "specdec-medusa-heads",
+      "verdict": "keep"
+    },
+    {
+      "name": "specdec-eagle-feature-loop",
+      "verdict": "keep",
+      "issue": "Clear two-step feature-space recurrence with the embed-and-feed-back arc; correct and readable in both themes. Minor: the 'one cheap decoder layer' caption sits under the EAGLE-layer box and the bottom summary caption is faint in dark theme.",
+      "improvement": "Optional: lift the 'one cheap decoder layer' label clear of the box outline and bump the bottom caption's contrast in dark mode. Not blocking."
+    },
+    {
+      "name": "specdec-tree-attention",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "specdec-accept-reject-decomposition",
+      "concept": "Visualizes the exactness proof: target mass p decomposes into accepted-overlap min(p,q) plus residual top-up (p-q)_+, so emitted ~ p for any drafter; alpha = overlap area = 1 - TV(p,q).",
+      "rationale": "This is the theoretical heart of the entire chapter - the modified-rejection-sampling identity min(p,q)+(p-q)_+ = p that guarantees losslessness, plus the alpha = 1 - TV(p,q) intuition that governs all speedups. It currently lives only as prose + algebra across a whole section and the Interview Corner. A single distribution-overlap picture makes the proof and the 'correctness is free, drafter only buys speed' insight click instantly - far more foundational than any of the architecture figures already drawn.",
+      "kind": "static",
+      "placement": "The Accept/Reject Rule: Preserving the Target Distribution",
+      "brief": "A bar-chart overlay over a tiny vocabulary of ~6-7 tokens on the x-axis (label them v1..v6 or single letters - small illustrative probabilities only, no real numbers needed beyond schematic bar heights). Draw the drafter distribution q and the target distribution p over the same tokens - e.g. q as one set of bars (outline or one semantic role), p as another (second semantic role), clearly distinguishable in both themes. Shade the per-token OVERLAP min(p,q) as the 'accepted mass' region and annotate 'sum of overlap = alpha = 1 - TV(p,q): tokens the drafter gets right on average'. Call out two representative tokens with small side-labels: (A) a token where p > q -> the gap (p-q)_+ is the 'residual top-up' the reject branch resamples from (mark it hatched, role 'top up'); (B) a token where q > p -> the excess (q-p)_+ is 'over-covered', trimmed by accept-prob p/q < 1 (mark it a different hatch, role 'trim'). Then a short reconstruction strip on the right or bottom: 'emitted = min(p,q) [accept] + (p-q)_+ [residual] = p exactly'. Show visually that stacking the accepted-overlap bars with the residual-topup bars rebuilds the p bars precisely, independent of q. Keep it one clean static frame; ASCII-safe math text (write (p-q)_+ , min(p,q), 'alpha = 1 - TV'); theme-safe semantic colors (accept / topup / trim as distinct roles, no hardcoded brand hues). Everything inside the viewBox with clear reading order: distributions top, region annotations middle, identity strip bottom."
+    },
+    {
+      "name": "specdec-speedup-economics",
+      "concept": "The speedup formula made visual: speedup rises steeply with acceptance alpha, there is an optimal draft length gamma*, and the whole win exists only while decode is memory-bound (gate on batch size).",
+      "rationale": "The closing section derives speedup = (1-alpha^(gamma+1))/((1-alpha)(1+gamma*c)) and stresses three intuitions - 'acceptance is everything', 'there is an optimal gamma', and 'it only pays while memory-bound, gate on batch size' (Key Takeaways #8, the Interview follow-up, the batch-size caveat). These economics are what a practitioner actually needs to reason about when to turn speculation on. A schematic curve figure conveys the shape of the tradeoff far better than the single worked numeric example in prose.",
+      "kind": "static",
+      "placement": "Acceptance Rate, Speedup & When It Pays Off",
+      "brief": "Two linked panels, both schematic (curves derived from the exact formula for illustrative alpha/gamma/c - this is math, not benchmarks; keep axis ticks schematic, e.g. speedup shown as 1x/2x/3x guide lines and alpha from 0 to 1). LEFT panel: line chart, x-axis = acceptance rate alpha (0 to 1), y-axis = speedup. Plot 2-3 curves for different draft lengths (gamma = 2, 4, 8), all starting near 1x at alpha=0 and rising steeply toward the right; annotate that they approach 1/(1-alpha) as c->0, and that at LOW alpha a larger gamma does NOT help (curves bunch/cross) because the geometric tail is tiny while cost 1+gamma*c grows - label a small 'optimal gamma*' marker where a mid curve peaks over the others. Shade a left region 'high-entropy chat: low alpha, small win' and a right region 'code / copy-heavy: high alpha, big win' to echo the worked example without quoting its numbers. RIGHT (smaller) inset panel: the memory-vs-compute GATE - a horizontal batch-size axis with a crossover line; left side 'small/moderate batch: memory-bound -> spare FLOPs -> speculation helps', right side 'large batch: compute-bound -> verification FLOPs cost real time -> speculation can HURT'. One-line takeaway strip: 'acceptance dominates; pick gamma*; and only speculate while decode is memory-bound'. ASCII-safe labels (write alpha, gamma, 'gamma*', 'speedup = (1 - alpha^(gamma+1)) / ((1-alpha)(1+gamma c))'); theme-safe; no invented benchmark values; all content inside the viewBox with the formula legible."
+    }
+  ],
+  "summary": "The chapter is figure-rich for its architectures (Medusa, EAGLE, tree attention) but figure-poor for its two deepest intuitions. Audit: keep 4 of 5 existing figures (pipeline, Medusa, EAGLE, tree-attention are all correct and theme-safe, with only cosmetic nits). REPLACE spec-decoding: it has missing-glyph tofu boxes in both themes AND duplicates the far better pipeline figure sitting just below it in the same section - repurpose its marker into the currently-unvisualized #1 insight, the memory-bound 'verify K tokens for the price of 1' latency comparison. Add two new static figures for the intuitions that currently live only in prose+algebra: (1) the accept/reject exactness decomposition min(p,q)+(p-q)_+ = p with alpha = 1 - TV(p,q) as the overlap area - the theoretical heart of the chapter; and (2) the speedup economics - speedup vs alpha curves with an optimal gamma* and the memory-vs-compute batch-size gate."
+}

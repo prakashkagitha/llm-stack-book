@@ -1,0 +1,61 @@
+{
+  "chapter": "content/07-inference-serving/10-structured-generation.md",
+  "core_intuitions": [
+    "Free-text decoding has no mechanism to guarantee output validity: the next-token objective never forces valid JSON/regex, so bad token sequences are always samplable unless something forbids them.",
+    "The enforcement mechanism is logit masking driven by an automaton state: at each step the current FSM/PDA state selects a boolean row over the vocabulary; forbidden tokens get -inf, softmax renormalizes over survivors, you sample, then the sampled token's characters ADVANCE the automaton to the next state. This loop is the whole game.",
+    "Token-level (not character-level) is the subtlety: because tokens are multi-character, validity must be tested by simulating the automaton char-by-char over the decoded token string; multi-char tokens like '27' become valid only in states where every one of their characters keeps the automaton alive.",
+    "Regular vs context-free: an FSM has only its current state as memory, so it cannot count unbounded brace nesting; JSON's arbitrary depth requires a pushdown automaton that adds a stack (push on '{'/'[', pop on '}'/']').",
+    "XGrammar's speed trick is splitting tokens into context-independent (validity depends only on the shallow active rule, precomputable to a bitmask) vs context-dependent (needs the full stack, e.g. closing brace), so per-step work is a cheap bitmap-OR plus a tiny correction.",
+    "The runtime overhead can be near-zero because mask computation on CPU overlaps with the GPU forward pass: wall-clock is max(fwd, mask) not fwd + mask."
+  ],
+  "existing": [
+    {
+      "name": "structgen-xgrammar-mask-architecture",
+      "verdict": "keep",
+      "issue": "Renders clearly in both themes. Correctly captures the context-independent bitmask vs context-dependent token-set split, the bitmap-OR combine, and the final logit-masking step. The colored role distinction (indep vs dep vs cache) survives the theme toggle and nothing clips.",
+      "improvement": ""
+    },
+    {
+      "name": "structgen-toolcall-constrained-flow",
+      "verdict": "keep",
+      "issue": "Clearly conveys the partial-application idea: free/unconstrained conversational text until the tool-call trigger token, then switch to grammar-enforced constrained mode, with the alternate <eot> no-tool branch. Legend and MASK slot metaphor read well in both themes. Minor busyness but reading order is clear.",
+      "improvement": ""
+    },
+    {
+      "name": "structgen-library-decision-tree",
+      "verdict": "keep",
+      "issue": "Clean serving-stack -> recommended-library mapping with a consistent color legend (XGrammar / llguidance-llama.cpp / Outlines). Legible in both themes, no clipping, matches the chapter's summary decision tree.",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "structgen-mask-decode-loop",
+      "concept": "The core constrained-decode cycle: automaton state -> logit mask -> renormalize -> sample -> advance state, grounded on the chapter's 4-digit-integer worked example.",
+      "rationale": "This is THE foundational mechanism of the entire chapter and it is currently never shown as an operation on an actual logit vector. Every later section (Outlines index, XGrammar split, tool calls, overlap) is an optimization of this exact loop. Seeing the mask zero out most of the vocabulary, softmax re-heighten only the survivors, the sampled token append to the output buffer, and its characters drive the FSM one state forward is what makes 'constrained generation' click viscerally rather than as an equation.",
+      "kind": "long-animation",
+      "placement": "After the 'Worked example: masking a 4-digit integer' admonition in the Logit Masking section",
+      "priority": 1,
+      "brief": "A single-column vertical loop showing ONE constrained decode step, animated to run across four steps that generate the string 2-0-2-7 under the regex [0-9]{4}. Layout, top to bottom, all inside the viewBox: (1) A slim horizontal FSM strip of five state nodes q0 -> q1 -> q2 -> q3 -> q4(accept, double ring), with a clearly highlighted 'current state' marker. (2) A raw logit vector drawn as a row of ~10 labeled vocabulary-token bars of varying illustrative heights; label them with short token texts, a mix of allowed and forbidden for the current state, e.g. '2','7','0','5' (single digits, allowed at q0) and ' the','{','abc','\\n','EOS','27' (forbidden at q0). Use only small illustrative bar heights, invent NO probabilities or benchmark numbers. (3) The MASK row for the current state overlaid: allowed token bars stay solid; forbidden bars are struck to -inf (collapse to a flat greyed/hatched stub with a small '-inf' tag). Label this step 'mask = valid[q_current]'. (4) After-mask softmax: the surviving bars re-grow so they visibly redistribute to fill the space (renormalization over survivors) — annotate 'renormalize over allowed tokens'. (5) Sample: one surviving token highlighted (step 1 picks '2'), with an arrow appending it to an OUTPUT buffer box that accumulates '2' -> '20' -> '202' -> '2027' across the animation. (6) Advance: an arrow shows the sampled token's characters driving the FSM, moving the current-state marker q0->q1 (then q1->q2, q2->q3, q3->q4). Include a callout that appears at q3: the multi-character token '27' is NOW allowed (it consumes two digits and lands in accept), whereas it was masked at q0 — this visualizes the token-vs-character lifting subtlety. Final frame: FSM sits in q4 (accept, glowing), output buffer reads '2027', and a small note 'EOS now permitted (state is accepting)'. CRITICAL: the animation must be a clean labeled STATIC frame at rest — freeze on step 1 with all six stages (state strip, raw logits, mask, renorm, sample, advance) fully labeled so a reader who never sees motion still understands the whole cycle. Theme-safe: use semantic roles (allowed vs forbidden vs current-state vs accept) not hardcoded brand colors; ensure the -inf stubs and the highlighted sample are distinguishable in both light and dark."
+    },
+    {
+      "name": "structgen-fsm-vs-pda-stack",
+      "concept": "Why a regex FSM cannot validate JSON and a pushdown automaton can: the stack is the missing memory that counts unbounded nesting.",
+      "rationale": "The chapter pivots from regular languages to context-free languages, and the entire justification for PDAs (and the added engineering cost of XGrammar/llguidance) hinges on one intuition: an FSM's only memory is its current state, so it literally cannot count braces, while a stack can. Right now this lives only in prose plus a text code block. A side-by-side visual with a concrete growing/shrinking stack on the chapter's own {\"users\":[{\"id\":1,\"name\": example makes the regular-vs-context-free boundary tangible and motivates everything after it.",
+      "kind": "static",
+      "placement": "In the 'Beyond Regular Languages: Pushdown Automata and CFGs' section, after 'The PDA State' subsection",
+      "priority": 2,
+      "brief": "A two-panel side-by-side comparison, equal width, both fitting inside the viewBox. LEFT panel titled 'FSM (regular) — memory = current state only': draw a small bounded ring of ~4-5 state circles with transitions, captioned 'great for a date like 2027-03-14'. Below it, show it attempting nested braces: a strip '{  {  {  }  }  }' with a THOUGHT/ERROR callout 'no memory of depth — cannot tell if braces balance; every extra { looks the same'. Mark the FSM as failing on unbounded nesting (a small crossed/greyed 'x depth?'). RIGHT panel titled 'PDA (context-free) — FSM + a stack': the same style state machine but with a vertical STACK column drawn as stacked plates beside it. Walk the chapter's exact partial JSON along the bottom: {\"users\": [{\"id\": 1, \"name\": with a cursor. Annotate the push/pop events: '{' pushes OBJECT, '[' pushes ARRAY, '{' pushes OBJECT, so the stack column reads bottom-to-top [OBJECT, ARRAY, OBJECT] exactly as in the chapter; note that a later '}' would pop the top. Add one label 'current sub-state: AFTER_KEY_COLON -> only a string value \" is allowed next' to tie the stack to the allowed-next-token idea. Bottom caption spanning both panels: 'An FSM forgets how deep it is; a PDA remembers via the stack — that is why JSON needs a pushdown automaton.' Theme-safe: use semantic roles for push vs pop vs current, small illustrative structures only, no invented numbers beyond the tiny example. Ensure the stack plates and their labels are legible with adequate spacing in both themes; no overlapping text."
+    },
+    {
+      "name": "structgen-mask-forward-overlap",
+      "concept": "Constrained decoding is near-free because CPU mask computation overlaps the GPU forward pass — wall-clock is max(fwd, mask), not their sum.",
+      "rationale": "The chapter makes a strong, non-obvious performance claim (sub-5% overhead, T ≈ max not sum) that readers often misunderstand as 'masking is just cheap'. The real intuition is pipelining across two different hardware resources. A two-lane timeline showing the GPU forward pass for step t running concurrently with CPU mask compute for step t+1 (advanced from t-1's token) turns the max-vs-sum formula into something a reader can see, and explains why overhead vanishes only when the forward pass dominates.",
+      "kind": "static",
+      "placement": "In the 'Performance Deep Dive: XGrammar's Overlap With Sampling' section, after 'Overlap With the Model Forward Pass'",
+      "priority": 3,
+      "brief": "A two-lane horizontal timeline (Gantt-style), fitting inside the viewBox, contrasting naive vs overlapped execution. TOP: label 'Naive (serial): T = fwd + mask' with, for each of ~3 decode steps, a GPU forward-pass block immediately followed by a CPU mask-compute block on the same single lane, so total length is visibly long. BOTTOM: label 'XGrammar (overlapped): T ~= max(fwd, mask)' with TWO stacked lanes — a GPU lane and a CPU lane. On the GPU lane draw forward-pass blocks for steps t, t+1, t+2 back-to-back. On the CPU lane draw mask-compute blocks offset so that the mask for step t+1 is computed DURING the GPU forward pass of step t (annotate one with 'mask for t+1, advanced from t-1 sampled token'). Use a dashed vertical guide to show that the overlapped total wall-clock is much shorter, and put a bracket comparing the two totals. Make the GPU forward block visibly much WIDER than the CPU mask block to encode 'for large models fwd >> mask, so mask hides completely' — add a small caption 'when fwd >> mask, overhead ~ 0; overhead only shows for tiny models'. Use only relative/illustrative durations, invent NO millisecond numbers. Theme-safe: distinguish the GPU lane, CPU lane, and the idle/hidden region by semantic roles that survive both light and dark; keep all block labels legible and non-overlapping."
+    }
+  ],
+  "summary": "The chapter is figure-solid on downstream/applied topics (XGrammar internals, tool-call partial application, library selection) and all three existing figures are keep-quality in both themes. The gap is the foundational mechanism itself: nothing shows the automaton-driven logit-mask-renormalize-sample-advance loop on an actual logit vector, and the regular-vs-context-free (FSM vs PDA stack) distinction lives only in prose. Proposing one must-have long-animation of the core decode loop grounded on the 4-digit worked example (priority 1), one static FSM-vs-PDA stack comparison on the chapter's own JSON example (priority 2), and one static overlap-pipeline timeline making the max-not-sum performance claim visible (priority 3)."
+}

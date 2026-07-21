@@ -1,0 +1,188 @@
+<figure class="viz" id="fig-cuda-tiled-matmul-reuse">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 700" role="img" aria-label="A thread block cooperatively loads a T by T tile of A and a T by T tile of B into shared memory, synchronizes, then each loaded value is reused T times across a row or column of threads while accumulating into a register, before marching to the next K-tile -- cutting global memory reads by roughly a factor of T versus the naive kernel.">
+<defs>
+  <marker id="ctm-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <marker id="ctm-arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="ctm-arr-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent2,#3b82f6)"/>
+  </marker>
+  <marker id="ctm-arr-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cuda-tiled-matmul-reuse text   { fill: var(--ink-soft,#45413a); }
+  #fig-cuda-tiled-matmul-reuse .ttl   { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-cuda-tiled-matmul-reuse .lbl   { font: 600 11px var(--sans,sans-serif); }
+  #fig-cuda-tiled-matmul-reuse .sm    { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cuda-tiled-matmul-reuse .mono  { font: 600 11px var(--mono,monospace); }
+  #fig-cuda-tiled-matmul-reuse .tny   { font: 700 9px var(--mono,monospace); }
+  #fig-cuda-tiled-matmul-reuse .sync  { font: 700 11px var(--mono,monospace); }
+  #fig-cuda-tiled-matmul-reuse .fin   { font: 600 11.5px var(--sans,sans-serif); }
+</style>
+
+<text x="400" y="16" text-anchor="middle" class="sm">illustrative tile size T = 4 (block cooperatively marches across K-tiles t = 0, 1, 2, ...)</text>
+
+
+
+
+<g data-anim="1">
+
+  
+  <text x="170" y="36" text-anchor="middle" class="ttl" fill="var(--accent,#c15b39)">A (M x K)</text>
+  <rect x="20" y="52" width="300" height="56" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <line x1="70" y1="52" x2="70" y2="108" class="v-grid" stroke-width="1"/>
+  <line x1="120" y1="52" x2="120" y2="108" class="v-grid" stroke-width="1"/>
+  <line x1="220" y1="52" x2="220" y2="108" class="v-grid" stroke-width="1"/>
+  <line x1="270" y1="52" x2="270" y2="108" class="v-grid" stroke-width="1"/>
+  <rect x="120" y="52" width="50" height="56" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+  <text x="145" y="84" text-anchor="middle" class="mono" fill="var(--accent,#c15b39)">t</text>
+  <rect x="170" y="52" width="50" height="56" rx="3" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="195" y="84" text-anchor="middle" class="tny" fill="var(--accent2,#3b82f6)">t+1</text>
+  <line x1="8" y1="52" x2="8" y2="108" class="v-muted" stroke-width="1.2" marker-start="url(#ctm-arr)" marker-end="url(#ctm-arr)"/>
+  <text x="8" y="47" text-anchor="middle" class="sm">M</text>
+  <line x1="20" y1="120" x2="320" y2="120" class="v-muted" stroke-width="1.2" marker-start="url(#ctm-arr)" marker-end="url(#ctm-arr)"/>
+  <text x="170" y="133" text-anchor="middle" class="sm">K (tiled in chunks of T)</text>
+
+  
+  <text x="632" y="36" text-anchor="middle" class="ttl" fill="var(--accent2,#3b82f6)">B (K x N)</text>
+  <line x1="600" y1="46" x2="664" y2="46" class="v-muted" stroke-width="1.2" marker-start="url(#ctm-arr)" marker-end="url(#ctm-arr)"/>
+  <text x="678" y="50" class="sm">N</text>
+  <rect x="600" y="52" width="64" height="208" rx="4" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.3"/>
+  <line x1="600" y1="86.7" x2="664" y2="86.7" class="v-grid" stroke-width="1"/>
+  <line x1="600" y1="190.7" x2="664" y2="190.7" class="v-grid" stroke-width="1"/>
+  <line x1="600" y1="225.3" x2="664" y2="225.3" class="v-grid" stroke-width="1"/>
+  <rect x="600" y="121.3" width="64" height="34.7" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="2.2"/>
+  <text x="632" y="143" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">t</text>
+  <rect x="600" y="156" width="64" height="34.7" rx="3" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="632" y="177" text-anchor="middle" class="tny" fill="var(--accent2,#3b82f6)">t+1</text>
+  <line x1="588" y1="52" x2="588" y2="260" class="v-muted" stroke-width="1.2" marker-start="url(#ctm-arr)" marker-end="url(#ctm-arr)"/>
+  <text x="578" y="159" text-anchor="middle" class="sm">K</text>
+
+  
+  <text x="145" y="150" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">As (shared)</text>
+  <g stroke="var(--accent,#c15b39)" stroke-width="1">
+    <rect x="105" y="156" width="18" height="18" class="v-fill"/><rect x="125" y="156" width="18" height="18" class="v-fill"/><rect x="145" y="156" width="18" height="18" class="v-fill"/><rect x="165" y="156" width="18" height="18" class="v-fill"/>
+    <rect x="105" y="176" width="18" height="18" class="v-fill"/><rect x="125" y="176" width="18" height="18" fill="var(--accent,#c15b39)" fill-opacity="0.30"/><rect x="145" y="176" width="18" height="18" class="v-fill"/><rect x="165" y="176" width="18" height="18" class="v-fill"/>
+    <rect x="105" y="196" width="18" height="18" class="v-fill"/><rect x="125" y="196" width="18" height="18" class="v-fill"/><rect x="145" y="196" width="18" height="18" class="v-fill"/><rect x="165" y="196" width="18" height="18" class="v-fill"/>
+    <rect x="105" y="216" width="18" height="18" class="v-fill"/><rect x="125" y="216" width="18" height="18" class="v-fill"/><rect x="145" y="216" width="18" height="18" class="v-fill"/><rect x="165" y="216" width="18" height="18" class="v-fill"/>
+  </g>
+
+  <text x="500" y="90" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">Bs (shared)</text>
+  <g stroke="var(--accent2,#3b82f6)" stroke-width="1">
+    <rect x="460" y="98" width="18" height="18" class="v-fill"/><rect x="480" y="98" width="18" height="18" class="v-fill"/><rect x="500" y="98" width="18" height="18" class="v-fill"/><rect x="520" y="98" width="18" height="18" class="v-fill"/>
+    <rect x="460" y="118" width="18" height="18" class="v-fill"/><rect x="480" y="118" width="18" height="18" fill="var(--accent2,#3b82f6)" fill-opacity="0.30"/><rect x="500" y="118" width="18" height="18" class="v-fill"/><rect x="520" y="118" width="18" height="18" class="v-fill"/>
+    <rect x="460" y="138" width="18" height="18" class="v-fill"/><rect x="480" y="138" width="18" height="18" class="v-fill"/><rect x="500" y="138" width="18" height="18" class="v-fill"/><rect x="520" y="138" width="18" height="18" class="v-fill"/>
+    <rect x="460" y="158" width="18" height="18" class="v-fill"/><rect x="480" y="158" width="18" height="18" class="v-fill"/><rect x="500" y="158" width="18" height="18" class="v-fill"/><rect x="520" y="158" width="18" height="18" class="v-fill"/>
+  </g>
+
+  <path d="M145,108 L145,156" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#ctm-arr-a)"/>
+  <path d="M600,138.6 L540,138" fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#ctm-arr-b)"/>
+
+  <text x="400" y="282" text-anchor="middle" class="sm">cooperative load: each thread loads 1 element from HBM into As / Bs (once per tile pass)</text>
+</g>
+
+
+
+
+<g data-anim="2">
+  <rect x="60" y="296" width="620" height="24" rx="5" class="viz-pulse" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="370" y="312.5" text-anchor="middle" class="sync" fill="var(--warn,#e0a106)">__syncthreads()  -- wait for the whole tile to land</text>
+</g>
+
+
+
+
+<g data-anim="3">
+  <text x="145" y="333" text-anchor="middle" class="tny" fill="var(--accent,#c15b39)">As[y][k]</text>
+  <rect x="135" y="340" width="20" height="20" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.30" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+  <g stroke="var(--accent,#c15b39)" stroke-width="1.3" marker-end="url(#ctm-arr-a)">
+    <path d="M158,350 L211,350"/>
+    <path d="M158,350 L261,350"/>
+    <path d="M158,350 L311,350"/>
+  </g>
+  <circle cx="215" cy="350" r="4.5" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <circle cx="265" cy="350" r="4.5" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <circle cx="315" cy="350" r="4.5" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="265" y="372" text-anchor="middle" class="sm">reused across a row of threads</text>
+
+  <text x="500" y="333" text-anchor="middle" class="tny" fill="var(--accent2,#3b82f6)">Bs[k][x]</text>
+  <rect x="480" y="340" width="20" height="20" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-width="1.6"/>
+  <g stroke="var(--accent2,#3b82f6)" stroke-width="1.3" marker-end="url(#ctm-arr-b)">
+    <path d="M490,363 L490,386"/>
+    <path d="M490,363 L490,406"/>
+    <path d="M490,363 L490,426"/>
+  </g>
+  <circle cx="490" cy="390" r="4.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+  <circle cx="490" cy="410" r="4.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+  <circle cx="490" cy="430" r="4.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+  <text x="465" y="446" class="sm">reused down a</text>
+  <text x="465" y="459" class="sm">column of threads</text>
+
+  <rect x="195" y="395" width="260" height="60" rx="6" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+  <text x="325" y="389" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">register (per thread)</text>
+  <text x="325" y="418" text-anchor="middle" class="mono">acc += As[y][k] * Bs[k][x]</text>
+  <text x="325" y="436" text-anchor="middle" class="sm">for k = 0 .. T-1, ticking up</text>
+</g>
+
+
+
+
+<g data-anim="4">
+  <rect x="60" y="468" width="620" height="24" rx="5" class="viz-pulse" fill="var(--warn,#e0a106)" fill-opacity="0.18" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="370" y="484.5" text-anchor="middle" class="sync" fill="var(--warn,#e0a106)">__syncthreads()  -- wait before the next tile overwrites As / Bs</text>
+</g>
+
+
+
+
+<g data-anim="5">
+  <path d="M325,455 L325,468" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6" marker-end="url(#ctm-arr-g)"/>
+  <path d="M325,492 L325,525 L358,553" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6" marker-end="url(#ctm-arr-g)"/>
+  <text x="545" y="568" class="sm">write C tile</text>
+  <text x="545" y="580" class="sm">after K-loop</text>
+
+  <line x1="270" y1="500" x2="530" y2="500" class="v-muted" stroke-width="1.1" marker-start="url(#ctm-arr)" marker-end="url(#ctm-arr)"/>
+  <text x="542" y="504" class="sm">N</text>
+  <text x="400" y="512" text-anchor="middle" class="ttl">C (M x N)</text>
+  <line x1="250" y1="514" x2="250" y2="632" class="v-muted" stroke-width="1.1" marker-start="url(#ctm-arr)" marker-end="url(#ctm-arr)"/>
+  <text x="236" y="577" text-anchor="middle" class="sm">M</text>
+
+  <rect x="270" y="514" width="260" height="118" rx="4" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <g class="v-grid" stroke-width="0.8">
+    <line x1="313" y1="514" x2="313" y2="632"/><line x1="357" y1="514" x2="357" y2="632"/><line x1="400" y1="514" x2="400" y2="632"/><line x1="443" y1="514" x2="443" y2="632"/><line x1="487" y1="514" x2="487" y2="632"/>
+    <line x1="270" y1="553" x2="530" y2="553"/><line x1="270" y1="593" x2="530" y2="593"/>
+  </g>
+  <rect x="357" y="553" width="43" height="40" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.4"/>
+  <g>
+    <rect x="358" y="554" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.55"/>
+    <rect x="369" y="554" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.55"/>
+    <rect x="380" y="554" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.30"/>
+    <rect x="391" y="554" width="9" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.15"/>
+    <rect x="358" y="564" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.55"/>
+    <rect x="369" y="564" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.30"/>
+    <rect x="380" y="564" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.15"/>
+    <rect x="391" y="564" width="9" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+    <rect x="358" y="574" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.30"/>
+    <rect x="369" y="574" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.15"/>
+    <rect x="380" y="574" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+    <rect x="391" y="574" width="9" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+    <rect x="358" y="584" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.15"/>
+    <rect x="369" y="584" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+    <rect x="380" y="584" width="10" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+    <rect x="391" y="584" width="9" height="9" fill="var(--good,#2f9e6e)" fill-opacity="0.10"/>
+  </g>
+  <text x="400" y="650" text-anchor="middle" class="sm">this block's output tile (T x T), accumulating over K-tiles</text>
+
+  <text x="400" y="668" text-anchor="middle" class="fin">naive: each element re-read ~N times from HBM  -&gt;  tiled: loaded once per tile pass</text>
+  <text x="400" y="684" text-anchor="middle" class="fin">-&gt;  ~T x fewer global reads (compute-bound)</text>
+</g>
+
+</svg>
+<figcaption><b>Tiling turns a bandwidth-bound matmul into a compute-bound one by reusing each shared-memory value T times.</b> A thread block cooperatively stages a T&amp;times;T tile of A and a T&amp;times;T tile of B into fast shared memory (<code>As</code>, <code>Bs</code>), synchronizes, then every thread reuses each loaded element across a full row or column of the output tile while accumulating into a register — before the block marches to the next K-tile. Each global-memory element is read once per tile pass instead of once per output element, cutting HBM traffic by roughly a factor of T.</figcaption>
+</figure>

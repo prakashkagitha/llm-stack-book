@@ -1,0 +1,56 @@
+{
+  "chapter": "02-transformer/06-transformer-block",
+  "core_intuitions": [
+    "A block ADDS a small correction to the residual stream, never replaces it; the identity skip keeps an unbroken gradient highway so deep stacks train.",
+    "The residual gradient is a product of (I + Jacobian) factors, so it never vanishes even when sublayers are near-zero at init — unlike a plain chain of Jacobians.",
+    "LayerNorm centers THEN scales; RMSNorm only rescales magnitude (drops mean-centering), preserving the vector's offset structure — the two coincide when the mean is ~0.",
+    "Pre-norm normalizes the sublayer INPUT so the skip carries raw x (a clean unit-variance gradient path); post-norm normalizes after the add and needs LR warmup.",
+    "Gated FFN (SwiGLU/GeGLU): a Swish gate branch suppresses irrelevant features while a linear value branch decides what to write — a two-path product that beats single-curve ReLU/GELU.",
+    "Division of labor: attention communicates across tokens, the FFN computes per-token and holds ~2/3 of the block's parameters (the part MoE later swaps out)."
+  ],
+  "existing": [
+    {
+      "name": "transformer-block",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "tblock-pre-vs-post-norm",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "tblock-activation-curves",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "tblock-complete-wiring",
+      "verdict": "refine",
+      "issue": "In the dark theme the SwiGLU FFN dashed container (fill=var(--surface) with fill-opacity 0.45) renders as a large light-gray blob that sits lighter than the page background and reads as an unintended highlighted region. Minor secondary nit: the 'x_attn (after residual add)' label sits close to the amber skip wire near the top + node and grazes it.",
+      "improvement": "Make the SwiGLU FFN grouping container theme-neutral: drop the semi-opaque surface fill in favor of fill:none (rely on the dashed stroke alone) or a very subtle theme-aware tint that stays darker than the page in dark mode, so it does not paint a gray box. Nudge the 'x_attn (after residual add)' text a few px right/down so it clears the amber skip polyline. Everything else (blue weight boxes with white text, amber skip wires, shape-preserved I/O trapezoids) is correct in both themes — keep as-is."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "tblock-layernorm-vs-rmsnorm",
+      "concept": "Side-by-side of how LayerNorm and RMSNorm transform the SAME small vector, making the 'RMSNorm only rescales magnitude, LayerNorm also recenters' intuition visible.",
+      "rationale": "The two dominant norms are the second pillar of the chapter and the choice recurs across every modern model, yet the section has only a prose worked example and no figure. The distinction is inherently visual (a vector's bar profile before/after), and seeing that RMSNorm keeps the up/down offset pattern while LayerNorm flattens the mean to zero is exactly the intuition the reader must grok. It directly animates the chapter's own worked numbers.",
+      "kind": "static",
+      "placement": "After the '### RMSNorm' worked example block (the 'Worked example: LayerNorm vs RMSNorm on a small vector' admonition), before the 'Pre-Norm vs Post-Norm' section.",
+      "brief": "A three-panel static infographic driven entirely by the chapter's worked example: input vector x = [1, 3, -1, 5], d=4, gamma=1, beta=0. Draw each vector as four labeled vertical bars sharing a common horizontal zero-baseline (bars go up for positive, down for negative). PANEL 1 titled 'Input x': bars at 1, 3, -1, 5; draw a dashed horizontal 'mean = 2.0' line across them and annotate 'mean drifts, magnitude arbitrary'. PANEL 2 titled 'LayerNorm: center, then scale' shown as a two-step transform — a small step-a caption 'subtract mean (2.0)' producing intermediate bars [-1, 1, -3, 3] centered on zero, then a step-b caption 'divide by std (sqrt5 approx 2.236)' producing the OUTPUT bars [-0.447, 0.447, -1.342, 1.342]; annotate the output 'zero mean, unit variance' and show the mean line now coinciding with the zero baseline. PANEL 3 titled 'RMSNorm: rescale only' — one step, caption 'divide by RMS = 3.0', output bars [0.333, 1.0, -0.333, 1.667]; annotate 'offset preserved, only overall magnitude rescaled — NOT zero-mean' and draw the (nonzero) mean line to show it did NOT move to zero. The load-bearing visual contrast: in Panel 3 the bar SHAPE/pattern (the relative ups and downs) is identical to the input just shrunk, whereas in Panel 2 the whole profile is shifted down so its mean sits on zero. Include the two compact formulas near their panels: LN = (x - mu)/sqrt(sigma^2+eps) * gamma + beta and RMSNorm = x / sqrt(mean(x^2)+eps) * gamma, and note beneath that 'when mu approx 0 the two outputs coincide'. Use one accent color for positive bars and a muted/negative color for the below-zero bar so the sign is legible; keep the zero baseline in a neutral/muted stroke. Small illustrative integers only (all numbers taken from the chapter). Everything must sit inside the viewBox with a clear left-to-right reading order (input then the two norms). Fully understandable as a single static frame; theme-safe (no hardcoded primary fills, style both light and dark)."
+    },
+    {
+      "name": "tblock-parameter-budget",
+      "concept": "Where one transformer block's parameters live: attention ~1/3 vs FFN ~2/3, and the FFN's three gated matrices as three equal slabs.",
+      "rationale": "The chapter states twice (body + key takeaways) that the FFN holds roughly two-thirds of a block's parameters and that this is why MoE replaces only the FFN, but the point lives entirely in prose and a numeric worked example. A single proportion bar cements the 'FFN is the big parameter block / primary storage site' intuition and foreshadows the MoE chapter. Secondary/nice-to-have relative to the norm figure, but it serves a takeaway that is otherwise unillustrated.",
+      "kind": "static",
+      "placement": "In 'The Feed-Forward Network (FFN) Sublayer' section, right after the 'Parameter count worked example' list.",
+      "brief": "A compact static budget infographic for ONE pre-norm block. Top element: a single horizontal 100%-width stacked bar representing the block's parameters, split into two labeled segments sized by the true architectural ratio — 'Attention ~ 1/3' (subtitle: 'fused QKV + output projection, 4d^2') taking about one third of the width, and 'FFN ~ 2/3' (subtitle: 'gated MLP, 3 x d x d_ff') taking about two thirds; render the two RMSNorms as a hairline sliver at the join labeled 'norms: negligible (2d)'. Use two distinct theme-safe hues (e.g. accent for attention, the 'good' hue for FFN). Below the bar, expand the FFN segment into a small breakdown: three equal rectangles side by side labeled W_gate, W_up, W_down, each annotated 'approx d x d_ff' with a bracket 'three matrices, not two (gated)'. Keep all quantities SYMBOLIC (4d^2, 3 x d x d_ff, d x d_ff) and the ratio (1/3, 2/3) — do NOT hardcode specific million-parameter counts; the fractions are the intuition. Add a one-line takeaway strip: 'Attention routes between tokens; the FFN computes per token and is the bulk of the weights — the part Mixture-of-Experts later swaps out.' Reading order top (whole-block split) to bottom (FFN internals). Must fit inside the viewBox, no overlapping labels; style for both light and dark themes with no hardcoded primary colors."
+    }
+  ],
+  "summary": "The chapter is already well-served on wiring and the pre/post-norm distinction: all four existing figures are correct and legible in both themes and get 'keep' verdicts, with one minor 'refine' on tblock-complete-wiring (a dark-theme gray blob from a semi-opaque surface fill on the SwiGLU container, plus a label grazing the skip wire). The clearest foundational gap is the LayerNorm-vs-RMSNorm mechanics: the chapter's second pillar has a strong visual worked example but no figure, so the priority-1 new figure animates that example to show RMSNorm rescales magnitude while LayerNorm also recenters. A priority-2 parameter-budget figure cements the otherwise-unillustrated 'FFN is ~2/3 of the block' takeaway and its MoE foreshadowing. Held to two new figures to stay disciplined."
+}

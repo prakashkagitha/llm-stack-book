@@ -84,6 +84,8 @@ $$
 
 **View 3 — Outer products (rank-1 decomposition).** $C = \sum_{p=1}^k A_{:,p} \cdot B_{p,:}^\top$. Each term is a rank-1 matrix (column times row). This view is surprisingly important: low-rank approximations are truncated versions of this sum.
 
+{{fig:matmul-three-views}}
+
 ### FLOP count and why it matters
 
 Multiplying an $(m \times k)$ matrix by a $(k \times n)$ matrix costs $2mkn$ FLOPs (multiply-accumulate, factor of 2). For a transformer layer with hidden dim $d = 4096$:
@@ -216,6 +218,8 @@ $$
 The **economy (thin) SVD** keeps only the $r = \text{rank}(A)$ non-zero singular values, giving $U \in \mathbb{R}^{m \times r}$, $\Sigma \in \mathbb{R}^{r \times r}$, $V \in \mathbb{R}^{n \times r}$.
 
 ### Best low-rank approximation: the Eckart-Young theorem
+
+{{fig:svd-geometry-and-lowrank}}
 
 **Theorem (Eckart-Young, 1936).** Among all rank-$k$ matrices, the one closest to $A$ in Frobenius norm is:
 
@@ -362,6 +366,8 @@ Think of each row of $X$ as an input vector and each row of $Y$ as the correspon
 $$
 \frac{\partial L}{\partial W} = X^\top \frac{\partial L}{\partial Y}, \qquad \frac{\partial L}{\partial X} = \frac{\partial L}{\partial Y} W^\top
 $$
+
+{{fig:linear-layer-backprop-transpose}}
 
 This is the most important formula to have on the tip of your tongue. It says: to compute how the loss changes with respect to the weights, multiply the transposed input by the upstream gradient; to backprop to the inputs, multiply the upstream gradient by the transposed weight.
 

@@ -1,0 +1,56 @@
+{
+  "chapter": "content/09-rag-retrieval/05-advanced-rag.md",
+  "core_intuitions": [
+    "Naive top-k RAG breaks on multi-hop questions because the retriever cannot know which chunks are relevant until it has already partially answered the question; the final sub-query often has zero semantic overlap with the original.",
+    "GraphRAG separates indexing granularity from retrieval granularity: an LLM extracts entities/relations, community detection clusters them hierarchically, and community summaries let global questions be answered without stuffing hundreds of chunks into context.",
+    "Multi-hop / iterative retrieval solves the dependency chain by looping retrieve -> reason -> reformulate, where each retrieval's result seeds the next query until the model decides it has enough.",
+    "Contextual retrieval fixes chunk decontextualisation: an isolated chunk embeds into the wrong neighbourhood; prepending an LLM-generated context sentence pushes its embedding toward the query's neighbourhood.",
+    "Self-RAG / CRAG make retrieval demand-driven and self-graded: relevance scores route each retrieved doc to accept / discard+web-search / decompose-and-verify.",
+    "HippoRAG's Personalized PageRank propagates relevance through the entity graph from query-seeded nodes, so passages transitively connected to several relevant entities get boosted without explicit sub-query generation.",
+    "Long-context vs RAG is a cost/quality tradeoff: attention prefill cost grows quadratically with context, RAG cost stays flat; long-context wins only for small corpora needing holistic synthesis, and even then lost-in-the-middle penalises poor placement."
+  ],
+  "existing": [
+    {
+      "name": "advrag-graphrag-indexing-pipeline",
+      "verdict": "keep"
+    },
+    {
+      "name": "advrag-raptor-summary-tree",
+      "verdict": "keep"
+    },
+    {
+      "name": "advrag-architecture-decision-tree",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "advrag-multihop-vs-singleshot",
+      "concept": "Why single-shot top-k RAG fails on multi-hop questions and how the iterative retrieve->reason->reformulate loop succeeds.",
+      "rationale": "The chapter's opening ('Why Naive RAG Breaks') and the entire Multi-Hop section hinge on one counterintuitive fact: the retriever cannot know which chunks are relevant until it has partially answered the question, and the last sub-query has NO semantic overlap with the original. Prose states this; a side-by-side visual makes the dependency chain click instantly. This is the single most foundational new mechanism in the chapter beyond GraphRAG indexing.",
+      "kind": "static",
+      "placement": "Multi-Hop Retrieval: Chaining Queries",
+      "priority": 1,
+      "brief": "Two-panel contrast, same worked-example question at the top spanning both panels: 'What language does the company founded by the author of PyTorch use?'. LEFT panel labelled 'Single-shot top-k' (dim / muted): the full question embeds once, an arrow to a vector index returns 3 chunk cards about PyTorch/deep-learning generically; a red-toned X or 'no chunk mentions the language' banner shows the miss. Key annotation: 'the query has no semantic overlap with the final answer term (Rust)'. RIGHT panel labelled 'Iterative multi-hop' (active): a vertical chain of three hop-cells, each cell showing sub-query -> retrieved chunk -> extracted fact, with a curved arrow feeding each extracted fact into the NEXT hop's sub-query. Hop 1: query 'author of PyTorch' -> chunk -> fact 'Soumith Chintala'. Hop 2: query 'company founded by Soumith Chintala' -> chunk -> fact 'Extropic AI'. Hop 3: query 'language used at Extropic AI' -> chunk -> fact 'Rust'. A small growing 'accumulated context' stack on the side gets taller each hop. A final decision diamond 'enough to answer?' -> 'Answer: Rust'. The load-bearing intuition to make legible: each hop's query is CONSTRUCTED from the previous hop's answer, so hop 3's query is unreachable from the original question. Use theme-safe neutral fills; reserve one accent for the flowing-fact arrows. No invented metrics. Everything inside the viewBox, clear top-to-bottom reading order on the right, left-to-right miss on the left."
+    },
+    {
+      "name": "advrag-contextual-retrieval-embedding-shift",
+      "concept": "Prepending a generated context sentence moves an ambiguous chunk's embedding from the wrong neighbourhood into the query's neighbourhood.",
+      "rationale": "Contextual retrieval is called 'almost universally applicable' in the chapter, but its mechanism is spatial and lives in embedding space where prose is weakest. The chapter even gives the exact example ('the plaintiff argued...' being ambiguous without knowing it is a 2019 employment case). A 2D embedding-space diagram showing the vector relocate is the canonical way to make this intuition land and cannot be conveyed as well any other way.",
+      "kind": "static",
+      "placement": "Contextual Retrieval and Dense Representations",
+      "priority": 1,
+      "brief": "A single 2D embedding-space plane (label axes generically 'embedding space', no numbers). Show two loose clusters of small dots: one cluster labelled 'unrelated legal boilerplate / other cases', another labelled 'employment-discrimination, 2019' near a distinct QUERY marker (a star) labelled 'query: constructive dismissal ruling'. Place a chunk token for the raw text '\"the plaintiff argued...\"' as a hollow dot sitting AWAY from the query, drifting toward the ambiguous/boilerplate cluster, annotated 'embedded in isolation -> ambiguous -> wrong neighbourhood'. Then show the SAME chunk after contextualisation: a filled dot near the query star, connected to the hollow dot by a bold dashed arrow labelled 'prepend LLM context: \"from a 2019 employment discrimination ruling...\"'. A small inset on the side shows the transformation as text: [context sentence] + [raw chunk] -> embed. Caption strip: 'the prefix resolves the ambiguity and pushes the embedding toward the right neighbourhood'. Theme-safe: neutral dots, one accent for the query star and the shift arrow; the two destinations distinguishable by position + label, not color alone. Keep dots sparse and legible, no overlap with labels, all within viewBox."
+    },
+    {
+      "name": "advrag-hipporag-ppr-propagation",
+      "concept": "Personalized PageRank seeds relevance at query-matched entities and propagates it through the graph, boosting transitively-connected passages that never matched the query directly.",
+      "rationale": "The chapter presents PPR with a formula and claims its key power is 'transitive relevance' and multi-hop reasoning WITHOUT explicit sub-query generation. That contrast with the explicit-decompose multihop figure is exactly the intuition worth drawing: relevance as something that FLOWS through edges rather than being retrieved by direct match. A static graph with a relevance heat gradient radiating from seeds makes the propagation concrete where the recurrence relation stays abstract.",
+      "kind": "static",
+      "placement": "HippoRAG: Personalized PageRank over Entity Graphs",
+      "priority": 2,
+      "brief": "One entity graph of ~9-11 labelled nodes (entities like 'ACME Corp', 'Series B', 'VC firm X', 'portfolio co Y', 'IPO event', a couple of distractor entities in a side branch). Two or three SEED nodes (the ones matching the query) are marked with a query-match badge / star and drawn as the brightest / fullest. Represent PPR score as node size + a theme-safe intensity ramp (e.g. fill opacity from strong at seeds fading to faint at the graph periphery), NOT hue. Show relevance 'flowing' along edges with small directional arrows / ripples emanating from seeds. Crucially, highlight ONE node that is 2-3 hops from any seed, has NO direct query match, yet is rendered clearly boosted because it sits between two moderately-scored intermediates — annotate it 'boosted transitively: connected to several relevant entities, never matched the query'. Include a faint 'teleport back to seeds (alpha)' curved arrow returning to the seed set to hint at the personalization vector. Small legend: 'node brightness/size = PPR relevance score'. Contrast callout: 'no explicit sub-queries -- multi-hop emerges from graph structure'. Distractor side-branch nodes stay faint to show relevance did NOT reach them. All labels legible, no overlaps, one accent reserved for seed badges, intensity ramp must be visible in both light and dark themes."
+    }
+  ],
+  "summary": "The chapter is already well-served on three mechanisms: GraphRAG indexing, the RAPTOR summary tree, and the architecture-selection decision tree. All three existing figures render correctly and legibly in both light and dark themes with no clipping or clutter, so all are KEEP. The gaps are three of the chapter's most important and most visual mechanisms, each currently prose-only: (1) multi-hop iterative retrieval, whose whole point -- that the final sub-query has no semantic overlap with the original question -- is a dependency chain best shown as a single-shot-fails vs iterative-succeeds contrast; (2) contextual retrieval, an inherently spatial embedding-space effect the chapter describes with an exact worked example; and (3) HippoRAG's Personalized PageRank, whose 'relevance flows through the graph' transitive intuition is exactly what the formula fails to convey. I propose three disciplined STATIC figures for these, two priority-1 and one priority-2. No animation is warranted: each mechanism is fully understandable in one frame."
+}

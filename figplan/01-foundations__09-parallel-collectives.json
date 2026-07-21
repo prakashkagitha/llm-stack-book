@@ -1,0 +1,63 @@
+{
+  "chapter": "content/01-foundations/09-parallel-collectives.md",
+  "core_intuitions": [
+    "SPMD: every GPU runs one process running the same program on different data, branching only by its integer rank.",
+    "The six collectives differ purely in their dataflow, and the master identity is All-Reduce = Reduce-Scatter then All-Gather (the basis of ZeRO/FSDP).",
+    "Ring all-reduce is bandwidth-optimal: each rank moves ~2M bytes regardless of n, because reduce-scatter + all-gather each send (n-1)/n*M in equal M/n steps around the ring.",
+    "The alpha-beta cost model T = alpha + B/beta splits time into a fixed latency floor and a bandwidth-limited slope, so small messages are latency-bound and large messages bandwidth-bound; the ring latency floor 2(n-1)alpha grows with n, which is why we bucket small gradients and go hierarchical.",
+    "The interconnect is a steep hierarchy: NVSwitch gives full non-blocking all-to-all NVLink (~10-50x faster) inside a node while InfiniBand is the slow inter-node hop, so production collectives are hierarchical (reduce on NVLink, exchange once over IB, broadcast back).",
+    "Each parallelism strategy is defined by its collective: DDP=all-reduce, ZeRO/FSDP=reduce-scatter+all-gather, tensor-parallel=all-reduce in a sub-group, MoE/expert-parallel=all-to-all (a data transpose across ranks)."
+  ],
+  "existing": [
+    {
+      "name": "collectives-six-dataflow",
+      "verdict": "refine",
+      "issue": "The name and marker promise all six collectives and the chapter explicitly calls them 'six operations you need to know cold', but the figure only draws three (All-Reduce, Reduce-Scatter, All-Gather). Broadcast, Reduce, and All-to-All - the latter being the whole basis of the MoE section later - are missing, so a reader mapping the six-row table to the picture comes up short.",
+      "improvement": "Add three compact panels for Broadcast (rank 0 buffer fans out to all), Reduce (all buffers funnel to rank 0 only), and All-to-All (rank i's j-th chunk lands as rank j's i-th chunk - draw it as a grid transpose so the distinct-chunk-to-each-rank pattern is unmistakable). Keep the existing A/B/C decomposition panels and the 'All-Reduce = Reduce-Scatter + All-Gather' footer as the punchline. Nudge the 'all-reduce (SUM)' / 'reduce-scatter (SUM)' labels off the arrow shafts so they don't overprint in dark mode."
+    },
+    {
+      "name": "ring-allreduce",
+      "verdict": "keep",
+      "improvement": "Strong in both themes: the two-phase story (reduce-scatter then all-gather), the per-edge 'send X' labels, the per-rank owned-chunk result, and the cost/rank footer converging to 2M all land cleanly. One low-risk QA check: confirm the all-gather cost term in the footer renders as (n-1)/n*M (the light-theme raster made the minus glyph look like a plus); the value is correct, just verify the glyph."
+    },
+    {
+      "name": "ring-ar-reduce-scatter-trace",
+      "verdict": "refine",
+      "issue": "Dark-mode legibility fails: the rank cards, the per-step log boxes, and the bottom banner are filled with a hardcoded dark-navy that nearly merges with the dark page background, and the gray body text inside them drops to very low contrast - the step log and rank results are hard to read. The panel is also dense (ring + side step-log + bottom banner all competing).",
+      "improvement": "Make the panel fills, borders, and text theme-aware so the navy cards read clearly on a dark page (lighter fill or brighter border+text). While in there, lighten the visual load: the side step-log repeats what the ring already shows, so trim it to just the accumulation state per step and let the ring carry the motion. Keep it a static trace - ring-allreduce already covers the mechanism, this one earns its place only if the per-step accumulation is crisply legible."
+    },
+    {
+      "name": "nvswitch-crossbar-topology",
+      "verdict": "refine",
+      "issue": "The core diagram (8 GPUs, crossbar, bandwidth callouts) is clear, but in dark mode the title ('DGX H100 Intra-Node Topology...'), the two-line bottom caption, and the 'One-shot reduce across fabric' annotation box use a dark-gray text color that is near-invisible on the dark background - exactly the takeaway sentences are the ones that vanish.",
+      "improvement": "Switch the title, bottom caption, and annotation-box text to a theme-aware foreground color so they stay legible on both backgrounds. Leave the GPU boxes, purple crossbar, and green bandwidth panel as-is (they read fine). Optionally tone the solid purple crossbar toward a theme-neutral accent, but that is secondary to fixing the text contrast."
+    },
+    {
+      "name": "hierarchical-allreduce-stages",
+      "verdict": "refine",
+      "issue": "Excellent three-stage narrative (intra-node reduce-scatter on NVLink -> single inter-node all-reduce on IB -> intra-node all-gather on NVLink) and the 'NVLink steps wrap the one expensive IB step' point is exactly right. But the title and the two-line bottom caption render in dark-gray and are almost unreadable in dark mode, so the summarizing sentence - the whole moral of the figure - disappears.",
+      "improvement": "Make the title and bottom-caption text theme-aware (foreground color that has contrast on both light and dark). The stage panels are light-filled so their interior labels survive; only the on-background text needs fixing. Consider bumping the 'bottleneck' label on the IB stage to a slightly stronger weight so the reason for the hierarchy pops."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "alpha-beta-cost-model",
+      "concept": "Plots T(B) = alpha + B/beta to show the latency floor vs the bandwidth slope, the latency-bound/bandwidth-bound crossover, and why the ring latency floor rises with n.",
+      "rationale": "The chapter's stated purpose is teaching 'the exact cost models engineers use to reason about whether a training job will be network-bound or compute-bound', yet the alpha-beta model - the single most reused quantitative tool in the chapter and the basis of the bucketing, hierarchical, and interview-corner arguments - has no figure. One line chart makes alpha (fixed startup), 1/beta (asymptotic rate), the two regimes, and the n-dependence of the latency floor all click at once. This is the biggest genuine gap.",
+      "kind": "static",
+      "placement": "Bandwidth and Latency Cost Models",
+      "priority": 1,
+      "brief": "A single clean line chart. X-axis: message size B (small on the left, large on the right). Y-axis: transfer time T. Draw the line T = alpha + B/beta: a horizontal dashed segment at height alpha near the origin labeled 'latency floor alpha (fixed startup, per call)', then the line rising with a constant slope labeled 'slope = 1/beta (bandwidth-limited)'. Shade/annotate two regions under the curve: left region 'latency-bound: T ~ alpha, message too small to amortize startup', right region 'bandwidth-bound: T ~ B/beta, transfer dominated by raw bytes'. Mark the crossover point where alpha = B/beta with a vertical guide labeled 'B* = alpha*beta (equal cost)'. Add a small annotation arrow near the left region reading 'gradient bucketing merges many tiny messages -> pushes right into the bandwidth regime'. Then an inset (or a second faint pair of parallel lines on the same axes) showing the ring all-reduce variant T = 2(n-1)alpha + (2(n-1)/n)(M/beta): draw two or three lines for increasing n, same slope but each with a HIGHER intercept, labeled 'ring latency floor 2(n-1)alpha grows with n -> why we go hierarchical at large n'. Use only small illustrative integers for n (e.g. n=4, 16, 64) and NO absolute bandwidth/latency numbers - the axes are qualitative. Theme-safe: no hardcoded primary fills, use theme foreground for text and a neutral accent for the shaded regions; everything inside the viewBox with clear reading order left-to-right."
+    },
+    {
+      "name": "all-to-all-moe-dispatch",
+      "concept": "Shows MoE token routing as an all-to-all: tokens on each GPU are colored by their destination expert, and the all-to-all shuffle delivers every token to the GPU that hosts its expert.",
+      "rationale": "The chapter devotes a full section and code sketch to all-to-all for expert parallelism but has zero visuals for it, and none of the existing figures draw all-to-all's distinctive dataflow (each rank sends a distinct chunk to every other rank - a data transpose). Seeing tokens sorted by color and transposed across GPUs is the moment MoE routing clicks and the 'bisection-bandwidth-limited, no ring benefit' cost intuition lands. Foundational to the DP/TP/EP-uses-which-collective mapping the chapter closes on.",
+      "kind": "static",
+      "placement": "All-to-All and Expert Parallelism",
+      "priority": 2,
+      "brief": "Two-column before/after over a small illustrative n (e.g. 4 GPUs, one expert per GPU). BEFORE (left): four GPU rows, each holding a short strip of token cells. Color each token cell by its DESTINATION expert (4 colors), scattered - so every GPU has a mix of all four colors, representing a router that sent tokens everywhere. Label 'each GPU holds tokens bound for many different experts'. MIDDLE: the all-to-all operation drawn as a crossing/transpose bundle of arrows - make clear that GPU i sends its color-j tokens to GPU j and receives color-i tokens from everyone (a grid transpose). Small caption 'all-to-all = transpose: rank i's chunk-for-j lands on rank j'. AFTER (right): four GPU rows again, but now each GPU's strip is a single solid color - GPU j holds exactly the tokens for expert j, ready for local expert compute. Label 'each GPU now holds only its own expert's tokens'. Footer line: 'cost ~ O(total token volume), limited by network bisection bandwidth - unlike all-reduce it gets no ring speedup'. Keep counts as small illustrative integers, invent no benchmark numbers. Theme-safe: distinguish the four experts with a categorical, theme-neutral palette (not brand primaries), keep all labels in theme foreground, fit within the viewBox with an obvious left-to-right reading order."
+    }
+  ],
+  "summary": "The chapter is figure-rich and mostly well-served: the ring all-reduce mechanism and the NVLink/NVSwitch/IB hierarchy each have strong figures. Two things drag on the existing set. First, four of the five figures render fine in light mode but leak dark-gray title/caption text or hardcoded navy panels that go near-invisible in dark mode (ring-ar trace worst, plus the two topology figures' summarizing captions) - all theme-safety refines, not redraws. Second, the 'six-dataflow' figure only draws three collectives despite the chapter enumerating six, so it needs Broadcast/Reduce/All-to-All added. The real conceptual gaps are two: the alpha-beta cost model (the chapter's central quantitative tool, currently unillustrated) deserves the one must-have new figure, and the all-to-all/MoE section has a whole story with no visual. ring-allreduce is a clean keep."
+}

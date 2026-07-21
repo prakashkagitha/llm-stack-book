@@ -1,0 +1,53 @@
+{
+  "chapter": "2.2 Embeddings & The Input Pipeline",
+  "core_intuitions": [
+    "Why one-hot fails and dense embeddings win: a V-dim orthogonal code has no geometry (every token equidistant) and is huge; a learned d-dim projection is 10x-100x smaller AND lets semantic relationships become directions in space.",
+    "The embedding lookup is mathematically a one-hot matmul but implemented as an index-select (row copy), so it costs O(Td) not O(TVd).",
+    "Weight tying: W_E and W_U are the SAME matrix. A token's embedding row is literally the direction the logit head dots against to vote for that token going out.",
+    "The two vocabulary operations are mirror opposites: embed = cheap index-select with a SPARSE gradient (only batch tokens lit); unembed = expensive dense GEMM (O(TVd), memory-bound at decode) with a DENSE gradient (all rows lit).",
+    "The residual stream view: the embedding writes the initial state that every later layer adds to, and the unembedding reads the accumulated sum."
+  ],
+  "existing": [
+    {
+      "name": "embed-text-to-tensors-pipeline",
+      "verdict": "keep",
+      "issue": "Renders correctly and legibly in both light and dark themes. Clear numbered reading order from raw string through BOS prepend, embedding lookup, positional add, to block-0 input, with tensor shapes carried on every arrow. Correctly conveys the concrete text-to-tensor trace the section calls for. Only nit is that the Step-3 caption sits close to the W_E table's bottom edge, but it remains on its own line and readable; not worth a redraw.",
+      "improvement": "Optional only: nudge the Step-3 caption ('Each of the 8 token IDs selects one 768-dim row') down a few px so it clears the W_E table box entirely."
+    },
+    {
+      "name": "embed-full-stack-architecture",
+      "verdict": "keep",
+      "issue": "Strong reference-style vertical flow: Token IDs -> W_E -> positional-handling OR-branch (GPT/BERT add vs Llama RoPE-in-attention) -> optional dropout/LayerNorm -> L blocks -> final norm -> logit projection -> softmax, with a dashed weight-tying arc back to W_E and a full legend. Works in both themes, shapes labeled throughout, and the OR diamond correctly encodes the mutually-exclusive positional choice. Accurately serves the 'full embedding stack' section."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "one-hot-vs-embedding-geometry",
+      "concept": "Side-by-side contrast of the sparse orthogonal one-hot code versus the compact dense embedding space where meaning becomes geometry.",
+      "rationale": "This is the opening 'why' of the entire chapter and the single biggest intuition gap: neither existing figure shows why one-hot fails (no geometry, huge V) or why a learned projection is both smaller AND semantically structured. The king-queen parallelogram is the canonical aha that makes embeddings click.",
+      "kind": "static",
+      "placement": "Why Not One-Hot Vectors?",
+      "priority": 1,
+      "brief": "Two-panel comparison joined by a central projecting arrow. LEFT panel titled 'One-hot: V dimensions, no geometry'. Draw a tall thin sparse column vector labeled o_i: mostly 0s with a single 1 at position i; annotate its height as V (with the range 32k-256k shown as illustrative text, not a benchmark). Beside/below it draw a small 3-axis orthogonal cross with three unit arrows labeled 'king', 'queen', 'cat' each along its own perpendicular axis; annotate 'every pair: 90 deg, cosine 0, distance sqrt(2) -- all tokens equidistant, meaning absent'. Add a small wide slab labeled '[B, T, V] -> tens of GB' to convey wasteful width. CENTER: a bold arrow labeled 'W_E projects: V-dim sparse  ->  d-dim dense (10x-100x smaller)'. RIGHT panel titled 'Learned embedding: d dimensions, geometry emerges'. Draw a short compact dense vector e_i labeled height d (show the range 512-8192 as illustrative), filled with a few small decimal components. Below it draw a 2D scatter (a projection of the embedding space) with two clusters: {king, queen} near each other and {man, woman} near each other, plus a separate {cat, dog} cluster; draw faint parallelogram arrows showing king - man + woman ~= queen. Caption: 'similar meaning -> nearby vectors; relationships become directions'. Theme-safe: no hardcoded primary colors, use fill-none vs filled and opacity to distinguish the single hot cell and the clusters; keep all labels legible and inside the viewBox. Use only the illustrative integers/ranges already in the text; invent no benchmark numbers."
+    },
+    {
+      "name": "weight-tying-shared-matrix",
+      "concept": "One embedding matrix W_E serving both the input row-lookup and the output logit projection, with a highlighted row showing that a token's embedding IS the direction the model votes for it.",
+      "rationale": "Weight tying is the chapter's central named concept (its own section, the Interview Corner question, and a key takeaway), yet the existing stack figure only hints at it with a dashed arc. This figure builds the actual mechanism intuition: the SAME row i is copied in on the input side and dotted against on the output side -- input geometry and output voting geometry are one and the same.",
+      "kind": "static",
+      "placement": "Weight Tying",
+      "priority": 1,
+      "brief": "Center the figure on a single matrix W_E drawn as a horizontal stack of rows, shape labeled [V, d], with one specific row highlighted (label it 'row i = cat'). LEFT flow ('going in', the input lookup): a token ID box 'id = i' -> arrow labeled 'index-select (row copy), O(d)' -> pulls the highlighted row out as e_i, the input embedding entering the residual stream. RIGHT flow ('going out', the output projection): after a small stack labeled 'L Transformer blocks', a final hidden state vector h (a d-vector) -> arrow labeled 'dot against every row, O(V*d) dense matmul' -> produces a length-V logit bar chart; make the bar at position i the tallest and connect it back with a thin callout 'logit_i = h . row_i (the SAME row i)'. Draw BOTH the left lookup arrow and the right matmul arrow visibly touching the exact same highlighted row to make the sharing literal. Top banner: 'Same matrix, both ends -- a token's embedding vector = the direction the logit head votes for that token.' Small footnote: 'halves vocab params (saves V*d); couples input and output token geometry; typically improves perplexity.' Theme-safe (highlight the shared row via opacity/stroke weight, not a fixed color); keep arrows uncrossed and everything inside the viewBox with a clear left-to-right, then center, reading order. Illustrative small integers only."
+    },
+    {
+      "name": "embed-vs-unembed-asymmetry",
+      "concept": "The mirror-image cost and gradient structure of the two vocabulary operations: cheap sparse index-select vs expensive dense GEMM.",
+      "rationale": "The embed/unembed asymmetry recurs across four sections (lookup cost, unembedding cost, gradient-flow sparsity, and the worked example) and is a key takeaway, but no figure ties it together. A single contrast diagram makes the recurring theme -- cheap+sparse in, expensive+dense out, and why weight tying superimposes both gradients -- click at once.",
+      "kind": "static",
+      "placement": "Gradient Flow Through the Embedding Layer",
+      "priority": 2,
+      "brief": "Two mirrored columns sharing a common visual language of 'lit vs dark rows' in a vocabulary-height table. LEFT column 'EMBED (input lookup)': operation glyph = table W_E with only a handful of rows lit (the batch's tokens), arrow labeled 'index-select'. Rows: 'Cost: O(T*d) -- copy T rows (cheap)'; 'Forward: cheap row copy'; 'Gradient: SPARSE -- only rows for tokens present in the batch are nonzero; the rest are exactly zero' (show most rows dark, a few lit). RIGHT column 'UNEMBED (logit projection)': operation glyph = a full dense GEMM block [T,d] x [d,V] -> [T,V] with every cell shaded, arrow labeled 'dense matmul'. Rows: 'Cost: O(T*V*d) -- often the single most expensive op; memory-bound at decode (reads all V*d params per token)'; 'Forward: expensive'; 'Gradient: DENSE -- every row updated, weighted by the hidden states' (show all rows lit). BOTTOM unifying banner: 'With weight tying these are the SAME matrix: it receives a SPARSE gradient from the input path PLUS a DENSE gradient from the output path. Frequent tokens are dominated by the unembed path; rare tokens only hear from the embed path.' Make the sparse-vs-dense row lighting the dominant visual contrast between columns. Theme-safe: express 'lit' vs 'zero' rows via opacity/fill presence rather than hardcoded colors; keep both columns aligned and fully inside the viewBox. Small illustrative integers only; no invented benchmark numbers."
+    }
+  ],
+  "summary": "Chapter is well-served on process/topology (the text-to-tensors pipeline and the full-stack architecture figures both KEEP -- clean, correct, dual-theme). The gaps are conceptual: (1) why one-hot fails and embeddings encode geometry -- the chapter's opening aha, unserved; (2) weight tying as one shared matrix whose row is both the input embedding and the output vote direction -- the central named concept, only hinted at today; (3) the embed/unembed cost+gradient asymmetry that recurs across four sections. Proposing 3 static figures (two priority-1, one priority-2); no animation needed since every intuition here lands in a single frame."
+}

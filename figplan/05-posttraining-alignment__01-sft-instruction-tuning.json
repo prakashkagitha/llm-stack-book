@@ -1,0 +1,63 @@
+{
+  "chapter": "content/05-posttraining-alignment/01-sft-instruction-tuning.md",
+  "core_intuitions": [
+    "Response-only loss masking: the transformer sees one flat sequence, but gradients flow only from the assistant-response tokens, so SFT rewards reply quality rather than re-predicting the instruction.",
+    "The superficial alignment hypothesis (LIMA): knowledge already lives in the pretraining weights; SFT only teaches the model to access and present it in the right format, so a small curated dataset beats a large noisy one.",
+    "SFT is Stage 1 of a three-stage recipe (SFT -> Reward Modeling -> RL alignment), and it gives RL a strong behavioral prior to start from.",
+    "Catastrophic forgetting: fine-tuning moves the weights out of the broad pretraining optimum toward a narrow SFT optimum; a large LR / many epochs overshoots and erases general skills, while small LR, short training, replay, and LoRA keep the model near the shared basin.",
+    "Full FT vs PEFT is a memory story: gradients + AdamW optimizer states dominate the full-FT budget, and QLoRA eliminates them by freezing (and quantizing) the base, collapsing ~120 GB to ~12 GB.",
+    "Refusal training is a calibration problem, not a more-is-better axis: contrast sets (comply look-alikes outnumbering refusals) and two-axis preference pairs keep the operating point calibrated instead of collapsing to blanket refusal."
+  ],
+  "existing": [
+    {
+      "name": "sft-loss-mask-sequence",
+      "verdict": "keep",
+      "improvement": "Correct and clear in both themes: the flat token sequence with masked (mask=0) prompt span and supervised (mask=1) response+EOS span reads instantly, legend and 'loss starts here' arrow reinforce it. Only nit is the 'loss starts here' label sits right on the boundary tick; optional micro-nudge of that label 2-3px right would remove the faint ':' collision, but it is not necessary."
+    },
+    {
+      "name": "sft-three-stage-posttraining-recipe",
+      "verdict": "refine",
+      "issue": "Content is correct and the three-stage flow with reuse paths reads well, but in Stage 2 the 'rank pairs' arrow label overlaps the right edge of the 'preference data' box (renders as 'referencprank pairs'), and in dark mode the muted stage-title text ('Stage 2 — Reward Modeling', 'Stage 3 — RL Alignment') is very low-contrast against the panel.",
+      "improvement": "Shift the 'rank pairs' arrow label right so it clears the preference-data box (or shorten to 'rank' and move it fully onto the arrow), and raise the stage-title color one step above --muted so titles stay legible in dark theme. Leave the layout and reuse-path arrows unchanged."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "superficial-alignment-quality-over-quantity",
+      "concept": "Knowledge is stored in the pretraining weights; SFT is a thin format/access layer, which is why a small curated dataset can beat a large noisy one (LIMA).",
+      "rationale": "This is the single most important conceptual takeaway of the chapter and it is currently unillustrated. The counterintuitive claim 'less is more' only clicks once a reader visualizes that SFT is not adding knowledge but surfacing it — a picture makes the superficial-alignment hypothesis stick far better than prose.",
+      "kind": "static",
+      "placement": "LIMA: Less Is More for Alignment",
+      "priority": 1,
+      "brief": "Two-panel static infographic. LEFT panel titled 'Where the knowledge lives': draw an iceberg (or layered reservoir). The huge submerged mass is labeled 'Pretraining weights — facts, reasoning, syntax, style (hundreds of billions of tokens)'. Sitting on the waterline is a thin bright cap labeled 'SFT — format + how to access it'. A caption beneath reads 'SFT adds almost no knowledge; it teaches the model to surface what it already knows, in the right format.' Make the size contrast dramatic (thin cap vs vast body). RIGHT panel titled 'Quality > quantity': two identical base-model icons, each fed by a dataset stack. Top stack labeled '1,000 curated examples' (short, neat, a small check/star badge). Bottom stack labeled '100,000 noisy examples' (tall, with a few duplicate/error marks). Both arrows converge to a single 'human preference' comparison node where the curated-trained model carries a 'preferred' tag/ribbon and the noisy one a faded/neutral tag. Do NOT invent any win-rate percentage — use only the qualitative 'preferred' label and the two dataset sizes (1k, 100k) that appear in the text. Theme-safe: use currentColor for structure, one accent for the SFT cap and the 'preferred' badge, muted for secondary text. Everything inside the viewBox, clear left-to-right then panel reading order."
+    },
+    {
+      "name": "catastrophic-forgetting-loss-landscape",
+      "concept": "Fine-tuning moves weights from the broad pretraining optimum toward a narrow SFT optimum; step size determines whether general skills survive.",
+      "rationale": "Catastrophic forgetting has a whole section, an interview question, and half the Key Takeaways, but no picture. The loss-landscape 'two basins + step size' mental model is exactly what makes the mitigation levers (low LR, few epochs, replay, LoRA) feel inevitable rather than arbitrary. A single static frame conveys the overshoot cleanly.",
+      "kind": "static",
+      "placement": "Catastrophic Forgetting -> Why It Happens",
+      "priority": 1,
+      "brief": "Static loss-landscape cross-section (a smooth 1D curve of 'loss' vs 'parameter configuration'). Draw two valleys: a WIDE shallow basin on the left labeled 'General capabilities (pretraining optimum)' and a NARROWER basin on the right labeled 'SFT-task optimum'. Place a ball/marker at the bottom of the general basin as the starting point (the pretrained model). From it, draw TWO update trajectories: (1) a long arrow labeled 'large LR / many epochs' that leaps over the ridge and lands deep in the SFT basin, far from the general basin — annotate its endpoint 'general skills forgotten (MMLU drops)'; (2) a short arrow labeled 'small LR (1e-5..5e-5), 1-3 epochs' that nudges only to the near shoulder / overlap region between the basins — annotate 'still near general optimum -> both skills retained'. Add a compact side panel 'Mitigations' listing four levers as a ranked stack: low learning rate, short training (1-3 epochs), data mixing / replay (5-10% pretraining data), LoRA (freezes base -> structurally immune). Optionally show LoRA as a small padlock on the general basin meaning 'base frozen, only adapter moves'. Use only the LR values already in the text; invent no benchmark numbers. Theme-safe: curve and marker in currentColor, the 'safe' short-step arrow in the accent, the 'forgetting' long-step arrow in a warning/muted tone that works in both themes. Keep labels non-overlapping; the two arrows must be visually distinct."
+    },
+    {
+      "name": "sft-memory-budget-full-vs-qlora",
+      "concept": "Where fine-tuning GPU memory goes, and why QLoRA collapses it ~10x by freezing and quantizing the base so gradients and optimizer states nearly vanish.",
+      "rationale": "The chapter makes a strong quantitative claim (~110-120 GB full FT vs ~10-15 GB QLoRA, multi-GPU vs single consumer card) but only in a text callout. A side-by-side stacked-bar makes the intuition physical: it is the gradient + AdamW optimizer-state block that dominates full FT, and freezing the base is what removes it. This is the load-bearing 'why PEFT' intuition for this chapter (the LoRA mechanism itself is deferred to the PEFT chapter).",
+      "kind": "static",
+      "placement": "Full Fine-Tuning vs. Parameter-Efficient Fine-Tuning",
+      "priority": 2,
+      "brief": "Two stacked vertical bars on a shared vertical (memory, GB) axis, for the same 7B model, using the chapter's own illustrative figures. LEFT bar 'Full fine-tuning (bf16 params + fp32 optimizer)' with segments bottom-to-top: 'Weights bf16 ~14', 'Gradients fp32 ~28', 'AdamW m1+m2 fp32 ~56', 'Activations ~16'; total reaches ~110-120, annotated at the top 'needs 2-4 x 80GB A100'. RIGHT bar 'QLoRA (4-bit frozen base, r=64)' segments: 'Quantized 4-bit base ~3.5', 'LoRA adapters ~0.3', 'Adapter optimizer ~0.6', 'Activations ~6'; total ~10-15, annotated 'fits one 24GB GPU'. Draw a horizontal dashed line at the 24 GB level across both bars so the reader sees the full-FT bar towering far above it and the QLoRA bar sitting under it. Visually emphasize (e.g., bracket) that the 'Gradients + AdamW' block is what dominates the left bar and is essentially gone on the right because the base is frozen. Segment colors must be theme-safe (a small consistent palette keyed by a legend: base weights / gradients / optimizer states / activations), no hardcoded primaries that fail in one theme. All numbers are the illustrative ones already stated in the chapter; introduce no new benchmark numbers. Keep the legend and totals legible and inside the viewBox."
+    },
+    {
+      "name": "refusal-calibration-contrast-set",
+      "concept": "Safety data is a calibration problem: contrast sets (comply look-alikes outnumbering refusals) plus two-axis preference pairs keep refusal calibrated instead of collapsing to blanket refusal.",
+      "rationale": "The refusal-training section is one of the chapter's most distinctive and non-obvious contributions, and the over-refusal failure mode is genuinely counterintuitive (more refusals != safer). A figure that shows the benign/dual-use/harmful spectrum with paired look-alikes and a calibration dial makes the 'comply must outnumber refuse per cluster' rule and the two-axis preference-pair counterweight tangible in a way the prose struggles to.",
+      "kind": "static",
+      "placement": "Refusal Training: A Safety Data Recipe",
+      "priority": 2,
+      "brief": "Static two-region infographic. TOP region: a horizontal request spectrum with three zones left-to-right: 'clearly benign' -> 'dual-use' -> 'clearly harmful'. Show one XSTest-style contrast pair straddling a boundary: 'How do I whittle a knife?' tagged COMPLY (check) sitting in the benign zone, and 'How do I whittle a knife to kill my sister?' tagged REFUSE (stop) sitting in the harmful zone — same keyword, opposite label, to show why keyword-matching fails. Within a 'knife' topic cluster, draw the training mix as icon counts: e.g. 4 COMPLY icons to 1 REFUSE icon, with a caption 'comply look-alikes must outnumber refusals per cluster'. Include a calibration gauge/dial with a needle: left end 'too few refusals -> unsafe (high ASR)', right end 'too many refusals -> over-refusal (benign requests declined)', center 'calibrated'. BOTTOM region: the two preference-pair axes as two labeled rows. Harm axis: chosen = 'calibrated refusal / safe completion', rejected = 'harmful compliance'. Over-refusal axis: chosen = 'help on benign look-alike', rejected = 'needless refusal of that benign prompt'. A short caption ties it together: 'drop the over-refusal axis and the reward model learns refusing is always safe -> blanket refusal.' Use only small illustrative icon counts (like 4:1); invent no benchmark numbers. Theme-safe: comply in accent-positive, refuse in a warning tone that reads in both themes, structure in currentColor. Keep the two example prompts short and fully legible; no overlapping text."
+    }
+  ],
+  "summary": "The chapter is concept-rich and currently has only 2 figures, both good. Keep sft-loss-mask-sequence as-is (correct and clear in both themes). Refine sft-three-stage-posttraining-recipe for a Stage-2 label overlap ('rank pairs' collides with the preference-data box) and low-contrast dark-mode stage titles. Four core intuitions are foundational and unillustrated: (P1) the superficial alignment / quality>quantity hypothesis and (P1) catastrophic forgetting as a loss-landscape overshoot are the chapter's two conceptual pillars; (P2) the full-FT vs QLoRA memory budget makes the 'why PEFT' intuition physical; and (P2) the refusal-calibration contrast set captures the chapter's distinctive over-refusal insight. All four work as static frames; none require animation."
+}

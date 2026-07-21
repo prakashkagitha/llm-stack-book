@@ -1,0 +1,57 @@
+{
+  "chapter": "content/12-production-mlops/08-reliability-engineering.md",
+  "core_intuitions": [
+    "HTTP-200 is blind to LLM quality: a response can be perfectly 'successful' at the transport layer (200 OK, low latency) yet semantically garbage (hallucinated number, wrong language, blank), so availability can read 100% while real value delivered is much lower — you need THREE SLI dimensions (availability, latency, quality), not one binary success rate.",
+    "Quality degrades continuously and SILENTLY: unlike a hard outage that spikes error rate instantly, a bad model version / prompt drift / stale corpus slides quality down a few percent at a time, invisible against user-signal noise, burning weeks of error budget before anyone notices. Anchored canary evals (a frozen golden set scored on a fixed cadence) are the clean signal that detects this early; the canary window width sets your MTTD.",
+    "When an alert fires, triage along a four-root-cause tree (provider/model regression, prompt change, retrieval drift, upstream data) checked IN PARALLEL — causes can coincide; it is a triage guide, not an ML decision tree.",
+    "Reliability is not binary up/down: design a degradation ladder (full RAG -> retrieval-off -> smaller model -> cache-only -> graceful error) with automatic, reversible circuit-breaker transitions, each trading value for reliability.",
+    "No single provider is five-nines: a gateway with health probing + circuit breaking + weighted priority auto-reroutes traffic to a secondary provider on failure, and a time-budgeted runbook walks on-call from detection through failover, recovery, and postmortem."
+  ],
+  "existing": [
+    {
+      "name": "reliability-diagnosis-tree",
+      "verdict": "refine",
+      "issue": "In dark theme the branch edge-labels (Provider/Model, Prompt, Retrieval, Upstream Data) are low-contrast purple-on-near-black and hard to read, and the bottom prose caption 'Triage guide, not an ML decision tree...' collides with / overlaps the dashed 'CHECK ALL FOUR IN PARALLEL' box.",
+      "improvement": "Raise the contrast of the four branch edge-labels in dark mode (use the theme foreground/muted token, not a saturated primary), and add vertical spacing so the closing caption sits clearly below the dashed parallel-check panel instead of overlapping it. Content and structure are otherwise correct and clear — keep the four-branch layout, Yes gates, and -> action pointers."
+    },
+    {
+      "name": "reliability-degradation-ladder",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "reliability-multiprovider-gateway",
+      "verdict": "refine",
+      "issue": "The four-item capability bullet list (Health probing / Circuit breaking / Latency SLO enforcement / Model equivalence) is jammed into the bottom-left corner where it overlaps the 'Emergency route' pill inside the gateway box and runs into the viewBox bottom edge; in dark theme the closing caption is also faded/near-clipped at the bottom.",
+      "improvement": "Move the gateway-capabilities bullet list out of the gateway box so it no longer overlaps the Emergency route pill — e.g. place it as its own small captioned panel below or to the side with clear separation — and ensure the bottom caption has full clearance inside the viewBox in both themes. Keep the core primary/fallback/emergency routes, the weighted-priority arrow, and the Healthy/Standby/last-resort provider states."
+    },
+    {
+      "name": "reliability-provider-outage-runbook",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "reliability-http200-quality-gap",
+      "concept": "Why binary HTTP success is deceptive for LLMs, and the three-dimensional SLI vocabulary (availability, latency, quality) that replaces it.",
+      "rationale": "This is the chapter's opening thesis and the single insight the whole discipline rests on: classical SRE's 'did the request succeed?' is blind to LLM failures because a semantically broken answer still returns 200 OK. No existing figure conveys this quality-vs-transport gap — the diagnosis tree, ladder, gateway, and runbook all assume you already accept that quality is a first-class SLI. A crisp static frame makes the gap visceral and motivates everything downstream.",
+      "kind": "static",
+      "placement": "Under 'SLIs and SLOs for Probabilistic Systems', right after the 'The problem with binary success rates' subheading (before or replacing the intro to the three-dimension table).",
+      "priority": 1,
+      "brief": "A single static infographic in two stacked acts. ACT 1 (the deception): a small vertical stream of ~6-7 request cards flows left-to-right into a 'serving' box; EVERY response comes out tagged with an identical green '200 OK' badge, so a classical 'Availability (HTTP 200)' meter on the far right reads full/100%. But annotate what each response actually CONTAINS via a small content chip: e.g. one clean good answer (check glyph), one 'hallucinated phone number', one 'switched language mid-paragraph', one 'empty string', one 'truncated output' — mark the broken ones with a warning glyph in a semantic 'bad' color and the good ones with a semantic 'good' color. Beside the full green availability meter, place a second 'Quality (judged-good)' meter that is only partially filled (use a small illustrative integer like 5-of-7 good; invent NO benchmark percentages beyond what the prose already states illustratively). Punchline label between them: 'Every response is HTTP 200 — only some deliver value.' ACT 2 (the fix): show three labeled SLI pillars/lanes side by side to establish the richer vocabulary — 'Availability' (did any response come back), 'Latency' (TTFT / E2E tail percentiles), 'Quality' (automated-judge pass rate) — each with its own small meter and a one-line 'what it measures' caption, visually distinguishing that only the third one catches the semantic failures from Act 1. Theme-safe: no hardcoded brand colors; use only semantic good/bad accents and theme foreground/muted tokens; small illustrative integers only; everything inside the viewBox with clear left-to-right reading order."
+    },
+    {
+      "name": "reliability-silent-quality-collapse",
+      "concept": "Silent quality collapse: quality drifts below the SLO while availability and latency stay green, and an anchored canary eval detects it far earlier than noisy user signal.",
+      "rationale": "The chapter repeatedly calls silent collapse 'the most dangerous LLM failure' and devotes a whole section to detecting it, yet nothing visualizes the core temporal intuition: a hard outage is a loud cliff classical SRE catches instantly, whereas quality erosion is a slow slide hidden inside user-signal noise. Showing the flat-green availability line next to the quietly sinking quality line — and the clean canary signal crossing the threshold weeks before the noisy signal would — makes the whole 'anchored canary eval + drift alert + MTTD = window width' argument click in one frame. This is foundational and not served by any existing figure.",
+      "kind": "static",
+      "placement": "Under 'Detecting Gradual Silent Quality Collapse', after the 'Why silent collapse is harder than hard failures' subheading.",
+      "priority": 1,
+      "brief": "A static time-series infographic. Horizontal axis = time (unitless / generic 'days-weeks', no invented dates). Near the top, two steady flat lines labeled 'Availability' and 'Latency p99', both comfortably in a green/healthy band the whole way — visually reassuring, 'dashboard looks fine'. Below them, the 'Quality SLI' region: draw the raw user-signal quality as a NOISY band that trends gently downward (a few points per window) — its noise makes the downward drift ambiguous for a long stretch; shade that stretch and label it 'weeks of error budget silently burned'. Draw a dashed horizontal 'Quality SLO threshold θ' line. Overlay a SECOND, clean line: the 'anchored canary eval (frozen golden set)' sampled as evenly-spaced small dots (a fixed cadence, e.g. every 15 min); because it is frozen and immune to traffic-mix noise, it tracks the true drift tightly and crosses θ EARLY — mark that crossing with a bold 'DETECTED' pin, positioned clearly to the LEFT of where the noisy user signal would finally dip unambiguously below θ (mark that later point 'noticed too late'). Small inbound arrows feed the quality drift from three labeled causes: 'silent model-version bump', 'prompt drift', 'stale retrieval corpus'. For contrast, include a small inset or a short segment showing a HARD failure as a sharp cliff in the availability line with an instant alarm marker — caption: 'hard failures are loud; quality collapse is silent.' Add a compact annotation tying detection latency to design: 'MTTD ≈ width of the canary window.' Theme-safe: semantic good/bad/threshold accents only, no brand primaries; illustrative shapes only, no fabricated benchmark numbers; keep all lines, the legend, and the two detection markers legible and non-overlapping inside the viewBox."
+    }
+  ],
+  "summary": "The chapter is well-served on its mechanism/runbook figures (four-root-cause tree, degradation ladder, multi-provider gateway, outage runbook) but figure-poor on its two conceptual pillars. Two existing figures are KEEP (degradation-ladder, outage-runbook); two need REFINE for dark-theme legibility and overlap (diagnosis-tree caption/label contrast; gateway capability-list overlapping the emergency-route pill). I propose two new priority-1 STATIC figures that carry the intuitions no current figure touches: (1) the HTTP-200 quality gap and three-dimensional SLI vocabulary — the chapter's opening thesis that binary success is blind to semantic failure; and (2) silent quality collapse — the flat-green availability line beside a quietly sinking quality line, with an anchored canary eval detecting the drift far earlier than noisy user signal. Both are fully understandable as single static frames, so no animation is warranted."
+}

@@ -1,0 +1,61 @@
+{
+  "chapter": "content/07-inference-serving/09-sampling-decoding.md",
+  "summary": "This chapter is already served by three solid figures (the logit->token pipeline, the beam-search tree, and the bias-diversity axis) that all render correctly in both themes. But the two most viscerally important intuitions of the chapter have NO visual: (1) what temperature actually DOES to a probability distribution (sharpen vs flatten), and (2) how the truncation family (top-k / top-p / min-p) carves the SAME distribution differently, and why the adaptive ones beat the fixed-count one. Both are described only in prose and a worked example. I propose two must-have static infographics for these, plus one priority-3 figure for the contrastive-decoding subtraction mechanism (expert minus amateur/premature-layer), which is otherwise pure algebra on the page. Existing figures: keep the pipeline as-is; light refine to the beam tree (bottom-caption overlap in the final column) and a small enrichment to the bias-diversity axis (name temperature as the underlying continuous knob).",
+  "core_intuitions": [
+    "Decoding is a two-stage pipeline: composable logit PROCESSORS reshape/mask the logit vector, then a single SAMPLER (argmax or multinomial draw) picks the token. Processor ORDER matters.",
+    "Temperature is the master dial: dividing logits by T<1 SHARPENS the softmax (mass concentrates on the peak, toward greedy), T>1 FLATTENS it (mass spreads toward uniform). Small T changes cause large probability changes.",
+    "The truncation family cuts the tail by different rules: top-k keeps a FIXED count, top-p keeps the smallest set covering cumulative MASS p (adaptive), min-p keeps tokens above a threshold RELATIVE TO THE PEAK (adaptive). The adaptivity is exactly why top-p/min-p beat top-k.",
+    "Greedy picks the locally optimal token, not the globally most probable sequence; beam search widens the search to B hypotheses with length normalization but still cannot enumerate the exponential space.",
+    "The bias-diversity tradeoff is the single axis every decoding choice lives on: from zero-variance/high-bias greedy to maximum-diversity/low-signal uniform.",
+    "Contrastive methods (Contrastive Decoding, DoLa) SUBTRACT a weaker distribution (amateur model, or a premature layer) from the expert's to cancel fluent-but-wrong tokens both agree on, amplifying the expert's distinctive signal."
+  ],
+  "existing": [
+    {
+      "name": "sampling-logit-pipeline",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "sampling-beam-search-tree",
+      "verdict": "refine",
+      "issue": "The figure is clear and correct in both themes, but in the final ('... EOS / Output') column the caption 'highest-scoring complete hypothesis returned' collides with the length-normalization formula 'score = (1/n^a) . sum log P(...)' directly below the best-hypothesis box; the two text blocks overlap and become hard to read in both light and dark.",
+      "improvement": "Separate the two bottom text blocks in the final column: give the 'best hypothesis' box's descriptive caption its own line above the formula, and move the length-normalization formula to its own uncrowded row (or into the step-2 caption band) so nothing overlaps. Keep everything else unchanged."
+    },
+    {
+      "name": "sampling-bias-diversity-axis",
+      "verdict": "refine",
+      "issue": "Clean and legible in both themes, but the chapter explicitly states 'Temperature is the most direct knob on this axis' and 'Temperature is the master dial' - yet temperature appears nowhere on the axis. The figure reads as a discrete list of named methods rather than a continuous knob, missing the chance to unify the whole chapter under one dial.",
+      "improvement": "Add a thin secondary label under the arrow indicating the continuous underlying knob, e.g. a 'temperature: low -> high' gradient track beneath the method markers, so the reader sees the named methods (greedy/top-k/top-p/typical/uniform) as points on the same continuum that temperature sweeps. Do not add benchmark numbers; keep it schematic."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "sampling-temperature-reshapes-distribution",
+      "concept": "How temperature sharpens or flattens the softmax distribution, using the chapter's own worked-example logits.",
+      "rationale": "Temperature is named the 'master dial' and 'single most important hyperparameter' of the chapter, yet its effect exists only as three lines of algebra in a worked example. Seeing the SAME bars redistribute mass as T changes is the fastest possible way to internalize sharpen-vs-flatten, and it directly anchors the worked example the reader just read.",
+      "kind": "static",
+      "placement": "Temperature Scaling (immediately after the 'Worked example: feeling the temperature' admonition)",
+      "priority": 1,
+      "brief": "A horizontal row of three small bar-chart panels sharing an identical set of raw logits, so the reader sees ONE distribution reshaped by the T knob. Use the chapter's worked-example numbers exactly: two dominant tokens with logits z_A=5.0 and z_B=4.0, plus 3-4 small 'tail' tokens with clearly lower logits (small illustrative values, e.g. 1.0, 0.5, 0.0). Each panel shows softmax PROBABILITY bars (not logits) for the same tokens. Panel 1 'T = 0.5 (sharpen)': p_A tall ~0.88, p_B ~0.12, tail nearly zero; label 'colder -> concentrates on the peak (toward greedy)'. Panel 2 'T = 1 (trained)': p_A ~0.73, p_B ~0.27; label 'the model's own distribution'. Panel 3 'T = 2 (flatten)': p_A ~0.62, p_B ~0.38, tail bars visibly rising; label 'hotter -> spreads mass (toward uniform)'. Put the softmax-with-temperature formula P_T(t) = exp(z_t/T) / sum exp(z'/T) as a small header. Bracket the whole row with two thin endpoint annotations: on the far left 'T -> 0: point mass at argmax = greedy', on the far right 'T -> infinity: uniform over vocab'. Keep the peak token a single consistent accent color across all three panels and the other bars neutral, so the eye tracks how the accent bar's height changes with T. Theme-safe: no hardcoded background colors, legible axis in both light and dark. All numbers are the chapter's illustrative worked-example values - invent no others."
+    },
+    {
+      "name": "sampling-truncation-family-comparison",
+      "concept": "top-k vs top-p vs min-p carving the same distribution, and why the two adaptive rules beat the fixed-count one.",
+      "rationale": "This is THE central point-of-confusion of the chapter: four verbal definitions (top-k fixed count, top-p cumulative mass, min-p relative-to-peak) that readers routinely conflate. The chapter itself states top-k's limitation ('k is absolute... whether the distribution is tight or flat') and top-p's virtue ('the nucleus adapts'), but never shows it. A single figure that fixes the methods on the SAME sorted distribution AND contrasts a confident vs an uncertain distribution makes the adaptivity click instantly - nothing in prose can do this as fast.",
+      "kind": "static",
+      "placement": "Min-p Sampling (right after the Min-p code block, once top-k, top-p, and min-p are all defined)",
+      "priority": 1,
+      "brief": "A 2-rows x 3-columns grid of small sorted-probability bar charts. ALL six panels use descending sorted probability bars over ~10-12 tokens. TOP ROW = a CONFIDENT distribution (one token ~0.6, steep decay). BOTTOM ROW = an UNCERTAIN/FLAT distribution (top token ~0.18, gentle decay, long tail). Columns are the three methods, each shown by which bars are KEPT (accent, solid) vs PRUNED (greyed/hollow). Column 1 'top-k (k=4)': keep the first 4 bars in BOTH rows - draw a vertical cut line after bar 4 in both, with a callout 'fixed count: keeps 4 either way'. Column 2 'top-p (p=0.9)': keep the smallest prefix whose cumulative mass >= 0.9 - in the confident row that's only ~3 bars, in the flat row it's ~8 bars; annotate each panel with a running cumulative-mass shade and a 'cum. mass >= p' marker, callout 'adapts: tiny nucleus when confident, wide when uncertain'. Column 3 'min-p (keep P >= p_min * p_max)': draw a HORIZONTAL threshold line at p_min * (tallest bar) in each row (p_min illustrative, e.g. 0.1); keep bars above the line - a high line in the confident row keeps few, a low line in the flat row keeps more; callout 'threshold scales with the peak'. The load-bearing contrast the layout must make obvious: read DOWN column 1 and the kept set is identical (4 and 4); read down columns 2 and 3 and the kept set GROWS from confident to uncertain. Add a one-line takeaway strip: 'top-k is blind to distribution shape; top-p and min-p adapt.' Use only small illustrative probabilities that sum to ~1 per panel; invent no benchmark numbers. Theme-safe accent for kept, neutral/greyed for pruned, legible in both themes; every panel fully inside the viewBox with no overlapping bars or labels."
+    },
+    {
+      "name": "sampling-contrastive-subtraction",
+      "concept": "Contrastive Decoding / DoLa: subtracting a weaker distribution cancels fluent-but-wrong tokens and amplifies the expert's distinctive signal.",
+      "rationale": "Contrastive Decoding and DoLa are given only as a pair of subtraction formulas (log P_expert - log P_amateur). The mechanism - that both models AGREE on fluent-but-wrong continuations so the subtraction cancels them, while the expert's distinctive-and-correct token survives - is genuinely non-obvious from algebra. A visual of the subtraction turns two opaque equations into an 'aha'. Priority 3 because it serves a later, more specialized section, not the chapter's core dial.",
+      "kind": "static",
+      "placement": "Contrastive Decoding and DoLa (after the DoLa formula / dola_logits code block)",
+      "priority": 3,
+      "brief": "Three stacked (or left-to-right) small bar panels over the same tiny illustrative vocabulary of ~5 candidate next-tokens (use generic placeholders like 'A', 'B', 'C', 'D', 'E' or neutral word-stand-ins, NOT real proper nouns). Panel 1 'expert log-probs': two bars are high - a 'fluent-but-generic' token (call it the shared-favorite) AND a 'distinctive expert' token. Panel 2 'amateur log-probs (or premature layer)': the shared-favorite token is ALSO high here, but the distinctive-expert token is LOW. Panel 3 'contrastive score = expert - amateur': the shared-favorite bar collapses toward zero (both agreed -> cancels), while the distinctive-expert bar stays tall and WINS. Draw faint connective guides between the same token across panels so the reader tracks the subtraction. Annotate: on the shared-favorite token 'fluent but not distinctive -> cancels'; on the winner 'expert prefers over amateur -> amplified'. Add a small dual-label noting the two instantiations: 'amateur = smaller/weaker model (Contrastive Decoding)' and 'premature layer of the SAME model (DoLa)'. Keep bars schematic with small illustrative log-prob values (negative numbers ok, e.g. -1, -2, -5); invent no benchmark numbers. Theme-safe, everything inside the viewBox, no overlapping labels."
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "chapter": "content/10-multimodal-and-arch/04-diffusion-generative.md",
+  "core_intuitions": [
+    "The forward process has a closed-form marginal: you can jump straight to any noise level in one shot via x_t = sqrt(a_bar_t) x_0 + sqrt(1-a_bar_t) eps, no stepping required.",
+    "Training is just regression: corrupt a clean sample to a random noise level, then ask the network to predict the exact noise it added (MSE). No adversary, no likelihood gymnastics.",
+    "The noise predictor is a rescaled score (the vector field pointing toward data), so reverse sampling = repeatedly following that field from pure noise back to a sample.",
+    "Classifier-free guidance steers by EXTRAPOLATION: start at the unconditional prediction, push through the conditional one, and overshoot (w>1) to sharpen prompt adherence.",
+    "Flow matching swaps curved multi-step diffusion trajectories for straight noise->data paths with constant velocity, so a handful of Euler steps suffices where diffusion needed dozens to a thousand.",
+    "Diffusion for text = iterative masked prediction: unmask a confident subset in parallel each pass (K passes, any order), versus autoregression's strict left-to-right one-token-per-step (L steps)."
+  ],
+  "existing": [
+    {
+      "name": "diffusion",
+      "verdict": "refine",
+      "issue": "Concept and dual forward/reverse framing are excellent and the speckle-noise pattern (rising opacity) is a genuine noise metaphor, not just a fade. The only weakness is legibility of the U+2212 minus sign: in the subscripts and formulas (sqrt(1-beta_t), x_{T-1}) it renders as a missing-glyph box in the preview font, so some reader fonts may drop it too, turning '1-beta_t' into '1 beta_t'.",
+      "improvement": "Replace the U+2212 unicode minus characters with a plain ASCII hyphen-minus (or a proper MathML/tspan minus) so the subtraction is guaranteed to render across fonts; optionally add one tiny caption cue that the growing speckle IS the added Gaussian noise, to lock the metaphor."
+    },
+    {
+      "name": "diffgen-latent-diffusion-pipeline",
+      "verdict": "refine",
+      "issue": "Clear, correct, and readable in both themes; the VAE compress -> latent diffusion loop -> VAE decode story lands well and the cross-attention text path is nicely called out. Minor flaw: the 'noisy latent x_t' label at the U-Net input is clipped by the box edge (renders as 'noisy latent x_').",
+      "improvement": "Give the 'noisy latent x_t' label enough width / reposition it so the subscript t is not clipped; nudge the dim gray subordinate labels one shade brighter for the dark theme."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "cfg-extrapolation-vectors",
+      "concept": "Classifier-free guidance as vector extrapolation in noise-prediction space: eps_guided = eps_null + w(eps_cond - eps_null).",
+      "rationale": "CFG is the single most-used control knob in text-to-image diffusion and the chapter's own interview corner hinges on WHY cranking w over-saturates. The prose says CFG 'extrapolates beyond the conditional distribution' but never shows it. A one-frame geometric picture makes the whole idea click: w=1 lands on the conditional, w>1 overshoots past it off the data manifold. Nothing else in the chapter conveys this.",
+      "kind": "static",
+      "placement": "Classifier-Free Guidance (CFG)",
+      "brief": "A single 2D 'prediction space' panel (this is epsilon / noise-prediction space, label it lightly). From a common origin dot x_t, draw two arrows to two nearby endpoints: a muted-gray arrow to eps_null labeled 'unconditional prediction (null token)', and an accent-colored arrow to eps_cond labeled 'conditional prediction (prompt c)'. Draw the short difference vector (eps_cond - eps_null) as a highlighted 'conditioning direction' connecting the two endpoints. Then draw the KEY guided arrow eps_guided = eps_null + w(eps_cond - eps_null) as a bold arrow that starts at eps_null, passes THROUGH eps_cond, and overshoots well beyond it, ending at a point marked eps_guided (w>1). Along this line place three small labeled ticks: w=0 at eps_null ('unconditioned'), w=1 exactly at eps_cond ('pure conditional'), w>1 at the overshoot ('extrapolated, sharper prompt adherence'). Add a compact side note strip mapping the scale to output character: small w = diverse/soft, large w = prompt-faithful but over-saturated / 'AI-ish' (echo the chapter's caution). Use only small illustrative integers/labels, no invented benchmark numbers. Theme-safe: accent for the conditioning direction and guided arrow, ink-soft gray for the unconditional; everything inside the viewBox with a clear left-to-right / origin-outward reading order. Must be fully legible as a static frame."
+    },
+    {
+      "name": "flow-vs-diffusion-paths",
+      "concept": "Why flow matching needs fewer steps: curved multi-step diffusion trajectory vs a straight, constant-velocity rectified-flow path between noise and data.",
+      "rationale": "The chapter claims flow matching 'wins in practice' chiefly because straight paths need far fewer integration steps, but this is stated only in words. The curved-vs-straight contrast is the crux intuition connecting diffusion, DDIM's ODE, and rectified flow, and it is inherently geometric — a figure conveys in one glance what a paragraph labors to say.",
+      "kind": "static",
+      "placement": "Why Flow Matching Wins in Practice",
+      "brief": "Two side-by-side trajectory panels sharing the same two anchored regions: a 'noise' region (small Gaussian blob / N(0,I) cloud) at one corner and a 'data' region (a curved data-manifold ribbon or a couple of sample icons) at the opposite corner. LEFT panel titled 'Diffusion (probability-flow ODE)': draw a WIGGLY CURVED path from noise to data with MANY closely spaced tick marks / small dots along it (each tick = one sampler step); annotate 'curved marginals -> discretization error accumulates -> many small steps (e.g. 50-1000)'. RIGHT panel titled 'Flow matching / rectified flow': draw a STRAIGHT line from noise to data with only a FEW widely spaced ticks (e.g. 4 dots); overlay one constant velocity arrow labeled 'v = x_1 - x_0 (same all along the path)' and show the interpolant formula x_t = (1-t)x_0 + t x_1; annotate 'straight path -> big exact-ish steps -> few steps (e.g. 4-8)'. Keep the noise and data anchors visually identical across both panels so the ONLY difference the eye catches is path shape and tick density. Use small illustrative integers only; invent no benchmark numbers. Theme-safe colors (accent for the straight/flow path, muted for the diffusion curve), no illegible overlaps, clear noise->data reading direction. Fully understandable as one static frame."
+    },
+    {
+      "name": "masked-diffusion-vs-ar-decoding",
+      "concept": "Discrete diffusion for text = parallel iterative unmasking of confident tokens, contrasted with autoregression's strict left-to-right one-token-per-step decoding.",
+      "rationale": "The Diffusion Language Models section is entirely prose plus a comparison table; its headline claim — parallel generation in K<<L passes with any-order infilling versus L sequential AR steps — is exactly the kind of process contrast a figure nails. This is the chapter's bridge back to the LLM engineer's home turf (AR decoding) and deserves a visual.",
+      "kind": "static",
+      "placement": "Comparison to Autoregressive Generation",
+      "brief": "Two stacked rows, each a horizontal strip of the same L token slots (say 8 slots), read as a small filmstrip of decoding steps. TOP row 'Autoregressive (AR)': show the sequence filling ONE slot at a time strictly left-to-right across successive mini-frames (slot 1 filled, then 1-2, then 1-3, ...), annotate 'L steps, one token per pass, strict left-to-right'. BOTTOM row 'Masked / absorbing diffusion': start with ALL slots showing [MASK]; across only ~3-4 mini-frames progressively unmask a CONFIDENT SUBSET in PARALLEL at scattered (non-contiguous) positions — frame 1 fills a few high-confidence positions anywhere in the sequence (highlight them as 'most confident'), frame 2 fills more, final frame all revealed; annotate 'K << L passes, any order, parallel, unmask most-confident first'. Add one small callout showing the editing affordance unique to diffusion: 're-mask a span -> regenerate = natural infilling'. Make the parallel/scattered fill visually distinct from AR's marching left edge so the contrast is instant. Theme-safe: accent highlight for the tokens chosen to unmask each pass, neutral for [MASK] slots; small illustrative counts only, no invented numbers; everything inside the viewBox with clear top-vs-bottom reading order. Legible as a static frame."
+    }
+  ],
+  "summary": "Concept-rich, figure-poor chapter: the two existing figures (forward/reverse noising, latent-diffusion pipeline) are both strong and only need minor refinements (a robust minus glyph; an unclipped 'noisy latent x_t' label). They cover the noising-process and Stable-Diffusion-architecture intuitions well. The three biggest UNSERVED core intuitions are all inherently geometric/process ideas that prose alone underserves: (1) CFG as vector extrapolation past the conditional (w>1), which the chapter's interview corner leans on; (2) the curved-vs-straight trajectory contrast that explains why flow matching needs far fewer steps; and (3) masked-diffusion parallel unmasking vs AR left-to-right decoding. I propose one static figure for each, two at priority 1."
+}

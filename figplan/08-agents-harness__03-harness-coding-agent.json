@@ -1,0 +1,59 @@
+{
+  "chapter": "content/08-agents-harness/03-harness-coding-agent.md",
+  "core_intuitions": [
+    "The harness is deterministic code wrapping a stochastic model; with a fixed model, the harness is what converts raw skill into a verified change in a real repo.",
+    "Models are stateless across calls; continuity is manufactured by re-serializing the entire transcript every turn, which is why the static preamble is kept byte-stable (prefix caching) and tool outputs must be truncated.",
+    "The agent loop is reason -> act -> observe, with STRUCTURAL termination (stop exactly when the assistant emits no tool call) and errors treated as first-class observations that feed back, not exceptions that crash.",
+    "Verification in the loop is the single biggest quality lever: a strong harness bounces every edit off a ground-truth oracle (test/build/lint) and refuses to finish until it passes; plausibility is not correctness.",
+    "The constrained edit tool (unique-match string replace that fails loudly on 0 or 2+ matches) converts a class of silent file corruptions into observable, recoverable failures.",
+    "Context isolation via sub-agents firewalls expensive, context-hungry exploration off the precious main thread; only a distilled answer crosses back."
+  ],
+  "existing": [
+    {
+      "name": "harness-division-of-labor",
+      "verdict": "keep",
+      "improvement": "Correctly and legibly conveys the deterministic-harness / stochastic-model split, the tool-call -> execution -> results feedback path, and the three external sinks (filesystem, shell, test suite). Reads cleanly in both light and dark; no clipping or clutter. Foundational and well-placed."
+    },
+    {
+      "name": "harness-context-assembly-stack",
+      "verdict": "refine",
+      "issue": "The three rotated side labels are clipped at the viewBox edges: 'prefix-cached' is cut at the top-left corner and 'static preamble'/'re-sent in full each call' touch the extreme left/right margins. Content and reading order are otherwise excellent.",
+      "improvement": "Widen the viewBox horizontal margins (add ~24-32px of left and right padding) and nudge the rotated bracket labels inward so no glyph is clipped in either theme. No structural change needed; this is purely a framing/padding fix."
+    },
+    {
+      "name": "harness-subagent-context-isolation",
+      "verdict": "keep",
+      "improvement": "Clearly conveys the firewall pattern: clean main context, disposable sub-agent doing ~40 reads that get discarded, and only a 3-line distilled answer crossing back. Both themes legible, illustrative integers only. Strong keep."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "agent-loop-structural-termination",
+      "concept": "The reason->act->observe control loop, showing structural termination and error-as-observation as the two load-bearing design choices.",
+      "rationale": "Anatomy III is called the 'beating heart of the harness' yet has no figure. The two subtle ideas that make a coding loop robust -- 'termination is structural not lexical' (stop exactly when no tool call is emitted) and 'errors are observations not exceptions' -- are precisely the kind of mechanism a static prose+code block conveys poorly. A single control-flow diagram makes both click at once and anchors the whole worked example that follows.",
+      "kind": "static",
+      "placement": "## Anatomy III: The Agent Loop",
+      "priority": 1,
+      "brief": "A control-flow / cycle diagram for the agent loop. Center it on three nodes arranged as a clockwise cycle: (1) REASON -- 'one forward pass over the ENTIRE transcript', (2) ACT -- 'execute the requested tool calls (possibly in parallel)', (3) OBSERVE -- 'append all results as the next user message'. The arrow from OBSERVE loops back up to REASON, closing the cycle. Immediately after the assistant reasons, place a decision diamond: 'assistant message contains a tool_use block?'. Two exits from the diamond: the YES branch flows into ACT (label the arrow 'acts to continue'); the NO branch flows OUT of the cycle to a terminal node TERMINATE / DONE (label the arrow 'speaks to finish'). Make the mantra 'acts to continue, speaks to finish' readable near the diamond -- this is the structural-termination intuition: the loop ends because there is nothing to execute, not because the model said a magic phrase. Second load-bearing idea, error-as-observation: from ACT, show two kinds of tool result flowing into OBSERVE through the SAME channel -- a normal result and an is_error result (e.g. a small tag 'failing test / blocked command / bad edit'). Annotate that channel: 'errors feed back as information; they do not crash the loop -> the model self-corrects next turn.' Third, convey the growing transcript: draw a small stack labeled 'messages (single source of truth, re-sent every turn)' beside REASON that gains one row each cycle -- a couple of illustrative rows plus an ellipsis, small turn counter t=0,1,2 only, no invented token numbers. Keep a clear top-to-bottom / around-the-cycle reading order; the DONE exit should be visually distinct (the only arrow that leaves the cycle). Theme-safe: no hardcoded primary colors, use the book's accent only for the two labeled decision branches. Everything inside the viewBox with generous margins so no label clips."
+    },
+    {
+      "name": "verification-the-dividing-line",
+      "concept": "Weak harness ('edit -> Done!') versus strong harness ('edit -> verify -> on fail feed the error back and iterate until the ground-truth check passes').",
+      "rationale": "The chapter states its thesis in bold: 'the largest single quality gap between coding harnesses is whether the agent verifies its own work.' It is ranked the #1 lever in the closing scorecard and recurs in the Interview Corner and Key Takeaways -- but there is no figure. A side-by-side contrast makes the single most important idea in the chapter visual and unmistakable: the difference is one feedback loop.",
+      "kind": "static",
+      "placement": "### Verification: the dividing line between good and bad harnesses",
+      "priority": 1,
+      "brief": "A two-column side-by-side contrast, same visual grammar on both sides so the ONE difference pops. LEFT column titled 'Weak harness': a short straight chain -- edit_file -> assistant says 'Done!' -> output box tagged 'plausible... maybe subtly wrong' with a small uncertainty/question mark. No loop, no oracle. Convey that nothing checked the work. RIGHT column titled 'Strong harness': edit_file -> a VERIFIER node (label it with the real oracles: 'run tests / build / lint', e.g. pytest -q) -> a decision: on PASS -> DONE terminal with a check tag 'ground-truth correct'; on FAIL -> the failure is captured as an observation ('Verification FAILED: <traceback>') and an arrow loops BACK to edit_file. Draw that feedback loop prominently -- it is the whole point; the two columns are identical except the right one has this loop closing on an external oracle. Add a caption strip spanning the bottom or between columns: 'plausibility is not correctness -- the verifier is an oracle the model cannot talk its way around.' Optionally a tiny sub-note on the right: 'narrow/fast verifier while iterating, broad verifier before final.' Use small illustrative labels only; invent NO benchmark numbers or pass-rate percentages. Theme-safe: reserve the accent color for the FAIL->retry loop and the PASS check so the eye lands on the differentiator; everything else neutral. Fully legible as a static frame in both light and dark, all content within the viewBox."
+    },
+    {
+      "name": "edit-tool-unique-match-contract",
+      "concept": "The constrained string-replace edit: the harness counts occurrences of old_string and branches on 0 / exactly-1 / 2-or-more, applying only the unique match and failing loudly otherwise.",
+      "rationale": "Ranked the #2 quality lever in the chapter's closing scorecard ('a correct, verifiable edit tool') and the reason it matters -- turning silent corruption into a loud, recoverable error -- is a mechanism a small decision figure makes instantly intuitive. Nice-to-have because the code block already spells the contract out concretely, but a visual crystallizes 'why unique-match is safe' faster than reading the guard clauses.",
+      "kind": "static",
+      "placement": "### The tool set: read, edit, bash, search",
+      "priority": 3,
+      "brief": "A single-input, three-outcome decision infographic for edit_file(old_string, new_string). Show a small file with a few lines and a call 'count occurrences of old_string in the file', branching into three cases laid out in parallel: CASE 0 matches -> tag 'the model hallucinated the context' -> FAIL LOUD, error returned to model ('re-read the file; text does not match'); CASE exactly 1 match -> the matched span highlighted in the file, arrow to APPLY -> file updated, terse success 'Edited: 1 replacement'; CASE 2+ matches -> two highlighted spans -> tag 'ambiguous' -> FAIL LOUD, error ('provide more surrounding context'). Make visually clear that only the middle (unique) case mutates the file; both failure cases return a recoverable error the model can act on -- annotate the takeaway: 'silent corruption becomes an observable, recoverable failure.' Contrast anchor (small, optional, at top): a crossed-out 'rewrite whole file' alternative labeled 'must reproduce every unchanged line perfectly -> one dropped line silently corrupts.' Illustrative tiny file only, no invented numbers beyond the 0/1/2 match counts. Theme-safe accent only on the loud-failure paths and the applied edit. All three columns and labels fit within the viewBox with clear left-to-right reading order in both themes."
+    }
+  ],
+  "summary": "The chapter is well-served on three fronts already (division of labor, context assembly stack, sub-agent isolation) -- all three existing figures are correct and legible in both themes; only the context-assembly stack needs a small padding fix to stop its rotated side labels clipping. The two most foundational intuitions are currently UNfigured despite being the chapter's centerpieces: the agent loop (Anatomy III, the 'beating heart' -- structural termination + error-as-observation) and verification-in-the-loop (the explicit thesis and #1 quality lever). I propose static figures for both as priority 1, plus an optional priority-3 static on the constrained-edit unique-match contract (the #2 lever). No animation is warranted: each mechanism is fully captured by a single well-composed static frame (a control-flow cycle, a two-column contrast, a three-way decision), so I keep the plan disciplined and static."
+}

@@ -1,0 +1,61 @@
+{
+  "chapter": "content/10-multimodal-and-arch/02-vision-language-models.md",
+  "core_intuitions": [
+    "The connection problem: a vision encoder speaks dense patch embeddings, an LLM speaks discrete token indices; a VLM must translate one space into the other. There are three answers (projector, cross-attention, unified tokenizer) that split into late fusion (separate vision tower feeding a mostly-frozen LLM) vs early fusion (one joint token stream from layer 1).",
+    "Projector vs cross-attention are two structurally opposite ways to inject vision: the projector PREPENDS visual tokens into the LLM sequence (they occupy real context positions), while Flamingo INSERTS gated cross-attention layers so the LLM residual stream is untouched and consumes zero context positions. Flamingo's gate tanh(alpha) starts at 0 (closed) so the pretrained LLM is unperturbed and vision fades in during training.",
+    "The visual token explosion: token count scales as (H/p)^2, and any-resolution tiling multiplies it by the number of tiles. More resolution = more tokens = more O(N^2) prefill FLOPs and more KV-cache memory. This is the central engineering tension of the whole chapter.",
+    "Any-resolution (AnyRes) tiling: an arbitrary-resolution image is cut into fixed-size tiles (each encoded independently by the same ViT) plus a down-sampled global thumbnail; tokens are concatenated with positional cues so the LLM knows each tile's 2-D location. This is how VLMs read dense text and charts.",
+    "Training is staged and freeze-state evolves: align the projector with a frozen encoder+LLM, then unfreeze for instruction tuning (optionally the encoder at a much lower LR), with differential learning rates per component to avoid catastrophic forgetting.",
+    "Loss is next-token cross-entropy over TEXT positions only; visual token positions are masked with -100 so no gradient flows from predicting 'the next visual token'."
+  ],
+  "existing": [
+    {
+      "name": "vlm-projector-dataflow",
+      "verdict": "refine",
+      "issue": "Clean and correct in both themes, but the two bottom captions 'autoregressive output' and 'answer text' overlap into an unreadable 'outputanswer text' collision, and the input box says '256 x 256 pixels' which contradicts the chapter's running example (336x336 -> 576 patches).",
+      "improvement": "Separate the two bottom caption lines so they no longer overlap (give the autoregressive-output arrow/label its own clear lane), and change the input resolution to 336 x 336 to match the chapter's canonical LLaVA example; optionally note N=576 patch tokens to tie the '[N, D_v]' label to a concrete number."
+    },
+    {
+      "name": "vlm-internvl2-training-stages",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": ""
+    },
+    {
+      "name": "vlm-dominant-recipe",
+      "verdict": "refine",
+      "issue": "Strong summary and legible in light theme, but in dark theme the dashed horizontal divider line runs straight through the 'HOW IT IS BUILT (training & data - not the runtime path)' caption, striking through the letters and hurting legibility.",
+      "improvement": "Give the divider caption a solid background swatch (or break the dashed line with a gap behind the text) so the dashes never cross the glyphs in either theme; keep everything else as-is."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "vlm-projector-vs-crossattn",
+      "concept": "Side-by-side structural contrast of the two late-fusion connection strategies: projector prepends visual tokens into the LLM sequence vs Flamingo's gated cross-attention that leaves the residual stream untouched.",
+      "rationale": "The LLaVA-vs-Flamingo fork is the biggest conceptual decision in the chapter and is currently carried only by a prose table. The intuition is inherently spatial: WHERE visual information enters the LLM and WHETHER it consumes context positions. Seeing the projected tokens sitting in the sequence on one side, and a gate-controlled cross-attention arm feeding an otherwise-unchanged residual stream on the other, makes the trade-offs (context cost, zero-context, interleaving, gated fade-in) click instantly.",
+      "kind": "static",
+      "placement": "Flamingo: Cross-Attention for In-Context Multimodal Learning (immediately after the LLaVA-vs-Flamingo comparison table)",
+      "priority": 1,
+      "brief": "A two-panel side-by-side comparison, titled 'Two ways to inject vision into an LLM'. LEFT panel 'Projector (LLaVA)': show a vertical LLM as a stack of identical self-attention blocks with a single left-to-right token sequence running INTO the bottom. The sequence lane visibly contains a run of shaded 'visual token' cells (label 'N projected patch tokens') followed by 'text tokens'; annotate 'visual tokens occupy real sequence positions -> consume context' and 'context cost proportional to N (e.g. 576)'. A small side box shows 'Vision encoder -> projector (MLP)' feeding those visual cells. RIGHT panel 'Cross-attention (Flamingo)': show the SAME LLM block stack, but the input sequence lane contains ONLY text tokens (label 'LLM residual stream unchanged, 0 context positions used'). Between two of the self-attention blocks, insert a distinct 'gated cross-attention' layer drawn as a small module with two inputs: an arrow up from the residual stream (the query) and a side arrow from a separate 'vision features Z_v' box (keys/values). On that module's output-merge point draw a gate labeled 'tanh(alpha)' with a caption 'alpha init = 0 -> gate closed -> LLM starts unperturbed, vision fades in during training'. Under the residual arrow write 'h <- h + tanh(alpha) . CrossAttn(h, Z_v)'. Add a compact bottom strip of 3-4 contrast chips echoing the table: 'context consumed: N vs 0', 'new params: ~21M projector vs cross-attn KV in every layer', 'multi-image interleaving: awkward vs natural'. Use only the theme's accent for the visual/vision elements and neutral fills for LLM blocks and text tokens; no invented benchmark numbers, only the illustrative 576/~21M already used in the chapter. Must read clearly as a single static frame in both light and dark themes; ensure the two panels are clearly separated by a vertical divider and equal in size."
+    },
+    {
+      "name": "vlm-token-explosion",
+      "concept": "How image resolution and AnyRes tiling multiply into visual tokens, and how those tokens blow up prefill cost and KV-cache memory - the central engineering tension.",
+      "rationale": "The chapter explicitly calls this 'the most important practical concern in VLM engineering' and 'the central engineering constraint,' devoting a full worked example to it, yet no figure conveys it. The (H/p)^2 scaling and the tile multiplier are numeric/spatial ideas that a single infographic can make visceral: you SEE the patch grid densify, the tiles stack up, the token count climb, and the KV-cache bar grow. This is the intuition that motivates every compression technique later in the chapter.",
+      "kind": "static",
+      "placement": "The Visual Token Explosion (right after the opening paragraph, before the worked example admonition)",
+      "priority": 1,
+      "brief": "A left-to-right infographic titled 'The visual token explosion: pixels -> patches -> tokens -> memory'. Show THREE stacked scenario rows sharing a common right-hand 'token count' axis so the growth is visually comparable. Row A 'Single tile, 336x336': draw a small square image overlaid with a coarse patch grid, annotate 'grid = (H/p)^2 = (336/14)^2 = 24x24 = 576 patch tokens', with a short token bar. Row B 'Higher res, 672x672': same image at a denser grid, annotate '(672/14)^2 = 48x48 = 2304 tokens', a ~4x longer token bar. Row C 'AnyRes tiling, 1344x336 panoramic': draw the wide image split into 4 tiles of 336x336 plus one small down-sampled 'thumbnail' tile, each tile emitting its own 576-token block; annotate '(4 tiles + 1 thumbnail) x 576 = 2880 tokens', with the longest token bar. Keep a clear label 'formula: tokens = tiles x (tile_H / p)^2'. On the far right, add a compact 'downstream cost' callout tying tokens to consequences: two mini-bars labeled 'prefill attention ~ O(N^2)' and 'KV-cache memory ~ linear in N (e.g. ~1.5 GB for the 2880-token visual prefix, one image, one layer-set at 7B/bf16)'. Include a small footnote 'more tokens = more fidelity, more context consumed, more memory' to name the tension. Use the accent color only for tokens/bars; grids and image frames neutral. Use only the illustrative integers already in the chapter (14px patch, 576, 2304, 2880, 1.5 GB); invent no benchmark scores. Everything must fit the viewBox with the three rows vertically stacked and legible in both themes; the shared token axis must not clip."
+    },
+    {
+      "name": "vlm-anyres-tiling",
+      "concept": "The AnyRes pipeline: an arbitrary-resolution image is cut into fixed-size tiles + a global thumbnail, each encoded independently by the same ViT, then concatenated with positional cues into one visual token sequence.",
+      "rationale": "AnyRes is the standard solution to the token-explosion tension and the enabler of OCR/chart/document reading, but it currently lives only in code. The mechanism has a spatial story - split, encode-in-parallel, concatenate, tag positions - that a diagram conveys far better than a loop. It complements the token-explosion figure (which shows the cost) by showing the actual construction (the how).",
+      "kind": "static",
+      "placement": "Native Resolution and Any-Resolution (after the numbered 4-step recipe list)",
+      "priority": 2,
+      "brief": "A left-to-right pipeline titled 'AnyRes tiling: read high-res images without one giant grid'. STAGE 1 'Tile': a tall/wide source document image with a dashed grid cutting it into a small array of fixed 336x336 tiles (show e.g. a 2x2 arrangement) PLUS a separate small 'global thumbnail (whole image down-sampled to one tile)' below, labeled 'context view'. STAGE 2 'Encode in parallel': draw the SAME shared ViT box drawn once with multiple parallel arrows (one per tile + thumbnail) passing through it, annotate 'same frozen ViT, each tile -> 576 patch tokens'. STAGE 3 'Concatenate + tag position': show the per-tile 576-token blocks laid end to end into one long sequence, with small position markers between them - depict the three positional-cue options from the chapter as little labeled tags: 'tile-position embeddings', 'special <row_start>/<col_end> tokens', and text cue like \"row 0, col 2:\"; put a separator glyph between tile blocks and mark the thumbnail block distinctly. STAGE 4 'Project -> LLM': the concatenated sequence passes through the projector into the LLM input. Add a one-line takeaway 'K tiles => K x 576 tokens: fidelity scales with tile count (this is what the token-explosion figure is counting)'. Use accent only for tokens/visual elements; keep ViT and projector boxes neutral. Only illustrative integers (336, 576, 2x2 tiles). Must be a clear static frame legible in both themes, with the thumbnail visually distinguished from the detail tiles so its 'global context' role is obvious."
+    }
+  ],
+  "summary": "The chapter already has three solid figures (projector dataflow, InternVL2 training stages, dominant-recipe summary), but they leave the two biggest conceptual pillars unillustrated: the projector-vs-cross-attention structural fork and the visual token explosion that motivates the whole compression story. I keep the training-stages figure as-is (excellent), and give the projector-dataflow and dominant-recipe figures small refines (a caption overlap and a 256->336 inconsistency on the former; a dark-theme dashed-line-through-caption on the latter). I add two priority-1 figures - a side-by-side projector-vs-Flamingo contrast (where vision enters, context cost, tanh(alpha) gated fade-in) and a pixels->patches->tokens->memory token-explosion infographic - plus one priority-2 AnyRes tiling pipeline that shows the construction whose cost the explosion figure counts. All new figures are static (single frames suffice) and use only the illustrative integers already present in the chapter."
+}

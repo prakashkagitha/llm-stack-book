@@ -1,0 +1,51 @@
+{
+  "chapter": "content/04-kernels-efficiency/10-memory-efficient-training.md",
+  "core_intuitions": [
+    "A training step holds SIX tensor categories, not just weights: bf16 weights (2P) + fp32 master (4P) + grads (2P) + Adam m,v (4P+4P) = 16P bytes. Optimizer states dominate, NOT the weights.",
+    "Activation memory scales as B*T*L and is separate from the 16P static cost; it can dwarf the weights for long sequences and is what checkpointing/FlashAttention attack.",
+    "Gradient checkpointing trades compute for memory: don't store intermediates during forward, recompute them on demand in backward. Checkpointing at sqrt(L) boundaries gives O(sqrt(L)) memory for ~33% extra compute.",
+    "Offloading works because optimizer states are touched only ONCE per step (read to update, write back), so the ~50x-slower PCIe transfer can be hidden behind compute; per-step tensors cannot be offloaded cheaply.",
+    "LoRA freezes W and trains a rank-r factorization delta_W = B*A (r << d). Frozen params carry ZERO gradient and ZERO optimizer state, so the 8P optimizer term collapses to ~8*(r/d)*P; QLoRA further shrinks the frozen base to 4-bit."
+  ],
+  "existing": [
+    {
+      "name": "memeff-memory-hierarchy-tiers",
+      "verdict": "refine",
+      "issue": "In the PCIe row the redundant grey label '(transfer link)' (x=530) collides with the orange 'transfer bottleneck' role note (x=658), producing overlapping text in the Role column in both themes. It adds no information beyond the row already being labelled 'PCIe bus' and dashed.",
+      "improvement": "Delete the '(transfer link)' text element (line 88) so 'transfer bottleneck' stands alone and legible; the figure is otherwise excellent — the log-scaled bandwidth bars, the '~50x slower' bracket on the PCIe gap, and the offload/prefetch direction arrows correctly build the offloading intuition in both themes. Keep everything else."
+    },
+    {
+      "name": "memeff-oom-decision-tree",
+      "verdict": "keep",
+      "issue": "",
+      "improvement": "Reads cleanly in both themes: root 'OOM during training?' branches on forward vs backward, then to activation-issue vs optimizer-issue remedy panels ordered by cost, with the backward/accumulation panel on the right. The red root box is a semantic alert color that survives both themes. No changes needed."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "memeff-training-memory-budget-16P",
+      "concept": "The 16P-per-parameter static memory breakdown of an Adam mixed-precision training step, revealing that optimizer states — not weights — dominate.",
+      "rationale": "This is the chapter's opening thesis and the mental model every later technique modifies ('LoRA kills the 8P optimizer term', 'checkpointing attacks activations on top of this'). The reader MUST feel that a 2P model actually costs 16P and that the 8P Adam m+v is the biggest slab. No existing figure shows this; it is the single most foundational visual in the chapter.",
+      "kind": "static",
+      "placement": "The Full Training Memory Budget (right after the M_static = 16P bytes equation, before The Activation Memory Equation)",
+      "brief": "A single horizontal (or vertical) stacked bar, total length labelled '16P bytes per parameter', partitioned proportionally into the FIVE slabs from the equation, each slab width exactly proportional to its coefficient so the eye reads the ratios: bf16 weights = 2P, fp32 master weights = 4P, bf16 gradients = 2P, Adam m_t = 4P, Adam v_t = 4P. Label each slab inside or with a leader line: the byte count (2P / 4P / 4P...), the tensor name, and its dtype (bf16 / fp32). Group the two Adam slabs under a brace labelled 'Optimizer states = 8P (dominant)' and, if room, brace {master 4P + grads 2P + Adam 8P = 14P} as 'the 14P you pay ON TOP of the model'. Add a small side callout: 'Model in bf16 is only 2P — the training step costs 8x that.' A faint appended segment beyond the bar, hatched/dashed and clearly separated, labelled 'activations (+B*T*L, separate — see next section)' signals that activations are NOT part of 16P. Use theme variables for all fills; give the dominant optimizer slabs the accent color and lighter neutral fills to the rest so the dominance is visible in both light and dark. Only illustrative symbolic quantities (2P,4P,8P,16P) — invent NO GB numbers. Everything inside the viewBox, one clear left-to-right reading order, legible in both themes."
+    },
+    {
+      "name": "memeff-checkpointing-recompute-timeline",
+      "concept": "Activation-memory footprint over the forward+backward timeline: baseline stores every layer (memory climbs then drains) vs checkpointing stores only sqrt(L) boundaries and recomputes segments on demand in backward.",
+      "rationale": "The recompute-vs-store tradeoff is a temporal process that a prose equation (M=O(L/k), FLOPs=O(k)) does not make intuitive. Seeing memory as a tall triangle that collapses into a low flat line with small recompute bumps is what makes 'trade ~33% compute for O(sqrt(L)) memory' click. It is the second pillar of the chapter and is unserved.",
+      "kind": "static",
+      "placement": "Activation Checkpointing: Recompute vs. Store (under The Recompute-Storage Tradeoff, near the M_act = O(L/k) equation)",
+      "brief": "A two-panel (stacked or side-by-side) memory-vs-time chart sharing an x-axis labelled 'forward pass -> | <- backward pass' with a small transformer-layer track (e.g. L=9 blocks) beneath. TOP panel 'Store everything (baseline)': the shaded activation-memory area rises step-by-step to a tall peak at the end of forward (every layer's activations retained), then steps back down through backward as each layer's grads are consumed — a big triangle; annotate peak 'O(L) activation memory, 0 extra compute'. BOTTOM panel 'Checkpoint at sqrt(L)': during forward only a few boundary tensors are kept (mark 3 checkpoint pins on the layer track at layers ~3,6,9), so the memory area stays LOW and roughly flat with tiny saw-tooth bumps; during backward, show short recompute spikes — a small bump where a segment between two checkpoints is re-run forward (draw a curved 'recompute' arrow from a checkpoint pin re-tracing that segment) before its grads flow. Annotate the low envelope 'O(sqrt(L)) memory' and the bumps 'recompute segment (+~33% compute)'. A dashed horizontal 'GPU memory limit' line that the baseline triangle pierces but the checkpointed envelope stays under makes the payoff obvious. Use a checkpoint-pin glyph consistently; accent color for retained/checkpoint tensors, neutral for the memory area. Symbolic only — no GB numbers. Fully legible as a static frame in both themes, single clear reading order left->right, forward then backward."
+    },
+    {
+      "name": "memeff-lora-memory-collapse",
+      "concept": "LoRA/QLoRA memory collapse: freezing W and training only the rank-r factors B*A removes gradients and optimizer state for the frozen base, so the 16P training bar shrinks to a tiny adapter bar.",
+      "rationale": "This is the chapter's central payoff and the answer to its Interview Corner. Readers must connect the factorization delta_W = B*A (r << d) to the memory consequence: frozen => 0 grad => 0 optimizer state, so the dominant 8P slab from figure one nearly vanishes. Pairing the tiny-matrix geometry with the collapsing memory bar in one figure makes the 'why PEFT slashes memory' intuition land in a way the tables cannot.",
+      "kind": "static",
+      "placement": "The Math Behind LoRA and Why PEFT Slashes Memory (spanning The LoRA Factorization and Memory Impact: Exact Accounting)",
+      "brief": "Left half — the factorization geometry: a large square weight matrix W (d x k), greyed and stamped 'FROZEN (no grad)', with a small side path delta_W = B*A drawn as a tall thin B (d x r) times a short wide A (r x k) meeting at a narrow rank-r waist; annotate 'r << d' and 'trainable params r(d+k) vs dk  ->  rho ~ r/d (~0.4%)'. Only B and A carry a small 'trainable / has grad' accent badge. Right half — the memory consequence as a direct visual echo of the 16P budget figure: three side-by-side stacked bars sharing a baseline. Bar 1 'Full fine-tune' = the full 16P stack (weights 2P + master 4P + grads 2P + Adam 8P) at full height, with the optimizer slab tall. Bar 2 'LoRA' = frozen base weights 2P still present (greyed) but the grads and optimizer slabs shrink to slivers labelled '2*|theta_LoRA| and 8*|theta_LoRA| ~ (r/d) of full' — visibly collapsed. Bar 3 'QLoRA' = the frozen base itself shrinks from 2P to ~P/2 ('4-bit NF4') with the same tiny adapter slivers on top. Add a bracket/arrow from Bar 1's optimizer slab to Bar 2's sliver labelled 'frozen => 0 optimizer state: ~99.6% gone'. Keep the slab color coding identical to memeff-training-memory-budget-16P (accent = optimizer states) so the two figures read as a set. Symbolic quantities only (P, r, d, |theta_LoRA|) — invent NO GB numbers. All within viewBox, matrices not overlapping the bars, legible both themes."
+    }
+  ],
+  "summary": "The chapter is concept-rich with only two figures, and both cover downstream topics (the memory hierarchy for offloading, and the OOM decision tree) while the three load-bearing intuitions are unillustrated. Existing: keep the OOM decision tree as-is; refine the hierarchy figure by deleting the redundant '(transfer link)' label that overlaps 'transfer bottleneck'. Propose three foundational static figures: (1) the 16P training-memory breakdown showing optimizer states dominate — the chapter's opening thesis and the mental model every technique modifies; (2) a memory-vs-time timeline making the checkpointing recompute-vs-store tradeoff visceral; (3) a LoRA/QLoRA memory-collapse figure that ties the rank-r factorization to the vanishing optimizer state, color-matched to figure (1) so they read as a set. Recommend static for all three — no motion is essential, and each is complete in a single frame."
+}

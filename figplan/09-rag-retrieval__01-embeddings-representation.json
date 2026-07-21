@@ -1,0 +1,65 @@
+{
+  "chapter": "content/09-rag-retrieval/01-embeddings-representation.md",
+  "core_intuitions": [
+    "Dense retrieval beats keyword matching because it maps meaning to geometry: 'car' and 'automobile' land close in vector space even with zero word overlap, whereas sparse/BM25 vectors are near-orthogonal.",
+    "The bi-encoder's power is INDEPENDENCE: query and document are encoded separately, so every document vector is precomputed offline and only the query is embedded at query time (cross-encoders can't do this).",
+    "InfoNCE turns a batch into a classification problem: a B x B similarity matrix whose diagonal are the true (query, positive) pairs and whose off-diagonal cells are free in-batch negatives; a row-wise softmax (sharpened by temperature) must pick the diagonal.",
+    "Contrastive training reshapes the space: it pulls each query toward its positive and pushes negatives away, converting an anisotropic cone of embeddings into a spread-out isotropic sphere; HARD negatives (superficially similar) provide far more signal than random ones.",
+    "Matryoshka training makes one vector useful at many prefix lengths at once: the first 32/64/128... dimensions each form a valid, re-normalizable embedding, so you can truncate at inference to trade quality for cost."
+  ],
+  "existing": [
+    {
+      "name": "emb-biencoder-concept",
+      "verdict": "refine",
+      "issue": "Correct and clear in both themes, but the single most important intuition of the whole architecture -- that document embeddings are precomputed offline and only the query is encoded at query time -- is relegated to a dim one-line caption at the bottom. The figure draws both towers identically, visually implying they run at the same time, which is exactly the misconception to dispel.",
+      "improvement": "Encode the offline/online asymmetry visually: tag the document tower with an 'offline / precomputed, stored in ANN index' band and the query tower with an 'online / at query time' band (use theme-neutral tints, e.g. a muted vs an accent hue). Optionally show the document embedding flowing into a small stacked 'index' glyph rather than directly to the score, so the reader sees that d-side work happens once, ahead of time. Keep the shared-weights dashed link and the dot-product score. Drop the literal square brackets around 'Transformer' so it doesn't read as an unfilled placeholder."
+    },
+    {
+      "name": "emb-biencoder-detailed",
+      "verdict": "keep"
+    },
+    {
+      "name": "emb-rag-pipeline",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "emb-infonce-similarity-matrix",
+      "concept": "InfoNCE as row-wise classification over a B x B batch similarity matrix: diagonal = positives, off-diagonal = in-batch negatives, softmax sharpened by temperature.",
+      "rationale": "This is the single most important mechanism in the chapter and it currently has NO figure -- only an equation and code. The intuition 'every other document in the batch is a free negative, and the loss is just cross-entropy that must pick the diagonal' is fundamentally spatial and clicks instantly from a labeled matrix but stays abstract in symbols. It also grounds why larger batches help (more off-diagonal negatives per row) and what temperature does (sharpening the row softmax).",
+      "kind": "static",
+      "placement": "### InfoNCE Derivation",
+      "priority": 1,
+      "brief": "Center the figure on a small square grid, e.g. 4x4 (B=4), labeled rows q1..q4 (queries) down the left and columns d1..d4 (documents) across the top. Each cell holds a similarity value sim = e_q . e_d; fill the grid with small illustrative decimals in [0,1] ONLY (invent no benchmark numbers) -- e.g. diagonal cells near 0.9 and off-diagonal near 0.1-0.3. Visually distinguish the diagonal cells (the true query-positive pairs) with an accent outline/fill and label them 'positive pair (target)'; render the off-diagonal cells in a muted tint labeled once as 'in-batch negatives (free)'. To the RIGHT of the matrix, expand ONE row (say q2) into a horizontal softmax strip: show the four cell values -> divide by tau (temperature) -> exp -> normalized probabilities, with the diagonal probability towering over the rest; annotate 'cross-entropy pushes P(correct doc) -> 1'. Add a compact temperature callout: a small paired sketch 'small tau = sharp / spiky softmax' vs 'large tau = soft / flat softmax' (two tiny bar clusters, no numbers needed beyond illustrative). Include one short caption tying it together: 'Row i is a classification over B documents; the answer is always the diagonal.' Optionally hint symmetry with a faint note that the loss is also applied column-wise (d->q). Everything must fit the viewBox with no overlaps; keep the matrix the dominant element and the softmax strip and temperature callout clearly secondary. Theme-safe: no hardcoded primary colors, use accent vs muted roles that work in light and dark."
+    },
+    {
+      "name": "emb-contrastive-space-geometry",
+      "concept": "What the contrastive loss DOES to the embedding space: pull query->positive, push away negatives, turning an anisotropic cone into an isotropic sphere; random vs hard negatives.",
+      "rationale": "The chapter's WHY -- the interview corner, the anisotropy discussion, and the entire hard-negatives section -- all rest on a geometric picture that is described only in prose. A before/after of the sphere (cone -> spread) plus the pull/push arrows makes 'anisotropic', 'isotropic', and 'hard negative' concrete in one glance, and shows why a hard negative (close to the query) yields a bigger, more useful gradient than a random one that is already far away.",
+      "kind": "static",
+      "placement": "## Hard Negatives: Going Beyond In-Batch Sampling",
+      "priority": 1,
+      "brief": "Two side-by-side circular panels representing the unit hypersphere (draw as a 2D circle with points on/near it). LEFT panel 'Before contrastive fine-tuning (anisotropic)': all embedding dots crammed into a narrow wedge/cone of the circle, so even unrelated sentences have high cosine similarity -- annotate 'everything looks similar; cosine uninformative'. RIGHT panel 'After contrastive fine-tuning (isotropic)': the same dots spread roughly uniformly around the circle. In the RIGHT panel, single out one query point q with: (a) its positive d+ pulled TIGHT next to it (inward arrow labeled 'pull positive together'), (b) a HARD negative d- placed deceptively close to q with an outward arrow labeled 'push hard negative away -- large gradient', and (c) a RANDOM negative already far across the circle with a faint/short arrow labeled 'random negative -- already far, little signal'. Use an accent hue for q and its positive, a contrasting muted hue for negatives. Add a small legend distinguishing query / positive / hard negative / random negative by marker. Keep only a handful of dots per panel so it stays legible; no numbers required. The static frame must fully convey the transformation (a left->right arrow between panels labeled 'contrastive training' helps). Theme-safe roles only; ensure dots and arrows are legible on both light and dark backgrounds."
+    },
+    {
+      "name": "emb-matryoshka-nested-dims",
+      "concept": "Matryoshka Representation Learning: one embedding vector whose growing prefixes (32, 64, 128, 256, full d) are each independently usable and re-normalizable, trained by summing InfoNCE losses over all prefixes.",
+      "rationale": "MRL is now standard (text-embedding-3, BGE-M3) and is one of the chapter's headline practical ideas, yet it has no figure. The nesting-doll concept is inherently visual: readers instantly grasp 'truncate to any supported size and re-normalize' from a picture of concentric prefixes far faster than from the summation formula. It also makes the training story clear -- gradients from every prefix slice flow into the same shared vector.",
+      "kind": "static",
+      "placement": "### How MRL Training Works",
+      "priority": 1,
+      "brief": "Show a single long horizontal embedding vector drawn as a row of cells, with vertical dividers marking prefix boundaries at illustrative granularities 32 | 64 | 128 | 256 | ... | d (small integers only). Above the vector, draw nested brackets or concentric 'Russian doll' bands that each span a prefix: the innermost band covers [0:32] labeled 'usable embedding', the next [0:64], then [0:128], [0:256], and the outermost the full d -- visually communicating that each larger prefix CONTAINS the smaller one (nesting). Annotate the leftmost region 'most discriminative signal packed early' and the rightmost 'later dims refine detail'. On the TRAINING side (left or below): show that InfoNCE is computed at EACH prefix (a small stack of loss terms L_32, L_64, ..., L_d) that sum into one total loss, with arrows/gradients flowing back into the SAME shared vector -- caption 'one model, many dimensions, trained jointly'. On the INFERENCE side (right or below): show a scissors/truncation glyph cutting at, say, dim 128, followed by 're-normalize (L2)' producing a shorter usable vector -- caption 'truncate at query time to trade quality for cost/latency/storage'. Keep the nested bands clearly distinguishable (graduated tints of one accent, legible in both themes) and avoid clutter -- 4-5 granularities max. Fit entirely in the viewBox; the nested-prefix vector is the hero element."
+    },
+    {
+      "name": "emb-dense-vs-sparse-vocab-mismatch",
+      "concept": "Why dense beats sparse: BM25/one-hot vectors are near-orthogonal so 'car' vs 'automobile' score zero (vocabulary mismatch), while a trained dense space places them close.",
+      "rationale": "This is the very first substantive idea of the chapter ('Why Dense Representations?') and its motivating hook -- yet the section is entirely prose until the bi-encoder diagram. A crisp side-by-side of the two geometries makes the central trade-off (exact-token overlap vs learned semantic proximity) immediate and frames every later technique as 'how we build that dense space'.",
+      "kind": "static",
+      "placement": "## Why Dense Representations?",
+      "priority": 2,
+      "brief": "Two contrasting panels. LEFT 'Sparse (BM25 / TF-IDF)': depict a few high-dimensional one-hot-ish axes; place the query 'automobile' and the document 'car' on DIFFERENT orthogonal axes so their dot product is zero -- annotate 'no shared token -> score 0 (vocabulary mismatch)'. Show a matching pair too (query 'car' vs doc 'car') sharing an axis with a nonzero overlap, to make clear sparse only fires on exact token overlap. RIGHT 'Dense (learned)': a small continuous 2D semantic map where 'car', 'automobile', and 'vehicle' cluster tightly together while an unrelated word like 'banana' sits far away; draw the query 'automobile' close to the doc 'car' with a short 'high cosine similarity' link. Include a one-line trade-off strip at the bottom: 'sparse: exact-match, inverted index, cheap' vs 'dense: semantic, needs ANN scan/index' (tie forward to the ANN chapter conceptually, no numbers). Keep few labeled points per panel, legible markers and text in both themes, accent for the query/positive relationship and muted for unrelated items. No invented benchmark numbers; illustrative geometry only. Everything within the viewBox, clear left/right reading order."
+    }
+  ],
+  "summary": "The chapter is concept-rich but figure-poor where it matters most: all three existing figures are architecture/flow diagrams (bi-encoder concept, bi-encoder detailed, RAG pipeline), correct and legible in both themes, so they mostly stay as keep. But the chapter's actual mechanisms -- the InfoNCE similarity matrix, the contrastive reshaping of the embedding space with hard negatives, and Matryoshka nested dimensions -- have no visuals at all despite being its conceptual core. I propose 3 priority-1 static infographics for exactly those mechanisms plus one priority-2 figure for the opening dense-vs-sparse motivation, and one refine to the bi-encoder-concept figure so it visually encodes the offline-precompute / online-query asymmetry instead of burying it in a caption."
+}

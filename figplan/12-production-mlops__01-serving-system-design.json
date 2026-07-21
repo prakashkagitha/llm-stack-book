@@ -1,0 +1,67 @@
+{
+  "chapter": "content/12-production-mlops/01-serving-system-design.md",
+  "core_intuitions": [
+    "LLM latency is TWO numbers (TTFT vs TPOT/ITL), not one, and they trade against each other and against throughput.",
+    "The serving stack is a layered control loop around GPUs: gateway (cheap, stateless) -> router (the brain, per-request placement) -> stateful model-pool replicas -> autoscaler, with tokens streaming back up.",
+    "p99 latency is dominated by QUEUEING: wait time blows up like 1/(1-rho) as utilization -> 1, which is why you provision to 60-75% utilization, not 95% (the headroom IS the SLO budget).",
+    "Replica selection must balance TOKENS not request count, and power-of-two-choices (randomize + local view) beats both round-robin and always-pick-the-global-minimum (thundering herd).",
+    "Fleet size is set by the MAX of two independent constraints: throughput (prefill rate + Little's Law) and memory (KV bytes/token vs HBM capacity); know which regime you are in.",
+    "Batching policy (max_num_batched_tokens, chunked prefill, P/D disaggregation) is how you SPEND the latency budget on the throughput-vs-TPOT frontier."
+  ],
+  "existing": [
+    {
+      "name": "serving-ttft-tpot-timeline",
+      "verdict": "keep",
+      "issue": "Clean, correct, legible in both themes. In dark theme the small 'TPOT' caption sits very close to the first token box border, but it remains readable and does not misconvey anything.",
+      "improvement": "Optional: nudge the 'TPOT' caption a few px lower so it clears the token-box outline in dark theme."
+    },
+    {
+      "name": "serving-reference-architecture",
+      "verdict": "refine",
+      "issue": "The core layered stack (gateway -> router -> pools -> shared infra) is excellent and reads clearly in both themes. The only defect is the rotated right-margin label 'tokens stream back up to client': it is clipped/hard to read in light theme and effectively invisible (dashed arrow only, no legible text) in dark theme.",
+      "improvement": "Make the vertical 'tokens stream back up' return path legible in BOTH themes: use a theme-safe text fill (currentColor / CSS var, not a hardcoded near-black), give it enough right-margin room inside the viewBox so no glyphs clip, and ensure the dashed up-arrow has adequate contrast on the dark background. Everything else stays as-is."
+    },
+    {
+      "name": "serving-throughput-tpot-frontier",
+      "verdict": "keep",
+      "issue": "Strong metaphor: SLO as a vertical line you must stay left of, feasible/forbidden shading, small/large batch operating points, 'best feasible op point'. Reads well; in dark theme a couple of callout labels lightly overlap the curve but the meaning is unambiguous.",
+      "improvement": "Optional: shift the 'large batch: cheap but slow TPOT' callout box so it does not cross the throughput curve in the dark render."
+    },
+    {
+      "name": "serving-e2e-request-trace",
+      "verdict": "keep",
+      "issue": "Numbered 10-step vertical trace is clear, correctly ordered, and legible in both themes; the highlighted 'FIRST TOKEN / TTFT clock stops' step is a nice touch. Same minor rotated right-margin 'tokens stream up to client' clipping as the architecture figure but far less prominent here.",
+      "improvement": "Optional: give the right-edge vertical return-path label a little more inset so it does not clip; not load-bearing."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "serving-queueing-cliff",
+      "concept": "Mean wait / latency multiplier vs utilization rho, showing the 1/(1-rho) hockey-stick blowup and the safe operating band.",
+      "rationale": "This is the chapter's explicitly-named 'single most useful piece of quantitative reasoning' and the justification for the headline rule 'provision to 60-75%, not 95%'. It is a whole section (Little's Law + the 1/(1-rho) cliff) with ZERO figure. A single static curve makes the non-linearity visceral in a way the prose and formula cannot: readers must SEE that latency is flat-then-vertical, so 80%->95% is a 4x jump. It is the most foundational un-illustrated intuition in the chapter.",
+      "kind": "static",
+      "placement": "Queueing: Little's Law and Why p99 Explodes (right after the W = (1/mu)/(1-rho) equation)",
+      "priority": 1,
+      "brief": "A single 2D plot. X-axis: utilization, labeled 'utilization  rho = lambda / (c*mu)', ticks from 0 to 1. Y-axis: 'mean time in system  W  (relative)  =  service_time / (1 - rho)', i.e. the latency multiplier 1/(1-rho). Draw the curve of 1/(1-rho): nearly flat and low from rho=0 to ~0.6, then sweeping sharply upward and asymptoting toward a dashed vertical asymptote at rho=1 labeled 'saturation:  rho -> 1,  W -> infinity'. Shade a vertical GREEN band spanning rho = 0.60 to 0.75, labeled 'operating target — provision here; the headroom is the SLO budget'. Shade a vertical RED band spanning rho = 0.90 to 1.0 labeled 'the queueing cliff'. Place two marked dots ON the curve with leader-line callouts using ONLY these small illustrative integers: at rho=0.8 a dot annotated 'x5', at rho=0.95 a dot annotated 'x20'. Add one short connecting annotation between them: '15 points of utilization  ->  ~4x latency'. Small caption under the plot: 'Latency is flat, then vertical. Running near saturation blows p99 even when the mean keeps up.' Theme-safe only: use currentColor / CSS variables for axes, curve, and text; express the green 'safe' and red 'danger' bands with low-opacity theme-aware fills (do not hardcode a near-black or near-white). Invent NO benchmark numbers beyond the two illustrative multipliers x5 and x20, which come straight from the chapter text. Everything must sit inside the viewBox with a clear left-to-right, bottom-to-top reading order."
+    },
+    {
+      "name": "serving-replica-balancing-strategies",
+      "concept": "Three replica-selection policies contrasted by the resulting per-replica load distribution: random/round-robin vs power-of-two-choices vs always-pick-the-global-minimum (thundering herd).",
+      "rationale": "'The router is the brain' and 'balance by tokens, use power-of-two-choices, never round-robin and never always-pick-the-minimum' is a top-line Key Takeaway with two dedicated callouts (thundering-herd pitfall + the balls-into-bins result), yet it has no figure. The intuition is inherently spatial — it is about the SHAPE of the load distribution across bins — so a side-by-side of the three outcomes makes 'why pow-2 beats both extremes' click far better than the asymptotic-notation prose. It also cements the chapter's insistence that the unit is TOKENS, not requests.",
+      "kind": "static",
+      "placement": "The Router -> Replica selection: do not use round-robin (right after the power-of-2 pick_replica code / power-of-two-choices paragraph)",
+      "priority": 2,
+      "brief": "Three side-by-side panels, each showing the SAME set of ~6 replica 'bins' drawn as vertical bars whose HEIGHT = load in tokens (queued + running). A shared note at top or bottom: 'bar height = queued + running TOKENS, not request count'. PANEL A titled 'Random / round-robin': bars are visibly uneven — one bar much taller (a hot, overloaded replica) and a couple nearly empty; sublabel 'balances request COUNT, not token WORK -> max load ~ Theta(log n / log log n); one replica badly overloaded'. PANEL B titled 'Power-of-2-choices': bars are nearly equal height; show a tiny inset of two dashed sample-arrows touching two bars with a check on the shorter one; sublabel 'sample 2 at random, keep the lighter -> max load ~ Theta(log log n); balanced with only LOCAL state'. PANEL C titled 'Always pick the global minimum (thundering herd)': show several router arrows all converging onto the single currently-shortest bar, which is drawn mid-spike, plus a small oscillation squiggle above it; sublabel 'every router picks the same 'best' replica at once -> it overloads, then all stampede the next -> load oscillates, never settles'. Make the intended winner (Panel B) visually calmest/most even. Use only small illustrative integer token counts on bars if any labels are shown; invent no benchmarks. Theme-safe: bars and text via currentColor / CSS vars, the 'hot/overloaded' emphasis via a theme-aware accent fill, not a hardcoded red/black. Keep a wide viewBox so all three panels and their sublabels fit without overlap; clear left-to-right reading order A, B, C."
+    },
+    {
+      "name": "serving-sizing-max-of-two",
+      "concept": "Fleet size = MAX(throughput-bound replica count, memory-bound replica count); the memory column doubles as an HBM budget breakdown.",
+      "rationale": "The 'two independent sizing constraints, take the binding one' aside and the matching Key Takeaway are a genuinely load-bearing mental model for the sizing sections and the interview answer, and the chapter carries them only in prose + a worked example. A compact static figure that literally shows two replica stacks of different heights with a MAX gate makes 'take the maximum, know your regime' immediate, and folding the HBM weights+reserve+KV breakdown into the memory column reinforces why memory is a hard, separate wall from throughput. Lower priority than the two above because the worked example already carries much of the weight.",
+      "kind": "static",
+      "placement": "Replica and Cluster Sizing: Memory Is the Real Constraint -> Aside: two sizing constraints, take the binding one",
+      "priority": 3,
+      "brief": "Two labeled vertical stacks of replica 'blocks' side by side, feeding a MAX gate. LEFT stack titled 'Throughput-bound  c >= lambda / (0.7 * mu)': a column of ~7 identical small replica blocks, sublabel 'set by prefill rate + Little's Law + the rho<=0.7 headroom'. RIGHT stack titled 'Memory-bound  N_requests / N_concurrent': a column of ~5 replica blocks, and render ONE of these replica blocks enlarged as an HBM budget bar split top-to-bottom into three segments: 'weights (fixed)', 'reserve', and a tall 'KV cache -> N_concurrent slots' segment subdivided into a few request slots that visibly grow with context length; sublabel 'set by KV bytes/token vs HBM capacity (GQA shrinks KV bytes/token)'. Both stacks feed arrows into a central MAX(...) node, whose single output arrow points to the TALLER (here left, 7) stack, labeled 'Fleet size = MAX(throughput, memory) = 7 replicas (illustrative)'. Below the MAX node add two small regime tags: 'long prompts, short outputs -> compute / throughput-bound' and 'many concurrent long-context chats -> memory-bound'. Use ONLY small illustrative integers (7 and 5) and clearly mark them illustrative; invent no benchmark numbers. Theme-safe: blocks, gate, arrows, and text via currentColor / CSS vars; the HBM segments distinguished by theme-aware opacity tiers, not hardcoded colors. Fit everything inside the viewBox with a clear reading order: two inputs -> MAX -> output."
+    }
+  ],
+  "summary": "The chapter is already well-served with four solid figures (TTFT/TPOT timeline, reference architecture, throughput-vs-TPOT frontier, end-to-end request trace), all of which render correctly in both light and dark themes. Three keep, and reference-architecture gets a refine for one concrete defect: the rotated right-margin 'tokens stream back up' return-path label is clipped in light and nearly invisible in dark and needs a theme-safe fill plus inset. The chapter's three biggest ANALYTICAL intuitions are currently un-illustrated, so I propose three new static figures, priority-ranked: (1) the queueing cliff — the 1/(1-rho) hockey-stick with a shaded 60-75% safe band and a red danger band, which visualizes the chapter's own 'single most useful piece of quantitative reasoning'; (2) a three-panel replica-balancing comparison (random vs power-of-2 vs thundering-herd) that makes 'balance tokens, use power-of-two-choices' spatial and obvious; and (3) a max-of-two sizing figure showing throughput-bound vs memory-bound replica stacks feeding a MAX gate, with the memory column doubling as an HBM breakdown. All three are static because a single frame fully conveys each idea; no animation is needed."
+}

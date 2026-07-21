@@ -1,0 +1,40 @@
+{
+  "chapter": "content/06-rl-infra/10-agentic-multiturn-rl.md",
+  "core_intuitions": [
+    "A trajectory is one flattened token stream of interleaved model actions and environment observations; only the model-authored ACTION tokens get a policy-gradient loss (the loss mask is 1 on actions, 0 on system/observation).",
+    "The rollout is not one autoregressive pass: the model generates an action, STOPS at a tool-call boundary, the environment runs and injects an observation, and the model resumes — turn boundaries are real seams that must be tracked.",
+    "Credit assignment spans a spectrum: trajectory-level broadcasts ONE terminal advantage identically onto every action token across all turns (robust, high-variance, rewards even wasted turns), while turn-level assigns each turn its own discounted return-to-go (lower variance, needs an intermediate signal).",
+    "Group-relative (GRPO) baselines cut variance for free by sampling G trajectories of the same task and normalizing rewards against the group mean — and group sampling requires G INDEPENDENT environment instances to avoid state leakage.",
+    "The dominant infra cost is the throughput tax: the GPU idles while it waits on environment latency (sandbox spin-up, search API, test suite); async decoupled rollout fans out many environments so the GPU generates for one trajectory while another waits on its tool.",
+    "Trajectory lengths are heavy-tailed (a 1-turn success vs an 8-turn flailing failure), creating stragglers; partial rollouts pause and resume episodes across steps to bound step latency."
+  ],
+  "existing": [
+    {
+      "name": "agentic-trajectory-loss-mask",
+      "verdict": "keep",
+      "issue": "Renders correctly and legibly in both light and dark themes; six-segment stream with the 0/1 mask row directly beneath is the clearest possible depiction of the masking core-intuition, with good reading order and correct semantics (action segments blue/mask=1, system+observation grey/mask=0). The terminal reward badge and the 'conditioned on / policy / injected by env' callouts add exactly the right nuance. No clipping or clutter.",
+      "improvement": "Optional only: the bottom explanatory caption line is 9.5px and slightly dim in dark theme — could bump to ~10.5px for comfort — but this is not blocking."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "credit-assignment-traj-vs-turn",
+      "concept": "Same 3-turn trajectory scored two ways: one terminal advantage broadcast flat onto every turn vs per-turn discounted returns-to-go.",
+      "rationale": "Credit assignment is the chapter's largest conceptual pillar (a full section plus a worked example), and the whole point — that trajectory-level gives every turn the SAME advantage even the wasted one, while turn-level shapes credit per turn — is inherently a comparison a single side-by-side infographic makes click instantly. The existing figure covers masking, not credit; this is the biggest under-served core intuition.",
+      "kind": "static",
+      "placement": "Section '### When to use which' (place the marker at the very start of that subsection, right after the worked-example callout that ends the turn-level subsection).",
+      "brief": "Draw the SAME 3-turn trajectory twice, as two stacked horizontal lanes sharing a common left-to-right time axis. Each lane shows three equal action blocks labelled 'Turn 0', 'Turn 1', 'Turn 2' (each block a small cluster of action-token ticks), ending in a terminal reward badge 'r = 0.75' at the right. TOP LANE, titled 'Trajectory-level credit': from the single terminal r, draw three arrows that fan out and land on all three turn blocks, each carrying the IDENTICAL advantage badge 'A = +1.36'. Make the three badges visually identical (same size, same fill). Annotate Turn 1 with a small italic note 'fixed nothing — still gets +1.36' to expose the weakness. Sub-label the lane: 'one scalar, broadcast to every action token'. BOTTOM LANE, titled 'Turn-level credit (return-to-go, gamma=0.9)': under each turn block show its per-turn reward (r0=0.25, r1=0.00, r2=0.50) as small text, and give each turn its OWN distinct credit badge sized/shaded by magnitude: Turn 0 'G0=0.66', Turn 1 'G1=0.45' (visibly the smallest, near-neutral), Turn 2 'G2=0.50'. Sub-label: 'each turn gets its own discounted credit'. The single load-bearing visual contrast is FLAT vs SHAPED: top row of three identical badges, bottom row of three different badges with the middle one clearly diminished. Use only the illustrative numbers already in the chapter's worked example. Theme-safe: use the accent for action blocks and a muted/warn tone for reward badges; do not hardcode primaries. Everything must fit in the viewBox with no overlapping badges; keep the two lanes clearly separated with their titles at the left.",
+      "priority": 1
+    },
+    {
+      "name": "rollout-throughput-sync-vs-async",
+      "concept": "GPU utilization timeline: synchronous rollout leaves idle bubbles waiting on the environment, while async env fan-out keeps the GPU saturated.",
+      "rationale": "The throughput tax — the GPU idling on environment latency — is the chapter's central INFRASTRUCTURE intuition (hard problem #3, plus the practitioner tip about profiling generate-vs-env-wait). It is invisible in code and only becomes obvious as a wall-clock timeline. A Gantt-style before/after is the canonical, self-explanatory way to show why async decoupled rollout exists.",
+      "kind": "static",
+      "placement": "Section '### 3. The throughput tax of environment interaction' (place the marker immediately after the opening paragraph that ends '...you can lose half your GPU-hours to waiting.').",
+      "brief": "A Gantt-style timeline with wall-clock time increasing left to right, two stacked scenarios. TOP, titled 'Synchronous (one trajectory at a time)': a single GPU lane that alternates between solid 'GEN' blocks (the GPU generating one action) and wide HATCHED gaps labelled 'env wait' (sandbox spin-up / search API / test run). The hatched gaps should be as wide as or wider than the GEN blocks so the eye sees roughly half the lane empty; add a small summary tag 'GPU idle ~50%'. BOTTOM, titled 'Async decoupled (environment fan-out)': the SAME GPU lane but now densely packed with back-to-back GEN blocks tagged by different trajectories (A, B, C, D — use distinct shades of the accent, not new hues), with NO hatched gaps; a summary tag 'GPU saturated'. Below the async GPU lane draw a small pool of parallel 'env worker' rows running concurrently in the background (each a hatched bar), and draw thin connector arrows showing that while trajectory A is in an env-worker bar (waiting on its tool), the GPU is generating a GEN-B block — i.e. the bubbles are filled by other trajectories' work. Key legible takeaway: the GPU is the expensive resource; env waits create bubbles in the sync case; fanning out many environments fills those bubbles. Theme-safe: solid accent for GEN, muted hatched fill for env-wait/env-worker bars, no hardcoded primaries; small integer trajectory labels only. Ensure the two GPU lanes align vertically on the same time scale so the 'idle vs packed' contrast is immediate, and keep all labels inside the viewBox.",
+      "priority": 1
+    }
+  ],
+  "summary": "The chapter is concept-rich and currently has a single (excellent) figure covering only the loss-mask intuition. Keep that figure as-is. The two most foundational under-served intuitions are (1) trajectory-level vs turn-level credit assignment — a natural side-by-side that makes 'flat broadcast vs shaped per-turn credit' click — and (2) the throughput tax, a Gantt timeline showing GPU idle bubbles under synchronous rollout vs a saturated GPU under async environment fan-out. Both are best as crisp static infographics; motion adds nothing a well-laid-out single frame cannot. Two new figures proposed, both priority 1."
+}

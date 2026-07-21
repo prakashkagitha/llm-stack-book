@@ -1,0 +1,53 @@
+{
+  "chapter": "13-interp-safety-gov/02-knowledge-editing-unlearning",
+  "summary": "The chapter has two conceptual halves. The editing/localization/decision side is well served by three existing figures (causal-tracing heatmap, ROME/MEMIT/AlphaEdit progression, when-not-to-edit tree), all of which render correctly in both themes. But the mechanical HEART of ROME - the MLP as a linear associative memory and why a rank-one outer-product update rewires one key while a C^-1 steering term protects every other fact - is currently only formulas. The two deepest conceptual payloads, the ripple effect ('editing installs an association, not a belief') and the whole machine-unlearning half ('won't say it' != 'provably forgot it'), have no figures at all. I keep two existing figures, propose a light refine to the progression card to give the non-obvious null-space projection an actual glyph, and add three static infographics that carry the unserved core intuitions.",
+  "core_intuitions": [
+    "Simple (subject, relation, object) facts are stored locally in middle-layer MLPs and are causally 'read' at the last subject token - so editing has a physical target.",
+    "The MLP down-projection is a linear associative memory (keys -> values); a rank-one outer-product update bends the response at one key k* to point at a new value v*, and the C^-1 term aims that perturbation into directions other keys barely use, which is why unrelated facts survive.",
+    "Editing installs an ASSOCIATION, not a BELIEF: the edited head fact flips but its multi-hop logical consequences stay stale, so the model contradicts itself (the ripple effect).",
+    "Scaling from one edit to thousands is a robustness ladder: rank-1 ROME -> low-rank multi-layer MEMIT -> null-space-projected AlphaEdit, each fighting the drift that accumulated edits inflict on preserved knowledge.",
+    "Unlearning removes the INFLUENCE of data, not just the output: suppression ('the model won't say it') is distinct from removal ('the model provably forgot it'); the gold standard is indistinguishability from a model retrained from scratch, and adversarial audits (membership inference, relearning, paraphrase) expose fake unlearning."
+  ],
+  "existing": [
+    {
+      "name": "kedit-causal-tracing-heatmap",
+      "verdict": "keep"
+    },
+    {
+      "name": "kedit-rome-memit-alphaedit-progression",
+      "verdict": "refine",
+      "issue": "It reads as three stacked cards of raw formulas - correct and legible in both themes, and it does convey the 'one update rule, three scales' escalation, but it builds little intuition beyond restating the equations. In particular AlphaEdit's genuinely non-obvious idea, the null-space projection, is reduced to 'delta_Alpha = P * delta_MEMIT' with no picture of what the projection geometrically does.",
+      "improvement": "Keep the three-card ladder and the increasing-robustness spine, but add two small theme-safe glyphs so it teaches rather than restates: (1) a scale glyph on the left edge of each card - one dot for ROME, a small grid of dots for MEMIT (batch), and stacked batches over time for AlphaEdit (sequential); (2) replace AlphaEdit's bare formula with a tiny 2D inset - a shaded plane labelled 'preserved-key subspace', the raw delta_MEMIT arrow poking into that plane, and its projection delta_Alpha lying in the orthogonal null-space direction so it 'doesn't talk to' old facts. Keep formulas as secondary captions, not the headline."
+    },
+    {
+      "name": "kedit-when-not-to-edit-tree",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "kedit-rank-one-associative-memory",
+      "concept": "How a single rank-one outer-product update rewrites one key->value association in the MLP memory while the C^-1 steering term keeps every other fact's output unchanged.",
+      "rationale": "This is the mechanical heart of the entire locate-then-edit half and the chapter's boxed centerpiece equation, yet nothing visualizes it - the causal-tracing heatmap shows WHERE and the progression card shows the FORMULA, but neither shows WHY a rank-one bump can install a new fact without collateral damage. The reader must intuit two things at once: (a) the residual (v* - W0 k*) is 'how far off the current answer is', and (b) C^-1 k* aims the fix into under-used directions so preserved keys are nearly orthogonal to it. Get this and ROME, MEMIT, AlphaEdit locality all click.",
+      "kind": "static",
+      "placement": "Section 2.2 'The key k* and the closed-form rank-one update' - immediately after the boxed Delta equation.",
+      "brief": "A left-to-right infographic of W_down as a linear associative memory. CENTER: a matrix/box W mapping input keys (d_mlp side) to output values (d_model side). LEFT: a small stack of existing 'preserved memories' - three key vectors k1,k2,k3 each arrowing through W to their correct value vectors v1,v2,v3 (neutral styling, labelled 'other facts, must not move'). Introduce a new key k* (accent styling): currently W maps it to W0 k*, landing near the OLD object ('Seattle'), but we want it to land at v* (the NEW object 'Paris'). MAIN PANEL: depict the update Delta = (v* - W0 k*)(C^-1 k*)^T explicitly as an OUTER PRODUCT of two vectors - a vertical residual vector r = v* - W0 k* labelled 'the gap: what to add at the output' and a horizontal steering vector C^-1 k* labelled 'the direction in key-space to write along'; show their product as a faint rank-one 'ridge' added onto W (annotate 'rank one = one ridge, cheap and invertible'). INSET (small, lower area): a 2D key-space scatter - a dense cloud of common key directions (high covariance C) and the update aimed into a sparse / under-used direction; show k1,k2,k3 sitting in the dense cloud nearly orthogonal to the update arrow, with the note 'preserved keys barely project onto Delta -> W k_i still ~ v_i -> locality'. OUTCOME strip along the bottom: after the edit, k* -> v* (new, accent) while k1,k2,k3 -> v1,v2,v3 unchanged (neutral, with small check marks). Use only small illustrative integers and named example tokens (Space Needle / Seattle / Paris); invent NO benchmark numbers. Single accent hue for the edited path, neutral for preserved; must render in both themes; strict left-to-right reading order, everything inside the viewBox, no overlapping labels."
+    },
+    {
+      "name": "kedit-ripple-effect-association-not-belief",
+      "concept": "A rank-one edit flips one direct association but leaves the fact's multi-hop logical consequences stale, so the model asserts mutually contradictory things.",
+      "rationale": "The chapter names the ripple effect 'the deepest failure mode' and the headline takeaway 'editing changes associations, not beliefs' - the single most memorable and testable idea in the editing half - but there is no figure. A knowledge-graph picture makes 'association vs belief' visceral in one glance: exactly one edge turned, all its implied neighbors did not, and the contradiction is right there.",
+      "kind": "static",
+      "placement": "Section 5.2 'Ripple effects: facts have neighbors' - after the Messi paragraph.",
+      "brief": "A small knowledge graph centered on subject node 'Messi'. Draw the EDITED edge prominently: 'plays for' -> 'Inter Miami', with the old target 'Barcelona' struck through and 'Inter Miami' in accent, tagged 'EDITED: 1 direct association'. Radiating from Messi (and from Inter Miami) show the multi-hop consequents that SHOULD have followed but did NOT, each in neutral/stale styling with a theme-safe warning marker (a small warning glyph, not a hardcoded red hex): 'league -> La Liga (Spain)' flagged 'should be MLS'; 'country of work -> Spain' flagged 'should be USA'; a reverse-lookup edge 'Inter Miami #10 -> ???' flagged 'still doesn't return Messi'. Along the bottom, a contradiction callout box quoting the model saying BOTH 'Messi plays for Inter Miami' AND 'Messi plays in the Spanish league', with a bold 'CONTRADICTION' tag. Caption strip: 'One edge turned. Every logical consequence left stale. An edit installs an association; a belief would update its neighbors too.' Theme-safe: edited edge = accent, stale/contradictory edges = semantic warning treatment (dashed + warning glyph, no raw color hex); all node and edge labels legible; fit inside viewBox; clear radial reading order from the Messi hub outward."
+    },
+    {
+      "name": "kedit-unlearn-suppress-vs-remove",
+      "concept": "Suppression (the model won't say it) versus true removal (the influence is gone), with the retrain-from-scratch gold standard and the three adversarial audits that a merely-suppressed model fails.",
+      "rationale": "Section 6 - the entire machine-unlearning half, including the Interview Corner and multiple Key Takeaways - has ZERO figures, and its whole thesis is one distinction: output changed != knowledge removed. This is the chapter's second pillar and its most safety- and compliance-critical intuition. A single contrast-plus-gauntlet infographic anchors it: why a refusal proves nothing, what 'gone' would actually mean, and how auditors tell the two apart.",
+      "kind": "static",
+      "placement": "Section 6.5 'The auditor's view: did it really forget?'",
+      "brief": "Top: a two-column contrast. LEFT column 'Suppression - output changed': a model whose weights still visibly CONTAIN the target knowledge (a greyed/locked data blob still inside the weight box), but the direct query path is blocked so it refuses / says 'I don't know'. RIGHT column 'Removal - influence gone': the data blob actually excised from the weights, anchored to a reference labelled 'gold standard: retrained from scratch on D minus D_f' (draw as a clean reference model the two are compared against). Bottom: an 'auditor's gauntlet' of three adversarial probes drawn as gates the two models pass through: (1) 'Membership inference' - forget-set loss/perplexity still anomalously low -> 'fingerprint remains'; (2) 'Relearning attack' - a few gradient steps on a tiny sample -> 'recall snaps back in seconds'; (3) 'Paraphrase / cross-lingual / jailbreak' - 'knowledge leaks via another path'. Show the SUPPRESSED model FAILING all three gates (leak/cross marks) while the TRULY-REMOVED model PASSES all three (check marks). Headline banner: \"'The model won't say it' != 'the model provably forgot it.'\" Use theme-safe pass/fail semantics (check vs cross with semantic colors, no raw hex), small illustrative only, no invented benchmark numbers; both themes; clear top-to-bottom reading order; everything inside the viewBox."
+    }
+  ]
+}

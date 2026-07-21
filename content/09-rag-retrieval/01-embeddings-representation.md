@@ -98,6 +98,8 @@ where $\tau > 0$ is the **temperature** hyperparameter. The loss is a cross-entr
 
 **Scaling with batch size.** With batch size $N$, each query sees $N-1$ negatives. Doubling $N$ roughly doubles the number of negatives per query, which empirically improves representation quality — this is why contrastive learning loves large batches. DPR (Karpukhin et al., 2020) used batch size 128; modern models often train with effective batch sizes in the thousands via gradient accumulation.
 
+{{fig:emb-infonce-similarity-matrix}}
+
 ### Full In-Batch Negative Loss Implementation
 
 ```python
@@ -224,6 +226,8 @@ A subtle failure mode: the mining procedure mislabels genuinely relevant documen
 - Soft-labeling using a teacher's confidence score
 - Filtering via conditional negative sampling (only include a mined negative if its teacher score is below a threshold)
 
+{{fig:emb-contrastive-space-geometry}}
+
 ## Architecture: Sentence-Transformers and the BERT-Based Bi-Encoder
 
 The canonical sentence embedding architecture is SBERT (Sentence-BERT, Reimers & Gurevych, 2019), which fine-tuned a BERT-base backbone on sentence pairs using contrastive/siamese networks. Modern models follow the same structure but with stronger backbones and larger training sets.
@@ -294,6 +298,8 @@ $$
 where $\mathbf{e}_{:m}$ denotes the first $m$ dimensions of the full embedding and $\lambda_m$ are weighting coefficients (often uniform). The total loss is the weighted sum of contrastive losses at each granularity; gradients flow through all prefix slices simultaneously.
 
 The effect: the first few dimensions encode the most discriminative signal; later dimensions refine it. At test time you can truncate to any supported size and re-normalize.
+
+{{fig:emb-matryoshka-nested-dims}}
 
 ```python
 def matryoshka_infonce_loss(

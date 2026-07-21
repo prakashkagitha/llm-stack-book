@@ -1,0 +1,49 @@
+{
+  "chapter": "content/08-agents-harness/07-multi-agent-systems.md",
+  "core_intuitions": [
+    "Multiple agents buy you three things a single call cannot: escape from one context window, error isolation with checkpoint/retry, and parallelism across independent sub-tasks; ensembling gain 1-(1-p)^N is largest at moderate per-agent success p.",
+    "The five canonical topologies (orchestrator-worker star, pipeline chain, debate peer-to-peer, blackboard shared-state, hierarchical tree) each have a signature failure mode; real systems compose them.",
+    "The workflow-vs-agent distinction is about WHO owns control flow: in a workflow the next step is decided by developer code (deterministic branches), in an agent the next step is decided by the model's own output; frameworks sit at different points on this axis.",
+    "Orchestrator-worker mechanics: decompose into a structured JSON plan, fan out workers in parallel with isolated error handling, then synthesize — the orchestrator's context is the bottleneck, which the blackboard externalizes.",
+    "The multi-agent 'tax' is real and compounds: every boundary adds latency and prompt-token overhead, forwarded context grows down the chain, and an early hallucination is treated as ground truth downstream (error amplification) — so benchmark the single-agent baseline first."
+  ],
+  "existing": [
+    {
+      "name": "marl-topologies-five-patterns",
+      "verdict": "refine",
+      "issue": "The blackboard panel (4) worker boxes are clipped/overlapping: they read 'Agg aggregato', 'Ret retriever', 'Gen generator', 'Crit critic' instead of clean Aggregator/Retriever/Generator/Critic labels. Separately, panel 1's worker boxes ('W1 - coder agent') overflow past the left panel border, and the 'rounds' label in panel 3 overlaps the double-headed debate arrow, hurting legibility in dark mode.",
+      "improvement": "Fix the four blackboard worker boxes to show a single clean role word (Aggregator, Retriever, Generator, Critic) sized to fit inside the box, or a stacked short-tag/role that does not clip; widen or re-pad panel 1 so the three worker boxes sit fully inside the panel border; move the 'rounds' label above the debate arrow (or into a small pill) so it never overlaps the arrowline. Re-check both themes for the same clipping."
+    },
+    {
+      "name": "marl-reference-architecture-layers",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "workflow-vs-agent-control-flow-spectrum",
+      "concept": "A single horizontal axis from 'control flow lives in developer code' (workflow) to 'control flow lives in the model' (agent), with the two mental models illustrated at the poles and the four frameworks placed along it.",
+      "rationale": "This is the chapter's explicitly-titled 'Critical Distinction' and it currently has only an ASCII text block. The whole framework section (LangGraph/AutoGen/CrewAI/Swarm) is organized by exactly this axis. A single figure that makes 'who decides the next step' visible converts an abstract distinction into a spatial intuition the reader carries through the rest of the chapter.",
+      "kind": "static",
+      "placement": "Workflow vs. Agent: The Critical Distinction",
+      "brief": "A wide horizontal spectrum figure. Draw one long left-to-right axis. Left endpoint labeled 'WORKFLOW - control flow written in code (deterministic)'; right endpoint labeled 'AGENT - control flow emerges from model output (dynamic)'. At the LEFT pole, a small inset schematic: a code/branch icon feeding fixed if/else edges into fixed model-call nodes (a diamond decision drawn in the code layer, arrows hard-wired to node A or node B) - annotate 'developer decides the edge'. At the RIGHT pole, a small inset schematic: a single model box emitting a structured action token like {action, input} that loops back to choose the next tool/step - annotate 'model decides the next action'. Along the axis, place four labeled markers grounded in the chapter text, left-to-right: LangGraph (near the workflow pole - 'developer writes the graph edges'), CrewAI (center-left - 'framework + manager LLM decide task order'), AutoGen (center-right - 'conversation/message replies drive control'), Swarm (near the agent pole - 'model function-call handoffs route control'). Under the axis add one contrasting caption strip: left half 'cheaper, testable, observable, less likely to spiral', right half 'more flexible, handles unenumerable steps'. Use only theme-safe neutrals plus one accent for the axis/markers; no invented benchmark numbers. Everything must fit inside the viewBox with clear left-to-right reading order and non-overlapping marker labels (stagger label heights if needed)."
+    },
+    {
+      "name": "multi-agent-tax-compounding",
+      "concept": "Side-by-side comparison of a single well-prompted call versus a multi-stage pipeline, showing the two compounding costs: forwarded-context token growth down the chain, and error amplification where an early wrong claim is trusted as ground truth downstream.",
+      "rationale": "The chapter's central thesis is 'every boundary costs tokens and latency; benchmark the single-agent baseline first' (the 'multi-agent tax' warning and cost worked example). The two mechanisms that make it compound - linear context growth and undetected error propagation - are hard to feel from prose. A static figure that shows tokens accreting stage by stage AND a red claim flowing untouched through later stages makes the 'why decomposition isn't free' intuition click.",
+      "kind": "static",
+      "placement": "When Multi-Agent Hurts: Costs, Anti-Patterns, and Failure Modes",
+      "brief": "A two-part figure. TOP row (baseline): one single agent box - a single small prompt+context bar and a self-contained loop annotated 'can self-correct: a contradiction is visible within one context'. BOTTOM row (pipeline): four stages left-to-right (Stage 1 ... Stage 4) connected by handoff arrows. Two overlaid stories on the pipeline: (1) TOKEN GROWTH - draw each stage's input as a stacked bar of small illustrative blocks that grows stage to stage: a fixed 'system prompt' block at every stage PLUS an accreting 'forwarded context' block (0 blocks at stage 1, then 1, 2, 3) so the reader sees prompt overhead paid every hop and context growing linearly; label 'overhead paid at every boundary'. (2) ERROR AMPLIFICATION - inside Stage 1's output mark one small item as a wrong/hallucinated claim (a distinct marker, theme-safe accent, e.g. a warning glyph, not a hardcoded red), then draw that same marked item flowing UNCHANGED through Stage 2, 3, 4 with a label 'treated as ground truth downstream - no cross-context contradiction to catch it'. Add a compact caption tying them together: 'Two costs compound across boundaries: tokens (overhead + growing context) and undetected errors.' Use small illustrative integers only (block counts 0,1,2,3), invent no dollar or benchmark figures. Keep both stories legible without color alone (use shape/label too) so it reads in light and dark themes; everything inside the viewBox, clear reading order top-then-bottom, left-to-right."
+    },
+    {
+      "name": "ensembling-gain-vs-p",
+      "concept": "A small curve of P(at least one correct) = 1-(1-p)^N versus per-agent success probability p, for a couple of N values, highlighting that the marginal gain is largest at moderate p and vanishes as p approaches 0 or 1.",
+      "rationale": "The chapter opens the case for multiple agents with the equation 1-(1-p)^N and the key qualitative claim 'the gain is largest when p is moderate'. A single small chart makes that non-obvious shape concrete and justifies WHEN debate/ensembling is worth the cost - reinforcing the tax message. Nice-to-have because the prose plus one worked point already carries the idea; the chart deepens rather than unlocks it.",
+      "kind": "static",
+      "placement": "The Case for Multiple Agents",
+      "brief": "A single clean line chart. X axis: per-agent success probability p from 0 to 1. Y axis: P(at least one of N correct) from 0 to 1. Plot two smooth curves, N=1 (the diagonal y=p, as a dashed reference) and N=3 (y = 1-(1-p)^3), optionally N=5 as a lighter third curve. Shade or annotate the VERTICAL GAP between the N=1 diagonal and the N=3 curve to represent 'ensembling gain', and call out that this gap is widest in the middle of the p range and pinches to zero at p=0 and p=1 with a short label 'largest gain at moderate p; near-zero when tasks are trivial or impossible'. Mark the single worked point from the text (p=0.7, N=3 -> ~0.97) with a small dot and label. Use theme-safe neutral axes/gridlines and one accent per curve distinguishable by dash pattern as well as color (for dark/light safety). No invented data beyond the exact formula; small round tick values only. Fit inside viewBox with legible axis labels and a compact legend."
+    }
+  ],
+  "summary": "The chapter is concept-rich with only two figures, both on topology/architecture. The two existing figures are sound; the five-topology panel needs a refine to fix clipped blackboard worker labels, panel-1 box overflow, and an overlapping 'rounds' label, while the reference-architecture figure is a keep. The two most foundational under-served intuitions are (1) the workflow-vs-agent control-flow distinction - the chapter's explicit 'Critical Distinction', currently only ASCII, which also organizes the entire frameworks section - and (2) the multi-agent 'tax', the chapter's central caution, whose two compounding mechanisms (context-token growth and error amplification) are hard to feel from prose. I propose static figures for both as priority-1, plus a priority-3 ensembling-gain curve that visualizes the opening 1-(1-p)^N equation."
+}

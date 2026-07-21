@@ -1,0 +1,60 @@
+{
+  "chapter": "content/03-pretraining/06-distributed-model-parallel.md",
+  "core_intuitions": [
+    "Why you must split the model itself: ~16N bytes of static state (weights + Adam moments + fp32 master) dwarfs any single GPU, so ZeRO/FSDP sharding of replicas is no longer enough and the computation graph must be carved up.",
+    "The axes are orthogonal and compose multiplicatively: TP splits WITHIN a layer (matmuls), PP splits ACROSS layers, CP/SP splits ALONG the sequence, EP splits ACROSS experts; total GPUs = d*t*p*c*e.",
+    "TP's core trick: a column-parallel layer leaves its output sharded on features, which is exactly what a row-parallel layer wants as input, so they compose like puzzle pieces with the nonlinearity on shards in between and exactly ONE all-reduce per region.",
+    "The pipeline bubble = fill+drain idle time; microbatching shrinks it as (p-1)/(m+p-1), 1F1B keeps the same bubble but BOUNDS activation memory to ~p microbatches instead of m, and interleaving divides the bubble by v.",
+    "Ring Attention: K/V blocks rotate around a ring of devices while FlashAttention online-softmax incrementally folds each incoming block into a running (max, sum, out); the next block is sent while the current is computed, so communication hides under the O(s^2/c) compute.",
+    "Place axes by communication intensity: per-layer collectives (TP all-reduce, EP all-to-all) must ride the fastest links (NVLink), while per-step / boundary comms (DP all-reduce, PP send/recv) tolerate the slow inter-node fabric."
+  ],
+  "existing": [
+    {
+      "name": "dmp-orthogonal-axes",
+      "verdict": "refine",
+      "issue": "The 'one matmul / split across GPUs' caption sits on top of the middle TP box and clips against it in both themes, muddying the one place the figure most needs to be clean. The two PP blocks are labelled GPU0 (top, layers k+1..L-1) and GPU1 (bottom, layers 0..k), which inverts the usual convention that the lower-numbered GPU owns the earlier layers.",
+      "improvement": "Move the 'one matmul split across GPUs' label into clear whitespace (e.g. a leader line pointing at the middle band) so it never overlaps the box; relabel the PP blocks so the bottom band reads 'GPU0 owns layers 0..k' and the top 'GPU_{p-1} owns layers ...L-1' for a natural bottom-to-top layer order; verify the red/blue/gold axis labels keep adequate contrast in dark mode."
+    },
+    {
+      "name": "dmp-tp-column-row-flow",
+      "verdict": "keep",
+      "issue": "Strongest figure in the chapter: column->GeLU-on-shards->row->one all-reduce reads cleanly and the 'no comm here' annotations nail the puzzle-piece intuition in both themes. Only nit is the 'broadcast / no comm' text hugging the left edge of the X box.",
+      "improvement": "Optional: nudge the left 'broadcast / no comm' caption a few px so it clears the X box outline; otherwise ship as-is."
+    },
+    {
+      "name": "pipeline-bubble",
+      "verdict": "keep"
+    },
+    {
+      "name": "dmp-gpipe-schedule",
+      "verdict": "keep"
+    },
+    {
+      "name": "dmp-1f1b-schedule",
+      "verdict": "keep"
+    },
+    {
+      "name": "dmp-ep-all-to-all",
+      "verdict": "refine",
+      "issue": "The multi-line captions above and below the diagram (e.g. 'run local experts on received tokens' and the three load-balance lines at the bottom) collide with the top edge of the expert-0 box and crowd the bottom in dark mode, reducing legibility of the otherwise clear dispatch(crossing dashed)/combine(returning solid) pattern.",
+      "improvement": "Give the top and bottom captions their own reserved bands with padding so no text overlaps a box; consider trimming the three-line bottom note to one line ('load balance decides EP speed: aux loss / capacity spread tokens; combine = exact reverse permutation of dispatch') and let the chapter prose carry the rest."
+    },
+    {
+      "name": "dmp-axis-placement-priority",
+      "verdict": "refine",
+      "issue": "In dark mode the bold title and the concentric nested rectangles nearly vanish: every ring is a similar translucent purple so the DP>PP>CP>EP/TP nesting is hard to read, and the title 'Parallelism Axes Ordered by Communication Intensity' is dark-gray-on-black. EP is drawn flanking TP on BOTH the left and right inside CP, which reads as two EP boxes rather than 'EP and TP share the innermost, fastest-link tier'.",
+      "improvement": "Raise contrast in dark mode (brighter title, distinct stroke per ring and a subtle fill-lightness gradient from cool/slow outer to hot/fast inner so nesting is unmistakable); make the innermost tier a single labelled region containing both TP and EP ('per-layer collectives -> NVLink') instead of two mirrored EP boxes; ensure the vertical fast/slow interconnect axis labels on the far left are not clipped."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "dmp-ring-attention",
+      "concept": "K/V blocks rotating around a ring of CP devices while online-softmax folds each incoming block into a running (max m, sum l, out), with next-block send overlapping current-block compute.",
+      "rationale": "Context parallelism is a first-class core intuition of this chapter (its own section, warning, and a place in the d*t*p*c*e product and the summary table) yet it is the ONLY axis with no figure. The mechanism is inherently temporal - three things happen at once each step: a K/V block arrives, the local QK^T*V is computed, and the online-softmax running stats are rescaled and accumulated - which prose and the code listing convey poorly. A visual of the ring with a step counter and the running-state update is what makes 'communication hides under O(s^2/c) compute' and 'total K/V volume is O(s*h), independent of c' click.",
+      "kind": "long-animation",
+      "placement": "### Ring Attention (anchor the marker right after the paragraph ending '...without ever materializing the full s x s attention matrix:' and before the code block)",
+      "brief": "Draw c=4 devices (small illustrative integer) as four rounded nodes arranged in a ring (clock positions 12/3/6/9), each labelled Device i and holding a fixed local query block Q_i (a small tinted tile that never moves) plus, at start, its own K_i/V_i tile. Two concentric conceptual layers per node: (1) the local compute box showing S = Q_i . K^T then the online-softmax running state as three small registers m (running max), l (running sum), out (running output); (2) the K/V tile currently resident. ANIMATION over c=4 steps, each step a labelled frame 'step t of c': (a) a curved ring arrow shows every device SENDING its current K/V tile to neighbour i+1 and simultaneously RECEIVING the tile from i-1 - draw the outgoing tile mid-flight on the ring arc to signal it moves while compute runs; (b) inside each node highlight the running-state update: m_new = max(m, blockmax), a small 'correction' factor exp(m-m_new) rescales the old out and l, then this block's exp-weighted V is added - show the three registers ticking to new values; (c) a thin 'compute' bar and a thin 'comm' bar drawn side by side and OVERLAPPING in time (not sequential) to make the hiding-under-compute point visually explicit. A persistent side panel tallies, per device: 'K/V blocks seen: t of c' and 'K/V bytes moved so far ~ t * (s/c) * h' converging to O(s*h) independent of c. Final frame: every device has seen all c blocks; each emits out / l (normalize at the very end) as the full attention output for its query block. Keep it fully readable as a STATIC frame by numbering the ring arrows 1..c and drawing the step-1 running-state update in full even at rest; a small caption strip reads 'K/V rotate; online softmax folds each block in; next send overlaps this step's compute'. No hardcoded benchmark numbers, only the symbols c=4, s, h and small step integers; theme-safe fills, distinct hue for the moving K/V tile vs the static Q tile vs the running-state registers; everything inside the viewBox with clear left-to-right / clockwise reading order. Add a small note that a causal mask makes early query blocks cheaper (foreshadowing the striped/zig-zag balance warning) but do not clutter - a one-line footnote suffices."
+    }
+  ],
+  "summary": "The chapter is figure-rich and mostly well-served: seven existing figures cover the memory wall / orthogonal axes, TP column-then-row composition, and the full pipeline story (bubble, GPipe, 1F1B) strongly - those five are keep-or-light-touch. Two need refinement for dark-mode legibility and label collisions: dmp-ep-all-to-all (caption text overlapping expert boxes) and especially dmp-axis-placement-priority (near-invisible title and indistinct nested rings in dark mode, plus a confusing mirrored-EP layout). dmp-orthogonal-axes has a caption overlapping its central TP box and a GPU/layer labelling inversion. The single genuine GAP is Context Parallelism / Ring Attention - a core intuition with its own section but no figure; I propose one long-animation, dmp-ring-attention, because the K/V ring rotation, online-softmax accumulation, and comm/compute overlap are inherently a multi-step temporal process that a static frame conveys poorly (while still being designed to read correctly as a static frame)."
+}

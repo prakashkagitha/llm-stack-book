@@ -1,0 +1,151 @@
+<figure class="viz" id="fig-dllm-masked-objective">
+<svg viewBox="0 0 780 600" role="img" aria-label="Absorbing forward process: a six-token sentence goes from clean at t=0, to partially masked at an intermediate t, to fully masked at t=1, following a schedule alpha_t dropping from 1 to 0. A bidirectional transformer with no causal mask reads the partially masked row and predicts clean tokens only at masked positions. The training objective is a cross-entropy summed over masked positions only, weighted by 1 over (1 minus alpha_t).">
+<defs>
+  <marker id="mko-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <marker id="mko-arr-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+
+<text x="390" y="22" text-anchor="middle" style="font:700 14px var(--sans,sans-serif)" fill="var(--ink-soft)">Absorbing (mask) forward process, and the masked-only training objective</text>
+
+
+<rect x="14" y="58" width="140" height="330" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.2"/>
+<text x="84" y="74" text-anchor="middle" style="font:700 10px var(--sans,sans-serif)" fill="var(--ink-soft)">schedule</text>
+<line x1="48" y1="82" x2="48" y2="368" stroke="var(--ink-soft)" stroke-width="1.2"/>
+<line x1="48" y1="368" x2="140" y2="368" stroke="var(--ink-soft)" stroke-width="1.2"/>
+<path d="M52,88 C60,140 70,300 138,362" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2.2" stroke-linecap="round"/>
+<circle cx="52" cy="88" r="3.2" fill="var(--accent,#c15b39)"/>
+<circle cx="138" cy="362" r="3.2" fill="var(--accent,#c15b39)"/>
+<text x="56" y="98" style="font:700 9.5px var(--mono,monospace)" fill="var(--ink-soft)">alpha_0 = 1</text>
+<text x="72" y="382" style="font:700 9.5px var(--mono,monospace)" fill="var(--ink-soft)">alpha_1 = 0</text>
+<text x="30" y="82" text-anchor="end" style="font:400 8px var(--sans,sans-serif)" fill="var(--muted)"> </text>
+<text x="84" y="228" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted)">t: 0 -&gt; 1</text>
+<text x="84" y="404" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">alpha_t = P(token survives</text>
+<text x="84" y="416" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">unmasked at time t)</text>
+
+
+<text x="190" y="62" style="font:700 11px var(--sans,sans-serif)" fill="var(--ink-soft)">t = 0 -- clean data</text>
+<g>
+  <rect x="190" y="70" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="221" y="97" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">the</text>
+  <rect x="260" y="70" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="291" y="97" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">cat</text>
+  <rect x="330" y="70" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="361" y="97" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">sat</text>
+  <rect x="400" y="70" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="431" y="97" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">on</text>
+  <rect x="470" y="70" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="501" y="97" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">the</text>
+  <rect x="540" y="70" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="571" y="97" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">mat</text>
+</g>
+
+<line x1="396" y1="118" x2="396" y2="188" stroke="var(--ink-soft)" stroke-width="1.4" marker-end="url(#mko-arr)"/>
+<text x="410" y="140" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">forward corruption: mask each token</text>
+<text x="410" y="153" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">independently, P(mask) = 1 - alpha_t</text>
+
+
+<text x="190" y="186" style="font:700 11px var(--sans,sans-serif)" fill="var(--ink-soft)">t (mid-schedule) -- partially masked</text>
+<g>
+  <rect x="190" y="194" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="221" y="221" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">the</text>
+
+  <rect x="260" y="194" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="291" y="221" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+
+  <rect x="330" y="194" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="361" y="221" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">sat</text>
+
+  <rect x="400" y="194" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="431" y="221" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">on</text>
+
+  <rect x="470" y="194" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="501" y="221" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+
+  <rect x="540" y="194" width="62" height="44" rx="6" fill="none" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="571" y="221" text-anchor="middle" style="font:600 11px var(--mono,monospace)" fill="var(--ink)">mat</text>
+</g>
+
+
+<rect x="192" y="246" width="58" height="16" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.1"/>
+<text x="221" y="257" text-anchor="middle" style="font:600 8px var(--sans,sans-serif)" fill="var(--muted)">ctx</text>
+<rect x="262" y="246" width="58" height="16" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+<text x="291" y="257" text-anchor="middle" style="font:700 8px var(--sans,sans-serif)" fill="var(--accent,#c15b39)">loss</text>
+<rect x="332" y="246" width="58" height="16" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.1"/>
+<text x="361" y="257" text-anchor="middle" style="font:600 8px var(--sans,sans-serif)" fill="var(--muted)">ctx</text>
+<rect x="402" y="246" width="58" height="16" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.1"/>
+<text x="431" y="257" text-anchor="middle" style="font:600 8px var(--sans,sans-serif)" fill="var(--muted)">ctx</text>
+<rect x="472" y="246" width="58" height="16" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+<text x="501" y="257" text-anchor="middle" style="font:700 8px var(--sans,sans-serif)" fill="var(--accent,#c15b39)">loss</text>
+<rect x="542" y="246" width="58" height="16" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.1"/>
+<text x="571" y="257" text-anchor="middle" style="font:600 8px var(--sans,sans-serif)" fill="var(--muted)">ctx</text>
+<text x="190" y="274" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">grey = context only, no loss   --   accent = masked, contributes to loss</text>
+
+
+<path d="M604,232 C616,214 616,206 618,190" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#mko-arr-acc)"/>
+
+
+<rect x="618" y="150" width="148" height="150" rx="10" fill="var(--v-fill)" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="692" y="172" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="var(--ink-soft)">bidirectional</text>
+<text x="692" y="186" text-anchor="middle" style="font:700 11px var(--sans,sans-serif)" fill="var(--ink-soft)">transformer</text>
+<text x="692" y="202" text-anchor="middle" style="font:600 9px var(--sans,sans-serif)" fill="var(--accent,#c15b39)">no causal mask</text>
+<line x1="634" y1="212" x2="750" y2="212" stroke="var(--border-2)" stroke-width="1"/>
+<text x="692" y="228" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">reads the WHOLE row;</text>
+<text x="692" y="240" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">predicts clean tokens</text>
+<text x="692" y="252" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">ONLY at [MASK]</text>
+<text x="692" y="264" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">positions</text>
+<rect x="632" y="272" width="120" height="18" rx="9" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.1"/>
+<text x="692" y="284" text-anchor="middle" style="font:700 8.5px var(--mono,monospace)" fill="var(--accent,#c15b39)">p(x0^i | x_t)</text>
+
+<line x1="396" y1="242" x2="396" y2="312" stroke="var(--ink-soft)" stroke-width="1.4" marker-end="url(#mko-arr)"/>
+<text x="410" y="296" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">as t -&gt; 1, more tokens</text>
+<text x="410" y="309" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">get masked</text>
+
+
+<text x="190" y="310" style="font:700 11px var(--sans,sans-serif)" fill="var(--ink-soft)">t = 1 -- fully masked</text>
+<g>
+  <rect x="190" y="318" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="221" y="345" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+  <rect x="260" y="318" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="291" y="345" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+  <rect x="330" y="318" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="361" y="345" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+  <rect x="400" y="318" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="431" y="345" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+  <rect x="470" y="318" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="501" y="345" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+  <rect x="540" y="318" width="62" height="44" rx="6" fill="var(--muted)" fill-opacity="0.15" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="3 3"/>
+  <text x="571" y="345" text-anchor="middle" style="font:700 11px var(--mono,monospace)" fill="var(--muted)">[M]</text>
+</g>
+
+
+<rect x="14" y="420" width="752" height="164" rx="10" fill="var(--v-fill)" stroke="var(--border-2)" stroke-width="1.2"/>
+<text x="390" y="442" text-anchor="middle" style="font:700 12px var(--sans,sans-serif)" fill="var(--ink-soft)">training objective: masked-only, mask-rate-weighted cross-entropy</text>
+
+<text x="70" y="474" style="font:700 13px var(--mono,monospace)" fill="var(--ink-soft)">L =</text>
+<rect x="105" y="456" width="128" height="30" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.12" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+<text x="169" y="476" text-anchor="middle" style="font:700 12px var(--mono,monospace)" fill="var(--accent,#c15b39)">1 / (1 - alpha_t)</text>
+<text x="169" y="494" text-anchor="middle" style="font:400 8.5px var(--sans,sans-serif)" fill="var(--muted)">the weight</text>
+<text x="248" y="474" style="font:700 15px var(--mono,monospace)" fill="var(--ink-soft)">x</text>
+<text x="272" y="474" style="font:600 12px var(--mono,monospace)" fill="var(--ink-soft)">sum over i where x_t^i = [MASK] of  -log p(x0^i | x_t)</text>
+<text x="272" y="492" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted)">(sum runs ONLY over currently-masked positions i)</text>
+
+<line x1="70" y1="508" x2="746" y2="508" stroke="var(--border-2)" stroke-width="1"/>
+
+<rect x="30" y="518" width="352" height="52" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.1"/>
+<text x="206" y="536" text-anchor="middle" style="font:700 10px var(--sans,sans-serif)" fill="var(--ink-soft)">t -&gt; 0: few masks</text>
+<text x="206" y="550" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted)">weight is LARGE -- each rare masked</text>
+<text x="206" y="562" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted)">token counts heavily</text>
+
+<rect x="398" y="518" width="352" height="52" rx="8" fill="none" stroke="var(--border-2)" stroke-width="1.1"/>
+<text x="574" y="536" text-anchor="middle" style="font:700 10px var(--sans,sans-serif)" fill="var(--ink-soft)">t -&gt; 1: many masks</text>
+<text x="574" y="550" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted)">weight -&gt; 1 -- reconstruct from</text>
+<text x="574" y="562" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted)">almost nothing</text>
+
+<text x="390" y="594" text-anchor="middle" style="font:400 9.5px var(--sans,sans-serif)" fill="var(--muted)">no left-to-right order: any subset of positions is recovered from any other subset as context.</text>
+</svg>
+<figcaption><b>Masked diffusion trains a BERT-style predictor at every masking rate.</b> The forward process masks tokens independently with probability 1 - alpha_t, sweeping from clean data (t=0) to fully masked (t=1); a bidirectional transformer with no causal mask reads a partially masked row and predicts the clean token at each masked position. Only masked positions contribute to the loss, and the 1/(1-alpha_t) weight turns this into a valid likelihood bound rather than just a masked-LM heuristic.</figcaption>
+</figure>

@@ -1,0 +1,54 @@
+{
+  "chapter": "content/03-pretraining/01-pretraining-data.md",
+  "core_intuitions": [
+    "Pretraining data is a funnel: hundreds of terabytes of raw crawl are progressively cut down — URL filter, WARC text extraction, language ID, quality heuristics, dedup, tokenize+pack — into a much smaller set of training-ready shards; volume shrinks monotonically and dedup is one of the largest single cuts.",
+    "WET files are convenient but keep boilerplate (nav, footer, cookie banner, 'related'); re-extracting main content from the raw WARC HTML with trafilatura yields cleaner text, which is why RefinedWeb/FineWeb/Dolma never train on WET.",
+    "Domain mixture weights combined with corpus size fix how many epochs each domain is seen: epochs_i = N*w_i/|D_i|. A tiny high-quality corpus (Wikipedia) up-weighted heavily is seen ~20x while the huge web corpus stays under 1 epoch; repeating past ~4 epochs degrades generalization.",
+    "Documents are concatenated with an EOS separator and packed into fixed rows of ctx_len+1 tokens; the +1 overlap gives the input/label shift (input = row[:-1], target = row[1:]) with no off-by-one at read time.",
+    "The pipeline is embarrassingly parallel at the file level: each WARC/WET file is an independent unit processed by a stateless worker, with no coordination until dedup."
+  ],
+  "existing": [],
+  "new_figures": [
+    {
+      "name": "pretraining-data-funnel",
+      "concept": "The end-to-end reduction of raw Common Crawl into training-ready shards, stage by stage, with volume shrinking at each step.",
+      "rationale": "This is the spine of the entire chapter. Every later section (extraction, filtering, dedup, packing) is one band of this funnel. A single static frame that shows the monotonic shrink from ~90 TB of raw WARC down to packed shards gives the reader the mental map that all the detailed sections hang off of. The chapter currently only conveys this as an ASCII block; a proper narrowing funnel makes the 'each stage throws data away' intuition immediate.",
+      "kind": "static",
+      "placement": "## Data Engineering at Scale (anchor after the 'Distributed Processing Architecture' ASCII pipeline)",
+      "priority": 1,
+      "brief": "A top-to-bottom funnel of horizontal stage-bands whose WIDTH encodes remaining data volume, so the shape visibly narrows. Top: a wide slab 'Common Crawl raw WARC — ~90 TB / snapshot, ~2.4B pages'. Feed it from a small cluster of 3-4 stacked file glyphs on the upper-left labelled 'one WARC file = one independent task' to signal embarrassing parallelism. Then successive narrowing bands, each labelled with the stage name and a one-line 'what it removes', top to bottom: (1) URL filtering — 'drop adult/spam/low-quality domains before any parsing'; (2) Text extraction from WARC — 'trafilatura main-content; drop nav/sidebar/footer (skip WET)'; (3) Language ID — 'fastText / CLD3; keep target languages'; (4) Quality filtering — 'Gopher/C4 heuristics: length, symbol ratio, repetition'; (5) Deduplication — 'MinHash LSH + exact; the single largest cut' and draw this band as the sharpest narrowing step; (6) Tokenize + pack — 'BPE, EOS separators, ctx_len+1 rows'; bottom output: a stack of shard tiles labelled 'training shards (.bin, memory-mappable int32)'. Put a small right-margin retention annotation 'raw crawl -> ~30-50% retained by doc count' as an illustrative range taken from the chapter; do NOT invent per-stage percentages beyond that. Use var(--accent) for the signal/output and var(--muted)/hatched fill for removed portions; a thin ghost outline at each band showing the pre-cut width makes the discarded slice visible. Theme-safe vars only, everything inside the viewBox, clear single-column reading order top-to-bottom.",
+      "figure_type": "flow"
+    },
+    {
+      "name": "warc-vs-wet-extraction",
+      "concept": "Why pipelines re-extract main content from raw WARC HTML instead of using the convenient WET text: WET keeps boilerplate, trafilatura returns just the article.",
+      "rationale": "The chapter hammers this point three separate times (WET caveat, 'Extracting Text from WARC', RefinedWeb MDR stage 2) because it is a load-bearing, counterintuitive decision: the easy path (WET) is the wrong one. A static side-by-side of the same rendered page decomposed into signal vs boilerplate, then the two extractor outputs, makes 'main-content extraction' concrete in a way prose cannot.",
+      "kind": "static",
+      "placement": "### Extracting Text from WARC (anchor after the code block, near the 'Why bother' paragraph)",
+      "priority": 2,
+      "brief": "Three-panel layout. CENTER: a stylized rendered web page inside a minimal browser-chrome frame, decomposed into labelled regions: top nav bar, a cookie-consent banner strip, a left sidebar, a large central ARTICLE BODY column, a 'related stories' rail on the right, and a footer. Tint the article body with var(--accent) (the signal) and every other region with a muted/hatched var(--muted) fill (boilerplate); include a tiny legend 'signal = main content / hatched = boilerplate'. From the page, TWO branches: LEFT branch labelled 'CC WET (built-in extractor)' -> a text-block glyph that stacks nav + cookie + article + related + footer lines (article lines accent, rest muted) with a badge 'High boilerplate'. RIGHT branch labelled 'trafilatura on raw WARC HTML' -> a text-block glyph with ONLY clean article lines (all accent) and a badge 'Low boilerplate — what you train on'. Bottom caption strip: 'RefinedWeb, FineWeb and Dolma re-extract from WARC and never train on WET.' Keep both output blocks the same frame size so the difference is purely fill composition. Theme-safe vars, no clipping, left-to-right reading with the page as the hub.",
+      "figure_type": "comparison"
+    },
+    {
+      "name": "mixture-weights-to-epochs",
+      "concept": "How mixture weight and corpus size jointly determine epochs seen (epochs = N*w/|D|), and why a tiny up-weighted corpus repeats many times while the huge web corpus stays under one epoch.",
+      "rationale": "This is the chapter's most quantitative core idea and the one most prone to being misread from a table alone. Visualizing the three linked quantities — corpus size, weight, resulting epochs — against a '~4 epoch repetition-risk' threshold turns the formula into an at-a-glance intuition: weight is a knob, but its effect on repetition is inversely scaled by corpus size. The Wikipedia-vs-Web contrast is the punchline.",
+      "kind": "static",
+      "placement": "## The Data Recipe: Mixture Weights (anchor after the worked-example admonition)",
+      "priority": 1,
+      "brief": "A small multiples / linked-bars chart, one row per domain using ONLY the chapter's illustrative worked-example numbers (N = 2T tokens). Rows: Web/CC (w=0.65, |D|=3.0T, epochs=0.43), Code/GitHub (0.15, 350B, 0.86), Books (0.08, 90B, 1.78), arXiv (0.04, 40B, 2.00), Wikipedia (0.04, 4B, 20.0), Other curated (0.04, 60B, 1.33). Three aligned columns per row: (A) 'Corpus size |D|' — a bar, clearly marked 'not to scale / log-ordered' so Web reads as huge and Wikipedia as a sliver; (B) 'Mixture weight w' — a proportion pill or share-of-unit-bar; (C) 'Epochs = N*w/|D|' — a bar with the numeric value. In column C draw a bold horizontal threshold line at 4 labelled 'repetition risk beyond ~4 epochs': the Wikipedia epochs bar pokes far past it (annotate '~20x — heavy up-weight, tiny corpus'), arXiv/Books sit near 1-2, and Web is a stub well under 1 (annotate '<1 epoch despite largest corpus & weight'). Put the formula epochs_i = N*w_i/|D_i| as a caption. The visual thesis to make unmissable: biggest corpus + biggest weight (Web) -> fewest epochs; smallest corpus + small weight (Wikipedia) -> most epochs. Use var(--accent) for epochs bars, var(--ink-soft) for size/weight; theme-safe, no invented numbers beyond those listed, all within viewBox.",
+      "figure_type": "chart"
+    },
+    {
+      "name": "token-packing-shard-rows",
+      "concept": "Documents are concatenated with EOS and chopped into fixed ctx_len+1 rows; the +1 overlap yields the input/target label shift.",
+      "rationale": "A subtle, recurring correctness point in the chapter (TokenShard writes ctx_len+1 rows, the dataset reader slices [:-1]/[1:], and the practitioner tip warns about the off-by-one). The overlap-by-one that makes input and target come from the same row is exactly the kind of thing a static frame clarifies instantly and prose muddles. Foundational for understanding why shards are laid out the way they are.",
+      "kind": "static",
+      "placement": "### Shard Layout for Streaming Training (anchor after the ShardedTokenDataset code / practitioner tip)",
+      "priority": 3,
+      "brief": "A horizontal token-stream ribbon at the top: colored token cells for Doc A, then a distinct EOS cell, then Doc B, EOS, Doc C... (use a small illustrative token count, e.g. cells numbered 1..N). Below it, show the same stream sliced into fixed rows of length ctx_len+1 (use a tiny ctx_len like 4 so a row is 5 cells) — draw 2-3 stacked rows, each a contiguous 5-cell slice, and clearly show the last partial slice being DROPPED (greyed/hatched with a 'partial row dropped' tag). Then EXPAND one row into two aligned copies to show the label shift: top copy highlights cells [0:ctx_len] as 'input = row[:-1]', bottom copy highlights cells [1:ctx_len+1] as 'target = row[1:]', with faint diagonal ties showing target is input shifted by one and the shared overlap. Small caption: 'the +1 overlap gives the input/label pair with no off-by-one at read time'. Note EOS cells belong to the stream and can land anywhere in a row. Theme-safe: input highlight var(--accent), target a second theme var or outline, EOS a muted distinct fill; everything inside the viewBox, reading top-to-bottom.",
+      "figure_type": "schematic"
+    }
+  ],
+  "summary": "This is a figure-zero, concept-rich engineering chapter, so the plan proposes four foundational new figures and no audits. The two priority-1 pillars are the data funnel (the whole chapter's spine: raw ~90 TB WARC shrinking stage-by-stage to packed shards, dedup as the sharpest cut) and the mixture-weights-to-epochs chart (making epochs = N*w/|D| click, with Wikipedia's ~20 epochs vs Web's <1 epoch against a ~4-epoch risk line). A priority-2 WARC-vs-WET comparison makes the chapter's most-repeated counterintuitive decision concrete (the easy path, WET, is the wrong one). A priority-3 token-packing schematic clarifies the recurring ctx_len+1 label-shift correctness point. All briefs use theme-safe vars and only the chapter's own illustrative integers."
+}

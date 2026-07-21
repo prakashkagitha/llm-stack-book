@@ -1,0 +1,55 @@
+{
+  "chapter": "content/04-kernels-efficiency/05-cuda-essentials.md",
+  "core_intuitions": [
+    "The logical grid -> block -> thread hierarchy maps onto physical SMs; blocks own an SM, warps of 32 threads run in lockstep (SIMT), and the SM hides memory latency by switching to a ready warp when one stalls.",
+    "The memory hierarchy is a bandwidth/latency pyramid: registers and shared memory are ~10-30x faster than HBM, so the whole game is maximizing reuse on-chip to avoid HBM round-trips.",
+    "Global memory coalescing: a warp reading consecutive addresses collapses into ONE 128-byte transaction, while a strided pattern explodes into up to 32 separate transactions (a ~32x bandwidth penalty).",
+    "Shared-memory bank conflicts: bank = address mod 32, so a whole column of a [32][32] tile lands in one bank -> 32-way serialized access; a +1 padding column staggers rows diagonally across all 32 banks and removes the conflict.",
+    "Tiled matmul: cooperatively staging T x T tiles into shared memory and marching across K lets each loaded element be reused T times, cutting HBM reads by ~a factor of T and turning a bandwidth-bound kernel into a compute-bound one.",
+    "Warp shuffles do intra-warp tree reductions without shared memory or __syncthreads(); fused kernels keep intermediates in registers/shared memory to eliminate HBM writes (the FlashAttention idea)."
+  ],
+  "existing": [
+    {
+      "name": "cuda-grid-block-thread-hierarchy",
+      "verdict": "refine",
+      "issue": "Content and the logical->physical mapping are clear and correct in both themes, but the bottom-left annotation 'cross-block comm via global mem only' sits flush against the left viewBox edge (near-clipped in both light and dark). Otherwise strong.",
+      "improvement": "Nudge the bottom-left annotation inward (add left padding inside the viewBox) so it is fully contained; optionally right-align it to start under the Grid box rather than the page edge. No other changes needed."
+    },
+    {
+      "name": "cuda-memory-hierarchy-bandwidth-latency",
+      "verdict": "keep",
+      "issue": "Widening-funnel encodes size while bandwidth+latency labels sit on each tier; the on-chip vs off-chip divider and the '5x BW drop' / '10x latency' callouts land the key message. Reads correctly in both themes.",
+      "improvement": "Minor optional polish: the '~600 GB/s' NVLink label is a touch dim in dark theme; could brighten it slightly. Not blocking."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "cuda-memory-coalescing",
+      "concept": "How a warp's 32 lanes hitting consecutive vs strided global addresses becomes 1 vs up to 32 memory transactions.",
+      "rationale": "The chapter calls coalescing 'the single most impactful access pattern optimization' and gives a GOOD/BAD code pair, but nothing shows WHY. The picture of 32 arrows collapsing into one 128-byte cache line versus fanning out into 32 separate lines makes the ~32x penalty instantly intuitive.",
+      "kind": "static",
+      "placement": "### Global Memory Coalescing",
+      "priority": 1,
+      "brief": "Two stacked panels, same 32-lane warp in each. TOP panel titled 'Coalesced (stride 1)': draw a warp as a row of small labeled cells lane 0, lane 1, lane 2 ... (show ~6 then an ellipsis then lane 31). Below it a horizontal ribbon of contiguous 4-byte memory words; each lane sends a short vertical arrow to the word directly under it (lane i -> address A + i). Draw a single bracket spanning all 32 words labeled '1 transaction = one 128-byte cache line serves all 32 lanes'. Annotate with the code-level formula 'A[row*N + threadIdx.x]'. BOTTOM panel titled 'Strided (stride 64)': same warp row, but the memory ribbon is much wider; each lane's arrow reaches a word far apart (lane i -> address A + i*64), each landing in its own separate 128-byte cache-line box; show ~4 of these separated line-boxes then an ellipsis and the label '32 separate transactions -> up to 32x bandwidth wasted'. Annotate with 'A[threadIdx.x*N + col]'. Use the book's semantic positive accent for the coalesced panel and the caution/negative accent for the strided panel (do NOT hardcode raw green/red hex; use theme-safe semantic tokens). Only architectural constants appear (32 lanes, 128 bytes, stride 1 vs 64); invent no benchmark numbers. Reading order top (good) then bottom (bad), left to right. Everything must fit the viewBox with the wide strided ribbon scrolling only if unavoidable — prefer compressing with an ellipsis so it stays inside."
+    },
+    {
+      "name": "cuda-bank-conflict-padding",
+      "concept": "Shared memory has 32 banks (bank = word-offset mod 32); a column of a [32][32] tile collides on one bank, and a +1 padding column staggers rows across all banks.",
+      "rationale": "Two worked examples AND the Interview Corner all hinge on the mod-32 bank arithmetic and the +1 padding trick — the subtlest idea in the chapter. A colored bank-index grid showing a solid-color column (conflict) becoming a diagonal rainbow (conflict-free) makes the algebra 'click' in one glance.",
+      "kind": "static",
+      "placement": "### Shared Memory and Bank Conflicts",
+      "priority": 1,
+      "brief": "Two side-by-side grid panels representing a shared-memory tile, each cell tinted by its bank index (bank = address-in-words mod 32) using a theme-safe repeating categorical palette (a 32-hue cycle; reuse the book's categorical set, not hardcoded primaries). For legibility show only ~5 rows (i = 0..4) then a vertical ellipsis, and columns j = 0..31 (label ends, ellipsis in middle). LEFT panel titled 'float tile[32][32] — no padding': write the per-cell bank formula 'bank = (i*32 + j) mod 32 = j'. Highlight one column j (e.g. j=5) with a bold outline; every cell in that column shows the SAME bank number (5) and the SAME tint. Below, draw the 32 warp lanes all pointing at that column with the caption '32 lanes -> bank 5 -> 32-way conflict, serialized (throughput drops ~32x)'. RIGHT panel titled 'float tile[32][33] — +1 padding': same grid plus one extra hatched/greyed 'pad' cell at the end of each row labeled 'wasted 4 B/row'. Write 'bank = (i*33 + j) mod 32 = (i + j) mod 32'. Highlight the same column j; now the cells step through DISTINCT bank numbers down the rows (a diagonal rainbow: banks 5,6,7,8,9...), captioned 'lanes spread across all 32 banks -> zero conflict'. Keep all integers small and derived from the formulas shown; invent no benchmark numbers. Clear left(problem)->right(fix) reading order; both panels must fit fully inside the viewBox in both themes with legible bank labels."
+    },
+    {
+      "name": "cuda-tiled-matmul-reuse",
+      "concept": "A block cooperatively stages T x T tiles of A and B into shared memory and marches across the K dimension, reusing each loaded element T times and accumulating into a register — cutting HBM reads by ~a factor of T.",
+      "rationale": "The chapter names the tiled matmul 'the single most important kernel to understand' and spends its longest code block plus a worked example on it, yet nothing visualizes the mechanism. The load-sync-compute-sync loop over K tiles and the on-chip reuse are inherently a multi-step process; a walkthrough turns the SGEMM code into a mental model that also underpins FlashAttention.",
+      "kind": "long-animation",
+      "placement": "### Tiled Matmul (SGEMM Quality)",
+      "priority": 1,
+      "brief": "Layout: matrix A (M x K) drawn as a wide horizontal strip on the upper left, matrix B (K x N) as a tall vertical strip on the upper right, output C (M x N) lower center with ONE highlighted T x T output tile (the tile this block computes) — use a small illustrative tile size T = 4 for legibility, label it 'tile size T'. Between them, two small T x T shared-memory buffers labeled 'As (shared)' and 'Bs (shared)'. Use theme-safe distinct accents for A, B, and C (semantic categorical tokens, not raw hex). ANIMATION marches over K-tiles t = 0, 1, 2, ...: STEP 1 (load) highlight tile t: the T x T sub-block of A's row-strip and B's col-strip that align with the output tile; draw arrows from these GLOBAL/HBM sub-blocks into As and Bs with the caption 'cooperative load: each thread loads 1 element from HBM (once)'. STEP 2 flash a '__syncthreads()' barrier bar. STEP 3 (compute + reuse) show one element of As fanning OUT across a row of threads and one element of Bs fanning DOWN a column, with the emphasis label 'each loaded value reused T times from shared memory (fast), not re-read from HBM'; a small register box for the output tile shows 'acc += As*Bs' ticking up. STEP 4 flash a second '__syncthreads()'. STEP 5 slide the tile highlight to t+1 along K and repeat, the C-tile shading in as the accumulator grows. FINAL frame: C tile fully shaded, caption 'naive: each element re-read ~N times from HBM  ->  tiled: loaded once per tile pass  ->  ~T x fewer global reads (compute-bound).' STATIC-FRAME REQUIREMENT: the first frame alone must be self-explanatory — show all three matrices, both shared buffers with the tile-t load arrows, the reuse fan-out, the accumulator, and a dashed 'next tile ->' arrow along K with small step dots to imply the march. Keep M, N, K, T symbolic/small; invent NO benchmark numbers (the ~T x and 'N times' stay structural/symbolic). Must fit the viewBox in both themes with no overlapping labels."
+    }
+  ],
+  "summary": "The chapter is concept-rich but figure-poor: its two existing figures ably cover the execution hierarchy and the memory pyramid (both KEEP, the hierarchy one needs a tiny left-edge padding fix), but the three access-pattern mechanisms the chapter itself flags as most important — global coalescing, shared-memory bank conflicts + the +1 padding trick, and the tiled-matmul reuse loop — have zero visual support despite driving the worked examples, the Interview Corner, and the Key Takeaways. I propose three foundational figures: two crisp static infographics (coalesced-vs-strided transactions; bank-index grid before/after padding) and one long-animation for the tiled matmul, where the load-sync-compute-sync K-march and on-chip reuse are genuinely a temporal process (and the intuition that later carries FlashAttention). All three obey the theme-safe / no-invented-numbers / static-legible constraints."
+}

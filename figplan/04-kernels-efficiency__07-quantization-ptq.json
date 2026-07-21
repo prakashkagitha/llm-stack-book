@@ -1,0 +1,61 @@
+{
+  "chapter": "content/04-kernels-efficiency/07-quantization-ptq.md",
+  "summary": "The chapter is already well-served on FOUNDATIONS (arithmetic mapping, granularity, the outlier phenomenon, and a decision guide) with four solid, theme-safe figures. The gap is the chapter's stated core: the four headline ALGORITHMS (GPTQ, AWQ, SmoothQuant, LLM.int8) have zero visuals, yet these are the mechanisms 'every LLM engineer must know.' I propose three new figures that make the two hardest and the two activation-quantization mechanisms click: GPTQ's sequential quantize-then-compensate sweep, SmoothQuant's difficulty migration (which also carries the 'outliers crush normal values' consequence that the existing outlier figure only implies), and the LLM.int8 split-matmul. AWQ intentionally gets no dedicated figure: its scale-invariance trick is the same one the SmoothQuant figure visualizes, so a separate one would be redundant. Existing figures are mostly keep; one minor refine for dark-mode overlap.",
+  "core_intuitions": [
+    "Quantization maps floats to a small integer grid via a scale s (and optional zero-point z), and the rounding error is proportional to s, which is proportional to the tensor's dynamic RANGE — so one giant value poisons everyone.",
+    "Granularity (per-tensor -> per-channel -> per-group) buys fidelity by fitting each scale to a smaller, more homogeneous slice, at a tiny storage cost.",
+    "Activation outliers: past ~6B params a few feature channels run 10-100x the rest; they inflate a per-tensor scale and crush normal values to zero — and they live in activations, not weights, which is why weight-only INT4 is nearly free.",
+    "GPTQ minimizes the LAYER OUTPUT error, not the weight error: quantize columns left-to-right, and after committing each rounding error, nudge the not-yet-quantized columns via H^-1 to absorb it.",
+    "Scale-invariance (AWQ/SmoothQuant): you can multiply weights by a per-channel scale and divide the matching activation channel by the same factor without changing the product, then fold the activation factor into the upstream norm for free.",
+    "The weight-only vs weight+activation split maps onto memory-bound decode (W4A16) vs compute-bound prefill/INT8-tensor-cores (W8A8)."
+  ],
+  "existing": [
+    {
+      "name": "quant-mapping",
+      "verdict": "keep"
+    },
+    {
+      "name": "quant-ptq-granularity",
+      "verdict": "refine",
+      "issue": "In dark mode the dense multi-line caption under the per-group panel ('4 rows x 2 groups...', 'in LLMs ~in_features/128...', 'LLM INT4 default; +0.125 bit/weight') runs into the 'granularity cost vs quality tradeoff' axis arrow, and at the very top the 'Per-tensor' title crowds the 'in_features' axis label. Slight clutter that hurts legibility on dark backgrounds.",
+      "improvement": "Add vertical breathing room: push the tradeoff axis down (or lift the panels up) so the per-group caption clears it in BOTH themes; trim the per-group caption to two lines max (e.g. keep '4 rows x 2 groups = 8 scales' and 'G=128 default; +0.125 bit/weight', drop the parenthetical). Nudge the top 'Per-tensor' label and the 'in_features' axis label apart so they don't touch."
+    },
+    {
+      "name": "quant-ptq-activation-outliers",
+      "verdict": "keep"
+    },
+    {
+      "name": "quant-ptq-decision-guide",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "gptq-error-compensation",
+      "concept": "GPTQ quantizes one weight column at a time and compensates the not-yet-quantized columns for the rounding error it just committed, keeping the layer OUTPUT (wX) close rather than each weight.",
+      "rationale": "This is the single hardest and most load-bearing idea in the chapter — the OBS/OBQ compensation delta = -(w_i - q_i)/[H^-1]_ii * H^-1_:,i is pure algebra in the text with no visual. The intuition that rounding error is not just accepted (RTN) but actively PUSHED FORWARD into remaining weights only clicks when you watch the sweep advance and see the correction fan out to the right. A static frame can show one step but the running, sequential nature is the whole point.",
+      "kind": "long-animation",
+      "placement": "### The GPTQ algorithm",
+      "priority": 1,
+      "brief": "Visualize a SINGLE weight row as a horizontal strip of ~10 cells indexed by input feature (columns). Behind the strip draw a faint set of horizontal dashed 'grid levels' (the allowed quantized values). Each cell holds a small vertical bar = that weight's float value. A vertical SWEEP LINE moves left to right. State at the moment shown: cells to the LEFT of the sweep are 'quantized & locked' (filled/darker, a small lock glyph, their bars snapped exactly onto grid ticks); the CURRENT cell at the sweep is highlighted; cells to the RIGHT are 'not-yet-quantized' (outline only, floating between ticks). Animate the step: (1) the current cell's bar SNAPS to the nearest grid level, opening a small gap annotated 'rounding error d = w_i - q_i'; (2) a set of thin arrows fans from the current cell to every cell on its right, labeled 'compensate: -d/[H^-1]_ii * H^-1_:,i', and those right-hand bars visibly shift a little (some up, some down) to absorb the error; (3) the sweep advances one cell and repeats, and because the remaining bars were pre-nudged they land closer to their grid ticks. Include a small contrast callout: 'RTN: round each independently, errors accumulate' vs 'GPTQ: running compensation keeps output wX ~ w_hat X'. Show a tiny 'output = sum of w_i x_i' meter that stays near-flat as the sweep proceeds. Labels required: 'grid levels', 'quantized & locked', 'current column', 'not-yet-quantized (gets compensated)', 'rounding error d', 'compensation proportional to H^-1'. Only small illustrative bar heights and the symbol H^-1 — invent NO perplexity or benchmark numbers. The final frame must be self-explanatory: sweep at roughly the middle, left half locked-on-grid, current column showing its error gap, correction arrows fanning right. Theme-safe: no hardcoded primaries; distinguish locked/current/pending by shape+fill, not color alone."
+    },
+    {
+      "name": "smoothquant-migration",
+      "concept": "A per-channel diagonal scale diag(s) migrates quantization difficulty out of spiky activations into smooth weights, so BOTH tensors become cleanly INT8-quantizable, and the inverse factor folds into the upstream RMSNorm at zero cost.",
+      "rationale": "SmoothQuant is the most elegant idea in the chapter and the key that unlocks W8A8 / INT8 tensor cores. It also lets one figure carry TWO intuitions: the scale-invariance trick shared with AWQ, AND the fatal consequence of outliers (normal activation values collapsing to zero on a coarse grid) that the existing outlier figure only implies. Seeing difficulty physically 'flow' across the equals sign makes X W = (X diag(s)^-1)(diag(s) W) intuitive rather than symbolic.",
+      "kind": "animated",
+      "placement": "### SmoothQuant: migrate the difficulty",
+      "priority": 1,
+      "brief": "Two stacked bar-rows of per-channel magnitudes, aligned column-for-column: TOP = activation channels (mostly small bars with ONE or TWO towering outlier spikes, reusing the spike motif from the outlier figure), BOTTOM = weight channels (uniformly modest bars). BEFORE panel (left): over the activation row draw a COARSE INT8 grid (few widely-spaced levels forced by the spike) and show the small activation bars collapsing onto the zero level — annotate 'outlier forces coarse scale -> normal values crushed to 0'; the weight row already fits a fine grid ('smooth, easy'). CENTER: a diag(s) operator with a downward arrow on the activation ('divide channel by s_c') and an upward arrow on the matched weight channel ('multiply by s_c'), with the identity X W = (X diag(s)^-1)(diag(s) W) shown once. Animate the migration: the activation spike SHRINKS while the matching weight bar GROWS, difficulty visibly flowing top->bottom across the same column. AFTER panel (right): both rows now have MODERATE, comparable ranges, each fitting a fine INT8 grid -> a small 'INT8 x INT8 -> tensor cores' matmul badge. Include a compact alpha (migration strength) slider with three ticks: 'a=1 all to weights', 'a=0.5 balanced', 'a=0 none moved'. Add a free-lunch callout: '1/s folds into RMSNorm affine weights (zero runtime cost)'. Labels required: 'activation: spiky, hard', 'weight: smooth, easy', 'diag(s): migrate difficulty', 'both quantize cleanly', 'INT8 tensor cores', 'folds into RMSNorm'. Small illustrative bar heights only, no benchmark numbers. Static frame = before | migrate | after read left-to-right and fully legible on its own. Theme-safe: mark outlier vs normal by height/shape, not color alone; both light and dark styled."
+    },
+    {
+      "name": "llm-int8-decomposition",
+      "concept": "LLM.int8() splits the matmul by feature column into a tiny exact FP16 path for the outlier dimensions and a large fast INT8 path for the ~99.9% regular dimensions, then sums the two partial products.",
+      "rationale": "It is the zero-tuning, runtime-detection counterpart to SmoothQuant and the mechanism behind load_in_8bit. The 'decompose the matmul' idea is inherently spatial — which columns go where, and that the two partial products sum back to the same output — and lands far better as a picture than as the indexed sum X_:,R W_R,: + X_:,O W_O,:. Completes the activation-quantization pair (static vs dynamic) alongside the SmoothQuant figure.",
+      "kind": "static",
+      "placement": "### LLM.int8(): keep the outliers in FP16",
+      "priority": 2,
+      "brief": "Show the input activation matrix X drawn as a wide block of vertical columns (tokens down, input features across). Mark a FEW columns as outliers with the tall-spike motif (label 'detected at runtime: |x| > threshold ~6'); the rest are short 'regular' columns. A vertical partition separates columns into two labeled groups: O = outliers (thin, few) and R = regular (wide, many). From O, route a thin slice X_:,O together with the matching weight rows W_O,: into a small box 'FP16 matmul — exact, no quant error, few dozen channels, cheap'. From R, route the wide slice X_:,R with W_R,: into a larger box 'INT8 matmul — tensor cores, ~99.9% of the FLOPs, fast'. Both boxes emit partial products of the SAME output shape [tokens x out], which meet at a '+' that produces the final output; annotate once with X W = X_:,R W_R,: + X_:,O W_O,:. Add two small footnote badges: 'zero calibration / no Hessian / no scale search' and 'cost: split-matmul kernel overhead -> better for fitting than for peak throughput'. Labels required: 'outlier columns -> FP16 (exact)', 'regular columns -> INT8 (tensor cores)', 'sum partial products', 'threshold detects outliers at runtime'. Use only the illustrative threshold 6 already in the text; invent no other numbers. Single static frame; clear left-to-right reading order (X -> split -> two matmuls -> sum -> output). Theme-safe in light and dark; distinguish the two paths by outline style/label, not color alone."
+    }
+  ]
+}

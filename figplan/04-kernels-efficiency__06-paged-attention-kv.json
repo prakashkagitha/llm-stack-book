@@ -1,0 +1,58 @@
+{
+  "chapter": "content/04-kernels-efficiency/06-paged-attention-kv.md",
+  "core_intuitions": [
+    "KV-cache size is linear in tokens (a per-token footprint beta) and can rival or exceed the model weights themselves, so memory — not FLOPs — is the binding constraint on concurrency and context length.",
+    "Decode is memory-bandwidth-bound, so throughput is gated by batch size, which is gated by how many KV caches fit in HBM: the causal chain fragmentation -> small batch -> low throughput.",
+    "Contiguous max-length allocation wastes 60-80% of KV memory in three ways: internal fragmentation (worst-case reservation), external fragmentation (holes between allocations), and the inability to share identical prefixes.",
+    "Paging decouples logical token order from physical placement: fixed-size KV blocks live anywhere in a pool and a per-sequence block table maps logical block -> physical block (the OS virtual-memory analogy).",
+    "Copy-on-write lets sequences share identical prefix KV and copy only the one block where they diverge — per block, not per sequence — turning O(k*s) into O(s + k*B).",
+    "The paged attention kernel is FlashAttention-style online softmax plus a single block-table gather indirection before each block load."
+  ],
+  "existing": [
+    {
+      "name": "paged-kv-internal-frag-bar",
+      "verdict": "refine",
+      "issue": "Clean single-idea bar and the message reads well in both themes, but there is a stray small triangle/cursor-like glyph floating under the bar (near center) that looks like an accidental artifact, and in dark theme the top title line ('Request A: max_len = 2048 reserved...') is rendered in a very dim gray that reads as disabled/low-contrast against the near-black background.",
+      "improvement": "Remove the stray triangle/pointer glyph beneath the bar. Raise the dark-theme contrast of the title line so it reads as clearly as the body annotations. Keep everything else as is — the used-vs-reserved proportion and the '~1.5% useful' punchline are exactly right."
+    },
+    {
+      "name": "paged-kv",
+      "verdict": "keep",
+      "issue": "Strong, central three-column pipeline (logical blocks -> block_table[A] -> physical pool) that works in both themes and directly serves the paging intuition. Only nit: in the leftmost logical-block cards the word 'tokens' sits slightly on top of the 'lbN' tag / range text, a hair of visual overlap.",
+      "improvement": "Optional micro-nudge: give the 'lbN' tag and the 'tokens X-Y' range their own non-overlapping baselines inside each logical-block card. No structural change needed."
+    },
+    {
+      "name": "paged-kv-logical-physical-mapping",
+      "verdict": "refine",
+      "issue": "Adds real value over paged-kv by showing TWO sequences (A and B) interleaved in one shared pool, reinforcing the line-124 point that A's blocks 7/1/4 sit scattered and interleaved with B's. But (a) the two-line bottom caption overlaps itself — the second line collides with the descenders of the first; (b) in dark theme several 'block N' index labels on the pool (block 1, block 3, block 6) are partly occluded by the connector arrows / block edges and become hard to read; (c) the A=purple / B=cyan hues go quite dim in dark theme.",
+      "improvement": "Give the two-line caption more leading so the lines never touch. Move the 'block N' pool-index labels clear of the incoming arrows (or draw arrow heads to a socket to the right of the label) so every index stays legible in dark theme. Bump the A/B accent luminance in dark theme so the two sequences stay distinguishable. Keep the interleaved-two-sequence framing — that is what justifies this figure sitting next to paged-kv."
+    },
+    {
+      "name": "paged-kv-hbm-contiguous-vs-paged",
+      "verdict": "refine",
+      "issue": "Excellent summary contrast (weights + fragmented contiguous slab -> uniformly packed paged grid, ~20-40% vs >90% useful, 'any free block reusable by any sequence'). The defect is the bottom legend: the swatch/label pairs are packed too tightly, so the label text overruns into the following swatch — 'reserved-but-empty (internal frag)' collides with the 'external frag hole' swatch in both themes.",
+      "improvement": "Space out the four legend items (wrap to two rows if needed) so each swatch has clear margin before the next item's label; ensure the legend text never overlaps an adjacent swatch in either theme. The two panels themselves are strong — leave them."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "paged-kv-copy-on-write",
+      "concept": "Copy-on-write prefix sharing: k sampled sequences share the prompt's KV blocks via ref-counted pointers, and when one must write it copies only the single contested block.",
+      "rationale": "COW is the single most distinctive payoff of paging — the thing the chapter says contiguous allocation 'simply cannot offer' — and it carries two worked examples (3.6x parallel-sampling saving, O(s+k*B) vs O(k*s)) plus the fork/cow_append code, yet NO existing figure shows it. The mechanism is inherently about pointers converging on shared blocks and one pointer being redirected onto a fresh private copy; that is exactly what a picture makes click and prose struggles with.",
+      "kind": "static",
+      "placement": "### Copy-on-write for shared prefixes",
+      "priority": 1,
+      "brief": "Two side-by-side panels sharing one physical KV pool motif. Scenario label at top: 'Parallel sampling: one prompt, k=3 samples.'\n\nLEFT PANEL titled 'Shared (read-only prefix)': three stacked block-table rows labeled 'Sample 1', 'Sample 2', 'Sample 3'. Each row is a short strip of 4 logical-block cells: lb0, lb1, lb2 (the shared prompt prefix) then lb3 (where generation continues). Draw arrows from all three rows' lb0 cells converging onto ONE physical block P0 in a pool column at right; likewise lb1->P1, lb2->P2. Annotate each shared prefix block P0/P1/P2 with a small ref-count badge 'ref=3'. Make clear the prompt KV is stored ONCE and three block tables point at it. Caption under left panel: 'The prompt's KV is identical and read-only -> store it once, three tables point at the same physical blocks.'\n\nRIGHT PANEL titled 'After copy-on-write (Sample 2 appends a token)': show the moment Sample 2 must write into a block whose ref-count > 1. Lay out five numbered step badges next to the action: (1) 'ref=3 > 1 -> cannot write in place'; (2) 'allocate fresh block P_new'; (3) 'copy contested block contents P2 -> P_new' (draw a copy arrow between the two physical blocks); (4) 'redirect Sample 2's lb entry to P_new; decrement old ref 3 -> 2'; (5) 'write the new token's K,V into P_new'. After the operation: P_new carries a badge 'ref=1 (private to Sample 2)', the old shared block now shows 'ref=2', and Samples 1 and 3 still point at all the original prefix blocks unchanged. Emphasize visually that ONLY ONE block was copied while the rest stay shared.\n\nBottom caption spanning both panels: 'COW is per BLOCK, not per sequence: k diverging candidates copy only the one block where they first differ -> O(s + k*B) memory, not O(k*s).'\n\nConstraints: theme-safe tokens only. Distinguish shared vs freshly-copied blocks by fill treatment (e.g. shared = solid accent, P_new = dashed outline / second accent) rather than by hardcoded named colors. ref-count badges are small integers (1,2,3) only — invent no benchmark numbers. Keep all three sample rows, both panels, the five step badges, and both captions inside the viewBox with clear reading order left->right, no overlaps."
+    },
+    {
+      "name": "paged-kv-cache-vs-weights-growth",
+      "concept": "The KV cache grows linearly with total tokens in flight while weights stay fixed, so KV overtakes the weights and hits the HBM ceiling — memory, not compute, is what runs out.",
+      "rationale": "The chapter's opening third hammers that KV size is linear in tokens and 'can rival or exceed the weights themselves,' and that this ceiling — not FLOPs — sets concurrency and context length. That is a core quantitative intuition none of the four existing figures show (they all start once the memory pressure exists). A single schematic that visualizes weights-as-fixed-slab vs KV-as-rising-wedge crossing the HBM line makes the 'memory is the binding constraint' claim visceral and connects the beta slope to the GQA/MQA/fp8 levers.",
+      "kind": "static",
+      "placement": "Why the KV Cache Exists, and How Big It Gets",
+      "priority": 2,
+      "brief": "A schematic area chart (no real benchmark numbers; axes are qualitative). X-axis: 'tokens in flight (context length x concurrency) ->'. Y-axis: 'HBM used ->'. \n\nDraw a flat horizontal band along the bottom labeled 'weights (fixed)'. Above it, a linearly rising wedge/area labeled 'KV cache = beta x total tokens', its upper edge a straight line of moderate slope starting from the top of the weights band at x=0. Draw a dashed horizontal line near the top labeled 'GPU HBM capacity'.\n\nMark two annotated points: (A) where the KV wedge's top edge crosses above the thickness of the weights band -> callout 'KV cache overtakes the weights'; (B) where weights + KV together meet the capacity line -> callout 'OOM / max concurrency = the throughput ceiling'. Drop a light vertical guide from point B to the x-axis labeled 'max tokens that fit'.\n\nAdd a small secondary faint line with a shallower slope branching from the origin of the KV wedge, labeled 'smaller beta (GQA/MQA, fp8) -> shallower slope -> more tokens fit', reaching the capacity line farther to the right (show its own vertical guide slightly right of B to make the 'more tokens' point concrete). \n\nOne-line takeaway caption: 'Weights are paid once; KV is paid per token. Long context or high concurrency makes KV — not FLOPs — the thing that runs out.'\n\nConstraints: theme-safe fills/strokes via tokens, no hardcoded primary colors; distinguish the weights band, KV wedge, and the shallower-beta line by fill/pattern/opacity. Keep axes unitless (no fabricated GiB numbers). Everything inside the viewBox, labels non-overlapping, clear reading order."
+    }
+  ],
+  "summary": "The chapter is already figure-rich and well-served on fragmentation (internal-frag-bar), the logical->physical block-table mapping (paged-kv, and a two-sequence interleaved variant), and the contiguous-vs-paged HBM summary. All four existing figures are fundamentally sound and correct in both themes; I keep the central paged-kv pipeline and mark the other three 'refine' for concrete, low-risk polish (a stray glyph + dim dark title on the frag bar; a self-overlapping caption and dark-theme label occlusion on the mapping figure; a cramped legend that overruns swatches on the HBM comparison). The one glaring conceptual gap is copy-on-write prefix sharing — the chapter's most distinctive mechanism, backed by two worked examples and code, with no figure — so the priority-1 new figure is a before/after COW diagram (ref-counted shared prefix blocks; one block copied on divergence). A priority-2 static schematic (KV cache rising to overtake fixed weights and hit the HBM ceiling) serves the chapter's foundational 'memory, not FLOPs, is the ceiling' intuition, which no current figure visualizes."
+}

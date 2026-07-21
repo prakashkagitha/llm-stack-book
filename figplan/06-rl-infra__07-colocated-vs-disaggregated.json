@@ -1,0 +1,56 @@
+{
+  "chapter": "content/06-rl-infra/07-colocated-vs-disaggregated.md",
+  "core_intuitions": [
+    "The trainer and the rollout engine have opposite hardware appetites: the trainer is compute-bound, holds ~16P bytes of state (weights+grads+Adam), and runs in short dense bursts; the rollout engine is memory-bandwidth-bound, holds only ~2P + KV cache, and runs long. Placement is the whole game.",
+    "Colocated time-slicing flips one GPU pool between two roles by swapping what owns HBM: during rollout the KV cache dominates and the optimizer state is offloaded; during training the Adam state floods back and the KV cache is freed. Phases are strictly serial, so training-grade GPUs spend a rollout-bound run doing memory-bound decode at low FLOP utilization.",
+    "Disaggregation puts training and rollout in separate, independently-sized pools that can pipeline (rollout generates the NEXT batch while the trainer works), buying overlap and utilization at the price of off-policy staleness (rollouts are produced under weights k steps old).",
+    "Weight sync ties the two worlds together and has three transports with a speed/robustness tradeoff: CUDA IPC aliases the same GPU memory (zero bytes move, same-node only), NCCL broadcast moves ~2P bytes GPU-to-GPU over NVLink/IB (~10s of ms), and checkpoint reload round-trips ~2P bytes through disk (seconds-minutes, layout-agnostic fallback).",
+    "The resharding problem is why sync is not a memcpy: trainer and inference store parameters differently along three axes (sharding/TP-degree, QKV & gate-up fusion with GQA head grouping, and dtype/quantization), so a correct sync layer must gather, fuse, optionally quantize, re-split, and broadcast, streamed layer by layer."
+  ],
+  "existing": [
+    {
+      "name": "colodis-rl-iteration-loop",
+      "verdict": "refine",
+      "issue": "The ROLLOUT box's descriptive sublabel ('autoregressive decode, KV cache / memory-bandwidth bound') overflows the box boundary in both themes and collides with the horizontal 'prompts' and 'completions' arrows that pass straight through the text, making the middle of the loop cluttered and hard to read.",
+      "improvement": "Constrain the rollout box's sublabel to fit strictly inside the box (shorten to two short lines, e.g. 'autoregressive decode' / 'memory-bw bound + KV cache'), and route the prompts/completions arrows to attach to the box edges rather than crossing the label. Give every node's sublabel the same in-box clipping discipline so no descriptive text touches an arrow."
+    },
+    {
+      "name": "colocated-disagg",
+      "verdict": "refine",
+      "issue": "Multiple text-overflow/clipping defects in both themes: (1) the top legend items collide with no gap ('memory-bound)trainer / fwd+bwd'); (2) the bottom-left explanatory paragraph is clipped at the right edge ('memory-bound deco[de]') and spills across the center panel divider; (3) the bottom-right paragraph is clipped ('while the trainer'); (4) the colocated ROLLOUT box's sublabel ('weights + KV cache; optimizer state offloaded to CPU') overflows onto the dashed weight-sync curve.",
+      "improvement": "Reflow all body text to wrap within its panel/box width (this figure is doing a lot; give each text block a hard max-width and let it break to more lines rather than clip). Add clear horizontal spacing between the two legend swatches so they read as two separate items. Ensure the two panels (COLOCATED vs DISAGGREGATED) never bleed text across the vertical divider. Verify nothing is cut off at the viewBox edge in either theme."
+    },
+    {
+      "name": "colodis-memory-timeline",
+      "verdict": "keep"
+    },
+    {
+      "name": "colodis-disagg-topology",
+      "verdict": "keep"
+    },
+    {
+      "name": "colodis-sync-vs-async-timeline",
+      "verdict": "keep"
+    },
+    {
+      "name": "colodis-reshard-tp8-to-tp2",
+      "verdict": "keep"
+    },
+    {
+      "name": "colodis-decision-flow",
+      "verdict": "keep"
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "colodis-weight-sync-three-paths",
+      "concept": "The three weight-sync transports side by side as data-movement paths: what bytes move, over what medium, and the speed vs robustness tradeoff.",
+      "rationale": "Weight synchronization is the spine of the chapter -- the intro calls it 'the hard part that ties both worlds together,' and an entire major section (Mechanism 1/2/3 plus a decision table) is devoted to it. Yet no existing figure shows the FUNDAMENTAL difference between the three mechanisms: that IPC moves zero bytes (aliased memory), NCCL moves the weights GPU-to-GPU over the fabric, and checkpoint reload round-trips them through disk. Readers memorize the names and the ms-vs-seconds numbers without grasping WHY the costs differ by orders of magnitude -- it is entirely about the length and medium of the byte path. A single static frame contrasting the three paths makes the whole section click and anchors the decision table.",
+      "kind": "static",
+      "placement": "## Weight Synchronization Mechanisms (right after the intro paragraph 'There are three transport mechanisms, in increasing order of speed and decreasing order of robustness.', before '### Mechanism 1')",
+      "priority": 1,
+      "brief": "A static infographic with three stacked horizontal lanes, one per mechanism, sharing a common left-to-right reading axis so the viewer can compare the length of the byte path at a glance. In every lane, draw a TRAINER GPU on the left holding the fresh weights (theta_t+1) and an INFERENCE GPU / engine on the right whose parameter buffers must end up holding those weights; use the book's existing role colors (trainer = warm/compute color, rollout = cool/inference color) consistently with the other figures in this chapter. Lane 1 -- CUDA IPC (zero-copy): the trainer GPU and the inference process both point to the SAME single memory block in the middle (draw one shared weight-tensor block with two labeled arrows 'export handle' and 'map handle / alias' converging on it, NOT two copies). Annotate: 'no bytes move -- both processes read the same physical GPU memory'; constraint tag 'same node, shared GPUs only'; cost tag '~0 ms'. Lane 2 -- NCCL broadcast: a single fat arrow carries the weight bytes directly from the trainer GPU to the inference GPU across a labeled fabric ('NVLink / InfiniBand'); put a small '~2P bytes' packet gliding along the arrow. Annotate: 'weights stream GPU->GPU over the fabric, never touching disk or host'; constraint tag 'any node reachable by NCCL'; cost tag '~10s of ms'. Lane 3 -- checkpoint reload: the weights go GPU -> a disk/NFS cylinder in the middle (down-arrow 'torch.save, 2P bytes written') -> then up to the inference GPU (up-arrow 'load_weights, 2P bytes read'); make this the visibly LONGEST path (two hops through slow storage). Annotate: 'round-trips through the filesystem -- layout-agnostic, doubles as the fault-tolerance checkpoint'; constraint tag 'works across clusters that share only a filesystem'; cost tag 'seconds-minutes'. Down the right margin (or as a vertical gradient bar beside the lanes) show the governing tradeoff with two opposing arrows: top-to-bottom 'fastest -> slowest' and 'least robust / most constrained -> most robust / most general', so the reader sees the ordering is a single spectrum. Keep all numbers as the order-of-magnitude labels already used in the chapter's decision table (~0 ms, ~10s of ms, seconds-minutes) and use only the symbolic '2P bytes' and 'theta' -- invent no benchmark figures. Everything must fit inside the viewBox with no text crossing arrows; both light and dark themes must be legible. The single most important visual message: the length and medium of the byte path IS the cost -- IPC's path is a point, NCCL's is one fabric hop, checkpoint's is a two-hop detour through disk."
+    }
+  ],
+  "summary": "This chapter is figure-rich (7 existing) and mostly excellent. Five figures are strong keeps: the memory-timeline (HBM budget flipping KV-cache-dominant to Adam-state-dominant, even overflowing the bar), the sync-vs-async timeline (serial vs overlapping lanes with dashed staleness links 'upd theta1 uses theta0'), the reshard tp8->tp2 pipeline (gather->fuse->split from 8 shards to 2 fused ranks), the disagg topology, and the decision flow all convey their core intuition clearly in both themes. Two figures need refinement for real text-overflow/clipping defects: the rl-iteration-loop (rollout sublabel overflows its box and collides with the prompt/completion arrows) and colocated-disagg (legend items collide, bottom paragraphs are clipped at the viewBox edge and bleed across the panel divider, rollout box text overruns the sync arrow). I propose ONE new priority-1 figure, colodis-weight-sync-three-paths: the chapter's entire weight-sync section (its declared spine) has no figure showing the three mechanisms as data-movement paths, so readers miss WHY IPC (~0 ms), NCCL (~10s ms), and checkpoint reload (seconds-minutes) differ by orders of magnitude -- it is purely the length and medium of the byte path. That single static contrast fills the one genuine gap without over-figuring an already well-served chapter."
+}

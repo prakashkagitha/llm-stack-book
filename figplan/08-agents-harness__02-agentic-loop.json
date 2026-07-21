@@ -1,0 +1,63 @@
+{
+  "chapter": "content/08-agents-harness/02-agentic-loop.md",
+  "core_intuitions": [
+    "The agentic loop (observe-think-act) works because observations are REAL environment feedback, not model-generated - grounding is the whole point.",
+    "ReAct interleaves Thought (internal CoT, not executed) with Action (tool call) and harness-injected Observation, all inside one growing context.",
+    "The stop='Observation:' trick is load-bearing: without it the model fabricates its own observation and the loop silently becomes ungrounded CoT.",
+    "Context grows O(k*s) with every step, driving cost, latency, derailment, and the need for explicit token-budget / step-limit termination.",
+    "Architectures trade reactivity for foresight: ReAct decides step-by-step, Plan-Execute front-loads decomposition, Reflexion adds an outer verbal-memory retry loop, Tree-of-Thought branches and prunes with a value function."
+  ],
+  "existing": [
+    {
+      "name": "agentloop-react-trace",
+      "verdict": "refine",
+      "issue": "In the dark render the 'Thought'/'Action'/'Observation' colored label pills keep dark text (low contrast on the pill fill) and each pill slightly overlaps the body sentence that follows it on the same line, so the first word reads as crowded.",
+      "improvement": "Give the label pills light text in dark theme (or theme-agnostic high-contrast text), and add a small horizontal gap / line break so the pill never overlaps the body text. Keep the excellent 'stop=Observation: model halts here; harness fills the real result' annotation - that is the key teaching moment."
+    },
+    {
+      "name": "react-loop",
+      "verdict": "keep",
+      "issue": "Clean, correct closed-cycle diagram (LLM at center, Thought->Action->tool->Observation->append, finish() exit). Reads well in both themes. The top 'REASONING' caption is nudged very close to the frame edge in dark but stays legible.",
+      "improvement": "Optional only: nudge the top 'REASONING' section caption down a few px so it clears the viewBox edge."
+    },
+    {
+      "name": "agentloop-plan-execute",
+      "verdict": "refine",
+      "issue": "Strong two-phase layout. Two dark-theme legibility snags: the 'Aggregate & answer' subtitle ('Combine step results into final response') is dark text on the purple fill and nearly disappears; the small 'inner ReAct loop' label overlaps the dashed executor box border.",
+      "improvement": "Force light subtitle text on the purple 'Aggregate & answer' box, and give the 'inner ReAct loop' label a tiny background chip or offset so it does not collide with the dashed border."
+    },
+    {
+      "name": "agentloop-reflexion-outer-loop",
+      "verdict": "refine",
+      "issue": "Conveys the outer retry loop and accumulating reflection memory well. But the '(accumulates across trials)' caption overlaps the 'trial 1' box, and the 'inject reflections into next trial's context' label crosses over the dashed feedback arrow, making both slightly muddy - worse in dark where the muted trial boxes sit close to the background.",
+      "improvement": "Move the '(accumulates across trials)' caption clearly below the trial stack with real spacing, and shift the 'inject reflections...' label off the dashed arrow so text and arrow do not overlap."
+    },
+    {
+      "name": "agentloop-tree-of-thought",
+      "verdict": "keep",
+      "issue": "Clear beam-search tree: winning path highlighted, pruned branches greyed, value scores (0.8 / 0.3) and depth rails d=0..d=3 all legible in both themes. The 'best' tag clips the top-left corner of the [A-C-F] node very slightly but stays readable.",
+      "improvement": "Optional only: seat the 'best' tag just outside the node so it does not overlap the border."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "agentloop-grounded-vs-hallucinated-observation",
+      "concept": "Side-by-side contrast of a single ReAct step WITH the stop='Observation:' sequence (grounded, real tool runs) versus WITHOUT it (model fabricates its own observation, tool bypassed).",
+      "rationale": "The chapter names hallucinated observations 'arguably the most dangerous failure mode' and repeats the stop-sequence warning three separate times (implementation notes, dedicated failure section, warning box, and Key Takeaways). No existing figure shows the FAILURE side - react-trace only shows the correct mechanism. This contrast makes the single most-emphasized defensive intuition of the chapter click instantly: a real tool call is what separates a grounded agent from CoT wearing a costume.",
+      "kind": "static",
+      "placement": "### Hallucinated Observations",
+      "priority": 1,
+      "brief": "Two panels sharing the same task step, a vertical divider between MODEL (left region of each panel) and HARNESS/TOOL (right region). PANEL A titled 'GROUNDED - stop at \"Observation:\"': the model box shows two lines, 'Thought: I need Tokyo's population' and 'Action: search(\"Tokyo population\")', then a solid horizontal STOP bar labeled stop=\"Observation:\". A solid arrow crosses the divider to a small tool/search glyph in the HARNESS column that actually runs; it returns a solid, real 'Observation: Tokyo metro ~37M' block injected back into the context. Tag near the observation: 'ground-truth, from the environment'. PANEL B titled 'UNGROUNDED - no stop sequence': the SAME Thought and Action, but now a THIRD line 'Observation: Tokyo metro ~37M' is drawn INSIDE the model box, rendered ghostly/dashed to signal fabrication, with a small 'fabricated' tag. The tool glyph in the HARNESS column is greyed out / unused, and the arrow to it is crossed out or dashed-and-severed with a label 'tool never ran'. A caution glyph on panel B. Bottom caption spanning both: 'The model can invent a plausible observation. Only a real tool call grounds the loop.' Constraints: theme-safe, no hardcoded primary colors (use the theme's danger/muted tokens for the ghost/fabricated block); the ~37M figure is the chapter's own illustrative number, invent no new benchmark numbers; both panels must be equally legible in light and dark; clear left-to-right reading order within each panel; everything inside the viewBox with no overlapping text."
+    },
+    {
+      "name": "agentloop-context-growth",
+      "concept": "The context window as a stacked bar that grows by one (action, observation) block per step, approaching a token-budget line that triggers termination.",
+      "rationale": "Context growth is the FIRST engineering problem the chapter raises (O(k*s) tokens) and it silently underlies three later sections: the token-budget stop (85% line), derailment/goal-dilution, and per-step latency/cost. It is currently conveyed only in prose and a formula. One staircase visual unifies why every step re-sends the whole history, why cost and latency scale with t, and why an explicit budget cutoff is needed - turning an abstract O(k*s) into something you can see fill up.",
+      "kind": "static",
+      "placement": "### 3. Token Budget",
+      "priority": 2,
+      "brief": "A horizontal sequence of 4-5 steps along the x-axis (t=1, t=2, t=3, t=4, t=5). At each step draw a vertical stacked bar representing the current context: the bar at t=1 holds just [system+task] plus one (a1,o1) block; each later bar re-stacks all previous blocks and adds a new (a_t, o_t) block on top, so the bars form a rising staircase - visually showing the whole history is re-sent every step. Label the newest block at each step '(a_t, o_t)' and shade older blocks more muted to read as 'carried forward'. Draw a horizontal dashed ceiling line near the top labeled 'token budget (~85% of window)'; at the final step the bar reaches it and a small flag reads 'stop: context full'. Right-side or bottom annotations, short: 'every step re-sends the full history', 'cost & latency grow with t', 'older turns dilute the goal -> derailment'. Constraints: use only small illustrative integers for step counts, invent no token counts or benchmark numbers (the 85% is the chapter's own value); theme-safe fills via theme tokens, no hardcoded primaries; staircase and labels must not overlap and must stay inside the viewBox; legible in both light and dark; understandable as a single static frame."
+    }
+  ],
+  "summary": "This chapter is already figure-rich (5 figures) and covers each agentic architecture (ReAct loop, ReAct trace, Plan-Execute, Reflexion outer loop, Tree-of-Thought) with clear, correct visuals - so most verdicts are keep/refine, not replace. react-loop and tree-of-thought are strong keeps; the other three need small dark-theme legibility fixes (low-contrast label pills / subtitles and a few text-on-arrow or text-on-box overlaps). The one genuinely foundational gap is the chapter's most-repeated intuition - hallucinated observations and why the stop='Observation:' trick is load-bearing - which no figure captures on the FAILURE side; I propose a grounded-vs-ungrounded contrast (priority 1). A second, lower-priority figure visualizes O(k*s) context growth against the token budget, unifying several currently prose-only threads (cost/latency scaling, budget termination, derailment). No long-animations are warranted - both new figures resolve cleanly as static frames."
+}

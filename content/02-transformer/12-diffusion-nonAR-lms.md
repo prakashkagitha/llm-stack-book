@@ -47,6 +47,8 @@ Here $t_{\text{step}}'$ is somewhat larger than $t_{\text{step}}$ because each s
 
 There is a second, qualitatively different motivation. AR models are **causally blind to the future**: when predicting $x_t$ they cannot see $x_{>t}$. This makes some tasks awkward — infilling, editing, satisfying global constraints, and the famous **reversal curse** (a model trained on "A is B" often fails to answer "what is B? → A"). A bidirectional denoiser conditions every position on every other position at every step, which structurally sidesteps these issues. Non-AR models are not just "AR but faster"; they have a different inductive bias.
 
+{{fig:dllm-serial-depth-ar-vs-diffusion}}
+
 ---
 
 ## Discrete & Masked Diffusion From First Principles
@@ -88,6 +90,8 @@ Contrast with next-token prediction, where the loss is $-\sum_t \log p_\theta(x_
 !!! note "Aside: why this is not just BERT"
 
     BERT also predicts masked tokens bidirectionally, so why can't we just sample from BERT? BERT masks a *fixed* small fraction (~15%) of tokens and is never trained to generate from a fully-masked sequence, nor to handle the high-masking-rate regime. It also lacks the time-conditioning and the $1/(1-\alpha_t)$ weighting that turn the masked-LM loss into a proper likelihood bound across *all* masking rates. Masked diffusion is "BERT trained at every masking rate from 0% to 100%, with the correct loss weighting, then sampled iteratively." That generalization is exactly what lets it generate coherent long text, which BERT cannot.
+
+{{fig:dllm-masked-objective}}
 
 ### Time conditioning, or the lack of it
 
@@ -204,6 +208,8 @@ The crucial subtlety is that **already-committed tokens become context for the n
 
 This is the central quality–latency knob. With $N = L$ steps and a one-token-per-step schedule, masked diffusion essentially reduces to an (order-flexible) autoregressive model and matches AR quality — but you have thrown away the speed advantage. With $N$ very small (say 8), you get blazing speed but the conditional-independence error bites and quality drops. Production systems live in the interesting middle: enough steps that each commits a small block of tokens, few enough that serial depth stays well below $L$. The empirical finding across LLaDA and Dream is that you can often reach AR-comparable quality at $N$ on the order of $L/4$ to $L/2$, and trade further quality for speed below that.
 
+{{fig:dllm-confidence-remasking-trajectory}}
+
 ---
 
 ## Semi-Autoregressive Block Diffusion
@@ -257,6 +263,8 @@ Block diffusion is the architecture that most directly maps onto the existing hi
 !!! tip "Practitioner tip: block size is your latency–quality dial"
 
     In a block-diffusion deployment you have two coupled knobs: block size $B$ and per-block denoising steps $N_B$. Small $B$ with few steps behaves like AR (high quality, lower parallelism). Large $B$ exposes more parallelism per block but raises the conditional-independence burden, demanding more denoising steps to stay coherent. A common sweet spot is a moderate block (e.g. 16–32 tokens) with a handful of denoising steps per block, so that each block commits a few tokens at a time while the cache amortizes the cost of all earlier blocks. Tune $B$ and $N_B$ jointly against your target time-to-first-token and inter-token latency.
+
+{{fig:dllm-block-diffusion-structure}}
 
 ---
 

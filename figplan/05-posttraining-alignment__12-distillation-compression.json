@@ -1,0 +1,61 @@
+{
+  "chapter": "content/05-posttraining-alignment/12-distillation-compression.md",
+  "core_intuitions": [
+    "Soft targets carry 'dark knowledge': a teacher's full distribution (cat 0.92, tiger 0.02, dog 0.06) encodes inter-class similarity that a one-hot label destroys, and temperature is the dial that exposes or suppresses that structure.",
+    "The tau^2 prefactor exists to keep gradient magnitude constant as temperature softens the distribution (softening otherwise shrinks the gradient by 1/tau^2).",
+    "Distillation comes in granularities of decreasing cost: token-level (match full logits everywhere), sequence-level (imitate greedy teacher text as hard labels), feature-level (align hidden states).",
+    "Off-policy trains on the teacher's own sequences and suffers distribution mismatch; on-policy trains on the student's own rollouts (scored by the teacher), so gradients reflect the distribution the student actually meets at test time.",
+    "Good pruning ranks a weight by how much removing it hurts, not just by its magnitude: Wanda's |w| x ||activation|| keeps a small weight sitting on a heavily-used input feature and drops a large weight on a near-dead feature.",
+    "Compression techniques stack (distill -> prune -> quantize -> speculative-decode), and a small draft/early-exit head is itself a distilled student whose whole job is to make KL(target || draft) tiny so most speculative proposals are accepted."
+  ],
+  "existing": [
+    {
+      "name": "distill-granularity-tiers",
+      "verdict": "keep",
+      "issue": "Clean, correct, and legible in both themes. Three-panel cost ordering (sequence low < feature med < token high) reads clearly. Only nit: the feature-level h^S -> W_proj -> h^T row is slightly cramped and the dashed arrowheads nearly touch the boxes, but it stays readable.",
+      "improvement": "Optional micro-polish only: add ~4px horizontal breathing room around the W_proj box in the feature panel so the two dashed arrows don't kiss the box edges. Not required."
+    },
+    {
+      "name": "distill-selfspec-earlyexit",
+      "verdict": "keep",
+      "issue": "Two-lane layout (full forward pass vs early-exit draft) with the dashed KD arrow and L_EE = KL(p_final || p_early) label conveys the 'distillation inside one model' idea very well in both themes. Minor: the 'accurate' tag at the far right sits right against the panel border.",
+      "improvement": "Optional: nudge the 'accurate' tag ~6px left so it clears the rounded panel border with a visible gap. Cosmetic only."
+    },
+    {
+      "name": "distill-compression-pipeline",
+      "verdict": "refine",
+      "issue": "The vertical stack + right-side size meter is a strong 'each stage compounds the shrink' visual. But in dark theme the 'size' label at the top of the meter collides with / is overlapped by the top of the meter bar (the word sits on the bar and becomes hard to read).",
+      "improvement": "Move the 'size' meter label up ~10px (or left-align it beside the bar top) so it clears the meter rectangle in both themes; give it a small surface background chip if needed so it never overlaps the gradient bar. Verify legibility in dark mode specifically."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "distill-soft-targets-temperature",
+      "concept": "Why soft targets beat hard labels, and how temperature dials the 'dark knowledge' from hidden to visible to washed-out.",
+      "rationale": "This is THE foundational intuition of the chapter's opening section and the Interview Corner, yet no figure serves it. The granularity figure shows WHERE the signal is matched, not WHY soft targets carry more information. A reader must viscerally see that a one-hot label is an information-poor spike while the teacher's softened distribution reveals inter-token structure, and that temperature is a dial with a sweet spot (too low = spike, too high = uniform noise).",
+      "kind": "static",
+      "placement": "5.1 Knowledge Distillation: Soft Targets and Temperature -> Why Soft Targets Contain More Information",
+      "priority": 1,
+      "brief": "A horizontal filmstrip of four small bar-chart panels over the SAME tiny vocabulary of ~5 illustrative tokens (label them 'Paris', 'London', 'Berlin', 'Rome', 'cat' or use generic t1..t5 with the top one flagged as the correct token). Each panel is a vertical bar chart of next-token probability. Panel 1 titled 'Hard label (one-hot)': a single full-height bar on the correct token, all others at zero -- caption underneath 'no similarity info'. Panel 2 titled 'Teacher, tau=1': one dominant tall bar plus a couple of tiny but nonzero bars -- caption 'dark knowledge hidden'. Panel 3 titled 'Teacher, tau approx 4': the same distribution but visibly softened -- the dominant bar shorter, the 2nd/3rd tokens now clearly nonzero and rank-ordered -- caption 'inter-token structure exposed' and a small callout 'the student learns Paris ~ London > Rome'. Panel 4 titled 'Teacher, tau=20': nearly flat/uniform bars -- caption 'ordering lost -> noise'. Use only small illustrative integers/proportions consistent with the chapter's worked example spirit (dominant, medium, small); do NOT invent benchmark numbers -- these are schematic probabilities that should visibly sum to a full bar-set. Add a slim horizontal 'temperature' axis arrow spanning panels 2->3->4 with a marked 'usable range tau 2-5' bracket under panels 2-3 and 'too high' under panel 4. Keep the correct token's bar a consistent accent hue across panels so the eye tracks how its dominance melts as tau rises. Theme-safe: use var(--accent...) families and CSS var fallbacks, no hardcoded primaries; everything inside the viewBox; bar tops and captions must not overlap. Fully understandable as a static frame."
+    },
+    {
+      "name": "distill-wanda-vs-magnitude",
+      "concept": "Wanda's pruning score = |weight| x input-activation-norm, and why it keeps/drops different weights than pure magnitude pruning.",
+      "rationale": "The entire pruning half of the chapter (Section 5.5: magnitude baseline, SparseGPT, Wanda, structured) currently has ZERO figures. The single most transferable intuition there is that importance is not magnitude alone -- a small weight on a heavily-used feature matters, a big weight on a dead feature does not. Seeing the two criteria disagree on the SAME weight matrix makes the Wanda formula click far better than the equation does.",
+      "kind": "static",
+      "placement": "5.5 Pruning: Structured and Unstructured -> Wanda: Pruning Without Hessians",
+      "priority": 2,
+      "brief": "Center on one small illustrative weight matrix drawn as a grid of ~4 rows x 6 columns of cells, cell shade encoding |weight| magnitude (darker = larger). Above the columns, draw a small bar for each column representing that input feature's activation norm ||x_j|| (some columns tall/active, one or two columns near-zero 'dead feature'). Show TWO pruning outcomes of the same grid side by side, or as two labeled overlays: LEFT 'Magnitude only: prune smallest |w|' -- mark the low-magnitude cells with an X (crossed out) regardless of their column; highlight one specific cell that is small-magnitude BUT sits under a tall activation bar, and X it out (a mistake). RIGHT 'Wanda: |w| x ||x_j||' -- the score = cell shade times column activation; now that same small-but-active cell is KEPT (circled/kept-marker), while a large-magnitude cell sitting under a near-dead column is instead pruned (X). Draw two thin arrows pointing to the two disagreement cells with tiny callouts: 'small weight, busy feature -> keep' and 'big weight, dead feature -> drop'. Include the formula chip score(w_ij) = |w_ij| . ||x_j||_2 near the Wanda side. Use kept vs pruned markers that are shape-distinct (circle vs X) so it reads without relying on color; use accent/good/muted CSS vars with fallbacks, no hardcoded primaries. Keep only a handful of cells so the grid is legible; small illustrative shading only, invent no benchmark sparsity/perplexity numbers. Must be fully clear as a static frame, legible in both light and dark themes."
+    },
+    {
+      "name": "distill-onpolicy-vs-offpolicy",
+      "concept": "Distribution mismatch: off-policy trains on the teacher's trajectories; on-policy trains on the student's own rollouts scored by the teacher, so training covers where the student actually goes at test time.",
+      "rationale": "On/off-policy is a subtle idea students routinely conflate, and the chapter frames it as the key reason on-policy wins on long multi-step generations. A spatial 'trajectory / covered-region' metaphor makes 'distribution mismatch' concrete in a way the prose cannot, and it ties directly into the RLHF/DPO cross-links. Nice-to-have rather than must-have because the two other new figures cover more central mechanics.",
+      "kind": "static",
+      "placement": "5.2 On-Policy vs Off-Policy Distillation -> On-Policy Distillation",
+      "priority": 3,
+      "brief": "Two side-by-side panels sharing a light 'space of sequences' backdrop (an abstract 2D region, no axes needed). LEFT panel 'Off-policy (teacher-guided)': draw a teacher-shaded region/manifold with a few solid trajectory lines that stay INSIDE it labeled 'teacher-preferred sequences'; a student icon is trained (KL arrows) only on points along those teacher trajectories. Then show a dashed 'test time' trajectory of the student wandering OUT of the shaded region into unshaded 'unseen' space, with a warning callout 'student drifts -> teacher signal never covered here (distribution mismatch)'. RIGHT panel 'On-policy': the student GENERATES a rollout trajectory first (dashed student path through the space), and the teacher SCORES each point on that path (small teacher-score arrows landing on the student's own trajectory), captioned 'train on the student's own generations -> coverage matches test-time distribution'. Include a compact 4-step legend for the on-policy loop mirroring the chapter: 1 sample prompt, 2 student generates, 3 teacher scores tokens, 4 minimize KD on the rollout. Use a teacher color-family region and a distinct student marker so the two roles never blur; rely on solid-vs-dashed line style (not color alone) to separate 'training data path' from 'test-time / rollout path'. Theme-safe CSS vars with fallbacks, no hardcoded primaries, no invented numbers; everything within the viewBox, clear reading order left-to-right, fully understandable as a static frame."
+    }
+  ],
+  "summary": "Chapter is well-served on the 'where you match the signal' axis (granularity, self-spec early-exit, and the compression pipeline all render cleanly in both themes; keep two, one minor dark-theme meter-label fix on the pipeline). The gaps are on the 'why it works' mechanics: (1) the chapter's foundational soft-targets + temperature intuition has no figure at all despite anchoring both the opening section and the Interview Corner, and (2) the entire pruning section is figure-less while its core idea -- importance = magnitude x activation, not magnitude alone -- is exactly the kind of thing a picture nails. Proposing a must-have soft-targets/temperature filmstrip (P1), a Wanda-vs-magnitude scoring grid (P2), and a nice-to-have on/off-policy distribution-mismatch diagram (P3). All static -- none require motion; the comparisons are spatial, not temporal."
+}

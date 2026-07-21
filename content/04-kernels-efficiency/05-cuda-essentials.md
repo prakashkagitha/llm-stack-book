@@ -77,6 +77,8 @@ float val = A[row * N + threadIdx.x];   // threads 0..31 read consecutive floats
 float val = A[threadIdx.x * N + col];   // threads 0..31 are N floats apart
 ```
 
+{{fig:cuda-memory-coalescing}}
+
 ### Shared Memory and Bank Conflicts
 
 Shared memory is organized into 32 **banks** (on modern GPUs), each 4 bytes wide. Bank $b$ holds bytes $4b, 4b+128, 4b+256, \ldots$. Accesses from the same warp to different addresses in the *same* bank are **serialized** — a bank conflict.
@@ -94,6 +96,8 @@ __shared__ float tile[32][33];  // 33 = 32 + 1 padding column
 ```
 
 The padding wastes 32 floats (128 bytes) per tile but eliminates the conflict entirely.
+
+{{fig:cuda-bank-conflict-padding}}
 
 !!! example "Worked Example: Shared Memory Bandwidth"
 
@@ -199,6 +203,8 @@ The bottleneck: `A[row * K + k]` is the same for all threads in the column direc
 ### Tiled Matmul (SGEMM Quality)
 
 The idea: divide A and B into $T \times T$ tiles. Each block cooperatively loads one tile of A and one tile of B into shared memory, computes the partial dot products, and advances to the next tile.
+
+{{fig:cuda-tiled-matmul-reuse}}
 
 ```cpp
 // Tiled matrix multiplication with shared memory

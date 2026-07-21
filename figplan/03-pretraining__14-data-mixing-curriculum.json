@@ -1,0 +1,65 @@
+{
+  "chapter": "content/03-pretraining/14-data-mixing-curriculum.md",
+  "core_intuitions": [
+    "A mixture is a sampling distribution w over domains, a separate object from how much data you have and from the target distribution p* you care about; the natural proportional mixture is almost never optimal.",
+    "Mixing is fundamentally an epoch-budget decision: e_i = w_i D / n_i, so upweighting a small pool forces repetition, and repetition has a decaying, eventually negative payoff past ~4-6 epochs.",
+    "Deduplication and upsampling act on the SAME axis (effective times a token is seen); dedup makes 'one epoch' honest, upsampling spends that honest budget, and doing both blindly MULTIPLIES duplication.",
+    "DoReMi reweights by EXCESS loss (proxy loss minus a fixed reference floor), not raw loss, so intrinsically hard-but-irreducible domains stop hogging weight and closeable-headroom domains get upweighted.",
+    "Group-DRO's excess loss is a LEVEL ('fix what's broken') while online bandit mixing uses loss VELOCITY ('ride what's improving'); same multiplicative-weights machinery, different signal, and they can disagree.",
+    "Data seen while the LR decays fastest imprints most on the final weights, so a late high-quality annealing phase (WSD) is the highest-leverage scheduling trick."
+  ],
+  "existing": [
+    {
+      "name": "mixing-epoch-budget-tree",
+      "verdict": "refine",
+      "issue": "Reads as a labeled list of e_i ranges rather than conveying the mechanism e_i = w_i D / n_i; pool sizes are only named in text ('huge pool', 'small pool') so the reader cannot SEE why a small pool forces many epochs. In dark theme the legend label 'downsample' is clipped to 'downsampl'.",
+      "improvement": "Fix the clipped legend ('downsample' cut in dark theme) by widening the legend/viewBox. Strengthen the intuition by encoding pool size visually: draw each domain's unique-token pool as a bar whose WIDTH scales with n_i (web very wide, math/books very narrow) and overlay the allocated weight as a slice, so the reader sees a wide web pool with a thin slice landing at e_i<1, and a narrow math pool with a fat slice landing at e_i~2-6. Keep the downsample/upsample color coding, and mark the ~4-6 epoch danger band on the epoch axis."
+    },
+    {
+      "name": "doremi-reference-proxy-loop",
+      "verdict": "refine",
+      "issue": "Strong, complete depiction of the reference->excess->weights->proxy loop and the min/max game. One real defect: in the dark render the 'reference model / trained once on natural mix w_nat' text overflows past the left border of its box.",
+      "improvement": "Ensure the reference-model box text fits inside its border in both themes (widen the box or shorten the line). Otherwise keep as-is; the loop, the Hedge update, and the three-band structure all read clearly."
+    },
+    {
+      "name": "mixing-wsd-anneal-schedule",
+      "verdict": "keep"
+    },
+    {
+      "name": "mixing-end-to-end-schedule-phases",
+      "verdict": "refine",
+      "issue": "Excellent multi-lane phase table (phase / context / LR / mixture aligned on the token axis). Only defect: the left-hand row labels are clipped at the viewBox edge — 'context' renders as 'ontext' and 'mixture' as 'ixture' in both themes.",
+      "improvement": "Shift the diagram right or widen the viewBox / add left padding so the row labels 'phase', 'context', 'LR', 'mixture' are fully visible. No content change needed."
+    }
+  ],
+  "new_figures": [
+    {
+      "name": "mixing-excess-loss-decomposition",
+      "concept": "Why DoReMi upweights by closeable (excess) loss, not raw loss: each domain's loss splits into an irreducible reference floor plus a closeable excess gap, and weight tracks only the gap.",
+      "rationale": "This is the single sharpest conceptual insight of the whole DoReMi section and the toy simulation ('high raw loss alone does not earn weight; closeable loss does'), yet it currently lives only in prose and inside a text box on the loop diagram. Seeing loss decomposed into floor + excess, with weight sized to the excess, is what makes the math-vs-multilingual outcome click.",
+      "kind": "static",
+      "placement": "The DoReMi trick: excess loss, not raw loss",
+      "priority": 1,
+      "brief": "A per-domain stacked-bar chart (4-5 illustrative domains: web, code, math, books, multilingual). For each domain draw one bar representing the proxy's current loss, split into two stacked segments: a lower segment = the reference / irreducible floor (muted neutral fill, labeled once via leader line 'irreducible floor - reference already achieves this'), and an upper segment = excess = proxy loss minus reference loss (accent fill, labeled 'closeable headroom'). Beside each bar place a weight indicator (an arrow or a small gauge) whose size tracks the EXCESS segment only, with the strap 'weight is proportional to excess, not to the whole bar'. Compose the schematic heights to teach three contrasting cases: (1) MATH - tall total bar AND a tall excess segment -> big weight arrow, annotate 'genuinely hard AND far from achievable -> upweight'; (2) MULTILINGUAL - an equally tall total bar but a tiny excess segment (huge floor, proxy already near it) -> small weight arrow, annotate 'hard but near-irreducible -> do not waste weight'; (3) WEB - short total, small excess -> small weight, annotate 'easy, already learned'. Add a caption line: 'Raw loss would dump weight on the tallest bar (multilingual) forever; excess loss asks where the proxy can still close the gap.' Heights are purely schematic small illustrative values - invent NO benchmark numbers. Distinguish floor vs excess by fill pattern plus labels, not hue alone, so both segments are legible in light and dark. Everything must fit the viewBox with clear reading order left-to-right."
+    },
+    {
+      "name": "mixing-level-vs-velocity",
+      "concept": "DoReMi's excess loss is a LEVEL (vertical gap to the achievable floor); online bandit mixing uses VELOCITY (the current slope of the loss curve) - same reweighting machinery, different signal, and they can point opposite ways.",
+      "rationale": "The chapter dedicates a whole admonition to this distinction and links it to RL curriculum, but a level (a gap) versus a derivative (a slope) is exactly the kind of thing a single picture disambiguates far better than words. It also cements why the two 'same family' methods can disagree.",
+      "kind": "static",
+      "placement": "Group-DRO vs. online bandit mixing - same family, different reward",
+      "priority": 2,
+      "brief": "Two small per-domain loss-vs-tokens curves side by side, sharing an axis style, each with a dashed horizontal reference-floor line and a vertical guide marking 'now' (current tokens seen). LEFT, 'Domain X': a decreasing curve that has FLATTENED but still sits well ABOVE its floor. Annotate the vertical distance from the curve down to the floor with a bracket labeled 'excess (LEVEL) = large', and draw a short tangent segment at 'now' that is nearly flat, labeled 'velocity (slope) ~ 0 (stuck)'. RIGHT, 'Domain Y': a still-steeply-decreasing curve that is currently CLOSE to its floor. Bracket its small vertical gap 'excess = small' and draw a steep tangent with a little slope triangle 'velocity = large (improving fast)'. Under each curve place two verdict chips: for X -> 'DoReMi (excess): UPWEIGHT' and 'Bandit (velocity): skip'; for Y -> 'DoReMi: leave it' and 'Bandit: UPWEIGHT'. Bottom strap: 'Excess = fix what is broken (a gap). Velocity = ride what is improving (a slope). They can point opposite ways.' Schematic axes only, no numbers. Use bracket + tangent-triangle geometry (not color) to carry the level-vs-slope contrast so it survives both themes."
+    },
+    {
+      "name": "mixing-dedup-upsample-multiply",
+      "concept": "Deduplication and upsampling act on the SAME axis (effective times a token is seen); done in the wrong order they multiply - internal-duplication factor times upsample factor - and silently overshoot the repetition danger zone.",
+      "rationale": "The chapter's core practical rule ('deduplicate first, then upsample') and its headline pitfall ('4x internal dup times 3x upsample = 12 views') are pure arithmetic-on-a-line that a static figure nails instantly, and it directly serves the effective-epochs intuition that anchors the first third of the chapter.",
+      "kind": "static",
+      "placement": "Upsampling vs. deduplication: the trade-off",
+      "priority": 3,
+      "brief": "A two-lane before/after for one small high-quality domain, with a shared vertical gauge on the right labeled 'effective views of a passage' that has a danger band near the top labeled '~4-6 epochs -> memorization'. TOP lane 'upsample BEFORE dedup (trap)': draw a document as a row of tiles where 4 tiles are near-duplicates of one passage (same shading/hatch + label 'dup') plus a couple of distinct 'unique' tiles; apply an operation box 'x3 upsample'; result: the duplicated passage now has 4 x 3 = 12 effective views, and its marker on the gauge lands INSIDE the danger band. Show the arithmetic '4 x 3 = 12' prominently. BOTTOM lane 'dedup THEN upsample (correct)': same starting document, a 'dedup' box collapses the 4 duplicate tiles into 1 unique tile (annotate 'now one epoch = one genuine pass'), then 'x3 upsample' -> 1 x 3 = 3 effective views, whose gauge marker sits in a safe band labeled '2-4 epochs, net-positive'. Punchline strap: 'Dedup makes the epoch count honest; upsampling then spends that honest budget.' Use only small illustrative integers; the danger/safe bands are schematic (invent no benchmark numbers). Distinguish duplicate vs unique tiles by hatch/pattern and text label, not hue alone, and keep both lanes and the gauge inside the viewBox with clear top-to-bottom reading order."
+    }
+  ],
+  "summary": "The chapter is already well-served on scheduling: the WSD annealing figure and the end-to-end phase table are strong and only need tiny clipping fixes; the DoReMi loop is complete (one text-overflow fix). The epoch-budget tree is serviceable but currently a labeled list - refine it to encode pool size visually so e_i = w_i D / n_i becomes tangible, and fix a clipped legend label. The genuinely under-served core intuitions are all conceptual: (1) excess-vs-raw loss decomposition (P1) - the sharpest idea in the DoReMi section, currently prose-only; (2) level-vs-velocity (P2) - the excess/level vs bandit/slope distinction the chapter flags explicitly; (3) dedup-then-upsample multiplication (P3) - the effective-views arithmetic pitfall. Three new static figures, no animation needed since every intuition here resolves in a single frame."
+}
