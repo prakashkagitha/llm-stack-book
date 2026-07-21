@@ -1,0 +1,94 @@
+<figure class="viz" id="fig-fa2-flops-not-fungible">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 430" role="img" aria-label="Two stacked bars showing that softmax is about 1 percent of FLOP count but a large slice of runtime, because matmul runs on fast tensor cores while softmax runs on a much slower special function unit.">
+<defs>
+  <pattern id="fa2fnf-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="7" height="7" fill="var(--accent,#c15b39)" fill-opacity="0.12"/>
+    <line x1="0" y1="0" x2="0" y2="7" stroke="var(--accent,#c15b39)" stroke-width="1.6" stroke-opacity="0.65"/>
+  </pattern>
+  <marker id="fa2fnf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+<style>
+  #fig-fa2-flops-not-fungible text { fill: var(--ink-soft,#333); font-family: var(--sans,sans-serif); }
+  #fig-fa2-flops-not-fungible .title   { font: 700 14px var(--sans,sans-serif); }
+  #fig-fa2-flops-not-fungible .barlbl  { font: 600 12px var(--sans,sans-serif); fill: #fff; }
+  #fig-fa2-flops-not-fungible .barlbl-o{ font: 600 11px var(--sans,sans-serif); }
+  #fig-fa2-flops-not-fungible .cap     { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa2-flops-not-fungible .unit-lbl{ font: 700 11px var(--sans,sans-serif); }
+  #fig-fa2-flops-not-fungible .unit-sub{ font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa2-flops-not-fungible .badge   { font: 700 10px var(--mono,monospace); }
+  #fig-fa2-flops-not-fungible .conn    { fill: none; stroke: var(--accent,#c15b39); stroke-width: 1.6; stroke-dasharray: 4 3; }
+  #fig-fa2-flops-not-fungible .take    { font: 600 11.5px var(--sans,sans-serif); }
+</style>
+
+<text x="20" y="26" class="title">FLOPs are not fungible: a 1% slice of work becomes a large slice of time</text>
+
+
+<g data-anim="1">
+  <text x="20" y="58" class="unit-lbl">Share of FLOP COUNT</text>
+  <rect x="20" y="66" width="720" height="40" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <rect x="20" y="66" width="720" height="40" rx="6" fill="none" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="370" y="91" text-anchor="middle" class="barlbl">matmul (QK^T and PV)</text>
+
+  
+  <rect x="732" y="66" width="8" height="40" fill="url(#fa2fnf-hatch)" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+</g>
+
+<g data-anim="2">
+  <line x1="736" y1="66" x2="736" y2="40" stroke="var(--accent,#c15b39)" stroke-width="1.2" stroke-dasharray="3 2"/>
+  <text x="736" y="34" text-anchor="end" class="badge" fill="var(--accent,#c15b39)">approx 1% of FLOPs</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="20" y="122" width="345" height="46" rx="8" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <text x="192" y="141" text-anchor="middle" class="unit-lbl" fill="var(--accent2,#3b82f6)">TENSOR CORES -- fast (matmul)</text>
+  <text x="192" y="157" text-anchor="middle" class="unit-sub">saturated by QK^T and PV</text>
+
+  <rect x="395" y="122" width="345" height="46" rx="8" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="567" y="141" text-anchor="middle" class="unit-lbl" fill="var(--accent,#c15b39)">SPECIAL-FUNCTION UNIT -- much slower (exp, transcendental)</text>
+  <text x="567" y="157" text-anchor="middle" class="unit-sub">handles exp / rowmax / rescale</text>
+</g>
+
+<g data-anim="3">
+  <rect x="507" y="106" width="145" height="18" rx="9" fill="var(--surface,#fff)" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <text x="579" y="119" text-anchor="middle" class="badge" fill="var(--accent,#c15b39)">approx 16x slower / FLOP</text>
+  <text x="700" y="185" text-anchor="end" class="cap" font-style="italic">(illustrative, per the chapter's 1/16 figure)</text>
+</g>
+
+
+<g data-anim="4">
+  <path class="conn" d="M 736 172 C 736 210, 700 230, 690 268" marker-end="url(#fa2fnf-arrow)"/>
+  <text x="470" y="223" text-anchor="middle" class="cap" fill="var(--accent,#c15b39)">same work, but on the slow pipe -&gt; disproportionate time</text>
+</g>
+
+
+<g data-anim="5">
+  <text x="20" y="262" class="unit-lbl">Share of RUNTIME</text>
+  <rect x="20" y="270" width="720" height="40" rx="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+  <rect x="20" y="270" width="720" height="40" rx="6" fill="none" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="315" y="295" text-anchor="middle" class="barlbl">matmul (QK^T and PV)</text>
+
+  
+  <rect x="630" y="270" width="110" height="40" fill="url(#fa2fnf-hatch)" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <text x="685" y="291" text-anchor="middle" class="barlbl-o" fill="var(--accent,#c15b39)">softmax</text>
+  <text x="685" y="303" text-anchor="middle" class="unit-sub" fill="var(--accent,#c15b39)">(exp / max / rescale)</text>
+</g>
+
+<g data-anim="5">
+  <line x1="685" y1="270" x2="685" y2="322" stroke="var(--accent,#c15b39)" stroke-width="1.2" stroke-dasharray="3 2"/>
+  <text x="685" y="335" text-anchor="middle" class="badge" fill="var(--accent,#c15b39)">a large slice of the time</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="20" y="366" width="720" height="46" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="380" y="386" text-anchor="middle" class="take">This is why FA2 fights to do softmax rarely,</text>
+  <text x="380" y="402" text-anchor="middle" class="take">and FA3 fights to overlap it behind matmul.</text>
+</g>
+
+</svg>
+<figcaption><b>FLOPs are not fungible: the softmax's tiny FLOP share hides a disproportionate runtime cost.</b> Matmul (QK^T and PV) is almost the entire FLOP count and runs on fast tensor cores, but softmax's exp/rowmax/rescale run on a much slower special-function unit — so a sliver of FLOPs turns into a large slice of wall-clock time, which is exactly what FA2 and FA3 are engineered around.</figcaption>
+</figure>

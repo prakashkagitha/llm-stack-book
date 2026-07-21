@@ -82,6 +82,8 @@ $$
 
 The deep insight is in the ratio $\hat{m}_t / \sqrt{\hat{v}_t}$. For a coordinate with a consistent gradient, $\hat{m}_t \approx \sqrt{\hat{v}_t}$, so the update magnitude is $\approx \eta$ — Adam takes a step of *roughly unit size in each coordinate*, regardless of the gradient's absolute scale. This is the **scale-invariance** that makes Adam so robust: you can change the loss scaling (or use mixed precision, see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html)) and Adam's effective step is unchanged. It is also why Adam tolerates the wildly heterogeneous gradient scales of a transformer that defeat plain SGD.
 
+{{fig:opt-adam-scale-invariance}}
+
 ### Decoupled weight decay: the W in AdamW
 
 L2 regularization adds $\tfrac{\lambda}{2}\lVert\theta\rVert^2$ to the loss, which contributes $\lambda\theta$ to the gradient. In *plain* SGD this is identical to weight decay (shrinking $\theta$ toward zero each step). But in Adam they are **not** equivalent: the $\lambda\theta$ term flows through the $m_t$ and $v_t$ machinery and gets divided by $\sqrt{\hat v_t}$, so parameters with large gradient magnitude (large $v_t$) get *less* decay — exactly backwards from what you want. Loshchilov & Hutter (*Decoupled Weight Decay Regularization*, 2019) showed this hurts, and proposed **AdamW**, which applies the decay directly to the weights, decoupled from the adaptive term:
@@ -172,7 +174,7 @@ Here is the systems reality that motivates everything in the rest of the chapter
 | Adam $v$ (second moment) | $P$ | fp32 | 4 |
 | Master weights (fp32 copy) | $P$ | fp32 | 4 |
 
-That last row appears because mixed-precision training keeps a high-precision master copy of the weights so that tiny updates are not lost to bf16 rounding (see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html)). The headline number from the ZeRO/DeepSpeed analysis is **16 bytes per parameter** for the model+optimizer state (2+2+4+4+4 = 16), of which the *optimizer alone* (m, v, master weights) is **12 bytes** — three times the size of the bf16 weights themselves.
+That last row appears because mixed-precision training keeps a high-precision master copy of the weights so that tiny updates are not lost to bf16 rounding (see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html)). The headline number from the ZeRO/DeepSpeed analysis is **16 bytes per parameter** for the model+optimizer state (2+2+4+4+4 = 16), of which the *optimizer alone* (m, v, master weights) is **12 bytes** — three times the 4 bytes of bf16 weights and gradients together.
 
 !!! example "Worked example: optimizer memory for a 7B model"
     Take $P = 7\times 10^9$ parameters.
@@ -184,6 +186,8 @@ That last row appears because mixed-precision training keeps a high-precision ma
     - fp32 master weights: $28$ GB
 
     Total $= 14 + 14 + 28 + 28 + 28 = 112$ GB, i.e. $16$ bytes/param. The **optimizer states alone are 84 GB** — they do not fit on a single 80 GB H100, and they dwarf the 14 GB of actual weights. This is the single biggest reason large-model training needs ZeRO/FSDP sharding (see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)), and the single biggest motivation for memory-frugal optimizers. Halving optimizer memory can be the difference between needing 16 versus 8 GPUs.
+
+{{fig:opt-memory-tax}}
 
 Two orthogonal strategies attack this. The first is **systems-level**: ZeRO/FSDP *shards* the 12 bytes of optimizer state across $N$ data-parallel ranks, so each rank holds only $12P/N$ bytes — no change to the math, pure distribution. The second is **algorithmic**: redesign the optimizer to store *less state per parameter*. Adafactor, Lion, and the sign-based family live here, and that is where we turn next. The two strategies compose: you can shard a Lion optimizer too.
 
@@ -302,6 +306,8 @@ $$
 
 Setting every singular value to 1 makes the update *spectrally uniform* — it pushes equally along every singular direction of the momentum, rather than letting the top few dominate. This is the matrix-valued analogue of Lion's per-coordinate sign: Lion normalizes each scalar entry to $\pm 1$; Muon normalizes each *singular value* to 1. Both are aggressive ways of discarding magnitude and keeping direction, but Muon respects the matrix structure of the weight.
 
+{{fig:opt-discard-magnitude-family}}
+
 The genius is *how* it computes $UV^\top$ without an SVD (which is slow and hard to do well in bf16 on GPUs). It uses a **Newton-Schulz iteration**: a fixed sequence of matrix-multiply-only steps that drives the singular values toward 1. Starting from a spectrally-normalized $X_0 = M/\lVert M\rVert_F$, it repeats a cubic polynomial in $X$:
 
 $$
@@ -343,6 +349,8 @@ def muon_step(W, G, momentum_buf, lr=0.02, mu=0.95, ns_steps=5):
     scale = (max(W.shape) ** 0.5)
     W.add_(update, alpha=-lr * scale)
 ```
+
+{{fig:opt-muon-newton-schulz}}
 
 Muon's properties make it a compelling AdamW replacement for the bulk of an LLM's parameters:
 

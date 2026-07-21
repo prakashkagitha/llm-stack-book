@@ -51,6 +51,8 @@ $$
 
 If every turn adds a constant $a$ tokens and $L_0$ is small, this is $\sum_{t=1}^N a t \approx \tfrac{1}{2} a N^2$. **Naive context accumulation is quadratic in the number of turns.** This single fact is the reason every serious agent harness has a context-management strategy. Halving $a$ (the per-turn footprint) quarters your bill; capping $L_t$ at a ceiling $C$ turns the quadratic back into a linear $O(NC)$.
 
+{{fig:quadratic-cost-of-accumulation}}
+
 !!! example "Worked example: the cost of not pruning"
 
     An agent runs for $N = 40$ turns. Each turn the model reads a file or runs a command whose output averages $a = 2{,}500$ tokens; the system prompt and tools are $L_0 = 3{,}000$ tokens. Input is priced at USD 3 per million tokens, output (assume 400 tokens/turn) at USD 15 per million.
@@ -70,6 +72,8 @@ If every turn adds a constant $a$ tokens and $L_0$ is small, this is $\sum_{t=1}
 ## Context Rot, Lost-in-the-Middle & Position Effects
 
 A bigger window does not mean a model uses all of it equally. Two empirical phenomena dominate practical context engineering.
+
+{{fig:effective-vs-advertised-window}}
 
 ### Lost-in-the-middle
 
@@ -203,6 +207,8 @@ W_{\text{eff}} = b_{\text{sys}} + b_{\text{tools}} + b_{\text{retrieved}} + b_{\
 $$
 
 The system prompt and tool schemas are fixed and small; retrieval, history, and scratchpad are the elastic segments you actively manage. A concrete starting split for a 32K *effective* budget on a coding agent might be: 2K system+tools, 8K retrieved code, 16K conversation history, 2K scratchpad, leaving 4K for the response.
+
+{{fig:token-budget-allocator}}
 
 ### A concrete budget manager
 
@@ -362,6 +368,8 @@ Two subtleties make or break compaction in practice. First, **never compact the 
 
 The deepest idea in modern context engineering is that **the context window should not be the agent's only memory.** Treat the window as fast, small, volatile RAM, and treat the file system (or a database, or a structured store) as slow, large, durable disk. The agent reads relevant state into the window when it needs it and writes durable state back out — exactly the memory hierarchy from [GPU Architecture & The Memory Hierarchy](../01-foundations/08-gpu-architecture.html), one level up.
 
+{{fig:context-window-memory-hierarchy}}
+
 ### The scratchpad / plan file
 
 Give the agent a persistent **scratchpad** — often literally a file like `PLAN.md` or `TODO.md` — that it owns and updates. This externalizes working memory so it survives compaction, and it gives the model a stable, re-readable anchor for the task structure. The pattern: the agent writes its plan to a file, and at the top of each turn the *current* plan file is read back into a small pinned segment. Compaction can wipe the conversation history, but the plan persists on disk.
@@ -440,6 +448,8 @@ BAD: a timestamp or turn-counter near the TOP invalidates EVERYTHING after it:
 [ "It is 14:32:07. " ][ system prompt ][ tools ] ...   <- cache miss every turn
   ^ changes each call -> longest common prefix is ~0 -> you pay full price always
 ```
+
+{{fig:prompt-cache-prefix-stability}}
 
 Common cache-busting mistakes, all fixable: putting the current timestamp, a random request ID, or a per-turn counter at the *top* of the system prompt; reordering tool definitions between calls (serialize them in a fixed, sorted order); rewriting earlier conversation turns during compaction in a way that changes their bytes (instead, compact into a *new* trailing segment and only occasionally rebuild). Move all volatile content to the *end*, just before the model's turn.
 

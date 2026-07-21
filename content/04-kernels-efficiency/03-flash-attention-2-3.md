@@ -146,6 +146,8 @@ each warp: all Br rows, slice of cols    each warp: slice of Br rows, all cols
   + __syncthreads()                       no extra __syncthreads in the hot path
 ```
 
+{{fig:fa2-split-k-vs-split-q}}
+
 Removing that per-iteration synchronization and shared-memory traffic is worth a large fraction of FA2's speedup. The cost is that each warp needs the $K_j, V_j$ tile available; FA2 keeps those in shared memory and lets all warps read them, which is exactly what shared memory is good at (broadcast reads).
 
 Putting the three edits together, FA2 roughly doubles FA1's throughput on A100, reaching on the order of 50–73% of theoretical bf16 matmul peak depending on head dimension and sequence length. In practice you never write this yourself — you call the library:
@@ -182,6 +184,8 @@ print(out.shape)  # (2, 16, 8192, 128)
 
     So non-matmul work is only ~1% of the FLOP *count*. But on an A100, suppose tensor cores run at 312 TFLOP/s and the special-function unit handling $\exp$ runs at ~20 TFLOP/s. The matmul takes $3.4\times10^{10} / 3.12\times10^{14} \approx 109\ \mu s$; the non-matmul takes $3.4\times10^{8} / 2.0\times10^{13} \approx 17\ \mu s$. That "1% of FLOPs" is suddenly **~14% of the runtime** if it is on the critical path. This is exactly why FA2 fights to minimize and overlap the softmax work, and why FA3's overlapping of matmul and softmax (below) matters so much.
 
+{{fig:fa2-flops-not-fungible}}
+
 ## FlashAttention-3: exploiting Hopper
 
 FA2 is close to optimal *for Ampere's programming model*, where the tensor-core instruction (`mma`) is synchronous: a warp issues it and waits for the result. NVIDIA's Hopper architecture (H100) added new hardware that breaks that synchronous assumption, and FA3 is essentially "FA2 rewritten to use everything Hopper offers." Three Hopper features matter.
@@ -213,6 +217,8 @@ This is the classic **producer/consumer** decoupling. Because the producer uses 
    prod:  load0  load1  load2  load3  load4 ...
    cons:         gemm0  gemm1  gemm2  gemm3 ...   (always one step behind, never starved)
 ```
+
+{{fig:fa3-producer-consumer-pingpong}}
 
 The payoff: the tensor cores rarely stall waiting for data, and the warps doing math never spend cycles on address generation. Register usage is also better balanced — Hopper lets you *reallocate* registers between warpgroups (`setmaxnreg`), giving the compute warpgroups more registers and the producer warps fewer.
 
@@ -324,6 +330,8 @@ $$
 the attention scores are *unchanged*. But the rotation **spreads each outlier across many coordinates**: a single huge entry becomes many moderate entries, so no coordinate dominates and the FP8 scale no longer has to stretch to cover an outlier. The quantization becomes far more uniform and the error drops.
 
 In practice FA3 uses a structured orthogonal matrix that is cheap to apply — a random-sign **Hadamard transform**, $M = \frac{1}{\sqrt{d}} H D$, where $H$ is the Hadamard matrix (applied in $O(d \log d)$ via the fast Hadamard transform) and $D$ is a random diagonal of $\pm 1$. The cost is a small pre-rotation of $Q$ and $K$; the benefit is that FP8 attention error approaches that of a properly-scaled quantization without outlier contamination.
+
+{{fig:fa3-incoherent-processing}}
 
 ```python
 import torch

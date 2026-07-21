@@ -1,0 +1,130 @@
+<figure class="viz" id="fig-fa2-split-k-vs-split-q">
+<svg viewBox="0 0 780 480" role="img" aria-label="Comparison of FlashAttention-1 split-K warp partitioning, where each warp owns a slice of key columns spanning all query rows and must reduce partial outputs across warps through shared memory, versus FlashAttention-2 split-Q partitioning, where each warp owns a slice of query rows spanning all key columns and produces an already-final output with no inter-warp reduction.">
+<defs>
+  <pattern id="fskq-w0" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--accent,#c15b39)" fill-opacity="0.30"/></pattern>
+  <pattern id="fskq-w1" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--accent2,#3b82f6)" fill-opacity="0.30"/></pattern>
+  <pattern id="fskq-w2" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--good,#2f9e6e)" fill-opacity="0.30"/></pattern>
+  <pattern id="fskq-w3" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="var(--warn,#e0a106)" fill-opacity="0.30"/></pattern>
+  <marker id="fskq-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+<style>
+  #fig-fa2-split-k-vs-split-q text { fill: var(--ink-soft,#333); font-family: var(--sans,sans-serif); }
+  #fig-fa2-split-k-vs-split-q .paneltitle { font: 700 13.5px var(--sans,sans-serif); }
+  #fig-fa2-split-k-vs-split-q .axlbl      { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa2-split-k-vs-split-q .wlbl       { font: 700 10px var(--sans,sans-serif); }
+  #fig-fa2-split-k-vs-split-q .cap        { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa2-split-k-vs-split-q .badbox     { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-fa2-split-k-vs-split-q .okbox      { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-fa2-split-k-vs-split-q .take       { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-fa2-split-k-vs-split-q .small      { font: 400 9px var(--mono,monospace); fill: var(--muted,#8a8479); }
+</style>
+
+
+<g data-anim="1">
+  <text x="30" y="22" class="paneltitle" fill="var(--accent,#c15b39)">SPLIT-K (FA1)</text>
+  <text x="30" y="38" class="axlbl">key columns Bc -&gt;</text>
+
+  
+  <g transform="translate(30,44)">
+    <rect x="0" y="0" width="40" height="120" fill="url(#fskq-w0)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="40" y="0" width="40" height="120" fill="url(#fskq-w1)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="80" y="0" width="40" height="120" fill="url(#fskq-w2)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="120" y="0" width="40" height="120" fill="url(#fskq-w3)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="0" y="0" width="160" height="120" fill="none" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="20" y="14" text-anchor="middle" class="wlbl" fill="var(--accent,#c15b39)">W0</text>
+    <text x="60" y="14" text-anchor="middle" class="wlbl" fill="var(--accent2,#3b82f6)">W1</text>
+    <text x="100" y="14" text-anchor="middle" class="wlbl" fill="var(--good,#2f9e6e)">W2</text>
+    <text x="140" y="14" text-anchor="middle" class="wlbl" fill="var(--warn,#e0a106)">W3</text>
+  </g>
+  <text x="12" y="104" text-anchor="middle" class="axlbl" transform="rotate(-90 12 104)">query rows Br</text>
+  <text x="30" y="180" class="cap">each warp: all Br rows, slice of Bc cols</text>
+
+  
+  <g transform="translate(30,200)">
+    <rect x="0" y="0" width="35" height="26" rx="4" fill="url(#fskq-w0)" stroke="var(--accent,#c15b39)"/>
+    <rect x="42" y="0" width="35" height="26" rx="4" fill="url(#fskq-w1)" stroke="var(--accent2,#3b82f6)"/>
+    <rect x="84" y="0" width="35" height="26" rx="4" fill="url(#fskq-w2)" stroke="var(--good,#2f9e6e)"/>
+    <rect x="126" y="0" width="35" height="26" rx="4" fill="url(#fskq-w3)" stroke="var(--warn,#e0a106)"/>
+    <text x="17" y="17" text-anchor="middle" style="font:600 8px var(--mono,monospace);">PV0</text>
+    <text x="59" y="17" text-anchor="middle" style="font:600 8px var(--mono,monospace);">PV1</text>
+    <text x="101" y="17" text-anchor="middle" style="font:600 8px var(--mono,monospace);">PV2</text>
+    <text x="143" y="17" text-anchor="middle" style="font:600 8px var(--mono,monospace);">PV3</text>
+  </g>
+  <text x="30" y="242" class="cap">4 PARTIAL outputs (disjoint col-sums)</text>
+</g>
+
+<g data-anim="2">
+  <line x1="107" y1="248" x2="107" y2="268" stroke="var(--ink-soft,#555)" stroke-width="1.5" marker-end="url(#fskq-arrow)"/>
+  <rect x="30" y="272" width="160" height="52" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+  <text x="110" y="288" text-anchor="middle" class="badbox" fill="var(--accent,#c15b39)">REDUCE across warps</text>
+  <text x="110" y="300" text-anchor="middle" class="badbox" fill="var(--accent,#c15b39)">via shared memory</text>
+  <text x="110" y="315" text-anchor="middle" class="small">__syncthreads() every iter</text>
+  <text x="178" y="284" text-anchor="middle" class="badbox" fill="var(--accent,#c15b39)">!</text>
+</g>
+
+<g data-anim="2">
+  <text x="30" y="345" class="cap">each warp has only a col-slice -&gt;</text>
+  <text x="30" y="358" class="cap">outputs must be summed -&gt; shared-mem</text>
+  <text x="30" y="371" class="cap">round trip + barrier in the hot path</text>
+</g>
+
+
+<line x1="392" y1="10" x2="392" y2="410" stroke="var(--border-2,#d8d1c0)" stroke-width="1.5" stroke-dasharray="5 4"/>
+
+
+<g data-anim="3">
+  <text x="412" y="22" class="paneltitle" fill="var(--good,#2f9e6e)">SPLIT-Q (FA2)</text>
+  <text x="412" y="38" class="axlbl">key columns Bc -&gt;</text>
+
+  
+  <g transform="translate(412,44)">
+    <rect x="0" y="0" width="160" height="30" fill="url(#fskq-w0)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="0" y="30" width="160" height="30" fill="url(#fskq-w1)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="0" y="60" width="160" height="30" fill="url(#fskq-w2)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="0" y="90" width="160" height="30" fill="url(#fskq-w3)" stroke="var(--border-2,#d8d1c0)"/>
+    <rect x="0" y="0" width="160" height="120" fill="none" stroke="var(--ink-soft,#555)" stroke-width="1.4"/>
+    <text x="8" y="19" class="wlbl" fill="var(--accent,#c15b39)">W0</text>
+    <text x="8" y="49" class="wlbl" fill="var(--accent2,#3b82f6)">W1</text>
+    <text x="8" y="79" class="wlbl" fill="var(--good,#2f9e6e)">W2</text>
+    <text x="8" y="109" class="wlbl" fill="var(--warn,#e0a106)">W3</text>
+  </g>
+  <text x="412" y="180" class="cap">each warp: slice of Br rows, all Bc cols</text>
+
+  
+  <g transform="translate(590,44)">
+    <rect x="0" y="0" width="170" height="30" rx="4" fill="url(#fskq-w0)" stroke="var(--accent,#c15b39)"/>
+    <rect x="0" y="30" width="170" height="30" rx="4" fill="url(#fskq-w1)" stroke="var(--accent2,#3b82f6)"/>
+    <rect x="0" y="60" width="170" height="30" rx="4" fill="url(#fskq-w2)" stroke="var(--good,#2f9e6e)"/>
+    <rect x="0" y="90" width="170" height="30" rx="4" fill="url(#fskq-w3)" stroke="var(--warn,#e0a106)"/>
+    <text x="8" y="19" style="font:600 9.5px var(--sans,sans-serif);" fill="var(--accent,#c15b39)">W0 -&gt; rows 0-15 final</text>
+    <text x="8" y="49" style="font:600 9.5px var(--sans,sans-serif);" fill="var(--accent2,#3b82f6)">W1 -&gt; rows 16-31 final</text>
+    <text x="8" y="79" style="font:600 9.5px var(--sans,sans-serif);" fill="var(--good,#2f9e6e)">W2 -&gt; rows 32-47 final</text>
+    <text x="8" y="109" style="font:600 9.5px var(--sans,sans-serif);" fill="var(--warn,#e0a106)">W3 -&gt; rows 48-63 final</text>
+  </g>
+  <text x="412" y="238" class="axlbl">each warp writes its own final rows -&gt;</text>
+</g>
+
+<g data-anim="4">
+  <rect x="412" y="256" width="348" height="44" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.3"/>
+  <text x="586" y="273" text-anchor="middle" style="font:600 10.5px var(--sans,sans-serif);">K_j, V_j: SHARED in shared memory,</text>
+  <text x="586" y="288" text-anchor="middle" style="font:600 10.5px var(--sans,sans-serif);">read-only broadcast to all warps</text>
+</g>
+
+<g data-anim="4">
+  <rect x="412" y="308" width="348" height="52" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+  <text x="586" y="330" text-anchor="middle" class="okbox" fill="var(--good,#2f9e6e)">no inter-warp reduction,</text>
+  <text x="586" y="345" text-anchor="middle" class="okbox" fill="var(--good,#2f9e6e)">no extra __syncthreads</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="20" y="422" width="738" height="44" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="389" y="440" text-anchor="middle" class="take">Same math, different owner: split-Q makes each warp's rows independent,</text>
+  <text x="389" y="456" text-anchor="middle" class="take">deleting the per-iteration barrier.</text>
+</g>
+
+</svg>
+<figcaption><b>Split-K (FA1) forces a per-iteration shared-memory reduction; split-Q (FA2) does not.</b> With split-K, each warp owns a slice of key columns spanning all query rows, so partial PV outputs must be summed across warps through shared memory with a synchronization barrier every iteration. With split-Q, each warp owns a slice of query rows spanning all key columns and produces an already-final output — no inter-warp reduction, no extra barrier.</figcaption>
+</figure>

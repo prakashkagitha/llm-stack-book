@@ -1,0 +1,100 @@
+<figure class="viz" id="fig-context-window-memory-hierarchy">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 760 480" role="img" aria-label="A two-tier memory hierarchy: a small context window acting as fast volatile RAM sits above a wide external file store acting as slow durable disk, with arrows for paging state in and out; a compaction event wipes recent-turns from the window while the pinned plan is re-read from the plan file on disk, so it survives compaction.">
+  <defs>
+    <marker id="mh-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="mh-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-context-window-memory-hierarchy .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-context-window-memory-hierarchy .tier-h{ font:700 13px var(--sans,sans-serif); }
+    #fig-context-window-memory-hierarchy .tier-sub{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-context-window-memory-hierarchy .chip{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-context-window-memory-hierarchy .arrow-lbl{ font:700 11px var(--sans,sans-serif); }
+    #fig-context-window-memory-hierarchy .note{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-context-window-memory-hierarchy .cap{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-context-window-memory-hierarchy text{ fill: var(--ink-soft); }
+    #fig-context-window-memory-hierarchy .chip-box{ fill: var(--surface); stroke: var(--border-2); stroke-width: 1.2; }
+    #fig-context-window-memory-hierarchy .chip-gone{ fill: var(--surface); stroke: var(--border-2); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: 0.45; }
+  </style>
+
+  <text x="380" y="20" text-anchor="middle" class="ttl">The context window is RAM; the file system is disk</text>
+
+  <g data-anim="1">
+
+    <rect x="140" y="38" width="480" height="118" rx="10" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.8"/>
+    <text x="380" y="58" text-anchor="middle" class="tier-h" fill="var(--accent)">CONTEXT WINDOW -- RAM</text>
+    <text x="380" y="72" text-anchor="middle" class="tier-sub">fast, small, volatile</text>
+
+    <rect x="160" y="84" width="120" height="30" rx="6" class="chip-box" id="mh-pinned-plan"/>
+    <text x="220" y="103" text-anchor="middle" class="chip">pinned plan</text>
+
+    <rect x="292" y="84" width="120" height="30" rx="6" class="chip-box" id="mh-recent-turns"/>
+    <text x="352" y="103" text-anchor="middle" class="chip">recent turns</text>
+
+    <rect x="424" y="84" width="120" height="30" rx="6" class="chip-box"/>
+    <text x="484" y="103" text-anchor="middle" class="chip">current task</text>
+
+    <text x="600" y="139" text-anchor="end" class="note">ephemeral working memory</text>
+  </g>
+
+  <g data-anim="2">
+
+    <line x1="230" y1="182" x2="230" y2="270" stroke="var(--accent)" stroke-width="2.2" marker-end="url(#mh-arrow-muted)"/>
+    <text x="238" y="220" class="arrow-lbl" fill="var(--accent)">write durable state</text>
+    <text x="238" y="234" class="arrow-lbl" fill="var(--accent)">OUT (page-out)</text>
+
+    <line x1="500" y1="270" x2="500" y2="182" stroke="var(--accent)" stroke-width="2.2" marker-end="url(#mh-arrow)"/>
+    <text x="492" y="220" text-anchor="end" class="arrow-lbl" fill="var(--accent)">read relevant state</text>
+    <text x="492" y="234" text-anchor="end" class="arrow-lbl" fill="var(--accent)">IN (page-in)</text>
+  </g>
+
+  <g data-anim="3">
+
+    <rect x="40" y="278" width="680" height="132" rx="10" class="v-fill" stroke="var(--border-2)" stroke-width="1.8"/>
+    <text x="380" y="298" text-anchor="middle" class="tier-h">EXTERNAL STORE -- DISK</text>
+    <text x="380" y="312" text-anchor="middle" class="tier-sub">slow, large, durable</text>
+
+    <rect x="60"  y="326" width="110" height="28" rx="6" class="chip-box" id="mh-plan-file"/>
+    <text x="115" y="344" text-anchor="middle" class="chip">PLAN.md</text>
+
+    <rect x="182" y="326" width="110" height="28" rx="6" class="chip-box"/>
+    <text x="237" y="344" text-anchor="middle" class="chip">TODO.md</text>
+
+    <rect x="304" y="326" width="130" height="28" rx="6" class="chip-box"/>
+    <text x="369" y="344" text-anchor="middle" class="chip">source files</text>
+
+    <rect x="446" y="326" width="150" height="28" rx="6" class="chip-box"/>
+    <text x="521" y="344" text-anchor="middle" class="chip">past-episode memory</text>
+
+    <text x="650" y="382" text-anchor="end" class="note">ground truth --</text>
+    <text x="650" y="395" text-anchor="end" class="note">regenerated, not re-summarized</text>
+  </g>
+
+  <g data-anim="4">
+
+    <line x1="344" y1="124" x2="360" y2="136" stroke="var(--muted)" stroke-width="2.4" stroke-linecap="round"/>
+    <line x1="360" y1="124" x2="344" y2="136" stroke="var(--muted)" stroke-width="2.4" stroke-linecap="round"/>
+    <rect x="292" y="84" width="120" height="30" rx="6" class="chip-gone"/>
+    <text x="352" y="103" text-anchor="middle" class="chip" opacity="0.45">recent turns</text>
+    <rect x="322" y="149" width="180" height="28" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="412" y="167" text-anchor="middle" class="note">compaction wipes conversation history</text>
+
+
+    <path d="M 115 326 C 115 240, 220 200, 220 114" fill="none" stroke="var(--good)" stroke-width="2.2"
+          stroke-dasharray="5 4" marker-end="url(#mh-arrow)"/>
+    <rect x="130" y="234" width="240" height="30" rx="6" class="v-fill" stroke="var(--good)" stroke-width="1.2"/>
+    <text x="250" y="248" text-anchor="middle" class="note" fill="var(--good)" font-weight="700">plan re-read from disk each turn --</text>
+    <text x="250" y="260" text-anchor="middle" class="note" fill="var(--good)" font-weight="700">survives compaction, rebuilt from ground truth</text>
+  </g>
+
+  <g data-anim="5">
+    <text x="380" y="440" text-anchor="middle" class="cap">window = ephemeral working memory; disk = durable ground truth</text>
+  </g>
+</svg>
+<figcaption><b>Treat the context window as fast, small, volatile RAM and the file system as slow, large, durable disk.</b> The agent pages relevant state in from disk and writes durable state back out; when compaction wipes the conversation history from the window, the plan is unaffected because it is re-read from <code>PLAN.md</code> on disk every turn, rebuilt from ground truth rather than from a lossy summary.</figcaption>
+</figure>

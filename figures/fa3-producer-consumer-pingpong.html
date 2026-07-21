@@ -1,0 +1,177 @@
+<figure class="viz" id="fig-fa3-producer-consumer-pingpong">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 610" role="img" aria-label="FA3 software pipeline: TMA producer warps stream K and V tiles a stage ahead into a shared-memory ring buffer while two consumer warpgroups ping-pong, one doing softmax on the special function unit while the other does wgmma on the tensor cores, keeping both tensor-core and SFU utilization meters near full, in contrast to FA2 where a single synchronous lane lets tensor cores go idle during softmax.">
+<defs>
+  <pattern id="fa3pp-sfu" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" fill="var(--accent,#c15b39)" fill-opacity="0.28"/>
+    <line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent,#c15b39)" stroke-width="1.4" stroke-opacity="0.6"/>
+  </pattern>
+  <pattern id="fa3pp-idle" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" fill="var(--muted,#8a8479)" fill-opacity="0.20"/>
+    <line x1="0" y1="0" x2="0" y2="6" stroke="var(--muted,#8a8479)" stroke-width="1.4" stroke-opacity="0.6"/>
+  </pattern>
+  <marker id="fa3pp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+<style>
+  #fig-fa3-producer-consumer-pingpong text { fill: var(--ink-soft,#333); font-family: var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .title    { font: 700 14.5px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .tierlbl   { font: 700 11.5px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa3-producer-consumer-pingpong .boxlbl    { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .sub       { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa3-producer-consumer-pingpong .stagelbl  { font: 700 9.5px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .tilelbl   { font: 400 9px var(--mono,monospace); }
+  #fig-fa3-producer-consumer-pingpong .lanelbl   { font: 700 11px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .blklbl    { font: 700 10px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .cap       { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+  #fig-fa3-producer-consumer-pingpong .meterlbl  { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .phase     { font: 500 10px var(--sans,sans-serif); }
+  #fig-fa3-producer-consumer-pingpong .ghostlbl  { font: 700 10.5px var(--sans,sans-serif); fill: var(--muted,#8a8479); }
+</style>
+
+<text x="16" y="22" class="title">FA3's software pipeline: producer/consumer + ping-pong overlap</text>
+
+
+<g data-anim="1">
+  <text x="16" y="42" class="tierlbl">TIER 1 -- shared-memory ring buffer fed by TMA producer</text>
+
+  
+  <rect x="16" y="50" width="130" height="92" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.10" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <text x="81" y="68" text-anchor="middle" class="boxlbl" fill="var(--accent2,#3b82f6)">PRODUCER warps</text>
+  <text x="81" y="80" text-anchor="middle" class="boxlbl" fill="var(--accent2,#3b82f6)">(TMA)</text>
+  <text x="81" y="98" text-anchor="middle" class="sub">almost no compute --</text>
+  <text x="81" y="109" text-anchor="middle" class="sub">just address-free</text>
+  <text x="81" y="120" text-anchor="middle" class="sub">TMA copies</text>
+  <text x="81" y="134" text-anchor="middle" class="sub">stays 1-2 stages ahead</text>
+
+  <line x1="146" y1="96" x2="170" y2="96" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#fa3pp-arrow)"/>
+</g>
+
+<g data-anim="2" class="viz-pulse" style="transform-origin:180px 96px">
+  <circle cx="180" cy="96" r="8" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+  <text x="180" y="80" text-anchor="middle" style="font:700 7.5px var(--mono,monospace);" fill="var(--good,#2f9e6e)">mbarrier</text>
+</g>
+
+
+<g data-anim="1">
+  <rect x="196" y="52" width="120" height="72" rx="7" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <text x="256" y="70" text-anchor="middle" class="stagelbl" fill="var(--good,#2f9e6e)">stage 0</text>
+  <text x="256" y="88" text-anchor="middle" class="tilelbl" fill="var(--good,#2f9e6e)">K3 V3</text>
+  <text x="256" y="102" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">being consumed</text>
+  <text x="256" y="114" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">now</text>
+
+  <rect x="328" y="52" width="120" height="72" rx="7" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.6"/>
+  <text x="388" y="70" text-anchor="middle" class="stagelbl">stage 1</text>
+  <text x="388" y="88" text-anchor="middle" class="tilelbl">K4 V4</text>
+  <text x="388" y="102" text-anchor="middle" class="sub">ready, waiting</text>
+
+  <rect x="460" y="52" width="120" height="72" rx="7" fill="var(--accent2,#3b82f6)" fill-opacity="0.12" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="520" y="70" text-anchor="middle" class="stagelbl" fill="var(--accent2,#3b82f6)">stage 2</text>
+  <text x="520" y="88" text-anchor="middle" class="tilelbl" fill="var(--accent2,#3b82f6)">K5 V5</text>
+  <text x="520" y="102" text-anchor="middle" class="sub" fill="var(--accent2,#3b82f6)">being filled by</text>
+  <text x="520" y="114" text-anchor="middle" class="sub" fill="var(--accent2,#3b82f6)">TMA now</text>
+
+  <line x1="256" y1="124" x2="256" y2="140" stroke="var(--good,#2f9e6e)" stroke-width="1.5" marker-end="url(#fa3pp-arrow)"/>
+  <text x="256" y="155" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">consumer reads next</text>
+</g>
+
+<g data-anim="2">
+  <rect x="600" y="52" width="164" height="102" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="682" y="70" text-anchor="middle" class="phase">producer stays ahead</text>
+  <text x="682" y="84" text-anchor="middle" class="phase">-&gt; consumer never</text>
+  <text x="682" y="98" text-anchor="middle" class="phase">starved</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="16" y="190" class="tierlbl">TIER 2 -- consumer warpgroups: GEMM(QK) -&gt; SOFTMAX -&gt; GEMM(PV), staggered</text>
+
+  <text x="16" y="222" class="lanelbl" fill="var(--accent2,#3b82f6)">WG1</text>
+  <rect x="60" y="204" width="140" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--accent2,#3b82f6)"/>
+  <text x="130" y="225" text-anchor="middle" class="blklbl" fill="#fff">GEMM(QK)</text>
+  <rect x="200" y="204" width="140" height="34" fill="url(#fa3pp-sfu)" stroke="var(--accent,#c15b39)"/>
+  <text x="270" y="225" text-anchor="middle" class="blklbl" fill="var(--accent,#c15b39)">SOFTMAX</text>
+  <rect x="340" y="204" width="140" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--accent2,#3b82f6)"/>
+  <text x="410" y="225" text-anchor="middle" class="blklbl" fill="#fff">GEMM(PV)</text>
+  <rect x="480" y="204" width="140" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--accent2,#3b82f6)"/>
+  <text x="550" y="225" text-anchor="middle" class="blklbl" fill="#fff">GEMM(QK)</text>
+
+  <text x="16" y="264" class="lanelbl" fill="var(--accent,#c15b39)">WG2</text>
+  <rect x="60" y="246" width="140" height="34" fill="url(#fa3pp-idle)" stroke="var(--border-2,#d8d1c0)" stroke-dasharray="4 3"/>
+  <text x="130" y="267" text-anchor="middle" class="sub">pipeline fill</text>
+  <rect x="200" y="246" width="140" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--accent2,#3b82f6)"/>
+  <text x="270" y="267" text-anchor="middle" class="blklbl" fill="#fff">GEMM(QK)</text>
+  <rect x="340" y="246" width="140" height="34" fill="url(#fa3pp-sfu)" stroke="var(--accent,#c15b39)"/>
+  <text x="410" y="267" text-anchor="middle" class="blklbl" fill="var(--accent,#c15b39)">SOFTMAX</text>
+  <rect x="480" y="246" width="140" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--accent2,#3b82f6)"/>
+  <text x="550" y="267" text-anchor="middle" class="blklbl" fill="#fff">GEMM(PV)</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="270" y1="196" x2="270" y2="288" stroke="var(--ink-soft,#555)" stroke-width="1.8" stroke-dasharray="6 3" class="viz-sweep" style="--sweep:60px"/>
+  <polygon points="270,192 263,182 277,182" fill="var(--ink-soft,#555)"/>
+  <text x="270" y="180" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);">now</text>
+</g>
+
+<g data-anim="4">
+  <rect x="630" y="204" width="134" height="76" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.08" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+  <text x="697" y="220" text-anchor="middle" class="phase" fill="var(--good,#2f9e6e)">ping-pong:</text>
+  <text x="697" y="234" text-anchor="middle" class="phase" fill="var(--good,#2f9e6e)">SFU softmax</text>
+  <text x="697" y="248" text-anchor="middle" class="phase" fill="var(--good,#2f9e6e)">(WG1) hides</text>
+  <text x="697" y="262" text-anchor="middle" class="phase" fill="var(--good,#2f9e6e)">behind tensor-</text>
+  <text x="697" y="274" text-anchor="middle" class="phase" fill="var(--good,#2f9e6e)">core GEMM (WG2)</text>
+</g>
+
+
+<g data-anim="5">
+  <text x="16" y="308" class="meterlbl" fill="var(--accent2,#3b82f6)">TENSOR CORES</text>
+  <rect x="160" y="296" width="604" height="16" rx="4" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <rect x="160" y="296" width="574" height="16" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.75"/>
+  <text x="768" y="308" class="sub" text-anchor="end" fill="var(--accent2,#3b82f6)">near-full</text>
+
+  <text x="16" y="332" class="meterlbl" fill="var(--accent,#c15b39)">SFUs</text>
+  <rect x="160" y="320" width="604" height="16" rx="4" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <rect x="160" y="320" width="560" height="16" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.75"/>
+  <text x="768" y="332" class="sub" text-anchor="end" fill="var(--accent,#c15b39)">near-full</text>
+
+  <text x="400" y="352" text-anchor="middle" class="cap">at every timestep, at least one warpgroup feeds each execution unit -&gt; both stay busy</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="16" y="372" width="748" height="150" rx="10" fill="var(--surface,#fff)" fill-opacity="0.4" stroke="var(--border-2,#d8d1c0)" stroke-width="1.4" stroke-dasharray="6 4"/>
+  <text x="32" y="392" class="ghostlbl">FA2 (synchronous mma) -- for comparison, one lane, no overlap</text>
+
+  <rect x="32" y="402" width="220" height="32" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-opacity="0.6"/>
+  <text x="142" y="423" text-anchor="middle" class="blklbl" fill="var(--accent2,#3b82f6)" opacity="0.85">GEMM(QK)</text>
+  <rect x="252" y="402" width="270" height="32" fill="url(#fa3pp-idle)" stroke="var(--muted,#8a8479)"/>
+  <text x="387" y="418" text-anchor="middle" class="blklbl" fill="var(--muted,#8a8479)">SOFTMAX</text>
+  <text x="387" y="431" text-anchor="middle" class="sub">(tensor cores IDLE)</text>
+  <rect x="522" y="402" width="220" height="32" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-opacity="0.6"/>
+  <text x="632" y="423" text-anchor="middle" class="blklbl" fill="var(--accent2,#3b82f6)" opacity="0.85">GEMM(PV)</text>
+
+  <text x="20" y="452" class="sub">tensor cores</text>
+  <rect x="100" y="443" width="642" height="12" rx="3" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <rect x="100" y="443" width="150" height="12" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+  <rect x="250" y="443" width="270" height="12" fill="none"/>
+  <rect x="520" y="443" width="150" height="12" fill="var(--accent2,#3b82f6)" fill-opacity="0.55"/>
+  <text x="387" y="452" text-anchor="middle" style="font:700 9px var(--sans,sans-serif);" fill="var(--warn,#e0a106)">idle dip</text>
+
+  <text x="387" y="478" text-anchor="middle" class="phase" fill="var(--muted,#8a8479)">FA2 cannot overlap: exp stalls the tensor cores</text>
+
+  <text x="32" y="504" class="cap">wgmma is ASYNC on Hopper: issue and continue -&gt; softmax of tile j overlaps QK matmul of tile j+1.</text>
+  <text x="32" y="517" class="cap">FA2's synchronous mma has no such overlap available.</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="16" y="536" width="748" height="58" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="390" y="558" text-anchor="middle" style="font:600 11.5px var(--sans,sans-serif);">Producer stays ahead, consumers ping-pong: SFU-bound softmax hides</text>
+  <text x="390" y="575" text-anchor="middle" style="font:600 11.5px var(--sans,sans-serif);">behind tensor-core GEMM, so both execution units stay busy.</text>
+</g>
+
+</svg>
+<figcaption><b>FA3's software pipeline overlaps data movement and softmax behind matmul.</b> TMA producer warps keep the shared-memory ring buffer a stage ahead of the consumer, and two consumer warpgroups ping-pong so that one runs softmax on the SFU while the other runs wgmma on the tensor cores -- keeping both utilization meters near full, unlike FA2's synchronous single lane where the tensor cores idle during every softmax.</figcaption>
+</figure>

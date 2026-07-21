@@ -1,0 +1,122 @@
+<figure class="viz" id="fig-token-budget-allocator">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 460" role="img" aria-label="A single horizontal bar for the effective window partitioned into system and tools, retrieved code, conversation history, scratchpad, and a reserved output tail, with pinned segments marked by a lock icon; the history segment overflows its cap and the oldest unpinned item is evicted and replaced by an elided breadcrumb; below, an escalation strip orders evict, truncate, and compact by increasing cost.">
+  <defs>
+    <marker id="tb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+    <pattern id="tb-hatch" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="var(--border-2)" stroke-width="3"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-token-budget-allocator .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-token-budget-allocator .seg-h{ font:700 11px var(--sans,sans-serif); }
+    #fig-token-budget-allocator .seg-sub{ font:500 9.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-token-budget-allocator .note{ font:600 11px var(--sans,sans-serif); }
+    #fig-token-budget-allocator .step{ font:700 11px var(--sans,sans-serif); }
+    #fig-token-budget-allocator .tag{ font:600 10px var(--mono,monospace); }
+    #fig-token-budget-allocator text{ fill: var(--ink-soft); }
+    #fig-token-budget-allocator .cell-bg{ fill: var(--surface); stroke: var(--border-2); stroke-width: 1.4; }
+    #fig-token-budget-allocator .cell-fill{ fill: var(--accent); }
+    #fig-token-budget-allocator .cell-fill-hist{ fill: var(--warn); }
+    #fig-token-budget-allocator .callout-bg{ fill: var(--surface); stroke: var(--border-2); stroke-width: 1; }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Token budgeting: manage the window like a memory allocator</text>
+
+  <g data-anim="1">
+
+    <text x="30" y="52" class="seg-h">W_eff = 32K</text>
+
+    <rect x="30"  y="60" width="46"  height="70" class="cell-bg"/>
+    <text x="53"  y="82" text-anchor="middle" class="seg-h" font-size="9.5">sys+</text>
+    <text x="53"  y="93" text-anchor="middle" class="seg-h" font-size="9.5">tools</text>
+    <text x="53"  y="107" text-anchor="middle" class="seg-sub">2K</text>
+    <rect x="34" y="64" width="38" height="18" fill="var(--accent)" opacity="0.65"/>
+    <g transform="translate(60,113)">
+      <path d="M -4 0 a4 4 0 0 1 8 0 v3 h-8 z" fill="none" stroke="var(--ink-soft)" stroke-width="1.4"/>
+      <rect x="-5" y="3" width="10" height="8" rx="1.5" fill="var(--ink-soft)"/>
+    </g>
+
+    <rect x="80"  y="60" width="120" height="70" class="cell-bg"/>
+    <text x="140" y="86" text-anchor="middle" class="seg-h">retrieved code</text>
+    <text x="140" y="100" text-anchor="middle" class="seg-sub">8K cap</text>
+    <rect x="84" y="64" width="80" height="18" fill="var(--accent)" opacity="0.65"/>
+
+    <rect x="204" y="60" width="260" height="70" class="cell-bg"/>
+    <text x="334" y="86" text-anchor="middle" class="seg-h">conversation history</text>
+    <text x="334" y="100" text-anchor="middle" class="seg-sub">16K cap -- elastic</text>
+    <rect x="208" y="64" width="252" height="18" fill="var(--warn)" opacity="0.75"/>
+
+    <rect x="468" y="60" width="46" height="70" class="cell-bg"/>
+    <text x="491" y="90" text-anchor="middle" class="seg-h" font-size="9.5">scratch</text>
+    <text x="491" y="104" text-anchor="middle" class="seg-sub">2K</text>
+    <rect x="472" y="64" width="26" height="18" fill="var(--accent)" opacity="0.65"/>
+    <g transform="translate(491,113)">
+      <path d="M -4 0 a4 4 0 0 1 8 0 v3 h-8 z" fill="none" stroke="var(--ink-soft)" stroke-width="1.4"/>
+      <rect x="-5" y="3" width="10" height="8" rx="1.5" fill="var(--ink-soft)"/>
+    </g>
+
+    <rect x="518" y="60" width="180" height="70" class="cell-bg" fill="url(#tb-hatch)"/>
+    <text x="608" y="86" text-anchor="middle" class="seg-h">output headroom</text>
+    <text x="608" y="100" text-anchor="middle" class="seg-sub">4K -- keep empty</text>
+
+    <text x="30" y="147" class="seg-sub">lock icon = pinned (system prompt, current task, active plan)</text>
+  </g>
+
+  <g data-anim="2">
+
+    <line x1="518" y1="52" x2="518" y2="138" stroke="var(--ink-soft)" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="514" y="45" text-anchor="end" class="tag">global ceiling = W_eff - output_reserve</text>
+  </g>
+
+  <g data-anim="3">
+
+    <rect x="204" y="170" width="260" height="70" class="cell-bg" stroke="var(--warn)" stroke-width="1.6"/>
+    <text x="334" y="196" text-anchor="middle" class="seg-h">conversation history</text>
+    <text x="334" y="210" text-anchor="middle" class="seg-sub">overflow: fill &gt; 16K cap</text>
+    <rect x="208" y="174" width="252" height="18" fill="var(--warn)" opacity="0.85"/>
+    <rect x="380" y="174" width="80" height="18" fill="var(--warn)" opacity="0.35"/>
+
+    <line x1="230" y1="174" x2="230" y2="250" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+    <text x="234" y="266" class="note" fill="var(--warn)">oldest unpinned item dropped</text>
+
+    <rect x="204" y="278" width="150" height="26" rx="5" class="callout-bg"/>
+    <text x="279" y="295" text-anchor="middle" class="tag">[elided 1,240 tokens]</text>
+  </g>
+
+  <g data-anim="4">
+    <line x1="464" y1="205" x2="494" y2="205" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#tb-arrow)"/>
+    <rect x="498" y="182" width="230" height="46" rx="7" class="callout-bg" stroke="var(--warn)"/>
+    <text x="613" y="201" text-anchor="middle" class="note" fill="var(--warn)">total &gt; ceiling --</text>
+    <text x="613" y="216" text-anchor="middle" class="note" fill="var(--warn)" font-size="10">squeeze largest elastic segment</text>
+  </g>
+
+  <g data-anim="5">
+    <text x="30" y="345" class="seg-h">Overflow handling, in cost order:</text>
+
+    <rect x="30"  y="358" width="200" height="46" rx="7" class="cell-bg" stroke="var(--good)"/>
+    <text x="130" y="378" text-anchor="middle" class="step" fill="var(--good)">1. EVICT</text>
+    <text x="130" y="393" text-anchor="middle" class="seg-sub">cheap -- no model call</text>
+
+    <line x1="230" y1="381" x2="266" y2="381" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+
+    <rect x="270" y="358" width="220" height="46" rx="7" class="cell-bg" stroke="var(--warn)"/>
+    <text x="380" y="378" text-anchor="middle" class="step" fill="var(--warn)">2. TRUNCATE</text>
+    <text x="380" y="393" text-anchor="middle" class="seg-sub">cut over-long single results</text>
+
+    <line x1="490" y1="381" x2="526" y2="381" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#tb-arrow)"/>
+
+    <rect x="530" y="358" width="220" height="46" rx="7" class="cell-bg" stroke="var(--accent)"/>
+    <text x="640" y="378" text-anchor="middle" class="step" fill="var(--accent)">3. COMPACT</text>
+    <text x="640" y="393" text-anchor="middle" class="seg-sub">costs a model call</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="30" y="418" width="720" height="26" rx="6" class="callout-bg"/>
+    <text x="390" y="435" text-anchor="middle" class="note">pin the load-bearing pieces; let the elastic segments absorb the squeeze; never silently drop context</text>
+  </g>
+</svg>
+<figcaption><b>Partition the effective window into per-segment budgets and enforce them like a memory allocator.</b> Pinned segments (system prompt, current task, active plan) are protected by a lock; the elastic conversation-history segment absorbs most growth and, on overflow, drops the oldest unpinned item behind an explicit breadcrumb rather than corrupting context silently; a reserved output tail and a global ceiling backstop guarantee the hard API limit is never exceeded; overflow is handled cheapest-first: evict, then truncate, then compact.</figcaption>
+</figure>

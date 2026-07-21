@@ -1,0 +1,121 @@
+<figure class="viz" id="fig-prompt-cache-prefix-stability">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 400" role="img" aria-label="Two request tapes. The GOOD tape keeps volatile content at the end, so the cache breakpoint sits just before the final new-turn block and most of the request is reused from cache. The BAD tape puts a timestamp at the very front, so the first differing byte is at position zero and the entire request is a cache miss billed at full price.">
+  <defs>
+    <marker id="pc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-prompt-cache-prefix-stability .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability .tape-h{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability .seg{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability .seg-sub{ font:500 9px var(--mono,monospace); fill:var(--muted); }
+    #fig-prompt-cache-prefix-stability .tag{ font:700 10.5px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability .note{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability .rule{ font:700 12px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability .legend{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-prompt-cache-prefix-stability text{ fill: var(--ink-soft); }
+    #fig-prompt-cache-prefix-stability .cached{ fill: var(--good); }
+    #fig-prompt-cache-prefix-stability .miss{ fill: var(--accent); }
+    #fig-prompt-cache-prefix-stability .callout-bg{ fill: var(--surface); stroke: var(--border-2); stroke-width: 1; }
+    #fig-prompt-cache-prefix-stability .blk-stroke{ stroke: var(--border-2); stroke-width: 1.2; }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Prefix caching: the cache hit ends at the first byte that differs</text>
+
+  <g data-anim="1">
+    <text x="20" y="52" class="tape-h" fill="var(--good)">GOOD -- volatile content moved to the end</text>
+
+
+    <rect x="20"  y="62" width="90"  height="40" rx="5" class="cached" opacity="0.20" stroke="var(--good)" stroke-width="1.2"/>
+    <text x="65"  y="80" text-anchor="middle" class="seg">system</text>
+    <text x="65"  y="93" text-anchor="middle" class="seg">prompt</text>
+
+    <rect x="114" y="62" width="100" height="40" rx="5" class="cached" opacity="0.20" stroke="var(--good)" stroke-width="1.2"/>
+    <text x="164" y="80" text-anchor="middle" class="seg">tool</text>
+    <text x="164" y="93" text-anchor="middle" class="seg">schemas</text>
+
+    <rect x="218" y="62" width="130" height="40" rx="5" class="cached" opacity="0.20" stroke="var(--good)" stroke-width="1.2"/>
+    <text x="283" y="80" text-anchor="middle" class="seg">retrieved</text>
+    <text x="283" y="93" text-anchor="middle" class="seg">(stable)</text>
+
+    <rect x="352" y="62" width="140" height="40" rx="5" class="cached" opacity="0.20" stroke="var(--good)" stroke-width="1.2"/>
+    <text x="422" y="80" text-anchor="middle" class="seg">history ...</text>
+    <text x="422" y="93" text-anchor="middle" class="seg-sub">~12k tok (illus.)</text>
+
+
+    <rect x="496" y="62" width="88" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="540" y="80" text-anchor="middle" class="seg">new turn</text>
+    <text x="540" y="93" text-anchor="middle" class="seg-sub">~1.5k tok</text>
+
+
+    <line x1="20" y1="112" x2="492" y2="112" stroke="var(--good)" stroke-width="3"/>
+    <text x="256" y="128" text-anchor="middle" class="tag" fill="var(--good)">cached prefix -- reused (approx 10x cheaper)</text>
+
+    <line x1="492" y1="55" x2="492" y2="112" stroke="var(--ink-soft)" stroke-width="2"/>
+    <text x="492" y="45" text-anchor="middle" class="tag">cache breakpoint</text>
+    <text x="492" y="147" text-anchor="middle" class="seg-sub">first differing byte</text>
+
+    <line x1="540" y1="112" x2="584" y2="112" stroke="var(--accent)" stroke-width="3"/>
+    <text x="562" y="128" text-anchor="middle" class="tag" fill="var(--accent)">prefilled fresh</text>
+    <text x="562" y="141" text-anchor="middle" class="tag" fill="var(--accent)">(full price)</text>
+
+
+    <rect x="352" y="163" width="140" height="30" rx="5" class="callout-bg"/>
+    <text x="422" y="177" text-anchor="middle" class="seg-sub" font-size="8.5">compaction rewrites the</text>
+    <text x="422" y="188" text-anchor="middle" class="seg-sub" font-size="8.5">head -&gt; busts the cache</text>
+  </g>
+
+  <g data-anim="2">
+    <line x1="20" y1="216" x2="760" y2="216" stroke="var(--border-2)" stroke-width="1"/>
+
+    <text x="20" y="240" class="tape-h" fill="var(--accent)">BAD -- a volatile token sits at the very top</text>
+
+
+    <rect x="20"  y="250" width="86" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="63" y="266" text-anchor="middle" class="seg" font-size="9">"14:32:07</text>
+    <text x="63" y="277" text-anchor="middle" class="seg" font-size="9">req-id, turn"</text>
+
+    <rect x="110" y="250" width="90" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="155" y="268" text-anchor="middle" class="seg">system</text>
+    <text x="155" y="281" text-anchor="middle" class="seg">prompt</text>
+
+    <rect x="204" y="250" width="90" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="249" y="268" text-anchor="middle" class="seg">tool</text>
+    <text x="249" y="281" text-anchor="middle" class="seg">schemas</text>
+
+    <rect x="298" y="250" width="130" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="363" y="268" text-anchor="middle" class="seg">retrieved</text>
+    <text x="363" y="281" text-anchor="middle" class="seg">(stable)</text>
+
+    <rect x="432" y="250" width="140" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="502" y="268" text-anchor="middle" class="seg">history ...</text>
+    <text x="502" y="281" text-anchor="middle" class="seg-sub">~12k tok (illus.)</text>
+
+    <rect x="576" y="250" width="88" height="40" rx="5" class="miss" opacity="0.28" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="620" y="268" text-anchor="middle" class="seg">new turn</text>
+    <text x="620" y="281" text-anchor="middle" class="seg-sub">~1.5k tok</text>
+
+
+    <line x1="20" y1="245" x2="20" y2="300" stroke="var(--ink-soft)" stroke-width="2"/>
+
+    <line x1="20" y1="300" x2="664" y2="300" stroke="var(--accent)" stroke-width="3"/>
+    <text x="342" y="316" text-anchor="middle" class="tag" fill="var(--accent)">cache MISS -- full price every turn</text>
+    <text x="20" y="292" text-anchor="start" class="seg-sub">breakpoint = byte 0</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="20" y="335" width="744" height="26" rx="6" class="callout-bg"/>
+    <text x="392" y="352" text-anchor="middle" class="note">the cache hit ends at the first byte that differs -- move all volatile content to the end</text>
+  </g>
+
+  <g data-anim="4">
+    <rect x="20" y="372" width="14" height="14" rx="3" class="cached" opacity="0.5" stroke="var(--good)" stroke-width="1"/>
+    <text x="40" y="383" class="legend">cached (discount)</text>
+    <rect x="180" y="372" width="14" height="14" rx="3" class="miss" opacity="0.5" stroke="var(--accent)" stroke-width="1"/>
+    <text x="200" y="383" class="legend">prefilled / miss (full price)</text>
+  </g>
+</svg>
+<figcaption><b>Prefix caching reuses the KV cache for every byte that matches the previous request; the hit ends exactly at the first byte that differs.</b> Order context most-stable-first (system, tools, retrieved, history) and push volatile bits (timestamps, request IDs, turn counters) into the final new-turn block: the GOOD tape reuses almost everything, while the BAD tape's volatile token at the top pushes the breakpoint to byte zero and turns every turn into a full-price cache miss.</figcaption>
+</figure>

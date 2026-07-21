@@ -69,6 +69,8 @@ $$
 
 Perplexity has the intuitive interpretation of the effective branching factor: a perplexity of 10 means the model is on average as uncertain as a uniform distribution over 10 equiprobable tokens. Well-pretrained 70B-class models reach perplexities on the order of 3–8 on standard benchmarks such as WikiText-103, depending on tokenizer and evaluation setup. (Always compare perplexity numbers only within the same tokenizer, as vocabulary size strongly affects the value.)
 
+{{fig:ptobj-crossentropy-entropy-floor}}
+
 ---
 
 ## Teacher Forcing and the Causal Mask
@@ -147,6 +149,8 @@ def compute_lm_loss(logits: torch.Tensor, tokens: torch.Tensor) -> torch.Tensor:
 ```
 
 This is the entirety of the loss function for standard causal language modeling. Everything else — masking, packing, weighting — is an elaboration of this core.
+
+{{fig:ptobj-teacher-forcing-shift}}
 
 ### What `F.cross_entropy` Actually Computes
 
@@ -329,6 +333,8 @@ def build_packed_loss_mask(
 
     return mask   # (B, T): 1 = train on this position, 0 = ignore
 ```
+
+{{fig:ptobj-packing-loss-mask}}
 
 ---
 
@@ -610,6 +616,8 @@ UL2 defines three classes of denoising modes, labeled with special tokens:
 During pretraining, the model sees all three modes with different sampling probabilities. At inference, users prefix their input with the appropriate sentinel to select the mode. **UL2 20B** (2022) achieved state-of-the-art on zero-shot generation benchmarks while retaining strong performance on classification, outperforming both T5 (span corruption only) and GPT-3 (causal LM only) at similar parameter counts.
 
 **Flan-UL2** (2023) further instruction-tuned the UL2 checkpoint and was released publicly.
+
+{{fig:ptobj-ul2-denoising-modes}}
 
 ### Prefix Language Modeling
 
