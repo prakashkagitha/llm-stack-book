@@ -44,6 +44,8 @@ The Act classifies AI systems into four tiers:
 
 Most LLM applications land in **limited-risk** if deployed for open consumer use, but many enterprise applications (hiring tools, medical triage, credit scoring) tip into **high-risk**, triggering a heavy compliance programme.
 
+{{fig:gov-eu-ai-act-risk-pyramid}}
+
 ---
 
 ## General-Purpose AI (GPAI) Model Obligations
@@ -101,6 +103,8 @@ For models above $10^{25}$ FLOPs, four *additional* obligations apply:
 2. **Incident reporting** — Report serious incidents and possible corrective measures to the European AI Office within two days of becoming aware.
 3. **Cybersecurity measures** — Protect the model and its infrastructure against adversarial attacks.
 4. **Energy efficiency reporting** — Report training energy consumption (in MWh) and inferred operational energy when known.
+
+{{fig:gov-flop-systemic-risk-gate}}
 
 ---
 

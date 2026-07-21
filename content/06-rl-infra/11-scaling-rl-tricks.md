@@ -65,6 +65,8 @@ The cleanest fix: make the generation batch *larger than the number of concurren
 
 In veRL/OpenRLHF this is just: don't shard prompts 1:1 to slots; pour the whole rollout batch into the inference pool and let the scheduler balance. The practical constraint is the **KV-cache budget** ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)): more concurrent long sequences need more cache pages.
 
+{{fig:scalingrl-gen-bubble-oversubscribe}}
+
 ### Lever 2: length-aware dispatch across engines
 
 When you have $K$ inference engines (data-parallel replicas of the policy), how you *partition* prompts across them matters. If you round-robin, one engine may by bad luck receive several outliers and become the straggler that gates the whole step. You cannot know lengths in advance, but you can balance *adaptively*: pull from a shared queue rather than pre-partitioning, so a fast engine that finishes its short sequences immediately grabs the next prompt. A shared global queue is strictly better than static per-engine assignment for heavy-tailed work — it is the classic "single queue, many servers" result from queueing theory.
@@ -192,6 +194,8 @@ The throughput consequence is double-edged. *Statistically* it is a huge win: ev
 
 !!! warning "Common pitfall: dynamic sampling on a synchronous engine"
     If you bolt DAPO's dynamic sampling onto a synchronous "generate-batch-then-train" loop, your step time becomes a random variable that *increases* as the model improves (more groups get filtered, so you oversample more). You will see step times creep up and GPU utilization sag mid-run and blame the optimizer. The fix is architectural: dynamic sampling *requires* a decoupled, continuously-fed generation pool so the extra sampling overlaps training instead of serializing with it.
+
+{{fig:scalingrl-dynamic-sampling-zero-gradient}}
 
 ### Over-long filtering & length control
 

@@ -1,0 +1,102 @@
+<figure class="viz" id="fig-mfu-hfu-flop-accounting">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 400" role="img" aria-label="Two stacked FLOP-accounting bars per token: MFU counts forward 2P plus backward 4P equals 6P useful FLOPs, while HFU adds a recomputed forward of 2P for gradient checkpointing, totaling 8P FLOPs issued to the GPU, four thirds of the MFU bar.">
+<style>
+  #fig-mfu-hfu-flop-accounting text{ fill:var(--ink-soft); }
+  #fig-mfu-hfu-flop-accounting .h1{ font:700 13px var(--sans,sans-serif); }
+  #fig-mfu-hfu-flop-accounting .seg{ font:700 11.5px var(--sans,sans-serif); fill:var(--surface); }
+  #fig-mfu-hfu-flop-accounting .seglbl{ font:600 10px var(--sans,sans-serif); }
+  #fig-mfu-hfu-flop-accounting .mono{ font:600 11px var(--mono,monospace); }
+  #fig-mfu-hfu-flop-accounting .small{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-mfu-hfu-flop-accounting .card{ fill:var(--surface); stroke:var(--border-2); stroke-width:1.1; }
+  #fig-mfu-hfu-flop-accounting .bracket{ fill:none; stroke:var(--v-stroke); stroke-width:1.3; }
+  #fig-mfu-hfu-flop-accounting .hatch{ fill:url(#mfu-hatch); }
+</style>
+<defs>
+  <pattern id="mfu-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <rect width="8" height="8" fill="var(--warn,#e0a106)" fill-opacity="0.55"/>
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--surface)" stroke-width="3"/>
+  </pattern>
+</defs>
+
+
+<text x="20" y="24" class="h1">FLOPs per token (P = model parameters, symbolic)</text>
+
+
+<g data-anim="1">
+  <text x="20" y="52" class="h1" fill="var(--accent)">MFU  --  useful model work</text>
+
+  
+  <rect x="20" y="62" width="130" height="34" class="v-accent" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="85" y="83" text-anchor="middle" class="seg">forward 2P</text>
+
+  
+  <rect x="150" y="62" width="260" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="280" y="79" text-anchor="middle" class="seg">backward 4P</text>
+  <text x="280" y="92" text-anchor="middle" class="seg" font-size="8.4">(~2x forward: grads wrt inputs AND weights)</text>
+
+  
+  <path d="M20 106 L20 112 L410 112 L410 106" class="bracket"/>
+  <text x="215" y="127" text-anchor="middle" class="mono">= 6P FLOPs/token</text>
+
+  <text x="430" y="80" class="small">attention adds</text>
+  <text x="430" y="92" class="small">12 x n_layers x d_model x S per token,</text>
+  <text x="430" y="104" class="small">secondary at moderate S</text>
+
+  
+  <rect x="600" y="58" width="160" height="60" rx="6" class="card"/>
+  <text x="610" y="76" class="small">MFU =</text>
+  <text x="610" y="92" class="mono" font-size="9.5">(6P x tok/s)</text>
+  <line x1="610" y1="98" x2="748" y2="98" class="v-grid"/>
+  <text x="610" y="112" class="mono" font-size="9.5">peak cluster FLOP/s</text>
+</g>
+
+
+<g data-anim="2">
+  <text x="20" y="164" class="h1" fill="var(--accent)">HFU  --  all FLOPs issued to the GPU</text>
+
+  <rect x="20" y="174" width="130" height="34" class="v-accent" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="85" y="195" text-anchor="middle" class="seg">forward 2P</text>
+
+  
+  <rect x="150" y="174" width="130" height="34" class="hatch" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="215" y="192" text-anchor="middle" class="seg" fill="var(--ink-soft)">recomputed</text>
+  <text x="215" y="203" text-anchor="middle" class="seg" fill="var(--ink-soft)" font-size="9">forward +2P</text>
+
+  
+  <rect x="280" y="174" width="260" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="410" y="195" text-anchor="middle" class="seg">backward 4P</text>
+
+  
+  <line x1="410" y1="168" x2="410" y2="212" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
+  <text x="215" y="222" text-anchor="middle" class="small">hatched = paid for, not new (checkpointing)</text>
+  <text x="410" y="222" text-anchor="middle" class="small">6P mark (Bar A's end)</text>
+
+  
+  <path d="M20 238 L20 244 L540 244 L540 238" class="bracket"/>
+  <text x="280" y="259" text-anchor="middle" class="mono">= 8P FLOPs/token = (4/3) x 6P</text>
+
+  
+  <rect x="600" y="164" width="160" height="70" rx="6" class="card"/>
+  <text x="610" y="182" class="small">HFU =</text>
+  <text x="610" y="196" class="mono" font-size="9">(issued x tok/s)</text>
+  <line x1="610" y1="202" x2="748" y2="202" class="v-grid"/>
+  <text x="610" y="216" class="mono" font-size="9">peak</text>
+  <text x="610" y="228" class="small">= MFU x (issued/model)</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="20" y="272" width="740" height="34" rx="8" class="v-accent" fill-opacity="0.14" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="390" y="293" text-anchor="middle" class="mono" fill="var(--accent)" font-size="11.5">HFU &gt;= MFU always -- recompute trades memory for extra issued FLOPs that raise HFU but not useful throughput</text>
+</g>
+
+
+<g data-anim="4">
+  <text x="20" y="326" class="small">Targets on H100: dense MFU 35-55%, HFU 55-70%.  MFU below 25% signals a misconfiguration</text>
+  <text x="20" y="340" class="small">(bubble too high, TP spanning nodes, micro-batch too small, checkpointing overhead).</text>
+</g>
+
+</svg>
+<figcaption><b>MFU counts only the 6P FLOPs/token that do useful forward and backward work; HFU also counts the extra 2P from recomputing activations under gradient checkpointing, giving 8P issued.</b> Because HFU's numerator always includes everything MFU's does plus more, HFU never falls below MFU — the gap between them is the price paid in wasted-but-necessary FLOPs to keep activation memory in budget.</figcaption>
+</figure>

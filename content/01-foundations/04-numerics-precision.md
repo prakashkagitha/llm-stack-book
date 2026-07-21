@@ -72,6 +72,8 @@ The key visual: **bf16 is the top 16 bits of fp32**. They share the same 8-bit e
 
 **Unit in the last place** (ULP) is the spacing between adjacent representable numbers at any given magnitude. For a normal fp32 number with magnitude around 1.0, 1 ULP ≈ $1.2 \times 10^{-7}$. For a number around $10^4$, 1 ULP ≈ $1.2 \times 10^{-3}$ — precision scales with magnitude.
 
+{{fig:float-number-line}}
+
 ---
 
 ## Dynamic Range vs. Precision: The Core Tradeoff
@@ -150,6 +152,8 @@ $$
 $$
 
 Because $z_j - m \leq 0$ for all $j$, the exponentials are in $[0, 1]$ — no overflow possible, and underflow is graceful (a very negative $z_j - m$ contributes essentially zero to the sum, which is correct behavior).
+
+{{fig:stable-softmax-two-lanes}}
 
 ```python
 import torch

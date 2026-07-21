@@ -201,6 +201,8 @@ The key architectural difference from the projector approach:
 | Few-shot image interleaving | Awkward — prepend all images | Natural — interleaved in context |
 | Fine-tuning complexity | Straightforward | More complex; two parameter groups |
 
+{{fig:vlm-projector-vs-crossattn}}
+
 Flamingo's cross-attention design enables *interleaved* image–text few-shot inference natively: you can pass "image1, caption1, image2, caption2, image3, ?" as a single context. The cross-attention layers route each text token to the most recently preceding image (via a masking strategy in the attention). This is harder to achieve with projectors because all image tokens compete for context space.
 
 ```python
@@ -285,6 +287,8 @@ if __name__ == "__main__":
 ## The Visual Token Explosion
 
 The most important practical concern in VLM engineering is the **visual token explosion**: the number of tokens consumed by one image scales as $(H/p)^2$ where $p$ is the patch size. A $336 \times 336$ image with $14 \times 14$ patches gives $576$ tokens. Scale to $672 \times 672$ and you get $2304$ tokens. These tokens sit in the LLM's context and cost $O(N^2)$ attention in the prefill phase.
+
+{{fig:vlm-token-explosion}}
 
 !!! example "Worked Example: Token Count and Memory Cost"
 

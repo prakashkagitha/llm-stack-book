@@ -118,6 +118,8 @@ class TemperatureProcessor:
 
     At $T = 0.5$, the model is roughly 7.4× more likely to pick $A$ than $B$; at $T = 2$, only 1.6× more likely. A small change in temperature creates large changes in practice.
 
+{{fig:sampling-temperature-reshapes-distribution}}
+
 ### Temperature and the Training Distribution
 
 A crucial subtlety: the model was trained with teacher-forcing at $T = 1$. When you use $T < 1$ at inference, you are sampling from a distribution that is *sharper* than what the model saw during training. This is usually fine — the probabilities just become more concentrated. When you use $T > 1$, you are sampling tokens the model considers unlikely, which can produce creative but also hallucinated or incoherent text.
@@ -207,6 +209,8 @@ class MinPProcessor:
         logits = logits.masked_fill(probs < threshold, float('-inf'))
         return logits
 ```
+
+{{fig:sampling-truncation-family-comparison}}
 
 ## Typical Sampling
 

@@ -1,0 +1,141 @@
+<figure class="viz" id="fig-scalingrl-gen-bubble-oversubscribe">
+<svg viewBox="0 0 800 604" role="img" aria-label="Two stacked Gantt panels on a shared time axis. Top: one shard per engine, five short sequences finish quickly and idle while one outlier runs to L_max, so generation efficiency eta collapses to L_bar over L_max. Bottom: oversubscribing the same six engines with a deep prompt queue lets continuous batching refill every freed slot, packing each lane with back-to-back prompts until only a small tail sliver at the very end is idle.">
+  <defs>
+    <pattern id="gbo-hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="var(--muted,#94a3b8)" stroke-width="2"/>
+    </pattern>
+    <marker id="gbo-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#2563eb)"/>
+    </marker>
+    <marker id="gbo-axis-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#94a3b8)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-scalingrl-gen-bubble-oversubscribe text { font-family: var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-scalingrl-gen-bubble-oversubscribe .panel-title { font: 700 13px var(--sans,sans-serif); }
+    #fig-scalingrl-gen-bubble-oversubscribe .eng-lbl { font: 600 10.5px var(--sans,sans-serif); }
+    #fig-scalingrl-gen-bubble-oversubscribe .axis-lbl { font: 400 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-scalingrl-gen-bubble-oversubscribe .note { font: 400 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-scalingrl-gen-bubble-oversubscribe .callout { font: 600 11px var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-scalingrl-gen-bubble-oversubscribe .idle-lbl { font: 600 10.5px var(--sans,sans-serif); fill: var(--warn,#c2410c); }
+    #fig-scalingrl-gen-bubble-oversubscribe .mono { font-family: var(--mono,monospace); font-size: 11px; }
+    #fig-scalingrl-gen-bubble-oversubscribe .legend-lbl { font: 500 10px var(--sans,sans-serif); }
+  </style>
+
+  <rect x="520" y="17" width="14" height="11" rx="2" fill="var(--accent,#2563eb)"/>
+  <text x="538" y="26" class="legend-lbl">useful decode work</text>
+  <rect x="646" y="17" width="14" height="11" rx="2" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.8"/>
+  <text x="664" y="26" class="legend-lbl">idle bubble</text>
+
+  <text x="16" y="50" class="panel-title">Naive: one shard per engine (eta = mean(L)/max(L))</text>
+
+  <line x1="279" y1="242" x2="279" y2="254" stroke="var(--muted,#94a3b8)" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <text x="279" y="266" text-anchor="middle" class="axis-lbl">L_bar</text>
+
+  <text x="95" y="79" text-anchor="end" class="eng-lbl">Engine 1</text>
+  <rect x="110" y="66" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="205" y="66" width="445" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="111" text-anchor="end" class="eng-lbl">Engine 2</text>
+  <rect x="110" y="98" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="205" y="98" width="445" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="141" text-anchor="end" class="eng-lbl">Engine 3</text>
+  <rect x="110" y="128" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="205" y="128" width="445" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <g>
+    <rect x="330" y="79" width="220" height="30" rx="5" fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+    <text x="440" y="91" text-anchor="middle" class="callout">bubble: idle GPUs</text>
+    <text x="440" y="103" text-anchor="middle" class="callout">waiting on the tail</text>
+  </g>
+
+  <text x="95" y="171" text-anchor="end" class="eng-lbl">Engine 4</text>
+  <rect x="110" y="158" width="540" height="22" fill="var(--accent,#2563eb)"/>
+  <text x="380" y="172" text-anchor="middle" class="note" fill="var(--surface,#fff)" font-weight="700">the outlier: one 16k-token trace</text>
+
+  <text x="95" y="201" text-anchor="end" class="eng-lbl">Engine 5</text>
+  <rect x="110" y="188" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="205" y="188" width="445" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="231" text-anchor="end" class="eng-lbl">Engine 6</text>
+  <rect x="110" y="218" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="205" y="218" width="445" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <line x1="650" y1="60" x2="650" y2="240" stroke="var(--muted,#94a3b8)" stroke-width="1.3" stroke-dasharray="4 3"/>
+
+  <line x1="110" y1="248" x2="650" y2="248" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+  <line x1="110" y1="242" x2="110" y2="254" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+  <line x1="650" y1="242" x2="650" y2="254" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+  <text x="380" y="266" text-anchor="middle" class="axis-lbl">L_max (slowest sequence)</text>
+
+  <rect x="60" y="278" width="680" height="42" rx="6" fill="var(--surface-3,#f5f3ff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <text x="400" y="297" text-anchor="middle" class="mono">eta_gen = sum(L_i) / (B * L_max) = L_bar / L_max</text>
+  <text x="400" y="313" text-anchor="middle" class="note">one long outlier drops eta far below 1</text>
+
+  <line x1="16" y1="336" x2="784" y2="336" stroke="var(--border-2,#e2e8f0)" stroke-width="1"/>
+
+  <text x="16" y="360" class="panel-title">Oversubscribe + continuous batching: deep queue refills freed slots (eta -&gt; ~1)</text>
+
+  <rect x="18" y="368" width="52" height="6" rx="1.5" fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <rect x="18" y="376" width="52" height="6" rx="1.5" fill="var(--surface,#fff)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+  <rect x="18" y="384" width="52" height="6" rx="1.5" fill="var(--surface-3,#eff6ff)" stroke="var(--accent,#2563eb)" stroke-width="1.3"/>
+  <text x="76" y="379" class="note">prompt queue</text>
+
+  <path d="M96 391 C 150 393, 180 400, 205 409" fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.6" marker-end="url(#gbo-arrow)"/>
+  <path d="M96 393 C 140 432, 175 462, 205 469" fill="none" stroke="var(--accent,#2563eb)" stroke-width="1.6" marker-end="url(#gbo-arrow)"/>
+
+  <text x="95" y="411" text-anchor="end" class="eng-lbl">Engine 1</text>
+  <rect x="110" y="398" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="207.5" y="398" width="115" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="325" y="398" width="90" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="417.5" y="398" width="120" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="540" y="398" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="635" y="398" width="15" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="441" text-anchor="end" class="eng-lbl">Engine 2</text>
+  <rect x="110" y="428" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="207.5" y="428" width="115" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="325" y="428" width="90" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="417.5" y="428" width="120" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="540" y="428" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="635" y="428" width="15" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="471" text-anchor="end" class="eng-lbl">Engine 3</text>
+  <rect x="110" y="458" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="207.5" y="458" width="115" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="325" y="458" width="90" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="417.5" y="458" width="120" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="540" y="458" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="635" y="458" width="15" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="501" text-anchor="end" class="eng-lbl">Engine 4</text>
+  <rect x="110" y="488" width="540" height="22" fill="var(--accent,#2563eb)"/>
+  <text x="380" y="501" text-anchor="middle" class="note" fill="var(--surface,#fff)" font-weight="700">still the one 16k-token outlier</text>
+
+  <text x="95" y="531" text-anchor="end" class="eng-lbl">Engine 5</text>
+  <rect x="110" y="518" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="207.5" y="518" width="115" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="325" y="518" width="90" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="417.5" y="518" width="120" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="540" y="518" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="635" y="518" width="15" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <text x="95" y="561" text-anchor="end" class="eng-lbl">Engine 6</text>
+  <rect x="110" y="548" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="207.5" y="548" width="115" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="325" y="548" width="90" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="417.5" y="548" width="120" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="540" y="548" width="95" height="22" fill="var(--accent,#2563eb)"/>
+  <rect x="635" y="548" width="15" height="22" fill="url(#gbo-hatch)" stroke="var(--border-2,#cbd5e1)" stroke-width="0.6"/>
+
+  <line x1="650" y1="392" x2="650" y2="576" stroke="var(--muted,#94a3b8)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="660" y="478" class="idle-lbl">only the final</text>
+  <text x="660" y="492" class="idle-lbl">tail remains</text>
+
+  <line x1="16" y1="580" x2="758" y2="580" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#gbo-axis-arrow)"/>
+  <text x="380" y="596" text-anchor="middle" class="axis-lbl">wall-clock time (same scale, both panels)</text>
+</svg>
+<figcaption><b>Oversubscription turns a mean-over-max tail bubble into a single final-tail sliver.</b> With one shard per engine (top), five engines finish in a fraction of the time and then idle until the outlier reaches <code>L_max</code>, so eta_gen = L_bar/L_max collapses whenever one trace runs long. Pouring the whole rollout batch into the same six engines (bottom) lets continuous batching refill every freed slot from a deep queue, so all but the very last unmatched moment is useful work.</figcaption>
+</figure>

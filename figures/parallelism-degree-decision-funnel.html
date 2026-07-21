@@ -1,0 +1,165 @@
+<figure class="viz" id="fig-parallelism-degree-decision-funnel">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 740 900" role="img" aria-label="A five-step decision funnel narrowing from N total GPUs to a concrete TP, PP, DP configuration: fit the model, pick TP for NVLink, pick PP for the pipeline bubble, set DP from what remains, then tune the batch size.">
+<defs>
+  <marker id="pdf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-accent"/>
+  </marker>
+</defs>
+<style>
+  #fig-parallelism-degree-decision-funnel text{ fill:var(--ink-soft); }
+  #fig-parallelism-degree-decision-funnel .h1{ font:700 15px var(--sans,sans-serif); }
+  #fig-parallelism-degree-decision-funnel .title{ font:700 12.5px var(--sans,sans-serif); fill:var(--accent); }
+  #fig-parallelism-degree-decision-funnel .body{ font:500 11px var(--sans,sans-serif); }
+  #fig-parallelism-degree-decision-funnel .mono{ font:600 10.5px var(--mono,monospace); }
+  #fig-parallelism-degree-decision-funnel .small{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-parallelism-degree-decision-funnel .why{ font:600 9.5px var(--sans,sans-serif); fill:var(--accent); }
+  #fig-parallelism-degree-decision-funnel .badge{ font:700 12px var(--sans,sans-serif); fill:var(--surface); }
+  #fig-parallelism-degree-decision-funnel .band{ fill:var(--surface); stroke:var(--border-2); stroke-width:1.2; }
+  #fig-parallelism-degree-decision-funnel .funnel{ fill:var(--v-grid); opacity:0.5; }
+</style>
+
+
+<g data-anim="1">
+  <rect x="20" y="14" width="700" height="40" rx="8" class="band" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="370" y="39" text-anchor="middle" class="h1">N total GPUs  (illustrative: 32)</text>
+</g>
+
+
+<polygon points="20,54 720,54 700,70 40,70" class="funnel"/>
+
+
+<g data-anim="2">
+  <rect x="40" y="70" width="660" height="150" rx="8" class="band"/>
+  <circle cx="62" cy="94" r="12" class="v-accent"/>
+  <text x="62" y="98" text-anchor="middle" class="badge">1</text>
+  <text x="82" y="98" class="title">FIT THE MODEL</text>
+
+  
+  <text x="82" y="118" class="small">model state per parameter, bf16 + fp32 Adam:</text>
+  <g transform="translate(82,124)">
+    <rect x="0" y="0" width="57" height="20" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <rect x="57" y="0" width="57" height="20" fill="var(--accent2,#3b82f6)" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+    <rect x="114" y="0" width="115" height="20" fill="var(--warn,#e0a106)" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+    <rect x="229" y="0" width="230" height="20" class="v-accent" fill-opacity="0.55" stroke="var(--border-2)" stroke-width="1"/>
+  </g>
+  <text x="82" y="164" class="small">2 (bf16 param)  +  2 (bf16 grad)  +  4 (fp32 master)  +  8 (Adam m,v)  =  16 bytes/param</text>
+
+  <path d="M82 178 L92 178" class="v-accent-s" stroke-width="1.6" marker-end="url(#pdf-arrow)"/>
+  <text x="98" y="182" class="body">need &gt;= ceil(model state / HBM per GPU) GPUs for state alone;</text>
+  <text x="98" y="198" class="body">activations roughly double it -&gt; e.g. 70B needs ~32 GPUs (TP8 x PP4) minimum</text>
+
+  <rect x="580" y="94" width="112" height="42" rx="6" fill="none" class="v-accent-s" stroke-width="1.2"/>
+  <text x="636" y="111" text-anchor="middle" class="why">WHY</text>
+  <text x="636" y="124" text-anchor="middle" class="small">HBM capacity</text>
+  <text x="636" y="135" text-anchor="middle" class="small">is the hard floor</text>
+</g>
+
+<polygon points="40,220 700,220 660,236 80,236" class="funnel"/>
+
+
+<g data-anim="3">
+  <rect x="80" y="236" width="580" height="160" rx="8" class="band"/>
+  <circle cx="102" cy="260" r="12" class="v-accent"/>
+  <text x="102" y="264" text-anchor="middle" class="badge">2</text>
+  <text x="122" y="264" class="title">PICK TP</text>
+
+  <rect x="122" y="274" width="380" height="20" rx="10" class="v-accent" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1"/>
+  <text x="132" y="288" class="small" fill="var(--accent)">TP all-reduce sits on the critical path -&gt; keep on NVLink</text>
+
+  <text x="122" y="312" class="mono">Rule: TP = GPUs per node (or a divisor); never span nodes</text>
+
+  
+  <g transform="translate(122,322)">
+    <rect x="0" y="0" width="230" height="54" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="8" y="14" class="small">one node</text>
+    <g stroke="var(--v-grid)" stroke-width="1">
+      <line x1="18" y1="34" x2="72" y2="34"/><line x1="18" y1="34" x2="72" y2="44"/>
+      <line x1="72" y1="34" x2="126" y2="34"/><line x1="72" y1="44" x2="126" y2="34"/>
+      <line x1="126" y1="34" x2="180" y2="34"/><line x1="126" y1="44" x2="180" y2="34"/>
+    </g>
+    <g class="v-accent">
+      <circle cx="18" cy="34" r="7"/><circle cx="72" cy="34" r="7"/><circle cx="126" cy="34" r="7"/><circle cx="180" cy="34" r="7"/>
+    </g>
+    <g fill="var(--surface)" text-anchor="middle" font="700 7.5px var(--mono,monospace)">
+      <text x="18" y="37">0</text><text x="72" y="37">1</text><text x="126" y="37">2</text><text x="180" y="37">3</text>
+    </g>
+    <text x="115" y="49" text-anchor="middle" class="small">NVLink mesh</text>
+  </g>
+
+  <text x="366" y="352" class="small">TP=1: no comm, max intensity</text>
+  <text x="366" y="366" class="small">TP=4/8: matches node size + NVLink</text>
+  <text x="366" y="380" class="small">TP&gt;8: crosses PCIe/IB -- avoid</text>
+
+  <rect x="530" y="260" width="112" height="42" rx="6" fill="none" class="v-accent-s" stroke-width="1.2"/>
+  <text x="586" y="277" text-anchor="middle" class="why">WHY</text>
+  <text x="586" y="290" text-anchor="middle" class="small">NVLink tier</text>
+  <text x="586" y="301" text-anchor="middle" class="small">~900 GB/s intra-node</text>
+</g>
+
+<polygon points="80,396 660,396 610,412 130,412" class="funnel"/>
+
+
+<g data-anim="4">
+  <rect x="130" y="412" width="480" height="170" rx="8" class="band"/>
+  <circle cx="152" cy="440" r="12" class="v-accent"/>
+  <text x="152" y="444" text-anchor="middle" class="badge">3</text>
+  <text x="172" y="444" class="title">PICK PP</text>
+
+  <rect x="486" y="424" width="110" height="46" rx="6" fill="none" class="v-accent-s" stroke-width="1.2"/>
+  <text x="541" y="441" text-anchor="middle" class="why">WHY</text>
+  <text x="541" y="454" text-anchor="middle" class="small">InfiniBand tier</text>
+  <text x="541" y="465" text-anchor="middle" class="small">inter-node, latency-tolerant</text>
+
+  <rect x="152" y="478" width="428" height="30" rx="10" class="v-accent" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1"/>
+  <text x="162" y="497" class="small" fill="var(--accent)">PP sends are point-to-point, latency-tolerant -&gt; span nodes</text>
+
+  <text x="152" y="526" class="mono">bubble ~ (PP-1) / (PP-1+m)   keep &lt;5% -&gt; m &gt;= 19(PP-1)</text>
+
+  <text x="152" y="550" class="small">interleaved (virtual PP) splits each stage into v chunks,</text>
+  <text x="152" y="564" class="small">dividing the bubble by v -- at the cost of v x more comm</text>
+</g>
+
+<polygon points="130,582 610,582 480,598 260,598" class="funnel"/>
+
+
+<g data-anim="5">
+  <rect x="260" y="598" width="220" height="110" rx="8" class="band"/>
+  <circle cx="282" cy="622" r="12" class="v-accent"/>
+  <text x="282" y="626" text-anchor="middle" class="badge">4</text>
+  <text x="302" y="626" class="title">SET DP</text>
+
+  <text x="282" y="650" class="mono">DP = N / (TP x PP)</text>
+  <text x="282" y="666" class="small">the leftover after TP, PP</text>
+  <text x="282" y="678" class="small">are carved out</text>
+
+  <rect x="282" y="686" width="180" height="16" rx="8" class="v-accent" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1"/>
+  <text x="290" y="697" class="small" fill="var(--accent)" font-size="8.6">ZeRO-1/2 overlaps DP comm -&gt; nearly free</text>
+</g>
+
+<polygon points="260,708 480,708 420,724 320,724" class="funnel"/>
+
+
+<g data-anim="6">
+  <rect x="320" y="724" width="220" height="90" rx="8" class="band"/>
+  <circle cx="342" cy="748" r="12" class="v-accent"/>
+  <text x="342" y="752" text-anchor="middle" class="badge">5</text>
+  <text x="362" y="752" class="title">TUNE BATCH</text>
+
+  <text x="342" y="774" class="small">GBS ~ 1M-4M tokens/step</text>
+  <text x="342" y="790" class="mono" font-size="9.5">GAS = GBS / (MBS x DP x S)</text>
+  <text x="342" y="804" class="small">S = sequence length</text>
+</g>
+
+<polygon points="320,814 540,814 470,830 390,830" class="funnel"/>
+
+
+<g data-anim="7">
+  <rect x="180" y="830" width="380" height="50" rx="25" class="v-accent" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="370" y="852" text-anchor="middle" class="mono" fill="var(--accent)" font-size="12">Example landing point:</text>
+  <text x="370" y="870" text-anchor="middle" class="mono" fill="var(--accent)" font-size="12">TP=8, PP=8, DP=8 -&gt; 512 GPUs</text>
+</g>
+
+</svg>
+<figcaption><b>Choosing a parallelism config is a five-step funnel that narrows from raw GPU count to a concrete TP/PP/DP split.</b> Each step is governed by a different constraint — HBM capacity fixes the minimum GPU count, NVLink bandwidth caps TP, pipeline-bubble math bounds PP, ZeRO overlap makes DP nearly free, and target token throughput sets the batch size — reading top to bottom in the order you should actually decide them.</figcaption>
+</figure>

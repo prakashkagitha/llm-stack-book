@@ -185,6 +185,8 @@ This mirrors how humans tackle complex problems and aligns with the model's toke
 
 ### Standard Chain-of-Thought (CoT)
 
+{{fig:cot-reasoning-scratchpad}}
+
 Wei et al.'s 2022 finding that appending "Let's think step by step" dramatically improves multi-step reasoning is one of the most-cited prompting results. The mechanism is not mysterious: by generating intermediate steps, the model creates a scratchpad that subsequent tokens can attend to. Each step reduces the cognitive distance to the answer.
 
 The formal view: the model computes
@@ -214,6 +216,8 @@ A: Let's think step by step."""
 ```
 
 ### Self-Consistency
+
+{{fig:self-consistency-majority-vote}}
 
 A single CoT sample can contain arithmetic or logical errors. Self-consistency (Wang et al., 2022) generates $k$ independent CoT chains and takes the majority-vote answer. This works because different reasoning paths that reach the same conclusion are unlikely to share the same error.
 

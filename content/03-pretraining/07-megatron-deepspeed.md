@@ -293,6 +293,8 @@ $$
 \text{GAS} = \frac{\text{GBS}}{\text{MBS} \times \text{DP} \times S}
 $$
 
+{{fig:parallelism-degree-decision-funnel}}
+
 ## MFU and HFU: Measuring Real Hardware Utilization
 
 You have launched the run. Now you want to know if you are getting good value from your hardware. Two metrics matter.
@@ -338,6 +340,8 @@ $$
 $$
 
 HFU ≥ MFU. A good cluster should see HFU of 55–70% on H100s with modern frameworks.
+
+{{fig:mfu-hfu-flop-accounting}}
 
 ```python
 def compute_mfu(

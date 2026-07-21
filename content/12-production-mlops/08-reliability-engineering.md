@@ -14,6 +14,8 @@ This chapter sits at the intersection of several others. Observability primitive
 
 In a traditional API, SLI = (successful requests) / (total requests). For an LLM API this ratio is deceptive: every response that comes back with HTTP 200 counts as a success, even if the model hallucinated a phone number, switched language mid-paragraph, or returned a blank string. A system could maintain 99.9% HTTP success while delivering value only 70% of the time.
 
+{{fig:reliability-http200-quality-gap}}
+
 We need a richer SLI vocabulary that covers three dimensions:
 
 | Dimension | What it measures | Typical SLO target |
@@ -433,6 +435,8 @@ For LLM quality incidents, MTTD is dominated by the width of your quality SLI wi
 ### Why silent collapse is harder than hard failures
 
 A provider outage causes an immediate spike in error rate. Silent quality collapse is insidious: it might manifest as a 2–3% drop per week in user satisfaction ratings, invisible against normal noise. By the time it is noticed, you have lost weeks of error budget and potentially user trust.
+
+{{fig:reliability-silent-quality-collapse}}
 
 Three instrumentation strategies combat this:
 
