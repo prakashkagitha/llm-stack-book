@@ -1,0 +1,118 @@
+<figure class="viz" id="fig-dynamo-graph-breaks-subgraphs">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 340" role="img" aria-label="TorchDynamo traces my_func left to right, hitting a graph break at the shape-dependent if statement and another at print; the traceable runs before, between, and after the breaks become three separately compiled subgraphs, while the if and print segments fall back to eager execution.">
+  <style>
+    #fig-dynamo-graph-breaks-subgraphs text{ fill:var(--ink-soft); }
+    #fig-dynamo-graph-breaks-subgraphs .ttl{ font:600 13px var(--sans,sans-serif); }
+    #fig-dynamo-graph-breaks-subgraphs .sub{ font:italic 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dynamo-graph-breaks-subgraphs .tok{ font:600 10px var(--mono,monospace); fill:var(--ink-soft); }
+    #fig-dynamo-graph-breaks-subgraphs .brk{ font:700 10.5px var(--sans,sans-serif); fill:var(--warn,#e0a106); }
+    #fig-dynamo-graph-breaks-subgraphs .reason{ font:italic 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dynamo-graph-breaks-subgraphs .lbl1{ font:700 11px var(--sans,sans-serif); }
+    #fig-dynamo-graph-breaks-subgraphs .lbl2{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dynamo-graph-breaks-subgraphs .eagerlbl{ font:600 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dynamo-graph-breaks-subgraphs .gh{ font:700 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dynamo-graph-breaks-subgraphs .gm{ font:600 9.5px var(--mono,monospace); fill:var(--ink-soft); }
+    #fig-dynamo-graph-breaks-subgraphs .cap{ font:italic 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-dynamo-graph-breaks-subgraphs .lg{ font:500 10px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-dynamo-graph-breaks-subgraphs .take{ font:700 11.5px var(--sans,sans-serif); }
+  </style>
+
+  <g data-anim="1">
+    <text x="12" y="20" class="ttl">Bytecode trace of my_func(x)</text>
+    <text x="768" y="20" text-anchor="end" class="sub">execution order, left to right -&gt;</text>
+  </g>
+
+  
+  <g data-anim="2">
+    
+    <polyline points="262,32 274,40 260,48 272,56" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="268" y="72" text-anchor="middle" class="brk">GRAPH BREAK</text>
+    <text x="268" y="86" text-anchor="middle" class="reason">data-dependent control flow</text>
+    <line x1="268" y1="90" x2="268" y2="100" stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="3 3"/>
+
+    
+    <polyline points="598,32 610,40 596,48 608,56" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="604" y="72" text-anchor="middle" class="brk">GRAPH BREAK</text>
+    <text x="604" y="86" text-anchor="middle" class="reason">side effect / host sync</text>
+    <line x1="604" y1="90" x2="604" y2="100" stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="3 3"/>
+  </g>
+
+  
+  <g data-anim="3">
+    
+    <g class="v-fill" stroke="var(--border-2)" stroke-width="1">
+      <rect x="12"  y="100" width="84"  height="26" rx="5"/>
+      <rect x="108" y="100" width="78"  height="26" rx="5"/>
+      <rect x="350" y="100" width="78"  height="26" rx="5"/>
+      <rect x="440" y="100" width="116" height="26" rx="5"/>
+      <rect x="652" y="100" width="104" height="26" rx="5"/>
+    </g>
+    
+    <g fill="var(--warn,#e0a106)" fill-opacity="0.09" stroke="var(--warn,#e0a106)" stroke-width="1.3" stroke-dasharray="4 2">
+      <rect x="198" y="100" width="140" height="26" rx="5"/>
+      <rect x="568" y="100" width="72"  height="26" rx="5"/>
+    </g>
+
+    <g class="tok" text-anchor="middle">
+      <text x="54"  y="117">y = sin(x)</text>
+      <text x="147" y="117">z = y + 1</text>
+      <text x="268" y="117">if x.shape[0] &gt; 10:</text>
+      <text x="389" y="117">y = y * 2</text>
+      <text x="498" y="117">w = matmul(...)</text>
+      <text x="604" y="117">print(w)</text>
+      <text x="704" y="117">return cos(w)</text>
+    </g>
+  </g>
+
+  
+  <g data-anim="4">
+    
+    <rect x="12" y="140" width="174" height="40" rx="8" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="99" y="157" text-anchor="middle" class="lbl1">Subgraph 1</text>
+    <text x="99" y="172" text-anchor="middle" class="lbl2">(compiled -&gt; fused Triton)</text>
+
+    
+    <rect x="198" y="140" width="230" height="40" rx="20" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <text x="313" y="164" text-anchor="middle" class="eagerlbl">eager</text>
+
+    
+    <rect x="440" y="140" width="116" height="40" rx="8" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="498" y="157" text-anchor="middle" class="lbl1">Subgraph 2</text>
+    <text x="498" y="172" text-anchor="middle" class="lbl2">(compiled)</text>
+
+    
+    <rect x="568" y="140" width="72" height="40" rx="20" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="4 3"/>
+    <text x="604" y="164" text-anchor="middle" class="eagerlbl">eager</text>
+
+    
+    <rect x="652" y="140" width="104" height="40" rx="8" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="704" y="157" text-anchor="middle" class="lbl1">Subgraph 3</text>
+    <text x="704" y="172" text-anchor="middle" class="lbl2">(compiled)</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="12" y="196" width="210" height="64" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <text x="22" y="212" class="gh">guards recorded during trace:</text>
+    <text x="22" y="228" class="gm">x.shape == (5,)</text>
+    <text x="22" y="242" class="gm">x.dtype == float32</text>
+    <text x="22" y="255" class="cap" font-size="8.7">(checked on every call)</text>
+    <text x="12" y="277" class="cap">if a guard fails at runtime -&gt; recompile</text>
+
+    
+    <rect x="440" y="200" width="22" height="15" rx="3" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="470" y="212" class="lg">compiled subgraph (fused kernels)</text>
+    <rect x="440" y="224" width="22" height="15" rx="7.5" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <text x="470" y="236" class="lg">eager fallback (unoptimized)</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <rect x="12" y="294" width="756" height="34" rx="7" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="390" y="316" text-anchor="middle" class="take">more breaks = smaller fusion regions + eager gaps = less speedup</text>
+  </g>
+
+</svg>
+<figcaption><b>Every graph break splits the function into a separately compiled subgraph.</b> TorchDynamo traces <span class="v-mono" style="font-family:var(--mono,monospace)">my_func</span> left to right and compiles the runs it can prove safe (solid boxes); the shape-dependent <span class="v-mono" style="font-family:var(--mono,monospace)">if</span> and the <span class="v-mono" style="font-family:var(--mono,monospace)">print</span> force a fallback to plain eager execution (outline pills), and the guards recorded during tracing mean any of those subgraphs gets re-traced the moment an assumption like the input shape changes.</figcaption>
+</figure>

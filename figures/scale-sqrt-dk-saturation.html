@@ -1,0 +1,116 @@
+<figure class="viz" id="fig-scale-sqrt-dk-saturation">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 820 560" role="img" aria-label="Three-stage diagram: raw attention score standard deviation grows as the square root of d_k, which pushes softmax toward a saturated one-hot output unless the scores are scaled, and a saturated softmax has a near-zero Jacobian so no gradient reaches the queries and keys.">
+<defs>
+  <marker id="ssat-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="currentColor"/>
+  </marker>
+  <marker id="ssat-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#94a3b8)"/>
+  </marker>
+  <marker id="ssat-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+<style>
+  #fig-scale-sqrt-dk-saturation text { fill: currentColor; }
+  #fig-scale-sqrt-dk-saturation .hdr    { font: 700 14px var(--sans,sans-serif); }
+  #fig-scale-sqrt-dk-saturation .sub    { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-scale-sqrt-dk-saturation .mono   { font: 600 11px var(--mono,monospace); }
+  #fig-scale-sqrt-dk-saturation .mono-sm{ font: 600 9.5px var(--mono,monospace); }
+  #fig-scale-sqrt-dk-saturation .lbl    { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-scale-sqrt-dk-saturation .cap    { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-scale-sqrt-dk-saturation .chip-t { font: 500 9.5px var(--sans,sans-serif); }
+  #fig-scale-sqrt-dk-saturation .curve  { fill: none; stroke-width: 2; }
+</style>
+
+<line x1="270" y1="30" x2="270" y2="530" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 4"/>
+<line x1="565" y1="30" x2="565" y2="530" stroke="var(--border-2,#94a3b8)" stroke-width="1" stroke-dasharray="4 4"/>
+
+<g data-anim="1">
+<text x="140" y="44" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">STAGE 1</text>
+<text x="140" y="60" text-anchor="middle" class="sub">Raw score std grows as sqrt(d_k)</text>
+
+<line x1="30" y1="330" x2="250" y2="330" stroke="var(--v-grid,#413c35)" class="v-grid" stroke-width="1"/>
+
+<path d="M 105 330 C 118 330 126 246 140 246 C 154 246 162 330 175 330" class="curve v-grid" stroke="var(--v-grid,#413c35)"/>
+<path d="M 60 330 C 90 330 112 288 140 288 C 168 288 190 330 220 330" class="curve v-muted" stroke="var(--v-muted,#978f83)"/>
+<path d="M 32 330 C 78 330 108 306 140 306 C 172 306 202 330 248 330" class="curve v-accent-s" stroke="var(--accent,#f59e0b)"/>
+
+<circle cx="20" cy="368" r="4" class="v-grid" fill="var(--v-grid,#413c35)"/>
+<text x="30" y="372" class="mono-sm">d_k = 8&#160;&#160; std ~ 2.8</text>
+<circle cx="20" cy="386" r="4" fill="var(--v-muted,#978f83)"/>
+<text x="30" y="390" class="mono-sm">d_k = 64&#160; std ~ 8</text>
+<circle cx="20" cy="404" r="4" fill="var(--accent,#f59e0b)"/>
+<text x="30" y="408" class="mono-sm">d_k = 128 std ~ 11</text>
+
+<text x="140" y="436" text-anchor="middle" class="mono">std(q.k) = sqrt(d_k)</text>
+<text x="140" y="456" text-anchor="middle" class="lbl">wider spread -> bigger raw logits</text>
+</g>
+
+<g data-anim="2">
+<text x="425" y="44" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">STAGE 2</text>
+<text x="425" y="60" text-anchor="middle" class="sub">Feed one row of scores to softmax</text>
+
+<text x="425" y="86" text-anchor="middle" class="cap" fill="var(--v-muted,#978f83)">(a) UNSCALED&#160; logits [20, 4, -3, 1]</text>
+<line x1="300" y1="186" x2="550" y2="186" stroke="var(--v-grid,#413c35)" class="v-grid" stroke-width="1"/>
+<g class="v-muted">
+<rect x="315" y="116" width="34" height="70" fill="var(--v-muted,#978f83)"/>
+<rect x="368" y="185" width="34" height="1.4" fill="var(--v-muted,#978f83)"/>
+<rect x="421" y="185" width="34" height="1" fill="var(--v-muted,#978f83)"/>
+<rect x="474" y="185" width="34" height="1.2" fill="var(--v-muted,#978f83)"/>
+</g>
+<text x="332" y="108" text-anchor="middle" class="mono-sm">1.00</text>
+<text x="385" y="180" text-anchor="middle" class="mono-sm" fill="var(--muted,#94a3b8)">~0</text>
+<text x="438" y="180" text-anchor="middle" class="mono-sm" fill="var(--muted,#94a3b8)">~0</text>
+<text x="491" y="180" text-anchor="middle" class="mono-sm" fill="var(--muted,#94a3b8)">~0</text>
+<text x="332" y="200" text-anchor="middle" class="lbl">p1</text>
+<text x="385" y="200" text-anchor="middle" class="lbl">p2</text>
+<text x="438" y="200" text-anchor="middle" class="lbl">p3</text>
+<text x="491" y="200" text-anchor="middle" class="lbl">p4</text>
+<rect x="330" y="212" width="190" height="20" rx="10" fill="var(--v-muted,#978f83)" fill-opacity="0.16" stroke="var(--v-muted,#978f83)" stroke-width="1"/>
+<text x="425" y="226" text-anchor="middle" class="chip-t" fill="var(--v-muted,#978f83)">saturated ~ hard arg-max</text>
+
+<text x="425" y="270" text-anchor="middle" class="cap" fill="var(--accent,#f59e0b)">(b) SCALED (/sqrt(64))&#160; logits [2.5, 0.5, -0.375, 0.125]</text>
+<line x1="300" y1="368" x2="550" y2="368" stroke="var(--v-grid,#413c35)" class="v-grid" stroke-width="1"/>
+<rect x="315" y="314" width="34" height="54" fill="var(--accent,#f59e0b)"/>
+<rect x="368" y="361" width="34" height="7" fill="var(--v-fill,#2f2b27)" stroke="var(--v-muted,#978f83)" stroke-width="0.8"/>
+<rect x="421" y="365" width="34" height="3" fill="var(--v-fill,#2f2b27)" stroke="var(--v-muted,#978f83)" stroke-width="0.8"/>
+<rect x="474" y="363" width="34" height="5" fill="var(--v-fill,#2f2b27)" stroke="var(--v-muted,#978f83)" stroke-width="0.8"/>
+<text x="332" y="306" text-anchor="middle" class="mono-sm">0.77</text>
+<text x="385" y="353" text-anchor="middle" class="mono-sm" fill="var(--muted,#94a3b8)">0.10</text>
+<text x="438" y="357" text-anchor="middle" class="mono-sm" fill="var(--muted,#94a3b8)">0.04</text>
+<text x="491" y="355" text-anchor="middle" class="mono-sm" fill="var(--muted,#94a3b8)">0.07</text>
+<text x="332" y="382" text-anchor="middle" class="lbl">p1</text>
+<text x="385" y="382" text-anchor="middle" class="lbl">p2</text>
+<text x="438" y="382" text-anchor="middle" class="lbl">p3</text>
+<text x="491" y="382" text-anchor="middle" class="lbl">p4</text>
+<rect x="345" y="394" width="160" height="20" rx="10" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="425" y="408" text-anchor="middle" class="chip-t" fill="var(--good,#2f9e6e)">soft, still peaked</text>
+</g>
+
+<g data-anim="3">
+<text x="690" y="44" text-anchor="middle" class="hdr" fill="var(--accent,#f59e0b)">STAGE 3</text>
+<text x="690" y="60" text-anchor="middle" class="sub">Gradient consequence</text>
+
+<line x1="551" y1="222" x2="588" y2="222" stroke="var(--muted,#94a3b8)" stroke-width="1.4" stroke-dasharray="3 4" marker-end="url(#ssat-arrow-muted)" class="v-muted"/>
+<rect x="590" y="150" width="210" height="130" rx="8" fill="var(--v-muted,#978f83)" fill-opacity="0.10" stroke="var(--v-muted,#978f83)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="695" y="176" text-anchor="middle" class="mono-sm" fill="var(--v-muted,#978f83)">Jacobian</text>
+<text x="695" y="192" text-anchor="middle" class="mono-sm" fill="var(--v-muted,#978f83)">diag(a) - a.a^T -> 0</text>
+<line x1="640" y1="204" x2="750" y2="204" stroke="var(--v-muted,#978f83)" stroke-width="1"/>
+<text x="695" y="224" text-anchor="middle" class="chip-t" fill="var(--v-muted,#978f83)">no gradient to Q, K</text>
+<text x="695" y="240" text-anchor="middle" class="chip-t" fill="var(--v-muted,#978f83)">training stalls</text>
+<text x="695" y="264" text-anchor="middle" class="lbl" fill="var(--muted,#94a3b8)">(dead path)</text>
+
+<line x1="551" y1="404" x2="588" y2="404" stroke="var(--good,#2f9e6e)" stroke-width="2.2" marker-end="url(#ssat-arrow-accent)"/>
+<rect x="590" y="352" width="210" height="120" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+<text x="695" y="378" text-anchor="middle" class="mono-sm" fill="var(--good,#2f9e6e)">Jacobian healthy</text>
+<line x1="640" y1="392" x2="750" y2="392" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+<text x="695" y="412" text-anchor="middle" class="chip-t" fill="var(--good,#2f9e6e)">gradient flows to Q, K</text>
+<text x="695" y="428" text-anchor="middle" class="chip-t" fill="var(--good,#2f9e6e)">training proceeds</text>
+<text x="695" y="452" text-anchor="middle" class="lbl" fill="var(--muted,#94a3b8)">(alive path)</text>
+</g>
+
+</svg>
+<figcaption><b>Score spread &#8594; softmax shape &#8594; gradient fate.</b> Raw dot-product scores have standard deviation sqrt(d_k), so larger head dimensions push logits far apart; fed to softmax unscaled, that spread saturates the output into a near one-hot vector whose Jacobian diag(a) - a a^T collapses to zero, killing the gradient to Q and K. Dividing by sqrt(d_k) keeps the softmax soft and peaked, so the Jacobian stays healthy and gradient keeps flowing.</figcaption>
+</figure>

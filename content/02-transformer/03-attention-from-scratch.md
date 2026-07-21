@@ -81,6 +81,8 @@ $$
 
 That is the entire single-query mechanism. Notice the output lives in value-space ($\mathbb{R}^{d_v}$), is a *convex combination* of the value vectors (it lies inside their convex hull — it can never extrapolate beyond the values it is given), and is differentiable with respect to $q$, every $k_j$, and every $v_j$. Information has flowed from the positions the query cared about into a single output vector.
 
+{{fig:attn-output-convex-hull}}
+
 ### Batching all queries at once
 
 In practice we have not one query but one *per position*: $n$ tokens each emit a query, so $Q \in \mathbb{R}^{n \times d_k}$. We want every query to attend over every key independently. Stacking step 1 over all queries turns the matrix–vector product into a matrix–matrix product:
@@ -129,6 +131,8 @@ $$
 $$
 
 The scaled scores have unit variance regardless of head dimension. Softmax receives inputs of a sane, dimension-independent spread, starts life close to uniform (gradients flow to all positions), and *learns* to sharpen as training progresses. The scale is a **variance-preserving normalization** that decouples the temperature of the attention distribution from an architectural hyperparameter ($d_k$) it has no business being coupled to. This is the same family of reasoning that motivates careful initialization and normalization throughout deep nets; see [Neural Networks From Scratch: MLPs & Backprop](../01-foundations/06-neural-nets-from-scratch.html).
+
+{{fig:scale-sqrt-dk-saturation}}
 
 !!! example "Worked example: scores with and without the scale"
     Let $d_k = 64$ and draw $q, k \sim \mathcal{N}(0, I_{64})$. A representative raw dot product $q \cdot k$ lands around $\pm 8$ in magnitude (std $= \sqrt{64} = 8$); occasional scores reach $\pm 20$ or more.

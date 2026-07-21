@@ -97,6 +97,8 @@ The two norms behave identically when $\mu \approx 0$, which is the common case 
 
     Note the difference: RMSNorm preserves the offset structure of the vector, only rescaling its overall magnitude.
 
+{{fig:tblock-layernorm-vs-rmsnorm}}
+
 ---
 
 ## Pre-Norm vs Post-Norm
@@ -151,6 +153,8 @@ For a Llama 2 7B block with $d = 4{,}096$ and the gated FFN described below with
 - Total per FFN: $\approx 135\text{M}$
 
 Multiplied across 32 blocks: $\approx 4.3\text{B}$ parameters — about 62% of the model's 7B total.
+
+{{fig:tblock-parameter-budget}}
 
 ---
 

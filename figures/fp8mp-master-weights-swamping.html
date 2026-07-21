@@ -1,0 +1,152 @@
+<figure class="viz" id="fig-fp8mp-master-weights-swamping">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 545" role="img"
+     aria-label="Two number-line panels compare an fp16 weight update to an fp32 master-weight update. In fp16, w=1.0 minus the tiny update 2e-4 lands less than half an ulp away and rounds back to exactly 1.0, so the update is lost and the weight stagnates over many steps. In fp32, the same update lands cleanly on a representable value, 0.9998, so it accumulates. A loop diagram shows the standard fix: compute in fp16, but apply the optimizer update to an fp32 master copy, then cast a fresh fp16 copy for the next forward pass.">
+<defs>
+  <marker id="mws-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="mws-arr-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="mws-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <pattern id="mws-finegrid" width="18" height="10" patternUnits="userSpaceOnUse">
+    <line x1="0" y1="0" x2="0" y2="10" stroke="var(--good,#2f9e6e)" stroke-width="1.1" opacity="0.55"/>
+  </pattern>
+  <style>
+    #fig-fp8mp-master-weights-swamping text{ fill:var(--ink-soft); }
+    #fig-fp8mp-master-weights-swamping .ttl{ font:700 13px var(--sans,sans-serif); }
+    #fig-fp8mp-master-weights-swamping .lbl{ font:500 9.5px var(--sans,sans-serif); }
+    #fig-fp8mp-master-weights-swamping .mono{ font:600 9.5px var(--mono,monospace); }
+    #fig-fp8mp-master-weights-swamping .tick{ font:600 9.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-fp8mp-master-weights-swamping .verdict{ font:700 10.5px var(--sans,sans-serif); }
+    #fig-fp8mp-master-weights-swamping .box{ font:700 11px var(--sans,sans-serif); }
+    #fig-fp8mp-master-weights-swamping .boxsub{ font:500 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-fp8mp-master-weights-swamping .foot{ font:500 10.5px var(--sans,sans-serif); }
+    #fig-fp8mp-master-weights-swamping .small{ font:500 8.5px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+</defs>
+
+
+<g data-anim="1">
+  <rect x="15" y="15" width="750" height="192" rx="10" fill="var(--surface-3)" fill-opacity="0.35" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="32" y="38" class="ttl" fill="var(--warn,#e0a106)">fp16 update: swamped</text>
+
+  
+  <line x1="150" y1="110" x2="530" y2="110" stroke="var(--border-2)" stroke-width="1.3"/>
+  <g stroke="var(--border-2)" stroke-width="1.3">
+    <line x1="190" y1="104" x2="190" y2="116"/>
+    <line x1="265" y1="104" x2="265" y2="116"/>
+    <line x1="340" y1="104" x2="340" y2="116"/>
+    <line x1="415" y1="104" x2="415" y2="116"/>
+    <line x1="490" y1="104" x2="490" y2="116"/>
+  </g>
+
+  
+  <text x="331" y="59" text-anchor="middle" class="mono">w - eta*g = 0.9998 wanted</text>
+  <line x1="340" y1="70" x2="325" y2="70" stroke="var(--ink-soft)" stroke-width="1.4" marker-end="url(#mws-arr)"/>
+  <line x1="322" y1="70" x2="322" y2="104" stroke="var(--ink-soft)" stroke-width="1.1" stroke-dasharray="3 3"/>
+  <circle cx="322" cy="110" r="4" fill="none" stroke="var(--ink-soft)" stroke-width="1.5" stroke-dasharray="2 2"/>
+
+  
+  <path d="M322 118 C 322 138, 340 138, 340 118" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.4" marker-end="url(#mws-arr-warn)"/>
+  <text x="331" y="151" text-anchor="middle" class="mono" fill="var(--warn,#e0a106)">round to nearest</text>
+
+  
+  <circle cx="340" cy="110" r="4.5" fill="var(--accent)"/>
+  <text x="350" y="94" text-anchor="start" class="tick">w = 1.0</text>
+
+  
+  <g stroke="var(--muted)" stroke-width="1">
+    <line x1="265" y1="168" x2="340" y2="168"/>
+    <line x1="265" y1="163" x2="265" y2="173"/>
+    <line x1="340" y1="163" x2="340" y2="173"/>
+  </g>
+  <text x="302" y="184" text-anchor="middle" class="small">1 ulp ~ 2^-10 ~ 9.77e-4</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="565" y="45" width="185" height="140" rx="8" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="657" y="63" text-anchor="middle" class="lbl" font-weight="700">after many steps</text>
+  <line x1="585" y1="110" x2="730" y2="110" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+  <circle cx="600" cy="110" r="2.6" fill="var(--warn,#e0a106)"/>
+  <circle cx="628" cy="110" r="2.6" fill="var(--warn,#e0a106)"/>
+  <circle cx="657" cy="110" r="2.6" fill="var(--warn,#e0a106)"/>
+  <circle cx="686" cy="110" r="2.6" fill="var(--warn,#e0a106)"/>
+  <circle cx="714" cy="110" r="2.6" fill="var(--warn,#e0a106)"/>
+  <text x="657" y="128" text-anchor="middle" class="small">steps -&gt;</text>
+  <text x="657" y="160" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)" font-weight="700">stuck at 1.0</text>
+  <text x="657" y="172" text-anchor="middle" class="small">(stagnation)</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="150" y="188" width="380" height="14" rx="6" fill="var(--warn,#e0a106)" fill-opacity="0.14" stroke="var(--warn,#e0a106)" stroke-width="1"/>
+  <text x="340" y="198" text-anchor="middle" class="verdict" fill="var(--warn,#e0a106)">update &lt; half an ulp -&gt; rounds back to 1.0 -&gt; LOST</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="15" y="222" width="750" height="150" rx="10" fill="var(--surface-3)" fill-opacity="0.35" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="32" y="245" class="ttl" fill="var(--good,#2f9e6e)">fp32 master: sticks</text>
+
+  <line x1="150" y1="305" x2="530" y2="305" stroke="var(--border-2)" stroke-width="1.3"/>
+  <rect x="150" y="300" width="380" height="10" fill="url(#mws-finegrid)" opacity="0.8"/>
+
+  <text x="331" y="270" text-anchor="middle" class="mono">w - eta*g = 0.9998 wanted</text>
+  <line x1="340" y1="281" x2="325" y2="281" stroke="var(--good,#2f9e6e)" stroke-width="1.4" marker-end="url(#mws-arr-good)"/>
+  <line x1="322" y1="281" x2="322" y2="300" stroke="var(--good,#2f9e6e)" stroke-width="1.1" stroke-dasharray="3 3"/>
+
+  <circle cx="340" cy="305" r="4.5" fill="var(--accent)"/>
+  <text x="340" y="325" text-anchor="middle" class="tick">1.0</text>
+
+  <circle cx="322" cy="305" r="4.5" fill="var(--good,#2f9e6e)"/>
+  <text x="322" y="341" text-anchor="middle" class="tick" fill="var(--good,#2f9e6e)">0.9998</text>
+
+  <rect x="150" y="352" width="380" height="14" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.14" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+  <text x="340" y="362" text-anchor="middle" class="verdict" fill="var(--good,#2f9e6e)">representable -&gt; update accumulates -&gt; progress</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="20" y="400" width="168" height="46" rx="8" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.3"/>
+  <text x="104" y="420" text-anchor="middle" class="box">compute</text>
+  <text x="104" y="434" text-anchor="middle" class="boxsub">in fp16 (fast)</text>
+
+  <line x1="188" y1="423" x2="202" y2="423" stroke="var(--ink-soft)" stroke-width="1.4" marker-end="url(#mws-arr)"/>
+
+  <rect x="204" y="400" width="150" height="46" rx="8" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.3"/>
+  <text x="279" y="420" text-anchor="middle" class="box">tiny gradient</text>
+  <text x="279" y="434" text-anchor="middle" class="boxsub">eta * g</text>
+
+  <line x1="354" y1="423" x2="368" y2="423" stroke="var(--ink-soft)" stroke-width="1.4" marker-end="url(#mws-arr)"/>
+
+  <rect x="370" y="400" width="205" height="46" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.14" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+  <text x="472" y="418" text-anchor="middle" class="box" fill="var(--good,#2f9e6e)">apply update to fp32</text>
+  <text x="472" y="432" text-anchor="middle" class="box" fill="var(--good,#2f9e6e)">MASTER weight (precise)</text>
+
+  <line x1="575" y1="423" x2="589" y2="423" stroke="var(--ink-soft)" stroke-width="1.4" marker-end="url(#mws-arr)"/>
+
+  <rect x="591" y="400" width="169" height="46" rx="8" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.3"/>
+  <text x="675" y="418" text-anchor="middle" class="box">cast fresh fp16</text>
+  <text x="675" y="432" text-anchor="middle" class="boxsub">copy, next forward</text>
+
+  <text x="472" y="463" text-anchor="middle" class="small">optimizer touches only the fp32 master</text>
+  <line x1="472" y1="446" x2="472" y2="456" stroke="var(--good,#2f9e6e)" stroke-width="1.1" stroke-dasharray="2 2"/>
+
+  <path d="M675 446 C 675 490, 104 490, 104 446" fill="none" stroke="var(--ink-soft)" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#mws-arr)"/>
+  <text x="390" y="500" text-anchor="middle" class="small">repeat every step</text>
+</g>
+
+
+<g data-anim="5">
+  <text x="390" y="522" text-anchor="middle" class="foot">loss scaling fixes grads that are too small to REPRESENT;</text>
+  <text x="390" y="536" text-anchor="middle" class="foot">master weights fix updates too small to STICK.</text>
+</g>
+
+</svg>
+<figcaption><b>An update smaller than half an ulp silently rounds back to the old weight — master weights fix it by giving the update a finer grid to land on.</b> In fp16, <code>w = 1.0 - 0.0002</code> falls inside the first grid cell and rounds right back to 1.0, so the weight never moves; in fp32 the same update lands on a real representable tick and sticks. The standard recipe keeps the fast fp16 copy for compute but routes every optimizer step through an fp32 master weight, casting a fresh fp16 copy each forward pass.</figcaption>
+</figure>

@@ -14,6 +14,8 @@ For large models, this cold-start instability is catastrophic. At step 1 of a ru
 
 Warmup solves this by linearly ramping the effective learning rate from near-zero to the target value over a set number of steps, giving the optimizer time to calibrate its momentum estimates and giving the network time to find a reasonable initialization basin before the full update magnitude kicks in.
 
+{{fig:lrsched-why-warmup}}
+
 The interplay with weight initialization is important. Standard initialization schemes ([Transformers: The Transformer Block](../02-transformer/06-transformer-block.html)) ensure variance-preserving forward passes at step 0, but they do not ensure that the *gradient landscape* is well-behaved. Warmup effectively treats the first $T_w$ steps as a coarser form of initialization.
 
 ## The Major Schedule Families
@@ -644,6 +646,8 @@ if __name__ == "__main__":
 ```
 
 If your muP column is not flat, the bug is almost always in the init std, the per-layer LR multiplier, or the attention/readout scaling.
+
+{{fig:lrsched-coordinate-check}}
 
 ### Practical muP Workflow
 

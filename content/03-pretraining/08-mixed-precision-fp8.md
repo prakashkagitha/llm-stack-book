@@ -18,6 +18,8 @@ A floating-point number is `sign × mantissa × 2^exponent`. The split between e
 | FP8 E4M3 | 8 | 4 / 3 | 448 | ~1.5e-2 (subnormal smaller) | ~0.125 |
 | FP8 E5M2 | 8 | 5 / 2 | 57344 | ~6.1e-5 | ~0.25 |
 
+{{fig:fp8mp-format-anatomy-range-vs-precision}}
+
 Read this table as the key to everything that follows. The two 16-bit formats have the *same size* but make opposite trades:
 
 - **FP16** keeps 10 mantissa bits (good precision) but only 5 exponent bits, so its maximum value is **65504** and its smallest normal is ~6e-5. Gradients in a transformer routinely live below 6e-5, so they **underflow to zero in fp16**. This is why fp16 *requires loss scaling* (we cover it below).
@@ -60,6 +62,8 @@ Let's make the failure concrete. Consider a single weight $w = 1.0$ and a tiny g
 In fp16, the representable numbers near $1.0$ are spaced $2^{-10} \approx 9.77 \times 10^{-4}$ apart (that is the ulp — unit in the last place). Our desired update $2 \times 10^{-4}$ is **smaller than half an ulp**, so when we round $1.0 - 0.0002$ to the nearest fp16 value we get... exactly $1.0$. **The update is silently lost.** Worse, this happens at *every* step late in training when gradients shrink, so the model stops learning even though loss looks vaguely fine.
 
 This is the **swamping** or **stagnation** problem, and it has nothing to do with overflow — it is pure precision loss when you add a small number to a large one in the same low-precision format. There are two complementary fixes, and you need both for fp16:
+
+{{fig:fp8mp-master-weights-swamping}}
 
 1. **Master weights in fp32.** Keep the *authoritative* copy of every weight in fp32. Do the matmuls and activations in fp16 (fast), but apply the optimizer update to the fp32 master copy (precise), then cast a fresh fp16 copy for the next forward. Now $1.0 - 0.0002 = 0.9998$ is representable, the update sticks, and the tiny updates accumulate over many steps.
 2. **Loss scaling** to fight *underflow* of the gradients themselves before they ever reach the optimizer (next section).

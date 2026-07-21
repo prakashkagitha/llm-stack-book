@@ -528,6 +528,8 @@ print(wordpiece_encode("playing", vocab))        # ['play', '##ing']
 
 Unigram (Kudo, *Subword Regularization*, 2018), the default model in the **SentencePiece** library, takes the opposite philosophical approach from BPE. Where BPE *builds up* a vocabulary by merging, Unigram *prunes down*. It starts with a large seed vocabulary (e.g. all frequent substrings) and iteratively removes pieces, keeping the set that best explains the corpus under a probabilistic model.
 
+{{fig:unigram-segmentation-lattice}}
+
 The model is a **unigram language model over subwords**: each subword $x$ has a probability $p(x)$, and a particular segmentation $\mathbf{x} = (x_1, \dots, x_k)$ of a string has probability
 
 $$
@@ -684,6 +686,8 @@ Code is brutal on naive tokenizers. Two issues dominate:
 ### The digit and arithmetic problem
 
 This is the most consequential and least obvious pitfall. How a tokenizer chunks numbers directly damages arithmetic.
+
+{{fig:digit-place-value-scramble}}
 
 Consider `12345`. Depending on the tokenizer it might be one token, or `123` + `45`, or `1234` + `5`, or `12` + `345` — and crucially, the chunking is **not consistent across numbers of the same length**, because it depends on which digit substrings happened to be frequent in the training corpus. A model trying to add `12345 + 6789` must first parse wildly inconsistent token boundaries; the *positional* meaning of a digit (units, tens, hundreds) is obscured. This is a major reason LLMs historically struggled with multi-digit arithmetic — not because they can't reason, but because the *input representation* scrambles place value.
 

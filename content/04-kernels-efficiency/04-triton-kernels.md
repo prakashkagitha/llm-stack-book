@@ -227,6 +227,8 @@ Matmul is where Triton shows its compute-bound chops, because it is the one oper
 
 The strategy is classic **tiling**: each program computes one `BLOCK_M x BLOCK_N` tile of `C`. To do so it walks the shared `K` dimension in steps of `BLOCK_K`, at each step loading a `BLOCK_M x BLOCK_K` tile of `A` and a `BLOCK_K x BLOCK_N` tile of `B`, multiplying them with `tl.dot` (which targets the Tensor Cores), and **accumulating** into an fp32 register tile. Only after the full `K` loop does it write the tile to HBM. Each element of `A` and `B` is thus loaded from HBM once per output tile but *reused* `BLOCK_N` and `BLOCK_M` times respectively from SRAM — that reuse is the entire point.
 
+{{fig:matmul-tile-reuse-kloop}}
+
 ```python
 import torch
 import triton
@@ -375,6 +377,8 @@ O_{\text{new}} = \alpha\,O + e^{\,S^{(j)} - m_{\text{new}}}\,V^{(j)}
 $$
 
 After the last block, divide once: $O \leftarrow O / \ell$. The output is bit-for-bit the same as a full softmax-then-matmul, but no $N\times N$ tensor ever touched HBM. The kernel below implements the forward pass for one `(batch, head)` per program row-block.
+
+{{fig:online-softmax-rescale-both}}
 
 ```python
 import torch

@@ -57,6 +57,8 @@ A common modern practice is a hybrid: upsample high-quality small domains to 2�
 
     If you upsample a domain that still contains internal near-duplicates, you multiply the duplication. A 3x upsample of a set that already contains 4x internal duplication of some passages yields 12 effective views of those passages — enough to trigger verbatim memorization (a privacy and generalization problem; see [Privacy, Memorization & Differential Privacy for LLMs](../13-interp-safety-gov/03-privacy-memorization-dp.html)). Always deduplicate *within* a domain before deciding its upsample factor.
 
+{{fig:mixing-dedup-upsample-multiply}}
+
 ### Why the mixture is not separable from everything else
 
 Two important couplings make mixing harder than "tune five numbers once":
@@ -163,6 +165,8 @@ DoReMi freezes the mixture for the target run. An alternative is to keep adaptin
 !!! note "Group-DRO vs. online bandit mixing — same family, different reward"
 
     Both treat domains as the thing to reweight and both use multiplicative-weights updates. The difference is the signal: **DoReMi's Group-DRO uses excess loss (a level)** — "how far is this domain from achievable?" — and is run on a cheap proxy to produce a static target mixture. **Online bandit mixing uses loss velocity (a derivative)** — "where am I improving fastest right now?" — and is run during the real training. Excess loss says "fix what's broken"; velocity says "ride what's working." They can disagree: a domain can have high excess loss yet near-zero velocity (stuck), in which case more weight wastes compute.
+
+{{fig:mixing-level-vs-velocity}}
 
 ---
 

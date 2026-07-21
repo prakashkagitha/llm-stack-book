@@ -122,6 +122,8 @@ def _decode_html(raw: bytes, content_type: str):
 
 FineWeb's ablations found that training on text re-extracted from WARC with `trafilatura` measurably beat training on the WET text for the same pages — which is why FineWeb (and RefinedWeb before it) never trains on WET at all.
 
+{{fig:warc-vs-wet-extraction}}
+
 The cost is compute: reading WET is nearly free, whereas WARC re-extraction parses full HTML for every page. On a **laptop/CPU**, `warcio` + `trafilatura` handles roughly 50–200 pages/sec/core — fine for one WARC file (~1 GB, ~30–50k records) as a learning exercise. At **crawl scale** (one monthly snapshot is ~90k WARC files, ~90 TB compressed, ~2.4B pages), switch to `fastwarc` + `resiliparse` (10–50x faster C-backed parsing) and fan out across a cluster with a work queue, one WARC per task — the same embarrassingly parallel pattern used for WET below.
 
 ---
@@ -593,6 +595,8 @@ class ShardedTokenDataset(IterableDataset):
 !!! tip "Practitioner tip"
 
     Write shards with `context_len + 1` tokens per row so that every fetch yields a complete `(input, label)` pair with no off-by-one indexing at read time. This eliminates a common source of subtle bugs when labels wrap across rows.
+
+{{fig:token-packing-shard-rows}}
 
 ### Verifying the Pipeline
 

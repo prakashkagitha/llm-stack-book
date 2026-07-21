@@ -1,0 +1,154 @@
+<figure class="viz" id="fig-attention-logit-overflow-qknorm">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 820 620" role="img" aria-label="Two pathways from the same Q and K projections: without QK-Norm, large query and key norms produce a logit near 880 that collapses the softmax to a single-token spike whose exponential sum underflows to NaN; with QK-Norm, RMSNorm bounds Q and K so logits stay modest and the softmax remains a stable, spread distribution.">
+<style>
+  #fig-attention-logit-overflow-qknorm text      { fill: var(--ink-soft,#45413a); }
+  #fig-attention-logit-overflow-qknorm .ttl      { font: 700 16px var(--sans,sans-serif); fill: currentColor; }
+  #fig-attention-logit-overflow-qknorm .sub      { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-attention-logit-overflow-qknorm .lane     { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-attention-logit-overflow-qknorm .cap      { font: 600 9.5px var(--sans,sans-serif); }
+  #fig-attention-logit-overflow-qknorm .capSub   { font: 500 8.7px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-attention-logit-overflow-qknorm .mono     { font: 700 12px var(--mono,monospace); fill: currentColor; }
+  #fig-attention-logit-overflow-qknorm .monoSm   { font: 600 8.3px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-attention-logit-overflow-qknorm .monoBig  { font: 700 24px var(--mono,monospace); }
+  #fig-attention-logit-overflow-qknorm .tick     { font: 600 7.6px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-attention-logit-overflow-qknorm .endTxt   { font: 700 10px var(--sans,sans-serif); }
+  #fig-attention-logit-overflow-qknorm .legend   { font: 500 9.5px var(--sans,sans-serif); }
+  #fig-attention-logit-overflow-qknorm .startTxt { font: 700 12px var(--sans,sans-serif); fill: currentColor; }
+  #fig-attention-logit-overflow-qknorm .startSub { font: 500 8.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-attention-logit-overflow-qknorm .flow     { stroke: currentColor; stroke-width: 1.4; fill: none; opacity: 0.6; }
+  #fig-attention-logit-overflow-qknorm .vec      { stroke: currentColor; stroke-width: 1.8; fill: none; }
+  @keyframes vpulse { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
+  #fig-attention-logit-overflow-qknorm .viz-pulse { animation: vpulse 2.2s ease-in-out infinite; }
+</style>
+
+<defs>
+  <marker id="qkn-arrow" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L8,4 L0,8 z" fill="currentColor" opacity="0.7"/>
+  </marker>
+</defs>
+
+<text x="20" y="24" class="ttl">An unbounded logit peaks the softmax; QK-Norm keeps it well-conditioned</text>
+<text x="20" y="42" class="sub">Story 3 (fp16 training): head 7's attention logits reached ~60,000 pre-softmax, one bad batch away from this exact failure.</text>
+<text x="20" y="56" class="sub">Same Q, K projections, two outcomes below.</text>
+
+<g data-anim="1">
+
+<rect x="20" y="270" width="118" height="72" rx="8" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+<text x="79" y="298" text-anchor="middle" class="startTxt">Q, K</text>
+<text x="79" y="313" text-anchor="middle" class="startSub">attention projections</text>
+<text x="79" y="325" text-anchor="middle" class="startSub">(raw, pre-normalization)</text>
+
+<path class="flow" d="M138,297 H150 V150 H158" marker-end="url(#qkn-arrow)"/>
+<path class="flow" d="M138,315 H150 V460 H158" marker-end="url(#qkn-arrow)"/>
+
+<text x="160" y="75" class="lane" fill="var(--bad,#dc2626)">WITHOUT QK-NORM</text>
+
+<g>
+  <line class="vec" x1="175" y1="200" x2="248" y2="118"/>
+  <path d="M248,118 L241,125 M248,118 L239,116" class="vec"/>
+  <text x="250" y="112" class="monoSm" fill="currentColor">Q</text>
+  <line class="vec" x1="175" y1="200" x2="268" y2="182"/>
+  <path d="M268,182 L259,180 M268,182 L262,189" class="vec"/>
+  <text x="270" y="196" class="monoSm" fill="currentColor">K</text>
+  <circle cx="175" cy="200" r="2.4" fill="currentColor"/>
+</g>
+<text x="225" y="224" text-anchor="middle" class="cap">large L2 norm</text>
+<text x="225" y="236" text-anchor="middle" class="capSub">||Q|| ~ ||K|| ~ 100</text>
+<line class="flow" x1="290" y1="150" x2="298" y2="150" marker-end="url(#qkn-arrow)"/>
+
+<g>
+  <text x="355" y="145" text-anchor="middle" class="mono">x 0.088</text>
+  <text x="355" y="163" text-anchor="middle" class="monoSm">(= 1/sqrt(128))</text>
+</g>
+<text x="355" y="224" text-anchor="middle" class="cap">scale by 1/sqrt(d_k)</text>
+<text x="355" y="236" text-anchor="middle" class="capSub">d_k = 128</text>
+<line class="flow" x1="410" y1="150" x2="418" y2="150" marker-end="url(#qkn-arrow)"/>
+
+<g>
+  <text x="475" y="140" text-anchor="middle" class="monoBig" fill="var(--bad,#dc2626)">880</text>
+  <text x="475" y="157" text-anchor="middle" class="monoSm">100x100x0.088~880</text>
+  <line x1="430" y1="188" x2="520" y2="188" class="flow" stroke="var(--muted,#6d675d)" stroke-dasharray="3 2" opacity="0.8"/>
+  <circle cx="434" cy="188" r="2" fill="var(--bad,#dc2626)"/>
+  <circle cx="520" cy="188" r="2" fill="var(--muted,#6d675d)"/>
+  <text x="520" y="200" text-anchor="end" class="tick">fp16 max 65504</text>
+</g>
+<text x="475" y="224" text-anchor="middle" class="cap">within fp16 range</text>
+<text x="475" y="236" text-anchor="middle" class="capSub">but too peaked</text>
+<line class="flow" x1="530" y1="150" x2="538" y2="150" marker-end="url(#qkn-arrow)"/>
+
+<g>
+  <line x1="546" y1="205" x2="654" y2="205" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <rect x="551" y="202" width="12" height="3" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="0.8"/>
+  <rect x="571" y="202" width="12" height="3" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="0.8"/>
+  <rect x="593" y="95" width="14" height="110" fill="var(--bad,#dc2626)" fill-opacity="0.85"/>
+  <text x="600" y="88" text-anchor="middle" class="monoSm" fill="var(--bad,#dc2626)" font-weight="700">~1.0</text>
+  <rect x="621" y="202" width="12" height="3" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="0.8"/>
+  <rect x="643" y="202" width="12" height="3" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="0.8"/>
+  <text x="643" y="216" text-anchor="middle" class="monoSm" font-size="7">~0</text>
+</g>
+<text x="600" y="224" text-anchor="middle" class="cap">softmax collapses</text>
+<text x="600" y="236" text-anchor="middle" class="capSub">to one token</text>
+<line class="flow" x1="660" y1="150" x2="668" y2="150" marker-end="url(#qkn-arrow)"/>
+
+<rect x="675" y="95" width="125" height="110" rx="8" fill="var(--bad,#dc2626)" fill-opacity="0.1" stroke="var(--bad,#dc2626)" stroke-width="1.8" class="viz-pulse"/>
+<text x="737" y="125" text-anchor="middle" class="endTxt" fill="var(--bad,#dc2626)">exp-sum</text>
+<text x="737" y="143" text-anchor="middle" class="endTxt" fill="var(--bad,#dc2626)">underflows -&gt;</text>
+<text x="737" y="161" text-anchor="middle" class="endTxt" fill="var(--bad,#dc2626)">NaN gradient</text>
+<text x="737" y="179" text-anchor="middle" class="endTxt" fill="var(--bad,#dc2626)">cascade</text>
+
+
+<text x="160" y="392" class="lane" fill="var(--good,#2f9e6e)">WITH QK-NORM</text>
+
+<g>
+  <circle cx="175" cy="480" r="42" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.1" stroke-dasharray="3 2" opacity="0.7"/>
+  <line class="vec" x1="175" y1="480" x2="203" y2="446"/>
+  <path d="M203,446 L196,451 M203,446 L197,439" class="vec"/>
+  <text x="205" y="442" class="monoSm" fill="currentColor">Q</text>
+  <line class="vec" x1="175" y1="480" x2="213" y2="464"/>
+  <path d="M213,464 L206,462 M213,464 L208,470" class="vec"/>
+  <text x="215" y="475" class="monoSm" fill="currentColor">K</text>
+  <circle cx="175" cy="480" r="2.4" fill="currentColor"/>
+</g>
+<text x="225" y="534" text-anchor="middle" class="cap">RMSNorm(Q), RMSNorm(K)</text>
+<text x="225" y="546" text-anchor="middle" class="capSub">norm now bounded</text>
+<line class="flow" x1="290" y1="460" x2="298" y2="460" marker-end="url(#qkn-arrow)"/>
+
+<g>
+  <text x="415" y="450" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">O(sqrt(d_k))</text>
+  <rect x="345" y="463" width="140" height="13" rx="6.5" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1.1"/>
+  <text x="415" y="472.5" text-anchor="middle" class="monoSm" fill="var(--good,#2f9e6e)">modest, stable range</text>
+</g>
+<text x="415" y="534" text-anchor="middle" class="cap">logits bounded regardless</text>
+<text x="415" y="546" text-anchor="middle" class="capSub">of raw Q, K activation scale</text>
+<line class="flow" x1="530" y1="460" x2="538" y2="460" marker-end="url(#qkn-arrow)"/>
+
+<g>
+  <line x1="546" y1="515" x2="654" y2="515" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <rect x="551" y="475" width="12" height="40" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+  <rect x="571" y="460" width="12" height="55" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+  <rect x="593" y="467" width="14" height="48" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+  <rect x="621" y="455" width="12" height="60" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+  <rect x="643" y="465" width="12" height="50" fill="var(--good,#2f9e6e)" fill-opacity="0.85"/>
+</g>
+<text x="600" y="533" text-anchor="middle" class="cap">softmax stays spread</text>
+<text x="600" y="546" text-anchor="middle" class="capSub">well-conditioned</text>
+<line class="flow" x1="660" y1="460" x2="668" y2="460" marker-end="url(#qkn-arrow)"/>
+
+<rect x="675" y="405" width="125" height="110" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.1" stroke="var(--good,#2f9e6e)" stroke-width="1.8" class="viz-pulse"/>
+<text x="737" y="440" text-anchor="middle" class="endTxt" fill="var(--good,#2f9e6e)">well-conditioned</text>
+<text x="737" y="458" text-anchor="middle" class="endTxt" fill="var(--good,#2f9e6e)">softmax,</text>
+<text x="737" y="476" text-anchor="middle" class="endTxt" fill="var(--good,#2f9e6e)">stable gradients</text>
+
+
+<rect x="20" y="580" width="14" height="14" rx="2" fill="var(--bad,#dc2626)" fill-opacity="0.7"/>
+<text x="40" y="591" class="legend">unbounded Q, K norm -&gt; collapsed softmax -&gt; NaN</text>
+<rect x="330" y="580" width="14" height="14" rx="2" fill="var(--good,#2f9e6e)" fill-opacity="0.7"/>
+<text x="350" y="591" class="legend">QK-Norm bounds the logit -&gt; stable softmax</text>
+<line x1="590" y1="587" x2="608" y2="587" stroke="var(--muted,#6d675d)" stroke-width="1.4" stroke-dasharray="3 2"/>
+<text x="614" y="591" class="legend">fp16 ceiling (reference)</text>
+
+</g>
+</svg>
+<figcaption><b>Raw query/key norms of ~100 push the attention logit to ~880 &amp;mdash; still under the fp16 ceiling of 65,504, but enough to collapse the softmax to a single-token delta and underflow the exponential sum into NaN.</b> QK-Norm applies RMSNorm to Q and K before the dot product, so the logit magnitude grows at most as O(sqrt(d<sub>k</sub>)) regardless of how large the raw activations get, keeping the softmax spread and the gradients finite &amp;mdash; this is the fix behind Story 3's fp16 head-7 near-miss at logits ~60,000.</figcaption>
+</figure>

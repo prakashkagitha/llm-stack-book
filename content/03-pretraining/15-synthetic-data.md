@@ -341,6 +341,8 @@ def distill_reasoning(problems, llm, K=8, max_keep_per_problem=2):
     return dataset
 ```
 
+{{fig:syndata-overgenerate-filter-hard}}
+
 Three design points are doing the heavy lifting:
 
 - **Over-generate, filter hard.** Sampling $K=8$ traces and keeping only correct ones is the verification asymmetry in action. Even if the teacher is only ~40% correct per attempt, with $K=8$ you cover a large fraction of solvable problems at least once: the probability of at least one success is $1-(1-0.4)^8 \approx 0.98$.
@@ -375,6 +377,8 @@ $$
 $$
 
 so after $t$ generations the variance has shrunk by a factor $(1-1/n)^t$. With finite samples the tails progressively disappear; the distribution collapses toward its mean. Now contrast the **accumulate** regime, where each fit uses the *original* real samples plus all synthetic so far — the real samples keep re-injecting the true variance, and the decay halts. Let us watch it happen.
+
+{{fig:syndata-collapse-replace-vs-accumulate}}
 
 ```python
 """

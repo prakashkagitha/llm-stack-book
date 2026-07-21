@@ -1,0 +1,103 @@
+<figure class="viz" id="fig-spike-diagnostic-decision-tree">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 380" role="img" aria-label="Decision tree: from loss spike detected, grad_norm is the primary discriminator routing to one of four categories -- data, optimizer, floating-point, or vanishing -- each with a diagnosis and fix, plus a separate cross-cutting check for whether the spike coincides with LR peak or end of warmup.">
+<style>
+  #fig-spike-diagnostic-decision-tree text       { fill: var(--ink-soft,#45413a); }
+  #fig-spike-diagnostic-decision-tree .ttl       { font: 700 15.5px var(--sans,sans-serif); fill: currentColor; }
+  #fig-spike-diagnostic-decision-tree .sub       { font: 500 10.3px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-spike-diagnostic-decision-tree .rootTxt   { font: 700 12px var(--sans,sans-serif); fill: currentColor; }
+  #fig-spike-diagnostic-decision-tree .gnTxt     { font: 700 13px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+  #fig-spike-diagnostic-decision-tree .gnSub     { font: 600 9px var(--sans,sans-serif); fill: var(--accent2,#3b82f6); }
+  #fig-spike-diagnostic-decision-tree .sideTxt   { font: 600 9.3px var(--sans,sans-serif); }
+  #fig-spike-diagnostic-decision-tree .cond      { font: 600 8.6px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-spike-diagnostic-decision-tree .cat       { font: 700 12px var(--sans,sans-serif); }
+  #fig-spike-diagnostic-decision-tree .desc      { font: 500 8.6px var(--sans,sans-serif); }
+  #fig-spike-diagnostic-decision-tree .fix       { font: 600 8.5px var(--sans,sans-serif); }
+  #fig-spike-diagnostic-decision-tree .link      { stroke: var(--border-2,#d8d1c0); stroke-width: 1.5; fill: none; }
+  @keyframes sdtpulse { 0%,100% { stroke-opacity:1; } 50% { stroke-opacity:0.45; } }
+  #fig-spike-diagnostic-decision-tree .viz-pulse { animation: sdtpulse 2.4s ease-in-out infinite; }
+</style>
+
+<defs>
+  <marker id="sdt-arrow" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0,0 L8,4 L0,8 z" fill="var(--border-2,#d8d1c0)"/>
+  </marker>
+</defs>
+
+<text x="20" y="20" class="ttl">Reading grad_norm to diagnose a loss spike</text>
+<text x="20" y="37" class="sub">grad_norm at the spike step is the primary discriminator -- it alone narrows the failure to one of four categories.</text>
+<text x="20" y="49" class="sub">LR timing is a separate, cross-cutting check worth running alongside.</text>
+
+<g data-anim="1">
+
+<rect x="330" y="66" width="140" height="42" rx="8" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.4"/>
+<text x="400" y="91" text-anchor="middle" class="rootTxt">Loss spike detected</text>
+
+<path class="link" d="M400,108 V124" marker-end="url(#sdt-arrow)"/>
+<path class="link" d="M400,124 H318 V139" marker-end="url(#sdt-arrow)"/>
+<path class="link" d="M400,124 H715" stroke-dasharray="4 3"/>
+<path class="link" d="M715,124 V139" stroke-dasharray="4 3" marker-end="url(#sdt-arrow)"/>
+
+<rect x="20" y="140" width="596" height="52" rx="9" fill="var(--accent2,#3b82f6)" fill-opacity="0.1" stroke="var(--accent2,#3b82f6)" stroke-width="2.4" class="viz-pulse"/>
+<text x="318" y="160" text-anchor="middle" class="gnTxt">CHECK grad_norm at the spike step</text>
+<text x="318" y="174" text-anchor="middle" class="gnSub">this one number tells you which branch</text>
+<text x="318" y="186" text-anchor="middle" class="gnSub">(the primary discriminator)</text>
+
+<rect x="650" y="140" width="130" height="52" rx="9" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="715" y="160" text-anchor="middle" class="sideTxt">Spike coincides with</text>
+<text x="715" y="172" text-anchor="middle" class="sideTxt">LR peak / end of</text>
+<text x="715" y="184" text-anchor="middle" class="sideTxt">warmup?</text>
+
+<line class="link" x1="90"  y1="192" x2="90"  y2="222" marker-end="url(#sdt-arrow)"/>
+<line class="link" x1="242" y1="192" x2="242" y2="222" marker-end="url(#sdt-arrow)"/>
+<line class="link" x1="394" y1="192" x2="394" y2="222" marker-end="url(#sdt-arrow)"/>
+<line class="link" x1="546" y1="192" x2="546" y2="222" marker-end="url(#sdt-arrow)"/>
+<line class="link" x1="715" y1="192" x2="715" y2="222" marker-end="url(#sdt-arrow)" stroke-dasharray="4 3"/>
+
+<rect x="20" y="223" width="140" height="120" rx="8" fill="var(--surface,#fff)" stroke="var(--ink-soft,#45413a)" stroke-width="1.6"/>
+<text x="90" y="238" text-anchor="middle" class="cond">grad_norm normal</text>
+<text x="90" y="248" text-anchor="middle" class="cond">(&lt;2x clip) + spiked</text>
+<text x="90" y="269" text-anchor="middle" class="cat" fill="var(--ink-soft,#45413a)">DATA</text>
+<text x="90" y="285" text-anchor="middle" class="desc">anomalous batch</text>
+<text x="90" y="296" text-anchor="middle" class="desc">(repetition / encoding /</text>
+<text x="90" y="307" text-anchor="middle" class="desc">dedup bug)</text>
+<text x="90" y="325" text-anchor="middle" class="fix">fix: skip-batch,</text>
+<text x="90" y="336" text-anchor="middle" class="fix">audit the source shard</text>
+
+<rect x="172" y="223" width="140" height="120" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.09" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+<text x="242" y="238" text-anchor="middle" class="cond">grad_norm large</text>
+<text x="242" y="248" text-anchor="middle" class="cond">(&gt;5x clip)</text>
+<text x="242" y="269" text-anchor="middle" class="cat" fill="var(--accent,#c15b39)">OPTIMIZER</text>
+<text x="242" y="285" text-anchor="middle" class="desc">Adam amplification,</text>
+<text x="242" y="296" text-anchor="middle" class="desc">stale sqrt(v_hat)</text>
+<text x="242" y="317" text-anchor="middle" class="fix">fix: clip, reduce LR</text>
+<text x="242" y="328" text-anchor="middle" class="fix">~20-30%, resume from</text>
+<text x="242" y="339" text-anchor="middle" class="fix">pre-spike ckpt</text>
+
+<rect x="324" y="223" width="140" height="120" rx="8" fill="var(--bad,#dc2626)" fill-opacity="0.09" stroke="var(--bad,#dc2626)" stroke-width="1.6"/>
+<text x="394" y="238" text-anchor="middle" class="cond">grad_norm</text>
+<text x="394" y="248" text-anchor="middle" class="cond">NaN / Inf</text>
+<text x="394" y="269" text-anchor="middle" class="cat" fill="var(--bad,#dc2626)" font-size="11">FLOATING-POINT</text>
+<text x="394" y="285" text-anchor="middle" class="desc">activation / attention</text>
+<text x="394" y="296" text-anchor="middle" class="desc">overflow</text>
+<text x="394" y="317" text-anchor="middle" class="fix">fix: QK-Norm, switch</text>
+<text x="394" y="328" text-anchor="middle" class="fix">to bf16, add z-loss</text>
+
+<rect x="476" y="223" width="140" height="120" rx="8" fill="var(--muted,#6d675d)" fill-opacity="0.09" stroke="var(--muted,#6d675d)" stroke-width="1.6"/>
+<text x="546" y="238" text-anchor="middle" class="cond">grad_norm ~ 0</text>
+<text x="546" y="266" text-anchor="middle" class="cat" fill="var(--muted,#6d675d)" font-size="11">VANISHING /</text>
+<text x="546" y="280" text-anchor="middle" class="cat" fill="var(--muted,#6d675d)" font-size="11">BAD INIT</text>
+<text x="546" y="304" text-anchor="middle" class="fix">fix: check depth-</text>
+<text x="546" y="315" text-anchor="middle" class="fix">scaling &amp; init</text>
+
+<rect x="650" y="223" width="130" height="120" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.1" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="4 3"/>
+<text x="715" y="245" text-anchor="middle" class="cat" fill="var(--warn,#e0a106)" font-size="11">WARMUP</text>
+<text x="715" y="261" text-anchor="middle" class="cat" fill="var(--warn,#e0a106)" font-size="11">TOO SHORT</text>
+<text x="715" y="283" text-anchor="middle" class="fix">extend warmup to</text>
+<text x="715" y="294" text-anchor="middle" class="fix">&gt;=1% of steps,</text>
+<text x="715" y="305" text-anchor="middle" class="fix">use sqrt-warmup</text>
+
+</g>
+</svg>
+<figcaption><b>grad_norm is the single fastest signal for triaging a loss spike.</b> Read its magnitude at the spike step against the clip threshold -- normal, &gt;5x, NaN/Inf, or ~0 -- and it routes you directly to a category (data, optimizer, floating-point, or vanishing/init) with a matching fix; whether the spike lines up with the LR peak or the end of warmup is a separate check worth running alongside, since a too-short warmup produces the same symptom independent of grad_norm.</figcaption>
+</figure>

@@ -531,6 +531,8 @@ Chinchilla answers "what minimizes *training* loss for a *training* budget." But
 
 ### Inference-aware scaling: why you deliberately over-train
 
+{{fig:inference-aware-overtraining}}
+
 Chinchilla optimizes training compute. But a deployed model is *trained once and served billions of times*. If you will serve a huge number of inference tokens, it is rational to **shrink the model below Chinchilla-optimal and train it on far more data than 20× tokens** — accepting a slightly higher training loss in exchange for a permanently cheaper, faster model at inference (every forward pass costs $\approx 2N$ FLOPs and the KV cache scales with $N$; see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html)).
 
 This is exactly why **Llama-style** models are trained on token counts vastly exceeding 20× their parameter count. Llama-2-7B saw ~2T tokens (~280 tokens/param); Llama-3-8B saw ~15T tokens (~1900 tokens/param) — roughly **two orders of magnitude past Chinchilla-optimal**. These models are *worse than Chinchilla-optimal for their training FLOPs* but *far better per inference FLOP*, which is what their deployers actually pay for.
@@ -585,6 +587,8 @@ The Chinchilla form assumes every token is fresh. Real high-quality data is fini
 ---
 
 ## The Emergent Abilities Debate
+
+{{fig:emergent-mirage-metric}}
 
 Scaling laws describe the *loss* — a smooth, continuous quantity. But practitioners care about **capabilities**: can the model do 3-digit arithmetic, pass a coding test, follow multi-step instructions? A celebrated and contested claim is that some capabilities are **emergent** — absent in small models, then appearing *abruptly* past a scale threshold, producing a sharp "phase transition" rather than a smooth curve (Wei et al., *Emergent Abilities of Large Language Models*).
 

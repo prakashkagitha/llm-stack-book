@@ -62,6 +62,8 @@ On modern hardware, launching a CUDA kernel costs roughly 5–20 µs of CPU time
 
 CUDA graphs record a sequence of GPU operations (kernel launches, memory copies, memsets) into an opaque graph object during a *capture phase*. Thereafter, the entire graph is replayed with a single CPU call — `cudaGraphLaunch`. The GPU receives the full work description at once and can schedule it optimally, without the CPU re-entering the driver for each kernel.
 
+{{fig:cuda-graph-cpu-launch-timeline}}
+
 ```python
 import torch
 
@@ -132,6 +134,8 @@ explanation = dynamo.explain(my_func)(torch.randn(5))
 print(explanation.graphs)          # Two subgraphs
 print(explanation.graph_break_reasons)  # "Data-dependent control flow"
 ```
+
+{{fig:dynamo-graph-breaks-subgraphs}}
 
 Each subgraph between graph breaks is independently compiled and cached. The guard system records the *assumptions* that were true during tracing (e.g., `x.shape[0] == 5`, `x.dtype == torch.float32`) and re-traces if they change. This recompilation can be expensive, which is why you want to minimize graph breaks in hot paths.
 

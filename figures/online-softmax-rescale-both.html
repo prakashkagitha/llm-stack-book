@@ -1,0 +1,324 @@
+<figure class="viz" id="fig-online-softmax-rescale-both">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-online-softmax-rescale-both text { fill: var(--ink-soft); }
+  #fig-online-softmax-rescale-both .title { font: 700 15px var(--sans,sans-serif); }
+  #fig-online-softmax-rescale-both .subtitle { font: 600 9.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-online-softmax-rescale-both .reg-name { font: 700 12px var(--sans,sans-serif); }
+  #fig-online-softmax-rescale-both .reg-sub { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-online-softmax-rescale-both .q-label { font: 600 9.5px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-online-softmax-rescale-both .q-num { font: 700 11px var(--mono,monospace); }
+  #fig-online-softmax-rescale-both .init-txt { font: 600 11px var(--mono,monospace); }
+  #fig-online-softmax-rescale-both .row-label { font: 700 12px var(--sans,sans-serif); }
+  #fig-online-softmax-rescale-both .box-title { font: 700 11px var(--sans,sans-serif); }
+  #fig-online-softmax-rescale-both .box-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-online-softmax-rescale-both .eq-txt { font: 500 10px var(--mono,monospace); }
+  #fig-online-softmax-rescale-both .eq-txt-b { font: 700 10px var(--mono,monospace); fill: var(--accent); }
+  #fig-online-softmax-rescale-both .eq-txt-muted { font: 500 10px var(--mono,monospace); fill: var(--muted); }
+  #fig-online-softmax-rescale-both .pill-txt { font: 700 8.5px var(--sans,sans-serif); }
+  #fig-online-softmax-rescale-both .card-title { font: 700 9.5px var(--sans,sans-serif); }
+  #fig-online-softmax-rescale-both .card-l { font: 700 11px var(--mono,monospace); }
+  #fig-online-softmax-rescale-both .arrow-lbl { font: 600 9px var(--mono,monospace); fill: var(--muted); }
+  #fig-online-softmax-rescale-both .focal-callout { font: 700 11px var(--sans,sans-serif); fill: var(--accent); }
+  #fig-online-softmax-rescale-both .final-title { font: 700 12.5px var(--sans,sans-serif); fill: var(--good,#2f9e6e); }
+  #fig-online-softmax-rescale-both .final-sub { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+
+  #fig-online-softmax-rescale-both [data-anim="1"]  { animation-delay: .05s; }
+  #fig-online-softmax-rescale-both [data-anim="2"]  { animation-delay: .35s; }
+  #fig-online-softmax-rescale-both [data-anim="3"]  { animation-delay: .65s; }
+  #fig-online-softmax-rescale-both [data-anim="4"]  { animation-delay: .95s; }
+  #fig-online-softmax-rescale-both [data-anim="5"]  { animation-delay: 1.30s; }
+  #fig-online-softmax-rescale-both [data-anim="6"]  { animation-delay: 1.65s; }
+  #fig-online-softmax-rescale-both [data-anim="7"]  { animation-delay: 2.00s; }
+  #fig-online-softmax-rescale-both [data-anim="8"]  { animation-delay: 2.35s; }
+  #fig-online-softmax-rescale-both [data-anim="9"]  { animation-delay: 2.80s; }
+  #fig-online-softmax-rescale-both [data-anim="10"] { animation-delay: 3.15s; }
+  #fig-online-softmax-rescale-both [data-anim="11"] { animation-delay: 3.50s; }
+  #fig-online-softmax-rescale-both [data-anim="12"] { animation-delay: 3.90s; }
+</style>
+<svg viewBox="0 0 800 674" role="img" aria-label="Animation of the online softmax update for one query row as three key/value blocks stream in. A running max m, running sum l, and output accumulator O are tracked. When a new block's max exceeds the running max, both l and O -- which were exponentiated against the old max -- must be rescaled by a correction factor alpha before the new block's contribution is added; forgetting to rescale either one is the classic bug. After the last block, O is divided by l once to produce the final normalized output.">
+  <defs>
+    <marker id="osrb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L8 5 L0 8.5 z" fill="var(--muted)"/>
+    </marker>
+    <marker id="osrb-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L8 5 L0 8.5 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="osrb-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L8 5 L0 8.5 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+
+  <text x="400" y="20" text-anchor="middle" class="title">Online softmax: rescaling BOTH l and O when the running max jumps</text>
+  <text x="400" y="34" text-anchor="middle" class="subtitle">both l and O were exponentiated against the OLD max --</text>
+  <text x="400" y="46" text-anchor="middle" class="subtitle">so both must be rescaled by alpha before adding new mass</text>
+
+  <g transform="translate(0,14)">
+
+  
+  <g data-anim="1">
+    <rect x="20" y="46" width="180" height="46" rx="6" class="v-fill v-stroke" stroke-width="1.2"/>
+    <text x="110" y="63" text-anchor="middle" class="reg-name">m -- running max</text>
+    <text x="110" y="78" text-anchor="middle" class="reg-sub">of scores seen so far</text>
+
+    <rect x="210" y="46" width="180" height="46" rx="6" class="v-fill v-stroke" stroke-width="1.2"/>
+    <text x="300" y="63" text-anchor="middle" class="reg-name">l -- running sum</text>
+    <text x="300" y="78" text-anchor="middle" class="reg-sub">of exp(scores - m)</text>
+
+    <rect x="400" y="46" width="180" height="46" rx="6" class="v-fill v-stroke" stroke-width="1.2"/>
+    <text x="490" y="63" text-anchor="middle" class="reg-name">O -- output accum.</text>
+    <text x="490" y="78" text-anchor="middle" class="reg-sub">d entries, unnormalized</text>
+
+    <text x="600" y="56" class="q-label">K/V blocks stream in:</text>
+    <rect x="600" y="62" width="20" height="20" rx="3" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="610" y="76" text-anchor="middle" class="q-num">1</text>
+    <rect x="628" y="62" width="20" height="20" rx="3" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="638" y="76" text-anchor="middle" class="q-num">2</text>
+    <rect x="656" y="62" width="20" height="20" rx="3" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="666" y="76" text-anchor="middle" class="q-num">3</text>
+    <line x1="680" y1="72" x2="700" y2="72" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#osrb-arrow)"/>
+
+    <rect x="20" y="106" width="760" height="30" rx="6" fill="var(--surface-3)" fill-opacity="0.5" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="38" y="126" class="init-txt">initial state:  m = -inf     l = 0</text>
+    <g transform="translate(600,113)">
+      <rect x="0" y="0" width="12" height="14" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.8"/>
+      <rect x="14" y="0" width="12" height="14" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.8"/>
+      <rect x="28" y="0" width="12" height="14" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.8"/>
+      <rect x="42" y="0" width="12" height="14" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.8"/>
+      <rect x="56" y="0" width="12" height="14" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.8"/>
+      <rect x="70" y="0" width="12" height="14" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.8"/>
+    </g>
+    <text x="686" y="126" class="init-txt">O = empty</text>
+  </g>
+
+  
+  <text x="20" y="152" class="row-label">block j = 1</text>
+
+  <g data-anim="2">
+    <rect x="20" y="160" width="150" height="60" rx="6" fill="var(--accent)" fill-opacity="0.09" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="95" y="180" text-anchor="middle" class="box-title">S^(1) arrives</text>
+    <text x="95" y="198" text-anchor="middle" class="box-sub">block max m_1 = 2</text>
+  </g>
+
+  <g data-anim="3">
+    <text x="188" y="176" class="eq-txt">m_new = max(m, m_1)</text>
+    <text x="188" y="192" class="eq-txt-muted">= max(-inf, 2) = 2</text>
+    <text x="188" y="212" class="eq-txt">alpha = exp(m_old-m_new)</text>
+    <text x="188" y="228" class="eq-txt-muted">= exp(-inf) = 0</text>
+  </g>
+
+  <g data-anim="4">
+    
+    <rect x="385" y="160" width="100" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="435" y="174" text-anchor="middle" class="card-title">before</text>
+    <text x="435" y="192" text-anchor="middle" class="card-l">l = 0.00</text>
+    <g transform="translate(399,200)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+
+    <line x1="485" y1="205" x2="508" y2="205" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#osrb-arrow)"/>
+    <text x="496" y="196" text-anchor="middle" class="arrow-lbl">x 0</text>
+
+    
+    <rect x="510" y="160" width="100" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="560" y="174" text-anchor="middle" class="card-title">rescaled</text>
+    <text x="560" y="192" text-anchor="middle" class="card-l">l = 0.00</text>
+    <g transform="translate(524,200)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+
+    <line x1="610" y1="205" x2="628" y2="205" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#osrb-arrow)"/>
+    <text x="616" y="196" text-anchor="middle" class="arrow-lbl">+3.00</text>
+
+    
+    <rect x="640" y="160" width="108" height="90" rx="6" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="694" y="174" text-anchor="middle" class="card-title">after block 1</text>
+    <text x="694" y="192" text-anchor="middle" class="card-l">l = 3.00</text>
+    <g transform="translate(658,200)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+  </g>
+
+  
+  <text x="20" y="278" class="row-label">block j = 2 -- the max jumps</text>
+
+  <g data-anim="5">
+    <rect x="20" y="286" width="150" height="60" rx="6" fill="var(--accent)" fill-opacity="0.09" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="95" y="306" text-anchor="middle" class="box-title">S^(2) arrives</text>
+    <text x="95" y="324" text-anchor="middle" class="box-sub">block max m_2 = 5</text>
+
+    
+    <rect x="385" y="286" width="100" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="435" y="300" text-anchor="middle" class="card-title">before</text>
+    <text x="435" y="318" text-anchor="middle" class="card-l">l = 3.00</text>
+    <g transform="translate(399,326)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.46" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+  </g>
+
+  <g data-anim="6">
+    <text x="188" y="302" class="eq-txt">m_new = max(m, m_2)</text>
+    <text x="188" y="320" class="eq-txt-b">= max(2, 5) = 5</text>
+    <rect x="298" y="309" width="46" height="15" rx="3" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1" class="viz-pulse"/>
+    <text x="321" y="320" text-anchor="middle" class="pill-txt" fill="var(--accent)">JUMP</text>
+  </g>
+
+  <g data-anim="7">
+    <text x="188" y="342" class="eq-txt">alpha = exp(m_old-m_new)</text>
+    <text x="188" y="358" class="eq-txt-muted">= exp(2 - 5) ~= 0.05</text>
+  </g>
+
+  <g data-anim="8">
+    <line x1="485" y1="331" x2="508" y2="331" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#osrb-arrow-accent)"/>
+    <text x="496" y="322" text-anchor="middle" class="arrow-lbl" fill="var(--accent)">x 0.05</text>
+
+    
+    <rect x="510" y="286" width="100" height="90" rx="6" fill="var(--accent)" fill-opacity="0.20" stroke="var(--accent)" stroke-width="2.2" class="viz-pulse"/>
+    <text x="560" y="300" text-anchor="middle" class="card-title">rescaled</text>
+    <text x="560" y="318" text-anchor="middle" class="card-l">l = 0.15</text>
+    <g transform="translate(524,326)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.10" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.10" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.10" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.10" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.10" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.10" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+
+    <rect x="20" y="386" width="655" height="20" rx="4" fill="var(--accent)" fill-opacity="0.10" stroke="var(--accent)" stroke-width="1" class="viz-pulse"/>
+    <text x="30" y="400" class="focal-callout">rescale BOTH -- the #1 bug is rescaling l but forgetting O (or vice versa)</text>
+  </g>
+
+  <g data-anim="9">
+    <line x1="610" y1="331" x2="628" y2="331" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#osrb-arrow)"/>
+    <text x="616" y="322" text-anchor="middle" class="arrow-lbl">+4.00</text>
+
+    <rect x="640" y="286" width="108" height="90" rx="6" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="694" y="300" text-anchor="middle" class="card-title">after block 2</text>
+    <text x="694" y="318" text-anchor="middle" class="card-l">l = 4.15</text>
+    <g transform="translate(658,326)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+  </g>
+
+  
+  <text x="20" y="436" class="row-label">block j = 3 -- max unchanged (no rescale)</text>
+
+  <g data-anim="10">
+    <rect x="20" y="444" width="150" height="60" rx="6" class="v-fill v-stroke" stroke-width="1.2"/>
+    <text x="95" y="464" text-anchor="middle" class="box-title">S^(3) arrives</text>
+    <text x="95" y="482" text-anchor="middle" class="box-sub">block max m_3 = 4</text>
+
+    <text x="188" y="460" class="eq-txt">m_new = max(m, m_3)</text>
+    <text x="188" y="478" class="eq-txt-muted">= max(5, 4) = 5</text>
+    <rect x="298" y="467" width="70" height="15" rx="3" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="333" y="478" text-anchor="middle" class="pill-txt" fill="var(--muted)">NO JUMP</text>
+    <text x="188" y="498" class="eq-txt">alpha = exp(5-5) = 1</text>
+    <text x="188" y="514" class="eq-txt-muted">(nothing to rescale)</text>
+  </g>
+
+  <g data-anim="11">
+    <rect x="385" y="444" width="100" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="435" y="458" text-anchor="middle" class="card-title">before</text>
+    <text x="435" y="476" text-anchor="middle" class="card-l">l = 4.15</text>
+    <g transform="translate(399,484)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+
+    <line x1="485" y1="489" x2="508" y2="489" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#osrb-arrow)"/>
+    <text x="496" y="480" text-anchor="middle" class="arrow-lbl">x 1</text>
+
+    <rect x="510" y="444" width="100" height="90" rx="6" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="560" y="458" text-anchor="middle" class="card-title">rescaled</text>
+    <text x="560" y="476" text-anchor="middle" class="card-l">l = 4.15</text>
+    <g transform="translate(524,484)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.64" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+
+    <line x1="610" y1="489" x2="628" y2="489" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#osrb-arrow)"/>
+    <text x="616" y="480" text-anchor="middle" class="arrow-lbl">+1.50</text>
+
+    <rect x="640" y="444" width="108" height="90" rx="6" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="694" y="458" text-anchor="middle" class="card-title">after block 3</text>
+    <text x="694" y="476" text-anchor="middle" class="card-l">l = 5.65</text>
+    <g transform="translate(658,484)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+  </g>
+
+  
+  <text x="20" y="562" class="row-label">after the last block: normalize once</text>
+
+  <g data-anim="12">
+    <rect x="20" y="570" width="140" height="70" rx="6" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="90" y="586" text-anchor="middle" class="card-title">final running state</text>
+    <text x="90" y="604" text-anchor="middle" class="card-l">l = 5.65</text>
+    <g transform="translate(48,610)">
+      <rect x="0" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="12" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="24" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="36" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="48" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+      <rect x="60" y="0" width="10" height="12" fill="var(--accent)" fill-opacity="0.85" stroke="var(--border-2)" stroke-width="0.7"/>
+    </g>
+
+    <line x1="160" y1="605" x2="216" y2="605" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#osrb-arrow-good)"/>
+    <text x="188" y="596" text-anchor="middle" class="arrow-lbl" fill="var(--good,#2f9e6e)">O / l</text>
+
+    <rect x="220" y="570" width="320" height="70" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+    <text x="380" y="590" text-anchor="middle" class="final-title">O_final = O / l   (divide once)</text>
+    <text x="380" y="606" text-anchor="middle" class="final-sub">normalized attention output for this query row</text>
+    <g transform="translate(320,614)">
+      <rect x="0" y="0" width="14" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.75" stroke="var(--good,#2f9e6e)" stroke-width="0.8"/>
+      <rect x="16" y="0" width="14" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.75" stroke="var(--good,#2f9e6e)" stroke-width="0.8"/>
+      <rect x="32" y="0" width="14" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.75" stroke="var(--good,#2f9e6e)" stroke-width="0.8"/>
+      <rect x="48" y="0" width="14" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.75" stroke="var(--good,#2f9e6e)" stroke-width="0.8"/>
+      <rect x="64" y="0" width="14" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.75" stroke="var(--good,#2f9e6e)" stroke-width="0.8"/>
+      <rect x="80" y="0" width="14" height="14" fill="var(--good,#2f9e6e)" fill-opacity="0.75" stroke="var(--good,#2f9e6e)" stroke-width="0.8"/>
+    </g>
+  </g>
+
+  </g>
+</svg>
+<figcaption><b>When a new key/value block raises the running max, both the running sum <code>l</code> and the output accumulator <code>O</code> must be rescaled by the same correction factor <code>alpha = exp(m_old - m_new)</code> before the new block's contribution is added.</b> Both were exponentiated against the old max, so both are stale in the same way; the classic bug is rescaling one and forgetting the other. After the last block, <code>O</code> is divided by <code>l</code> exactly once to produce the normalized output.</figcaption>
+</figure>

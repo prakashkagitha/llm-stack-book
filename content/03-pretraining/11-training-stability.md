@@ -250,6 +250,8 @@ class QKNormAttention(nn.Module):
         return self.W_o(out)
 ```
 
+{{fig:attention-logit-overflow-qknorm}}
+
 ### Z-loss
 
 The z-loss is a small auxiliary penalty on the log-partition function of the softmax:
@@ -633,6 +635,8 @@ STEP 6: PREVENT RECURRENCE
   [ ] Consider adding skip-batch logic if not already present
   [ ] Consider adding QK-norm / z-loss if not already present
 ```
+
+{{fig:spike-diagnostic-decision-tree}}
 
 Here is a minimal but complete diagnostic script to run against a checkpoint and a batch:
 
