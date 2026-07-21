@@ -42,6 +42,8 @@ Training signal: cross-entropy loss on next token
 
 Each arrow introduces a gap. Evaluation research tries to close those gaps; this chapter is about understanding where they lie.
 
+{{fig:eval-proxy-gap-ladder}}
+
 ---
 
 ## The Benchmark Zoo
@@ -289,6 +291,8 @@ GSM8K crossed this threshold around 2023; HumanEval in 2024. MMLU approaches it:
 The mirror problem affects evaluations of smaller models on very hard benchmarks. But there is a subtlety worth internalizing: a *genuine* floor on GPQA — a four-choice benchmark — is the random-chance rate of about 25 %, which a model reaches by emitting parseable answers that carry no signal. So if a 7B-parameter model scores 5 %, do not read that as "very weak scientific reasoning": 5 % is far *below* chance, and a model almost never performs worse than random guessing. A score that sits well under 25 % is a red flag that the answer extractor is failing — the model is producing answers in a format the regex misses (or refusing, or rambling without committing to a letter), so parsed answers default to wrong. Before drawing any capability conclusion, inspect the null/unparsed rate and a sample of raw generations; a true floor result clusters near 25 %, not near 0 %.
 
 The rule of thumb: **a benchmark is most informative when average performance is between roughly 20 % and 80 %.** Below 20 % you are measuring noise; above 80 % you are measuring ceiling effects and question quality.
+
+{{fig:benchmark-score-informative-band}}
 
 ---
 

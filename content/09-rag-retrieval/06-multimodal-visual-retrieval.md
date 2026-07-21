@@ -77,6 +77,8 @@ This is genuinely useful for **natural-image** retrieval ("find the photo of a d
 
 ColBERT (Khattab & Zaharia, *ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT*, 2020) sits between two extremes. A **cross-encoder** concatenates query and document, runs full attention across both, and scores them jointly — maximally expressive but $O(\text{queries} \times \text{docs})$ forward passes, far too slow to scan a corpus. A **bi-encoder** (single vector each) is fast — you precompute document vectors and do a dot product — but throws away token-level detail.
 
+{{fig:retrieval-interaction-spectrum}}
+
 Late interaction is the middle path. Encode the query into **one vector per query token** $\{q_1, \dots, q_n\}$ and the document into **one vector per document token** $\{d_1, \dots, d_m\}$. Precompute and store all document token vectors offline. At query time, score with the **MaxSim** operator: for each query token, find its best-matching document token, then sum:
 
 $$
@@ -103,6 +105,8 @@ Q = torch.nn.functional.normalize(torch.randn(4, 8), dim=-1)
 D = torch.nn.functional.normalize(torch.randn(6, 8), dim=-1)
 print("MaxSim score:", maxsim(Q, D).item())
 ```
+
+{{fig:maxsim-scoring-grid}}
 
 The cost is storage: instead of one vector per document you store $m$ (often 100–300 for a passage). This is the central trade-off of all multi-vector retrieval, and most of the systems engineering later in this chapter exists to make it affordable.
 

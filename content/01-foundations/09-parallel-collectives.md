@@ -223,6 +223,8 @@ $$
 
 The bandwidth term is constant in $n$ — adding more GPUs doesn't change the bandwidth cost. The latency term grows linearly, which is why ring all-reduce across thousands of GPUs requires hierarchical approaches.
 
+{{fig:alpha-beta-cost-model}}
+
 !!! example "Worked Example: Is a DDP Training Step Bottlenecked by Communication?"
 
     **Setup:** 8 GPUs on a single node connected via NVLink. We are training a 1.3B parameter model in bf16 (2 bytes/parameter). After the backward pass, we need to all-reduce gradients.

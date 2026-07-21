@@ -320,6 +320,8 @@ def multihop_rag(
 
     **Answer**: Rust. Each hop is unretievable without the previous one because the final query ("programming language at Extropic AI") has no semantic overlap with the original question.
 
+{{fig:advrag-multihop-vs-singleshot}}
+
 ## Self-RAG and Corrective RAG
 
 ### Self-RAG: Retrieval and Quality Tokens
@@ -468,6 +470,8 @@ def build_contextual_chunks(
 ```
 
 The mechanism: the embedding of "the plaintiff argued..." is ambiguous without knowing this is an employment discrimination case from 2019. The prefix "This chunk is from a 2019 employment discrimination ruling in which the plaintiff argues constructive dismissal..." resolves that ambiguity and pushes the embedding toward the right neighbourhood.
+
+{{fig:advrag-contextual-retrieval-embedding-shift}}
 
 Empirically (Anthropic's own report), contextual retrieval combined with BM25 hybrid search reduced retrieval failure rates substantially on the tasks tested. The cost is one additional LLM call per chunk at indexing time — acceptable for corpora that do not change frequently, expensive for streaming ingestion.
 

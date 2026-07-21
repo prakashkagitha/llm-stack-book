@@ -158,6 +158,8 @@ Production provides implicit preference signals that require no user action:
 
 These signals are noisy individually but highly correlated in aggregate. You can train a lightweight classifier to predict explicit thumbs-up from implicit signals, then use this **proxy reward model** to label the remaining 95% of unlabeled traffic.
 
+{{fig:preference-signal-pyramid}}
+
 ### Pairwise preference labeling at scale
 
 For offline reward model training (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)), you need explicit pairwise preference labels. A practical pipeline:
@@ -260,6 +262,8 @@ This is just the average negative log-probability per token, i.e. the per-token 
 ### Core-set / diversity sampling
 
 Uncertainty sampling alone leads to annotation of many near-duplicate examples (the model is uncertain in a cluster around the same concept). Add a diversity constraint: after computing uncertainty scores, run k-medoids clustering on the prompt embeddings, then sample the highest-uncertainty example from each cluster.
+
+{{fig:active-learning-uncertainty-vs-diversity}}
 
 ```python
 # flywheel/active_learning/coreset_sampler.py

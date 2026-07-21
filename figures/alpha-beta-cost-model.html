@@ -1,0 +1,131 @@
+<figure class="viz" id="fig-alpha-beta-cost-model">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-alpha-beta-cost-model text { fill: var(--ink-soft); }
+  #fig-alpha-beta-cost-model .title    { font: 700 15px var(--sans,sans-serif); }
+  #fig-alpha-beta-cost-model .eq       { font: 600 12.5px var(--mono,monospace); fill: var(--muted); }
+  #fig-alpha-beta-cost-model .lbl      { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-alpha-beta-cost-model .lbl-sm   { font: 400 10.5px var(--sans,sans-serif); }
+  #fig-alpha-beta-cost-model .lbl-xs   { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-alpha-beta-cost-model .cap-it   { font: italic 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-alpha-beta-cost-model .muted    { fill: var(--muted); }
+  #fig-alpha-beta-cost-model .axis-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-alpha-beta-cost-model .n-lbl    { font: 700 11px var(--mono,monospace); }
+</style>
+<svg viewBox="0 0 800 720" role="img" aria-label="Line chart of the alpha-beta cost model T(B) = alpha + B/beta, showing a latency-bound region for small messages, a bandwidth-bound region for large messages, and a crossover point B* where the two costs are equal. A second inset panel shows three parallel lines for ring all-reduce with n=4, 16, 64 ranks, each with the same slope but a higher latency-floor intercept, illustrating why hierarchical collectives are needed at large n.">
+<defs>
+  <marker id="abc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+  </marker>
+  <marker id="abc-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+  </marker>
+  <marker id="abc-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+  </marker>
+</defs>
+
+
+<text x="400" y="24" text-anchor="middle" class="title">Alpha-Beta Communication Cost Model</text>
+<text x="400" y="42" text-anchor="middle" class="eq">T(B) = alpha + B / beta</text>
+
+
+<g data-anim="1">
+  
+  <line x1="80" y1="390" x2="770" y2="390" stroke="var(--border-2)" stroke-width="1.6" marker-end="url(#abc-arrow)"/>
+  <line x1="80" y1="390" x2="80" y2="60" stroke="var(--border-2)" stroke-width="1.6" marker-end="url(#abc-arrow)"/>
+  <text x="425" y="440" text-anchor="middle" class="axis-lbl">message size B  (small -&gt; large)</text>
+  <text x="30" y="225" text-anchor="middle" class="axis-lbl" transform="rotate(-90 30 225)">transfer time T</text>
+</g>
+
+
+<g data-anim="1">
+  <polygon points="95,350 310,267 310,390 95,390" fill="var(--warn)" fill-opacity="0.10"/>
+  <polygon points="310,267 740,100 740,390 310,390" fill="var(--good)" fill-opacity="0.08"/>
+</g>
+
+
+<g data-anim="2">
+  <line x1="80" y1="350" x2="280" y2="350" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="85" y="300" class="lbl">latency floor alpha</text>
+  <text x="85" y="313" class="lbl-xs muted">(fixed startup, per call)</text>
+  <line x1="112" y1="317" x2="112" y2="347" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#abc-arrow-muted)"/>
+</g>
+
+
+<line x1="95" y1="350" x2="740" y2="100" stroke="var(--ink-soft)" stroke-width="2.4"
+      class="viz-draw" style="--len:660" data-anim="2"/>
+
+
+<g data-anim="3">
+  <text x="560" y="145" text-anchor="middle" class="lbl">slope = 1/beta</text>
+  <text x="560" y="158" text-anchor="middle" class="lbl-xs muted">(bandwidth-limited)</text>
+</g>
+
+
+<g data-anim="3">
+  <line x1="310" y1="390" x2="310" y2="267" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <circle cx="310" cy="267" r="4" fill="var(--accent)"/>
+  <text x="310" y="405" text-anchor="middle" class="lbl" fill="var(--accent)">B* = alpha * beta</text>
+  <text x="310" y="418" text-anchor="middle" class="lbl-xs muted">(equal cost)</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="250" y="345" text-anchor="middle" class="lbl" fill="var(--warn)">latency-bound</text>
+  <text x="250" y="359" text-anchor="middle" class="lbl-sm">T ~ alpha, message too</text>
+  <text x="250" y="372" text-anchor="middle" class="lbl-sm">small to amortize startup</text>
+
+  <text x="520" y="345" text-anchor="middle" class="lbl" fill="var(--good)">bandwidth-bound</text>
+  <text x="520" y="359" text-anchor="middle" class="lbl-sm">T ~ B/beta, transfer</text>
+  <text x="520" y="372" text-anchor="middle" class="lbl-sm">dominated by raw bytes</text>
+</g>
+
+
+<g data-anim="4">
+  <text x="95" y="194" class="lbl-sm">gradient bucketing merges</text>
+  <text x="95" y="207" class="lbl-sm">many tiny messages -&gt;</text>
+  <text x="95" y="220" class="lbl-sm" fill="var(--accent)">pushes into bandwidth regime</text>
+  <path d="M 110 230 Q 230 255 306 266" fill="none" stroke="var(--accent)" stroke-width="1.6"
+        marker-end="url(#abc-arrow-accent)"/>
+</g>
+
+<text x="762" y="76" text-anchor="end" class="cap-it">(axes qualitative - not to scale)</text>
+
+
+<line x1="30" y1="465" x2="770" y2="465" stroke="var(--border-2)" stroke-dasharray="5 3" stroke-width="0.8"/>
+
+
+<g data-anim="5">
+  <text x="400" y="493" text-anchor="middle" class="title" style="font-size:13.5px">Ring All-Reduce: Latency Floor Grows With n</text>
+  <text x="400" y="509" text-anchor="middle" class="eq" style="font-size:11px">T_ring(M) = 2(n-1)*alpha + (2(n-1)/n) * (M/beta)</text>
+
+  <line x1="160" y1="650" x2="672" y2="650" stroke="var(--border-2)" stroke-width="1.4" marker-end="url(#abc-arrow)"/>
+  <line x1="160" y1="650" x2="160" y2="495" stroke="var(--border-2)" stroke-width="1.4" marker-end="url(#abc-arrow)"/>
+  <text x="420" y="672" text-anchor="middle" class="axis-lbl">message size M per rank (small -&gt; large)</text>
+  <text x="118" y="575" text-anchor="middle" class="axis-lbl" transform="rotate(-90 118 575)">T</text>
+
+  
+  <line x1="175" y1="640" x2="650" y2="582" stroke="var(--accent2)" stroke-width="2.2"/>
+  <text x="658" y="586" class="n-lbl" fill="var(--accent2)">n=4</text>
+
+  <line x1="175" y1="615" x2="650" y2="557" stroke="var(--accent)" stroke-width="2.2"/>
+  <text x="658" y="561" class="n-lbl" fill="var(--accent)">n=16</text>
+
+  <line x1="175" y1="560" x2="650" y2="502" stroke="var(--warn)" stroke-width="2.2"/>
+  <text x="658" y="506" class="n-lbl" fill="var(--warn)">n=64</text>
+
+  
+  <circle cx="175" cy="640" r="3.5" fill="var(--accent2)"/>
+  <circle cx="175" cy="615" r="3.5" fill="var(--accent)"/>
+  <circle cx="175" cy="560" r="3.5" fill="var(--warn)"/>
+
+  <text x="420" y="692" text-anchor="middle" class="lbl-sm">ring latency floor 2(n-1)*alpha grows with n</text>
+  <text x="420" y="705" text-anchor="middle" class="lbl-sm">-&gt; why we go hierarchical (fewer, bigger hops) at large n</text>
+  <path d="M 350 682 Q 260 650 178 600" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="3 3"
+        marker-end="url(#abc-arrow-muted)"/>
+</g>
+
+</svg>
+<figcaption><b>The alpha-beta cost model T(B) = alpha + B/beta separates a fixed per-call latency floor from a bandwidth-limited slope.</b> Small messages (left, amber) never amortize the startup cost alpha and are latency-bound; large messages (right, green) are dominated by raw bytes moved and are bandwidth-bound; the crossover B* = alpha*beta is where the two terms cost the same — this is why gradient bucketing (merging many tiny messages into one large one) pushes communication into the cheaper bandwidth-bound regime. The inset shows the ring all-reduce variant: three lines with the same bandwidth slope but a latency-floor intercept 2(n-1)*alpha that grows with the number of ranks n, which is exactly why large clusters use hierarchical (intra-node then inter-node) collectives instead of one flat ring.</figcaption>
+</figure>

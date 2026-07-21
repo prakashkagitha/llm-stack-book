@@ -195,6 +195,8 @@ $$
 
 so with $n_{\text{list}} = \sqrt{N}$ and $n_{\text{probe}} = 8$, you scan on the order of $8\sqrt{N}$ vectors instead of $N$. For $N = 10^9$ that is $8 \cdot 31{,}623 \approx 2.5 \times 10^5$ vectors per query — a **4000×** reduction.
 
+{{fig:ivf-voronoi-probe}}
+
 IVF alone solves the *speed* problem but not the *memory* problem: every vector is still stored in full `float32`. For a billion 768-d vectors that is 3 TB of RAM. To break the memory wall we need quantization.
 
 ## Product Quantization (PQ): Compressing the Vectors
@@ -222,6 +224,8 @@ $$
 $$
 
 where $\mathbf{q}^j$ is the $j$-th sub-block of the query. The trick: at query time, precompute a small **lookup table (LUT)** of size $m \times k^*$ holding the squared distance from each query sub-block to every centroid in that subspace. Then the distance to *any* database vector is just $m$ table lookups and $m{-}1$ additions — no multiplications, no decompression. This is **ADC** (the query stays "asymmetric": full precision; only the database is quantized, which keeps accuracy higher than quantizing both sides).
+
+{{fig:pq-adc-lookup}}
 
 ```python
 import numpy as np

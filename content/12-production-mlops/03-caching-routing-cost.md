@@ -102,6 +102,8 @@ A practical approach:
 
 For general chat bots a threshold near 0.92–0.95 is common. For medical, legal, or financial applications a higher bar (0.97+) or a human-review loop on borderline hits is appropriate.
 
+{{fig:cost-semantic-threshold-tradeoff}}
+
 ```python
 import numpy as np
 from typing import Optional
@@ -181,6 +183,8 @@ At 10,000 calls per day this saves approximately USD 18 per day on the system pr
     Saving: roughly **\$217/day** or **\$79K/year** — just from restructuring your prompt.
 
 To maximise prefix cache hits, keep the stable part of your prompt at the top (system instructions, few-shot examples, retrieved context) and put the variable part at the bottom (user message). This is covered in more depth in [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html) and [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
+
+{{fig:cost-prefix-cache-reuse-layout}}
 
 ```python
 # Anthropic prompt caching API usage (Python SDK, 2024+)

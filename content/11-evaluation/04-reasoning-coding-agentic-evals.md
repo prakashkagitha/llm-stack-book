@@ -14,6 +14,8 @@ A model that generates correct code 30% of the time and a model that generates c
 
 **Pass@k** is the probability that *at least one* of $k$ independent samples passes all tests for a given problem. If we generate $n$ samples per problem (with $n \geq k$) and $c$ of them pass, the unbiased estimator is:
 
+{{fig:rcae-passk-urn-without-replacement}}
+
 $$
 \widehat{\text{Pass@}k} = 1 - \frac{\binom{n - c}{k}}{\binom{n}{k}}
 $$
@@ -526,6 +528,8 @@ $$
 $$
 
 and plot accuracy vs. token budget $B$ as a curve. A model that dominates everywhere on this curve is unambiguously better. When curves cross, the comparison is budget-dependent.
+
+{{fig:rcae-accuracy-vs-compute-crossing-curves}}
 
 **Majority voting** (self-consistency, Wang et al., 2022): generate $k$ independent solutions and take the majority answer. Accuracy improves with $k$, but at the cost of $k \times$ compute. The marginal return diminishes — this is a compute-accuracy tradeoff curve.
 
