@@ -1,0 +1,111 @@
+<figure class="viz" id="fig-structgen-mask-forward-overlap">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 420" role="img" aria-label="Timeline comparison of naive serial constrained decoding, where each step pays forward pass time plus mask compute time in sequence, versus XGrammar's overlapped execution, where the CPU computes the mask for the next step during the GPU's forward pass of the current step, so wall-clock time is the max of the two rather than their sum, and the overhead nearly disappears when the forward pass is much larger than mask compute.">
+  <defs>
+    <marker id="mo-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+    </marker>
+    <marker id="mo-arr-a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-structgen-mask-forward-overlap text { fill: var(--ink-soft,#45413a); font: 400 10px var(--sans,sans-serif); }
+    #fig-structgen-mask-forward-overlap .ttl   { font: 700 12.5px var(--sans,sans-serif); fill: var(--ink); }
+    #fig-structgen-mask-forward-overlap .sub   { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-structgen-mask-forward-overlap .lbl   { font: 600 10.5px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+    #fig-structgen-mask-forward-overlap .ann   { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-structgen-mask-forward-overlap .mono  { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+    #fig-structgen-mask-forward-overlap .mono-s{ font: 500 9px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+    #fig-structgen-mask-forward-overlap .lanelbl{ font: 700 10.5px var(--sans,sans-serif); }
+    #fig-structgen-mask-forward-overlap [data-anim] { opacity: 0; }
+    #fig-structgen-mask-forward-overlap [data-anim="1"] { animation: mo-in .5s ease-out .05s forwards; }
+    #fig-structgen-mask-forward-overlap [data-anim="2"] { animation: mo-in .5s ease-out .5s forwards; }
+    #fig-structgen-mask-forward-overlap [data-anim="3"] { animation: mo-in .5s ease-out .95s forwards; }
+    @keyframes mo-in { from{opacity:0;} to{opacity:1;} }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="20" y="26" class="ttl">Naive (serial): T = fwd + mask</text>
+    <text x="20" y="42" class="sub">forward pass and mask compute run back-to-back on one timeline, for each of 3 decode steps</text>
+
+    <text x="20" y="72" class="lanelbl">single lane</text>
+    
+    <rect x="110" y="58" width="130" height="28" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="175" y="76" text-anchor="middle" class="mono-s">fwd t</text>
+    <rect x="240" y="58" width="34" height="28" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="257" y="76" text-anchor="middle" class="mono-s" font-size="8">mask</text>
+
+    
+    <rect x="278" y="58" width="130" height="28" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="343" y="76" text-anchor="middle" class="mono-s">fwd t+1</text>
+    <rect x="408" y="58" width="34" height="28" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="425" y="76" text-anchor="middle" class="mono-s" font-size="8">mask</text>
+
+    
+    <rect x="446" y="58" width="130" height="28" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="511" y="76" text-anchor="middle" class="mono-s">fwd t+2</text>
+    <rect x="576" y="58" width="34" height="28" rx="4" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <text x="593" y="76" text-anchor="middle" class="mono-s" font-size="8">mask</text>
+
+    
+    <path d="M110,96 L110,102 L610,102 L610,96" fill="none" class="v-stroke" stroke-width="1.2"/>
+    <text x="360" y="116" text-anchor="middle" class="lbl">total wall-clock: fwd+mask, fwd+mask, fwd+mask -- three full sums, back to back</text>
+  </g>
+
+  <line x1="20" y1="140" x2="760" y2="140" class="v-grid" stroke-width="1"/>
+
+  
+  <g data-anim="2">
+    <text x="20" y="164" class="ttl">XGrammar (overlapped): T ~= max(fwd, mask)</text>
+    <text x="20" y="180" class="sub">GPU and CPU run on separate lanes; the CPU computes step t+1's mask while the GPU runs step t's forward pass</text>
+
+    
+    <text x="20" y="216" class="lanelbl" fill="var(--accent2,#3b82f6)">GPU lane</text>
+    <rect x="110" y="200" width="180" height="30" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="200" y="219" text-anchor="middle" class="mono-s">forward pass, step t</text>
+    <rect x="290" y="200" width="180" height="30" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="380" y="219" text-anchor="middle" class="mono-s">forward pass, step t+1</text>
+    <rect x="470" y="200" width="180" height="30" rx="4" fill="var(--accent2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+    <text x="560" y="219" text-anchor="middle" class="mono-s">forward pass, step t+2</text>
+
+    
+    <text x="20" y="266" class="lanelbl" fill="var(--warn,#e0a106)">CPU lane</text>
+    <rect x="110" y="248" width="24" height="26" rx="3" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.3" opacity="0.5"/>
+    <text x="122" y="291" text-anchor="middle" class="ann" font-size="8">mask t</text>
+
+    <rect x="290" y="248" width="24" height="26" rx="3" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="302" y="291" text-anchor="middle" class="ann" font-size="8">mask t+1</text>
+
+    <rect x="470" y="248" width="24" height="26" rx="3" class="v-fill" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="482" y="291" text-anchor="middle" class="ann" font-size="8">mask t+2</text>
+
+    
+    <path d="M302,248 C302,240 260,236 200,232" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" marker-end="url(#mo-arr)"/>
+    <rect x="112" y="304" width="360" height="40" rx="7" fill="var(--warn,#e0a106)" fill-opacity="0.08" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="122" y="319" class="ann" fill="var(--warn,#e0a106)" font-weight="700">mask for t+1, advanced from t-1's</text>
+    <text x="122" y="333" class="ann" fill="var(--warn,#e0a106)">sampled token -- computed during GPU's fwd t</text>
+
+    
+    <line x1="650" y1="192" x2="650" y2="284" class="v-grid" stroke-width="1.3" stroke-dasharray="3 3"/>
+    <path d="M110,362 L110,368 L650,368 L650,362" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="380" y="384" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">total wall-clock ~= 3 x fwd (mask fully hidden underneath)</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <path d="M615,108 C660,124 660,180 660,196" fill="none" class="v-stroke" stroke-width="1.1" stroke-dasharray="2 3" marker-end="url(#mo-arr)"/>
+    <text x="700" y="150" class="ann" text-anchor="middle">overlap</text>
+    <text x="700" y="163" class="ann" text-anchor="middle">removes the</text>
+    <text x="700" y="176" class="ann" text-anchor="middle">mask segments</text>
+  </g>
+
+  <g data-anim="3">
+    <rect x="20" y="392" width="740" height="22" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.06" stroke="var(--good,#2f9e6e)" stroke-width="1"/>
+    <text x="390" y="407" text-anchor="middle" class="ann" fill="var(--good,#2f9e6e)">when fwd &gt;&gt; mask (large models), overhead ~ 0; overhead only shows for tiny models where mask compute rivals fwd time</text>
+  </g>
+
+</svg>
+<figcaption><b>Constrained decoding's mask computation runs on the CPU while the GPU executes the model's forward pass, so the two overlap instead of stacking.</b> The naive serial model pays <code>fwd + mask</code> every step; XGrammar pays roughly <code>max(fwd, mask)</code> because the CPU computes step t+1's mask (advanced from step t-1's sampled token) while the GPU is still busy with step t's forward pass -- for large models where the forward pass dominates, the mask is completely hidden and the overhead approaches zero.</figcaption>
+</figure>

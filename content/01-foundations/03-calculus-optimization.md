@@ -276,6 +276,8 @@ Not all minima are equal. The **sharpness** of a minimum is captured by the maxi
 
 This observation (Hochreiter & Schmidhuber, 1997; Keskar et al., 2017) motivates Sharpness-Aware Minimization (SAM), which explicitly penalizes sharp minima, and also explains why large-batch SGD (which has lower gradient noise) tends to find sharper minima than small-batch SGD.
 
+{{fig:flat-vs-sharp-minima-generalization}}
+
 ---
 
 ## Lipschitz Constants and the Condition Number

@@ -1,0 +1,176 @@
+<figure class="viz" id="fig-structgen-fsm-vs-pda-stack">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 560" role="img" aria-label="Side-by-side comparison: a plain finite state machine has no memory of nesting depth and cannot validate JSON braces, while a pushdown automaton pairs the same kind of state machine with a stack that tracks OBJECT and ARRAY nesting, which is why JSON requires a pushdown automaton rather than a regular-language FSM.">
+  <defs>
+    <marker id="fp-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+    </marker>
+    <marker id="fp-arr-bad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6d675d)"/>
+    </marker>
+    <marker id="fp-arr-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-structgen-fsm-vs-pda-stack text { fill: var(--ink-soft,#45413a); font: 400 10px var(--sans,sans-serif); }
+    #fig-structgen-fsm-vs-pda-stack .ttl   { font: 700 13px var(--sans,sans-serif); fill: var(--ink); }
+    #fig-structgen-fsm-vs-pda-stack .sub   { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-structgen-fsm-vs-pda-stack .lbl   { font: 600 10.5px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+    #fig-structgen-fsm-vs-pda-stack .ann   { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+    #fig-structgen-fsm-vs-pda-stack .mono  { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+    #fig-structgen-fsm-vs-pda-stack .mono-s{ font: 500 9.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+    #fig-structgen-fsm-vs-pda-stack .node-lbl { font: 700 8.5px var(--mono,monospace); text-anchor: middle; }
+    #fig-structgen-fsm-vs-pda-stack .err   { font: 700 10px var(--sans,sans-serif); }
+    #fig-structgen-fsm-vs-pda-stack [data-anim] { opacity: 0; }
+    #fig-structgen-fsm-vs-pda-stack [data-anim="1"] { animation: fp-in .5s ease-out .05s forwards; }
+    #fig-structgen-fsm-vs-pda-stack [data-anim="2"] { animation: fp-in .5s ease-out .5s forwards; }
+    #fig-structgen-fsm-vs-pda-stack [data-anim="3"] { animation: fp-in .5s ease-out .95s forwards; }
+    #fig-structgen-fsm-vs-pda-stack [data-anim="4"] { animation: fp-in .5s ease-out 1.4s forwards; }
+    @keyframes fp-in { from{opacity:0;} to{opacity:1;} }
+  </style>
+
+  <line x1="390" y1="14" x2="390" y2="486" class="v-grid" stroke-width="1.3" stroke-dasharray="3 4"/>
+
+  
+  <g data-anim="1">
+    <text x="20" y="26" class="ttl">FSM (regular) &#8212; memory = current state only</text>
+
+    
+    <g>
+      <circle cx="90"  cy="72" r="16" fill="var(--accent,#c15b39)" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="90" y="75" class="node-lbl" fill="#fff">q0</text>
+      <circle cx="160" cy="52" r="16" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.3"/>
+      <text x="160" y="55" class="node-lbl">q1</text>
+      <circle cx="230" cy="72" r="16" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.3"/>
+      <text x="230" y="75" class="node-lbl">q2</text>
+      <circle cx="230" cy="112" r="16" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.3"/>
+      <text x="230" y="115" class="node-lbl">q3</text>
+      <circle cx="160" cy="132" r="16" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+      <text x="160" y="135" class="node-lbl">q4</text>
+
+      <path d="M104,64 L148,54" class="v-stroke" stroke-width="1.3" fill="none" marker-end="url(#fp-arr)"/>
+      <path d="M175,57 L216,68" class="v-stroke" stroke-width="1.3" fill="none" marker-end="url(#fp-arr)"/>
+      <path d="M230,88 L230,96" class="v-stroke" stroke-width="1.3" fill="none" marker-end="url(#fp-arr)"/>
+      <path d="M216,118 L175,130" class="v-stroke" stroke-width="1.3" fill="none" marker-end="url(#fp-arr)"/>
+      <text x="270" y="76" class="ann">total memory:</text>
+      <text x="270" y="90" class="ann">one of 5 labels</text>
+      <text x="270" y="104" class="ann">(q0..q4) &#8212; nothing more</text>
+    </g>
+    <text x="20" y="164" class="ann">great for a fixed-shape pattern like a date: <tspan class="mono-s">2027-03-14</tspan></text>
+
+    
+    <line x1="20" y1="184" x2="360" y2="184" class="v-grid" stroke-width="1"/>
+    <text x="20" y="204" class="lbl">Trying to validate nested JSON braces:</text>
+
+    <g class="mono" font-size="15" text-anchor="middle">
+      <text x="45"  y="234">{</text>
+      <text x="80"  y="234">{</text>
+      <text x="115" y="234">{</text>
+      <text x="150" y="234">}</text>
+      <text x="185" y="234">}</text>
+      <text x="220" y="234">}</text>
+    </g>
+    <g class="v-stroke" stroke-width="1" fill="none">
+      <rect x="30" y="216" width="30" height="26" rx="4" fill="var(--surface-3)"/>
+      <rect x="65" y="216" width="30" height="26" rx="4" fill="var(--surface-3)"/>
+      <rect x="100" y="216" width="30" height="26" rx="4" fill="var(--surface-3)"/>
+      <rect x="135" y="216" width="30" height="26" rx="4" fill="var(--surface-3)"/>
+      <rect x="170" y="216" width="30" height="26" rx="4" fill="var(--surface-3)"/>
+      <rect x="205" y="216" width="30" height="26" rx="4" fill="var(--surface-3)"/>
+    </g>
+    <text x="248" y="234" class="ann">every extra "{" looks</text>
+    <text x="248" y="247" class="ann">identical to the FSM</text>
+
+    
+    <path d="M110,248 C90,262 80,272 80,286" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.4" marker-end="url(#fp-arr-bad)"/>
+    <rect x="20" y="288" width="340" height="60" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.08" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="32" y="306" class="err" fill="var(--warn,#e0a106)">no memory of depth</text>
+    <text x="32" y="322" class="ann">cannot tell if the braces balance &#8212; state q2 after "{{{" looks</text>
+    <text x="32" y="336" class="ann">the same whether the input had 3 opens or 30</text>
+
+    
+    <g transform="translate(316,362)">
+      <circle r="17" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.4" opacity="0.6"/>
+      <line x1="-8" y1="-8" x2="8" y2="8" stroke="var(--muted,#6d675d)" stroke-width="1.6" opacity="0.75"/>
+      <line x1="8" y1="-8" x2="-8" y2="8" stroke="var(--muted,#6d675d)" stroke-width="1.6" opacity="0.75"/>
+    </g>
+    <text x="316" y="392" text-anchor="middle" class="ann" fill="var(--muted,#6d675d)">depth?</text>
+    <text x="20" y="418" class="err" fill="var(--muted,#6d675d)">FAILS on unbounded nesting</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <text x="410" y="26" class="ttl">PDA (context-free) &#8212; FSM + a stack</text>
+
+    
+    <g>
+      <circle cx="470" cy="72" r="16" fill="var(--accent,#c15b39)" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+      <text x="470" y="75" class="node-lbl" fill="#fff">s0</text>
+      <circle cx="540" cy="52" r="16" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.3"/>
+      <text x="540" y="55" class="node-lbl">s1</text>
+      <circle cx="600" cy="82" r="16" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.3"/>
+      <text x="600" y="85" class="node-lbl">s2</text>
+
+      <path d="M484,64 L528,54" class="v-stroke" stroke-width="1.3" fill="none" marker-end="url(#fp-arr)"/>
+      <path d="M554,58 L588,76" class="v-stroke" stroke-width="1.3" fill="none" marker-end="url(#fp-arr)"/>
+      <text x="500" y="106" text-anchor="middle" class="ann">memory = current sub-state + the stack</text>
+    </g>
+
+    
+    <rect x="650" y="42" width="90" height="120" rx="7" fill="none" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="2 3"/>
+    <text x="695" y="36" text-anchor="middle" class="lbl">STACK</text>
+    <text x="695" y="58" text-anchor="middle" class="ann">top</text>
+    <rect x="660" y="64" width="70" height="24" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="1.5"/>
+    <text x="695" y="80" text-anchor="middle" class="mono-s" fill="var(--accent,#c15b39)">OBJECT</text>
+    <rect x="660" y="90" width="70" height="24" rx="4" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+    <text x="695" y="106" text-anchor="middle" class="mono-s">ARRAY</text>
+    <rect x="660" y="116" width="70" height="24" rx="4" class="v-fill" stroke="var(--v-stroke,#45413a)" stroke-width="1.2"/>
+    <text x="695" y="132" text-anchor="middle" class="mono-s">OBJECT</text>
+    <text x="695" y="152" text-anchor="middle" class="ann">bottom</text>
+
+    
+    <rect x="410" y="114" width="228" height="70" rx="8" fill="var(--accent2,#3b82f6)" fill-opacity="0.06" stroke="var(--accent2,#3b82f6)" stroke-width="1.2"/>
+    <text x="420" y="130" class="ann" fill="var(--accent2,#3b82f6)">push/pop so far:  "{" pushes OBJECT,</text>
+    <text x="420" y="144" class="ann" fill="var(--accent2,#3b82f6)">"[" pushes ARRAY,  "{" pushes OBJECT.</text>
+    <text x="420" y="158" class="ann" fill="var(--accent2,#3b82f6)">stack now reads, bottom-to-top:</text>
+    <text x="420" y="172" class="ann" fill="var(--accent2,#3b82f6)">[OBJECT, ARRAY, OBJECT]. later "}" pops.</text>
+
+    <line x1="410" y1="188" x2="740" y2="188" class="v-grid" stroke-width="1"/>
+    <text x="410" y="208" class="lbl">Walking the chapter's partial JSON:</text>
+
+    <g class="mono" font-size="12.5">
+      <text x="410" y="234"><tspan fill="var(--accent,#c15b39)" font-weight="700">{</tspan>"users": <tspan fill="var(--accent,#c15b39)" font-weight="700">[</tspan><tspan fill="var(--accent,#c15b39)" font-weight="700">{</tspan>"id": 1, "name": </text>
+    </g>
+    
+    <rect x="700" y="220" width="2.4" height="18" fill="var(--good,#2f9e6e)"/>
+    <text x="706" y="234" class="ann" fill="var(--good,#2f9e6e)">cursor</text>
+
+    
+    <path d="M406,246 L406,252 L500,252 L500,246" fill="none" class="v-stroke" stroke-width="1.2"/>
+    <text x="453" y="266" text-anchor="middle" class="ann" fill="var(--accent,#c15b39)">3 pushes: "{" then "[" then "{"</text>
+
+    
+    <rect x="410" y="278" width="330" height="66" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.08" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="420" y="296" class="lbl" fill="var(--good,#2f9e6e)">current sub-state: AFTER_KEY_COLON</text>
+    <text x="420" y="312" class="ann">-&gt; only a string value is allowed next</text>
+    <text x="420" y="328" class="mono-s" fill="var(--good,#2f9e6e)">allowed next char: " (opening quote)</text>
+
+    <text x="410" y="366" class="ann">Stack (bottom to top): OBJECT -&gt; ARRAY -&gt; OBJECT</text>
+    <text x="410" y="382" class="ann">The stack is what an FSM does not have, and it is exactly</text>
+    <text x="410" y="396" class="ann">what makes tracking unbounded nesting possible.</text>
+
+    <text x="410" y="422" class="err" fill="var(--good,#2f9e6e)">HANDLES unbounded nesting</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="20" y="440" width="740" height="72" rx="9" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.3"/>
+    <text x="390" y="465" text-anchor="middle" class="lbl">An FSM forgets how deep it is; a PDA remembers via the stack --</text>
+    <text x="390" y="482" text-anchor="middle" class="lbl">that is why JSON needs a pushdown automaton, not a regular-language FSM.</text>
+    <text x="390" y="500" text-anchor="middle" class="ann">(FSM: bounded fixed-depth patterns only &#8226; PDA: FSM state + stack = unbounded nesting)</text>
+  </g>
+
+</svg>
+<figcaption><b>An FSM has no memory beyond its current state, so it can validate a fixed-shape pattern but not arbitrarily nested braces; a pushdown automaton pairs the same kind of state machine with an explicit stack that records nesting depth.</b> Walking the chapter's partial JSON <code>{"users": [{"id": 1, "name": </code> through a PDA leaves the stack reading <code>OBJECT -&gt; ARRAY -&gt; OBJECT</code> bottom-to-top with sub-state <code>AFTER_KEY_COLON</code>, which is exactly how the automaton knows only a string-opening quote is allowed next.</figcaption>
+</figure>

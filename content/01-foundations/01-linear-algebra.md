@@ -516,6 +516,8 @@ $$
 \mathbf{y} = W_0 \mathbf{x} + B(A\mathbf{x}) = W_0 \mathbf{x} + \underbrace{B}_{\text{small}} \underbrace{(A\mathbf{x})}_{\text{rank-}r \text{ proj}}
 $$
 
+{{fig:lora-lowrank-bottleneck}}
+
 Parameter count: full fine-tune needs $d^2$ parameters; LoRA needs $2dr$. For $d = 4096$, $r = 8$: full = 16.8M params; LoRA = 65.5K params — a 256× reduction.
 
 At initialization, $A$ is sampled from a Gaussian and $B = 0$, so $\Delta W = 0$ and training begins from the pretrained solution.

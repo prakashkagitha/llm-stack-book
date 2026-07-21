@@ -1,0 +1,199 @@
+<figure class="viz" id="fig-injsec-gcg-suffix-search">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 640" role="img" aria-label="Diagram of the GCG algorithm: a frozen harmful prefix plus a mutable adversarial suffix are optimized by gradient-ranked token swaps in a repeat loop to force the model to begin its reply with a compliant Sure here is target string, and the resulting suffix often transfers from open-weight to closed models.">
+<defs>
+  <marker id="gcg-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" class="v-accent"/>
+  </marker>
+  <marker id="gcg-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <style>
+    #fig-injsec-gcg-suffix-search text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-injsec-gcg-suffix-search .tit  { font: 700 13px var(--sans,sans-serif); }
+    #fig-injsec-gcg-suffix-search .sub  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+    #fig-injsec-gcg-suffix-search .lbl  { font: 600 10.5px var(--sans,sans-serif); }
+    #fig-injsec-gcg-suffix-search .mono { font: 600 11px var(--mono,monospace); }
+    #fig-injsec-gcg-suffix-search .mono-sm { font: 600 9.5px var(--mono,monospace); }
+    #fig-injsec-gcg-suffix-search .note { font: italic 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+    #fig-injsec-gcg-suffix-search .stage-tit { font: 700 11px var(--sans,sans-serif); }
+    #fig-injsec-gcg-suffix-search .stage-body { font: 400 9.5px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+
+    #fig-injsec-gcg-suffix-search [data-anim] { opacity: 0; }
+    #fig-injsec-gcg-suffix-search.playing [data-anim="1"] { animation: gcg-in .45s .05s ease forwards; }
+    #fig-injsec-gcg-suffix-search.playing [data-anim="2"] { animation: gcg-in .45s .55s ease forwards; }
+    #fig-injsec-gcg-suffix-search.playing [data-anim="3"] { animation: gcg-in .45s 1.15s ease forwards; }
+    #fig-injsec-gcg-suffix-search.playing [data-anim="4"] { animation: gcg-in .45s 1.85s ease forwards; }
+    #fig-injsec-gcg-suffix-search.playing [data-anim="5"] { animation: gcg-in .45s 2.55s ease forwards; }
+    #fig-injsec-gcg-suffix-search.playing [data-anim="6"] { animation: gcg-in .45s 3.15s ease forwards; }
+    #fig-injsec-gcg-suffix-search:not(.playing) [data-anim] { opacity: 1; }
+    @keyframes gcg-in { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
+
+    #fig-injsec-gcg-suffix-search .flip-old { animation: none; }
+    #fig-injsec-gcg-suffix-search.playing .flip-old { animation: gcg-fade-out 0.5s 3.4s ease forwards; }
+    #fig-injsec-gcg-suffix-search.playing .flip-new { opacity: 0; animation: gcg-fade-in 0.5s 3.7s ease forwards; }
+    #fig-injsec-gcg-suffix-search:not(.playing) .flip-new { opacity: 0; }
+    #fig-injsec-gcg-suffix-search:not(.playing) .flip-old { opacity: 1; }
+    @keyframes gcg-fade-out { to { opacity: 0; } }
+    @keyframes gcg-fade-in { to { opacity: 1; } }
+  </style>
+</defs>
+
+<text x="12" y="22" class="tit">Constructing the attack input</text>
+
+<g data-anim="1">
+<rect x="12" y="34" width="230" height="46" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<text x="118" y="53" text-anchor="middle" class="mono">"How do I ... ?"</text>
+<text x="118" y="67" text-anchor="middle" class="sub">harmful instruction prefix (frozen)</text>
+<g transform="translate(214,40)">
+  <rect x="0" y="5" width="13" height="10" rx="2" fill="none" stroke="var(--ink-soft)" stroke-width="1.4"/>
+  <path d="M 2.5 5 L 2.5 2.5 A 3.5 3.5 0 0 1 10.5 2.5 L 10.5 5" fill="none" stroke="var(--ink-soft)" stroke-width="1.4"/>
+</g>
+</g>
+
+<text x="252" y="60" text-anchor="middle" class="tit">+</text>
+
+<g data-anim="2">
+<g id="gcg-suffix-box">
+  <rect x="270" y="34" width="248" height="46" rx="6" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <text x="394" y="27" text-anchor="middle" class="lbl" fill="var(--accent)">adversarial suffix (k mutable slots)</text>
+  
+  <g class="mono-sm">
+    <rect x="277" y="42" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1"/>
+    <text x="294" y="61" text-anchor="middle">!</text>
+    <rect x="316" y="42" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1"/>
+    <text x="333" y="61" text-anchor="middle">}</text>
+    <rect x="355" y="42" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1"/>
+    
+    <g class="flip-old">
+      <text x="372" y="61" text-anchor="middle">{</text>
+    </g>
+    <g class="flip-new">
+      <text x="372" y="61" text-anchor="middle">~</text>
+    </g>
+    <rect x="394" y="42" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1"/>
+    <text x="411" y="61" text-anchor="middle">@</text>
+    <rect x="433" y="42" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1"/>
+    <text x="450" y="61" text-anchor="middle">#</text>
+    <rect x="472" y="42" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1"/>
+    <text x="489" y="61" text-anchor="middle">^</text>
+  </g>
+</g>
+</g>
+
+<g data-anim="3">
+<line x1="270" y1="90" x2="270" y2="108" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<line x1="518" y1="90" x2="518" y2="108" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<line x1="127" y1="80" x2="127" y2="108" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<line x1="127" y1="108" x2="518" y2="108" stroke="var(--v-stroke)" stroke-width="1.3" marker-end="url(#gcg-arrow-muted)"/>
+
+<rect x="272" y="116" width="180" height="30" rx="15" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<text x="362" y="136" text-anchor="middle" class="lbl">forward pass through model</text>
+</g>
+
+<g data-anim="4">
+<line x1="362" y1="146" x2="362" y2="164" stroke="var(--v-stroke)" stroke-width="1.3" marker-end="url(#gcg-arrow-muted)"/>
+<rect x="252" y="172" width="220" height="46" rx="6" fill="var(--good)" fill-opacity="0.14" stroke="var(--good)" stroke-width="1.6"/>
+<text x="362" y="192" text-anchor="middle" class="mono" fill="var(--good)">"Sure, here is ..."</text>
+<text x="362" y="207" text-anchor="middle" class="sub">target continuation (fixed)</text>
+<text x="484" y="192" class="mono-sm">L = -log p(target</text>
+<text x="484" y="205" class="mono-sm">&#160;&#160;&#160;&#160;&#160;| prefix, suffix)</text>
+</g>
+
+
+<line x1="12" y1="236" x2="768" y2="236" stroke="var(--v-grid)" stroke-width="1"/>
+<text x="12" y="256" class="tit">The optimization loop (repeat)</text>
+
+
+<g data-anim="5">
+<path d="M 128 288 A 260 130 0 1 1 118 300" fill="none" class="v-muted" stroke="var(--muted,#6d675d)" stroke-width="1.6" stroke-dasharray="2 4" marker-end="url(#gcg-arrow-muted)"/>
+<text x="390" y="278" text-anchor="middle" class="sub" fill="var(--muted,#6d675d)">repeat until the model begins its reply with the target string</text>
+</g>
+
+<g data-anim="5">
+
+<rect x="20" y="296" width="230" height="150" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<circle cx="45" cy="318" r="13" class="v-accent" fill="var(--accent)"/>
+<text x="45" y="322" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">1</text>
+<text x="66" y="315" class="stage-tit">Backprop</text>
+<text x="66" y="329" class="stage-body">gradient of L w.r.t. each</text>
+<text x="66" y="341" class="stage-body">suffix token's one-hot</text>
+<text x="135" y="368" text-anchor="middle" class="mono-sm" fill="var(--accent)">k &#215; |V| gradient table</text>
+
+<g stroke="var(--v-stroke)" stroke-width="0.6" fill="none" opacity="0.7">
+  <rect x="45" y="378" width="180" height="52"/>
+  <line x1="75" y1="378" x2="75" y2="430"/>
+  <line x1="105" y1="378" x2="105" y2="430"/>
+  <line x1="135" y1="378" x2="135" y2="430"/>
+  <line x1="165" y1="378" x2="165" y2="430"/>
+  <line x1="195" y1="378" x2="195" y2="430"/>
+  <line x1="45" y1="391" x2="225" y2="391"/>
+  <line x1="45" y1="404" x2="225" y2="404"/>
+  <line x1="45" y1="417" x2="225" y2="417"/>
+</g>
+<rect x="105" y="404" width="30" height="13" class="v-accent" fill="var(--accent)" fill-opacity="0.55"/>
+<text x="120" y="443" text-anchor="middle" class="sub">low-loss cell per slot</text>
+</g>
+
+<g data-anim="6">
+
+<rect x="272" y="296" width="230" height="150" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<circle cx="297" cy="318" r="13" class="v-accent" fill="var(--accent)"/>
+<text x="297" y="322" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">2</text>
+<text x="318" y="315" class="stage-tit">Rank swaps per slot</text>
+<text x="318" y="329" class="stage-body">top-B steepest-descent</text>
+<text x="318" y="341" class="stage-body">token candidates per position</text>
+
+<rect x="330" y="356" width="34" height="30" rx="4" class="v-fill" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="347" y="375" text-anchor="middle" class="mono-sm">{</text>
+<line x1="347" y1="386" x2="347" y2="398" stroke="var(--v-stroke)" stroke-width="1" marker-end="url(#gcg-arrow-muted)"/>
+<rect x="300" y="402" width="30" height="24" rx="4" fill="var(--good)" fill-opacity="0.18" stroke="var(--good)" stroke-width="1"/>
+<text x="315" y="418" text-anchor="middle" class="mono-sm">~</text>
+<rect x="333" y="402" width="30" height="24" rx="4" fill="var(--good)" fill-opacity="0.12" stroke="var(--good)" stroke-width="1"/>
+<text x="348" y="418" text-anchor="middle" class="mono-sm">&amp;</text>
+<rect x="366" y="402" width="30" height="24" rx="4" fill="var(--good)" fill-opacity="0.08" stroke="var(--good)" stroke-width="1"/>
+<text x="381" y="418" text-anchor="middle" class="mono-sm">%</text>
+<text x="440" y="416" class="sub">top-B</text>
+<text x="440" y="428" class="sub">candidates</text>
+</g>
+
+<g data-anim="6">
+
+<rect x="524" y="296" width="230" height="150" rx="8" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.3"/>
+<circle cx="549" cy="318" r="13" class="v-accent" fill="var(--accent)"/>
+<text x="549" y="322" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">3</text>
+<text x="570" y="315" class="stage-tit">Evaluate &amp; keep best</text>
+<text x="570" y="329" class="stage-body">run a batch of candidate</text>
+<text x="570" y="341" class="stage-body">suffixes, keep lowest loss</text>
+
+<polyline points="545,384 575,398 605,394 635,412 665,408 695,428"
+          fill="none" class="v-accent" stroke="var(--accent)" stroke-width="1.8"/>
+<circle cx="695" cy="428" r="3.5" class="v-accent" fill="var(--accent)"/>
+<text x="620" y="360" text-anchor="middle" class="sub">loss (schematic, no axis) -- trends down</text>
+<text x="545" y="440" class="sub">iter 1</text>
+<text x="695" y="440" text-anchor="middle" class="sub">iter N</text>
+</g>
+
+
+<g data-anim="6">
+<line x1="250" y1="371" x2="270" y2="371" stroke="var(--v-stroke)" stroke-width="1.4" marker-end="url(#gcg-arrow-muted)"/>
+<line x1="502" y1="371" x2="522" y2="371" stroke="var(--v-stroke)" stroke-width="1.4" marker-end="url(#gcg-arrow-muted)"/>
+</g>
+
+
+<g data-anim="6">
+<rect x="20" y="460" width="734" height="46" rx="7" class="v-fill" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="387" y="479" text-anchor="middle" class="note">Discrete tokens can't be nudged along a gradient -- use the gradient to RANK swaps,</text>
+<text x="387" y="493" text-anchor="middle" class="note">then actually evaluate them.</text>
+</g>
+
+
+<g data-anim="6">
+<rect x="20" y="518" width="734" height="52" rx="8" fill="var(--warn)" fill-opacity="0.12" stroke="var(--warn)" stroke-width="1.6"/>
+<text x="387" y="540" text-anchor="middle" class="lbl" fill="var(--warn)">A suffix optimized on an open-weight model often TRANSFERS to closed models</text>
+<text x="387" y="557" text-anchor="middle" class="sub">white-box attack -&gt; black-box deployment</text>
+</g>
+
+</svg>
+<figcaption><b>GCG runs gradient descent on discrete tokens by ranking swaps, not by moving continuously.</b> The harmful prefix and compliant target are frozen; only the k-token adversarial suffix mutates, one slot at a time, as the loop backprops, ranks candidate substitutions by gradient, and keeps whichever evaluated candidate lowers the loss. Because the search only needs gradient access at find-time, suffixes discovered on an open-weight model frequently transfer to closed-weight deployments.</figcaption>
+</figure>

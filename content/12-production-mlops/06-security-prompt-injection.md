@@ -132,6 +132,8 @@ where $\mathbf{x}_{\text{adv}}$ is a suffix of $k$ tokens being optimized, $\mat
 
 The attack transfers across models trained on similar data, meaning a suffix found on an open-weight model can sometimes work on closed-weight models. This is a sobering result: white-box attacks generalize to black-box deployment.
 
+{{fig:injsec-gcg-suffix-search}}
+
 ```python
 # Simplified illustration of the GCG token-flip search
 # NOT production code — for conceptual illustration only.
@@ -193,6 +195,8 @@ def gcg_step(
 A more recent and practical attack exploits long-context models. By filling the context with many examples of the model apparently complying with harmful requests (fabricated by the attacker), the model is primed via in-context learning to continue the pattern (Anthropic's "Many-shot jailbreaking" research, 2024). The attack requires no gradient access and scales with context length — larger context windows are, counterintuitively, a larger attack surface.
 
 The mathematical intuition is that in-context learning exploits the model's implicit meta-learning: given $n$ examples of behavior $B$, the model infers that behavior $B$ is expected and continues it. As $n$ grows, the prior from RLHF training is increasingly overridden.
+
+{{fig:injsec-many-shot-prior-override}}
 
 ---
 

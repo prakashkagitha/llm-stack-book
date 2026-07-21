@@ -117,6 +117,8 @@ Allowed next chars:     " (opening quote of a string)
 
 The combined state space grows, but for any fixed grammar the number of reachable (stack prefix × sub-state) combinations is bounded. In practice, for JSON with a known schema (a JSON Schema object), the grammar is further restricted and the effective state count stays manageable.
 
+{{fig:structgen-fsm-vs-pda-stack}}
+
 ### Grammar-Based Constrained Decoding
 
 Tools like Outlines (Willard & Louf, 2023), XGrammar (MIT/CMU, 2024), and llguidance (Microsoft Research) convert a grammar specification into a token-level decision object:
@@ -606,6 +608,8 @@ T_{\text{constrained, naive}} = T_{\text{model\_fwd}} + T_{\text{mask\_compute}}
 $$
 
 For large models where $T_{\text{model\_fwd}}$ dominates ($\gg T_{\text{mask\_compute}}$), the overhead of constrained generation is near-zero.
+
+{{fig:structgen-mask-forward-overlap}}
 
 !!! example "Throughput numbers in context"
 

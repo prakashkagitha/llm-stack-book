@@ -26,6 +26,8 @@ $$
 
 Neither metric alone is sufficient. An evaluator who reports only harm rate is measuring a classifier threshold; to assess the *cost* of that threshold you need the over-refusal rate too.
 
+{{fig:safety-operating-point-tradeoff}}
+
 ---
 
 ## 11.5.2 Safety Benchmarks: Curated Datasets
@@ -515,6 +517,8 @@ This is the domain of frontier-model safety evaluations. Labs like Anthropic, Op
 ### CBRN Uplift Evaluation
 
 The key concept is **uplift**: does the model provide meaningful assistance toward a catastrophic harm that a competent but non-expert adversary could not otherwise achieve? The evaluation design:
+
+{{fig:default-vs-max-capability-elicitation}}
 
 1. Recruit domain experts (biosecurity, chemistry) to define "would this response provide meaningful uplift to someone attempting X?"
 2. Elicit the model's best response using the strongest available attacks.

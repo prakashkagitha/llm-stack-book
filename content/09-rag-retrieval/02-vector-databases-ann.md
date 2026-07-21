@@ -108,6 +108,8 @@ for d in [2, 10, 100, 1000]:
 
 At $d=2$ the farthest point is dozens of times farther than the nearest, so "nearest neighbor" is meaningful and a tree can prune aggressively. At $d=1000$ the ratio collapses toward 1: the nearest and farthest neighbors are almost the same distance away.
 
+{{fig:curse-distance-concentration}}
+
 ### Why this kills exact structures
 
 A $k$-d tree prunes a branch when the splitting hyperplane is farther from the query than the best candidate found so far. In high dimensions, because distances concentrate and because a query's "ball" of radius (best-so-far) intersects almost every cell, **almost no branches can be pruned**. The tree degrades to a linear scan — with worse constants than brute force, because of the pointer chasing. Empirically, $k$-d trees lose to brute force somewhere around $d \approx 20$–$30$.
@@ -483,6 +485,8 @@ Always compute `exact_k` with brute force on a held-out query set. A subtle but 
 | ScaNN | leaves/reorder | aniso codebooks | $k$-means + tree | MIPS, throughput-critical |
 
 The mental model: **HNSW spends memory to buy recall and latency. PQ spends recall to buy memory. IVF spends recall to buy latency.** Real systems stack them — `IVF65536_HNSW32,PQ64` is a real FAISS factory string that uses an HNSW graph as the coarse quantizer over IVF cells whose contents are PQ-compressed, hitting all three corners at once.
+
+{{fig:recall-latency-memory-triangle}}
 
 !!! tip "Practitioner tip: the order of operations that actually works"
 

@@ -1,0 +1,115 @@
+<figure class="viz" id="fig-recall-latency-memory-triangle">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 730" role="img" aria-label="A triangle with corners recall, latency, and memory; each ANN method sits closer to the two corners it favors and away from the one it sacrifices, with FLAT at the recall corner, HNSW on the recall-latency edge spending memory, IVF-Flat and PQ on the latency-memory edge spending recall, and a stacked IVF+HNSW+PQ system near the center reaching toward all three.">
+  <style>
+    #fig-recall-latency-memory-triangle text{ fill: var(--ink-soft); }
+    #fig-recall-latency-memory-triangle .ttl{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-recall-latency-memory-triangle .subttl{ font:600 11.5px var(--sans,sans-serif); fill: var(--accent); font-style: italic; }
+    #fig-recall-latency-memory-triangle .corner{ font:800 13px var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-recall-latency-memory-triangle .cornersub{ font:500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-recall-latency-memory-triangle .mname{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-recall-latency-memory-triangle .mdesc{ font:500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-recall-latency-memory-triangle .mknob{ font:600 9.3px var(--mono,monospace); fill: var(--accent); }
+    #fig-recall-latency-memory-triangle .tri{ fill: none; stroke: var(--v-grid); stroke-width: 1.6; }
+    #fig-recall-latency-memory-triangle .lead{ stroke: var(--v-muted); stroke-width: 1; stroke-dasharray: 3 2; fill: none; opacity: 0.75; }
+    #fig-recall-latency-memory-triangle .dot{ fill: var(--accent); stroke: var(--surface); stroke-width: 1.4; }
+    #fig-recall-latency-memory-triangle .dotFlat{ fill: var(--ink-soft); stroke: var(--surface); stroke-width: 1.4; }
+    #fig-recall-latency-memory-triangle .box{ fill: var(--surface); stroke: var(--border-2); stroke-width: 1; }
+    #fig-recall-latency-memory-triangle .boxC{ fill: var(--surface-3); stroke: var(--accent2,#3b82f6); stroke-width: 1.3; }
+    #fig-recall-latency-memory-triangle .slider{ stroke: var(--v-muted); stroke-width: 1.6; }
+    #fig-recall-latency-memory-triangle .sliderknob{ fill: var(--accent); }
+    #fig-recall-latency-memory-triangle .strip{ fill: var(--surface-3); stroke: var(--border-2); stroke-width: 1; }
+    #fig-recall-latency-memory-triangle .striptxt{ font:500 10.3px var(--sans,sans-serif); fill: var(--ink-soft); }
+  </style>
+
+  <text x="390" y="20" text-anchor="middle" class="ttl">Every ANN deployment is a point inside a triangle: recall, latency, memory -- pick any two cheaply</text>
+  <text x="390" y="38" text-anchor="middle" class="subttl">"You get any two corners cheaply; the third is the price."</text>
+
+  
+  
+  <g data-anim="1">
+    <polygon points="390,150 170,470 610,470" class="tri"/>
+
+    <text x="390" y="120" text-anchor="middle" class="corner">RECALL</text>
+    <text x="390" y="134" text-anchor="middle" class="cornersub">find the true neighbors</text>
+
+    <text x="120" y="500" text-anchor="middle" class="corner">LATENCY</text>
+    <text x="120" y="514" text-anchor="middle" class="cornersub">lower = faster</text>
+
+    <text x="660" y="500" text-anchor="middle" class="corner">MEMORY</text>
+    <text x="660" y="514" text-anchor="middle" class="cornersub">lower = smaller</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <circle cx="390" cy="150" r="5.5" class="dotFlat"/>
+    <path d="M 386,146 L 260,110" class="lead"/>
+    <rect x="40" y="66" width="222" height="52" rx="7" class="box"/>
+    <text x="51" y="84" class="mname">FLAT / brute force</text>
+    <text x="51" y="98" class="mdesc">recall = 1.0, exact -- but scans</text>
+    <text x="51" y="110" class="mdesc">everything: far from latency + memory</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <circle cx="291" cy="294" r="5.5" class="dot"/>
+    <path d="M 286,291 L 176,262" class="lead"/>
+    <rect x="16" y="196" width="200" height="86" rx="7" class="box"/>
+    <text x="27" y="215" class="mname">HNSW</text>
+    <text x="27" y="229" class="mdesc">great recall AND latency,</text>
+    <text x="27" y="241" class="mdesc">pulled away from memory</text>
+    <text x="27" y="257" class="mknob">spends MEMORY (vectors + graph)</text>
+    
+    <line x1="27" y1="270" x2="107" y2="270" class="slider"/>
+    <circle cx="80" cy="270" r="4" class="sliderknob"/>
+    <text x="115" y="273" class="mdesc">knob: ef</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <circle cx="302" cy="470" r="5.5" class="dot"/>
+    <path d="M 300,475 L 270,555" class="lead"/>
+    <rect x="150" y="558" width="212" height="86" rx="7" class="box"/>
+    <text x="161" y="577" class="mname">IVF-Flat</text>
+    <text x="161" y="591" class="mdesc">fast scan of a few cells,</text>
+    <text x="161" y="603" class="mdesc">pulled away from recall</text>
+    <text x="161" y="619" class="mknob">spends RECALL to buy LATENCY</text>
+    <line x1="161" y1="632" x2="241" y2="632" class="slider"/>
+    <circle cx="200" cy="632" r="4" class="sliderknob"/>
+    <text x="249" y="635" class="mdesc">knob: n_probe</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <circle cx="500" cy="470" r="5.5" class="dot"/>
+    <path d="M 502,475 L 520,555" class="lead"/>
+    <rect x="418" y="558" width="212" height="86" rx="7" class="box"/>
+    <text x="429" y="577" class="mname">PQ / IVF-PQ</text>
+    <text x="429" y="591" class="mdesc">tiny footprint per vector,</text>
+    <text x="429" y="603" class="mdesc">pulled away from recall</text>
+    <text x="429" y="619" class="mknob">spends RECALL to buy MEMORY</text>
+    <line x1="429" y1="632" x2="509" y2="632" class="slider"/>
+    <circle cx="468" cy="632" r="4" class="sliderknob"/>
+    <text x="517" y="635" class="mdesc">knob: m bytes/vec</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <path d="M 390,363 l -7,-7 l 7,-7 l 7,7 Z" fill="var(--accent2,#3b82f6)"/>
+    <path d="M 390,356 l -7,7 l 7,7 l 7,-7 Z" fill="var(--accent2,#3b82f6)"/>
+    <rect x="298" y="378" width="184" height="50" rx="7" class="boxC"/>
+    <text x="390" y="396" text-anchor="middle" class="mname" style="font-size:10.5px">IVF65536_HNSW32,PQ64</text>
+    <text x="390" y="410" text-anchor="middle" class="mdesc">stacks families to reach</text>
+    <text x="390" y="422" text-anchor="middle" class="mdesc">toward all three corners</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <rect x="20" y="666" width="740" height="52" rx="8" class="strip"/>
+    <text x="390" y="686" text-anchor="middle" class="striptxt">One knob per method (ef / n_probe / m) slides you along the curve; measure recall@k against</text>
+    <text x="390" y="702" text-anchor="middle" class="striptxt">brute force and pick the cheapest setting that clears your eval bar.</text>
+  </g>
+
+</svg>
+<figcaption><b>Every ANN deployment lands inside a recall-latency-memory triangle, and you can only buy two corners cheaply.</b> FLAT sits pinned at perfect recall by scanning everything; HNSW spends memory for recall and latency; IVF-Flat and PQ both spend recall, one to buy latency and the other to buy memory; production systems stack these families (an FAISS factory string like <span style="font-family:var(--mono,monospace)">IVF65536_HNSW32,PQ64</span>) to push toward all three at once.</figcaption>
+</figure>

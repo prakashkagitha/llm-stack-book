@@ -87,6 +87,8 @@ There is one more free token. If *all* $\gamma$ draft tokens are accepted, the t
 
 The greedy/argmax special case is even simpler: with temperature 0, $p$ and $q$ are point masses, accept iff the drafter's argmax equals the target's argmax. "Accept the longest matching prefix" is exactly the rejection rule specialized to deterministic distributions.
 
+{{fig:specdec-accept-reject-decomposition}}
+
 ## A From-Scratch Implementation
 
 Below is a complete, runnable implementation of speculative sampling with a real target and draft model from the same family (so they share a tokenizer — a hard requirement). It is written for clarity, not maximum throughput; production engines fuse these steps into batched CUDA kernels with tree attention (next section). Read the comments carefully: the accept/reject loop is the heart of the algorithm.
@@ -521,6 +523,8 @@ Two regimes fall right out of this formula. As the drafter cost $c \to 0$ (e.g.,
     Now stress-test the assumption. If the workload is high-entropy chat at temperature 1.0 and acceptance drops to $\alpha = 0.4$, expected tokens per step is $(1 - 0.4^6)/0.6 = 0.9959/0.6 \approx 1.66$, and speedup $\approx 1.66/1.105 \approx 1.5\times$. Same machinery, very different payoff — acceptance rate is everything. And note the sweep on $\gamma$: at $\alpha=0.4$, raising $\gamma$ to 8 barely changes the numerator ($\approx 1.66$, since the geometric tail is tiny) while the denominator grows to $1.17$, so the speedup *falls*. The optimal $\gamma$ is workload-dependent.
 
 A second, system-level caveat the formula hides: **batch size.** All these speedups assume the decode step is memory-bandwidth bound, so the extra verification FLOPs are free. At large batch sizes the GPU becomes **compute-bound** (you've already amortized weight loading across many requests), the verification tokens compete for real FLOPs, and the speedup collapses — speculation can even slow you down. Production engines therefore gate speculation on batch size and turn it off under heavy load. This is the same memory-vs-compute boundary analyzed in [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) and [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
+
+{{fig:specdec-speedup-economics}}
 
 !!! warning "Common pitfall: tokenizer and distribution mismatch"
     For drafter-based speculation, the draft and target **must share an identical tokenizer**; a token ID has to mean the same string in both, or the accept test is incoherent and outputs garble. Two more subtle traps: (1) the drafter and target must use the **same temperature and sampling transform** at verification time, or the $p/q$ ratio is computed against the wrong distribution; and (2) "typical acceptance" / threshold-based acceptance (used by some Medusa configs) is *not* the exact rule — it deviates slightly from the target distribution by design. If you need bit-exact equivalence to the target's sampler, use the exact rejection rule, not a relaxed one.

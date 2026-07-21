@@ -429,6 +429,8 @@ $$
 
 The practical lesson is in the denominators. If $\sigma^2_{\text{prompt}}$ is large and you used **one** prompt template, that term is divided by $n_t = 1$ — no amount of extra items reduces it. This is why "we changed the system prompt and the score moved 4 points" is so common: prompt variance is frequently the *dominant* term, and it is invisible to an item-bootstrap CI. The robustness chapter [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming-safety-eval.html) treats prompt sensitivity as a first-class failure mode.
 
+{{fig:statrig-variance-budget-denominators}}
+
 ### Estimating the components
 
 A clean way to estimate components is a crossed design: run the eval over a grid of $n_i$ items $\times$ $n_t$ prompts $\times$ $n_s$ seeds and fit the variances by ANOVA or REML. Here is a compact estimator for the two axes practitioners most often neglect — prompt and seed — using nested means.
@@ -618,6 +620,8 @@ I_i(\theta) = a_i^2\, P_i(\theta)\big(1 - P_i(\theta)\big),
 $$
 
 maximized when $P_i(\theta) = 0.5$, i.e. when the item's difficulty matches the model's ability. This is the engine of **adaptive testing**: ask each model items near its own ability frontier, where each answer is maximally informative, and you reach a target precision with a fraction of the items.
+
+{{fig:statrig-irt-item-information}}
 
 ### Fitting a tiny IRT model and computing item information
 

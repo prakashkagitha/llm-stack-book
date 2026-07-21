@@ -124,6 +124,8 @@ Reflection is the highest-value memory operation and the most commonly skipped. 
 
 Reflection produces compact, high-signal semantic memories from noisy episodic records. Generative Agents (Park et al., 2023) showed that reflection loops dramatically improve the coherence of long-running simulated agents. The reflect step should run: (a) periodically (every N episodes), (b) before a session ends, or (c) when a new episode contradicts an existing fact.
 
+{{fig:agentmem-reflect-distillation}}
+
 ---
 
 ## 8.5.5 Memory Compaction
@@ -139,6 +141,8 @@ C_{\text{new}} = [\text{system prompt},\; \text{summary}(C_{1:t-k}),\; C_{t-k+1:
 $$
 
 This preserves recent turns verbatim and compresses older turns. The rolling-summary pattern applies this recursively: the next time you compact, you summarise the previous summary plus the new window.
+
+{{fig:agentmem-compaction-sliding-window}}
 
 **Loss is guaranteed.** You must accept that some information will not survive compaction. This is the right trade-off for most tasks, but you should write high-value facts to the external store *before* compacting, not after.
 

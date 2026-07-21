@@ -1,0 +1,135 @@
+<figure class="viz" id="fig-serving-replica-balancing-strategies">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 500" role="img" aria-label="Three panels comparing replica load-balancing policies: random or round-robin leaves one replica badly overloaded while others sit idle, power-of-two-choices keeps load nearly equal across replicas using only two random samples, and always picking the single least-loaded replica causes every router to converge on the same replica at once, overload it, and oscillate.">
+  <style>
+    #fig-serving-replica-balancing-strategies .ttl{ font:700 14.5px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies .note{ font:600 11px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies .panel-ttl{ font:700 13px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies .panel-sub{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies .sub{ font:500 10px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies .badge{ font:700 11px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies .tag{ font:600 9.5px var(--sans,sans-serif); }
+    #fig-serving-replica-balancing-strategies text{ fill: var(--ink-soft); }
+    #fig-serving-replica-balancing-strategies .dim{ fill: var(--muted); }
+  </style>
+
+  <defs>
+    <marker id="bal-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="bal-arrow-b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent2,#3b82f6)"/>
+    </marker>
+    <marker id="bal-arrow-c" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke)"/>
+    </marker>
+  </defs>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Replica selection: how the router's pick shapes the load distribution</text>
+
+  <g data-anim="1">
+    <rect x="150" y="30" width="480" height="20" rx="10" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="390" y="44" text-anchor="middle" class="note">bar height = queued + running TOKENS, not request count</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="20" y="64" width="230" height="426" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+    <circle cx="36" cy="78" r="10" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2"/>
+    <text x="36" y="82" text-anchor="middle" class="badge">A</text>
+    <text x="135" y="86" text-anchor="middle" class="panel-ttl">Random / round-robin</text>
+
+    <line x1="55" y1="360" x2="245" y2="360" class="v-grid" stroke-width="1" stroke-dasharray="4 3"/>
+
+    
+    <rect x="60" y="345" width="20" height="15" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="94" y="335" width="20" height="25" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="128" y="160" width="20" height="200" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.55" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <rect x="162" y="270" width="20" height="90" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="196" y="290" width="20" height="70" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="230" y="320" width="20" height="40" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+
+    
+    <text x="138" y="143" text-anchor="middle" class="tag" fill="var(--warn,#e0a106)">overloaded</text>
+    <line x1="138" y1="147" x2="138" y2="157" stroke="var(--warn,#e0a106)" stroke-width="1.6" marker-end="url(#bal-arrow-warn)"/>
+
+    
+    <path d="M70 306 L70 344 M104 306 L104 334 M70 306 L104 306" fill="none" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 2"/>
+    <text x="87" y="299" text-anchor="middle" class="tag dim">idle</text>
+
+    <text x="135" y="380" text-anchor="middle" class="sub">balances request COUNT,</text>
+    <text x="135" y="395" text-anchor="middle" class="sub">not token WORK -&gt;</text>
+    <text x="135" y="410" text-anchor="middle" class="sub">max load ~ Theta(log n /</text>
+    <text x="135" y="425" text-anchor="middle" class="sub">log log n); one replica</text>
+    <text x="135" y="440" text-anchor="middle" class="sub">badly overloaded</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="275" y="64" width="230" height="426" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <circle cx="291" cy="78" r="10" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="291" y="82" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">B</text>
+    <text x="390" y="86" text-anchor="middle" class="panel-ttl">Power-of-two-choices</text>
+
+    <line x1="310" y1="360" x2="500" y2="360" class="v-grid" stroke-width="1" stroke-dasharray="4 3"/>
+
+    
+    <rect x="295" y="265" width="20" height="95" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="329" y="260" width="20" height="100" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="363" y="270" width="20" height="90" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="397" y="255" width="20" height="105" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="431" y="262" width="20" height="98" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="465" y="268" width="20" height="92" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+
+    
+    <circle cx="390" cy="112" r="6" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <line x1="390" y1="118" x2="405" y2="253" stroke="var(--accent2,#3b82f6)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#bal-arrow-b)"/>
+    <line x1="390" y1="118" x2="439" y2="260" stroke="var(--accent2,#3b82f6)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#bal-arrow-b)"/>
+    <path d="M433 249 L438 254 L447 242" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+
+    <text x="390" y="380" text-anchor="middle" class="sub">sample 2 at random, keep</text>
+    <text x="390" y="395" text-anchor="middle" class="sub">the lighter -&gt; max load ~</text>
+    <text x="390" y="410" text-anchor="middle" class="sub">Theta(log log n); balanced</text>
+    <text x="390" y="425" text-anchor="middle" class="sub">with only LOCAL state</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="530" y="64" width="230" height="426" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+    <circle cx="546" cy="78" r="10" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2"/>
+    <text x="546" y="82" text-anchor="middle" class="badge">C</text>
+    <text x="645" y="86" text-anchor="middle" class="panel-ttl">Always pick the minimum</text>
+    <text x="645" y="100" text-anchor="middle" class="panel-sub dim">(thundering herd)</text>
+
+    <line x1="565" y1="360" x2="755" y2="360" class="v-grid" stroke-width="1" stroke-dasharray="4 3"/>
+
+    
+    <rect x="550" y="290" width="20" height="70" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="584" y="210" width="20" height="150" rx="2" fill="var(--warn,#e0a106)" fill-opacity="0.55" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+    <rect x="618" y="305" width="20" height="55" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="652" y="270" width="20" height="90" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="686" y="295" width="20" height="65" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <rect x="720" y="260" width="20" height="100" rx="2" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+
+    
+    <line x1="548" y1="130" x2="592" y2="207" stroke="var(--v-stroke)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#bal-arrow-c)"/>
+    <line x1="650" y1="118" x2="598" y2="207" stroke="var(--v-stroke)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#bal-arrow-c)"/>
+    <line x1="742" y1="130" x2="602" y2="207" stroke="var(--v-stroke)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#bal-arrow-c)"/>
+    <text x="548" y="122" text-anchor="middle" class="tag dim">router</text>
+    <text x="650" y="112" text-anchor="middle" class="tag dim">router</text>
+    <text x="742" y="122" text-anchor="middle" class="tag dim">router</text>
+
+    
+    <path d="M620 158 C 626 148, 632 168, 638 158 S 650 148, 656 158" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="663" y="175" class="tag" fill="var(--warn,#e0a106)">oscillates</text>
+
+    <text x="645" y="380" text-anchor="middle" class="sub">every router picks the</text>
+    <text x="645" y="395" text-anchor="middle" class="sub">same 'best' replica at</text>
+    <text x="645" y="410" text-anchor="middle" class="sub">once -&gt; it overloads, then</text>
+    <text x="645" y="425" text-anchor="middle" class="sub">all stampede the next -&gt;</text>
+    <text x="645" y="440" text-anchor="middle" class="sub">load oscillates, never</text>
+    <text x="645" y="455" text-anchor="middle" class="sub">settles</text>
+  </g>
+</svg>
+<figcaption><b>Sampling two replicas and picking the lighter one beats both extremes.</b> Random or round-robin balances request <i>count</i>, not token work, so one replica ends up hot while others idle; power-of-two-choices samples just two replicas and keeps the fleet nearly level using only local state; always routing to the single global minimum makes every router converge on the same "best" replica at once, overloading it and causing load to oscillate rather than settle.</figcaption>
+</figure>

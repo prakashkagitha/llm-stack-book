@@ -116,6 +116,8 @@ The model learns simultaneously:
 
 The training loss is computed only on the assistant tokens — the tool call JSON and the final response — not on the user turns or tool results (which are fixed ground truth).
 
+{{fig:sft-loss-masking-tool-use}}
+
 ### What the model actually learns
 
 From a representation-learning perspective, the model learns to:
@@ -249,6 +251,8 @@ Not all parse failures are equal. A robust harness distinguishes between:
 | Tool execution error | Network timeout, API 500 | Return truncated error message; log for ops |
 
 The key insight: **errors are tool results**. Feed them back into the conversation just like a successful result, and the model can usually correct itself on the next turn. Do not silently swallow errors — the model cannot fix what it cannot see.
+
+{{fig:parse-validate-dispatch-pipeline}}
 
 !!! warning "Never trust the model's JSON blindly"
     Even a well fine-tuned model will occasionally emit JSON with trailing commas (invalid), single-quoted strings (invalid), or Python-style `True`/`None` booleans (invalid in JSON). Always parse with a strict parser like `json.loads`. Consider a lenient fallback like `json5` or a regex-clean pass for production systems where latency matters more than strictness.

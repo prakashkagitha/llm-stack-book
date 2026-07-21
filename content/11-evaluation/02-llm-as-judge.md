@@ -179,6 +179,8 @@ def pairwise_judge_debiased(judge_fn, question, response_a, response_b):
 
 This doubles inference cost but nearly eliminates position bias.
 
+{{fig:judge-position-swap-debias}}
+
 ### Verbosity Bias (Length Bias)
 
 LLM judges tend to prefer longer responses, independent of quality. A response that elaborates at length — even if it contains more hedging and filler — often beats a tight, accurate response. This has been measured in MT-Bench and other benchmarks.
@@ -643,6 +645,8 @@ Deploying a judge in production without calibration is the most common mistake. 
 5. **Set acceptance thresholds.** Before deploying a new judge or judge model, require Spearman $\rho > 0.75$ and agreement rate >70% on the gold set.
 
 6. **Re-calibrate on model updates.** When you upgrade the judge model (e.g., GPT-4o to GPT-4o-mini), re-run calibration. Score distributions can shift.
+
+{{fig:judge-calibration-trust-loop}}
 
 ### Confidence Intervals for Elo Rankings
 

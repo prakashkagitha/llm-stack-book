@@ -136,6 +136,8 @@ def pick_replica(replicas, req_prefix_hashes, d=2):
 
 Power-of-two-choices is a beautiful result from balls-into-bins theory: sampling *two* random replicas and picking the less loaded one reduces the maximum load from $\Theta(\log n / \log\log n)$ (pure random) to $\Theta(\log\log n)$ — an exponential improvement — while needing only local state for two replicas, not a global scan. It is the workhorse of large fleets precisely because it avoids the herd behavior and central-state bottleneck of "always pick the global minimum."
 
+{{fig:serving-replica-balancing-strategies}}
+
 !!! warning "Common pitfall: the thundering herd to the least-loaded replica"
 
     If every router instance always sends to the *single* globally least-loaded replica, they all pick the same one simultaneously, overload it, then all stampede to the next — load oscillates instead of balancing. This is why power-of-*d*-choices (with randomization) beats "always pick the minimum" in a distributed router. Randomize, and never let all routers share one synchronous view of "the best" replica.
@@ -276,6 +278,8 @@ For a 70B model the weights alone (≈140 GB in bf16) exceed one 80 GB GPU, forc
 !!! note "Aside: two sizing constraints, take the binding one"
 
     You now have two independent replica counts: one from *throughput* ($\lambda / (0.7\mu)$) and one from *concurrency/memory* ($N_{\text{requests}} / N_{\text{concurrent}}$). The real fleet size is the **maximum** of the two. Compute-bound workloads (long prompts, short outputs) are limited by prefill throughput; memory-bound workloads (many concurrent long-context chats) are limited by KV capacity. Know which regime you are in before you order GPUs.
+
+{{fig:serving-sizing-max-of-two}}
 
 ## Batching Policy: The Throughput Engine
 
