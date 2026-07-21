@@ -1,0 +1,112 @@
+<figure class="viz" id="fig-fused-softmax-hbm-passes">
+<style>
+  #fig-fused-softmax-hbm-passes .title { font: 700 14px var(--sans,sans-serif); }
+  #fig-fused-softmax-hbm-passes .lane-label { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-fused-softmax-hbm-passes .zone-label { font: 600 11px var(--sans,sans-serif); }
+  #fig-fused-softmax-hbm-passes .step-label { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-fused-softmax-hbm-passes .pass-num { font: 700 10px var(--mono,monospace); }
+  #fig-fused-softmax-hbm-passes .onchip-label { font: 600 10.5px var(--mono,monospace); }
+  #fig-fused-softmax-hbm-passes .caption-strip { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-fused-softmax-hbm-passes text { fill: var(--ink-soft); }
+</style>
+<svg viewBox="0 0 800 480" role="img" aria-label="Comparison of HBM traffic for softmax over one row: the naive multi-op path makes about five passes across the HBM boundary because intermediates round-trip to memory, while the fused Triton kernel makes about two passes, reducing and writing on-chip.">
+  <defs>
+    <marker id="fshp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L8 5 L0 8.5 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="fshp-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 1.5 L8 5 L0 8.5 z" fill="var(--good,#2f9e6e)"/>
+    </marker>
+  </defs>
+
+  <text x="400" y="26" text-anchor="middle" class="title">HBM traffic for softmax over one row (M x N matrix)</text>
+
+  
+  
+  <text x="150" y="52" text-anchor="middle" class="zone-label" fill="var(--muted)">HBM (off-chip, slow)</text>
+  <text x="590" y="52" text-anchor="middle" class="zone-label" fill="var(--muted)">on-chip (SRAM / registers, fast)</text>
+  <line x1="370" y1="42" x2="370" y2="454" stroke="var(--border-2,#cbd5e1)" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.7"/>
+
+  
+
+  
+  <g transform="translate(0,66)">
+    <text x="20" y="0" class="lane-label" fill="var(--accent)">Naive multi-op PyTorch -- about 5 HBM passes</text>
+
+    
+    <rect x="20" y="14" width="90" height="46" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+    <text x="65" y="41" text-anchor="middle" class="onchip-label" fill="var(--muted)">HBM: x</text>
+
+    
+    
+    <line x1="115" y1="24" x2="345" y2="24" stroke="var(--accent)" stroke-width="2" marker-end="url(#fshp-arrow)"/>
+    <text x="230" y="16" text-anchor="middle" class="step-label">1. read x -&gt; find max</text>
+
+    
+    <line x1="115" y1="50" x2="345" y2="50" stroke="var(--accent)" stroke-width="2" marker-end="url(#fshp-arrow)"/>
+    <text x="230" y="66" text-anchor="middle" class="step-label">2. read x -&gt; exp</text>
+
+    
+    <rect x="410" y="10" width="120" height="56" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1"/>
+    <text x="470" y="32" text-anchor="middle" class="onchip-label" fill="var(--muted)">max, exp</text>
+    <text x="470" y="48" text-anchor="middle" class="onchip-label" fill="var(--muted)">(briefly)</text>
+
+    
+    <line x1="345" y1="80" x2="115" y2="80" stroke="var(--accent)" stroke-width="2" marker-end="url(#fshp-arrow)"/>
+    <text x="230" y="96" text-anchor="middle" class="step-label">3. write exp(x) to HBM</text>
+
+    
+    <rect x="20" y="66" width="90" height="34" rx="6" fill="var(--accent)" fill-opacity="0.12" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="65" y="87" text-anchor="middle" class="onchip-label" fill="var(--accent)">HBM: exp(x)</text>
+
+    
+    <line x1="115" y1="112" x2="345" y2="112" stroke="var(--accent)" stroke-width="2" marker-end="url(#fshp-arrow)"/>
+    <text x="230" y="128" text-anchor="middle" class="step-label">4. read exp(x) -&gt; sum</text>
+
+    
+    <line x1="115" y1="140" x2="345" y2="140" stroke="var(--accent)" stroke-width="2" marker-end="url(#fshp-arrow)"/>
+    <text x="230" y="156" text-anchor="middle" class="step-label">5. read exp(x) -&gt; divide, write out</text>
+
+    <rect x="20" y="126" width="90" height="34" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+    <text x="65" y="147" text-anchor="middle" class="onchip-label" fill="var(--muted)">HBM: out</text>
+
+    <text x="565" y="90" text-anchor="middle" class="onchip-label" fill="var(--muted)" font-style="italic">intermediates round-trip</text>
+    <text x="565" y="104" text-anchor="middle" class="onchip-label" fill="var(--muted)" font-style="italic">to HBM between every op</text>
+  </g>
+
+  
+  <g transform="translate(0,270)">
+    <text x="20" y="0" class="lane-label" fill="var(--good,#2f9e6e)">Fused Triton kernel -- about 2 HBM passes</text>
+
+    
+    <rect x="20" y="16" width="90" height="106" rx="6" fill="var(--surface-3,#f1f5f9)" stroke="var(--border-2,#cbd5e1)" stroke-width="1.2"/>
+    <text x="65" y="72" text-anchor="middle" class="onchip-label" fill="var(--muted)">HBM: x</text>
+
+    
+    <line x1="115" y1="48" x2="345" y2="48" stroke="var(--good,#2f9e6e)" stroke-width="2.5" marker-end="url(#fshp-arrow-good)"/>
+    <text x="230" y="36" text-anchor="middle" class="step-label">1. read row once</text>
+
+    
+    <rect x="380" y="16" width="180" height="106" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.1" stroke="var(--good,#2f9e6e)" stroke-width="1.5"/>
+    <text x="470" y="52" text-anchor="middle" class="onchip-label" fill="var(--good,#2f9e6e)">max -&gt; subtract -&gt; exp</text>
+    <text x="470" y="68" text-anchor="middle" class="onchip-label" fill="var(--good,#2f9e6e)">-&gt; sum -&gt; divide</text>
+    <text x="470" y="88" text-anchor="middle" class="onchip-label" fill="var(--muted)" font-style="italic">all in SRAM / registers,</text>
+    <text x="470" y="102" text-anchor="middle" class="onchip-label" fill="var(--muted)" font-style="italic">no round-trip to HBM</text>
+
+    
+    <line x1="345" y1="98" x2="115" y2="98" stroke="var(--good,#2f9e6e)" stroke-width="2.5" marker-end="url(#fshp-arrow-good)"/>
+    <text x="230" y="114" text-anchor="middle" class="step-label">2. write row once</text>
+
+    
+    <text x="65" y="128" text-anchor="middle" class="onchip-label" fill="var(--muted)" font-size="9.5px" opacity="0">out</text>
+  </g>
+
+  
+  <g transform="translate(20,420)">
+    <rect x="0" y="0" width="760" height="42" rx="6" fill="var(--good,#2f9e6e)" fill-opacity="0.08" stroke="var(--good,#2f9e6e)" stroke-opacity="0.35" stroke-width="1"/>
+    <text x="380" y="18" text-anchor="middle" class="caption-strip" fill="var(--good,#2f9e6e)">softmax is memory-bound: runtime is proportional to HBM bytes moved</text>
+    <text x="380" y="34" text-anchor="middle" class="caption-strip" fill="var(--good,#2f9e6e)">~5 passes -&gt; ~2 passes = about 2.5x faster; you cannot beat 1 read + 1 write</text>
+  </g>
+</svg>
+<figcaption><b>The naive multi-op softmax round-trips its exponentials through HBM, costing about five passes over the row; the fused Triton kernel reads once, does the whole reduction on-chip, and writes once.</b> Because softmax is memory-bound, halving the HBM traffic (5 passes to 2) directly buys roughly a 2.5x speedup -- there is no way to do better than one read and one write.</figcaption>
+</figure>

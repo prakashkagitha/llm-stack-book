@@ -111,6 +111,8 @@ where $Q_\mathcal{N}$ is the quantile function of the standard normal. At runtim
 
 NF4 is the weight format used by QLoRA for the frozen base model. It achieves slightly lower perplexity than INT4 per-group on the same model at the same 4-bit budget, because its code points are better matched to the actual weight distribution.
 
+{{fig:quant-nf4-vs-int4-codepoints}}
+
 ```python
 # bitsandbytes NF4 quantization (load_in_4bit with bnb_4bit_quant_type="nf4")
 import torch
@@ -227,6 +229,8 @@ $$
 $$
 
 where $d$ and $d_\text{min}$ are the two fp16 super-block scales (for the sub-block scales and mins respectively), $s_j$ and $m_j$ are the 6-bit scale and min of the sub-block $j$ that weight $\hat{w}$ belongs to, and $q \in [0, 15]$ is the stored 4-bit weight.
+
+{{fig:quant-q4km-superblock-anatomy}}
 
 ```python
 # Convert a Hugging Face model to GGUF Q4_K_M using llama.cpp's converter

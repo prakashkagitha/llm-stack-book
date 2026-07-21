@@ -75,6 +75,8 @@ $$
 
     **Lesson:** at 1/8th the traffic, cost per token triples. Low utilization is the enemy of cost efficiency.
 
+{{fig:econ-cost-per-token-hyperbola}}
+
 ### Input Tokens vs. Output Tokens
 
 Output tokens are expensive because they require an autoregressive decode step — one weight-loading pass per token. Input (prefill) tokens are cheap relative to output because they are processed in parallel. As a rough rule of thumb, at large batch sizes and typical prompt/completion ratios, output tokens cost roughly 3–5× more in wall-clock GPU-time — and hence dollars — per token than input tokens (the exact ratio depends on sequence lengths and batch size). Note the asymmetry is *not* about arithmetic: the FLOPs per token are essentially identical (~2P, where P is the parameter count) for a prefill token and a decode token. It is about bandwidth. A decode step reads the entire weight matrix from HBM to emit a single token, so it is memory-bound and poorly utilized; parallel prefill reads those same weights once and amortizes them across every prompt token at near-peak FLOP utilization. Output tokens are expensive because each one pays for its own weight-loading pass, not because it does more math.
@@ -188,6 +190,8 @@ H100 arithmetic intensity breakeven batch size: 295
 ```
 
 Below $B^* \approx 295$ the decode step time is flat at ~42 ms per step (bandwidth-bound floor). Each new request added below this threshold contributes zero extra latency but produces one more output token — a pure win. Above this, each additional request adds proportional latency.
+
+{{fig:econ-decode-step-time-knee}}
 
 The practical lesson: on a single H100 serving a 70B BF16 model, you can pack up to ~295 concurrent decoding sequences before latency starts climbing. That is the regime where `tokens/s/GPU` is maximized.
 

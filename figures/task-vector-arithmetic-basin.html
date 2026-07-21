@@ -1,0 +1,125 @@
+<figure class="viz" id="fig-task-vector-arithmetic-basin">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 800 660" role="img" aria-label="A weight-space schematic: task vectors tau_A and tau_B are arrows from a shared base checkpoint theta_base to fine-tuned points theta_A and theta_B inside a low-loss basin. Their vector sum lands on a merged point theta_merge that stays inside the same basin. A dashed arrow shows theta_base minus tau_A negating a behavior. A separate, unrelated basin from a different base checkpoint shows that merging task vectors computed against different base checkpoints does not compose the same way.">
+<defs>
+  <marker id="tvb-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+    <path d="M0,0 L7,3.5 L0,7 Z" fill="currentColor"/>
+  </marker>
+  <marker id="tvb-arrow-muted" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+    <path d="M0,0 L7,3.5 L0,7 Z" fill="currentColor" style="color:var(--muted,#64748b)"/>
+  </marker>
+</defs>
+<style>
+  #fig-task-vector-arithmetic-basin text { fill: currentColor; }
+  #fig-task-vector-arithmetic-basin .ax-lbl    { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-task-vector-arithmetic-basin .pt-lbl    { font: 700 12px var(--mono,monospace); fill: var(--ink-soft,#334155); }
+  #fig-task-vector-arithmetic-basin .pt-sub    { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-task-vector-arithmetic-basin .vec-lbl-a { font: 700 12px var(--mono,monospace); fill: var(--accent,#c15b39); }
+  #fig-task-vector-arithmetic-basin .vec-lbl-b { font: 700 12px var(--mono,monospace); fill: var(--accent2,#3b82f6); }
+  #fig-task-vector-arithmetic-basin .vec-lbl-m { font: 700 12px var(--mono,monospace); fill: var(--good,#2f9e6e); }
+  #fig-task-vector-arithmetic-basin .basin-lbl { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-task-vector-arithmetic-basin .basin-lbl-faded { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-task-vector-arithmetic-basin .cross-lbl { font: 600 11px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-task-vector-arithmetic-basin .leg-title { font: 700 11.5px var(--sans,sans-serif); }
+  #fig-task-vector-arithmetic-basin .leg-body  { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#64748b); }
+  #fig-task-vector-arithmetic-basin .basin-fill   { fill: var(--accent,#c15b39); fill-opacity: 0.08; }
+  #fig-task-vector-arithmetic-basin .basin-fill-2 { fill: var(--accent,#c15b39); fill-opacity: 0.06; }
+  #fig-task-vector-arithmetic-basin .basin-stroke { stroke: var(--border-2,#475569); }
+  #fig-task-vector-arithmetic-basin .basin-contour{ stroke: var(--border-2,#475569); stroke-dasharray: 3 3; fill: none; opacity: 0.7; }
+  #fig-task-vector-arithmetic-basin .basin-other-fill { fill: var(--muted,#64748b); fill-opacity: 0.10; }
+  #fig-task-vector-arithmetic-basin .arrow-a   { stroke: var(--accent,#c15b39); color: var(--accent,#c15b39); stroke-width: 2.2; fill: none; marker-end: url(#tvb-arrow); }
+  #fig-task-vector-arithmetic-basin .arrow-b   { stroke: var(--accent2,#3b82f6); color: var(--accent2,#3b82f6); stroke-width: 2.2; fill: none; marker-end: url(#tvb-arrow); }
+  #fig-task-vector-arithmetic-basin .arrow-m   { stroke: var(--good,#2f9e6e); color: var(--good,#2f9e6e); stroke-width: 3; fill: none; marker-end: url(#tvb-arrow); }
+  #fig-task-vector-arithmetic-basin .arrow-neg { stroke: var(--accent,#c15b39); color: var(--accent,#c15b39); stroke-width: 1.8; stroke-dasharray: 5 4; fill: none; marker-end: url(#tvb-arrow); opacity: 0.85; }
+  #fig-task-vector-arithmetic-basin .guide     { stroke: var(--muted,#64748b); stroke-width: 1.1; stroke-dasharray: 3 3; fill: none; opacity: 0.6; }
+  #fig-task-vector-arithmetic-basin .cross-line{ stroke: var(--muted,#64748b); stroke-width: 1.6; stroke-dasharray: 5 4; fill: none; }
+  #fig-task-vector-arithmetic-basin .pt-dot    { fill: var(--surface,#fff); stroke: var(--ink-soft,#334155); stroke-width: 1.6; }
+  #fig-task-vector-arithmetic-basin .pt-dot-m  { fill: var(--good,#2f9e6e); stroke: var(--good,#2f9e6e); stroke-width: 1.6; }
+  #fig-task-vector-arithmetic-basin .axis-line { stroke: var(--muted,#64748b); stroke-width: 1.3; }
+  #fig-task-vector-arithmetic-basin .divider   { stroke: var(--border-2,#475569); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.6; }
+  #fig-task-vector-arithmetic-basin .swatch-line-a { stroke: var(--accent,#c15b39); color: var(--accent,#c15b39); stroke-width: 2.2; }
+  #fig-task-vector-arithmetic-basin .swatch-line-m { stroke: var(--good,#2f9e6e); color: var(--good,#2f9e6e); stroke-width: 3; }
+  #fig-task-vector-arithmetic-basin .swatch-line-neg { stroke: var(--accent,#c15b39); color: var(--accent,#c15b39); stroke-width: 1.8; stroke-dasharray: 5 4; }
+  #fig-task-vector-arithmetic-basin .swatch-line-x { stroke: var(--muted,#64748b); stroke-width: 1.6; stroke-dasharray: 5 4; }
+</style>
+<g data-anim="1">
+<ellipse cx="300" cy="300" rx="210" ry="190" class="basin-fill basin-stroke" stroke-width="1.4"/>
+<ellipse cx="300" cy="300" rx="149" ry="135" class="basin-contour"/>
+<ellipse cx="300" cy="300" rx="88" ry="80" class="basin-contour"/>
+<text x="300" y="90" text-anchor="middle" class="basin-lbl">low-loss basin (shared base checkpoint)</text>
+</g>
+<g data-anim="2">
+<line x1="200" y1="240" x2="255" y2="145" class="guide"/>
+<line x1="355" y1="205" x2="255" y2="145" class="guide"/>
+</g>
+<g data-anim="2">
+<line x1="300" y1="300" x2="208" y2="246" class="arrow-a"/>
+<line x1="300" y1="300" x2="347" y2="211" class="arrow-b"/>
+<text x="216.0" y="264.0" class="vec-lbl-a">tau_A</text>
+<text x="337.5" y="242.5" class="vec-lbl-b">tau_B</text>
+</g>
+<g data-anim="3">
+<line x1="300" y1="300" x2="261" y2="155" class="arrow-m"/>
+</g>
+<g data-anim="4">
+<line x1="300" y1="300" x2="392" y2="354" class="arrow-neg"/>
+<text x="410" y="362" class="vec-lbl-a">- tau_A</text>
+<text x="410" y="378" class="pt-sub">negate a behavior</text>
+</g>
+<g data-anim="1">
+<circle cx="300" cy="300" r="5" class="pt-dot"/>
+<circle cx="200" cy="240" r="5" class="pt-dot"/>
+<circle cx="355" cy="205" r="5" class="pt-dot"/>
+<circle cx="400" cy="360" r="5" class="pt-dot"/>
+</g>
+<g data-anim="1">
+<text x="300" y="322" text-anchor="middle" class="pt-lbl">theta_base</text>
+<text x="300" y="336" text-anchor="middle" class="pt-sub">shared pre-trained init</text>
+<text x="186" y="230" text-anchor="end" class="pt-lbl">theta_A</text>
+<text x="186" y="246" text-anchor="end" class="pt-sub">task A fine-tune</text>
+<text x="369" y="195" text-anchor="start" class="pt-lbl">theta_B</text>
+<text x="369" y="211" text-anchor="start" class="pt-sub">task B fine-tune</text>
+</g>
+<g data-anim="3">
+<circle cx="255" cy="145" r="5.5" class="pt-dot-m"/>
+<text x="241" y="129" text-anchor="end" class="pt-lbl" style="fill:var(--good,#2f9e6e)">theta_merge</text>
+<text x="241" y="143" text-anchor="end" class="pt-sub">= theta_base + tau_A + tau_B</text>
+<text x="241" y="157" text-anchor="end" class="pt-sub" style="fill:var(--good,#2f9e6e)">still inside the basin</text>
+</g>
+<g data-anim="1">
+<line x1="46" y1="500" x2="108" y2="500" class="axis-line" marker-end="url(#tvb-arrow-muted)"/>
+<line x1="46" y1="500" x2="46" y2="438" class="axis-line" marker-end="url(#tvb-arrow-muted)"/>
+<text x="112" y="504" class="ax-lbl">weight dim i</text>
+<text x="40" y="434" class="ax-lbl" text-anchor="start">weight dim j</text>
+<text x="46" y="522" class="ax-lbl">(weight-space; shown are 2 of millions of dims)</text>
+</g>
+<line x1="560" y1="50" x2="560" y2="470" class="divider"/>
+<g data-anim="5">
+<ellipse cx="680" cy="230" rx="72" ry="62" class="basin-other-fill basin-stroke" stroke-width="1.2" stroke-dasharray="2 2"/>
+<circle cx="680" cy="230" r="5" class="pt-dot"/>
+<text x="680" y="152" text-anchor="middle" class="basin-lbl-faded">different base checkpoint</text>
+<text x="680" y="166" text-anchor="middle" class="basin-lbl-faded">unrelated basin</text>
+<text x="680" y="252" text-anchor="middle" class="pt-lbl">theta_other</text>
+<line x1="506" y1="340" x2="612" y2="270" class="cross-line"/>
+<line x1="551.0" y1="297.0" x2="567.0" y2="313.0" class="cross-line" stroke-dasharray="none" stroke-width="2"/>
+<line x1="551.0" y1="313.0" x2="567.0" y2="297.0" class="cross-line" stroke-dasharray="none" stroke-width="2"/>
+<text x="559.0" y="329.0" text-anchor="middle" class="cross-lbl">merging across bases = noise</text>
+</g>
+<g data-anim="6">
+<line x1="30" y1="544" x2="770" y2="544" class="basin-stroke" stroke-width="1" opacity="0.5"/>
+<line x1="30" y1="562" x2="58" y2="562" class="swatch-line-a" marker-end="url(#tvb-arrow)"/>
+<text x="66" y="566" class="leg-title" style="fill:var(--accent,#c15b39)">tau = theta_ft - theta_base</text>
+<text x="66" y="582" class="leg-body">solid arrow: one task vector</text>
+<line x1="230" y1="562" x2="258" y2="562" class="swatch-line-m" marker-end="url(#tvb-arrow)"/>
+<text x="266" y="566" class="leg-title" style="fill:var(--good,#2f9e6e)">tau_A + tau_B</text>
+<text x="266" y="582" class="leg-body">sum lands back inside the basin</text>
+<line x1="470" y1="562" x2="498" y2="562" class="swatch-line-neg" marker-end="url(#tvb-arrow)"/>
+<text x="506" y="566" class="leg-title" style="fill:var(--accent,#c15b39)">- tau</text>
+<text x="506" y="582" class="leg-body">subtract to negate a behavior</text>
+<line x1="628" y1="562" x2="656" y2="562" class="swatch-line-x"/>
+<text x="664" y="566" class="leg-title">different bases</text>
+<text x="664" y="582" class="leg-body">not composable</text>
+</g>
+</svg>
+<figcaption><b>Task vectors are literal arrows in weight space, and they add like vectors.</b> Fine-tuning on task A or task B moves the model from a shared checkpoint <span class="v-mono">theta_base</span> to <span class="v-mono">theta_A</span> or <span class="v-mono">theta_B</span>; the task vector is that displacement, <span class="v-mono">tau = theta_ft - theta_base</span>. Adding <span class="v-mono">tau_A + tau_B</span> lands on a merged model that is still inside the same low-loss basin, subtracting a task vector negates its behavior, but composing task vectors computed against two <i>different</i> base checkpoints has no such guarantee -- there is no shared basin for the arithmetic to land in.</figcaption>
+</figure>

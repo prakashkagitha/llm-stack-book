@@ -1,0 +1,85 @@
+<figure class="viz" id="fig-econ-decode-step-time-knee">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 860 430" role="img" aria-label="Line chart of decode step time versus active batch size: a flat bandwidth-bound floor at about 42 milliseconds up to B* around 295, then a linear compute-bound ramp beyond it.">
+  <defs>
+    <marker id="edk-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-econ-decode-step-time-knee .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-econ-decode-step-time-knee .ax{ font:600 12px var(--sans,sans-serif); }
+    #fig-econ-decode-step-time-knee .lbl{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-econ-decode-step-time-knee .sub{ font:500 10.5px var(--sans,sans-serif); }
+    #fig-econ-decode-step-time-knee .tick{ font:500 10.5px var(--mono,monospace); }
+    #fig-econ-decode-step-time-knee .note{ font:600 11px var(--sans,sans-serif); }
+    #fig-econ-decode-step-time-knee text{ fill: var(--ink-soft); }
+    #fig-econ-decode-step-time-knee .dim{ fill: var(--muted); }
+  </style>
+
+  <text x="430" y="24" text-anchor="middle" class="ttl">Below B*, every added request is a free token</text>
+
+  
+  <g data-anim="1">
+    <line x1="90" y1="46" x2="90" y2="360" class="v-stroke" stroke-width="1.6" marker-start="url(#edk-arrow)"/>
+    <line x1="90" y1="360" x2="820" y2="360" class="v-stroke" stroke-width="1.6" marker-end="url(#edk-arrow)"/>
+    <text x="30" y="203" class="ax" text-anchor="middle" transform="rotate(-90 30 203)">decode step time (ms/token)</text>
+    <text x="455" y="405" class="ax" text-anchor="middle">active batch size B (concurrent decoding sequences)</text>
+    <text x="90" y="378" class="tick" text-anchor="middle">1</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="90" y="46" width="430" height="314" fill="var(--good)" opacity="0.07"/>
+    <rect x="520" y="46" width="300" height="314" fill="var(--warn)" opacity="0.09"/>
+
+    
+    <line x1="90" y1="280" x2="520" y2="280" class="viz-draw" style="--len:430" stroke="var(--accent)" stroke-width="3.4" stroke-linecap="round"/>
+    
+    <line x1="520" y1="280" x2="810" y2="70" class="viz-draw" style="--len:320" stroke="var(--accent)" stroke-width="3.4" stroke-linecap="round"/>
+  </g>
+
+  
+  <g data-anim="3">
+    <line x1="520" y1="46" x2="520" y2="360" stroke="var(--warn)" stroke-width="1.8" stroke-dasharray="4 4"/>
+    <circle cx="520" cy="280" r="5" fill="var(--surface,#fff)" stroke="var(--warn)" stroke-width="2.4"/>
+    <text x="520" y="378" class="tick" text-anchor="middle" fill="var(--warn)">B*</text>
+    <rect x="565" y="52" width="245" height="40" rx="6" class="v-fill" stroke="var(--warn)" stroke-width="1.4"/>
+    <text x="687" y="68" class="note" text-anchor="middle" fill="var(--warn)">B* = FLOP/s / BW &#126; 295</text>
+    <text x="687" y="83" class="sub dim" text-anchor="middle">the knee / breakeven batch size</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <text x="300" y="262" class="lbl" text-anchor="middle" fill="var(--accent)">bandwidth-bound floor</text>
+    <text x="300" y="298" class="sub" text-anchor="middle">weights stream from HBM once per step (&#126;42 ms)</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <text x="720" y="248" class="lbl" text-anchor="middle" fill="var(--accent)">compute-bound: step time</text>
+    <text x="720" y="264" class="lbl" text-anchor="middle" fill="var(--accent)">grows linearly with batch</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <circle cx="190" cy="330" r="6" class="v-fill" stroke="var(--good)" stroke-width="1.6"/>
+    <circle cx="235" cy="330" r="6" class="v-fill" stroke="var(--good)" stroke-width="1.6"/>
+    <circle cx="280" cy="330" r="6" class="v-fill" stroke="var(--good)" stroke-width="1.6"/>
+    <circle cx="325" cy="330" r="6" class="v-fill" stroke="var(--good)" stroke-width="1.6"/>
+    <path d="M180 320 L335 320" stroke="var(--good)" stroke-width="1.4" fill="none"/>
+    <path d="M180 320 L180 326 M335 320 L335 326" stroke="var(--good)" stroke-width="1.4" fill="none"/>
+    <text x="257" y="352" class="note" text-anchor="middle" fill="var(--good)">each added request here = +1 free token, +0 latency</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="597" y="298" width="218" height="40" rx="6" class="v-fill" stroke="var(--warn)" stroke-width="1.4"/>
+    <text x="706" y="314" class="note" text-anchor="middle" fill="var(--warn)">past B*: each added request</text>
+    <text x="706" y="329" class="note" text-anchor="middle" fill="var(--warn)">adds latency, no extra tokens/dollar</text>
+  </g>
+
+  <text x="820" y="418" text-anchor="end" class="sub dim">illustrative: floor height and B* depend on model size and GPU (here 70B BF16 on one H100)</text>
+</svg>
+<figcaption><b>Below B*, decode is bandwidth-bound and step time is constant, so packing more concurrent sequences is a pure throughput win at zero latency cost.</b> Above B*, the GPU is out of spare compute cycles between weight loads: you pay latency for nothing, because throughput no longer scales with batch size.</figcaption>
+</figure>

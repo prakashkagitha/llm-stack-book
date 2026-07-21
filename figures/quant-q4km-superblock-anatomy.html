@@ -1,0 +1,142 @@
+<figure class="viz" id="fig-quant-q4km-superblock-anatomy">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 390" role="img" aria-label="Anatomy of one GGUF Q4_K_M super-block: 256 weights store two fp16 super-block scales d and dmin, eight sub-blocks of 32 weights each carrying a 6-bit scale and min packed into 12 bytes, and 4-bit weights packed into 128 bytes, combined by the dequantization formula w-hat equals d times s-j times q minus dmin times m-j.">
+  <defs>
+    <marker id="q4km-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-quant-q4km-superblock-anatomy text{ fill:var(--ink-soft); }
+    #fig-quant-q4km-superblock-anatomy .title{ font:700 15px var(--sans,sans-serif); }
+    #fig-quant-q4km-superblock-anatomy .banner{ font:600 12px var(--sans,sans-serif); }
+    #fig-quant-q4km-superblock-anatomy .sectitle{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-quant-q4km-superblock-anatomy .chiplbl{ font:700 11px var(--mono,monospace); }
+    #fig-quant-q4km-superblock-anatomy .chipsub{ font:500 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-quant-q4km-superblock-anatomy .sublabel{ font:600 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-quant-q4km-superblock-anatomy .celllbl{ font:700 9px var(--mono,monospace); }
+    #fig-quant-q4km-superblock-anatomy .cellsub{ font:500 8px var(--mono,monospace); fill:var(--muted); }
+    #fig-quant-q4km-superblock-anatomy .note{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-quant-q4km-superblock-anatomy .wval{ font:700 9.5px var(--mono,monospace); }
+    #fig-quant-q4km-superblock-anatomy .panellbl{ font:700 10.5px var(--mono,monospace); }
+    #fig-quant-q4km-superblock-anatomy .panelsub{ font:500 8.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-quant-q4km-superblock-anatomy .formula{ font:700 12.5px var(--mono,monospace); }
+  </style>
+
+
+  <text x="400" y="20" text-anchor="middle" class="title">Q4_K_M super-block anatomy (GGUF k-quant)</text>
+  <g data-anim="1">
+    <rect x="16" y="30" width="768" height="32" rx="7" class="v-fill" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="400" y="51" text-anchor="middle" class="banner">mixed precision: scales stored at higher precision (fp16 / 6-bit) than the 4-bit weights they govern</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="16" y="76" width="560" height="298" rx="10" class="v-grid" fill="none" stroke-width="1.4"/>
+    <text x="28" y="96" class="sectitle">Super-block = 256 weights -- block_q4_K (144 bytes total)</text>
+
+    <g stroke="var(--accent)" stroke-width="1.4" fill="none">
+      <rect x="158" y="106" width="130" height="36" rx="6" class="v-fill"/>
+      <rect x="304" y="106" width="130" height="36" rx="6" class="v-fill"/>
+    </g>
+    <text x="223" y="122" text-anchor="middle" class="chiplbl" fill="var(--accent)">d (fp16)</text>
+    <text x="223" y="136" text-anchor="middle" class="chipsub">scale for s_j</text>
+    <text x="369" y="122" text-anchor="middle" class="chiplbl" fill="var(--accent)">dmin (fp16)</text>
+    <text x="369" y="136" text-anchor="middle" class="chipsub">scale for m_j</text>
+    <text x="296" y="156" text-anchor="middle" class="sublabel">two high-precision super-block scales (4 bytes total)</text>
+  </g>
+
+
+  <g data-anim="3">
+    <text x="28" y="174" class="sectitle">8 sub-blocks x 32 weights each</text>
+
+    <g class="v-grid" stroke-width="1.2">
+      <g fill="var(--surface-3,var(--v-fill))">
+        <rect x="42.0" y="182" width="60" height="56" rx="5"/>
+        <rect x="106.0" y="182" width="60" height="56" rx="5"/>
+        <rect x="170.0" y="182" width="60" height="56" rx="5"/>
+        <rect x="298.0" y="182" width="60" height="56" rx="5"/>
+        <rect x="362.0" y="182" width="60" height="56" rx="5"/>
+        <rect x="426.0" y="182" width="60" height="56" rx="5"/>
+        <rect x="490.0" y="182" width="60" height="56" rx="5"/>
+      </g>
+    </g>
+    <rect x="234.0" y="182" width="60" height="56" rx="5" fill="var(--v-fill)" stroke="var(--accent)" stroke-width="1.8"/>
+
+    <g text-anchor="middle">
+      <text x="72.0" y="204" class="celllbl">sub 0</text><text x="72.0" y="222" class="cellsub">s0, m0</text>
+      <text x="136.0" y="204" class="celllbl">sub 1</text><text x="136.0" y="222" class="cellsub">s1, m1</text>
+      <text x="200.0" y="204" class="celllbl">sub 2</text><text x="200.0" y="222" class="cellsub">s2, m2</text>
+      <text x="264.0" y="204" class="celllbl" fill="var(--accent)">sub 3</text><text x="264.0" y="222" class="cellsub" fill="var(--accent)">s_j, m_j</text>
+      <text x="328.0" y="204" class="celllbl">sub 4</text><text x="328.0" y="222" class="cellsub">s4, m4</text>
+      <text x="392.0" y="204" class="celllbl">sub 5</text><text x="392.0" y="222" class="cellsub">s5, m5</text>
+      <text x="456.0" y="204" class="celllbl">sub 6</text><text x="456.0" y="222" class="cellsub">s6, m6</text>
+      <text x="520.0" y="204" class="celllbl">sub 7</text><text x="520.0" y="222" class="cellsub">s7, m7</text>
+      <text x="264.0" y="234" class="cellsub" fill="var(--accent)">(6-bit each)</text>
+    </g>
+
+    <path d="M42,244 L42,250 L550,250 L550,244" fill="none" class="v-grid" stroke-width="1.2"/>
+    <text x="296" y="264" text-anchor="middle" class="note">16 six-bit scales+mins -&gt; scales[12] = 12 bytes</text>
+
+    <line x1="264" y1="238" x2="264" y2="243" class="v-accent-s" stroke="var(--accent)" stroke-width="1.6"/>
+    <line x1="264" y1="270" x2="264" y2="275" class="v-accent-s" stroke="var(--accent)" stroke-width="1.6"/>
+  </g>
+
+
+  <g data-anim="4">
+    <text x="28" y="286" class="sectitle" fill="var(--accent)">zoom -- sub-block 3 (highlighted above), first weights shown</text>
+
+    <g stroke="var(--accent)" stroke-width="1.4" fill="var(--v-fill)">
+      <rect x="165.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="190.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="215.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="240.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="265.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="290.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="315.5" y="296" width="22" height="26" rx="4"/>
+      <rect x="340.5" y="296" width="22" height="26" rx="4"/>
+    </g>
+    <g text-anchor="middle" fill="var(--accent)">
+      <text x="176.5" y="313" class="wval">9</text>
+      <text x="201.5" y="313" class="wval">2</text>
+      <text x="226.5" y="313" class="wval">14</text>
+      <text x="251.5" y="313" class="wval">0</text>
+      <text x="276.5" y="313" class="wval">11</text>
+      <text x="301.5" y="313" class="wval">5</text>
+      <text x="326.5" y="313" class="wval">7</text>
+      <text x="351.5" y="313" class="wval">3</text>
+    </g>
+    <text x="374.5" y="313" text-anchor="middle" class="note">...</text>
+    <text x="405.5" y="313" text-anchor="middle" class="note">x32</text>
+
+    <text x="165.5" y="336" class="note">q in [0, 15] each (4-bit)</text>
+    <text x="28" y="352" class="note">all 256 weights (8 sub-blocks x 32) -&gt; qs[128] = 128 bytes</text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="596" y="76" width="188" height="298" rx="10" class="v-grid" fill="none" stroke-width="1.4"/>
+    <text x="608" y="96" class="sectitle">dequant formula (per weight)</text>
+
+    <g class="v-accent-s" stroke="var(--accent)" stroke-width="1.3" marker-end="url(#q4km-arrow)">
+      <line x1="596" y1="124" x2="618" y2="124"/>
+      <line x1="596" y1="210" x2="618" y2="210"/>
+      <line x1="596" y1="309" x2="618" y2="309"/>
+    </g>
+
+    <text x="624" y="120" class="panellbl" fill="var(--accent)">d, dmin</text>
+    <text x="624" y="133" class="panelsub">fp16 super-block scales</text>
+
+    <text x="624" y="206" class="panellbl" fill="var(--accent)">s_j, m_j</text>
+    <text x="624" y="219" class="panelsub">6-bit sub-block scale/min</text>
+
+    <text x="624" y="305" class="panellbl" fill="var(--accent)">q</text>
+    <text x="624" y="318" class="panelsub">4-bit stored weight</text>
+
+    <line x1="608" y1="332" x2="776" y2="332" class="v-grid" stroke-width="1"/>
+    <text x="690" y="352" text-anchor="middle" class="formula">w_hat = d x s_j x q</text>
+    <text x="690" y="368" text-anchor="middle" class="formula">- dmin x m_j</text>
+  </g>
+</svg>
+<figcaption><b>Q4_K_M nests three precision tiers inside one 256-weight super-block.</b> Two fp16 scales (<code>d</code>, <code>dmin</code>) govern eight 6-bit sub-block scale/min pairs, which in turn govern the 4-bit weights themselves -- so the metadata that decides how to read the weights is stored more precisely than the weights it describes, at a total cost of 144 bytes for 256 weights (4 + 12 + 128).</figcaption>
+</figure>

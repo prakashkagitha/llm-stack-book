@@ -57,6 +57,8 @@ ptrs = base_ptr + row * stride_m + col * stride_n   # shape (BLOCK_M, BLOCK_N)
 
 This `[:, None]` / `[None, :]` broadcasting (identical to NumPy) is the workhorse. Internalize it: **rows down, columns across, strides convert logical indices to memory offsets.** `BLOCK_M`, `BLOCK_N`, and `BLOCK_SIZE` are *compile-time constants* (declared `tl.constexpr`), which lets the compiler unroll loops, size registers, and pick vector widths. Newer Triton also offers `tl.make_block_ptr`, a structured block-pointer object that tracks shape, strides, and offsets for you; we use explicit pointer math here because it makes the mechanism visible.
 
+{{fig:triton-pointer-block-arithmetic}}
+
 !!! note "Two more primitives: `tl.trans` and `tl.atomic_add`"
     Two `tl` operations round out the survey and appear the moment you write a backward pass. **`tl.trans(x)`** transposes a 2-D tile already in registers — handy when a matmul needs the transpose of a loaded tile, e.g. `tl.dot(tl.trans(P), dO)` to form `P^T dO`. You can often avoid it by **swapping the roles of the two strides** when you build the pointer block: put the index you want on the columns onto the row axis and vice-versa, and the tile arrives transposed at load time for free. Kernel 4 already does this implicitly for `K` — it builds a `(HEAD_DIM, BLOCK_N)` tile by placing `offs_n` on the column axis and `offs_d` on the row axis, so `tl.dot(q, k)` sees `K^T` with no transpose op. **`tl.atomic_add(ptr, val, mask=...)`** does a race-safe read-modify-write, needed whenever *several programs* accumulate into the same address — most importantly `dQ` in the attention backward, where every key block contributes to every query's gradient (Kernel 5). Accumulate atomics into an **fp32** buffer (atomic fp16 adds lose precision) and zero it before launch. The atomics-free alternative is to re-partition the loop so each program owns its reduced output exclusively — the two-kernel split we discuss in Kernel 5.
 
@@ -139,6 +141,8 @@ $$
 A library implementation reads `x` (to find the max), reads `x` again (to exponentiate), writes the exponentials, reads them again (to sum), and reads once more to divide — roughly **5 passes over HBM**. The max-subtraction is not optional: it is the standard numerically stable softmax that prevents `exp` from overflowing for large logits (see [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html)).
 
 The fused Triton kernel assigns **one program per row**. The program loads the entire row into registers/SRAM *once*, computes the max, the exponentials, and the sum without ever round-tripping the intermediates to HBM, and writes the row *once*. That is 1 read + 1 write — a 2.5x reduction in memory traffic, and since softmax is memory-bound, roughly a 2.5x speedup.
+
+{{fig:fused-softmax-hbm-passes}}
 
 ```python
 import torch

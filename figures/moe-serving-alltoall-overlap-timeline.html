@@ -1,0 +1,213 @@
+<figure class="viz" id="fig-moe-serving-alltoall-overlap-timeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 820 460" role="img" aria-label="Two Gantt timelines for one MoE decode layer on a shared time axis. Top: serialized naive all-to-all, where the single compute lane goes idle (hatched) during dispatch and combine, giving a long total wall-clock. Bottom: DeepEP low-latency hook overlap, where a second NIC/RDMA lane carries dispatch and combine while the compute lane stays busy running the shared-expert FFN and next micro-batch attention, finishing at the same point the naive version's compute lane just starts its idle combine wait -- a much shorter total wall-clock.">
+
+<defs>
+  <marker id="msdt-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+  </marker>
+  <pattern id="msdt-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--accent2)" stroke-width="3" stroke-opacity="0.55"/>
+  </pattern>
+  <style>
+    #fig-moe-serving-alltoall-overlap-timeline text { font-family: var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-moe-serving-alltoall-overlap-timeline .ttl  { font: 700 13px var(--sans,sans-serif); fill: var(--ink); }
+    #fig-moe-serving-alltoall-overlap-timeline .lane { font: 600 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-moe-serving-alltoall-overlap-timeline .blk  { font: 600 10px var(--sans,sans-serif); fill: var(--surface,#fff); }
+    #fig-moe-serving-alltoall-overlap-timeline .blk2 { font: 600 9px var(--sans,sans-serif); fill: var(--surface,#fff); }
+    #fig-moe-serving-alltoall-overlap-timeline .sm   { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-moe-serving-alltoall-overlap-timeline .lbl  { font: 700 11px var(--sans,sans-serif); }
+    #fig-moe-serving-alltoall-overlap-timeline .mono { font: 600 9.5px var(--mono,monospace); }
+
+    #fig-moe-serving-alltoall-overlap-timeline [data-anim] { opacity: 0; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view [data-anim="1"] { animation: msdt-in 0.4s ease-out 0.1s forwards; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view [data-anim="2"] { animation: msdt-in 0.4s ease-out 0.6s forwards; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view [data-anim="3"] { animation: msdt-in 0.4s ease-out 1.2s forwards; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view [data-anim="4"] { animation: msdt-in 0.4s ease-out 1.9s forwards; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view [data-anim="5"] { animation: msdt-in 0.4s ease-out 2.5s forwards; }
+    @keyframes msdt-in { from{opacity:0;} to{opacity:1;} }
+
+    #fig-moe-serving-alltoall-overlap-timeline .msdt-playhead { transform-box: fill-box; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view .msdt-playhead {
+      animation: msdt-play 6s linear 0.4s infinite;
+    }
+    #fig-moe-serving-alltoall-overlap-timeline .msdt-pkt-a { transform-box: fill-box; opacity:0; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view .msdt-pkt-a { animation: msdt-pkt-a 6s linear 0.4s infinite; }
+    #fig-moe-serving-alltoall-overlap-timeline .msdt-pkt-b { transform-box: fill-box; opacity:0; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view .msdt-pkt-b { animation: msdt-pkt-b 6s linear 0.4s infinite; }
+    #fig-moe-serving-alltoall-overlap-timeline .msdt-hook { transform-box: fill-box; transform-origin: center; }
+    #fig-moe-serving-alltoall-overlap-timeline.in-view .msdt-hook { animation: msdt-hook 6s linear 0.4s infinite; }
+
+    @keyframes msdt-play {
+      0%   { transform: translateX(0px);    opacity: 1; }
+      92%  { transform: translateX(490px);  opacity: 1; }
+      95%  { transform: translateX(490px);  opacity: 0; }
+      100% { transform: translateX(0px);    opacity: 0; }
+    }
+    @keyframes msdt-pkt-a {
+      0%, 10%  { opacity: 0; transform: translateX(0px); }
+      12%      { opacity: 1; transform: translateX(0px); }
+      34%      { opacity: 1; transform: translateX(120px); }
+      36%,100% { opacity: 0; transform: translateX(120px); }
+    }
+    @keyframes msdt-pkt-b {
+      0%, 66%  { opacity: 0; transform: translateX(0px); }
+      68%      { opacity: 1; transform: translateX(0px); }
+      90%      { opacity: 1; transform: translateX(120px); }
+      92%,100% { opacity: 0; transform: translateX(120px); }
+    }
+    @keyframes msdt-hook {
+      0%, 32%   { transform: scale(1);   opacity: 0.55; }
+      34%       { transform: scale(1.6); opacity: 1; }
+      38%,100%  { transform: scale(1);   opacity: 0.55; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #fig-moe-serving-alltoall-overlap-timeline .msdt-playhead { display: none; }
+      #fig-moe-serving-alltoall-overlap-timeline .msdt-pkt-a,
+      #fig-moe-serving-alltoall-overlap-timeline .msdt-pkt-b { opacity: 0.9 !important; animation: none !important; }
+      #fig-moe-serving-alltoall-overlap-timeline .msdt-hook { animation: none !important; opacity: 0.85 !important; }
+    }
+  </style>
+</defs>
+
+
+<g data-anim="1">
+  <text x="70" y="52" class="ttl">Serialized (naive all_to_all)</text>
+  <text x="20" y="99" class="lane">SM /</text>
+  <text x="20" y="112" class="lane">compute</text>
+  <rect x="70" y="78" width="700" height="34" rx="4" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="0.8" opacity="0.6"/>
+</g>
+
+<g data-anim="2">
+  
+  <rect x="100" y="78" width="60" height="34" rx="4" fill="var(--accent)" fill-opacity="0.85" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="130" y="99" text-anchor="middle" class="blk">router</text>
+
+  
+  <rect class="viz-pulse" x="160" y="78" width="120" height="34" rx="4" fill="url(#msdt-hatch)" stroke="var(--accent2)" stroke-width="1.4"/>
+  <rect x="190" y="85" width="60" height="24" rx="3" fill="var(--surface)" opacity="0.8"/>
+  <text x="220" y="93" text-anchor="middle" font="700 10px var(--sans,sans-serif)" fill="var(--accent2)">DISPATCH</text>
+  <text x="220" y="105" text-anchor="middle" font="700 10px var(--sans,sans-serif)" fill="var(--accent2)">all-to-all</text>
+
+  
+  <rect x="280" y="78" width="180" height="34" rx="4" fill="var(--accent)" fill-opacity="0.85" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="370" y="99" text-anchor="middle" class="blk">expert grouped GEMM</text>
+
+  
+  <rect class="viz-pulse" x="460" y="78" width="120" height="34" rx="4" fill="url(#msdt-hatch)" stroke="var(--accent2)" stroke-width="1.4"/>
+  <rect x="490" y="85" width="60" height="24" rx="3" fill="var(--surface)" opacity="0.8"/>
+  <text x="520" y="93" text-anchor="middle" font="700 10px var(--sans,sans-serif)" fill="var(--accent2)">COMBINE</text>
+  <text x="520" y="105" text-anchor="middle" font="700 10px var(--sans,sans-serif)" fill="var(--accent2)">all-to-all</text>
+
+  
+  <text x="370" y="128" text-anchor="middle" class="sm" fill="var(--accent2)">hatched = exposed all-to-all -&gt; GPU idle</text>
+  <line x1="345" y1="120" x2="230" y2="115" stroke="var(--accent2)" stroke-width="0.9" stroke-dasharray="2 2" opacity="0.75"/>
+  <line x1="395" y1="120" x2="510" y2="115" stroke="var(--accent2)" stroke-width="0.9" stroke-dasharray="2 2" opacity="0.75"/>
+
+  
+  <line x1="100" y1="144" x2="580" y2="144" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <line x1="100" y1="140" x2="100" y2="148" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <line x1="580" y1="140" x2="580" y2="148" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <text x="340" y="162" text-anchor="middle" class="lbl">high TPOT, low eta</text>
+</g>
+
+
+<line x1="20" y1="180" x2="800" y2="180" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="6 4"/>
+
+
+<g data-anim="3">
+  <text x="70" y="202" class="ttl">Overlapped (DeepEP low-latency hook)</text>
+  <text x="20" y="235" class="lane">SM /</text>
+  <text x="20" y="248" class="lane">compute</text>
+  <text x="20" y="284" class="lane">NIC /</text>
+  <text x="20" y="297" class="lane">RDMA</text>
+  <rect x="70" y="222" width="700" height="34" rx="4" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="0.8" opacity="0.6"/>
+  <rect x="70" y="272" width="700" height="30" rx="4" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="0.8" opacity="0.6"/>
+</g>
+
+<g data-anim="4">
+  
+  <rect x="100" y="222" width="60" height="34" rx="4" fill="var(--accent)" fill-opacity="0.85" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="130" y="243" text-anchor="middle" class="blk">router</text>
+
+  <rect x="160" y="222" width="60" height="34" rx="4" fill="var(--accent)" fill-opacity="0.65" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="190" y="236" text-anchor="middle" class="blk2">shared-</text>
+  <text x="190" y="247" text-anchor="middle" class="blk2">expert FFN</text>
+
+  <rect x="220" y="222" width="60" height="34" rx="4" fill="var(--accent)" fill-opacity="0.65" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="250" y="236" text-anchor="middle" class="blk2">next micro-</text>
+  <text x="250" y="247" text-anchor="middle" class="blk2">batch attn</text>
+
+  <rect x="280" y="222" width="180" height="34" rx="4" fill="var(--accent)" fill-opacity="0.85" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="370" y="243" text-anchor="middle" class="blk">expert grouped GEMM</text>
+
+  
+  <line x1="280" y1="256" x2="280" y2="259" stroke="var(--accent2)" stroke-width="1.2"/>
+  <g class="msdt-hook">
+    <circle cx="280" cy="264" r="5.5" fill="var(--accent2)"/>
+    <text x="295" y="267" text-anchor="start" class="mono" fill="var(--accent2)">hook()</text>
+  </g>
+  <line x1="280" y1="269" x2="280" y2="274" stroke="var(--accent2)" stroke-width="1.2"/>
+
+  
+  <rect x="160" y="274" width="120" height="30" rx="4" fill="var(--accent2)" fill-opacity="0.4" stroke="var(--accent2)" stroke-width="1.2"/>
+  <text x="220" y="292" text-anchor="middle" class="blk2" fill="var(--accent2)">dispatch RDMA (in flight)</text>
+
+  <rect x="280" y="274" width="120" height="30" rx="4" fill="var(--accent2)" fill-opacity="0.4" stroke="var(--accent2)" stroke-width="1.2"/>
+  <text x="340" y="292" text-anchor="middle" class="blk2" fill="var(--accent2)">combine RDMA</text>
+
+  <text x="130" y="292" text-anchor="middle" class="sm" opacity="0.7">idle</text>
+  <text x="430" y="292" text-anchor="middle" font="500 8px var(--sans,sans-serif)" fill="var(--muted)" opacity="0.8">arrived</text>
+
+  
+  <g class="msdt-pkt-a">
+    <circle cx="160" cy="289" r="5" fill="var(--surface,#fff)" stroke="var(--accent2)" stroke-width="2"/>
+  </g>
+  <g class="msdt-pkt-b">
+    <circle cx="280" cy="289" r="5" fill="var(--surface,#fff)" stroke="var(--accent2)" stroke-width="2"/>
+  </g>
+
+  <text x="70" y="314" class="sm" fill="var(--accent)">compute lane stays busy end-to-end</text>
+
+  
+  <line x1="100" y1="332" x2="460" y2="332" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <line x1="100" y1="328" x2="100" y2="336" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <line x1="460" y1="328" x2="460" y2="336" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <text x="280" y="350" text-anchor="middle" class="lbl">low exposed all-to-all -&gt; high eta</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="460" y1="70" x2="460" y2="360" stroke="var(--ink-soft)" stroke-width="1" stroke-dasharray="3 3" opacity="0.55"/>
+  <text x="466" y="365" class="sm" font-style="italic">DeepEP already done here -- naive still has combine left</text>
+</g>
+
+
+<g data-anim="5">
+  <rect x="70" y="392" width="14" height="14" rx="2" fill="var(--accent)" fill-opacity="0.85" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="90" y="403" class="sm">compute lane (SM)</text>
+  <rect x="240" y="392" width="14" height="14" rx="2" fill="var(--accent2)" fill-opacity="0.5" stroke="var(--accent2)" stroke-width="1.2"/>
+  <text x="260" y="403" class="sm">comm lane (NIC / RDMA)</text>
+  <rect x="440" y="392" width="14" height="14" rx="2" fill="url(#msdt-hatch)" stroke="var(--accent2)" stroke-width="1.2"/>
+  <text x="460" y="403" class="sm">idle (exposed all-to-all)</text>
+</g>
+
+
+<g data-anim="5">
+  <line x1="70" y1="424" x2="770" y2="424" stroke="var(--ink-soft)" stroke-width="1.2" marker-end="url(#msdt-arr)"/>
+  <text x="760" y="440" text-anchor="end" class="sm">time (shared axis, both timelines)</text>
+</g>
+
+
+<g class="msdt-playhead">
+  <line x1="100" y1="70" x2="100" y2="120" stroke="var(--warn)" stroke-width="2" opacity="0.9"/>
+  <polygon points="95,68 105,68 100,76" fill="var(--warn)" opacity="0.9"/>
+</g>
+<g class="msdt-playhead">
+  <line x1="100" y1="214" x2="100" y2="312" stroke="var(--warn)" stroke-width="2" opacity="0.9"/>
+  <polygon points="95,212 105,212 100,220" fill="var(--warn)" opacity="0.9"/>
+</g>
+
+</svg>
+<figcaption><b>Serializing the all-to-all exposes it as GPU idle time; DeepEP's hook-based overlap hides it behind useful compute.</b> Top: with a naive <code>all_to_all</code>, the single compute lane sits idle (hatched) through both dispatch and combine, so the exposed all-to-all is fully on the critical path. Bottom: DeepEP's low-latency kernel kicks off dispatch on the NIC while the SM lane runs the shared-expert FFN and the next micro-batch's attention, only calling <code>hook()</code> once the tokens have actually arrived; combine then overlaps the same way behind the expert GEMM. Same total work, but the dashed guideline shows the overlapped version already finished at the exact instant the naive version is only just starting its exposed combine all-to-all.</figcaption>
+</figure>

@@ -26,6 +26,8 @@ Three distinct families emerged:
 
 ---
 
+{{fig:peft-intervention-sites}}
+
 ## Prompt Tuning
 
 ### The Core Algorithm
@@ -458,6 +460,8 @@ Task vectors support a surprising range of operations:
 - **Add** a skill: $\theta_\text{merge} = \theta_\text{pre-trained} + \lambda \tau_\text{task}$
 - **Remove** a behavior: $\theta_\text{merge} = \theta_\text{pre-trained} - \lambda \tau_\text{task}$ (analogy negation)
 - **Combine** multiple tasks: $\theta_\text{merge} = \theta_\text{pre-trained} + \lambda \sum_i \tau_i$
+
+{{fig:task-vector-arithmetic-basin}}
 
 The scalar $\lambda$ controls the "temperature" of the intervention — too large and the fine-tune dominates; too small and the effect disappears. Values around 0.3–0.8 work well in practice.
 

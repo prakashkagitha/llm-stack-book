@@ -353,6 +353,8 @@ $$
 
 If the average sequence is only 512 tokens long, padding wastes 75% of those FLOPs. Sequence packing eliminates this waste.
 
+{{fig:chattmpl-packing-vs-padding}}
+
 ### Pack-Then-Truncate
 
 Sequence packing concatenates multiple independent examples into a single sequence of exactly `max_length` tokens. The simplest algorithm is first-fit-decreasing bin packing: sort examples by length, greedily fill each bin.
@@ -453,6 +455,8 @@ The most important correctness issue with packing is **cross-document attention 
 For most SFT training this leakage is a minor nuisance — the model quickly learns that `<|im_start|>` marks a boundary — but it can degrade performance on short conversations and is measurably harmful for preference learning where sequence independence is critical.
 
 The fix is a **block-diagonal attention mask**: within each packed bin, the causal mask is restricted to within-document boundaries. Each document can only attend to its own prior tokens.
+
+{{fig:chattmpl-block-diagonal-attention}}
 
 ```python
 def make_block_diagonal_mask(

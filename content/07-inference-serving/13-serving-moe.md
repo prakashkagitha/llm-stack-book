@@ -20,6 +20,8 @@ $$
 
 For $B=64$, $k=8$, $E=256$ this is $256(1-(1-1/32)^{64})\approx 256(1-0.132)\approx 222$ — already **87% of all experts** touched by a modest batch. So even though each *token* is sparse, a realistic decode *batch* is nearly dense in expert coverage. You cannot avoid keeping (almost) all experts resident and ready.
 
+{{fig:moe-serving-sparse-token-dense-batch}}
+
 The second inversion is communication. EP places experts on different GPUs; routing is data-dependent and changes every token. The required primitive is **all-to-all**: GPU $i$ has a variable number of tokens destined for each expert, hence for each GPU. Unlike the all-reduce of tensor parallelism (TP) — whose volume is fixed at $\sim 2\,d_{\text{model}}$ bytes per token per layer regardless of routing — all-to-all volume is $\sim k\,d_{\text{model}}$ bytes per token per layer *and* is **load-imbalanced and irregular**: the message sizes are unknown until the router fires.
 
 
@@ -129,6 +131,8 @@ DeepEP provides two families of kernels:
 
 - **High-throughput (normal) kernels** for *prefill* and training, where batches are large and you want to saturate bandwidth. These do **NVLink+RDMA forwarding**: a token going to a remote node's expert is sent over RDMA once, then forwarded over NVLink to the right GPU inside that node, instead of doing $G$ independent point-to-point sends. This is the all-to-all analogue of a hierarchical all-reduce.
 - **Low-latency kernels** for *decode*, where batches are tiny and the all-to-all latency directly sets time-per-output-token (TPOT). These use **pure RDMA with no NVLink hop** (lower latency, fewer synchronization points) and a **hook-based overlap** scheme: the kernel returns control to Python before the receive completes, lets you run unrelated compute (the attention of the next micro-step, or the router), and you call a hook later that consumes the arrived data. This hides the all-to-all latency *behind* useful work — communication and computation truly overlap rather than serialize.
+
+{{fig:moe-serving-alltoall-overlap-timeline}}
 
 Two further tricks matter:
 

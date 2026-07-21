@@ -294,6 +294,8 @@ The action at turn $t$ gets advantage based on $G_t$ rather than the full-trajec
 
 ### When to use which
 
+{{fig:credit-assignment-traj-vs-turn}}
+
 Use **trajectory-level** credit when the only honest reward is terminal (did the final answer match? did the PR merge?) and you cannot decompose it — this is the common case and it is what verifiable-reward agentic RL defaults to. Reach for **turn-level** credit when the environment naturally exposes intermediate progress (test pass counts, game score, retrieval hits) and trajectories are long enough that broadcast advantage learns too slowly. Process reward models (PRMs), which *learn* to score intermediate steps, are a third option discussed in [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html); they are powerful but reward-hackable, so verifiable per-turn signals are preferred when available.
 
 ## Environment Design: ReAct and the RAGEN Pattern
@@ -394,6 +396,8 @@ Trajectories have wildly different lengths: a lucky 1-turn success finishes in 2
 ### 3. The throughput tax of environment interaction
 
 In single-turn RL, the GPU generates continuously. In agentic RL, every turn the GPU *stops*, waits for the environment (a Python sandbox spin-up, a search API round-trip, a 10-second test suite), then resumes. During that wait the expensive accelerators are idle. If environment latency is comparable to generation latency — and for code execution or web tools it often *exceeds* it — you can lose half your GPU-hours to waiting.
+
+{{fig:rollout-throughput-sync-vs-async}}
 
 The standard fix is **asynchronous, decoupled rollout**: run many environment instances concurrently so that while one trajectory waits on its tool, the GPU generates the next action for another trajectory. This requires an async rollout engine (vLLM's and SGLang's async APIs) feeding a pool of environment workers, with a scheduler that interleaves their requests. Architecturally this is the colocated-vs-disaggregated question of [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html) applied to environments: you want the inference engine saturated by a *fan-out* of environments, not blocked on any one of them.
 

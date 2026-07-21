@@ -1,0 +1,142 @@
+<figure class="viz" id="fig-rollout-throughput-sync-vs-async">
+<svg viewBox="0 0 800 410" role="img" aria-label="Gantt-style GPU timeline comparing synchronous and asynchronous agentic rollout. In the synchronous scenario, a single GPU lane alternates GEN blocks with wide hatched env-wait gaps, leaving the GPU roughly half idle. In the asynchronous scenario, the same GPU lane is packed with back-to-back GEN blocks for four concurrently fanned-out trajectories A, B, C, D with no gaps, while a pool of parallel env-worker rows below absorbs the tool waits -- so while trajectory A sits in its env-worker bar, the GPU is generating trajectory B's next action.">
+<defs>
+  <pattern id="rtsa-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="8" stroke="var(--muted,#6b7280)" stroke-width="1.5" stroke-opacity="0.4"/>
+  </pattern>
+  <marker id="rtsa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+</defs>
+<style>
+  #fig-rollout-throughput-sync-vs-async text { fill: var(--ink-soft,#333); font: 400 12px var(--sans,sans-serif); }
+  #fig-rollout-throughput-sync-vs-async .title       { font: 700 15px var(--sans,sans-serif); }
+  #fig-rollout-throughput-sync-vs-async .legend      { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-rollout-throughput-sync-vs-async .panel-title { font: 700 13.5px var(--sans,sans-serif); }
+  #fig-rollout-throughput-sync-vs-async .lane-lbl    { font: 700 11px var(--mono,monospace); }
+  #fig-rollout-throughput-sync-vs-async .block-lbl   { font: 700 11px var(--sans,sans-serif); fill: var(--surface,#fff); }
+  #fig-rollout-throughput-sync-vs-async .idle-lbl    { font: 600 10px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-rollout-throughput-sync-vs-async .note-it     { font: 400 italic 10.5px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-rollout-throughput-sync-vs-async .tag-lbl     { font: 700 10.5px var(--sans,sans-serif); }
+  #fig-rollout-throughput-sync-vs-async .row-lbl     { font: 700 10px var(--mono,monospace); fill: var(--muted,#666); }
+  #fig-rollout-throughput-sync-vs-async .axis-lbl    { font: 400 italic 10.5px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-rollout-throughput-sync-vs-async .conn-lbl    { font: 400 italic 10px var(--sans,sans-serif); fill: var(--muted,#666); }
+</style>
+
+
+<text x="20" y="22" class="title">GPU timeline: synchronous vs. asynchronous rollout</text>
+<text x="20" y="40" class="legend">
+  <tspan fill="var(--accent,#c15b39)" font-weight="700">GEN</tspan> = GPU generating an action &#160;&#8226;&#160;
+  <tspan fill="var(--muted,#666)" font-weight="700">hatched</tspan> = env wait / env worker
+</text>
+
+
+<text x="20" y="66" class="panel-title">Synchronous (one trajectory at a time)</text>
+<text x="108" y="103" text-anchor="end" class="lane-lbl">GPU</text>
+
+<rect x="120" y="82" width="80" height="34" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.9"/>
+<text x="160" y="103" text-anchor="middle" class="block-lbl">GEN</text>
+
+<rect x="200" y="82" width="80" height="34" rx="4" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="240" y="103" text-anchor="middle" class="idle-lbl">env wait</text>
+
+<rect x="280" y="82" width="80" height="34" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.9"/>
+<text x="320" y="103" text-anchor="middle" class="block-lbl">GEN</text>
+
+<rect x="360" y="82" width="80" height="34" rx="4" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="400" y="103" text-anchor="middle" class="idle-lbl">env wait</text>
+
+<rect x="440" y="82" width="80" height="34" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.9"/>
+<text x="480" y="103" text-anchor="middle" class="block-lbl">GEN</text>
+
+<rect x="520" y="82" width="80" height="34" rx="4" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="560" y="103" text-anchor="middle" class="idle-lbl">env wait</text>
+
+<rect x="600" y="82" width="80" height="34" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.9"/>
+<text x="640" y="103" text-anchor="middle" class="block-lbl">GEN</text>
+
+<rect x="680" y="82" width="80" height="34" rx="4" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="720" y="103" text-anchor="middle" class="idle-lbl">env wait</text>
+
+<rect x="656" y="58" width="122" height="19" rx="9.5" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+<text x="717" y="71.5" text-anchor="middle" class="tag-lbl" fill="var(--warn,#e0a106)">GPU idle ~50%</text>
+
+<text x="120" y="134" class="note-it">env wait = sandbox spin-up, search API round-trip, test run</text>
+
+<line x1="20" y1="150" x2="780" y2="150" stroke="var(--border-2,#d8d1c0)" stroke-width="0.8" opacity="0.6"/>
+
+
+<line x1="280" y1="82" x2="280" y2="342" stroke="var(--muted,#888)" stroke-width="0.6" stroke-dasharray="2,4" opacity="0.18"/>
+<line x1="520" y1="82" x2="520" y2="342" stroke="var(--muted,#888)" stroke-width="0.6" stroke-dasharray="2,4" opacity="0.18"/>
+
+
+<text x="20" y="174" class="panel-title">Asynchronous (environment fan-out)</text>
+<text x="20" y="189" class="note-it">A, B, C, D = four concurrently fanned-out trajectories</text>
+<text x="108" y="220" text-anchor="end" class="lane-lbl">GPU</text>
+
+<rect x="120" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.95"/>
+<text x="160" y="220" text-anchor="middle" class="block-lbl">GEN-A</text>
+<rect x="200" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.75"/>
+<text x="240" y="220" text-anchor="middle" class="block-lbl">GEN-B</text>
+<rect x="280" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+<text x="320" y="220" text-anchor="middle" class="block-lbl">GEN-C</text>
+<rect x="360" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.38"/>
+<text x="400" y="220" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#333)">GEN-D</text>
+<rect x="440" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.95"/>
+<text x="480" y="220" text-anchor="middle" class="block-lbl">GEN-A</text>
+<rect x="520" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.75"/>
+<text x="560" y="220" text-anchor="middle" class="block-lbl">GEN-B</text>
+<rect x="600" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.55"/>
+<text x="640" y="220" text-anchor="middle" class="block-lbl">GEN-C</text>
+<rect x="680" y="199" width="80" height="34" fill="var(--accent,#c15b39)" fill-opacity="0.38"/>
+<text x="720" y="220" text-anchor="middle" class="block-lbl" fill="var(--ink-soft,#333)">GEN-D</text>
+<rect x="120" y="199" width="640" height="34" rx="4" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+<line x1="200" y1="199" x2="200" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+<line x1="280" y1="199" x2="280" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+<line x1="360" y1="199" x2="360" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+<line x1="440" y1="199" x2="440" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+<line x1="520" y1="199" x2="520" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+<line x1="600" y1="199" x2="600" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+<line x1="680" y1="199" x2="680" y2="233" stroke="var(--surface,#fff)" stroke-width="1.3" opacity="0.65"/>
+
+<rect x="656" y="177" width="122" height="19" rx="9.5" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+<text x="717" y="190.5" text-anchor="middle" class="tag-lbl" fill="var(--good,#2f9e6e)">GPU saturated</text>
+
+
+<text x="20" y="254" class="panel-title" font-size="11.5">Env workers (parallel pool)</text>
+
+<text x="108" y="272" text-anchor="end" class="row-lbl">env: A</text>
+<rect x="120" y="262" width="640" height="16" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="0.8"/>
+<rect x="120" y="262" width="80" height="16" fill="var(--surface,#fff)"/>
+<rect x="440" y="262" width="80" height="16" fill="var(--surface,#fff)"/>
+
+<text x="108" y="294" text-anchor="end" class="row-lbl">env: B</text>
+<rect x="120" y="284" width="640" height="16" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="0.8"/>
+<rect x="200" y="284" width="80" height="16" fill="var(--surface,#fff)"/>
+<rect x="520" y="284" width="80" height="16" fill="var(--surface,#fff)"/>
+
+<text x="108" y="316" text-anchor="end" class="row-lbl">env: C</text>
+<rect x="120" y="306" width="640" height="16" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="0.8"/>
+<rect x="280" y="306" width="80" height="16" fill="var(--surface,#fff)"/>
+<rect x="600" y="306" width="80" height="16" fill="var(--surface,#fff)"/>
+
+<text x="108" y="338" text-anchor="end" class="row-lbl">env: D</text>
+<rect x="120" y="328" width="640" height="16" fill="url(#rtsa-hatch)" stroke="var(--muted,#6b7280)" stroke-width="0.8"/>
+<rect x="360" y="328" width="80" height="16" fill="var(--surface,#fff)"/>
+<rect x="680" y="328" width="80" height="16" fill="var(--surface,#fff)"/>
+
+
+<line x1="240" y1="233" x2="240" y2="261" stroke="var(--muted,#6b7280)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#rtsa-arrow)"/>
+<text x="252" y="246" class="conn-lbl">A waits while GPU</text>
+<text x="252" y="258" class="conn-lbl">generates B</text>
+
+
+<line x1="400" y1="233" x2="400" y2="305" stroke="var(--muted,#6b7280)" stroke-width="1" stroke-dasharray="2,3" opacity="0.45" marker-end="url(#rtsa-arrow)"/>
+
+
+<line x1="120" y1="360" x2="766" y2="360" stroke="var(--muted,#6b7280)" stroke-width="1.2" marker-end="url(#rtsa-arrow)"/>
+<text x="120" y="378" class="axis-lbl">wall-clock time (same scale as the synchronous panel above)</text>
+
+</svg>
+<figcaption><b>The GPU is the expensive resource, and environment waits create bubbles unless you fan out.</b> In the synchronous panel, the GPU alternates generating one action and waiting on an environment, so roughly half its time sits idle behind a hatched gap. In the asynchronous panel, the same GPU lane runs back-to-back GEN blocks for four concurrently fanned-out trajectories -- while trajectory A sits in its env-worker bar waiting on a tool, the GPU is already generating trajectory B's next action, so the bubbles disappear.</figcaption>
+</figure>

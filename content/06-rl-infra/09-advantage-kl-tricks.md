@@ -208,6 +208,8 @@ def kl_estimators(logp_policy, logp_ref):
     return k1, k2, k3
 ```
 
+{{fig:advkl-kl-estimators-k1k2k3}}
+
 !!! note "Aside"
 
     Why is $k_3 = e^r - 1 - r$ unbiased? Because $\mathbb{E}_{a\sim\pi_\theta}\!\left[\frac{\pi_{\text{ref}}(a)}{\pi_\theta(a)}\right] = \sum_a \pi_\theta(a)\frac{\pi_{\text{ref}}(a)}{\pi_\theta(a)} = \sum_a \pi_{\text{ref}}(a) = 1$, so $\mathbb{E}[e^r - 1] = 0$, and $\mathbb{E}[-r] = \mathbb{E}[k_1] = D_{\mathrm{KL}}$. The $e^r-1$ term is a zero-mean control variate that cancels variance while preserving the expectation. This is the same control-variate trick used throughout variance-reduced estimation.
@@ -415,6 +417,8 @@ def aggregate_loss(per_token_loss, mask, mode="token_mean"):
     else:
         raise ValueError(mode)
 ```
+
+{{fig:advkl-loss-aggregation-length}}
 
 !!! example "Worked example: why aggregation changes the answer"
 
