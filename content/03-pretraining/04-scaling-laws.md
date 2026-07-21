@@ -383,6 +383,8 @@ A few engineering notes that separate a real fit from a toy one:
 
 The parametric fit above is Chinchilla's Approach 3 — fit the full surface $L(N,D)$ and differentiate. Approach 2, the **IsoFLOP method**, is more robust to misspecification of that parametric form because it never commits to it directly. Instead, at each of several *fixed* compute budgets $C$ you sweep $N$ (forcing $D = C/(6N)$ so every run in the slice costs exactly $C$), fit a quadratic (parabola) in $\log N$ to the resulting losses, and read off the valley — the loss-minimizing $N_{\text{opt}}(C)$ — for that slice. Repeat across several budgets and fit a power law through the valleys to recover the allocation exponent $a$ directly. This is the isoFLOP-slice picture illustrated in {{fig:scaling-kaplan-vs-chinchilla}} above.
 
+{{fig:isoflop-valley-method}}
+
 Grid design matters: use 4–6 fixed-$C$ slices spaced roughly half a decade apart, and at least 6 models per slice spanning about an order of magnitude in $N$, centered on the expected optimum $\sqrt{C/120}$ — a parabola needs points bracketing the minimum on *both* arms, or the fitted vertex is biased.
 
 ```python

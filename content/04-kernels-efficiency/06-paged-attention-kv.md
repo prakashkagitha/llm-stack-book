@@ -224,6 +224,8 @@ Sharing works perfectly until a shared sequence needs to **write** into a block 
 
 Crucially, COW happens **per block, not per sequence**. Two diverging beam-search candidates that shared 200 prefix blocks copy only the *one* block where they first differ; the other 199 stay shared. For wide beams or large $k$-sampling over long prompts, this is the difference between $O(k \cdot s)$ and $O(s + k \cdot B)$ memory. This same machinery generalizes to cross-request **prefix caching**, the subject of [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html); SGLang pushes it further with a radix tree in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
 
+{{fig:paged-kv-copy-on-write}}
+
 !!! example "Worked example: parallel sampling savings"
 
     Prompt = 1000 tokens, generate $k=8$ samples of 200 tokens each, Llama-2-70B GQA ($\beta \approx 0.3125$ MiB/token), block size 16.

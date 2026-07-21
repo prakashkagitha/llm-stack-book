@@ -23,10 +23,10 @@
 
   
   <g data-anim="1">
-    <rect x="232" y="12" width="13" height="13" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
-    <text x="251" y="22" class="small">rollout / generation (memory-bound)</text>
-    <rect x="488" y="12" width="13" height="13" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
-    <text x="507" y="22" class="small">trainer / fwd+bwd (compute-bound)</text>
+    <rect x="196" y="12" width="13" height="13" rx="3" class="gen" fill="var(--accent2,#3b82f6)" fill-opacity="0.85"/>
+    <text x="215" y="22" class="small">rollout / generation (memory-bound)</text>
+    <rect x="524" y="12" width="13" height="13" rx="3" class="trn" fill="var(--accent)" fill-opacity="0.85"/>
+    <text x="543" y="22" class="small">trainer / fwd+bwd (compute-bound)</text>
   </g>
 
   
@@ -72,18 +72,19 @@
 
   
   <g data-anim="4">
-    <path d="M310 230 C310 250 133 250 133 234" fill="none" class="trn" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#cd-arrow)"/>
+    <path d="M310 230 C310 250 133 250 133 234" style="fill:none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#cd-arrow)"/>
     <text x="222" y="262" text-anchor="middle" class="tag">weight sync: in-place / CUDA IPC (~0 ms)</text>
   </g>
 
   
   <g data-anim="4">
-    <rect x="30" y="282" width="320" height="98" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
-    <text x="44" y="302" class="role">No overlap &#8594; one capability idle</text>
-    <text x="44" y="320" class="small">Phases are strictly serial: training-grade GPUs</text>
-    <text x="44" y="333" class="small">spend the long rollout doing memory-bound decode.</text>
-    <text x="44" y="354" class="mono" fill="var(--warn,#e0a106)">U &#8776; T_train / T_iter  (small, rollout-bound)</text>
-    <text x="44" y="372" class="small">+ simplest to run &#183; 1:1 ratio forced &#183; on-policy</text>
+    <rect x="30" y="282" width="336" height="112" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="44" y="302" class="role">No overlap -&gt; one capability idle</text>
+    <text x="44" y="320" class="small">Phases are strictly serial: training-grade</text>
+    <text x="44" y="333" class="small">GPUs spend the long rollout doing</text>
+    <text x="44" y="346" class="small">memory-bound decode.</text>
+    <text x="44" y="367" class="mono" fill="var(--warn,#e0a106)">U &#8776; T_train / T_iter  (small, rollout-bound)</text>
+    <text x="44" y="385" class="small">+ simplest to run &#183; 1:1 ratio forced &#183; on-policy</text>
   </g>
 
   
@@ -142,11 +143,12 @@
 
   
   <g data-anim="5">
-    <rect x="410" y="306" width="320" height="74" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
-    <text x="424" y="326" class="role">Pools overlap &#8594; both stay busy</text>
-    <text x="424" y="344" class="small">Rollout generates the next batch while the trainer</text>
-    <text x="424" y="357" class="small">steps on the current one &#8212; at the cost of 1-step</text>
-    <text x="424" y="370" class="mono" fill="var(--good,#2f9e6e)">staleness, corrected by the PPO/GRPO ratio &#961;.</text>
+    <rect x="410" y="306" width="340" height="88" rx="7" class="v-fill v-grid" stroke-width="1.1"/>
+    <text x="424" y="326" class="role">Pools overlap -&gt; both stay busy</text>
+    <text x="424" y="344" class="small">Rollout generates the next batch while</text>
+    <text x="424" y="357" class="small">the trainer steps on the current one,</text>
+    <text x="424" y="370" class="small">at the cost of 1-step</text>
+    <text x="424" y="384" class="mono" fill="var(--good,#2f9e6e)">staleness, corrected by PPO/GRPO ratio &#961;.</text>
   </g>
 </svg>
 <figcaption><b>Where the bytes live: colocated time-slicing vs disaggregated pools.</b> <b>Colocated</b> runs rollout and training on one shared GPU pool in strictly serial phases (weights swapped in place via CUDA IPC), so the expensive training-grade GPUs spend most of a rollout-bound run idling at low utilization. <b>Disaggregated</b> splits generation and training onto independently-sized pools connected by a weight-sync path (NCCL broadcast + resharding) and an experience path; the two overlap to keep both busy, paying a one-step <b>staleness</b> that the importance ratio corrects.</figcaption>

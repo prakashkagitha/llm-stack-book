@@ -134,6 +134,8 @@ $$
 
 Excess loss answers a sharper question: *"On which domain is the proxy still far from what's achievable?"* A domain with high irreducible entropy will have high loss for *both* proxy and reference, so its excess is small once the proxy catches up — the adversary stops over-investing in it. A domain where the proxy lags the reference (lots of headroom) gets upweighted. DoReMi clamps excess at zero (you cannot do better than reference "for free") and uses it to drive the weights.
 
+{{fig:mixing-excess-loss-decomposition}}
+
 ### The algorithm
 
 DoReMi runs three steps:

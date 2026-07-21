@@ -107,6 +107,8 @@ o_{\text{new}} &= \alpha\,o \;+\; \sum_j e^{\,x_j - m_{\text{new}}}\, v_j .
 \end{aligned}
 $$
 
+{{fig:online-softmax-rescale}}
+
 After the final block, the true softmax-weighted output is $o / \ell$ — we divide by the denominator exactly once, at the very end. Notice what each line does: $m_{\text{new}}$ updates the max; $\alpha$ rescales the *already-accumulated* sum and output down onto the new max; then we add the new block's contributions, exponentiated against the new max so they are on the same scale.
 
 ### A from-scratch implementation and a correctness proof

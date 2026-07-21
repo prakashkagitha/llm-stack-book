@@ -1,0 +1,151 @@
+<figure class="viz" id="fig-colodis-weight-sync-three-paths">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 616" role="img" aria-label="Three weight-sync transport paths compared as lanes: CUDA IPC has both processes alias one shared memory block with no bytes moving; NCCL broadcast streams weights GPU to GPU over NVLink or InfiniBand; checkpoint reload round-trips the weights through disk. A margin spectrum shows the paths ordered from fastest and least robust at top to slowest and most robust at bottom.">
+  <defs>
+    <marker id="wsp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+    <marker id="wsp-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+    </marker>
+    <style>
+      #fig-colodis-weight-sync-three-paths text{ fill:var(--ink-soft); }
+      #fig-colodis-weight-sync-three-paths .colhead{ font:700 12px var(--sans,sans-serif); letter-spacing:.02em; }
+      #fig-colodis-weight-sync-three-paths .lanehead{ font:700 13.5px var(--sans,sans-serif); }
+      #fig-colodis-weight-sync-three-paths .anno{ font:400 11px var(--sans,sans-serif); fill:var(--muted); }
+      #fig-colodis-weight-sync-three-paths .boxlbl{ font:700 11px var(--sans,sans-serif); }
+      #fig-colodis-weight-sync-three-paths .boxsub{ font:400 9.5px var(--mono,monospace); fill:var(--muted); }
+      #fig-colodis-weight-sync-three-paths .medlbl{ font:600 10.5px var(--sans,sans-serif); }
+      #fig-colodis-weight-sync-three-paths .medsub{ font:400 9px var(--sans,sans-serif); fill:var(--muted); }
+      #fig-colodis-weight-sync-three-paths .arrlbl{ font:600 10px var(--sans,sans-serif); }
+      #fig-colodis-weight-sync-three-paths .tag{ font:600 10px var(--mono,monospace); }
+      #fig-colodis-weight-sync-three-paths .tagmuted{ fill:var(--muted); }
+      #fig-colodis-weight-sync-three-paths .spec{ font:700 10.5px var(--sans,sans-serif); fill:var(--muted); }
+      #fig-colodis-weight-sync-three-paths .pill{ fill:var(--surface-3); stroke:var(--border-2); stroke-width:1; }
+      #fig-colodis-weight-sync-three-paths .lanebg{ fill:var(--surface); stroke:var(--border-2); stroke-width:1.2; }
+      #fig-colodis-weight-sync-three-paths .trnbox{ fill:var(--surface); stroke:var(--accent); stroke-width:1.8; }
+      #fig-colodis-weight-sync-three-paths .infbox{ fill:var(--surface); stroke:var(--accent2,#3b82f6); stroke-width:1.8; }
+      #fig-colodis-weight-sync-three-paths .trntxt{ fill:var(--accent); }
+      #fig-colodis-weight-sync-three-paths .inftxt{ fill:var(--accent2,#3b82f6); }
+    </style>
+  </defs>
+
+  
+  <g data-anim="1">
+    <text x="95" y="26" text-anchor="middle" class="colhead trntxt">TRAINER GPU</text>
+    <text x="680" y="26" text-anchor="middle" class="colhead inftxt">INFERENCE GPU</text>
+    <line x1="20" y1="38" x2="758" y2="38" class="v-grid" stroke="currentColor" stroke-width="1" opacity="0.6"/>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="14" y="50" width="744" height="160" rx="10" class="lanebg"/>
+    <text x="28" y="72" class="lanehead">CUDA IPC (zero-copy)</text>
+    <text x="28" y="90" class="anno">no bytes move -- both processes read the same physical GPU memory</text>
+
+    
+    <rect x="40" y="108" width="110" height="48" rx="7" class="trnbox"/>
+    <text x="95" y="128" text-anchor="middle" class="boxlbl trntxt">TRAINER</text>
+    <text x="95" y="142" text-anchor="middle" class="boxsub">theta_t+1</text>
+
+    
+    <rect x="330" y="104" width="180" height="56" rx="8" class="pill" stroke-dasharray="4 3"/>
+    <text x="420" y="127" text-anchor="middle" class="medlbl">shared weight tensor</text>
+    <text x="420" y="141" text-anchor="middle" class="medsub">one physical GPU memory block</text>
+
+    
+    <rect x="620" y="108" width="130" height="48" rx="7" class="infbox"/>
+    <text x="685" y="128" text-anchor="middle" class="boxlbl inftxt">INFERENCE</text>
+    <text x="685" y="142" text-anchor="middle" class="boxsub">param buffers</text>
+
+    
+    <line x1="150" y1="118" x2="328" y2="116" class="trntxt" stroke="currentColor" stroke-width="1.8" marker-end="url(#wsp-arrow)"/>
+    <text x="238" y="110" text-anchor="middle" class="arrlbl trntxt">export handle</text>
+
+    <line x1="620" y1="146" x2="512" y2="146" class="inftxt" stroke="currentColor" stroke-width="1.8" marker-end="url(#wsp-arrow)"/>
+    <text x="566" y="162" text-anchor="middle" class="arrlbl inftxt">map handle / alias</text>
+
+    
+    <rect x="28" y="176" width="270" height="22" rx="11" class="pill"/>
+    <text x="163" y="191" text-anchor="middle" class="tag tagmuted">same node, shared GPUs only</text>
+    <rect x="666" y="176" width="84" height="22" rx="11" class="pill"/>
+    <text x="708" y="191" text-anchor="middle" class="tag">~0 ms</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="14" y="224" width="744" height="160" rx="10" class="lanebg"/>
+    <text x="28" y="246" class="lanehead">NCCL broadcast</text>
+    <text x="28" y="264" class="anno">weights stream GPU-&gt;GPU over the fabric, never touching disk or host</text>
+
+    <rect x="40" y="282" width="110" height="48" rx="7" class="trnbox"/>
+    <text x="95" y="302" text-anchor="middle" class="boxlbl trntxt">TRAINER</text>
+    <text x="95" y="316" text-anchor="middle" class="boxsub">theta_t+1</text>
+
+    <rect x="620" y="282" width="130" height="48" rx="7" class="infbox"/>
+    <text x="685" y="302" text-anchor="middle" class="boxlbl inftxt">INFERENCE</text>
+    <text x="685" y="316" text-anchor="middle" class="boxsub">param buffers</text>
+
+    
+    <line x1="152" y1="306" x2="618" y2="306" class="trntxt viz-draw" style="--len:470" stroke="currentColor" stroke-width="7" stroke-linecap="round" marker-end="url(#wsp-arrow)" opacity="0.85"/>
+    <text x="385" y="286" text-anchor="middle" class="arrlbl">NVLink / InfiniBand fabric</text>
+
+    
+    <rect x="352" y="298" width="66" height="16" rx="4" class="pill viz-sweep" style="--sweep:60px"/>
+    <text x="385" y="309" text-anchor="middle" class="tag">~2P bytes</text>
+
+    <rect x="28" y="350" width="248" height="22" rx="11" class="pill"/>
+    <text x="152" y="365" text-anchor="middle" class="tag tagmuted">any node reachable by NCCL</text>
+    <rect x="644" y="350" width="106" height="22" rx="11" class="pill"/>
+    <text x="697" y="365" text-anchor="middle" class="tag">~10s of ms</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <rect x="14" y="398" width="744" height="192" rx="10" class="lanebg"/>
+    <text x="28" y="420" class="lanehead">Checkpoint reload</text>
+    <text x="28" y="438" class="anno">round-trips through the filesystem -- layout-agnostic, doubles as the fault-tolerance checkpoint</text>
+
+    <rect x="40" y="452" width="110" height="46" rx="7" class="trnbox"/>
+    <text x="95" y="471" text-anchor="middle" class="boxlbl trntxt">TRAINER</text>
+    <text x="95" y="485" text-anchor="middle" class="boxsub">theta_t+1</text>
+
+    <rect x="620" y="452" width="130" height="46" rx="7" class="infbox"/>
+    <text x="685" y="471" text-anchor="middle" class="boxlbl inftxt">INFERENCE</text>
+    <text x="685" y="485" text-anchor="middle" class="boxsub">param buffers</text>
+
+    
+    <g transform="translate(375,536)">
+      <path d="M0,-16 a45,10 0 1 1 90,0 a45,10 0 1 1 -90,0" class="pill" stroke-width="1.4"/>
+      <path d="M0,-16 v26 a45,10 0 0 0 90,0 v-26" class="pill" stroke-width="1.4"/>
+      <line x1="0" y1="-16" x2="0" y2="10" class="v-grid" stroke="currentColor" stroke-width="1"/>
+      <line x1="90" y1="-16" x2="90" y2="10" class="v-grid" stroke="currentColor" stroke-width="1"/>
+      <text x="45" y="2" text-anchor="middle" class="medlbl">disk / NFS</text>
+    </g>
+
+    
+    <line x1="118" y1="498" x2="385" y2="524" class="trntxt" stroke="currentColor" stroke-width="1.8" marker-end="url(#wsp-arrow)"/>
+    <text x="230" y="474" text-anchor="middle" class="arrlbl trntxt">torch.save</text>
+    <text x="230" y="486" text-anchor="middle" class="medsub">2P bytes written</text>
+
+    
+    <line x1="455" y1="524" x2="652" y2="498" class="inftxt" stroke="currentColor" stroke-width="1.8" marker-end="url(#wsp-arrow)"/>
+    <text x="530" y="474" text-anchor="middle" class="arrlbl inftxt">load_weights</text>
+    <text x="530" y="486" text-anchor="middle" class="medsub">2P bytes read</text>
+
+    <rect x="28" y="562" width="330" height="22" rx="11" class="pill"/>
+    <text x="193" y="577" text-anchor="middle" class="tag tagmuted">works across clusters sharing only a filesystem</text>
+    <rect x="614" y="562" width="136" height="22" rx="11" class="pill"/>
+    <text x="682" y="577" text-anchor="middle" class="tag">seconds-minutes</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <line x1="784" y1="58" x2="784" y2="582" class="v-muted" stroke="currentColor" stroke-width="1.6" marker-end="url(#wsp-arrow-muted)"/>
+    <text x="770" y="320" text-anchor="middle" class="spec" transform="rotate(-90 770 320)">FASTEST -&gt; SLOWEST</text>
+    <text x="800" y="320" text-anchor="middle" class="spec" transform="rotate(-90 800 320)">LEAST ROBUST -&gt; MOST ROBUST / GENERAL</text>
+  </g>
+
+</svg>
+<figcaption><b>The three weight-sync transports, laid out as data-movement paths: what bytes move, over what medium, and at what cost.</b> Reading top to bottom, the path from trainer to inference engine gets longer -- CUDA IPC has both processes alias the very same memory block (no path at all), NCCL broadcast is one hop across the fabric, and checkpoint reload is a two-hop detour through disk -- and that path length <i>is</i> the latency: speed falls and robustness rises together as you move down the stack.</figcaption>
+</figure>

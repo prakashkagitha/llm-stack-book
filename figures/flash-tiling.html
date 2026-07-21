@@ -24,13 +24,13 @@
     <text x="14" y="116" text-anchor="end" class="mono v-accent" fill="var(--accent)">Qᵢ</text>
     
     <rect class="viz-sweep" x="24" y="90" width="44" height="44" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.5"/>
-    <text x="46" y="240" text-anchor="middle" class="mono" fill="var(--accent)">Kⱼ,Vⱼ →</text>
+    <text x="46" y="240" text-anchor="middle" class="mono" fill="var(--accent)">Kⱼ,Vⱼ -&gt;</text>
   </g>
 
   
   <g data-anim="3">
     <text x="112" y="266" text-anchor="middle" class="sm">never written to HBM:</text>
-    <text x="112" y="282" text-anchor="middle" class="mono" fill="var(--warn,#e0a106)">materialize S = O(L²) ✗</text>
+    <text x="112" y="282" text-anchor="middle" class="mono" fill="var(--warn,#e0a106)">materialize S = O(L²)  x</text>
   </g>
 
   
@@ -56,9 +56,9 @@
   <g data-anim="4">
     <rect x="290" y="128" width="174" height="70" rx="6" class="v-fill v-grid" stroke-width="1.2"/>
     <text x="377" y="146" text-anchor="middle" class="sm">online softmax — running state</text>
-    <text x="300" y="167" class="mono">mᵢ ← max(mᵢ, rowmax)</text>
-    <text x="300" y="183" class="mono">ℓᵢ ← ℓᵢ·e^Δ + Σe</text>
-    <text x="300" y="199" class="mono v-accent" fill="var(--accent)">Oᵢ ← Oᵢ·e^Δ + P·Vⱼ</text>
+    <text x="300" y="167" class="mono">mᵢ &lt;- max(mᵢ, rowmax)</text>
+    <text x="300" y="183" class="mono">ℓᵢ &lt;- alpha*ℓᵢ + sum(e)</text>
+    <text x="300" y="199" class="mono v-accent" fill="var(--accent)">Oᵢ &lt;- alpha*Oᵢ + P*Vⱼ</text>
   </g>
 
   
@@ -68,9 +68,9 @@
     <rect x="548" y="120" width="150" height="86" rx="8" class="v-fill v-grid" stroke-width="1.3"/>
     <text x="623" y="112" text-anchor="middle" class="sm">HBM (large, slower)</text>
     <text x="623" y="150" text-anchor="middle" class="big" fill="var(--good,#2f9e6e)">write Oᵢ once</text>
-    <text x="623" y="172" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">O(L·d) ✓</text>
+    <text x="623" y="172" text-anchor="middle" class="mono" fill="var(--good,#2f9e6e)">O(L·d)  OK</text>
     <text x="623" y="190" text-anchor="middle" class="sm">Q,K,V also live here</text>
   </g>
 </svg>
-<figcaption><b>FlashAttention keeps the big matrix off HBM.</b> For each query block <span class="mono">Qᵢ</span>, blocks of keys/values stream through fast on-chip SRAM while an <b>online softmax</b> incrementally updates the running max <span class="mono">m</span>, normalizer <span class="mono">ℓ</span>, and output <span class="mono">O</span>. Only the final <span class="mono">Oᵢ</span> (size <span class="mono">L·d</span>) is written back — the <span class="mono">L²</span> score matrix is never materialized, turning attention from memory-bound to compute-bound.</figcaption>
+<figcaption><b>FlashAttention keeps the big matrix off HBM.</b> For each query block <span class="mono">Qᵢ</span>, blocks of keys/values stream through fast on-chip SRAM while an <b>online softmax</b> incrementally updates the running max <span class="mono">m</span>, normalizer <span class="mono">ℓ</span>, and output <span class="mono">O</span>. Only the final <span class="mono">Oᵢ</span> (size <span class="mono">L·d</span>) is written back — the <span class="mono">L²</span> score matrix is never materialized, eliminating the &#920;(L²) HBM traffic that dominates the naive kernel (the kernel remains memory-bound; it just moves far fewer bytes).</figcaption>
 </figure>

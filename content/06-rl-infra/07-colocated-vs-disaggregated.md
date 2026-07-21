@@ -135,6 +135,8 @@ The disadvantages are real. First, **idle GPUs under perfect balance are impossi
 
 After the optimizer step, the trainer holds the new policy $\theta_{t+1}$. The rollout engine still holds $\theta_t$. We must move the new weights into the inference engine's parameter buffers before (or for async, soon after) the next rollout. There are three transport mechanisms, in increasing order of speed and decreasing order of robustness.
 
+{{fig:colodis-weight-sync-three-paths}}
+
 ### Mechanism 1: Checkpoint reload (slow, simple, robust)
 
 The trainer writes a full checkpoint to shared storage; the inference engine reloads it. This is the "obviously correct" baseline and the only mechanism that trivially handles *any* layout mismatch, because the checkpoint is a layout-independent `state_dict` and the inference engine loads it with its own sharding logic — the same path it uses at startup.

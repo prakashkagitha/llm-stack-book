@@ -28,6 +28,8 @@ TensorRT-LLM (TRTLLM) is NVIDIA's open-source library for building highly optimi
 
 The key insight: PyTorch runs an interpreter that dispatches individual CUDA kernels at every step. TensorRT traces the full forward pass, applies a library of graph optimizations — layer fusion, constant folding, precision calibration — and emits a binary engine that the CUDA runtime can execute with minimal host overhead. For a model that runs millions of requests per day, eliminating Python-level dispatch overhead is material.
 
+{{fig:trtllm-eager-vs-compiled-engine}}
+
 ### Build and Run Pipeline
 
 ```bash

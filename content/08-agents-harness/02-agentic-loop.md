@@ -698,6 +698,8 @@ Mitigation: add a short *rationale check* to the thought step. If the thought do
 
 Without the `stop=["Observation:"]` trick, the model will sometimes write both the Action *and* a fake Observation in a single generation, bypassing real tool execution entirely. This is arguably the most dangerous failure mode because it looks correct in the logs.
 
+{{fig:agentloop-grounded-vs-hallucinated-observation}}
+
 Always terminate generation at `"Observation:"` and inject the real result from your harness.
 
 !!! warning "Common pitfall: trusting model-generated observations"

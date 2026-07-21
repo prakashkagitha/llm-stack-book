@@ -1,0 +1,181 @@
+<figure class="viz" id="fig-online-softmax-rescale">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 640" role="img" aria-label="Comic strip of the online softmax streaming over logits x = 1, 2, 8, 3 in two blocks: block A = [1,2] accumulates a running denominator against local max 2; block B = [8,3] reveals a bigger logit 8, and a correction factor alpha = e^(m_old - m_new) shrinks the old accumulators onto the new scale before block B's fresh terms are added, exactly matching the two-pass reference; the output is normalized once at the end.">
+  <style>
+    #fig-online-softmax-rescale text{ fill:var(--ink-soft); }
+    #fig-online-softmax-rescale .lbl{ font:700 13px var(--sans,sans-serif); }
+    #fig-online-softmax-rescale .sm{ font:600 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-online-softmax-rescale .sm2{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-online-softmax-rescale .mono{ font:600 10.8px var(--mono,monospace); }
+    #fig-online-softmax-rescale .monosm{ font:500 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-online-softmax-rescale .ctx{ font:600 12px var(--mono,monospace); fill:var(--muted); }
+    #fig-online-softmax-rescale .num{ font:700 12px var(--mono,monospace); }
+    #fig-online-softmax-rescale .warnfill{ fill:var(--warn,#e0a106); }
+    #fig-online-softmax-rescale .goodfill{ fill:var(--good,#2f9e6e); }
+    #fig-online-softmax-rescale .accentfill{ fill:var(--accent); }
+  </style>
+
+  <text x="400" y="24" text-anchor="middle" class="ctx">streaming logits x = [1, 2, 8, 3]  --  block size 2:  block A = [1, 2],  block B = [8, 3]</text>
+
+  
+  <g data-anim="1">
+    <rect x="16" y="44" width="372" height="248" rx="10" class="v-fill v-grid" stroke-width="1.3"/>
+    <circle cx="40" cy="68" r="13" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="40" y="72" text-anchor="middle" class="mono accentfill">1</text>
+    <text x="202" y="72" text-anchor="middle" class="lbl">Block A = [1, 2] enters</text>
+    <line x1="30" y1="84" x2="374" y2="84" class="v-grid" stroke-width="1"/>
+
+    <text x="34" y="102" class="sm2">incoming: x=1, x=2   local max = <tspan class="mono accentfill" font-weight="700">2</tspan></text>
+
+    <rect x="34" y="112" width="22" height="13" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1"/>
+    <text x="104" y="122" class="monosm">e^(1-2) = 0.368</text>
+    <rect x="34" y="134" width="60" height="13" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1"/>
+    <text x="104" y="144" class="monosm">e^(2-2) = 1</text>
+
+    <text x="34" y="172" class="mono">m: -inf -&gt; 2</text>
+    <text x="34" y="188" class="mono">den = 0.368 + 1 = 1.368</text>
+    <text x="34" y="206" class="sm2">accumulated against local max = 2</text>
+
+    <line x1="30" y1="218" x2="374" y2="218" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="34" y="234" class="sm">state after block A:</text>
+
+    <rect x="55" y="242" width="70" height="24" rx="12" class="v-fill" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="90" y="258" text-anchor="middle" class="num accentfill">m = 2</text>
+
+    <rect x="150" y="246" width="88" height="14" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="150" y="277" class="monosm">den = 1.368</text>
+
+    <rect x="312" y="242" width="34" height="24" rx="4" fill="var(--accent)" fill-opacity="0.45" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="329" y="277" text-anchor="middle" class="monosm">o</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <line x1="390" y1="168" x2="406" y2="168" stroke="var(--accent)" stroke-width="2"/>
+    <path d="M406 168 l-7 -4 v8 z" fill="var(--accent)"/>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="408" y="44" width="372" height="248" rx="10" class="v-fill v-grid" stroke-width="1.3"/>
+    <circle cx="432" cy="68" r="13" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="432" y="72" text-anchor="middle" class="mono accentfill">2</text>
+    <text x="604" y="72" text-anchor="middle" class="lbl">Block B = [8, 3] enters</text>
+    <line x1="422" y1="84" x2="766" y2="84" class="v-grid" stroke-width="1"/>
+
+    <rect x="426" y="90" width="220" height="22" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.16" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+    <text x="536" y="105" text-anchor="middle" class="mono warnfill">8 &gt; current max 2 !</text>
+
+    <text x="426" y="132" class="mono">m: 2 -&gt; 8</text>
+    <text x="426" y="148" class="mono">alpha = e^(2-8) = e^-6 ~= 0.00248</text>
+  </g>
+
+  <g data-anim="3">
+    <text x="426" y="170" class="sm">den collapses by alpha:</text>
+    <rect x="426" y="176" width="137" height="14" fill="var(--warn,#e0a106)" fill-opacity="0.30" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="571" y="187" class="monosm warnfill">den_old = 1.368</text>
+  </g>
+
+  <g data-anim="4">
+    <line x1="494" y1="192" x2="494" y2="212" stroke="var(--accent)" stroke-width="2" class="viz-draw" style="--len:20"/>
+    <path d="M494 212 l-4 -8 h8 z" fill="var(--accent)"/>
+    <text x="504" y="206" class="mono accentfill">x alpha ~= 0.00248</text>
+
+    <rect x="426" y="218" width="3" height="14" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.3" class="viz-pulse"/>
+    <text x="437" y="229" class="mono accentfill" font-weight="700">den = 0.0034</text>
+
+    <text x="426" y="252" class="sm2">o rescales by the same alpha:</text>
+    <rect x="426" y="258" width="40" height="12" fill="var(--warn,#e0a106)" fill-opacity="0.30" stroke="var(--warn,#e0a106)" stroke-width="1.1"/>
+    <line x1="470" y1="264" x2="486" y2="264" stroke="var(--accent)" stroke-width="1.6"/>
+    <path d="M486 264 l-6 -3 v6 z" fill="var(--accent)"/>
+    <rect x="490" y="258" width="4" height="12" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.1" class="viz-pulse"/>
+    <text x="502" y="267" class="sm2">o (tiny, same collapse)</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <path d="M594 292 C 594 320, 202 292, 202 306" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="4 3" class="viz-draw" style="--len:160"/>
+    <path d="M202 306 l-6 -6 h9 z" fill="var(--accent)"/>
+    <rect x="336" y="293" width="124" height="14" fill="var(--bg)" stroke="none"/>
+    <text x="398" y="303" text-anchor="middle" class="sm2">continue streaming</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="16" y="308" width="372" height="248" rx="10" class="v-fill v-grid" stroke-width="1.3"/>
+    <circle cx="40" cy="332" r="13" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="40" y="336" text-anchor="middle" class="mono accentfill">3</text>
+    <text x="202" y="336" text-anchor="middle" class="lbl">Add block B's fresh terms (new scale)</text>
+    <line x1="30" y1="348" x2="374" y2="348" class="v-grid" stroke-width="1"/>
+
+    <text x="34" y="366" class="sm2">fresh terms vs. new max m = 8:</text>
+
+    <rect x="34" y="374" width="60" height="13" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1"/>
+    <text x="104" y="384" class="monosm">e^(8-8) = 1</text>
+    <rect x="34" y="396" width="3" height="13" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1"/>
+    <text x="104" y="406" class="monosm">e^(3-8) = 0.0067</text>
+
+    <text x="34" y="430" class="mono">den = 0.0034 + 1.0067 = 1.0101</text>
+
+    <rect x="34" y="440" width="300" height="26" rx="13" fill="var(--good,#2f9e6e)" fill-opacity="0.14" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="184" y="457" text-anchor="middle" class="mono goodfill">matches two-pass reference den* = 1.0101</text>
+
+    <line x1="30" y1="478" x2="374" y2="478" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="34" y="494" class="sm">state after block B:</text>
+
+    <rect x="55" y="502" width="70" height="24" rx="12" class="v-fill" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="90" y="518" text-anchor="middle" class="num accentfill">m = 8</text>
+
+    <rect x="150" y="506" width="65" height="14" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="150" y="537" class="monosm">den = 1.0101</text>
+
+    <rect x="312" y="502" width="34" height="24" rx="4" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="329" y="537" text-anchor="middle" class="monosm">o</text>
+  </g>
+
+  
+  <g data-anim="6">
+    <line x1="390" y1="432" x2="406" y2="432" stroke="var(--accent)" stroke-width="2"/>
+    <path d="M406 432 l-7 -4 v8 z" fill="var(--accent)"/>
+  </g>
+
+  
+  <g data-anim="6">
+    <rect x="408" y="308" width="372" height="248" rx="10" class="v-fill v-grid" stroke-width="1.3"/>
+    <circle cx="432" cy="332" r="13" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="432" y="336" text-anchor="middle" class="mono accentfill">4</text>
+    <text x="604" y="336" text-anchor="middle" class="lbl">Finalize: normalize once</text>
+    <line x1="422" y1="348" x2="766" y2="348" class="v-grid" stroke-width="1"/>
+
+    <rect x="442" y="364" width="34" height="24" rx="4" fill="var(--accent)" fill-opacity="0.45" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="459" y="400" text-anchor="middle" class="sm2">o (unnorm.)</text>
+
+    <text x="498" y="382" text-anchor="middle" class="lbl">/</text>
+
+    <rect x="516" y="368" width="65" height="14" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="516" y="400" class="monosm">den = 1.0101</text>
+
+    <text x="600" y="382" text-anchor="middle" class="lbl">=</text>
+
+    <rect x="618" y="360" width="140" height="32" rx="6" fill="var(--accent)" fill-opacity="0.18" stroke="var(--accent)" stroke-width="1.6"/>
+    <text x="688" y="381" text-anchor="middle" class="mono accentfill" font-weight="700">output = o / l</text>
+
+    <text x="432" y="424" class="sm2">normalize once, at the very end -- not after every block.</text>
+
+    <line x1="422" y1="438" x2="766" y2="438" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="432" y="454" class="sm">the general recurrence:</text>
+    <text x="432" y="472" class="monosm">m_new = max(m, m~)</text>
+    <text x="432" y="488" class="monosm">alpha = e^(m - m_new)</text>
+    <text x="432" y="504" class="monosm">den_new = alpha*den + sum(e^(x-m_new))</text>
+    <text x="432" y="520" class="monosm">o_new = alpha*o + sum(e^(x-m_new)*v)</text>
+  </g>
+
+  
+  <g data-anim="7">
+    <rect x="16" y="572" width="768" height="48" rx="8" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.3"/>
+    <text x="400" y="592" text-anchor="middle" class="mono accentfill">invariant: every exponent stays &lt;= 0</text>
+    <text x="400" y="610" text-anchor="middle" class="sm2">(subtract the current running max before exponentiating) -&gt; the running sum never overflows</text>
+  </g>
+</svg>
+<figcaption><b>The online softmax streams left to right, and a single correction factor keeps it exact.</b> Block A [1, 2] accumulates a denominator against its own local max (panel 1); block B [8, 3] reveals a bigger logit, so the running max jumps and the correction factor <span class="mono">alpha = e^(m_old &amp;minus; m_new)</span> shrinks the old <span class="mono">den</span> and <span class="mono">o</span> onto the new scale before the fresh terms are added (panels 2&amp;ndash;3) &amp;mdash; landing exactly on the two-pass reference. The division by <span class="mono">den</span> happens only once, at the end (panel 4).</figcaption>
+</figure>

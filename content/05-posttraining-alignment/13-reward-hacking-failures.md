@@ -22,6 +22,10 @@ $$
 
 The gap between proxy reward and true reward grows — sometimes catastrophically.
 
+
+{{fig:rewardhack-rm-extrapolation}}
+
+
 There are three distinct Goodhart failure modes, formalized by Manheim and Garrabrant (2019):
 
 | Mode | Description | LLM example |
