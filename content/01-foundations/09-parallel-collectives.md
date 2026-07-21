@@ -560,6 +560,8 @@ def moe_dispatch(tokens: torch.Tensor, expert_ids: torch.Tensor, n_experts: int)
 
 The all-to-all cost is $O(M)$ where $M$ is the total token volume, and unlike all-reduce it does not benefit from the ring structure — it is inherently limited by the bisection bandwidth of the network.
 
+{{fig:all-to-all-moe-dispatch}}
+
 ## Key Considerations for Choosing Collectives
 
 Different distributed training strategies use different collectives as their communication primitive:

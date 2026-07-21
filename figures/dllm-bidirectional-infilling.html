@@ -1,0 +1,195 @@
+<figure class="viz" id="fig-dllm-bidirectional-infilling">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 536" role="img" aria-label="Two panels. Top: infilling a masked hole conditioned on both the prefix and suffix is native to diffusion, while autoregression can only condition on the left context. Bottom: the reversal curse -- an autoregressive model trained only on A implies B fails to answer what is B, while a bidirectional diffusion model trained to reconstruct either side answers correctly.">
+<style>
+  #fig-dllm-bidirectional-infilling text        { fill: var(--ink-soft,#45413a); }
+  #fig-dllm-bidirectional-infilling .ttl        { font: 700 15px var(--sans,sans-serif); fill: var(--ink,#211f1b); }
+  #fig-dllm-bidirectional-infilling .panel-ttl  { font: 700 13px var(--sans,sans-serif); fill: var(--ink,#211f1b); }
+  #fig-dllm-bidirectional-infilling .row-lbl    { font: 700 11.5px var(--sans,sans-serif); }
+  #fig-dllm-bidirectional-infilling .ann        { font: 500 10.5px var(--sans,sans-serif); }
+  #fig-dllm-bidirectional-infilling .small      { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-dllm-bidirectional-infilling .tok        { font: 700 11px var(--mono,monospace); fill: var(--ink,#211f1b); }
+  #fig-dllm-bidirectional-infilling .tok-mask   { font: 700 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-dllm-bidirectional-infilling .cell-known { fill: var(--ink-soft,#45413a); fill-opacity: 0.14; stroke: var(--accent,#c15b39); stroke-width: 1.4; }
+  #fig-dllm-bidirectional-infilling .cell-mask  { fill: var(--surface-3,#ece7da); stroke: var(--border-2,#d8d1c0); stroke-width: 1; stroke-dasharray: 2 2; }
+  #fig-dllm-bidirectional-infilling .cell-fail  { fill: var(--surface-3,#ece7da); stroke: var(--muted,#6d675d); stroke-width: 1.4; stroke-dasharray: 3 2; }
+  #fig-dllm-bidirectional-infilling .cell-good  { fill: var(--good,#2f9e6e); fill-opacity: 0.18; stroke: var(--good,#2f9e6e); stroke-width: 1.6; }
+  #fig-dllm-bidirectional-infilling .panel-box  { fill: var(--surface,#fff); fill-opacity: 0.5; stroke: var(--border-2,#d8d1c0); stroke-width: 1; rx: 8; }
+  #fig-dllm-bidirectional-infilling [data-anim] { opacity: 0; animation: bdFade 0.5s ease-out forwards; }
+  #fig-dllm-bidirectional-infilling [data-anim="1"] { animation-delay: 0s; }
+  #fig-dllm-bidirectional-infilling [data-anim="2"] { animation-delay: 0.35s; }
+  #fig-dllm-bidirectional-infilling [data-anim="3"] { animation-delay: 0.9s; }
+  #fig-dllm-bidirectional-infilling [data-anim="4"] { animation-delay: 1.4s; }
+  #fig-dllm-bidirectional-infilling [data-anim="5"] { animation-delay: 1.9s; }
+  @keyframes bdFade { to { opacity: 1; } }
+</style>
+
+<text x="20" y="22" class="ttl">Bidirectionality in practice: native infilling, and robustness to the reversal curse</text>
+
+
+<rect class="panel-box" x="12" y="34" width="756" height="186"/>
+<text x="26" y="54" class="panel-ttl">Infilling: denoise a hole conditioned on both sides</text>
+
+<g data-anim="1">
+  <text x="26" y="76" class="row-lbl">Diffusion</text>
+
+  
+  <g transform="translate(150,66)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">The</text>
+  </g>
+  <g transform="translate(194,66)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">cat</text>
+  </g>
+
+  
+  <g transform="translate(258,66)">
+    <rect class="cell-mask" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok-mask">[M]</text>
+  </g>
+  <g transform="translate(302,66)">
+    <rect class="cell-mask" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok-mask">[M]</text>
+  </g>
+
+  
+  <g transform="translate(366,66)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">the</text>
+  </g>
+  <g transform="translate(410,66)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">mat</text>
+  </g>
+
+  <text x="150" y="102" class="small">prefix (clamped)</text>
+  <text x="366" y="102" class="small">suffix (clamped)</text>
+  <text x="278" y="112" text-anchor="middle" class="small">hole</text>
+
+  
+  <path d="M214,110 C 230,124 250,128 268,120" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#bdArrow)"/>
+  <path d="M386,110 C 370,124 350,128 332,120" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#bdArrow)"/>
+  <text x="278" y="136" text-anchor="middle" class="ann" fill="var(--accent,#c15b39)">conditioned on both sides</text>
+</g>
+
+<line x1="26" y1="148" x2="742" y2="148" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.6"/>
+
+<g data-anim="2">
+  <text x="26" y="168" class="row-lbl">AR (for comparison)</text>
+
+  <g transform="translate(150,158)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">The</text>
+  </g>
+  <g transform="translate(194,158)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">cat</text>
+  </g>
+  <g transform="translate(258,158)">
+    <rect class="cell-mask" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok-mask">?</text>
+  </g>
+  <g transform="translate(302,158)">
+    <rect class="cell-mask" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok-mask">?</text>
+  </g>
+  <g transform="translate(366,158)" opacity="0.4">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">the</text>
+  </g>
+  <g transform="translate(410,158)" opacity="0.4">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">mat</text>
+  </g>
+
+  
+  <path d="M214,196 C 230,188 250,186 268,192" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.8" marker-end="url(#bdArrowMuted)"/>
+
+  <text x="26" y="216" class="ann">AR: the future to the right is unavailable (faded) -- must bolt on fill-in-the-middle</text>
+</g>
+
+
+<rect class="panel-box" x="12" y="234" width="756" height="288"/>
+<text x="26" y="254" class="panel-ttl">The reversal curse: training direction determines what can be recalled</text>
+
+<g data-anim="3">
+  <text x="26" y="280" class="row-lbl">Training pair: "A is B"</text>
+  <g transform="translate(230,266)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">A</text>
+  </g>
+  <g transform="translate(340,266)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">B</text>
+  </g>
+</g>
+
+<line x1="26" y1="306" x2="742" y2="306" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.6"/>
+
+
+<g data-anim="4">
+  <text x="26" y="334" class="row-lbl">AR</text>
+
+  <g transform="translate(150,322)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">A</text>
+  </g>
+  <path d="M192,334 L 256,334" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#bdArrow)"/>
+  <g transform="translate(260,322)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">B</text>
+  </g>
+  <text x="150" y="364" class="small">gradient flows A -&gt; B only, during training</text>
+
+  <text x="480" y="326" text-anchor="middle" class="ann">query: "what is B?"</text>
+  <path d="M480,332 L 480,350" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.6" marker-end="url(#bdArrowMuted)"/>
+  <g transform="translate(460,354)">
+    <rect class="cell-fail" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok-mask">?</text>
+  </g>
+  <text x="480" y="396" text-anchor="middle" class="small">stumbles -- no reverse gradient ever seen</text>
+</g>
+
+<line x1="26" y1="418" x2="742" y2="418" stroke="var(--border-2,#d8d1c0)" stroke-width="1" opacity="0.6"/>
+
+
+<g data-anim="5">
+  <text x="26" y="446" class="row-lbl">Diffusion</text>
+
+  <g transform="translate(150,432)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">A</text>
+  </g>
+  <path d="M192,440 L 256,440" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#bdArrow)"/>
+  <path d="M256,450 L 192,450" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#bdArrow)"/>
+  <g transform="translate(260,432)">
+    <rect class="cell-known" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">B</text>
+  </g>
+  <text x="150" y="476" class="small">either side maskable -&gt; reconstructs A given B, and B given A</text>
+
+  <text x="480" y="436" text-anchor="middle" class="ann">query: "what is B?"</text>
+  <path d="M480,442 L 480,460" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8" marker-end="url(#bdArrowGood)"/>
+  <g transform="translate(460,464)">
+    <rect class="cell-good" x="0" y="0" width="40" height="24"/>
+    <text x="20" y="16" text-anchor="middle" class="tok">A</text>
+  </g>
+  <text x="480" y="506" text-anchor="middle" class="small" fill="var(--good,#2f9e6e)">resolves correctly -- both directions trained</text>
+</g>
+
+<defs>
+  <marker id="bdArrow" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+    <path d="M0,0.5 L8,4.5 L0,8.5 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="bdArrowMuted" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+    <path d="M0,0.5 L8,4.5 L0,8.5 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+  <marker id="bdArrowGood" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+    <path d="M0,0.5 L8,4.5 L0,8.5 Z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+</defs>
+
+</svg>
+<figcaption><b>Bidirectionality is a structural capability, not just a speed trick.</b> Diffusion fills a masked hole by conditioning on prefix and suffix simultaneously (native infilling), while an autoregressive model only ever sees the left context and must bolt on fill-in-the-middle. The same bidirectional training -- reconstructing either side from the other -- is why diffusion LMs resist the reversal curse that trips up AR models trained only on the forward "A is B" gradient.</figcaption>
+</figure>

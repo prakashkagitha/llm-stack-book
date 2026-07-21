@@ -1,0 +1,227 @@
+<figure class="viz" id="fig-dmp-ring-attention">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 800 700" role="img" aria-label="Ring attention over c=4 devices arranged in a ring: each device keeps a fixed query block and rotates key/value blocks around the ring, folding each incoming block into a running online-softmax state (m, l, out) while the next block's transfer overlaps this step's compute; total data moved per device is O(s*h), independent of c.">
+<defs>
+  <marker id="dra-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+<style>
+  #fig-dmp-ring-attention text { fill: var(--ink-soft,#45413a); font: 400 10px var(--sans,sans-serif); }
+  #fig-dmp-ring-attention .ttl    { font: 700 14px var(--sans,sans-serif); fill: var(--ink); }
+  #fig-dmp-ring-attention .hdr    { font: 700 11px var(--sans,sans-serif); }
+  #fig-dmp-ring-attention .lbl    { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-dmp-ring-attention .lbl-m  { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-dmp-ring-attention .mono   { font: 600 9.5px var(--mono,monospace); }
+  #fig-dmp-ring-attention .mono-s { font: 500 8.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-dmp-ring-attention .cap    { font: 400 10px var(--sans,sans-serif); }
+  #fig-dmp-ring-attention .num    { font: 700 10px var(--mono,monospace); fill: var(--surface,#fff); }
+  #fig-dmp-ring-attention .pulse  { animation: dra-pulse 2.2s ease-in-out infinite; }
+
+  #fig-dmp-ring-attention [data-anim] { opacity: 0; }
+  #fig-dmp-ring-attention [data-anim="1"] { animation: dra-in .5s ease-out .05s forwards; }
+  #fig-dmp-ring-attention [data-anim="2"] { animation: dra-in .5s ease-out .55s forwards; }
+  #fig-dmp-ring-attention [data-anim="3"] { animation: dra-in .5s ease-out 1.05s forwards; }
+  #fig-dmp-ring-attention [data-anim="4"] { animation: dra-in .5s ease-out 1.55s forwards; }
+  #fig-dmp-ring-attention [data-anim="5"] { animation: dra-in .5s ease-out 2.05s forwards; }
+  #fig-dmp-ring-attention [data-anim="6"] { animation: dra-in .5s ease-out 2.55s forwards; }
+  @keyframes dra-in { from{opacity:0;} to{opacity:1;} }
+  @keyframes dra-pulse { 0%,100%{opacity:.4;} 50%{opacity:1;} }
+</style>
+
+<g data-anim="1">
+  <text x="400" y="22" text-anchor="middle" class="ttl">Ring Attention: c=4 devices, step 1 of c (steps 2..c repeat this pattern)</text>
+
+
+  <g id="dra-box0">
+    <rect x="196" y="41" width="168" height="118" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <text x="204" y="57" class="hdr">Device 0</text>
+    <rect x="204" y="63" width="54" height="26" rx="5" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+    <text x="231" y="80" text-anchor="middle" class="num">Q0</text>
+    <rect x="266" y="63" width="90" height="26" rx="5" class="v-accent" opacity="0.9"/>
+    <text x="311" y="80" text-anchor="middle" class="num">K0,V0</text>
+    <text x="204" y="103" class="mono-s">S = Q0 . K0^T</text>
+    <rect x="204" y="111" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="228" y="125" text-anchor="middle" class="mono">m'</text>
+    <rect x="256" y="111" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="280" y="125" text-anchor="middle" class="mono">l'</text>
+    <rect x="308" y="111" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="332" y="125" text-anchor="middle" class="mono">out'</text>
+    <text x="280" y="146" text-anchor="middle" class="lbl-m">folds K0,V0 into (m,l,out)</text>
+  </g>
+
+
+  <g id="dra-box1">
+    <rect x="366" y="211" width="168" height="118" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <text x="374" y="227" class="hdr">Device 1</text>
+    <rect x="374" y="233" width="54" height="26" rx="5" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+    <text x="401" y="250" text-anchor="middle" class="num">Q1</text>
+    <rect x="436" y="233" width="90" height="26" rx="5" class="v-accent" opacity="0.9"/>
+    <text x="481" y="250" text-anchor="middle" class="num">K1,V1</text>
+    <text x="374" y="273" class="mono-s">S = Q1 . K1^T</text>
+    <rect x="374" y="281" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="398" y="295" text-anchor="middle" class="mono">m'</text>
+    <rect x="426" y="281" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="450" y="295" text-anchor="middle" class="mono">l'</text>
+    <rect x="478" y="281" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="502" y="295" text-anchor="middle" class="mono">out'</text>
+    <text x="450" y="316" text-anchor="middle" class="lbl-m">folds K1,V1 into (m,l,out)</text>
+  </g>
+
+
+  <g id="dra-box2">
+    <rect x="196" y="381" width="168" height="118" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <text x="204" y="397" class="hdr">Device 2</text>
+    <rect x="204" y="403" width="54" height="26" rx="5" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+    <text x="231" y="420" text-anchor="middle" class="num">Q2</text>
+    <rect x="266" y="403" width="90" height="26" rx="5" class="v-accent" opacity="0.9"/>
+    <text x="311" y="420" text-anchor="middle" class="num">K2,V2</text>
+    <text x="204" y="443" class="mono-s">S = Q2 . K2^T</text>
+    <rect x="204" y="451" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="228" y="465" text-anchor="middle" class="mono">m'</text>
+    <rect x="256" y="451" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="280" y="465" text-anchor="middle" class="mono">l'</text>
+    <rect x="308" y="451" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="332" y="465" text-anchor="middle" class="mono">out'</text>
+    <text x="280" y="486" text-anchor="middle" class="lbl-m">folds K2,V2 into (m,l,out)</text>
+  </g>
+
+
+  <g id="dra-box3">
+    <rect x="26" y="211" width="168" height="118" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+    <text x="34" y="227" class="hdr">Device 3</text>
+    <rect x="34" y="233" width="54" height="26" rx="5" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+    <text x="61" y="250" text-anchor="middle" class="num">Q3</text>
+    <rect x="96" y="233" width="90" height="26" rx="5" class="v-accent" opacity="0.9"/>
+    <text x="141" y="250" text-anchor="middle" class="num">K3,V3</text>
+    <text x="34" y="273" class="mono-s">S = Q3 . K3^T</text>
+    <rect x="34" y="281" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="58" y="295" text-anchor="middle" class="mono">m'</text>
+    <rect x="86" y="281" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="110" y="295" text-anchor="middle" class="mono">l'</text>
+    <rect x="138" y="281" width="48" height="20" rx="4" fill="none" class="v-accent-s" stroke-width="1.3"/>
+    <text x="162" y="295" text-anchor="middle" class="mono">out'</text>
+    <text x="110" y="316" text-anchor="middle" class="lbl-m">folds K3,V3 into (m,l,out)</text>
+  </g>
+
+  <rect x="26" y="28" width="12" height="12" rx="2" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+  <text x="44" y="38" class="lbl-m">Qi = fixed</text>
+  <rect x="678" y="28" width="12" height="12" rx="2" class="v-accent" opacity="0.9"/>
+  <text x="696" y="38" class="lbl-m">Ki,Vi = rotates</text>
+</g>
+
+
+<g data-anim="2">
+  <path d="M 366,110 Q 470,120 452,215" fill="none" class="v-stroke" stroke-width="1.6" marker-end="url(#dra-arr)"/>
+  <path d="M 452,325 Q 470,420 366,412" fill="none" class="v-stroke" stroke-width="1.6" marker-end="url(#dra-arr)"/>
+  <path d="M 194,412 Q 90,420 108,325" fill="none" class="v-stroke" stroke-width="1.6" marker-end="url(#dra-arr)"/>
+  <path d="M 108,215 Q 90,120 194,110" fill="none" class="v-stroke" stroke-width="1.6" marker-end="url(#dra-arr)"/>
+
+  <circle cx="452" cy="163" r="10" class="v-accent"/>
+  <text x="452" y="167" text-anchor="middle" class="num">1</text>
+  <circle cx="452" cy="380" r="10" class="v-accent"/>
+  <text x="452" y="384" text-anchor="middle" class="num">2</text>
+  <circle cx="108" cy="380" r="10" class="v-accent"/>
+  <text x="108" y="384" text-anchor="middle" class="num">3</text>
+  <circle cx="108" cy="163" r="10" class="v-accent"/>
+  <text x="108" y="167" text-anchor="middle" class="num">4</text>
+
+  <rect x="425" y="185" width="30" height="12" rx="3" class="v-accent pulse" opacity="0.55"/>
+  <rect x="425" y="352" width="30" height="12" rx="3" class="v-accent pulse" opacity="0.55"/>
+  <rect x="90" y="352" width="30" height="12" rx="3" class="v-accent pulse" opacity="0.55"/>
+  <rect x="90" y="185" width="30" height="12" rx="3" class="v-accent pulse" opacity="0.55"/>
+</g>
+
+
+<g data-anim="3">
+  <rect x="194" y="168" width="172" height="200" rx="8" class="v-fill" stroke="var(--v-accent,var(--accent,#c15b39))" stroke-width="1.4"/>
+  <text x="280" y="186" text-anchor="middle" class="hdr">Step 1 of c=4, in full</text>
+  <text x="202" y="203" class="mono-s">S = Qi . Ki^T</text>
+  <text x="202" y="219" class="mono-s">m_new = max(m, blockmax(S))</text>
+  <text x="202" y="235" class="mono-s">p = exp(S - m_new)</text>
+  <text x="202" y="251" class="mono-s">corr = exp(m - m_new)</text>
+  <text x="202" y="267" class="mono-s">l_new = corr*l + sum(p)</text>
+  <text x="202" y="283" class="mono-s">out_new = corr*out + p . V</text>
+  <line x1="202" y1="294" x2="358" y2="294" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="280" y="311" text-anchor="middle" class="mono-s">m,l,out &lt;- m_new,l_new,out_new</text>
+  <text x="280" y="330" text-anchor="middle" class="cap">exact: associative fold, same</text>
+  <text x="280" y="344" text-anchor="middle" class="cap">result as full attention.</text>
+  <text x="280" y="360" text-anchor="middle" class="lbl-m">steps 2..c repeat with next block</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="560" y="41" width="230" height="300" rx="8" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="572" y="60" class="hdr">Per-device tally</text>
+  <text x="572" y="74" class="lbl-m">(identical for every device)</text>
+
+  <text x="572" y="96" class="mono-s">step t</text>
+  <text x="618" y="96" class="mono-s">KV seen</text>
+  <text x="788" y="96" text-anchor="end" class="mono-s">bytes moved</text>
+  <line x1="572" y1="101" x2="788" y2="101" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+  <text x="572" y="120" class="mono">t=1</text>
+  <text x="618" y="120" class="mono">1 of 4</text>
+  <text x="788" y="120" text-anchor="end" class="mono">~(s/c)*h</text>
+
+  <text x="572" y="144" class="mono">t=2</text>
+  <text x="618" y="144" class="mono">2 of 4</text>
+  <text x="788" y="144" text-anchor="end" class="mono">~2*(s/c)*h</text>
+
+  <text x="572" y="168" class="mono">t=3</text>
+  <text x="618" y="168" class="mono">3 of 4</text>
+  <text x="788" y="168" text-anchor="end" class="mono">~3*(s/c)*h</text>
+
+  <text x="572" y="192" class="mono">t=4</text>
+  <text x="618" y="192" class="mono">4 of 4</text>
+  <text x="788" y="192" text-anchor="end" class="mono">~4*(s/c)*h = s*h</text>
+
+  <line x1="572" y1="204" x2="788" y2="204" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <rect x="572" y="216" width="206" height="34" rx="6" fill="var(--good,#2f9e6e)" opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="675" y="238" text-anchor="middle" class="mono" style="fill:var(--good,#2f9e6e)">-&gt; O(s*h), indep. of c</text>
+
+  <text x="572" y="270" class="lbl-m">c cancels: c steps x</text>
+  <text x="572" y="284" class="lbl-m">(s/c)*h bytes/step = s*h total,</text>
+  <text x="572" y="298" class="lbl-m">while local compute is</text>
+  <text x="572" y="312" class="lbl-m">O(s^2/c) per device.</text>
+</g>
+
+
+<g data-anim="5">
+  <text x="400" y="530" text-anchor="middle" class="hdr">Compute and communication overlap, step by step (c=4)</text>
+
+  <text x="30" y="573" class="lbl-m">compute</text>
+  <text x="30" y="591" class="lbl-m">comm</text>
+
+
+  <text x="180" y="548" text-anchor="middle" class="lbl-m">step 1</text>
+  <rect x="110" y="560" width="140" height="14" rx="3" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+  <rect x="110" y="580" width="140" height="14" rx="3" class="v-accent" opacity="0.75"/>
+  <line x1="180" y1="574" x2="180" y2="580" class="v-stroke" stroke-width="1.4"/>
+  <text x="110" y="607" class="lbl-m">overlap: next send hides under this compute</text>
+
+  <text x="340" y="548" text-anchor="middle" class="lbl-m">step 2</text>
+  <rect x="270" y="560" width="140" height="14" rx="3" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+  <rect x="270" y="580" width="140" height="14" rx="3" class="v-accent" opacity="0.75"/>
+
+  <text x="500" y="548" text-anchor="middle" class="lbl-m">step 3</text>
+  <rect x="430" y="560" width="140" height="14" rx="3" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+  <rect x="430" y="580" width="140" height="14" rx="3" class="v-accent" opacity="0.75"/>
+
+  <text x="660" y="548" text-anchor="middle" class="lbl-m">step 4</text>
+  <rect x="590" y="560" width="140" height="14" rx="3" fill="var(--accent2,#3b82f6)" opacity="0.85"/>
+  <rect x="590" y="580" width="140" height="14" rx="3" class="v-accent" opacity="0.75"/>
+</g>
+
+
+<g data-anim="6">
+  <rect x="40" y="612" width="720" height="30" rx="6" class="v-fill" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="400" y="631" text-anchor="middle" class="cap">Final frame, after all c steps: every device emits out / l (normalize once, at the very end).</text>
+
+  <text x="400" y="660" text-anchor="middle" class="lbl-m">Note: a causal mask makes early query blocks cheaper than late ones (some K/V blocks are</text>
+  <text x="400" y="674" text-anchor="middle" class="lbl-m">skippable) -- this unbalances the ring; striped/zig-zag Ring Attention rebalances it (below).</text>
+</g>
+
+</svg>
+<figcaption><b>Each of c=4 devices holds a fixed query block Q_i and rotates key/value blocks around a ring, folding every incoming K/V block into a running online-softmax state (m, l, out) via a rescale-then-add update.</b> Because the next block's K/V transfer is issued before the current block's compute finishes, communication overlaps compute and total data moved per device is O(s*h) -- independent of the number of devices c -- while local compute stays O(s^2/c) per device, so Ring Attention scales to long sequences by adding devices.</figcaption>
+</figure>

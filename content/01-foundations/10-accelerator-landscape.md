@@ -28,6 +28,8 @@ This is spectacularly efficient *for dense matrix multiply* — far higher FLOPs
 
 Hold onto this single sentence, because it explains 90% of the porting pain in this chapter: **GPUs give you a programmable machine and make you manage memory; systolic accelerators give you a compiler and make you accept its abstractions.**
 
+{{fig:accel-simt-vs-systolic-silicon-budget}}
+
 The arithmetic-intensity reasoning from [GPU Architecture & The Memory Hierarchy](../01-foundations/08-gpu-architecture.html) still governs both. A chip's matmul units can only run at peak if the operands arrive fast enough. We formalize this with the ridge point of the roofline:
 
 $$

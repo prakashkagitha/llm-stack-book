@@ -359,6 +359,8 @@ The **Receiver Operating Characteristic (ROC)** curve plots True Positive Rate (
 
 **AUC (Area Under the ROC Curve)** summarizes the entire curve in one number. AUC = 0.5 is random; AUC = 1.0 is perfect. AUC has a useful probabilistic interpretation: it equals the probability that the model ranks a randomly chosen positive example higher than a randomly chosen negative.
 
+{{fig:mlfund-roc-threshold-sweep}}
+
 $$
 \text{AUC} = P(\hat{p}(x^+) > \hat{p}(x^-))
 $$

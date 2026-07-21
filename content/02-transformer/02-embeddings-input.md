@@ -354,6 +354,8 @@ $$
 
 The unembed gradient is dense (it involves all $T$ hidden states hitting all $V$ rows), while the embed gradient is sparse. This means the gradient magnitude for frequently used tokens will be dominated by the unembed path, while rare tokens only receive signal through the embed path — a subtle asymmetry that the optimizer must handle.
 
+{{fig:embed-vs-unembed-asymmetry}}
+
 ---
 
 ## Special Tokens and Padding

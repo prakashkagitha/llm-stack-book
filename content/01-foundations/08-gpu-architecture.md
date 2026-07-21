@@ -142,6 +142,8 @@ A **Tensor Core** is a small systolic-array-like unit that computes an entire sm
 
 The catch: Tensor Cores only accelerate **matrix multiplication** (and operations you can phrase as one), and only in **reduced precision** (BF16/FP16/FP8/FP4 inputs, usually with FP32 accumulation). They want tile-shaped, contiguous data with dimensions that are multiples of 8 or 16. A pointwise operation (add, GELU, layernorm) gets *zero* benefit from Tensor Cores — it runs on CUDA cores and is almost always memory-bound. This split — matmuls on Tensor Cores, everything else on CUDA cores and bandwidth-limited — is the structural reason kernel fusion ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)) matters so much.
 
+{{fig:cuda-core-vs-tensor-core}}
+
 !!! note "Aside: how the throughput numbers multiply up"
     Vendors quote "sparse" Tensor Core numbers (assuming 2:4 structured sparsity) that double the dense figure. Always check whether a headline TFLOP/s is dense or sparse, and which precision. A "1979 TFLOP/s" H100 number is FP16 *with sparsity*; the dense FP16 figure is about half. For honest roofline math, use dense numbers in the precision you actually run.
 

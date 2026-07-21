@@ -340,6 +340,8 @@ The MLP and the projections are trivially sequence-parallel (they act per-token)
 
 The online-softmax running statistics (the running max $m$ and running sum $\ell$, from FlashAttention) let each device *incrementally* fold in each incoming K/V block without ever materializing the full $s \times s$ attention matrix:
 
+{{fig:dmp-ring-attention}}
+
 ```python
 # Ring Attention: each of c devices owns a contiguous query/key/value block.
 # We rotate K,V around the ring; online softmax accumulates the result.

@@ -1,0 +1,188 @@
+<figure class="viz" id="fig-mlfund-roc-threshold-sweep">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 800 460" role="img" aria-label="Two coupled panels. Left: two overlapping score distributions, negatives and positives, with a vertical decision-threshold line; everything right of the line is predicted positive, everything left is predicted negative, producing TP, FP, FN, TN regions. Right: an ROC plot of true positive rate versus false positive rate. As the threshold sweeps from a strict high value to a lenient low value, the predicted-positive region on the left grows and the corresponding point on the right walks from the origin up to the top-right corner, tracing the bowed ROC curve above the chance diagonal; the area under that traced curve is the AUC.">
+  <defs>
+    <marker id="mrts-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <clipPath id="mrts-clipL">
+      <rect x="0" y="150" width="210" height="170"/>
+    </clipPath>
+    <clipPath id="mrts-clipR">
+      <rect x="210" y="150" width="590" height="170"/>
+    </clipPath>
+  </defs>
+
+  <style>
+    #fig-mlfund-roc-threshold-sweep text { fill: var(--ink-soft); }
+    #fig-mlfund-roc-threshold-sweep .ttl  { font: 700 15px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .hdr  { font: 700 13px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .ax   { font: 600 11px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .tick { font: 500 10.5px var(--mono,monospace); fill: var(--muted); }
+    #fig-mlfund-roc-threshold-sweep .cal-b{ font: 700 10.5px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .cal  { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-mlfund-roc-threshold-sweep .hump-lbl { font: 600 11.5px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .reg  { font: 700 13px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .reg-sm { font: 700 9.5px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .thr-lbl { font: 700 11px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .leg  { font: 500 10.5px var(--sans,sans-serif); }
+    #fig-mlfund-roc-threshold-sweep .footer { font: 400 11.5px var(--sans,sans-serif); font-style: italic; fill: var(--muted); }
+    #fig-mlfund-roc-threshold-sweep .auc-lbl { font: 700 12px var(--sans,sans-serif); }
+
+    /* staged reveal -- final state (all visible) is the readable static figure */
+    #fig-mlfund-roc-threshold-sweep [data-anim] { opacity: 0; }
+    #fig-mlfund-roc-threshold-sweep [data-anim="1"] { animation: mrts-in .4s ease-out .1s forwards; }
+    #fig-mlfund-roc-threshold-sweep [data-anim="2"] { animation: mrts-in .4s ease-out .5s forwards; }
+    #fig-mlfund-roc-threshold-sweep [data-anim="3"] { animation: mrts-in .4s ease-out .9s forwards; }
+    #fig-mlfund-roc-threshold-sweep [data-anim="4"] { animation: mrts-in .4s ease-out 1.3s forwards; }
+    #fig-mlfund-roc-threshold-sweep [data-anim="5"] { animation: mrts-in .4s ease-out 1.8s forwards; }
+    #fig-mlfund-roc-threshold-sweep [data-anim="6"] { animation: mrts-in .4s ease-out 2.3s forwards; }
+    @keyframes mrts-in { from { opacity: 0; } to { opacity: 1; } }
+
+    #fig-mlfund-roc-threshold-sweep .roc-curve { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+    #fig-mlfund-roc-threshold-sweep .viz-draw { stroke-dasharray: var(--len,1000); stroke-dashoffset: var(--len,1000); }
+
+    @media (prefers-reduced-motion: reduce) {
+      #fig-mlfund-roc-threshold-sweep .mrts-decor { display: none; }
+    }
+  </style>
+
+  <text x="400" y="20" text-anchor="middle" class="ttl">Sweeping the threshold traces the ROC curve</text>
+
+  <line x1="400" y1="50" x2="400" y2="428" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+
+  
+  <text x="200" y="46" text-anchor="middle" class="hdr">1. Threshold slices the score distribution</text>
+
+  <g data-anim="1">
+    <text x="205" y="64" text-anchor="middle" class="cal">threshold t sweeps: 1 (strict) -&gt; 0 (lenient)</text>
+    <line x1="320" y1="76" x2="93" y2="76" stroke="currentColor" class="v-muted" stroke-width="1.6" marker-end="url(#mrts-arr)"/>
+  </g>
+
+  <g data-anim="2">
+    
+    <line x1="320" y1="165" x2="320" y2="312" stroke="currentColor" class="v-muted" stroke-width="1.3" stroke-dasharray="4 3" opacity="0.85"/>
+    <line x1="90" y1="165" x2="90" y2="312" stroke="currentColor" class="v-muted" stroke-width="1.3" stroke-dasharray="4 3" opacity="0.85"/>
+
+    <text x="320" y="98" text-anchor="middle" class="cal-b">strict (t -&gt; 1)</text>
+    <text x="320" y="111" text-anchor="middle" class="cal">few predicted +</text>
+    <text x="320" y="124" text-anchor="middle" class="cal">-&gt; low FPR, low TPR</text>
+    <line x1="320" y1="129" x2="320" y2="163" stroke="currentColor" class="v-muted" stroke-width="1" stroke-dasharray="2 2"/>
+
+    <text x="90" y="98" text-anchor="middle" class="cal-b">lenient (t -&gt; 0)</text>
+    <text x="90" y="111" text-anchor="middle" class="cal">many predicted +</text>
+    <text x="90" y="124" text-anchor="middle" class="cal">-&gt; high TPR, high FPR</text>
+    <line x1="90" y1="129" x2="90" y2="163" stroke="currentColor" class="v-muted" stroke-width="1" stroke-dasharray="2 2"/>
+  </g>
+
+  <g data-anim="3">
+    
+    <line x1="40" y1="300" x2="372" y2="300" stroke="currentColor" class="v-stroke" stroke-width="1.4"/>
+    <polygon points="372,295 384,300 372,305" fill="currentColor" class="v-muted"/>
+    <text x="206" y="322" text-anchor="middle" class="ax">model score s(x)</text>
+
+    
+    <path d="M50,300 C68,300 82,190 145,190 C208,190 222,300 240,300 Z" fill="var(--good,#2f9e6e)" fill-opacity="0.20" clip-path="url(#mrts-clipL)"/>
+    <path d="M180,300 C198,300 212,190 275,190 C338,190 352,300 370,300 Z" fill="var(--good,#2f9e6e)" fill-opacity="0.20" clip-path="url(#mrts-clipR)"/>
+    <path d="M50,300 C68,300 82,190 145,190 C208,190 222,300 240,300 Z" fill="var(--bad,#dc2626)" fill-opacity="0.62" clip-path="url(#mrts-clipR)"/>
+    <path d="M180,300 C198,300 212,190 275,190 C338,190 352,300 370,300 Z" fill="var(--bad,#dc2626)" fill-opacity="0.62" clip-path="url(#mrts-clipL)"/>
+
+    
+    <path d="M50,300 C68,300 82,190 145,190 C208,190 222,300 240,300 Z" fill="none" stroke="currentColor" class="v-stroke" stroke-width="1.3"/>
+    <path d="M180,300 C198,300 212,190 275,190 C338,190 352,300 370,300 Z" fill="none" stroke="currentColor" class="v-stroke" stroke-width="1.3"/>
+
+    <text x="130" y="205" text-anchor="middle" class="hump-lbl">negatives</text>
+    <text x="270" y="205" text-anchor="middle" class="hump-lbl">positives</text>
+
+    
+    <text x="108" y="272" text-anchor="middle" class="reg" fill="var(--good,#2f9e6e)">TN</text>
+    <text x="292" y="272" text-anchor="middle" class="reg" fill="var(--good,#2f9e6e)">TP</text>
+    <text x="197" y="296" text-anchor="middle" class="reg-sm" fill="var(--bad,#dc2626)">FN</text>
+    <text x="223" y="296" text-anchor="middle" class="reg-sm" fill="var(--bad,#dc2626)">FP</text>
+  </g>
+
+  <g data-anim="4">
+    
+    <line x1="210" y1="165" x2="210" y2="316" stroke="var(--accent)" stroke-width="2.4"/>
+    <text x="210" y="155" text-anchor="middle" class="thr-lbl" fill="var(--accent)">threshold t</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="45" y="336" width="10" height="10" rx="2" fill="var(--good,#2f9e6e)"/>
+    <text x="61" y="345" text-anchor="start" class="leg">correct: TP (hit), TN (correct reject)</text>
+    <rect x="45" y="352" width="10" height="10" rx="2" fill="var(--bad,#dc2626)"/>
+    <text x="61" y="361" text-anchor="start" class="leg">error: FP (false alarm), FN (miss)</text>
+  </g>
+
+  
+  <g class="mrts-decor">
+    <circle r="5.5" fill="var(--accent)" opacity="0">
+      <animate attributeName="opacity" dur="6s" repeatCount="indefinite" keyTimes="0;0.05;0.92;1" values="0;0.9;0.9;0"/>
+      <animateMotion dur="6s" repeatCount="indefinite" path="M320,178 L90,178"/>
+    </circle>
+  </g>
+
+  
+  <text x="600" y="46" text-anchor="middle" class="hdr">2. Each threshold is one ROC point</text>
+
+  <g data-anim="1">
+    <line x1="460" y1="380" x2="460" y2="90" stroke="currentColor" class="v-stroke" stroke-width="1.4" marker-end="url(#mrts-arr)"/>
+    <line x1="460" y1="380" x2="760" y2="380" stroke="currentColor" class="v-stroke" stroke-width="1.4" marker-end="url(#mrts-arr)"/>
+
+    <line x1="610" y1="380" x2="610" y2="90" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4"/>
+    <line x1="460" y1="235" x2="760" y2="235" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4"/>
+
+    <text x="460" y="395" text-anchor="middle" class="tick">0</text>
+    <text x="610" y="395" text-anchor="middle" class="tick">0.5</text>
+    <text x="760" y="395" text-anchor="middle" class="tick">1</text>
+    <text x="447" y="384" text-anchor="end" class="tick">0</text>
+    <text x="447" y="239" text-anchor="end" class="tick">0.5</text>
+    <text x="447" y="94" text-anchor="end" class="tick">1</text>
+
+    <text x="610" y="413" text-anchor="middle" class="ax">False Positive Rate (FPR)</text>
+    <text x="428" y="235" text-anchor="middle" class="ax" transform="rotate(-90 428 235)">True Positive Rate (TPR)</text>
+  </g>
+
+  <g data-anim="2">
+    <line x1="460" y1="380" x2="760" y2="90" stroke="currentColor" class="v-muted" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="616" y="262" text-anchor="middle" class="cal" font-style="italic">random (AUC 0.5)</text>
+
+    <circle cx="460" cy="90" r="3.6" fill="var(--ink-soft)"/>
+    <text x="470" y="86" text-anchor="start" class="cal-b">ideal (0,1)</text>
+  </g>
+
+  <g data-anim="3">
+    <path d="M460,380 C475,260 495,165 530,135 C600,100 690,90 760,90 L760,380 Z" fill="var(--accent)" fill-opacity="0.15"/>
+    <text x="585" y="300" text-anchor="middle" class="auc-lbl" fill="var(--accent)">AUC</text>
+  </g>
+
+  <g data-anim="4">
+    <path class="roc-curve viz-draw" style="--len:620" d="M460,380 C475,260 495,165 530,135 C600,100 690,90 760,90"/>
+  </g>
+
+  <g data-anim="5">
+    <circle cx="496" cy="142" r="5" fill="var(--accent)"/>
+    <line x1="503" y1="138" x2="540" y2="120" stroke="currentColor" class="v-muted" stroke-width="1" stroke-dasharray="2 2"/>
+    <text x="546" y="123" text-anchor="start" class="cal-b" fill="var(--accent)">t shown at left</text>
+
+    <circle cx="466" cy="365" r="4.2" fill="var(--muted)"/>
+    <text x="466" y="352" text-anchor="middle" class="cal">strict</text>
+
+    <circle cx="739" cy="105" r="4.2" fill="var(--muted)"/>
+    <text x="713" y="120" text-anchor="middle" class="cal">lenient</text>
+  </g>
+
+  
+  <g class="mrts-decor">
+    <circle r="6" fill="var(--accent)" opacity="0">
+      <animate attributeName="opacity" dur="6s" repeatCount="indefinite" keyTimes="0;0.05;0.92;1" values="0;0.95;0.95;0"/>
+      <animateMotion dur="6s" repeatCount="indefinite" path="M460,380 C475,260 495,165 530,135 C600,100 690,90 760,90"/>
+    </circle>
+  </g>
+
+  <g data-anim="6">
+    <text x="400" y="448" text-anchor="middle" class="footer">as t relaxes from 1 to 0, (FPR, TPR) sweeps from (0,0) to (1,1) along the curve -- AUC is the shaded area beneath it</text>
+  </g>
+</svg>
+<figcaption><b>Sliding the decision threshold from 1 down to 0 traces the ROC curve.</b> At each threshold, everything to the right of the line is predicted positive and everything to the left is predicted negative, so as the threshold relaxes from strict (bottom-left: low FPR, low TPR) to lenient (top-right: high FPR, high TPR), the resulting (FPR, TPR) points sweep out the curve and AUC is the area beneath it.</figcaption>
+</figure>

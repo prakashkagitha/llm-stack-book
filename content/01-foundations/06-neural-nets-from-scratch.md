@@ -618,6 +618,8 @@ print("BN grad rel-error:", np.abs(num - dZ).max() / (np.abs(num).max() + 1e-12)
 
 BatchNorm normalizes *across the batch* for each feature; **LayerNorm** normalizes *across the features* for each example. The distinction matters enormously for transformers. BatchNorm's batch-coupling is a liability for language models: sequence lengths vary, batches are heterogeneous, and at inference (especially autoregressive decode, one token at a time) there is effectively no batch to normalize over. LayerNorm and its simpler cousin RMSNorm are per-token and batch-independent, so they behave identically in training and inference. That is why essentially every modern LLM uses LayerNorm/RMSNorm, not BatchNorm — a design choice we unpack in [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html).
 
+{{fig:batchnorm-vs-layernorm-axes}}
+
 !!! tip "Practitioner tip"
 
     The single most useful debugging instrument for a from-scratch network is a **gradient check**, and the second is a **histogram of per-layer activation and gradient statistics**. If early-layer gradients are orders of magnitude smaller than late-layer ones, you have a vanishing-gradient problem (fix the init or add normalization/residuals). If activation stds drift toward 0 or blow up as you go deeper, your initialization variance is wrong. Print `A.std()` per layer before you reach for anything fancier.

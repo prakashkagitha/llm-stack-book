@@ -245,6 +245,8 @@ $$
 
 Why does capacity exist at all? Because GPUs want **static, rectangular tensors**. To run expert $e$ as one efficient matmul, you need a fixed-size buffer of tokens for it. Capacity is that buffer size. If more than `capacity` tokens route to an expert, the overflow is **dropped** (skips the FFN, passes through on the residual). If fewer arrive, the buffer is **padded** with zeros (wasted FLOPs). So $C_f$ trades two evils: too low and you drop many tokens (hurting quality); too high and you waste compute and memory on padding. Typical training values are $C_f \in [1.0, 2.0]$; Switch used around 1.0–1.25, GShard often 2.0. Modern systems increasingly use **dropless** MoE (Megablocks) with grouped/block-sparse GEMMs that handle ragged sizes directly, eliminating both dropping and padding — but the capacity concept is essential for understanding the classics and most serving paths.
 
+{{fig:moe-capacity-buffer-drop-pad}}
+
 !!! example "Worked example: capacity, dropping, and the parameter/FLOP split"
     Take a configuration close to a small Mixtral-style layer: $E = 8$ experts, top-$k = 2$, $d_\text{model} = 4096$, $d_\text{ff} = 14336$, processing a batch of $N = 8192$ tokens (e.g. 16 sequences of length 512). Use a capacity factor $C_f = 1.25$.
 

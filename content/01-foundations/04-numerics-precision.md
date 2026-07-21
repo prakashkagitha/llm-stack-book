@@ -96,6 +96,8 @@ bf16 keeps fp32's 8-bit exponent (max value ~$3.4 \times 10^{38}$) but sacrifice
 !!! warning "fp16 overflow in practice"
     During early LLM training, gradient norms can spike to values well above 65504. With fp16 these spikes produce `inf` gradients, which then corrupt the parameter update. The standard remedy is **loss scaling** (multiply the loss by a large scalar before backward, divide gradients after) — but the approach is fragile. bf16 makes the problem largely disappear because the dynamic range matches fp32.
 
+{{fig:format-range-ruler}}
+
 ---
 
 ## Catastrophic Cancellation

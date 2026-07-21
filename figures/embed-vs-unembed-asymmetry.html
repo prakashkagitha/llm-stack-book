@@ -1,0 +1,162 @@
+<figure class="viz" id="fig-embed-vs-unembed-asymmetry">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 650" role="img" aria-label="Mirror comparison of the embedding lookup and the unembedding logit projection: the embed side is a cheap sparse index-select with a sparse gradient touching only rows for tokens in the batch, while the unembed side is an expensive dense matmul with a dense gradient touching every row; with weight tying the two share one matrix that receives both a sparse and a dense gradient contribution.">
+
+<defs>
+  <marker id="evu-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#555)"/>
+  </marker>
+</defs>
+
+
+<g data-anim="1">
+
+<rect x="20" y="16" width="345" height="36" rx="18" fill="var(--accent,#6aa3ff)"/>
+<text x="192" y="39" text-anchor="middle" style="font:700 14px var(--sans,sans-serif)" fill="#fff">EMBED (input lookup)</text>
+
+<text x="40" y="66" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Forward: index-select</text>
+
+
+<rect x="40" y="80" width="130" height="142" rx="6" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<text x="105" y="76" text-anchor="middle" style="font:500 9px var(--mono,monospace)" fill="var(--muted,#888)">W_E  [V, d]</text>
+<g>
+  <rect x="48" y="88.0" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="99.3" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="110.6" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="121.9" width="114" height="8" rx="1.5" fill="var(--accent,#6aa3ff)"/>
+  <rect x="48" y="133.2" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="144.5" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="155.8" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="167.1" width="114" height="8" rx="1.5" fill="var(--accent,#6aa3ff)"/>
+  <rect x="48" y="178.4" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="189.7" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+  <rect x="48" y="201.0" width="114" height="8" rx="1.5" fill="var(--accent,#6aa3ff)"/>
+  <rect x="48" y="212.3" width="114" height="8" rx="1.5" fill="var(--surface-3,#eee)" opacity="0.6"/>
+</g>
+
+<line x1="172" y1="150" x2="238" y2="150" stroke="var(--accent,#6aa3ff)" stroke-width="1.6" marker-end="url(#evu-arr)"/>
+<text x="205" y="140" text-anchor="middle" style="font:600 8.5px var(--sans,sans-serif)" fill="var(--accent,#6aa3ff)">index-select</text>
+
+<rect x="240" y="120" width="125" height="60" rx="7" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.4"/>
+<text x="302" y="144" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">T rows copied</text>
+<text x="302" y="162" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">&#8594; [T, d]</text>
+
+<text x="105" y="234" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">V rows total &#8212; only 3 lit here</text>
+
+<text x="40" y="256" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">Cost: O(T&#183;d) &#8212; copy T rows (cheap)</text>
+<text x="40" y="276" style="font:500 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Forward: cheap row copy</text>
+
+</g>
+
+
+<g data-anim="2">
+<text x="40" y="326" style="font:700 12px var(--sans,sans-serif)" fill="var(--good,#2f9e6e)">Gradient (backward pass)</text>
+
+<rect x="40" y="334" width="130" height="88" rx="6" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<g>
+  <rect x="48" y="341" width="114" height="6.5" rx="1.3" fill="var(--surface-3,#eee)" opacity="0.5"/>
+  <rect x="48" y="350.2" width="114" height="6.5" rx="1.3" fill="var(--surface-3,#eee)" opacity="0.5"/>
+  <rect x="48" y="359.4" width="114" height="6.5" rx="1.3" fill="var(--surface-3,#eee)" opacity="0.5"/>
+  <rect x="48" y="368.6" width="114" height="6.5" rx="1.3" fill="var(--good,#2f9e6e)"/>
+  <rect x="48" y="377.8" width="114" height="6.5" rx="1.3" fill="var(--surface-3,#eee)" opacity="0.5"/>
+  <rect x="48" y="387.0" width="114" height="6.5" rx="1.3" fill="var(--surface-3,#eee)" opacity="0.5"/>
+  <rect x="48" y="396.2" width="114" height="6.5" rx="1.3" fill="var(--good,#2f9e6e)"/>
+  <rect x="48" y="405.4" width="114" height="6.5" rx="1.3" fill="var(--surface-3,#eee)" opacity="0.5"/>
+  <rect x="48" y="414.6" width="114" height="6.5" rx="1.3" fill="var(--good,#2f9e6e)"/>
+</g>
+<text x="180" y="349" style="font:700 11px var(--sans,sans-serif)" fill="var(--good,#2f9e6e)">SPARSE</text>
+<text x="180" y="367" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">only rows for tokens</text>
+<text x="180" y="382" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">present in the batch</text>
+<text x="180" y="397" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">are nonzero; the rest</text>
+<text x="180" y="412" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">are exactly zero.</text>
+</g>
+
+
+<g data-anim="1">
+
+<rect x="395" y="16" width="345" height="36" rx="18" fill="var(--accent2,#3b82f6)"/>
+<text x="567" y="39" text-anchor="middle" style="font:700 14px var(--sans,sans-serif)" fill="#fff">UNEMBED (logit projection)</text>
+
+<text x="415" y="66" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Forward: dense matmul</text>
+
+
+<rect x="415" y="80" width="130" height="142" rx="6" fill="var(--accent2,#3b82f6)" opacity="0.5" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<g stroke="var(--surface,#fff)" stroke-width="1" opacity="0.35">
+  <line x1="415" y1="115.5" x2="545" y2="115.5"/>
+  <line x1="415" y1="151" x2="545" y2="151"/>
+  <line x1="415" y1="186.5" x2="545" y2="186.5"/>
+  <line x1="447.5" y1="80" x2="447.5" y2="222"/>
+  <line x1="480" y1="80" x2="480" y2="222"/>
+  <line x1="512.5" y1="80" x2="512.5" y2="222"/>
+</g>
+<text x="480" y="76" text-anchor="middle" style="font:500 9px var(--mono,monospace)" fill="var(--muted,#888)">[T,d] &#215; [d,V]</text>
+
+<line x1="547" y1="150" x2="613" y2="150" stroke="var(--accent2,#3b82f6)" stroke-width="1.6" marker-end="url(#evu-arr)"/>
+<text x="580" y="140" text-anchor="middle" style="font:600 8.5px var(--sans,sans-serif)" fill="var(--accent2,#3b82f6)">dense matmul</text>
+
+<rect x="615" y="120" width="125" height="60" rx="7" fill="var(--surface-3,#eee)" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+<text x="677" y="144" text-anchor="middle" style="font:600 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">all V logits</text>
+<text x="677" y="162" text-anchor="middle" style="font:500 10px var(--mono,monospace)" fill="var(--muted,#888)">&#8594; [T, V]</text>
+
+<text x="480" y="234" text-anchor="middle" style="font:400 9px var(--sans,sans-serif)" fill="var(--muted,#888)">every cell computed &#8212; all shaded</text>
+
+<text x="415" y="252" style="font:500 11px var(--mono,monospace)" fill="var(--ink-soft,#333)">Cost: O(T&#183;V&#183;d) &#8212; often the single</text>
+<text x="415" y="268" style="font:500 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">most expensive op; memory-bound at</text>
+<text x="415" y="284" style="font:500 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">decode (reads all V&#183;d params/token)</text>
+<text x="415" y="302" style="font:500 11px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Forward: expensive</text>
+
+</g>
+
+
+<g data-anim="2">
+<text x="415" y="326" style="font:700 12px var(--sans,sans-serif)" fill="var(--warn,#e0a106)">Gradient (backward pass)</text>
+
+<rect x="415" y="334" width="130" height="88" rx="6" fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+<g>
+  <rect x="423" y="341" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="350.2" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="359.4" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="368.6" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="377.8" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="387.0" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="396.2" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="405.4" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+  <rect x="423" y="414.6" width="114" height="6.5" rx="1.3" fill="var(--warn,#e0a106)"/>
+</g>
+<text x="555" y="349" style="font:700 11px var(--sans,sans-serif)" fill="var(--warn,#e0a106)">DENSE</text>
+<text x="555" y="367" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">every row updated,</text>
+<text x="555" y="382" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">weighted by the</text>
+<text x="555" y="397" style="font:400 10px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">hidden states.</text>
+</g>
+
+
+<line x1="380" y1="10" x2="380" y2="430" stroke="var(--border-2,#ccc)" stroke-width="0.6" stroke-dasharray="2 5" opacity="0.5"/>
+
+
+<g data-anim="3">
+<rect x="20" y="440" width="720" height="190" rx="10" fill="var(--surface-3,#eee)" stroke="var(--accent,#6aa3ff)" stroke-width="1.4"/>
+
+<text x="40" y="464" style="font:700 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">With weight tying (W_U = W_E), these are the SAME matrix:</text>
+
+<text x="40" y="490" style="font:500 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">it receives a</text>
+<text x="128" y="490" style="font:700 12px var(--sans,sans-serif)" fill="var(--good,#2f9e6e)">SPARSE gradient</text>
+<text x="245" y="490" style="font:500 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">from the input path</text>
+
+<text x="40" y="510" style="font:500 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">PLUS a</text>
+<text x="97" y="510" style="font:700 12px var(--sans,sans-serif)" fill="var(--warn,#e0a106)">DENSE gradient</text>
+<text x="204" y="510" style="font:500 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">from the output path.</text>
+
+<line x1="40" y1="528" x2="700" y2="528" stroke="var(--border-2,#ccc)" stroke-width="0.8" opacity="0.5"/>
+
+<text x="40" y="552" style="font:600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Frequent tokens</text>
+<text x="150" y="552" style="font:400 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">&#8212; gradient dominated by the dense unembed path.</text>
+
+<text x="40" y="574" style="font:600 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">Rare tokens</text>
+<text x="128" y="574" style="font:400 12px var(--sans,sans-serif)" fill="var(--ink-soft,#333)">&#8212; hear from the sparse embed path only, when they appear.</text>
+
+<text x="40" y="604" style="font:400 10px var(--sans,sans-serif)" fill="var(--muted,#888)">This asymmetry is a subtlety the optimizer's per-row moment estimates must absorb (see Gradient Scaling above).</text>
+</g>
+
+</svg>
+<figcaption><b>Embed and unembed are mirror-image operations on vocabulary-sized data: one is cheap and sparse, the other is expensive and dense.</b> The token embedding lookup is an O(T&#183;d) index-select whose backward pass touches only the rows for tokens actually in the batch; the unembed logit projection is an O(T&#183;V&#183;d) dense matmul whose backward pass updates every row of the vocabulary matrix. When the two matrices are tied, frequent tokens are shaped mainly by the dense unembed gradient while rare tokens rely on the sparse embed gradient to be heard at all.</figcaption>
+</figure>

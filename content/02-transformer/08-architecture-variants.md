@@ -540,6 +540,8 @@ The pre-training objective is not just a loss function — it determines what th
 
 A key efficiency point: CLM trains on **every position** in every sequence, while MLM trains only on the ~15% masked positions. This means that for a given sequence of $T$ tokens, CLM extracts $T$ gradient signals while MLM extracts only $\approx 0.15T$. Over a fixed compute budget, CLM sees more learning signal per FLOP on raw generation ability. MLM produces better per-token representations for discrimination tasks, but that advantage diminishes with scale.
 
+{{fig:archvar-objective-signal-comparison}}
+
 !!! note "The ELECTRA Alternative"
     Clark et al. (*ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators*, 2020) observed that MLM wastes compute on easy-to-predict unmasked tokens. ELECTRA uses a small generator to fill in masks, then trains a large discriminator to detect which tokens are "replaced." The discriminator trains on *all* tokens, achieving BERT-level performance at substantially lower compute. This is still encoder-only but with a more efficient objective.
 

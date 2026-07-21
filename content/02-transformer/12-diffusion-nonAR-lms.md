@@ -306,6 +306,8 @@ Temperature, top-$k$, and top-$p$ ([Sampling Strategies & Decoding Algorithms](.
 
 The most intellectually interesting reason to care about non-AR LLMs is not speed — it is **bidirectionality**. Because a masked-diffusion model conditions every position on every other position, it can do things that are structurally hard for a left-to-right model.
 
+{{fig:dllm-bidirectional-infilling}}
+
 **Infilling and editing.** Given a document with a hole in the middle, an AR model must either be specially trained with fill-in-the-middle objectives or awkwardly re-prompted. A diffusion model treats infilling as its *native* operation: clamp the known prefix and suffix as unmasked context, mask the hole, and denoise. The hole is filled conditioned on *both* sides, which is exactly what coherent editing requires.
 
 **Global constraints.** Tasks like "write a sentence that ends with this exact word" or "produce code with this signature and this return statement" require coordinating the beginning and end of the output. Left-to-right generation can paint itself into a corner; bidirectional denoising can place the constrained tokens first and grow the rest around them.

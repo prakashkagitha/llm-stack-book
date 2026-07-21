@@ -18,13 +18,7 @@ Let us nail down the permutation-equivariance claim, because it is the entire re
 
 There are two fundamentally different places to inject position, and the entire chapter is organized around this fork:
 
-```text
-  APPROACH A: add to the representation        APPROACH B: add to the attention score
-  --------------------------------------       --------------------------------------
-  x_i  ->  x_i + p_i   (before attention)       S_ij = (q_i · k_j)/√d_k  +  bias(i, j)
-  sinusoidal, learned absolute                  relative bias, ALiBi
-  RoPE rotates q,k (a hybrid: see §RoPE)         T5 relative position bias
-```
+{{fig:position-injection-sites}}
 
 **Approach A — modify the inputs.** Give every position $i$ a vector $p_i$ and fold it into the token representation, classically by addition: $\tilde{x}_i = x_i + p_i$. The model then sees a representation that *encodes* position, and attention can learn to use it. Sinusoidal and learned absolute encodings live here.
 

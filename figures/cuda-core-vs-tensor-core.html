@@ -1,0 +1,142 @@
+<figure class="viz" id="fig-cuda-core-vs-tensor-core">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 760 610" role="img" aria-label="Comparison of a CUDA core and a Tensor Core on the same GPU. The CUDA core is a scalar ALU computing c = a times b plus d, one fused multiply-add per cycle; doing a 16 by 16 by 16 tile that way needs 4096 scalar FMAs. The Tensor Core consumes whole 16x16 tiles A, B, C in one instruction and emits a whole output tile D = A matmul B plus C. A bar comparison shows Tensor Core matmul throughput at roughly 16x the CUDA-core FP32 throughput on the same chip, illustrative ratio only. A boxed note lists the catch: Tensor Cores only accelerate matmul, only in reduced precision with FP32 accumulation, only on tile-shaped data with dimensions that are multiples of 8 or 16; pointwise ops like add, GELU, and norm get zero benefit and stay on CUDA cores, memory-bound.">
+<defs>
+  <marker id="cvt-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6b7280)"/>
+  </marker>
+</defs>
+<style>
+  #fig-cuda-core-vs-tensor-core text{ fill:var(--ink-soft); font-family:var(--sans,sans-serif); }
+  #fig-cuda-core-vs-tensor-core .col-hdr{ font:700 14px var(--sans,sans-serif); letter-spacing:.2px; }
+  #fig-cuda-core-vs-tensor-core .lbl{ font:700 12.5px var(--sans,sans-serif); }
+  #fig-cuda-core-vs-tensor-core .mono{ font:600 11px var(--mono,monospace); }
+  #fig-cuda-core-vs-tensor-core .cap{ font:700 11px var(--sans,sans-serif); }
+  #fig-cuda-core-vs-tensor-core .sub{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-cuda-core-vs-tensor-core .faint{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); font-style:italic; }
+  #fig-cuda-core-vs-tensor-core .sect{ font:700 12.5px var(--sans,sans-serif); }
+  #fig-cuda-core-vs-tensor-core .note{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-cuda-core-vs-tensor-core .tile-line{ stroke:var(--muted); stroke-width:0.6; opacity:0.4; }
+</style>
+
+<g data-anim="1">
+  <text x="195" y="30" text-anchor="middle" class="col-hdr" fill="var(--accent)">CUDA core (scalar ALU)</text>
+  <text x="580" y="30" text-anchor="middle" class="col-hdr" fill="var(--accent2,#3b82f6)">Tensor Core (matrix engine)</text>
+  <line x1="390" y1="42" x2="390" y2="296" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+</g>
+
+<g data-anim="2">
+  
+  <rect x="145" y="110" width="100" height="56" rx="8" class="v-fill" stroke="var(--accent)" stroke-width="1.6"/>
+  <text x="195" y="132" text-anchor="middle" class="lbl" fill="var(--accent)">ALU</text>
+  <text x="195" y="150" text-anchor="middle" class="mono">c = a*b + d</text>
+
+  
+  <line x1="70" y1="120" x2="145" y2="120" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <line x1="70" y1="138" x2="145" y2="138" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <line x1="70" y1="156" x2="145" y2="156" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <text x="60" y="124" text-anchor="end" class="mono">a</text>
+  <text x="60" y="142" text-anchor="end" class="mono">b</text>
+  <text x="60" y="160" text-anchor="end" class="mono">d</text>
+
+  
+  <line x1="245" y1="138" x2="300" y2="138" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <text x="310" y="142" class="mono" fill="var(--accent)">c</text>
+
+  <text x="195" y="192" text-anchor="middle" class="cap" fill="var(--accent)">one fused multiply-add per cycle, FP32/INT</text>
+
+  <text x="195" y="212" text-anchor="middle" class="faint">a 16x16x16 tile the scalar way =</text>
+  <text x="195" y="226" text-anchor="middle" class="faint">issue 16^3 = 4096 scalar FMAs</text>
+</g>
+
+<g data-anim="3">
+  
+  <rect x="420" y="118" width="40" height="40" rx="4" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <line x1="430" y1="118" x2="430" y2="158" class="tile-line"/>
+  <line x1="440" y1="118" x2="440" y2="158" class="tile-line"/>
+  <line x1="450" y1="118" x2="450" y2="158" class="tile-line"/>
+  <line x1="420" y1="128" x2="460" y2="128" class="tile-line"/>
+  <line x1="420" y1="138" x2="460" y2="138" class="tile-line"/>
+  <line x1="420" y1="148" x2="460" y2="148" class="tile-line"/>
+  <text x="440" y="111" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">A</text>
+
+  
+  <rect x="420" y="176" width="40" height="40" rx="4" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <line x1="430" y1="176" x2="430" y2="216" class="tile-line"/>
+  <line x1="440" y1="176" x2="440" y2="216" class="tile-line"/>
+  <line x1="450" y1="176" x2="450" y2="216" class="tile-line"/>
+  <line x1="420" y1="186" x2="460" y2="186" class="tile-line"/>
+  <line x1="420" y1="196" x2="460" y2="196" class="tile-line"/>
+  <line x1="420" y1="206" x2="460" y2="206" class="tile-line"/>
+  <text x="440" y="169" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">B</text>
+
+  <text x="440" y="232" text-anchor="middle" class="sub">16x16 tiles</text>
+
+  
+  <rect x="505" y="63" width="40" height="40" rx="4" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.5"/>
+  <line x1="515" y1="63" x2="515" y2="103" class="tile-line"/>
+  <line x1="525" y1="63" x2="525" y2="103" class="tile-line"/>
+  <line x1="535" y1="63" x2="535" y2="103" class="tile-line"/>
+  <line x1="505" y1="73" x2="545" y2="73" class="tile-line"/>
+  <line x1="505" y1="83" x2="545" y2="83" class="tile-line"/>
+  <line x1="505" y1="93" x2="545" y2="93" class="tile-line"/>
+  <text x="525" y="56" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">C</text>
+  <text x="498" y="87" text-anchor="end" class="sub">16x16</text>
+
+  
+  <line x1="460" y1="138" x2="475" y2="150" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <line x1="460" y1="196" x2="475" y2="194" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <line x1="525" y1="103" x2="525" y2="128" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+  <text x="536" y="120" class="mono" fill="var(--muted)">+</text>
+
+  
+  <rect x="475" y="128" width="110" height="90" rx="10" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="1.8"/>
+  <text x="530" y="168" text-anchor="middle" class="lbl" fill="var(--accent2,#3b82f6)">TENSOR CORE</text>
+  <text x="530" y="184" text-anchor="middle" class="sub">systolic MAC array</text>
+
+  
+  <line x1="585" y1="173" x2="630" y2="176" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#cvt-arr)"/>
+
+  
+  <rect x="630" y="151" width="50" height="50" rx="5" class="v-fill" stroke="var(--accent)" stroke-width="1.8"/>
+  <line x1="642.5" y1="151" x2="642.5" y2="201" class="tile-line"/>
+  <line x1="655" y1="151" x2="655" y2="201" class="tile-line"/>
+  <line x1="667.5" y1="151" x2="667.5" y2="201" class="tile-line"/>
+  <line x1="630" y1="163.5" x2="680" y2="163.5" class="tile-line"/>
+  <line x1="630" y1="176" x2="680" y2="176" class="tile-line"/>
+  <line x1="630" y1="188.5" x2="680" y2="188.5" class="tile-line"/>
+  <text x="655" y="144" text-anchor="middle" class="lbl" fill="var(--accent)">D</text>
+  <text x="655" y="215" text-anchor="middle" class="sub">16x16</text>
+
+  <text x="550" y="252" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">D = A @ B + C</text>
+  <text x="550" y="270" text-anchor="middle" class="cap" fill="var(--accent2,#3b82f6)">one instruction consumes whole tiles -&gt;</text>
+  <text x="550" y="284" text-anchor="middle" class="cap" fill="var(--accent2,#3b82f6)">a whole tile of MACs</text>
+</g>
+
+<line x1="20" y1="306" x2="740" y2="306" class="v-grid" stroke-width="1"/>
+
+<g data-anim="4">
+  <text x="20" y="330" class="sect">Same chip, ~16x throughput gap (illustrative ratio)</text>
+
+  <text x="210" y="364" text-anchor="end" class="sub">FP32 CUDA cores</text>
+  <rect x="220" y="348" width="32" height="22" rx="3" fill="var(--muted)" fill-opacity="0.35" stroke="var(--muted)" stroke-width="1.2"/>
+  <text x="262" y="364" class="mono">1x</text>
+
+  <text x="210" y="404" text-anchor="end" class="sub">BF16/FP16 Tensor Cores</text>
+  <rect x="220" y="390" width="512" height="22" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.5" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+  <text x="700" y="404" text-anchor="end" class="mono" fill="var(--accent2,#3b82f6)">~16x</text>
+
+  <text x="20" y="428" class="note">(illustrative ratio -- not vendor TFLOP/s figures)</text>
+</g>
+
+<g data-anim="5">
+  <rect x="20" y="448" width="720" height="145" rx="10" fill="var(--warn,#e0a106)" fill-opacity="0.06" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="36" y="472" class="lbl" fill="var(--warn,#e0a106)">THE CATCH</text>
+  <text x="36" y="494" class="sub" fill="var(--ink-soft)">Tensor Cores accelerate only matmul (or ops phrased as one).</text>
+  <text x="36" y="514" class="sub" fill="var(--ink-soft)">Only in reduced precision: BF16/FP16/FP8/FP4 in, FP32 accumulate.</text>
+  <text x="36" y="534" class="sub" fill="var(--ink-soft)">Only on tile-shaped data with dims that are multiples of 8 or 16.</text>
+  <text x="36" y="554" class="sub" fill="var(--warn,#e0a106)" font-weight="700">Pointwise ops (add, GELU, norm) get ZERO benefit -&gt; CUDA cores -&gt; memory-bound.</text>
+</g>
+</svg>
+<figcaption><b>A CUDA core does one scalar FMA per cycle; a Tensor Core consumes whole tiles and emits a whole tile per instruction.</b> That structural difference is why Tensor Core matmul throughput runs roughly an order of magnitude (~16x) above FP32 CUDA-core throughput on the same chip -- but only for matmul-shaped work in reduced precision; pointwise ops like add, GELU, and layernorm never touch a Tensor Core and stay memory-bound on CUDA cores.</figcaption>
+</figure>
