@@ -1,6 +1,6 @@
 <figure class="viz" id="fig-reward-signal-flow">
 <button class="viz-replay" type="button">&#x21BB; replay</button>
-<svg viewBox="0 0 660 476" role="img" aria-label="Reward signal flow diagram: a prompt feeds into the Policy LLM to produce a completion, which fans out to three parallel verifiers (rule-based, LLM judge, reward model), then merges into a weighted combination, flows through advantage estimation, and feeds a policy loss that loops back via gradient update.">
+<svg viewBox="0 0 660 476" role="img" aria-label="Reward signal flow diagram: a prompt feeds into the Policy LLM to produce a completion, which fans out to three parallel verifiers (rule-based, LLM judge, reward model) annotated with cost and signal quality, then merges into a weighted combination, flows through advantage estimation, and feeds a policy loss that loops back via gradient update. The rule-based path is visually emphasized as the preferred family for RLVR.">
 <defs>
   <marker id="rsf-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
     <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#45413a)"/>
@@ -8,14 +8,19 @@
   <marker id="rsf-arr-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
     <path d="M0 1 L9 5 L0 9 z" fill="var(--muted,#6d675d)"/>
   </marker>
+  <marker id="rsf-arr-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent2,#3b6fd4)"/>
+  </marker>
 </defs>
 <style>
   #fig-reward-signal-flow .lbl { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
   #fig-reward-signal-flow .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
   #fig-reward-signal-flow .cap { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-signal-flow .axis-k { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
   #fig-reward-signal-flow .header { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#6d675d); letter-spacing: 0.08em; text-transform: uppercase; }
   #fig-reward-signal-flow .math { font: 500 11px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
   #fig-reward-signal-flow .grad-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-reward-signal-flow .badge { font: 700 8.5px var(--sans,sans-serif); fill: var(--accent2,#3b6fd4); letter-spacing: 0.02em; }
 
   @keyframes rsf-tok1 {
     0%   { transform: translateX(0);    opacity: 0; }
@@ -119,7 +124,7 @@
       stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
 
 <line x1="180" y1="128" x2="180" y2="158"
-      stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
+      stroke="var(--accent2,#3b6fd4)" stroke-width="2.4" marker-end="url(#rsf-arr-accent)"/>
 <line x1="395" y1="128" x2="395" y2="158"
       stroke="var(--ink-soft,#45413a)" stroke-width="1.5" marker-end="url(#rsf-arr)"/>
 <line x1="580" y1="128" x2="580" y2="158"
@@ -132,32 +137,44 @@
 
 
 
-<rect x="102" y="158" width="156" height="54" rx="7"
-      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="1.8"/>
-<text x="180" y="180" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Rule-Based Verifier</text>
-<text x="180" y="196" text-anchor="middle" class="sub">fast / deterministic</text>
-<text x="180" y="222" text-anchor="middle" class="cap">cheap, deterministic</text>
+<rect x="102" y="158" width="156" height="80" rx="7"
+      fill="var(--surface-3,#e8eefc)" stroke="var(--accent2,#3b6fd4)" stroke-width="2"/>
+<rect x="196" y="139" width="76" height="16" rx="5"
+      fill="var(--accent2,#3b6fd4)" opacity="0.15" stroke="var(--accent2,#3b6fd4)" stroke-width="1"/>
+<text x="234" y="150" text-anchor="middle" class="badge">PREFERRED</text>
+<text x="180" y="178" text-anchor="middle" class="lbl" fill="var(--accent2,#3b6fd4)">Rule-Based Verifier</text>
+<text x="150" y="197" text-anchor="start" class="axis-k">cost:</text>
+<text x="210" y="197" text-anchor="start" class="sub">cheap</text>
+<text x="150" y="213" text-anchor="start" class="axis-k">signal:</text>
+<text x="210" y="213" text-anchor="start" class="sub">deterministic</text>
+<text x="180" y="230" text-anchor="middle" class="grad-lbl">hard to hack</text>
 
 
-<rect x="317" y="158" width="156" height="54" rx="7"
+<rect x="317" y="158" width="156" height="80" rx="7"
       fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
-<text x="395" y="180" text-anchor="middle" class="lbl">LLM Judge</text>
-<text x="395" y="196" text-anchor="middle" class="sub">async API</text>
-<text x="395" y="222" text-anchor="middle" class="cap">expensive, noisy</text>
+<text x="395" y="178" text-anchor="middle" class="lbl">LLM Judge</text>
+<text x="343" y="197" text-anchor="start" class="axis-k">cost:</text>
+<text x="403" y="197" text-anchor="start" class="sub">expensive</text>
+<text x="343" y="213" text-anchor="start" class="axis-k">signal:</text>
+<text x="403" y="213" text-anchor="start" class="sub">noisy</text>
+<text x="395" y="230" text-anchor="middle" class="grad-lbl">gameable</text>
 
 
-<rect x="510" y="158" width="140" height="54" rx="7"
+<rect x="510" y="158" width="140" height="80" rx="7"
       fill="var(--surface,#fff)" stroke="var(--border-2,#cfcfdb)" stroke-width="1.3"/>
-<text x="580" y="180" text-anchor="middle" class="lbl">Reward Model</text>
-<text x="580" y="196" text-anchor="middle" class="sub">GPU</text>
-<text x="580" y="222" text-anchor="middle" class="cap">GPU, smooth</text>
+<text x="580" y="178" text-anchor="middle" class="lbl">Reward Model</text>
+<text x="529" y="197" text-anchor="start" class="axis-k">cost:</text>
+<text x="589" y="197" text-anchor="start" class="sub">GPU</text>
+<text x="529" y="213" text-anchor="start" class="axis-k">signal:</text>
+<text x="589" y="213" text-anchor="start" class="sub">smooth</text>
+<text x="580" y="230" text-anchor="middle" class="grad-lbl">hackable</text>
 
 
-<line x1="180" y1="212" x2="180" y2="248"
+<line x1="180" y1="238" x2="180" y2="248"
+      stroke="var(--accent2,#3b6fd4)" stroke-width="2.4"/>
+<line x1="395" y1="238" x2="395" y2="248"
       stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
-<line x1="395" y1="212" x2="395" y2="248"
-      stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
-<line x1="580" y1="212" x2="580" y2="248"
+<line x1="580" y1="238" x2="580" y2="248"
       stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
 <line x1="180" y1="248" x2="580" y2="248"
       stroke="var(--ink-soft,#45413a)" stroke-width="1.5"/>
@@ -193,17 +210,17 @@
 
 
 
-<path d="M 485 392 Q 485 440 390 440 Q 160 440 160 72 Q 160 52 170 52"
+<path d="M 485 392 Q 485 440 390 440 L 70 440 L 70 100 L 20 100 L 20 34 L 240 34 L 240 52"
       fill="none"
       stroke="var(--muted,#8a8a99)" stroke-width="1.2"
       stroke-dasharray="6 4"
       marker-end="url(#rsf-arr-muted)"/>
 
-<text x="330" y="454" text-anchor="middle" class="grad-lbl">gradient update</text>
+<text x="230" y="454" text-anchor="middle" class="grad-lbl">gradient update</text>
 
 
 <path class="fb-anim"
-      d="M 485 392 Q 485 440 390 440 Q 160 440 160 72 Q 160 52 170 52"
+      d="M 485 392 Q 485 440 390 440 L 70 440 L 70 100 L 20 100 L 20 34 L 240 34 L 240 52"
       fill="none"
       stroke="var(--accent,#c15b39)" stroke-width="2"
       stroke-dasharray="400" stroke-dashoffset="400"

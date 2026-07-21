@@ -1,111 +1,116 @@
 <figure class="viz" id="fig-ppo-clip">
-<button class="viz-replay" type="button">↻ replay</button>
-<svg viewBox="0 0 760 372" role="img" aria-label="The PPO clipped surrogate objective plotted against the probability ratio r for a good token (advantage positive) and a bad token (advantage negative); in both panels the objective flattens to zero gradient once the ratio leaves the trust region 1 minus epsilon to 1 plus epsilon.">
-  <defs>
-    <marker id="pc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
-    </marker>
-  </defs>
-  <style>
-    #fig-ppo-clip text{ fill:var(--ink-soft); }
-    #fig-ppo-clip .ax{ font:600 12.5px var(--sans,sans-serif); }
-    #fig-ppo-clip .tk{ font:500 11px var(--mono,monospace); fill:var(--muted); }
-    #fig-ppo-clip .ttl{ font:600 13px var(--sans,sans-serif); }
-    #fig-ppo-clip .note{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
-    #fig-ppo-clip .flat{ font:600 10.5px var(--sans,sans-serif); }
-  </style>
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 780 500" role="img" aria-label="Why PPO needs importance sampling: rollouts are generated once and reused for several gradient steps, so tokens must be reweighted by the ratio r_t = pi_theta over pi_old; most tokens have a ratio near 1 and are safe, but a rare token's ratio can blow up, and that large ratio times a large advantage can destroy the policy in one update -- which is why PPO must bound the ratio.">
+<defs>
+  <marker id="pc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+  </marker>
+</defs>
+<style>
+  #fig-ppo-clip text{ fill:var(--ink-soft); }
+  #fig-ppo-clip .lbl{ font:600 12.5px var(--sans,sans-serif); }
+  #fig-ppo-clip .lbl-s{ font:600 11px var(--sans,sans-serif); }
+  #fig-ppo-clip .note{ font:500 11px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-ppo-clip .note-s{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-ppo-clip .mono{ font:600 11.5px var(--mono,monospace); }
+  #fig-ppo-clip .mono-s{ font:600 10px var(--mono,monospace); }
+  #fig-ppo-clip .ttl{ font:700 13.5px var(--sans,sans-serif); }
+  #fig-ppo-clip .t-warn{ fill:var(--warn,#e0a106); }
+  #fig-ppo-clip .t-acc{ fill:var(--accent); }
+  #fig-ppo-clip .t-muted{ fill:var(--muted); }
+</style>
+
+
+<g data-anim="1">
+  <text x="390" y="22" text-anchor="middle" class="ttl">Reusing rollouts makes the data off-policy</text>
+
+  <rect x="30" y="34" width="300" height="64" rx="10" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.4"/>
+  <text x="180" y="60" text-anchor="middle" class="lbl">generate rollouts ONCE</text>
+  <text x="180" y="78" text-anchor="middle" class="note-s">(expensive autoregressive decode)</text>
+
+  <line x1="330" y1="66" x2="418" y2="66" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#pc-arrow)" color="var(--ink-soft)"/>
+
+  <rect x="422" y="34" width="300" height="64" rx="10" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="1.8"/>
+  <text x="572" y="58" text-anchor="middle" class="lbl t-acc">take SEVERAL gradient steps</text>
+  <text x="572" y="75" text-anchor="middle" class="note-s">on that same frozen batch</text>
+  <text x="572" y="90" text-anchor="middle" class="note-s t-acc" style="font-weight:700">(epochs 2, 3, 4&#8230; reused)</text>
+
+  <text x="390" y="118" text-anchor="middle" class="note">After step 1 the data was sampled by an earlier policy, not the current one &#8212; every token must be</text>
+  <text x="390" y="134" text-anchor="middle" class="mono-s t-acc">reweighted by the ratio  r_t(&#952;) = &#960;_&#952;(o_t | s_t) / &#960;_old(o_t | s_t)</text>
+</g>
+
+<line x1="20" y1="152" x2="760" y2="152" stroke="var(--border-2)" stroke-width="1" opacity="0.6"/>
+
+
+<g data-anim="2">
+  <text x="390" y="174" text-anchor="middle" class="lbl-s">one rollout's tokens, ratios after a few gradient steps</text>
 
   
-  <g data-anim="1">
-    <text x="210" y="34" text-anchor="middle" class="ttl" fill="var(--good,#2f9e6e)">A &gt; 0&#8195;(good token &#183; push r up)</text>
+  <g>
     
-    <g class="v-grid" stroke-width="1" opacity="0.55">
-      <line x1="140" y1="50" x2="140" y2="250"/>
-      <line x1="210" y1="50" x2="210" y2="250"/>
-      <line x1="280" y1="50" x2="280" y2="250"/>
+    <g>
+      <rect x="66" y="192" width="80" height="62" rx="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.3"/>
+      <text x="106" y="216" text-anchor="middle" class="note-s">o_12</text>
+      <text x="106" y="238" text-anchor="middle" class="mono-s">r=1</text>
+    </g>
+    <g>
+      <rect x="160" y="192" width="80" height="62" rx="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.3"/>
+      <text x="200" y="216" text-anchor="middle" class="note-s">o_13</text>
+      <text x="200" y="238" text-anchor="middle" class="mono-s">r=1</text>
+    </g>
+    <g>
+      <rect x="254" y="192" width="80" height="62" rx="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.3"/>
+      <text x="294" y="216" text-anchor="middle" class="note-s">o_14</text>
+      <text x="294" y="238" text-anchor="middle" class="mono-s">r=1</text>
+    </g>
+    <g>
+      <rect x="348" y="192" width="80" height="62" rx="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.3"/>
+      <text x="388" y="216" text-anchor="middle" class="note-s">o_15</text>
+      <text x="388" y="238" text-anchor="middle" class="mono-s">r=1</text>
     </g>
     
-    <line x1="70" y1="50" x2="70" y2="250" class="v-stroke" stroke="var(--ink-soft)" stroke-width="1.6"/>
-    <line x1="70" y1="250" x2="350" y2="250" class="v-stroke" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#pc-arrow)" color="var(--ink-soft)"/>
-    
-    <text x="140" y="266" text-anchor="middle" class="tk">1-&#949;</text>
-    <text x="210" y="266" text-anchor="middle" class="tk">1</text>
-    <text x="280" y="266" text-anchor="middle" class="tk">1+&#949;</text>
-    <text x="338" y="266" text-anchor="middle" class="ax">r</text>
-    <text x="44" y="150" text-anchor="middle" class="ax" transform="rotate(-90 44 150)">L<tspan dy="-3" font-size="9">CLIP</tspan></text>
-  </g>
-
-  
-  <g data-anim="2">
-    <rect x="140" y="50" width="140" height="200" fill="var(--accent)" fill-opacity="0.07"/>
-    <text x="210" y="62" text-anchor="middle" class="note">trust region</text>
-  </g>
-
-  
-  <g data-anim="3">
-    
-    <path d="M70 230 L280 90 L350 90" fill="none"
-          stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
-          class="viz-draw" style="--len:330"/>
-    
-    <circle cx="210" cy="143" r="4.5" fill="var(--accent)" stroke="var(--surface,#fff)" stroke-width="1.4"/>
-  </g>
-
-  
-  <g data-anim="4">
-    <line x1="280" y1="90" x2="280" y2="250" stroke="var(--accent)" stroke-width="1.1" stroke-dasharray="3 3" opacity="0.65"/>
-    <text x="328" y="80" text-anchor="middle" class="flat" fill="var(--accent)">flat</text>
-    <text x="328" y="105" text-anchor="middle" class="note">gradient = 0</text>
-    <text x="328" y="118" text-anchor="middle" class="note">no extra</text>
-    <text x="328" y="131" text-anchor="middle" class="note">reward</text>
-  </g>
-
-  
-  <g data-anim="1">
-    <text x="610" y="34" text-anchor="middle" class="ttl" fill="var(--warn,#e0a106)">A &lt; 0&#8195;(bad token &#183; push r down)</text>
-    <g class="v-grid" stroke-width="1" opacity="0.55">
-      <line x1="540" y1="50" x2="540" y2="250"/>
-      <line x1="610" y1="50" x2="610" y2="250"/>
-      <line x1="680" y1="50" x2="680" y2="250"/>
+    <g class="viz-pulse">
+      <rect x="442" y="188" width="88" height="70" rx="8" fill="var(--warn)" fill-opacity="0.16" stroke="var(--warn)" stroke-width="2.4"/>
+      <text x="486" y="212" text-anchor="middle" class="note-s t-warn" style="font-weight:700">o_16 (rare)</text>
+      <text x="486" y="236" text-anchor="middle" class="mono t-warn">r=8</text>
     </g>
-    
-    <line x1="470" y1="50" x2="470" y2="250" class="v-stroke" stroke="var(--ink-soft)" stroke-width="1.6"/>
-    <line x1="470" y1="50" x2="750" y2="50" class="v-stroke" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#pc-arrow)" color="var(--ink-soft)"/>
-    <text x="540" y="42" text-anchor="middle" class="tk">1&#8722;&#949;</text>
-    <text x="610" y="42" text-anchor="middle" class="tk">1</text>
-    <text x="680" y="42" text-anchor="middle" class="tk">1+&#949;</text>
-    <text x="744" y="42" text-anchor="middle" class="ax">ratio r</text>
-    <text x="446" y="150" text-anchor="middle" class="ax" transform="rotate(-90 446 150)">L<tspan dy="-3" font-size="9">CLIP</tspan></text>
+    <g>
+      <rect x="540" y="192" width="80" height="62" rx="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.3"/>
+      <text x="580" y="216" text-anchor="middle" class="note-s">o_17</text>
+      <text x="580" y="238" text-anchor="middle" class="mono-s">r=1</text>
+    </g>
+    <g>
+      <rect x="634" y="192" width="80" height="62" rx="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1.3"/>
+      <text x="674" y="216" text-anchor="middle" class="note-s">o_18</text>
+      <text x="674" y="238" text-anchor="middle" class="mono-s">r=1</text>
+    </g>
   </g>
 
-  <g data-anim="2">
-    <rect x="540" y="50" width="140" height="200" fill="var(--warn,#e0a106)" fill-opacity="0.08"/>
-    <text x="610" y="240" text-anchor="middle" class="note">trust region</text>
-  </g>
+  <text x="106" y="270" text-anchor="middle" class="note-s t-muted">safe &#8212; near 1</text>
+  <text x="674" y="270" text-anchor="middle" class="note-s t-muted">safe &#8212; near 1</text>
+  <text x="486" y="278" text-anchor="middle" class="note-s t-warn" style="font-weight:700">blow-up zone</text>
+</g>
 
-  
-  <g data-anim="3">
-    
-    <path d="M470 110 L540 110 L750 250" fill="none"
-          stroke="var(--warn,#e0a106)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
-          class="viz-draw" style="--len:330"/>
-    <circle cx="610" cy="157" r="4.5" fill="var(--warn,#e0a106)" stroke="var(--surface,#fff)" stroke-width="1.4"/>
-  </g>
 
-  <g data-anim="4">
-    <line x1="540" y1="50" x2="540" y2="110" stroke="var(--warn,#e0a106)" stroke-width="1.1" stroke-dasharray="3 3" opacity="0.65"/>
-    <text x="505" y="92" text-anchor="middle" class="flat" fill="var(--warn,#e0a106)">flat</text>
-    <text x="505" y="116" text-anchor="middle" class="note">grad = 0</text>
-    <text x="505" y="129" text-anchor="middle" class="note">no extra</text>
-    <text x="505" y="142" text-anchor="middle" class="note">reward</text>
-  </g>
+<g data-anim="3">
+  <line x1="486" y1="258" x2="486" y2="300" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#pc-arrow)" color="var(--warn)"/>
 
-  
-  <g data-anim="5">
-    <text x="380" y="300" text-anchor="middle" class="ttl" fill="var(--accent)">L<tspan dy="-3" font-size="10">CLIP</tspan><tspan dy="3"> = min( r&#183;A,&#8201; clip(r, 1&#8722;&#949;, 1+&#949;)&#183;A )</tspan></text>
-    <text x="380" y="324" text-anchor="middle" class="note">the min makes a one-sided trust region: full credit moving r toward the rewarding side</text>
-    <text x="380" y="340" text-anchor="middle" class="note">up to 1+&#949; for good tokens, down to 1&#8722;&#949; for bad &#8212; then the gradient is clipped to zero.</text>
-  </g>
+  <rect x="270" y="304" width="432" height="86" rx="10" fill="var(--warn)" fill-opacity="0.10" stroke="var(--warn)" stroke-width="1.8"/>
+  <text x="486" y="330" text-anchor="middle" class="mono t-warn">r_t &#183; A_t&#8194;=&#8194;8&#8194;&#215;&#8194;(+1)&#8194;=&#8194;8</text>
+  <text x="486" y="352" text-anchor="middle" class="lbl-s t-warn">an 8&#215; larger update from ONE rare token</text>
+  <text x="486" y="370" text-anchor="middle" class="note-s">vs. a safe token: r_t &#183; A_t = 1 &#215; (+1) = 1 &#8212; a normal-size step</text>
+  <text x="486" y="386" text-anchor="middle" class="note-s" style="font-weight:700" fill="var(--warn)">this single token's step can destroy the policy</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="20" y1="406" x2="760" y2="406" stroke="var(--border-2)" stroke-width="1" opacity="0.6"/>
+
+  <rect x="60" y="424" width="660" height="56" rx="10" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="2"/>
+  <text x="390" y="450" text-anchor="middle" class="ttl t-acc">=&gt; this is why PPO must BOUND the ratio r_t</text>
+  <text x="390" y="470" text-anchor="middle" class="note-s">unclipped importance sampling lets one lucky/unlucky token dominate the whole update &#8212; see the clip, next</text>
+</g>
+
 </svg>
-<figcaption><b>The clip turns each token's objective into a one-sided trust region.</b> For a <b>good</b> token (A&gt;0) the surrogate rises with the ratio <b>r</b> until <b>1+&#949;</b>, then goes flat — boosting it further earns nothing. For a <b>bad</b> token (A&lt;0) it falls until <b>1&#8722;&#949;</b>, then flat — over-suppressing earns nothing. The flat shoulders zero out the gradient, so no single PPO step can exploit the importance ratio too far.</figcaption>
+<figcaption><b>Reusing rollouts for several gradient steps makes the data off-policy, and importance sampling is the fix &amp;mdash; but an unbounded ratio is dangerous.</b> Generation is expensive, so PPO takes several optimization steps on one batch of rollouts; after the first step each token must be reweighted by <b>r_t = &amp;pi;<sub>&amp;theta;</sub>/&amp;pi;<sub>old</sub></b>. Most tokens sit near r&#8776;1 (safe), but a token that was rare under the old policy can have its ratio blow up (e.g. r=8), and that large ratio times a large advantage can take a single catastrophic step that wrecks the policy &amp;mdash; the exact failure PPO's clip is built to prevent.</figcaption>
 </figure>
