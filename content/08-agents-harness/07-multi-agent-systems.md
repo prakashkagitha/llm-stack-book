@@ -28,6 +28,8 @@ $$
 
 For $p = 0.7$ and $N = 3$, this is $1 - 0.3^3 = 0.973$. The gain is largest when $p$ is moderate — for tasks that are either trivial ($p \approx 1$) or impossibly hard ($p \approx 0$), multiple agents add cost without benefit.
 
+{{fig:ensembling-gain-vs-p}}
+
 ## Topologies: How Agents Are Wired
 
 The wiring diagram is the first design decision. There are five canonical patterns; real systems combine them.
@@ -66,6 +68,8 @@ The practical significance: workflows are cheaper to run, easier to test, easier
 A common design pattern is to use a workflow as the outer shell (so the overall task is deterministic and auditable) and embed agents as the *leaves* of the workflow — the workers that handle unpredictable sub-tasks.
 
 We will return to this distinction when discussing frameworks, because LangGraph, AutoGen, CrewAI, and Swarm each stake out a different point on this spectrum.
+
+{{fig:workflow-vs-agent-control-flow-spectrum}}
 
 ## Orchestrator-Worker in Code
 
@@ -771,6 +775,8 @@ Adding agents is not free. Before designing a multi-agent system, run through th
     At 10,000 pipeline runs per day, that is USD 27/day or roughly USD 800/month just for this pipeline — before any tool calls or RAG retrieval costs. Contrast with a single well-prompted agent that might cost USD 0.0008/call at the same volume: USD 240/month. The multi-agent premium here is roughly 3.4×.
 
     The premium is justified only if the quality gain exceeds the cost. Measure both.
+
+{{fig:multi-agent-tax-compounding}}
 
 ## Agentic RL and Learning to Orchestrate
 

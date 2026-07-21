@@ -81,6 +81,8 @@ $$
 
 The key methodological point — and a frequent interview trap — is that **MIA success must be measured by true-positive rate at very low false-positive rate (TPR @ low FPR)**, plotted on a log-log ROC, *not* by average accuracy. A privacy attack that is correct 50.5% of the time on average but achieves 100× the chance TPR at 0.1% FPR is a serious breach for the few people in that high-confidence tail. Average accuracy hides exactly the worst-case leakage that matters.
 
+{{fig:mia-tpr-low-fpr-roc}}
+
 ### 2.3 Reconstruction and attribute inference
 
 Reconstruction is the strongest attack: recover an input *given partial knowledge*. In LLMs this shows up as **prompt-completion reconstruction** — give the model `"John Smith's social security number is "` and see if it completes the real digits. **Attribute inference** is the inverse: infer a sensitive attribute of a known individual from the model's behavior. These are the attacks that turn "the model memorized a document" into "the model deanonymized a person."
@@ -182,6 +184,8 @@ def canary_exposure(model, tokenizer, template, true_body, body_space_size,
 ```
 
 The audit recipe in production: insert a *family* of canaries (different formats, different duplication counts, placed at different points in training) and report the exposure distribution. Rising exposure on low-duplication canaries is your early-warning system that the pipeline memorizes too aggressively — *before* a real secret leaks.
+
+{{fig:canary-exposure-rank-ladder}}
 
 ---
 
@@ -314,6 +318,8 @@ def dp_sgd_step(model, batch, loss_fn, optimizer,
 #   # ... standard training loop ...
 #   eps = privacy_engine.get_epsilon(delta=1e-6)   # report the spent budget
 ```
+
+{{fig:dp-sgd-clip-then-noise}}
 
 #### The costs of DP-SGD, honestly
 

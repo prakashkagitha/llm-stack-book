@@ -221,6 +221,8 @@ For document editing or summarization, you can show two alternative completions 
 
 The statistical efficiency gain is substantial. Because each user sees both models, within-user variance is eliminated. Empirically, interleaving experiments have been reported to require on the order of 100x fewer user-sessions to detect the same effect size as a parallel A/B test for ranking systems (Radlinski & Craswell, "Optimized Interleaving for Online Retrieval Evaluation," WSDM 2013). The gain for LLM completions is product-dependent but typically a factor of 10–30x.
 
+{{fig:online-eval-interleaving-vs-ab-variance}}
+
 ```python
 from collections import defaultdict
 from typing import NamedTuple
@@ -293,6 +295,8 @@ $$
 
 where $\rho$ is the Pearson correlation between $Y$ and $X$. If $\rho = 0.7$ (typical for behavioral metrics), variance drops by $1 - 0.49 = 51\%$, and required sample size drops by half.
 
+{{fig:online-eval-cuped-variance-reduction}}
+
 ```python
 import numpy as np
 from scipy import stats
@@ -360,6 +364,8 @@ print(f"Delta: {result['delta']:.4f}, p={result['p_value']:.4f}, "
 ### Sequential testing (always-valid p-values)
 
 The temptation with slow experiments is to peek repeatedly at the p-value and stop early if $p < 0.05$. This inflates the false positive rate dramatically: peeking daily for 14 days at $\alpha = 0.05$ yields an actual false positive rate of roughly 20–25%.
+
+{{fig:online-eval-sequential-peeking}}
 
 **Sequential testing** (also called always-valid inference) provides a test statistic that can be evaluated at any time without type-I error inflation. The mSPRT (mixture Sequential Probability Ratio Test, Johari et al., 2017) and e-values framework guarantee that at any stopping time $\tau$:
 

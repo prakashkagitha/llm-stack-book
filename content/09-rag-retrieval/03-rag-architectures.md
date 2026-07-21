@@ -67,6 +67,8 @@ At query time, the query vector is compared against all indexed vectors, and the
 
 The ANN index returns approximate top-$k$ results, typically $k = 5$–$20$. A cross-encoder reranker (e.g., `bge-reranker-large`) then scores the query alongside each candidate chunk jointly, producing a more accurate relevance ranking. The top-$k'$ (typically $k' = 3$–$5$) chunks after reranking form the retrieved context.
 
+{{fig:bi-encoder-vs-cross-encoder}}
+
 ### Stage 5 — Generate
 
 The retrieved chunks are concatenated into a context block, formatted with a prompt template, and sent to the LLM. The model generates an answer grounded in the retrieved evidence.
@@ -316,6 +318,8 @@ if __name__ == "__main__":
 
 ## RAG Evaluation: RAGAS and the Three Metrics
 
+{{fig:ragas-metric-decomposition}}
+
 Measuring whether your RAG system is working requires disaggregating the pipeline into retrieval quality and generation quality. The RAGAS framework (Es et al., 2023) defines three core metrics that cover both concerns, all computable without human labels using an LLM-as-judge.
 
 ### Faithfulness
@@ -420,6 +424,8 @@ $$
 $$
 
 where $k = 60$ is a smoothing constant, $R_1$ is the BM25 ranking, and $R_2$ is the dense ranking.
+
+{{fig:hybrid-rrf-fusion}}
 
 **HyDE (Hypothetical Document Embedding)**, introduced by Gao et al. (2022), flips the retrieval problem: instead of embedding the short query directly, the LLM generates a hypothetical answer document, and that document is used as the retrieval query. Since the hypothetical document uses the same vocabulary and style as the corpus, the retrieval often improves substantially for queries where the question and answer have very different surface forms.
 

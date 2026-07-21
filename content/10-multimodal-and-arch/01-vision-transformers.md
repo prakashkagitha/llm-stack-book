@@ -337,6 +337,8 @@ ViT uses **learned** 1D positional embeddings by default — one embedding vecto
 
 **Resolution generalization** is a real problem: if you train ViT-B/16 on 224×224 and want to fine-tune on 384×384 (giving $N = 576$ patches), the learned position embeddings are the wrong size. The standard fix is **bicubic interpolation** of the position embedding grid — treating the 14×14 embedding table as a 2D feature map and resizing it to 24×24.
 
+{{fig:pos-embed-interpolation}}
+
 ```python
 import torch
 import torch.nn.functional as F
@@ -473,6 +475,8 @@ def zero_shot_classify(image_embed: torch.Tensor,
 
 CLIP's softmax-based InfoNCE loss has a subtle problem: computing $\log \sum_j e^{S_{kj}}$ requires gathering the full batch's logits to one device, which creates a communication bottleneck when training on thousands of GPUs. Zhai et al. (Google, "Sigmoid Loss for Language Image Pre-Training", 2023) proposed **SigLIP** to address this.
 
+{{fig:clip-siglip-contrastive-matrix}}
+
 Instead of a softmax over $N$ negatives, SigLIP applies a **sigmoid** binary cross-entropy to each pair independently:
 
 $$
@@ -506,6 +510,8 @@ DINOv2 models (ViT-S, ViT-B, ViT-L, ViT-G/14) produce exceptionally clean spatia
 ### Register Tokens
 
 Darcet et al. (Meta AI, "Vision Transformers Need Registers", 2023) discovered that ViT attention maps often contain **artifact tokens** — patches with anomalously high attention scores that don't correspond to semantic content. These arise when the model has too few positions to store global information, forcing it to "park" redundant global context in arbitrary high-norm patch tokens.
+
+{{fig:vit-register-tokens}}
 
 The fix is **register tokens**: $R$ extra learnable tokens (typically $R = 4$ or $8$) appended to the sequence before the Transformer blocks. They serve as scratch space for global reasoning:
 

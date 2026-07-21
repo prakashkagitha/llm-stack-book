@@ -1,0 +1,143 @@
+<figure class="viz" id="fig-obs-eval-in-production-async-sampling">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 740 880" role="img" aria-label="Diagram showing a synchronous critical path where the LLM service returns a response directly to the user, while a copy of each completed request drops into a sampling gate; only a small fraction passes into an asynchronous eval queue and LLM-as-judge, whose composite scores are written to a log/trace store that feeds dashboards and the data flywheel, never touching the user-facing response.">
+<defs>
+  <marker id="oe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#475569)"/>
+  </marker>
+  <marker id="oe-arrow-acc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="oe-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+  </marker>
+</defs>
+<style>
+  #fig-obs-eval-in-production-async-sampling text { font-family: var(--sans, sans-serif); fill: var(--ink-soft,#333); }
+  #fig-obs-eval-in-production-async-sampling .lane-lbl { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-obs-eval-in-production-async-sampling .title { font: 600 13px var(--sans,sans-serif); }
+  #fig-obs-eval-in-production-async-sampling .sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-eval-in-production-async-sampling .note { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-obs-eval-in-production-async-sampling .note-acc { font: 600 10.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-obs-eval-in-production-async-sampling .row-lbl { font: 400 10.5px var(--sans,sans-serif); }
+  #fig-obs-eval-in-production-async-sampling .chip { font: 600 9.5px var(--mono,monospace); }
+  #fig-obs-eval-in-production-async-sampling .boundary-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--muted,#888); }
+</style>
+
+
+<g data-anim="1">
+  <rect x="16" y="14" width="708" height="170" rx="10" fill="var(--surface,#faf8f3)" class="v-stroke" stroke-width="1.6"/>
+  <text x="36" y="34" class="lane-lbl">SYNCHRONOUS &#8212; CRITICAL PATH</text>
+
+  
+  <rect x="36" y="52" width="110" height="52" rx="8" class="v-fill v-stroke" stroke-width="1.4"/>
+  <text x="91" y="83" text-anchor="middle" class="title">User</text>
+
+  
+  <rect x="256" y="52" width="180" height="52" rx="8" class="v-fill v-stroke" stroke-width="1.6"/>
+  <text x="346" y="83" text-anchor="middle" class="title">LLM Service</text>
+
+  
+  <rect x="546" y="52" width="140" height="52" rx="8" class="v-fill v-stroke" stroke-width="1.4"/>
+  <text x="616" y="83" text-anchor="middle" class="title">Response</text>
+
+  
+  <line x1="146" y1="78" x2="252" y2="78" stroke="var(--ink-soft,#333)" stroke-width="2.6" marker-end="url(#oe-arrow)"/>
+  <line x1="436" y1="78" x2="542" y2="78" stroke="var(--ink-soft,#333)" stroke-width="2.6" marker-end="url(#oe-arrow)"/>
+
+  
+  <path d="M 616 104 C 616 150, 91 150, 91 104" fill="none" stroke="var(--ink-soft,#333)" stroke-width="2.6" marker-end="url(#oe-arrow)"/>
+  <text x="378" y="172" text-anchor="middle" class="note-acc">returns immediately &#8212; never waits for eval</text>
+</g>
+
+
+<g data-anim="2">
+  <line x1="346" y1="184" x2="346" y2="238" stroke="var(--v-muted,#888)" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#oe-arrow-muted)"/>
+  <text x="360" y="214" class="note">copy of each completed request</text>
+
+  
+  <rect x="120" y="240" width="480" height="196" rx="10" fill="var(--surface,#faf8f3)" class="v-stroke" stroke-width="1.6"/>
+  <text x="360" y="262" text-anchor="middle" class="title">SAMPLING GATE</text>
+  <text x="360" y="277" text-anchor="middle" class="sub">should_evaluate(record, policy)</text>
+
+  
+  
+  <rect x="150" y="290" width="170" height="14" rx="3" class="v-accent"/>
+  <text x="332" y="301" class="row-lbl"><tspan font-weight="700">100%</tspan> of failures / safety-flagged</text>
+
+  
+  <rect x="150" y="316" width="51" height="14" rx="3" class="v-accent"/>
+  <text x="332" y="327" class="row-lbl"><tspan font-weight="700">~30%</tspan> of new prompt-template traffic</text>
+
+  
+  <rect x="150" y="342" width="85" height="14" rx="3" class="v-accent"/>
+  <text x="332" y="353" class="row-lbl"><tspan font-weight="700">~50%</tspan> of previously low-scoring</text>
+
+  
+  <rect x="150" y="368" width="16" height="14" rx="3" class="v-accent"/>
+  <text x="332" y="379" class="row-lbl"><tspan font-weight="700">~5%</tspan> baseline random</text>
+
+  <text x="360" y="422" text-anchor="middle" class="sub">policy from production_eval_sampler.py</text>
+</g>
+
+
+<g data-anim="3">
+  <path d="M 600 338 C 650 338, 650 338, 700 338" fill="none" stroke="var(--v-muted,#888)" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+  <path d="M 660 333 L 700 338 L 660 343 z" fill="var(--v-muted,#888)" opacity="0.55"/>
+  <text x="712" y="312" text-anchor="end" class="note">not sampled</text>
+  <text x="712" y="328" text-anchor="end" class="note">&#8212; dropped</text>
+  <text x="712" y="358" text-anchor="end" class="note" font-style="italic">(most traffic)</text>
+</g>
+
+
+<g data-anim="4">
+  <line x1="360" y1="436" x2="360" y2="472" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#oe-arrow-acc)"/>
+  <text x="374" y="458" class="note-acc">sampled</text>
+
+  <rect x="60" y="474" width="620" height="248" rx="10" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="370" y="496" text-anchor="middle" class="boundary-lbl">ASYNCHRONOUS &#8212; SEPARATE PROCESS / WORKER POOL (OFF THE CRITICAL PATH)</text>
+
+  
+  <rect x="94" y="500" width="118" height="34" rx="5" class="v-fill v-stroke" stroke-width="1.2" transform="translate(10,58)"/>
+  <rect x="94" y="500" width="118" height="34" rx="5" class="v-fill v-stroke" stroke-width="1.2" transform="translate(5,50)"/>
+  <rect x="94" y="500" width="118" height="34" rx="5" class="v-fill v-stroke" stroke-width="1.4" transform="translate(0,42)"/>
+  <text x="153" y="563" text-anchor="middle" class="title" font-size="11.5">async eval queue</text>
+
+  <line x1="222" y1="566" x2="290" y2="566" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#oe-arrow-acc)"/>
+
+  
+  <rect x="292" y="512" width="220" height="176" rx="8" class="v-fill v-stroke" stroke-width="1.6"/>
+  <text x="402" y="534" text-anchor="middle" class="title">JUDGE</text>
+  <text x="402" y="549" text-anchor="middle" class="sub">LLM-as-judge (gpt-4o-mini, T=0)</text>
+
+  <rect x="310" y="560" width="80" height="24" rx="12" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="350" y="575" text-anchor="middle" class="chip">faithfulness</text>
+  <rect x="396" y="560" width="70" height="24" rx="12" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="431" y="575" text-anchor="middle" class="chip">relevance</text>
+  <rect x="310" y="592" width="70" height="24" rx="12" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="345" y="607" text-anchor="middle" class="chip">fluency</text>
+
+  <line x1="402" y1="616" x2="402" y2="638" stroke="var(--accent,#c15b39)" stroke-width="1.6" marker-end="url(#oe-arrow-acc)"/>
+  <rect x="342" y="640" width="120" height="26" rx="13" class="v-accent"/>
+  <text x="402" y="657" text-anchor="middle" class="chip" fill="var(--surface,#faf8f3)">composite</text>
+</g>
+
+
+<g data-anim="5">
+  <path d="M 402 666 L 402 746" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#oe-arrow-acc)"/>
+  <text x="420" y="682" class="note-acc">composite score</text>
+  <text x="420" y="696" class="note-acc">written back</text>
+
+  <rect x="150" y="748" width="440" height="56" rx="8" fill="var(--surface,#faf8f3)" class="v-stroke" stroke-width="1.6"/>
+  <text x="370" y="770" text-anchor="middle" class="title">LOG / TRACE STORE</text>
+  <text x="370" y="786" text-anchor="middle" class="sub">attached by trace ID</text>
+
+  <line x1="370" y1="804" x2="370" y2="826" stroke="var(--ink-soft,#333)" stroke-width="1.8" marker-end="url(#oe-arrow)"/>
+
+  <rect x="150" y="828" width="440" height="34" rx="8" class="v-fill v-stroke" stroke-width="1.2"/>
+  <text x="370" y="850" text-anchor="middle" class="title" font-size="12">dashboards + data flywheel</text>
+</g>
+
+</svg>
+<figcaption><b>Evaluation runs off the request's critical path.</b> The user gets a response the instant the LLM service returns it; only a strategically sampled copy — every failure, ~30% of new prompt-template traffic, ~50% of previously low-scoring requests, ~5% baseline random — is diverted into an asynchronous queue where an LLM-as-judge scores it, writing the composite result back to the log/trace store for dashboards and the data flywheel, never the user.</figcaption>
+</figure>

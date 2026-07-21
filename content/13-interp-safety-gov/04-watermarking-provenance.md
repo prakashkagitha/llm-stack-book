@@ -20,6 +20,8 @@ Three desiderata tension against each other:
 
 These three cannot all be maximized simultaneously, and the tradeoffs define the design space.
 
+{{fig:wmprov-asymmetry-inversion}}
+
 ---
 
 ## Statistical Text Watermarking: The Green-List Scheme
@@ -56,6 +58,8 @@ A threshold $z^* \approx 4$ corresponds to a false-positive rate on the order of
     - At a threshold of $z^* = 4.0$, this text is flagged with overwhelming confidence.
 
     Now suppose an adversary randomly replaces 30% of tokens via paraphrase. Empirically, $\approx 50\%$ of replaced tokens will land in the green list (random chance), so $g_{\text{post}} \approx 145 \times 0.7 + 100 \times 0.3 = 101.5 + 30 = 131.5$. $z \approx (131.5 - 100)/7.07 \approx 4.45$ — still well above threshold. This illustrates why moderate paraphrase attacks are insufficient.
+
+{{fig:wmprov-greenlist-mechanism}}
 
 ### Context Hashing and Key Security
 
@@ -333,6 +337,8 @@ A watermark that fails under modest editing provides only false assurance. The m
 The *context-window hash* choice ($h$, the number of preceding tokens hashed) determines how an insertion/deletion attack propagates. With $h=1$ (Markov-1), inserting one token shifts the green list for only one future token. With $h=4$, it shifts four. Sliding-window detection (try all possible insertion offsets) partially recovers.
 
 Adaptive adversaries who can query the model repeatedly — and observe which tokens land in the green list — can, in principle, reconstruct the green list and mask it. This motivates *multi-bit and multi-key* watermarks: rather than a single binary signal, embed a message identifier drawn from a space of $2^{32}$ or more possible keys, so that cracking one key does not transfer.
+
+{{fig:wmprov-detection-separation}}
 
 ---
 

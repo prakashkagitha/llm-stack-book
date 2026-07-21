@@ -315,6 +315,8 @@ class LLMLogRecord(BaseModel):
 
 Offline evaluation with held-out benchmarks tells you how a model performs on a fixed distribution. Production evaluation tells you how it performs on your actual users, who are always stranger than your benchmark dataset. The two must both be part of your release process.
 
+{{fig:obs-eval-in-production-async-sampling}}
+
 ### Sampling strategy
 
 You cannot judge every response with an LLM-as-judge (it is expensive and adds latency). Instead, sample strategically:
@@ -414,6 +416,8 @@ For a deep dive into LLM-as-judge methodology and bias mitigation, see [LLM-as-a
 ## Drift Detection
 
 A model that performed well at launch can degrade silently as user behaviour evolves, upstream data sources change, or the base model provider silently updates their serving stack. There are three types of drift to monitor.
+
+{{fig:obs-drift-detection-triptych}}
 
 ### Input drift (covariate shift)
 
@@ -649,6 +653,8 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
 
 !!! tip "Practitioner tip: use composite burn-rate alerts, not fixed thresholds"
     Fixed thresholds (alert if score < 0.7) generate alarm fatigue when traffic is noisy. Instead, compute a *burn rate*: if your error budget allows 1% of responses to be low-quality, alert when the 1-hour burn rate exceeds 2x the budget rate. This is the SRE error-budget model applied to LLM quality, and it dramatically reduces false positives while catching genuine degradations faster.
+
+{{fig:obs-burn-rate-vs-fixed-threshold}}
 
 !!! sota "State of the Art & Resources (2026)"
     LLMOps observability has rapidly matured from ad-hoc logging into a principled discipline: OpenTelemetry GenAI semantic conventions now provide a vendor-neutral standard for LLM spans and metrics, while purpose-built platforms (Langfuse, Arize Phoenix, MLflow Tracing) offer production-grade trace storage, eval pipelines, and drift monitoring. The key challenge in 2025–2026 is scaling these practices to multi-agent systems with complex, nested execution graphs.

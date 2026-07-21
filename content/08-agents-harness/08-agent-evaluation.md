@@ -352,6 +352,8 @@ for k in [1, 2, 4, 8]:
 # pass@8: 0.737
 ```
 
+{{fig:ageval-pass-at-k}}
+
 ## Harness Effects on Scores
 
 The harness — the scaffolding around the model — is not a neutral measurement instrument. It is a design choice that can swing scores dramatically. This section catalogs the main harness dimensions and their approximate effects.
@@ -383,6 +385,8 @@ Instruction format affects whether the model produces valid `git diff` output, u
 !!! warning "Common pitfall: reporting scores without harness disclosure"
 
     A leaderboard entry that says "Model X achieves 35% on SWE-bench Verified" is nearly uninterpretable without knowing the harness. Always report: (1) oracle vs. retrieved file localization, (2) maximum iterations, (3) tools available, (4) scaffold name and version. Without these, comparison across entries is meaningless.
+
+{{fig:ageval-harness-swing}}
 
 ## Reproducibility and Variance
 
@@ -473,6 +477,8 @@ result = mcnemar_test(outcomes_a, outcomes_b)
 print(result)
 # {"A_only": 30, "B_only": 45, "chi2": ..., "p_value": ..., "significant_at_05": ...}
 ```
+
+{{fig:ageval-score-noise-band}}
 
 ## Contamination in Agent Benchmarks
 

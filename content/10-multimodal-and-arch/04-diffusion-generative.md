@@ -283,6 +283,8 @@ where $w$ is the guidance scale (common values: 3–15). Larger $w$ increases ad
 
 Intuitively, $w=0$ is unconditioned, $w=1$ is the pure conditional model, and $w>1$ *extrapolates* beyond the conditional distribution, sharpening the conditioning signal. This extrapolation is why CFG boosts both quality and prompt adherence simultaneously, and also why it can produce slightly unrealistic outputs at large guidance scales.
 
+{{fig:cfg-extrapolation-vectors}}
+
 !!! interview "Interview Corner"
     **Q:** A colleague proposes increasing the classifier-free guidance scale from 7 to 20 to get better text alignment in a text-to-image model. What are the trade-offs, and what would you recommend instead?
 
@@ -416,6 +418,8 @@ This is *Rectified Flow* (Liu et al.) in discrete language: training pairs are $
 
 Flow matching is now the backbone of Stable Diffusion 3, Flux.1, and many audio generation models.
 
+{{fig:flow-vs-diffusion-paths}}
+
 ```python
 def flow_matching_loss(model: nn.Module, x1: torch.Tensor):
     """
@@ -498,6 +502,8 @@ This gives parallel generation, a key advantage over autoregressive models which
 | Controllability | Via prompting | Easier arbitrary-region infilling |
 
 Diffusion LMs remain competitive with AR on unconditional text generation and controlled infilling, but for tasks requiring long-range consistency (e.g., long-form reasoning), autoregressive models still hold an edge. However, diffusion's native support for infilling makes it attractive for code editing, style transfer, and constrained generation scenarios (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)).
+
+{{fig:masked-diffusion-vs-ar-decoding}}
 
 ## Relevance for LLM Engineers
 

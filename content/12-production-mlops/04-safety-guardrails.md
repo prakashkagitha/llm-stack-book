@@ -58,6 +58,8 @@ For a *safety* filter, a missed harmful request (a false negative) is far costli
 
     Here $\tau=0.5$ wins on $F_2$ *despite* lower recall, because the precision collapse at $\tau=0.3$ floods reviewers with false alarms. The point is that you must compute this on *your* data rather than trusting the 0.5 default — and re-compute it whenever the input distribution shifts (Section 9.2).
 
+{{fig:guardrails-threshold-precision-recall}}
+
 ```python
 # input_classifier.py
 # Minimal topic/policy classifier using a fine-tuned HuggingFace encoder.
@@ -558,6 +560,8 @@ Alignment at training time — covered in [Constitutional AI, RLAIF & Self-Impro
 
 This is expensive but produces high-quality, context-sensitive refusals and corrections. It is suited for low-volume, high-stakes applications (legal, medical, mental health) rather than high-throughput consumer products.
 
+{{fig:guardrails-constitutional-revision-loop}}
+
 ```python
 # constitutional_revision.py
 # Two-pass Constitutional AI revision at inference time.
@@ -728,6 +732,8 @@ Not all content categories carry the same stakes. A pragmatic architecture uses 
 | High | Self-harm, targeted harassment | Block + offer crisis resources | 350M encoder |
 | Medium | Explicit adult content | Block in general context; allow in age-verified context | 110M encoder |
 | Low | Off-topic for the application | Redirect, not block | Rule-based |
+
+{{fig:guardrails-cascade-confidence-routing}}
 
 !!! interview "Interview Corner"
     **Q:** You are designing a content moderation system for a large LLM-powered consumer product. A single Llama Guard 8B model has 99% recall on your harm benchmark but adds 80 ms to every request's latency. How would you redesign the system to maintain safety while meeting a 20 ms budget for guardrailing?

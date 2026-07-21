@@ -79,6 +79,10 @@ $$
 \boxed{\;\Delta = \frac{(v_* - W_0 k_*)\,\big(C^{-1} k_*\big)^\top}{\big(C^{-1} k_*\big)^\top k_*}\;}
 $$
 
+
+{{fig:kedit-rank-one-associative-memory}}
+
+
 This is **rank one** — an outer product of two vectors — so it costs $d \times d_{\text{mlp}}$ extra storage at most and is trivially invertible (subtract it to undo the edit). The numerator's left factor $(v_* - W_0 k_*)$ is the *residual* we need to add at the key; the right factor $C^{-1} k_*$ steers the update along the direction that is least used by other keys (it is large where $C$ is small), which is precisely what minimizes collateral damage.
 
 !!! example "Worked example: the magnitudes of one edit"
@@ -199,6 +203,10 @@ A trivial editor that hard-codes the output token maxes efficacy and destroys ge
 
 The deepest failure mode is the **ripple effect** (Cohen et al., *Evaluating the Ripple Effects of Knowledge Editing*, 2023). Knowledge is relational. If you edit "*Lionel Messi plays for* → *Inter Miami*", a correct world model implies a cascade of consequents: *Messi's league is now MLS*, *Messi's country of work is now the USA*, *the player wearing #10 for Inter Miami is Messi*. A surgical token-level edit changes the head fact but leaves the **2-hop and multi-hop consequences inconsistent** — the model will happily say Messi plays for Inter Miami *and* that he plays in the Spanish league. The RippleEdits benchmark formalizes this with logical-implication, composition, and subject-aliasing tests. The brutal lesson: a single rank-one bump cannot install a *belief*; it installs an *association*, and the model's other associations don't update to stay consistent.
 
+
+{{fig:kedit-ripple-effect-association-not-belief}}
+
+
 ### 5.3 Forgetting and drift at scale
 
 As Section 3 foreshadowed, editing **accumulates damage**. Empirically, after enough sequential edits a model's general benchmark scores (perplexity, downstream accuracy) degrade — sometimes sharply, a "model collapse" cliff. The mechanisms: (a) each edit's $\Delta$ slightly perturbs preserved keys despite the $C^{-1}$ steering; (b) the covariance statistics go stale; (c) edits interfere with each other in shared parameter space. This is the editing-specific face of **catastrophic forgetting** — see the continual-learning treatment in [Continual & Domain-Adaptive Pretraining](../03-pretraining/16-continual-pretraining.html). Null-space projection (AlphaEdit) and memory adapters (GRACE/WISE) are the field's two main answers.
@@ -286,6 +294,10 @@ The decisive test is adversarial, not behavioral. Three probes that routinely ca
 1. **Membership inference (MIA)**: can an attacker tell, from loss/perplexity, that $x \in D_f$ was once in training? If forget-set perplexity is still anomalously low, the data's fingerprint remains. (See [Privacy, Memorization & Differential Privacy for LLMs](../13-interp-safety-gov/03-privacy-memorization-dp.html).)
 2. **Relearning / fine-tuning attacks**: a few gradient steps on a *tiny* sample of the forgotten data. If the model snaps back to full recall almost instantly, the knowledge was suppressed, not removed — a damning result, since true removal should require relearning from near-scratch.
 3. **Jailbreak / paraphrase elicitation**: ask in another language, via role-play, or with an indirect prompt. Output-only unlearning leaks under these constantly.
+
+
+{{fig:kedit-unlearn-suppress-vs-remove}}
+
 
 !!! interview "Interview Corner"
     **Q:** Your team ran gradient-ascent unlearning to comply with a deletion request. The forget-set perplexity went up and the model refuses the direct question. Legal asks: "Is the data gone?" What do you tell them, and what tests do you run?
