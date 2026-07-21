@@ -1,6 +1,6 @@
 <figure class="viz" id="fig-trl-vllm-colocate-rollout-flow">
 <button class="viz-replay" type="button">↻ replay</button>
-<svg viewBox="0 0 900 480" role="img" aria-label="TRL vLLM backend: Training Process (GPU 0-3) on the left exchanges weights and prompts with vLLM Server (GPU 4-7) on the right through four numbered steps, then loops back.">
+<svg viewBox="0 0 900 610" role="img" aria-label="TRL vLLM backend: Training Process (GPU 0-3) on the left exchanges weights and prompts with vLLM Server (GPU 4-7) on the right through four numbered steps, then loops back. A timeline strip below shows vLLM generating rollouts for step N at the same wall-clock time as the training GPUs back-propagating step N-1.">
 <defs>
   <marker id="vcr-arr-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
     <path d="M0,1 L9,5 L0,9 Z" fill="var(--accent,#f59e0b)"/>
@@ -10,6 +10,9 @@
   </marker>
   <marker id="vcr-arr-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
     <path d="M0,1 L9,5 L0,9 Z" fill="var(--ink-soft,#64748b)"/>
+  </marker>
+  <marker id="vcr-arr-time" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#94a3b8)"/>
   </marker>
 </defs>
 <style>
@@ -21,6 +24,11 @@
   #fig-trl-vllm-colocate-rollout-flow .arr-lbl   { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
   #fig-trl-vllm-colocate-rollout-flow .callout   { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
   #fig-trl-vllm-colocate-rollout-flow .self-lbl  { font: 400 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-trl-vllm-colocate-rollout-flow .tl-lane   { font: 700 11.5px var(--sans,sans-serif); fill: var(--ink-soft,#334155); }
+  #fig-trl-vllm-colocate-rollout-flow .tl-tile   { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-trl-vllm-colocate-rollout-flow .tl-head   { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-trl-vllm-colocate-rollout-flow .tl-time   { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#94a3b8); }
+  #fig-trl-vllm-colocate-rollout-flow .pill-txt  { font: 700 9.5px var(--sans,sans-serif); fill: #12261c; }
 
   /* packet animation keyframes */
   @keyframes vcr-pkt-a {
@@ -139,18 +147,19 @@
 <rect x="590" y="328" width="268" height="72" rx="7"
       fill="var(--good,#2f9e6e)" fill-opacity="0.10"
       stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
-<text x="724" y="350" text-anchor="middle" class="callout" style="fill:var(--good,#2f9e6e);font-weight:600;font-size:10px">OVERLAP</text>
-<text x="724" y="366" text-anchor="middle" class="callout">vLLM generates while training GPUs</text>
-<text x="724" y="380" text-anchor="middle" class="callout">run back-prop  ->  1.5-2x wall-clock</text>
-<text x="724" y="394" text-anchor="middle" class="callout">throughput improvement</text>
+<rect x="686" y="336" width="76" height="17" rx="8.5" fill="var(--good,#2f9e6e)"/>
+<text x="724" y="348" text-anchor="middle" class="pill-txt">OVERLAP</text>
+<text x="724" y="368" text-anchor="middle" class="callout">vLLM generates while training GPUs</text>
+<text x="724" y="382" text-anchor="middle" class="callout">run back-prop  -&gt;  1.5-2x wall-clock</text>
+<text x="724" y="396" text-anchor="middle" class="callout">throughput improvement</text>
 
 
 
 
-<line x1="442" y1="120" x2="568" y2="128" stroke="var(--accent,#f59e0b)" stroke-width="2"
+<line x1="442" y1="118" x2="568" y2="122" stroke="var(--accent,#f59e0b)" stroke-width="2"
       marker-end="url(#vcr-arr-r)"/>
-<text x="505" y="98" text-anchor="middle" class="arr-lbl" style="fill:var(--accent,#f59e0b)">push updated weights</text>
-<text x="505" y="109" text-anchor="middle" class="arr-lbl">(shared mem / RDMA)</text>
+<text x="505" y="100" text-anchor="middle" class="arr-lbl" style="fill:var(--accent,#f59e0b)">push updated weights</text>
+<text x="505" y="148" text-anchor="middle" style="font:400 9px var(--sans,sans-serif);fill:var(--muted,#94a3b8)">(shared mem / RDMA)</text>
 
 
 <line x1="442" y1="186" x2="568" y2="168" stroke="var(--accent,#f59e0b)" stroke-width="2"
@@ -164,9 +173,9 @@
 
 
 
-<rect class="pkt-a" x="446" y="113" width="44" height="16" rx="4"
+<rect class="pkt-a" x="446" y="111" width="44" height="16" rx="4"
       fill="var(--accent,#f59e0b)" fill-opacity="0.95"/>
-<text class="pkt-a" x="468" y="125" text-anchor="middle"
+<text class="pkt-a" x="468" y="123" text-anchor="middle"
       style="font:600 9px var(--sans,sans-serif);fill:var(--surface-3,#f1f5f9)">weights</text>
 
 
@@ -180,6 +189,58 @@
       fill="var(--accent-2,#3b82f6)" fill-opacity="0.95"/>
 <text class="pkt-c" x="546" y="257" text-anchor="middle"
       style="font:600 9px var(--sans,sans-serif);fill:var(--surface-3,#f1f5f9)">output</text>
+
+
+
+<text x="26" y="452" class="tl-head">Wall-clock timeline</text>
+
+
+<rect x="393" y="438" width="241" height="136" rx="10"
+      fill="var(--good,#2f9e6e)" fill-opacity="0.07"
+      stroke="var(--good,#2f9e6e)" stroke-width="1.4" stroke-dasharray="5,4"/>
+<rect x="477" y="444" width="74" height="16" rx="8" fill="var(--good,#2f9e6e)"/>
+<text x="514" y="456" text-anchor="middle" class="pill-txt">OVERLAP</text>
+
+
+<text x="26" y="489" class="tl-lane">train GPUs</text>
+<text x="26" y="555" class="tl-lane">vLLM server</text>
+
+
+<rect x="154" y="468" width="225" height="34" rx="6"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.14" stroke="var(--accent,#f59e0b)" stroke-width="1.2"/>
+<text x="266.5" y="489" text-anchor="middle" class="tl-tile" style="fill:var(--accent,#f59e0b)">back-prop N-2</text>
+
+<rect x="401" y="468" width="225" height="34" rx="6"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.22" stroke="var(--accent,#f59e0b)" stroke-width="1.6"/>
+<text x="513.5" y="489" text-anchor="middle" class="tl-tile" style="fill:var(--accent,#f59e0b)">back-prop N-1</text>
+
+<rect x="648" y="468" width="225" height="34" rx="6"
+      fill="var(--accent,#f59e0b)" fill-opacity="0.14" stroke="var(--accent,#f59e0b)" stroke-width="1.2"/>
+<text x="760.5" y="489" text-anchor="middle" class="tl-tile" style="fill:var(--accent,#f59e0b)">back-prop N</text>
+
+
+<line x1="514" y1="502" x2="514" y2="534" stroke="var(--good,#2f9e6e)" stroke-width="1.6" stroke-dasharray="3,3"/>
+<circle cx="514" cy="502" r="2.4" fill="var(--good,#2f9e6e)"/>
+<circle cx="514" cy="534" r="2.4" fill="var(--good,#2f9e6e)"/>
+
+
+<rect x="154" y="534" width="225" height="34" rx="6"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent-2,#3b82f6)" stroke-width="1.2"/>
+<text x="266.5" y="555" text-anchor="middle" class="tl-tile" style="fill:var(--accent-2,#3b82f6)">gen rollouts N-1</text>
+
+<rect x="401" y="534" width="225" height="34" rx="6"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.22" stroke="var(--accent-2,#3b82f6)" stroke-width="1.6"/>
+<text x="513.5" y="555" text-anchor="middle" class="tl-tile" style="fill:var(--accent-2,#3b82f6)">gen rollouts N</text>
+
+<rect x="648" y="534" width="225" height="34" rx="6"
+      fill="var(--accent-2,#3b82f6)" fill-opacity="0.14" stroke="var(--accent-2,#3b82f6)" stroke-width="1.2"/>
+<text x="760.5" y="555" text-anchor="middle" class="tl-tile" style="fill:var(--accent-2,#3b82f6)">gen rollouts N+1</text>
+
+
+<line x1="154" y1="588" x2="330" y2="588" stroke="var(--muted,#94a3b8)" stroke-width="1.5" marker-end="url(#vcr-arr-time)"/>
+<text x="340" y="592" class="tl-time">time</text>
+<text x="626" y="592" text-anchor="end" class="tl-time">same column = same wall-clock slot</text>
+
 </svg>
-<figcaption><b>TRL's vLLM backend decouples generation from gradient computation.</b> After each optimizer step, the trainer pushes updated weights to the vLLM server (step 1), sends a new prompt batch (step 2), and receives completions back (step 3) while the training GPUs simultaneously run back-propagation on the previous batch (step 4). This overlap of generation and training delivers a 1.5–2x wall-clock throughput improvement over the default colocated mode.</figcaption>
+<figcaption><b>TRL's vLLM backend decouples generation from gradient computation.</b> After each optimizer step, the trainer pushes updated weights to the vLLM server (step 1), sends a new prompt batch (step 2), and receives completions back (step 3) while the training GPUs simultaneously run back-propagation on the previous batch (step 4). The timeline below makes the overlap concrete: the highlighted column shows vLLM generating rollouts for step N in the same wall-clock slot that the training GPUs spend back-propagating step N-1, which is what turns a strictly sequential generate-then-train loop into the 1.5-2x throughput gain over colocated mode.</figcaption>
 </figure>
