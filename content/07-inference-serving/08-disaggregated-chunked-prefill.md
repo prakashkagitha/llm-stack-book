@@ -28,6 +28,8 @@ For a 70B parameter model in BF16 (140 GB of weights), each decode step reads ro
 
 The key insight: **prefill wants to be compute-bound and loves big batches; decode wants high bandwidth and is bottlenecked by memory, not FLOPs.** These constraints point toward different hardware configurations: fewer, faster GPUs (or GPUs with high TFLOP/s) for prefill, and more, bandwidth-rich GPUs for decode.
 
+{{fig:prefill-decode-reuse-contrast}}
+
 ### The Interference Problem
 
 Now imagine both phases run on the same GPU pool under a continuous batching scheduler (see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)). Every iteration of the inference engine processes a mixed batch: some sequences are in prefill, others are in decode. This mixing has two serious consequences:

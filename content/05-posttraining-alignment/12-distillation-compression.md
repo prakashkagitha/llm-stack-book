@@ -14,6 +14,8 @@ Consider a cat-vs-dog classifier. A hard label says `cat = 1, dog = 0`. But a we
 
 The same principle applies to language models. When a teacher assigns probability 0.3 to "Paris", 0.2 to "London", and 0.15 to "Berlin" as the next token after "The capital of France is", the student learns a richer, more structured representation than it would from the hard label "Paris" alone.
 
+{{fig:distill-soft-targets-temperature}}
+
 ### The KD Loss
 
 For a language model the per-token distillation loss is the Kullback-Leibler divergence between the teacher's soft distribution $q$ and the student's distribution $p$:

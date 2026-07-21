@@ -101,6 +101,8 @@ All three must be present simultaneously for a complete exfiltration attack. Eac
 
 Jailbreaks target a different layer: the model's *trained behavior* rather than its context framing. The goal is to elicit outputs that the model's fine-tuning or RLHF training was designed to prevent.
 
+{{fig:injsec-injection-vs-jailbreak}}
+
 ### Taxonomy of Jailbreak Strategies
 
 | Category | Mechanism | Example |

@@ -1,0 +1,145 @@
+<figure class="viz" id="fig-tool-call-anatomy">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 760 626" role="img" aria-label="Diagram showing tool schemas live in the context the model reads, the tool call is text the model writes conditioned on that schema, and the harness extracts the call, runs the tool, and appends the result back into context.">
+<defs>
+  <marker id="tca-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--ink-soft,#333)"/>
+  </marker>
+  <marker id="tca-arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 1 L9 5 L0 9 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+<style>
+  #fig-tool-call-anatomy text { fill: var(--ink-soft,#333); font: 400 11px var(--sans,sans-serif); }
+  #fig-tool-call-anatomy .zone-title { font: 700 13px var(--sans,sans-serif); }
+  #fig-tool-call-anatomy .blk-title  { font: 700 12px var(--sans,sans-serif); text-anchor: middle; }
+  #fig-tool-call-anatomy .blk-body   { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+  #fig-tool-call-anatomy .mono       { font: 400 10px var(--mono,monospace); }
+  #fig-tool-call-anatomy .mono-lg    { font: 400 11.5px var(--mono,monospace); }
+  #fig-tool-call-anatomy .edge-lbl   { font: 600 11px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-tool-call-anatomy .step-lbl   { font: 500 10.5px var(--sans,sans-serif); }
+  #fig-tool-call-anatomy .foot       { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+
+  @keyframes tca-fade { from { opacity:0; transform:translateY(6px);} to { opacity:1; transform:translateY(0);} }
+  #fig-tool-call-anatomy [data-anim] { animation: tca-fade .55s ease-out both; }
+  #fig-tool-call-anatomy [data-anim="1"] { animation-delay: 0s; }
+  #fig-tool-call-anatomy [data-anim="2"] { animation-delay: .35s; }
+  #fig-tool-call-anatomy [data-anim="3"] { animation-delay: .7s; }
+  #fig-tool-call-anatomy [data-anim="4"] { animation-delay: 1.05s; }
+  #fig-tool-call-anatomy [data-anim="5"] { animation-delay: 1.4s; }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-tool-call-anatomy [data-anim] { animation: none !important; opacity:1 !important; transform:none !important; }
+  }
+</style>
+
+<rect x="10" y="10" width="740" height="600" rx="12"
+      fill="var(--surface,#fafafa)" fill-opacity="0.4"
+      stroke="var(--border-2,#ccc)" stroke-width="1.5"/>
+
+
+<g data-anim="1">
+  <rect x="26" y="24" width="708" height="230" rx="10"
+        fill="var(--surface-3,#e8e8f0)" fill-opacity="0.45"
+        stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="44" y="44" class="zone-title">CONTEXT — input the model READS (never edits)</text>
+
+  
+  <rect x="44" y="58" width="170" height="180" rx="8"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+  <text x="129" y="78" class="blk-title">system prompt</text>
+  <text x="129" y="100" text-anchor="middle" class="blk-body">"You are a helpful</text>
+  <text x="129" y="114" text-anchor="middle" class="blk-body">assistant. Use tools</text>
+  <text x="129" y="128" text-anchor="middle" class="blk-body">when they help answer</text>
+  <text x="129" y="142" text-anchor="middle" class="blk-body">the user's request."</text>
+
+  
+  <rect x="232" y="58" width="300" height="180" rx="8"
+        fill="var(--accent,#c15b39)" fill-opacity="0.10"
+        stroke="var(--accent,#c15b39)" stroke-width="2"/>
+  <text x="382" y="78" class="blk-title" fill="var(--accent,#c15b39)">TOOL SCHEMAS</text>
+  <g class="mono">
+    <text x="248" y="97">name:</text>
+    <text x="258" y="111">get_current_weather</text>
+    <text x="248" y="127">description:</text>
+    <text x="258" y="141">"Retrieve current</text>
+    <text x="258" y="153"> weather for a city"</text>
+    <text x="248" y="169">parameters: {</text>
+    <text x="258" y="183">location: string,</text>
+    <text x="258" y="197">units: enum[c,f],</text>
+    <text x="258" y="211">required: [location]</text>
+    <text x="248" y="225">}</text>
+  </g>
+
+  
+  <rect x="550" y="58" width="166" height="180" rx="8"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+  <text x="633" y="78" class="blk-title">conversation so far</text>
+  <text x="633" y="98" text-anchor="middle" class="blk-body">user: "weather in</text>
+  <text x="633" y="112" text-anchor="middle" class="blk-body">Tokyo?"</text>
+  <rect x="562" y="182" width="142" height="44" rx="6"
+        fill="none" stroke="var(--muted,#888)" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="633" y="199" text-anchor="middle" class="blk-body" style="font-style:italic;">+ tool msg</text>
+  <text x="633" y="212" text-anchor="middle" class="blk-body" style="font-style:italic;">appended here</text>
+</g>
+
+
+<g data-anim="2">
+  <path d="M382,254 L382,336" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#tca-arr-a)"/>
+  <text x="400" y="280" class="edge-lbl">conditions / constrains</text>
+  <text x="400" y="295" class="edge-lbl">the generated JSON</text>
+</g>
+
+
+<g data-anim="2">
+  <rect x="26" y="300" width="708" height="110" rx="10"
+        fill="var(--surface-3,#e8e8f0)" fill-opacity="0.3"
+        stroke="var(--border-2,#ccc)" stroke-width="1.4"/>
+  <text x="44" y="320" class="zone-title">GENERATION — text the model WRITES</text>
+
+  <rect x="60" y="336" width="640" height="58" rx="8"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.2"/>
+  <text x="76" y="360" class="mono-lg">&lt;tool_call&gt;{"name": "get_current_weather",</text>
+  <text x="76" y="380" class="mono-lg">  "arguments": {"location": "Tokyo, Japan", "units": "celsius"}}&lt;/tool_call&gt;</text>
+</g>
+
+
+<g data-anim="3">
+  <path d="M380,410 L380,440" fill="none" stroke="var(--ink-soft,#555)" stroke-width="1.6" marker-end="url(#tca-arr)"/>
+  <text x="396" y="429" class="step-lbl" fill="var(--muted,#888)">parse &amp; dispatch</text>
+</g>
+
+
+<g data-anim="3">
+  <rect x="270" y="440" width="220" height="100" rx="10"
+        fill="var(--surface,#fff)" stroke="var(--border-2,#ccc)" stroke-width="1.6"/>
+  <g transform="translate(296,460)" stroke="var(--muted,#888)" stroke-width="1.4" fill="none">
+    <circle r="7"/>
+    <g stroke-width="2">
+      <line x1="0" y1="-11" x2="0" y2="-7"/>
+      <line x1="0" y1="11" x2="0" y2="7"/>
+      <line x1="-11" y1="0" x2="-7" y2="0"/>
+      <line x1="11" y1="0" x2="7" y2="0"/>
+      <line x1="-7.8" y1="-7.8" x2="-4.9" y2="-4.9"/>
+      <line x1="7.8" y1="7.8" x2="4.9" y2="4.9"/>
+      <line x1="-7.8" y1="7.8" x2="-4.9" y2="4.9"/>
+      <line x1="7.8" y1="-7.8" x2="4.9" y2="-4.9"/>
+    </g>
+  </g>
+  <text x="390" y="466" class="blk-title">HARNESS</text>
+  <text x="380" y="486" text-anchor="middle" class="step-lbl">1. extract the tool_call</text>
+  <text x="380" y="503" text-anchor="middle" class="step-lbl">2. run the tool</text>
+  <text x="380" y="520" text-anchor="middle" class="step-lbl">3. format the result</text>
+</g>
+
+
+<g data-anim="4">
+  <path d="M492,478 C 640,478 726,450 726,380 C 726,300 726,250 716,214"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8" stroke-dasharray="6 3"
+        marker-end="url(#tca-arr)"/>
+  <text x="612" y="466" text-anchor="middle" class="step-lbl">result appended -&gt; becomes context</text>
+</g>
+
+<text x="380" y="608" text-anchor="middle" class="foot" data-anim="5">Schema is fixed, read-only input. The call is freshly generated output. The harness turns that output back into input.</text>
+</svg>
+<figcaption><b>The tool schema lives in context as read-only input; the tool call is text the model writes, shaped by that schema; the harness closes the loop.</b> The model never edits the <code>TOOL SCHEMAS</code> block — it only reads it, and that reading conditions the JSON it generates in its own output. The harness then extracts the call, executes the tool, and appends the result as a new <code>tool</code> message, which becomes part of the context for the next turn.</figcaption>
+</figure>

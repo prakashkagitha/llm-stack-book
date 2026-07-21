@@ -557,6 +557,8 @@ def build_mup_optimizer(
     return torch.optim.AdamW(param_groups, lr=base_lr, betas=(0.9, 0.95))
 ```
 
+{{fig:lrsched-mup-transfer}}
+
 ### Verifying muP: The Coordinate Check
 
 The coordinate check is the single test that catches the large majority of real-world muP bugs. It plots the per-layer activation (or update) scale against width. Under a **correct** muP implementation, those curves are flat across widths — the whole point of the parameterization. Under standard parameterization (SP), the same curves blow up or shrink monotonically as width grows, because activation scale is exactly what SP fails to control.

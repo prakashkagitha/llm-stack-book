@@ -394,6 +394,9 @@ $$
 
 For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): speedup $\approx 41\times$ in prefill attention FLOPs. Real TTFT improvements are smaller due to weight-loading overhead that is shared regardless of cache state, but 5–15× TTFT improvements are commonly observed in practice.
 
+
+{{fig:prefixcache-attention-cost-geometry}}
+
 !!! example "Worked numerical example: system-prompt caching for a chatbot"
     **Setup.** A production chatbot uses:
     - Model: LLaMA-3 70B, 80 layers, 8192-dimensional hidden state, GQA with 8 KV heads, head dim 128, dtype bfloat16.

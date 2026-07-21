@@ -177,6 +177,8 @@ $$
 W = \frac{1}{\mu - \lambda} = \frac{1/\mu}{1 - \rho}
 $$
 
+{{fig:serving-queueing-cliff}}
+
 As $\rho \to 1$, $W \to \infty$. This is the mathematical reason a cluster that looks "80% utilized and fine" falls off a cliff at 95%: the queueing term $1/(1-\rho)$ goes from $5$ to $20$ — a 4x latency increase from a 15-point utilization change. The tail percentiles explode even faster than the mean. **This is why you provision LLM clusters to run at 60–75% utilization, not 95%.** The headroom is not waste; it is the budget that keeps p99 bounded.
 
 !!! example "Worked example: sizing a pool to a p99 TTFT SLO"

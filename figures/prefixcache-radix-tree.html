@@ -1,5 +1,5 @@
 <figure class="viz" id="fig-prefixcache-radix-tree">
-<svg viewBox="0 0 820 500" role="img" aria-label="RadixAttention prefix trie: a shared system-prompt node branches into two session-specific child nodes, each leading to response-token leaves.">
+<svg viewBox="0 0 820 580" role="img" aria-label="RadixAttention prefix trie: a shared system-prompt node leads to a shared first-turn node, which then splits into two session-specific branches -- one showing incremental multi-turn growth A to A+B to A+B+C, the other diverging immediately with its own second turn.">
 <defs>
   <marker id="rt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
     <path d="M0 1 L9 5 L0 9 z" fill="var(--border-2,#d8d1c0)"/>
@@ -17,76 +17,89 @@
   #fig-prefixcache-radix-tree .callout { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
   #fig-prefixcache-radix-tree .callout-b { font: 600 10.5px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
   #fig-prefixcache-radix-tree .badge { font: 700 9px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-prefixcache-radix-tree .lookup-lbl { font: 700 11.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
 </style>
 
 
-<rect x="368" y="18" width="84" height="30" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
-<text x="410" y="38" text-anchor="middle" class="node-lbl">root</text>
+<text x="410" y="24" text-anchor="middle" class="lookup-lbl">Single trie lookup: O(P) longest-prefix match. Shared path = KV reused by every session.</text>
+
+<rect x="368" y="40" width="84" height="30" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+<text x="410" y="60" text-anchor="middle" class="node-lbl">root</text>
 
 
-<line x1="410" y1="48" x2="410" y2="86" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#rt-arrow-accent)"/>
-<text x="418" y="72" class="edge-lbl">system prompt token sequence</text>
-
-
-
-<rect x="160" y="92" width="500" height="70" rx="10" fill="var(--accent,#c15b39)" fill-opacity="0.13" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
-
-<text x="410" y="117" text-anchor="middle" class="node-mono" style="fill:var(--accent,#c15b39)">"You are a helpful AI assistant.\n"</text>
-
-<text x="410" y="133" text-anchor="middle" class="node-sub" style="fill:var(--accent,#c15b39)">(system prompt, shared by all sessions)</text>
-
-<rect x="260" y="143" width="82" height="14" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
-<text x="301" y="153" text-anchor="middle" class="badge">KV cached</text>
-<rect x="360" y="143" width="100" height="14" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
-<text x="410" y="153" text-anchor="middle" class="badge">ref-counted</text>
+<line x1="410" y1="70" x2="410" y2="108" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#rt-arrow-accent)"/>
+<text x="418" y="94" class="edge-lbl">system prompt token sequence</text>
 
 
 
-<line x1="290" y1="162" x2="210" y2="218" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
+<rect x="160" y="114" width="500" height="70" rx="10" fill="var(--accent,#c15b39)" fill-opacity="0.13" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
 
-<line x1="530" y1="162" x2="610" y2="218" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
+<text x="410" y="139" text-anchor="middle" class="node-mono" style="fill:var(--accent,#c15b39)">"You are a helpful AI assistant.\n"</text>
 
+<text x="410" y="155" text-anchor="middle" class="node-sub" style="fill:var(--accent,#c15b39)">(system prompt, shared by all sessions)</text>
 
-<text x="210" y="198" text-anchor="middle" class="edge-lbl">query tokens (session 1)</text>
-<text x="614" y="198" text-anchor="middle" class="edge-lbl">query tokens (session 2)</text>
-
-
-
-<rect x="80" y="224" width="260" height="44" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
-<text x="210" y="248" text-anchor="middle" class="node-mono">"User: What is..."</text>
-<text x="210" y="262" text-anchor="middle" class="node-sub">session 1 query</text>
+<rect x="260" y="165" width="82" height="14" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+<text x="301" y="175" text-anchor="middle" class="badge">KV cached</text>
+<rect x="360" y="165" width="100" height="14" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+<text x="410" y="175" text-anchor="middle" class="badge">ref-counted</text>
 
 
-<rect x="490" y="224" width="260" height="44" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
-<text x="620" y="248" text-anchor="middle" class="node-mono">"User: Translate..."</text>
-<text x="620" y="262" text-anchor="middle" class="node-sub">session 2 query</text>
-
-
-<line x1="210" y1="268" x2="210" y2="314" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
-<line x1="620" y1="268" x2="620" y2="314" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
-
-
-<rect x="110" y="320" width="200" height="34" rx="7" class="v-fill v-stroke" stroke-width="1.2"/>
-<text x="210" y="341" text-anchor="middle" class="node-mono" style="fill:var(--muted,#6d675d)">[response tokens]</text>
-
-<rect x="520" y="320" width="200" height="34" rx="7" class="v-fill v-stroke" stroke-width="1.2"/>
-<text x="620" y="341" text-anchor="middle" class="node-mono" style="fill:var(--muted,#6d675d)">[response tokens]</text>
+<line x1="410" y1="184" x2="410" y2="222" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#rt-arrow-accent)"/>
+<text x="418" y="207" class="edge-lbl">first turn (A), still shared by both sessions</text>
 
 
 
-<text x="410" y="178" text-anchor="middle" class="callout-b" style="fill:var(--accent,#c15b39)">Single trie lookup: O(P) longest-prefix match. Shared path = KV reused by every session.</text>
+<rect x="160" y="222" width="500" height="70" rx="10" fill="var(--accent,#c15b39)" fill-opacity="0.09" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+
+<text x="410" y="247" text-anchor="middle" class="node-mono" style="fill:var(--accent,#c15b39)">"User: I need help with the checkout API..."</text>
+
+<text x="410" y="263" text-anchor="middle" class="node-sub" style="fill:var(--accent,#c15b39)">(turn 1 = token seq A, shared by session 1 &amp; 2)</text>
+
+<rect x="260" y="273" width="82" height="14" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+<text x="301" y="283" text-anchor="middle" class="badge">KV cached</text>
+<rect x="360" y="273" width="100" height="14" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.22" stroke="var(--accent,#c15b39)" stroke-width="0.8"/>
+<text x="410" y="283" text-anchor="middle" class="badge">ref-counted</text>
 
 
-<line x1="210" y1="362" x2="210" y2="390" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2"/>
-<line x1="620" y1="362" x2="620" y2="390" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2"/>
-<line x1="210" y1="390" x2="620" y2="390" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2"/>
 
-<text x="415" y="408" text-anchor="middle" class="callout-b">Divergence point: each session writes its own fresh blocks after the shared prefix.</text>
-<text x="415" y="424" text-anchor="middle" class="callout">Multi-turn growth: each new turn appends to its branch (root -&gt; A -&gt; A+B -&gt; A+B+C) incrementally.</text>
-<text x="415" y="440" text-anchor="middle" class="callout">A second session sharing the first turn automatically reuses the cached sub-path — no recompute.</text>
+<line x1="290" y1="292" x2="210" y2="330" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
+<line x1="530" y1="292" x2="620" y2="330" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
+
+<text x="210" y="316" text-anchor="middle" class="edge-lbl">turn 2 (session 1): A -&gt; A+B</text>
+<text x="620" y="316" text-anchor="middle" class="edge-lbl">turn 2 (session 2): diverges after A</text>
 
 
-<text x="415" y="464" text-anchor="middle" class="callout">Leaf (response) nodes hold per-session tokens in exclusive fresh blocks outside the shared cache.</text>
+<rect x="80" y="330" width="260" height="44" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+<text x="210" y="354" text-anchor="middle" class="node-mono">"User: What is..."</text>
+<text x="210" y="368" text-anchor="middle" class="node-sub">session 1, path A+B</text>
+
+
+<rect x="490" y="330" width="260" height="44" rx="8" class="v-fill v-stroke" stroke-width="1.5"/>
+<text x="620" y="354" text-anchor="middle" class="node-mono">"User: Translate..."</text>
+<text x="620" y="368" text-anchor="middle" class="node-sub">session 2, own turn 2</text>
+
+
+<line x1="210" y1="374" x2="210" y2="420" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
+<line x1="620" y1="374" x2="620" y2="420" stroke="var(--border-2,#d8d1c0)" stroke-width="1.8" marker-end="url(#rt-arrow)"/>
+
+
+<rect x="110" y="420" width="200" height="34" rx="7" class="v-fill v-stroke" stroke-width="1.2"/>
+<text x="210" y="441" text-anchor="middle" class="node-mono" style="fill:var(--muted,#6d675d)">[response tokens]</text>
+
+<rect x="520" y="420" width="200" height="34" rx="7" class="v-fill v-stroke" stroke-width="1.2"/>
+<text x="620" y="441" text-anchor="middle" class="node-mono" style="fill:var(--muted,#6d675d)">[response tokens]</text>
+
+
+<line x1="210" y1="454" x2="210" y2="482" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2"/>
+<line x1="620" y1="454" x2="620" y2="482" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2"/>
+<line x1="210" y1="482" x2="620" y2="482" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2"/>
+
+<text x="415" y="500" text-anchor="middle" class="callout-b">Partial-overlap split: sessions share the system prompt and Turn A, not just one flat prefix.</text>
+<text x="415" y="516" text-anchor="middle" class="callout">The trie diverges only when turn 2 differs: session 1 grows A -&gt; A+B -&gt; A+B+C,</text>
+<text x="415" y="532" text-anchor="middle" class="callout">while session 2 branches off right after A with its own turn 2.</text>
+
+
+<text x="415" y="556" text-anchor="middle" class="callout">Leaf (response) nodes hold per-session tokens in exclusive fresh blocks outside the shared cache.</text>
 </svg>
-<figcaption><b>RadixAttention models the prefix cache as a radix trie where shared prefixes form common root-to-node paths.</b> The accent-highlighted system-prompt node is traversed by every session, allowing all requests to reuse its pre-computed, reference-counted KV tensors with a single O(P) trie lookup. Sessions diverge only at the first differing token, writing their unique suffixes into fresh, unshared child nodes that sit outside the shared cache.</figcaption>
+<figcaption><b>RadixAttention models the prefix cache as a radix trie where shared prefixes form common root-to-node paths, and partial overlaps split the tree.</b> Both sessions reuse the accent-highlighted system prompt <i>and</i> the first turn (token sequence A) with a single O(P) trie lookup; the trie only splits into separate branches once their second turns diverge, so session 1's incremental growth (A &#8594; A+B &#8594; A+B+C) is cached independently of session 2's own second turn. Each session's divergent suffix is written into fresh, unshared child nodes outside the shared cache.</figcaption>
 </figure>

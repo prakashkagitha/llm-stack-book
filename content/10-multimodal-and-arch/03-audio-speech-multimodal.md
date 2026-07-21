@@ -143,6 +143,8 @@ class ResidualVQ(nn.Module):
         return all_indices  # K tensors each (B, T)
 ```
 
+{{fig:rvq-residual-cascade}}
+
 ### Token Rate and Sequence Length
 
 !!! example "Worked example: token budget for 30 s of speech"

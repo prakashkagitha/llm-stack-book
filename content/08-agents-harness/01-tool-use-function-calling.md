@@ -88,6 +88,8 @@ The result will be returned in <tool_response>...</tool_response>.
 
 The exact XML-like or JSON-like wrapper tokens vary per model family. Llama 3.1 uses a `<|python_tag|>` prefix for code interpreter calls and a custom tool-call format. Mistral uses `[TOOL_CALLS]` markers. Claude uses a dedicated `<parameter name="name">` XML structure. What they all share is that the *schema is in the context* and the *call is in the generated text*.
 
+{{fig:tool-call-anatomy}}
+
 ---
 
 ## The Function-Calling Fine-Tune
