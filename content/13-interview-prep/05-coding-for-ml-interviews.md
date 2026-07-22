@@ -494,8 +494,9 @@ def _tests():
     out, w = attention(Q, K, V)
     assert np.allclose(w.sum(axis=1), 1.0) and out.shape == (4, 3)
 
-    # causal mask: query 0 attends only to key 0
-    _, wc = attention(Q[:6], K, V, mask=causal_mask(6))
+    # causal mask: query 0 attends only to key 0 (self-attention over the
+    # 6-length K sequence, so query count matches key count for the mask)
+    _, wc = attention(K, K, V, mask=causal_mask(6))
     assert np.allclose(wc[0, 1:], 0.0), "causal mask leak"
 
     # logistic regression separates a linearly separable set

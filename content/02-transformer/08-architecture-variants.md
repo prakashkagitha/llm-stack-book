@@ -96,7 +96,7 @@ def apply_mlm_mask(input_ids: torch.Tensor,
     masked_input = input_ids.clone()
     masked_input[replace_with_mask]   = mask_token_id
     masked_input[replace_with_random] = torch.randint(
-        0, vocab_size, replace_with_random.sum().item()
+        0, vocab_size, (replace_with_random.sum().item(),)
     )
 
     # Labels: original token at selected positions, -100 elsewhere
