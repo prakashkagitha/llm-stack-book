@@ -826,3 +826,171 @@ The code in this chapter gives you a concrete starting point. In the next chapte
 - **LangGraph (LangChain)** — open-source agent framework with first-class support for persistent state stores across agent steps; good reference implementation of session persistence.
 - **Cognee** (topoteretes/cognee on GitHub) — open-source memory layer with knowledge-graph extraction from unstructured text; shows a practical graph-memory pipeline.
 - **Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks, Lewis et al., 2020** — the foundational RAG paper; motivates why external retrieval beats storing everything in weights.
+
+---
+
+## Exercises
+
+**1.** For each of the following memory items, decide whether it belongs in the **episodic** store or the **semantic** store, and give a one-line justification. Then explain, using the argument in section 8.5.2, why storing (a) and (c) together in a single undifferentiated vector store degrades retrieval quality.
+
+  - (a) "2025-11-04 14:12: the user asked me to refactor the auth module and I found a bug in the JWT refresh endpoint."
+  - (b) "The production database engine is PostgreSQL 15."
+  - (c) "2025-11-05 09:30: reran the integration suite; 3 tests still failing on token refresh."
+  - (d) "The user prefers British English spelling."
+
+??? note "Solution"
+    Classification:
+
+    - (a) **Episodic.** It is a timestamped, situated record of a specific interaction ("on this date I did X"). It is append-only and queried with temporal/situational cues.
+    - (b) **Semantic.** A stable fact that should hold across sessions; updated by overwrite when the engine changes. Canonical key e.g. `project.database.engine`.
+    - (c) **Episodic.** Another timestamped event tied to a particular run.
+    - (d) **Semantic.** A stable user preference; canonical key e.g. `user.language`, overwritten only on explicit correction.
+
+    Why mixing (a) and (c) with semantic facts hurts retrieval: the chapter's key insight (8.5.2) is that episodic entries carry date-specific noise. Both (a) and (c) contain the token cluster "token refresh," so a *general-knowledge* query such as "what do I know about the auth module?" will surface these two dated event records with high cosine similarity, crowding out (or diluting) the stable fact you actually want. Episodic entries also grow monotonically, so over time date-specific noise increasingly dominates any content-based query. Keeping episodic events in an append-only log and distilling stable facts into a separate semantic store (via the reflect step) keeps general-knowledge queries clean.
+
+**2.** You call `mem.recall(query, top_k=3, min_score=0.3)`. The query embeds (after L2 normalisation) to $q = [0.6,\ 0.8,\ 0.0]$. The vector store holds four already-normalised memory vectors:
+
+  - $m_1 = [0.6,\ 0.8,\ 0.0]$
+  - $m_2 = [0.0,\ 1.0,\ 0.0]$
+  - $m_3 = [1.0,\ 0.0,\ 0.0]$
+  - $m_4 = [0.8,\ -0.6,\ 0.0]$
+
+Compute each cosine similarity by hand, then state exactly which entries `recall` returns and in what order. (Recall from the code that `search` sorts by descending score and *breaks* as soon as a score falls below `min_score`.)
+
+??? note "Solution"
+    Because every vector is unit-length, cosine similarity equals the plain dot product with $q$ (this is exactly why the chapter's `add`/`search` pass `normalize_embeddings=True`):
+
+    $$
+    \begin{aligned}
+    \cos(q, m_1) &= 0.6\cdot0.6 + 0.8\cdot0.8 + 0 = 0.36 + 0.64 = 1.00 \\
+    \cos(q, m_2) &= 0.6\cdot0.0 + 0.8\cdot1.0 + 0 = 0.80 \\
+    \cos(q, m_3) &= 0.6\cdot1.0 + 0.8\cdot0.0 + 0 = 0.60 \\
+    \cos(q, m_4) &= 0.6\cdot0.8 + 0.8\cdot(-0.6) + 0 = 0.48 - 0.48 = 0.00
+    \end{aligned}
+    $$
+
+    Descending order: $m_1(1.00),\ m_2(0.80),\ m_3(0.60),\ m_4(0.00)$. With `top_k=3` we look at the first three; all three exceed `min_score=0.3`, so `recall` returns:
+
+    ```text
+    [(m1_text, 1.00), (m2_text, 0.80), (m3_text, 0.60)]
+    ```
+
+    $m_4$ is excluded on two counts: it is beyond `top_k=3`, and its score $0.00 < 0.3$ would trigger the `break` anyway. Note the ordering is by relevance, highest first.
+
+**3.** You are sizing a memory store with a **1024-dimensional** float32 embedding model and a target of $N = 250{,}000$ memories, each averaging **80 tokens** of text.
+
+  - (a) Compute the raw vector storage in bytes and MB/GB.
+  - (b) Compute the total text token count and the UTF-8 text storage at 4 bytes/token.
+  - (c) If the injection budget is 1500 tokens per call, what is the maximum number of 80-token entries you could inject, and how does that compare to the chapter's recommended `top_k`?
+  - (d) At \$2.00 per million input tokens, what does injecting `top_k = 5` entries (80 tokens each) cost per call, and over 50 000 calls?
+
+??? note "Solution"
+    (a) Vector storage (formula from 8.5.8, $N \times D \times 4$ bytes):
+    $$
+    250{,}000 \times 1024 \times 4 = 250{,}000 \times 4096 = 1{,}024{,}000{,}000 \text{ bytes} = 1024 \text{ MB} \approx 1.02 \text{ GB}.
+    $$
+    Large enough that you would prefer an on-disk ANN index (FAISS/Qdrant) over holding one big numpy array in RAM.
+
+    (b) Token count: $250{,}000 \times 80 = 20{,}000{,}000 = 20$ M tokens. At 4 bytes/token:
+    $$
+    20{,}000{,}000 \times 4 = 80{,}000{,}000 \text{ bytes} = 80 \text{ MB}.
+    $$
+    Comfortably a single SQLite file or a directory of JSONL.
+
+    (c) Maximum entries $= \lfloor 1500 / 80 \rfloor = 18$. The chapter recommends a conservative `top_k` of 3-5 (up to ~10) with a relevance threshold, so you should inject far fewer than the 18 the budget technically allows — packing all 18 in would dilute the context with low-relevance entries (the "writing everything verbatim" pitfall).
+
+    (d) Per call: $5 \times 80 = 400$ input tokens. Cost $= 400 / 1{,}000{,}000 \times \$2.00 = \$0.0008$ per call. Over 50 000 calls: $50{,}000 \times \$0.0008 = \$40$. Negligible against the productivity gain from accurate recall — the same conclusion the chapter reaches in 8.5.8.
+
+**4.** The "writing everything verbatim" pitfall recommends fix (c): *run a deduplication pass that merges near-identical memories.* Implement a `deduplicate(self, threshold: float = 0.95) -> int` method on `VectorMemory` that removes near-duplicate entries (keeping the first member of each duplicate group) and returns the number removed. Exploit the fact that the stored vectors are already L2-normalised. Explain why that normalisation makes the check a single dot product.
+
+??? note "Solution"
+    Because `add` stores every vector with `normalize_embeddings=True`, each row of `self._vectors` is unit length, so the cosine similarity between any two stored vectors is just their dot product `v @ w`. We greedily keep entries whose vector is not within `threshold` cosine of any already-kept vector:
+
+    ```python
+    def deduplicate(self, threshold: float = 0.95) -> int:
+        """
+        Remove near-duplicate entries. Keeps the first member of each
+        near-duplicate group; deletes the rest. Returns the number removed.
+        Relies on stored vectors being L2-normalised (cosine == dot product).
+        """
+        if len(self._entries) < 2:
+            return 0
+
+        kept_entries: list[MemoryEntry] = []
+        kept_vecs: list[np.ndarray] = []
+        removed = 0
+
+        for i, entry in enumerate(self._entries):
+            vec = self._vectors[i]
+            # cosine == dot product because both operands are unit vectors
+            is_dup = any(float(vec @ kv) >= threshold for kv in kept_vecs)
+            if is_dup:
+                removed += 1
+            else:
+                kept_entries.append(entry)
+                kept_vecs.append(vec)
+
+        if removed:
+            self._entries = kept_entries
+            self._vectors = (
+                np.vstack(kept_vecs) if kept_vecs
+                else np.empty((0, self.dim), dtype=np.float32)
+            )
+            self._save()
+        return removed
+    ```
+
+    Why a single dot product suffices: cosine similarity is $\cos(u,v) = \frac{u\cdot v}{\lVert u\rVert\,\lVert v\rVert}$. When $\lVert u\rVert = \lVert v\rVert = 1$ the denominator is 1, so $\cos(u,v) = u\cdot v$ exactly — no per-pair norm computation is needed, which is the same shortcut `search` uses (`scores = self._vectors @ q_vec`). The pass is $O(N \cdot K)$ where $K$ is the number of kept (unique) entries; for large stores you would replace the inner loop with a batched matmul against the kept matrix.
+
+**5.** Implement the *structured compaction* trigger described in the practitioner tip and section 8.5.5.3. Write a function `compact_if_needed(mem, transcript_tokens, llm_call, ctx_window=128_000, threshold=0.75)` that: (a) does nothing and returns `None` while the transcript is below `threshold` of the context window; (b) otherwise asks the LLM to serialise current state into the structured JSON schema from 8.5.5.3, parses it robustly, persists the fields to the semantic store, and returns the parsed dict. Why is serialising into this schema more reliable than a free-text summary?
+
+??? note "Solution"
+    The tip says: trigger at 70-80% of capacity (here `threshold=0.75`), before information is lost, and produce a deterministic structured blob rather than a lossy free-text summary. The function mirrors the robust-parse style of the chapter's `reflect`:
+
+    ```python
+    import re, json as _json
+
+    def compact_if_needed(mem, transcript_tokens, llm_call,
+                          ctx_window: int = 128_000,
+                          threshold: float = 0.75):
+        """
+        Trigger a structured compaction pass once the in-context transcript
+        crosses `threshold` of the context window. Persists the compacted
+        state to the semantic store and returns the parsed dict (or None
+        if compaction was not needed).
+        """
+        if transcript_tokens < threshold * ctx_window:
+            return None  # still room; do not compact yet
+
+        prompt = f"""Serialise the current session state into EXACTLY this JSON schema:
+    {{
+      "task_state": "one-line status",
+      "decisions_made": ["..."],
+      "open_questions": ["..."],
+      "user_preferences": {{"key": "value"}},
+      "next_steps": ["..."]
+    }}
+    Fill every field from the conversation so far. Output only the JSON object.
+
+    JSON output:"""
+
+        raw = llm_call(prompt)
+
+        # Robust parse: grab the first {...} block.
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return None
+        state = _json.loads(match.group())
+
+        # Persist each field to the semantic store under canonical keys.
+        mem.remember("compaction.task_state", state.get("task_state", ""))
+        mem.remember("compaction.decisions_made", state.get("decisions_made", []))
+        mem.remember("compaction.open_questions", state.get("open_questions", []))
+        mem.remember("compaction.next_steps", state.get("next_steps", []))
+        for k, v in (state.get("user_preferences") or {}).items():
+            mem.remember(f"user.{k}", v)
+
+        return state
+    ```
+
+    Usage: the harness prepends `mem.semantic.as_context_string()` (which now contains the compacted `compaction.*` and `user.*` keys) to the fresh context, giving deterministic continuity. Why the schema beats free text: as 8.5.5.3 notes, the model is *filling in a fixed set of slots* rather than generating prose freely, so it is far less prone to hallucination or to silently dropping a field; the result is machine-parseable, so downstream reads (`state["next_steps"]`) are deterministic instead of requiring the agent to re-read and re-interpret a paragraph. Because the state is written to the semantic store *before* the old prefix is discarded, no high-value fact is lost in the compaction — exactly the ordering the chapter insists on ("write high-value facts to the external store *before* compacting").

@@ -542,3 +542,201 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
 - Zheng, L. et al. "SGLang: Efficient Execution of Structured Language Model Programs." *arXiv:2312.07104*, 2023. — RadixAttention and the structured-program serving model that hosts SGLang's multi-LoRA path.
 - Predibase, "LoRAX: Multi-LoRA inference server." Open-source repository — production reference implementation of dynamic adapter loading and tiered storage.
 - vLLM documentation, "Using LoRA adapters" — configuration and the runtime dynamic-loading API for multi-tenant adapter serving.
+
+---
+
+## Exercises
+
+**1.** A colleague proposes speeding up your multi-tenant server by calling `peft`'s `merge_and_unload()` on every adapter at load time so that "the LoRA math disappears at runtime." A single batch on your server typically contains requests for 15 different adapters. Explain concretely why merging breaks multi-tenancy, and describe the two fallback strategies you would be forced into if you insisted on serving merged weights — and why both are catastrophic.
+
+??? note "Solution"
+    Merging computes $W = W_0 + \frac{\alpha}{r}BA$ and folds one adapter permanently into the base weights. A merged weight matrix can embody exactly **one** adapter's update. But a batch here needs 15 *different* adapters simultaneously, so a single set of merged weights cannot serve the batch. The two forced fallbacks:
+
+    - **(a) One forward pass per adapter.** Split the batch of $B$ tokens into 15 sub-batches (one per adapter), merge, and run each separately. Each pass now has batch size $\approx B/15$, so you have shattered the batch. Throughput on a GPU is roughly proportional to how well you fill the batch dimension of the big GEMMs; running 15 tiny GEMMs instead of one large one collapses GPU utilization.
+    - **(b) Re-merge / un-merge between micro-batches.** Keep one base and rewrite $W_0 \gets W_0 + \frac{\alpha}{r}BA$ for the current adapter, run, then subtract it back before the next. For a 13B base this rewrites tens of gigabytes of GPU DRAM *per micro-batch step*, at every layer. The memory-write traffic dwarfs the actual compute and is far more expensive than the LoRA correction it was trying to avoid.
+
+    The whole field of multi-tenant LoRA serving exists to avoid exactly these two options: keep the LoRA path **separate and additive** ($y = W_0 x + \frac{\alpha}{r}B(Ax)$) so a single batched base GEMM plus a grouped low-rank correction serves all 15 adapters in one pass. Merging is optimal only in the single-tenant case, where you serve one adapter forever.
+
+**2.** Consider one adapted projection with $d_\text{in} = d_\text{out} = 4096$ and LoRA rank $r = 32$. Using the parenthesized forward $y = W_0 x + \frac{\alpha}{r}B(Ax)$, compute the extra multiply-accumulate (MAC) cost of the LoRA path *per token* as a fraction of the base GEMM. Then state what this fraction would become if you (naively) first materialized $\Delta W = \frac{\alpha}{r}BA$ and added it to $W_0$.
+
+??? note "Solution"
+    **Base GEMM** (per token): a $d_\text{out}\times d_\text{in}$ matrix times a vector costs
+
+    $$
+    d_\text{in}\, d_\text{out} = 4096 \times 4096 = 16{,}777{,}216 \text{ MACs}.
+    $$
+
+    **LoRA path, parenthesized** (per token): compute $Ax$ (shrink $d_\text{in}\to r$) then $B(Ax)$ (expand $r\to d_\text{out}$):
+
+    $$
+    r\,d_\text{in} + r\,d_\text{out} = r(d_\text{in}+d_\text{out}) = 32 \times (4096 + 4096) = 32 \times 8192 = 262{,}144 \text{ MACs}.
+    $$
+
+    **Fraction:**
+
+    $$
+    \frac{262{,}144}{16{,}777{,}216} = 0.015625 = 1.5625\%.
+    $$
+
+    So the LoRA correction adds only about 1.6% to the FLOPs of this projection — the essence of why LoRA is cheap to *compute*.
+
+    **If you materialize $\Delta W = \frac{\alpha}{r}BA$ instead:** building $\Delta W$ costs a $d_\text{out}\times d_\text{in}$ full matrix, and adding it produces a dense weight, so the effective per-token cost becomes another full $d_\text{in} d_\text{out} = 16{,}777{,}216$ MACs — a **100%** overhead, $64\times$ more than the parenthesized path ($16{,}777{,}216 / 262{,}144 = 64$). This is exactly why we never materialize $BA$: the parenthesization is the entire point.
+
+**3.** You run a decode step on a shared 13B-shaped model. LoRA is applied to the four attention projections $q,k,v,o$, each with $d_\text{in}=d_\text{out}=4096$ and rank $r=16$, weights in fp16 (2 bytes). The decode batch has 48 tokens drawn from **24 distinct adapters**. Because decode is memory-bandwidth bound, estimate the "bandwidth tax" the LoRA weights impose: the bytes of LoRA weights that must be streamed, as a fraction of the base attention-projection weights streamed. Contrast this with the FLOP fraction of the same correction.
+
+??? note "Solution"
+    **Base weights streamed** (loaded once for the whole batch, 4 projections):
+
+    $$
+    4 \times d_\text{in} d_\text{out} \times 2\,\text{bytes} = 4 \times 4096 \times 4096 \times 2 = 134{,}217{,}728 \text{ bytes} \approx 134.2\ \text{MB}.
+    $$
+
+    **LoRA weights streamed:** each adapter contributes an $A$ ($r \times d_\text{in}$) and $B$ ($d_\text{out}\times r$) per projection:
+
+    $$
+    \text{params per adapter per proj} = r\,d_\text{in} + d_\text{out}\,r = 16\times4096 + 4096\times16 = 131{,}072.
+    $$
+
+    Across 4 projections and 24 adapters:
+
+    $$
+    24 \times 4 \times 131{,}072 \times 2\,\text{bytes} = 25{,}165{,}824 \text{ bytes} \approx 25.2\ \text{MB}.
+    $$
+
+    **Bandwidth tax:**
+
+    $$
+    \frac{25{,}165{,}824}{134{,}217{,}728} = 0.1875 = 18.75\%.
+    $$
+
+    **Contrast with FLOPs.** The base GEMM does $48 \times 4096 \times 4096 \times 4 \approx 3.22\times10^9$ MACs; the LoRA correction does $48 \times 16 \times (4096+4096) \times 4 \approx 2.52\times10^7$ MACs, i.e. about $0.78\%$ of the base FLOPs. So the correction is **under 1% of the FLOPs but nearly 19% of the streamed bytes.** In decode we are bandwidth bound, so it is the ~19% that hurts. This is precisely why (a) decode-time LoRA costs far more than its FLOP count suggests, (b) a fused gather that loads each adapter's weights *once* matters so much, and (c) capping the number of distinct adapters per step (`max_loras`) is such a powerful throughput knob — fewer distinct adapters means fewer LoRA bytes streamed per step.
+
+**4.** Prefix caching lets requests share KV-cache blocks for a common token prefix (e.g. a shared system prompt). Tenant Alpha's adapter adapts only the $q$ and $o$ projections and the MLP; Tenant Beta's adapter adapts $q,k,v,o$. Both send requests that begin with the *same* 400-token shared system prompt over the same base model. For each tenant, can the prefix KV blocks be shared with *other* tenants? State the correct cache key in each case and explain the underlying reason.
+
+??? note "Solution"
+    The KV cache stores the $K$ and $V$ projections of the prefix tokens. Whether they can be shared across tenants depends entirely on **whether the adapter changes the $k$ or $v$ projections**, because that is what determines $K$ and $V$.
+
+    - **Tenant Alpha (adapts $q,o$, MLP — not $k,v$):** $K$ and $V$ for the prefix are computed from the **base weights only**, so they are *identical* to what any other adapter that also leaves $k,v$ untouched would produce (and identical to the base model's). The prefix KV blocks are **shareable across all such tenants**. The correct key is
+
+        `key = hash(prefix_tokens)`
+
+        — no adapter ID needed. Since system prompts are commonly shared, this is a large cross-tenant win.
+
+    - **Tenant Beta (adapts $k$ and $v$):** the LoRA correction changes $K$ and $V$, so Beta's prefix KV blocks are **adapter-specific**. They are still cacheable, but only reusable by *other requests on Beta's own adapter* (with the same base prefix). The correct key must include the adapter identity:
+
+        `key = hash(prefix_tokens) (+) adapter_id`
+
+    **Takeaway:** designing an adapter to *avoid* the $k,v$ projections (when accuracy permits) is not merely a quality decision — it directly enables cross-tenant KV reuse, letting one cached system prompt serve every tenant. This is a concrete case of co-designing the fine-tuning recipe with the serving system.
+
+**5.** The toy `MultiLoRALinear.forward` in Section 7.14.7 uses `self.A_all[lora_idx]` and `self.B_all[lora_idx]`, which materializes a `[B, r, d_in]` gathered tensor — physically copying a popular adapter's weight once per row that uses it. The chapter's warning notes a real SGMV kernel instead loads each adapter's weight tile **once** per segment. Implement a `forward_grouped(layer, x, lora_idx)` that reproduces this: it must compute the correction by iterating over the *distinct* adapters present in the batch, loading each adapter's `A`/`B` exactly once and applying it to all of that adapter's rows with a single small GEMM. Skip the reserved base-only slot 0. Your function must be numerically equivalent to `layer.forward`.
+
+??? note "Solution"
+    We group rows by adapter, and for each distinct adapter do one shrink GEMM and one expand GEMM using the adapter's weights loaded a single time. This is the Python-level model of what a real SGMV kernel does with shared memory (it never builds a `[B, r, d_in]` gather tensor).
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def forward_grouped(layer, x, lora_idx):
+        """Batched multi-adapter forward that loads each adapter's A,B once
+        per segment (no per-row gather of weights). Equivalent to
+        MultiLoRALinear.forward but bandwidth-friendly, mirroring SGMV.
+        x:        [B, d_in]
+        lora_idx: [B] long   (0 == reserved base-only slot)
+        """
+        # (a) Shared base GEMM, fully batched, adapter-independent.
+        y = F.linear(x, layer.W0)                       # [B, d_out]
+
+        # (b) One low-rank correction per distinct adapter in the batch.
+        for a in torch.unique(lora_idx).tolist():
+            if a == 0:
+                continue                                # base-only rows: no correction
+            rows = (lora_idx == a).nonzero(as_tuple=True)[0]   # this adapter's segment
+            xa = x[rows]                                # [n_a, d_in]
+            A  = layer.A_all[a]                         # [r, d_in]  loaded ONCE
+            B  = layer.B_all[a]                         # [d_out, r] loaded ONCE
+            s  = layer.scale[a]                         # scalar alpha/r
+            v  = xa @ A.t()                             # [n_a, r]     shrink
+            delta = v @ B.t()                           # [n_a, d_out] expand
+            y[rows] += s * delta
+        return y
+    ```
+
+    **Why this is the point:** for an adapter with 200 rows in the batch, the original `self.A_all[lora_idx]` copies its `A` matrix 200 times into a gather tensor; `forward_grouped` reads `A`/`B` once and reuses them across all 200 rows via a single `[200, d_in] @ [d_in, r]` GEMM. Same FLOPs, far less memory traffic — exactly the win the fused kernel delivers.
+
+    **Equivalence check** (reusing the chapter's setup):
+
+    ```python
+    torch.manual_seed(0)
+    d_in, d_out, r = 64, 48, 8
+    layer = MultiLoRALinear(d_in, d_out, max_adapters=4, rank=r)
+    for slot in (1, 2, 3):
+        A = torch.randn(r, d_in) * 0.02
+        B = torch.randn(d_out, r) * 0.02
+        layer.set_adapter(slot, A, B, alpha=16.0)
+
+    x = torch.randn(6, d_in)
+    lora_idx = torch.tensor([1, 2, 1, 3, 2, 0])     # 6 tokens, 3 adapters + base
+    y_ref = layer.forward(x, lora_idx)
+    y_grp = forward_grouped(layer, x, lora_idx)
+    print((y_ref - y_grp).abs().max().item())        # ~1e-7: numerically identical
+    ```
+
+**6.** The chapter's `AdapterRegistry.ensure_resident` evicts by **LRU** and refuses to touch any adapter still in use. Section 7.14.4 notes that **LFU** (evict the least-*frequently*-used) can be better when a few adapters dominate traffic. Modify the registry to (a) track a per-adapter `hit_count`, and (b) evict, when the GPU pool is full, the resident adapter with the **smallest `hit_count`** among those with `ref_count == 0`. If every resident adapter is in use, raise an error. Give the code and explain when LFU beats LRU here.
+
+??? note "Solution"
+    Add a `hit_count` field to `AdapterMeta` and rewrite the eviction branch to scan resident adapters for the evictable one (`ref_count == 0`) with the minimum hit count.
+
+    ```python
+    from dataclasses import dataclass
+    from collections import OrderedDict
+    import torch
+
+    @dataclass
+    class AdapterMeta:
+        A: torch.Tensor
+        B: torch.Tensor
+        alpha: float
+        ref_count: int = 0
+        hit_count: int = 0          # NEW: LFU frequency signal
+
+    class LFUAdapterRegistry:
+        def __init__(self, layer, n_gpu_slots: int):
+            self.layer = layer
+            self.n_gpu_slots = n_gpu_slots
+            self.cpu_pool: dict[str, AdapterMeta] = {}
+            self.gpu: "OrderedDict[str,int]" = OrderedDict()   # name -> slot
+            self.free_slots = list(range(1, n_gpu_slots + 1))  # slot 0 reserved
+
+        def register(self, name, A, B, alpha):
+            self.cpu_pool[name] = AdapterMeta(A=A, B=B, alpha=alpha)
+
+        def ensure_resident(self, name) -> int:
+            meta = self.cpu_pool[name]
+            meta.hit_count += 1                     # count every use for LFU
+            if name in self.gpu:                    # GPU hit
+                return self.gpu[name]
+            if not self.free_slots:                 # pool full -> LFU eviction
+                candidates = [
+                    (self.cpu_pool[n].hit_count, n, slot)
+                    for n, slot in self.gpu.items()
+                    if self.cpu_pool[n].ref_count == 0
+                ]
+                if not candidates:
+                    raise RuntimeError("all resident adapters in use; cannot evict")
+                _, victim, vslot = min(candidates)  # smallest hit_count wins
+                del self.gpu[victim]
+                self.free_slots.append(vslot)
+            slot = self.free_slots.pop()
+            self.layer.set_adapter(slot, meta.A, meta.B, meta.alpha)   # H2D copy
+            self.gpu[name] = slot
+            return slot
+    ```
+
+    Key points, all grounded in Section 7.14.4:
+
+    - `hit_count` is incremented on **every** `ensure_resident` call (hit or miss), giving the frequency signal.
+    - Eviction only ever considers adapters with `ref_count == 0`; an in-use adapter is never evicted (the invariant the chapter stresses). If none is evictable, we raise rather than corrupt an in-flight request.
+    - `min(candidates)` picks the least-frequently-used evictable adapter. (Ties break lexicographically by adapter name, since the tuple comparison falls through to the `n` field; a production system would instead add an explicit age/recency tiebreak.)
+
+    **When LFU beats LRU:** when traffic is **skewed** — a handful of popular adapters serve most requests, interspersed with a long tail of one-off cold adapters. Under pure LRU, a burst of rare adapters can push a popular-but-momentarily-idle adapter out of the pool (scan/thrash), forcing an expensive reload right after. LFU keeps the high-frequency adapters pinned because their hit counts stay large, absorbing the cold tail in the remaining slots. When traffic has strong *temporal locality* but flatter frequencies, LRU can still win; the chapter notes a cost-aware policy weighting recency by adapter size and fetch cost as the more robust production choice.

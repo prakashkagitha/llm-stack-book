@@ -769,3 +769,187 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 - Wang, L., Ma, C., Feng, X., et al. *A Survey on Large Language Model based Autonomous Agents.* Frontiers of Computer Science, 2024.
 - Significant Gravitas / AutoGPT — one of the earliest open-source agentic loop implementations. [github.com/Significant-Gravitas/AutoGPT](https://github.com/Significant-Gravitas/AutoGPT)
 - LangChain Agents documentation and the LangGraph framework for graph-based agentic pipelines.
+
+## Exercises
+
+**1.** In the `ReActAgent.run` loop, the call to the model passes `stop=["Observation:"]`. Explain concretely what failure mode this prevents, and describe what would go wrong in the trace of the "worked example: ratio calculation" if this stop sequence were removed. Would the logs *look* correct?
+
+??? note "Solution"
+    The stop sequence prevents the **hallucinated observation** failure mode. Without it, in a single generation the model can produce both an `Action:` line *and* a fabricated `Observation:` line, because during training it has seen many complete Thought/Action/Observation traces and will happily continue the pattern past the action.
+
+    In the ratio example, instead of stopping after `Action: search("Tokyo population")`, the model might emit in one shot:
+
+    ```text
+    Thought: I need Tokyo's population.
+    Action: search("Tokyo population")
+    Observation: Tokyo metro ~38 million (2024).
+    ```
+
+    Here the `~38 million` was invented by the model, not returned by the `search` tool (which would have said `~37 million`). The harness never actually calls `search`, so the answer is no longer grounded — it is plain chain-of-thought with the *appearance* of tool use. Crucially, the logs **do look correct**: they contain a well-formed Observation line, so a casual reader cannot tell the tool was never run. As the chapter's warning admonition notes, this is "arguably the most dangerous failure mode because it looks correct in the logs." Terminating generation at `"Observation:"` forces the loop to inject the real tool output instead.
+
+**2.** The chapter states that after $k$ steps the context is $O(k \cdot s)$ tokens, and gives a rough estimator (`4 chars ~= 1 token`) with `MAX_CONTEXT_FRACTION = 0.85` on a 128,000-token model. Suppose each step (the assistant's Thought+Action plus the injected Observation) adds on average $s = 1{,}200$ tokens to the message history, and the system prompt plus task is $s_0 = 800$ tokens. At which step number does the `context_full` check first return `True`? How does this interact with the default `MAX_STEPS = 10`?
+
+??? note "Solution"
+    The budget is $0.85 \times 128{,}000 = 108{,}800$ tokens. After $k$ steps the estimated context is:
+
+    $$
+    \text{tokens}(k) = s_0 + k \cdot s = 800 + 1{,}200\,k
+    $$
+
+    Set this greater than the budget:
+
+    $$
+    800 + 1{,}200\,k > 108{,}800 \;\Longrightarrow\; 1{,}200\,k > 108{,}000 \;\Longrightarrow\; k > 90.
+    $$
+
+    So `context_full` first returns `True` at $k = 91$ steps.
+
+    Interaction with `MAX_STEPS = 10`: the hard step limit is reached *far* earlier (at step 10), so with these numbers the token-budget guard never actually fires — the loop always terminates on `MAX_STEPS` (or on a model `finish()`) first. This illustrates the chapter's point that robust agents layer multiple termination mechanisms: here the step limit is the binding constraint, and the token budget is a backstop that only matters for long-horizon agents (e.g., a 50-step coding agent) or much larger per-step token counts.
+
+**3.** Compare ReAct and Tree-of-Thought purely in terms of LLM-call cost for a task that takes $d = 8$ steps. For Tree-of-Thought use beam width $b = 3$ and $k = 3$ candidate expansions per node (as in the `beam_react_agent`, which samples `beam_width` continuations from each of the `beam_width` beams). Roughly how many model generations does each approach make, and by what factor is Tree-of-Thought more expensive? Why does the chapter say this is "typically reserved for offline evaluation"?
+
+??? note "Solution"
+    **ReAct:** one generation per step, so about $d = 8$ generations (plus possibly one final `finish` step). Order of magnitude: ~8 calls.
+
+    **Tree-of-Thought / beam search:** after the first level the beam holds $b = 3$ nodes, and each node is expanded with `beam_width` = 3 continuations, giving $3 \times 3 = 9$ generations per depth level. Over $d = 8$ levels that is roughly:
+
+    $$
+    9 \times 8 = 72 \text{ generations}
+    $$
+
+    (the very first level expands the single root into 3, so the exact count is $3 + 9 \times 7 = 66$; either way it is order-of-magnitude $b \times k \times d \approx 3 \times 3 \times 8 = 72$).
+
+    So Tree-of-Thought costs roughly $72 / 8 \approx 9\times$ more model calls than ReAct here — consistent with the chapter's statement that tree search "multiplies the LLM calls by roughly $k \times d$." Because each call also has latency and dollar cost, a ~9x blow-up in generations is only worth paying when quality clearly dominates cost. In an interactive production setting the extra latency (each generation is a full forward pass) makes it impractical, so it is reserved for offline evaluation or high-value tasks where correctness outweighs cost.
+
+**4.** The `_parse_action` method uses the regex `r"Action:\s*(\w+)\(([^)]*)\)"`. Identify a realistic tool call that this regex parses *incorrectly*, and explain the consequence inside `_execute_action`. Then propose (in words or code) a more robust parsing strategy consistent with the chapter's style.
+
+??? note "Solution"
+    The character class `[^)]*` captures everything up to the **first** closing parenthesis. So any argument string that itself contains a `)` is truncated. For example:
+
+    ```text
+    Action: calculator("(37 / 20) * 100")
+    ```
+
+    The regex captures the argument group as `"(37 / 20"` — it stops at the first `)`. Worse, the outer match ends there too, so the trailing ` * 100")` is dropped. Inside `_execute_action`, `calculator` then receives the string `(37 / 20` (after quote-stripping), which is an unbalanced expression and returns `"Error: {e}"`. A single stray parenthesis derails the step even though the model did nothing wrong.
+
+    A second, related bug: splitting arguments on `,` breaks any argument that legitimately contains a comma (e.g., `search("Tokyo, Japan population")` would be split into two args).
+
+    **More robust strategy.** Rather than a single greedy regex, match the tool name and then parse the argument payload with a balanced-parenthesis / quote-aware pass. A pragmatic approach that stays in the chapter's style:
+
+    ```python
+    def _parse_action(self, text: str):
+        # Find "Action:" then the tool name and an opening paren.
+        m = re.search(r"Action:\s*(\w+)\(", text)
+        if not m:
+            return None
+        tool_name = m.group(1)
+        # Walk from the opening paren, tracking depth and quotes,
+        # to find the matching closing paren.
+        start = m.end()  # char just after "("
+        depth, in_str, quote = 1, False, ""
+        buf = []
+        for ch in text[start:]:
+            if in_str:
+                if ch == quote:
+                    in_str = False
+                buf.append(ch)
+            elif ch in "\"'":
+                in_str, quote = True, ch
+                buf.append(ch)
+            elif ch == "(":
+                depth += 1
+                buf.append(ch)
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+                buf.append(ch)
+            else:
+                buf.append(ch)
+        payload = "".join(buf)
+        # Split on top-level commas only (ignore commas inside quotes).
+        args, cur, in_str, quote = [], [], False, ""
+        for ch in payload:
+            if in_str:
+                if ch == quote:
+                    in_str = False
+                cur.append(ch)
+            elif ch in "\"'":
+                in_str, quote = True, ch
+                cur.append(ch)
+            elif ch == ",":
+                args.append("".join(cur).strip().strip("\"'"))
+                cur = []
+            else:
+                cur.append(ch)
+        if cur:
+            args.append("".join(cur).strip().strip("\"'"))
+        args = [a for a in args if a]
+        return tool_name, args
+    ```
+
+    This correctly handles nested parentheses and quoted commas. In practice, many production harnesses side-step the problem entirely by using the provider's native JSON tool-calling API (where arguments arrive as structured JSON), which the chapter mentions as the "tool-calling variant."
+
+**5.** Implement action deduplication for `ReActAgent`, combining the chapter's `detect_loop` idea and the Interview Corner's "action hashing." Modify `run` so that when the model proposes an action it has already tried (same tool name + same argument set), the harness does **not** re-execute the tool but instead injects a corrective observation telling the model to try something different. Give the modified loop body.
+
+??? note "Solution"
+    We maintain a set of canonical `(tool_name, frozenset(args))` signatures. Before executing a parsed action, we check membership; if it is a repeat, we skip execution and inject a nudge. `finish` is exempt (finishing is terminal, not a loop). Only the changed parts of `run` are shown; everything else is unchanged.
+
+    ```python
+    def run(self, task: str, verbose: bool = True) -> str:
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user",   "content": task},
+        ]
+        seen_actions: set[tuple[str, frozenset]] = set()
+
+        for step in range(self.MAX_STEPS):
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                stop=["Observation:"],
+                temperature=0.0,
+                max_tokens=512,
+            )
+            assistant_text = response.choices[0].message.content.strip()
+            if verbose:
+                print(f"\n[Step {step+1}]\n{assistant_text}")
+
+            parsed = self._parse_action(assistant_text)
+            if parsed is None:
+                observation = "Error: no Action found. Please follow the format."
+            else:
+                tool_name, args = parsed
+                # ---- Action deduplication ----
+                signature = (tool_name, frozenset(args))
+                if tool_name != self.STOP_TOKEN and signature in seen_actions:
+                    observation = (
+                        "You have already tried this exact action and it did "
+                        "not resolve the task. Do NOT repeat it. Reason about "
+                        "why it failed and choose a different tool or arguments."
+                    )
+                else:
+                    if tool_name != self.STOP_TOKEN:
+                        seen_actions.add(signature)
+                    observation = self._execute_action(tool_name, args)
+
+            if observation == "__FINISH__":
+                match = re.search(r"finish\(([^)]*)\)", assistant_text)
+                final_answer = match.group(1).strip('"\'') if match else assistant_text
+                if verbose:
+                    print(f"\n[Final Answer] {final_answer}")
+                return final_answer
+
+            messages.append({"role": "assistant", "content": assistant_text})
+            messages.append({"role": "user", "content": f"Observation: {observation}"})
+            if verbose:
+                print(f"Observation: {observation}")
+
+        return "Error: agent exceeded maximum steps without finishing."
+    ```
+
+    Key design choices, grounded in the chapter:
+
+    - The signature uses `frozenset(args)` so argument *order* does not matter and the tuple is hashable — exactly the Interview Corner's `(tool_name, frozenset(args))` recommendation.
+    - `finish` is excluded from deduplication, since terminating is not a repeated *loop* action.
+    - Instead of hard-blocking, we inject a corrective observation ("Do NOT repeat it... choose a different tool"), which keeps the model in the loop with useful feedback rather than silently dropping the step — matching the chapter's advice to nudge the model toward "a different strategy." This still counts against `MAX_STEPS`, so a persistently stuck agent still terminates safely.

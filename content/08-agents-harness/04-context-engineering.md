@@ -49,7 +49,7 @@ $$
 T_{\text{in}} = \sum_{t=1}^{N} L_t = \sum_{t=1}^{N}\left(L_0 + \sum_{i=1}^{t} a_i\right)
 $$
 
-If every turn adds a constant $a$ tokens and $L_0$ is small, this is $\sum_{t=1}^N a t \approx \tfrac{1}{2} a N^2$. **Naive context accumulation is quadratic in the number of turns.** This single fact is the reason every serious agent harness has a context-management strategy. Halving $a$ (the per-turn footprint) quarters your bill; capping $L_t$ at a ceiling $C$ turns the quadratic back into a linear $O(NC)$.
+If every turn adds a constant $a$ tokens and $L_0$ is small, this is $\sum_{t=1}^N a t \approx \tfrac{1}{2} a N^2$. **Naive context accumulation is quadratic in the number of turns.** This single fact is the reason every serious agent harness has a context-management strategy. Because the dominant term $\tfrac{1}{2}aN^2$ is *linear* in $a$, halving $a$ (the per-turn footprint) halves that term — while capping $L_t$ at a ceiling $C$ turns the quadratic back into a linear $O(NC)$, attacking the far larger $N^2$ factor.
 
 {{fig:quadratic-cost-of-accumulation}}
 
@@ -542,3 +542,106 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
 - Packer et al., *MemGPT: Towards LLMs as Operating Systems* (2023) — the RAM-vs-disk framing of context as a managed memory hierarchy.
 - Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (RadixAttention) — automatic prefix sharing as a serving-side complement to context engineering.
 - Lewis et al., *Retrieval-Augmented Generation* (2020) — the retrieval-vs-stuffing foundation; pairs with Part IX of this book.
+
+## Exercises
+
+**1.** A retrieval step returns 8 documents ranked by relevance score, $d_1$ (best) through $d_8$ (worst), which you will stuff into the window. A colleague proposes concatenating them in rank order, $d_1 d_2 \dots d_8$, reasoning that the most relevant document should come first. Using the position effects described in this chapter, explain why this ordering is suboptimal and give a better one.
+
+??? note "Solution"
+
+    Rank order puts $d_1$ at the start (good) but leaves the *second*-best document, $d_2$, and the rest of the strong documents progressively deeper toward the middle, exactly where **lost-in-the-middle** predicts the worst retrieval accuracy. The accuracy-versus-position curve is U-shaped: strong at the beginning and end, sagging in the middle. Concatenating $d_1 \dots d_8$ places your two most valuable documents ($d_1, d_2$) adjacent at the front, so $d_2$ still enjoys an edge, but $d_3, d_4$ land in the low-accuracy trough while the weakest documents occupy the high-salience *end* of the window.
+
+    The chapter's actionable rule is: "place the most important material at the start or the very end of the window, never buried in the middle... When you stuff $k$ retrieved documents, put the highest-scoring ones at the boundaries." So a better layout brackets the boundaries with the best documents and hides the weak ones in the middle, e.g.:
+
+    $$
+    d_1 \; d_3 \; d_5 \; \underbrace{d_7 \; d_8}_{\text{middle: weakest}} \; d_6 \; d_4 \; d_2
+    $$
+
+    Here $d_1$ sits at the very start and $d_2$ at the very end (the two highest-salience slots), $d_3$/$d_4$ just inside them, and the two least relevant documents ($d_7, d_8$) absorb the middle trough where a loss of signal costs the least.
+
+**2.** An agent runs for $N = 30$ turns and appends everything, never pruning. The system prompt plus tools are $L_0 = 3{,}000$ tokens, and each turn adds $a = 2{,}000$ tokens (assistant message plus tool result). Input is billed at USD 3 per million tokens.
+
+    (a) Compute the total input tokens billed across the run and the input cost. (b) If you instead halve the per-turn footprint to $a = 1{,}000$ tokens, what is the new input cost, and by what factor did the bill change? Explain the factor using the chapter's cost model.
+
+??? note "Solution"
+
+    **(a)** The prompt length at turn $t$ is $L_t = L_0 + a\,t = 3000 + 2000\,t$. The total input billed is the sum of every prefix:
+
+    $$
+    T_{\text{in}} = \sum_{t=1}^{30}(3000 + 2000\,t) = 30\cdot 3000 + 2000\cdot\frac{30\cdot 31}{2} = 90{,}000 + 2000\cdot 465 = 90{,}000 + 930{,}000 = 1{,}020{,}000
+    $$
+
+    So $T_{\text{in}} = 1.02$M tokens. Input cost $= 1.02 \times 3 = $ **USD 3.06**.
+
+    **(b)** With $a = 1{,}000$: $T_{\text{in}} = 30\cdot 3000 + 1000\cdot 465 = 90{,}000 + 465{,}000 = 555{,}000$ tokens $= 0.555$M. Cost $= 0.555 \times 3 = $ **USD 1.665**.
+
+    The bill fell by a factor of $3.06 / 1.665 \approx 1.84$, i.e. a bit less than 2x. This follows directly from the chapter's cost model $T_{\text{in}} = L_0 N + a\,\tfrac{N(N+1)}{2}$, which is *linear* in $a$: the $a$-dependent term halves exactly ($930{,}000 \to 465{,}000$) when you halve $a$, so if the fixed $L_0 N = 90{,}000$ term were negligible the total would halve too — a clean 2x. But $L_0 N$ does not depend on $a$, so it is left unchanged and dilutes the reduction to 1.84x. (Note it is *halving*, not quartering: $a$ scales the dominant $\tfrac{1}{2}aN^2$ term linearly; it is halving $N$ that would quarter the bill.) The pure-quadratic $\tfrac{1}{2}aN^2$ approximation dominates only once $a N \gg L_0$; at $N = 30$ the constant $L_0 N$ still contributes enough to hold the factor below 2. Halving the footprint of a *longer* run (larger $N$, so the $a$-term dwarfs $L_0 N$) would approach the clean 2x more closely.
+
+**3.** An agent carries a stable prefix of $P = 10{,}000$ tokens (system + tools + pinned plan) and adds $\Delta = 1{,}000$ new tokens per turn. Pricing: uncached input USD 3/M; cached *reads* USD 0.30/M; a one-time cache *write* USD 3.75/M for the prefix. Compute (a) the per-turn cost with no caching, (b) the steady-state per-turn cost once the prefix is cached, and (c) the total cost of a 20-turn run with and without caching. What is the overall ratio?
+
+??? note "Solution"
+
+    **(a) No caching.** Every turn re-prefills the whole prompt $P + \Delta = 11{,}000$ tokens at full price:
+
+    $$
+    11{,}000 \times \frac{3}{10^6} = \text{USD } 0.033 \text{ per turn.}
+    $$
+
+    **(b) Cached steady state (turns 2+).** The unchanged $P = 10{,}000$ prefix is read from cache at the discount, and only the $\Delta = 1{,}000$ new tokens prefill at full price:
+
+    $$
+    \underbrace{10{,}000 \times \tfrac{0.30}{10^6}}_{\text{cached read }=\,0.003} + \underbrace{1{,}000 \times \tfrac{3}{10^6}}_{\text{new }=\,0.003} = \text{USD } 0.006 \text{ per turn.}
+    $$
+
+    That is a $0.033/0.006 = 5.5\times$ reduction on every steady-state turn.
+
+    **(c) 20-turn totals.** Without caching: $20 \times 0.033 = $ **USD 0.66**.
+
+    With caching, turn 1 pays the write surcharge on the prefix plus the new tokens at full price:
+
+    $$
+    \text{turn 1} = 10{,}000 \times \tfrac{3.75}{10^6} + 1{,}000 \times \tfrac{3}{10^6} = 0.0375 + 0.003 = \text{USD } 0.0405,
+    $$
+
+    then turns 2-20 (19 turns) cost USD 0.006 each: $19 \times 0.006 = 0.114$. Total $= 0.0405 + 0.114 = $ **USD 0.1545**.
+
+    Overall ratio $= 0.66 / 0.1545 \approx 4.3\times$ cheaper. The one-time write surcharge (USD 0.0375 vs 0.03 uncached, a 25% premium paid once) is repaid within the first cached turn, and every subsequent turn compounds the saving — which is why the chapter calls prefix stability "the highest-leverage single change you can make to agent economics."
+
+**4.** The chapter gives one rule for cacheable context ("keep the prefix byte-stable") and separately warns that compaction "busts the cache." (a) Explain mechanically why placing a live timestamp at the *top* of the system prompt causes a cache miss on every turn, whereas placing it at the *end* of the current turn does not. (b) Explain why compaction busts the cache, and state the rule for *when* it is nonetheless worth doing.
+
+??? note "Solution"
+
+    **(a)** Prefix caching matches the **longest common prefix** of the new request against a cached entry, and "the cache hit ends at the *first byte that differs*." A timestamp like `"It is 14:32:07. "` changes every call. If it sits at the *top*, the very first bytes of the request differ from the cached entry, so the longest common prefix is essentially zero — everything after it (system prompt, tools, history) must be re-prefilled at full price, every turn. If instead the volatile timestamp goes at the *end*, inside the current user turn, then the entire stable block before it (system + tools + retrieved + history) is a byte-identical prefix that matches the cache; only the short trailing turn — which was going to be new anyway — is prefilled. The chapter's directive: "Move all volatile content to the *end*, just before the model's turn."
+
+    **(b)** Compaction *rewrites the conversation head*: it replaces a long span of old turns with a freshly generated summary, changing the bytes near the front of the messages. Since the cache match ends at the first differing byte, that rewrite invalidates the cached prefix downstream of it, so the turn immediately after a compaction is a full cache miss (plus the cost of the summarization model call itself).
+
+    The rule: **compact deliberately, not eagerly.** Each compaction trades a one-time cost (a cache-miss prefill of the new, shorter prefix + one summarization call) for cheaper subsequent turns (a smaller prefix re-sent at the cache discount). It is worth doing only when "the projected savings over the next several turns exceed that one-time cost" — i.e. when you expect enough remaining turns to amortize the busted cache, not on every turn.
+
+**5.** The "Common pitfall" admonition warns that piping raw, unbounded tool output into the window is the most common way agents blow their budget, and prescribes truncating "with an explicit `[... 4,213 lines elided ...]` marker." Implement a function `bound_tool_output(text, max_tokens=2000, head_frac=0.5)` that returns `text` unchanged if it is within budget, and otherwise keeps a head and a tail slice (splitting the budget by `head_frac`) joined by an explicit elided-token breadcrumb. Use the chapter's real-tokenizer helper `_enc` / `ntok`. Then show, with a short example, why keeping both a head *and* a tail (rather than just a head) matters for tool output.
+
+??? note "Solution"
+
+    We slice on real tokens (not characters) so the cap is exact, keep the first `head_frac` of the budget from the top and the remainder from the bottom, and stitch them with a breadcrumb that both records how much was dropped and tells the model how to recover it — mirroring the chapter's "a tool wrapper that caps every result... and tells the model how to fetch more is worth more than a cleverer prompt."
+
+    ```python
+    # Bound a single tool result to a hard token budget, keeping head + tail
+    # with an explicit breadcrumb. Uses the chapter's _enc / ntok helpers.
+    def bound_tool_output(text: str, max_tokens: int = 2000,
+                          head_frac: float = 0.5) -> str:
+        toks = _enc.encode(text)
+        if len(toks) <= max_tokens:
+            return text                      # already within budget: untouched
+        n_head = int(max_tokens * head_frac)
+        n_tail = max_tokens - n_head
+        n_elided = len(toks) - n_head - n_tail
+        head = _enc.decode(toks[:n_head])
+        tail = _enc.decode(toks[-n_tail:]) if n_tail else ""
+        marker = (f"\n[... {n_elided} tokens elided; "
+                  f"narrow the query or call read_window to fetch more ...]\n")
+        return head + marker + tail
+
+    # (The breadcrumb itself costs a handful of tokens, so the result is a hair
+    #  over max_tokens; reserve a small margin upstream if the cap is hard.)
+    ```
+
+    **Why head *and* tail.** Tool output is frequently most informative at *both* ends. A `pytest` run, for example, prints the collected-tests banner and progress dots at the top but the actual `FAILED test_x - AssertionError...` summary and the exit status at the *bottom*. A head-only truncation ($head\_frac = 1.0$) would keep the useless progress noise and elide precisely the failure summary the agent needs to act. Concretely, for a 5,000-line log at `max_tokens=2000`, head+tail preserves both the invocation/first errors and the final failure roster and exit code, while the middle — the repetitive bulk — is exactly the low-signal span it is safest to drop, echoing the lost-in-the-middle intuition that the boundaries carry the load. The breadcrumb keeps the elision honest so the model does not hallucinate continuity across the gap, and it points at the just-in-time tools (`read_window`, `grep`) for pulling any elided detail back on demand.

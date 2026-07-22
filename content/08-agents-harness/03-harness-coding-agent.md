@@ -509,3 +509,163 @@ The model sets the ceiling on raw reasoning and code-writing skill. The harness 
 - Wang et al., *Voyager* and the *OpenHands* (formerly OpenDevin) project — open agentic harnesses worth reading as reference implementations of loops, tools, and sandboxes.
 - The *Aider* repository (Paul Gauthier) — an excellent, readable real-world coding harness; study its diff-application strategies and repo-map construction.
 - Anthropic's engineering writing on *Claude Code* and *building effective agents*, and OpenAI's *Codex CLI* — practitioner accounts of the design decisions discussed in this chapter.
+
+## Exercises
+
+**1.** The chapter insists that a coding loop's termination be *structural* (stop exactly when the assistant emits no tool call) rather than *lexical* (stop when the model says "I'm done"). Give one concrete bug that a lexical stop-word check produces which the structural rule cannot, and explain why the structural rule is immune to it.
+
+??? note "Solution"
+    A lexical check scans the assistant's prose for a phrase like "done" or "fixed" and ends the loop when it appears. The failure mode: the model emits a message that *both* says "Done — I've fixed the format string" *and* carries a pending `bash` tool call to re-run the test in the same assistant turn. A lexical check sees "Done", terminates, and never executes the verification command — the harness declares success while the ground-truth check was still queued and unrun. Worse, the model may say "done" inside its reasoning ("this isn't done yet, let me also check...") and trip a naive substring match mid-task.
+
+    The structural rule inspects the assistant message for `tool_use` blocks:
+
+    ```python
+    tool_calls = [b for b in resp.content if b.type == "tool_use"]
+    if not tool_calls:
+        return resp, messages   # only stop with an empty action set
+    ```
+
+    It is immune because it keys off *what the model is trying to do* (its action set), not *what it says*. As the chapter puts it, "the model speaks to finish and acts to continue": as long as any tool call is present the loop must execute it, so a message that both claims completion and requests a tool is correctly treated as "keep going". Termination becomes a property of the message structure the harness fully controls, not of natural-language phrasing the model controls.
+
+**2.** The `edit_file` tool rejects an `old_string` that occurs **zero** times *and* one that occurs **two or more** times, treating both as hard errors rather than guessing. (a) Explain what each of those two conditions tells the harness about the model's state. (b) Why is failing loudly on the two-or-more case strictly safer than the seemingly helpful behavior of "just replace the first match"? (c) The tool's contract also says the file "must already have been read this session." What class of failure does that precondition prevent?
+
+??? note "Solution"
+    **(a) What each count means.**
+    - `count == 0`: the `old_string` the model supplied does not appear in the current file. The model is working from a stale or hallucinated picture of the contents — it either never read the file, or the file changed since it read it. The correct move is to force a re-read, which is exactly what the error message instructs ("Re-read the file; the text you supplied does not match the current contents.").
+    - `count > 1`: the anchor is ambiguous. The model gave context that matches multiple spans, so the harness cannot know *which* occurrence the model meant. The fix is more surrounding context to make the match unique.
+
+    **(b) Why loud failure beats "replace the first match".** "Replace the first match" silently picks an occurrence the model may not have intended. If the intended edit was the third occurrence, the harness has now corrupted an unrelated span, and — critically — it does so *invisibly*: the tool returns success, so the model believes the edit landed correctly and moves on, potentially building further edits on a now-wrong file. This is precisely the "silent corruption" the chapter warns against. Failing loudly converts an unobservable, unrecoverable corruption into an observable, recoverable error the model can immediately fix by supplying a unique anchor. The recurring theme: prefer recoverable, observable failures over silent guesses.
+
+    **(c) What read-before-edit prevents.** Requiring a prior read prevents *blind edits* — the model editing a file whose current contents it has never seen, based only on assumptions about what "should" be there. Combined with the unique-match check, it closes the loop: the model must have seen the real bytes (read) and must anchor to bytes that still exist uniquely (unique match), so an edit can only succeed against contents the model has actually observed.
+
+**3.** A "fix the failing test" session runs for 5 turns. Because the transcript is resent every turn, the per-turn **input** token counts are:
+
+| Turn | Total input tokens | Static preamble (cacheable) |
+|------|--------------------|-----------------------------|
+| 0    | 5,040              | 5,000 (cache *write*)       |
+| 1    | 5,530              | 5,000 (cache *read*)        |
+| 2    | 6,150              | 5,000 (cache *read*)        |
+| 3    | 6,600              | 5,000 (cache *read*)        |
+| 4    | 6,700              | 5,000 (cache *read*)        |
+
+Uncached input is billed at $3.00 per million tokens; a cache *read* is billed at $0.30 per million (one tenth). Assume the cache *write* on turn 0 is billed at the normal uncached rate, and that on turns 1-4 exactly the 5,000-token static preamble is a cache hit while the rest of each turn's input is uncached. Compute (a) total input tokens over the session, (b) input cost with no caching, (c) input cost with prefix caching, and (d) the percentage reduction. Why does keeping the system prompt and tool schemas byte-stable matter for this number?
+
+??? note "Solution"
+    **(a) Total input tokens.**
+    $$5040 + 5530 + 6150 + 6600 + 6700 = 30{,}020 \text{ tokens.}$$
+
+    **(b) No caching.** Every input token is billed at $3.00/M:
+    $$30{,}020 \times \frac{\$3.00}{10^6} = \$0.09006.$$
+
+    **(c) With prefix caching.** Split each turn into cached-read vs uncached tokens.
+    - Uncached tokens: turn 0 pays full price for all 5,040 (the cache write). Turns 1-4 pay full price only for the non-preamble remainder: $530 + 1150 + 1600 + 1700 = 4980$. Uncached total $= 5040 + 4980 = 10{,}020$.
+    - Cached-read tokens: the 5,000-token preamble on each of turns 1-4: $5000 \times 4 = 20{,}000$.
+
+    Cost:
+    $$10{,}020 \times \frac{\$3.00}{10^6} + 20{,}000 \times \frac{\$0.30}{10^6} = \$0.03006 + \$0.00600 = \$0.03606.$$
+
+    **(d) Reduction.**
+    $$\frac{0.09006 - 0.03606}{0.09006} = \frac{0.05400}{0.09006} \approx 0.60 = 60\%.$$
+
+    So caching cuts input cost by about 60% here; with a larger cached fraction of each turn (or a cheaper cache tier) you approach the 70-80% figure the chapter cites for the worked example. **Why byte-stability matters:** the cache keys on an exact prefix. If the system prompt or tool schemas change by even one byte between turns, the cached prefix is invalidated and the entire preamble is re-billed at the full uncached rate on that turn — you lose the $0.30/M reads and pay $3.00/M instead. That is why harnesses freeze the preamble across turns.
+
+**4.** The chapter's `edit_file` says the read-before-edit precondition is "enforced elsewhere" but does not show the enforcement. Implement it. Add session state that records which files have been read, update `read_file` to register a successful read, and add a guard at the top of `edit_file` that returns a teaching error (in the chapter's style) if the file was never read this session. Keep the `ToolResult` interface unchanged.
+
+??? note "Solution"
+    We keep a module-level set of resolved paths that have been read, register each successful `read_file`, and gate `edit_file` on membership. Paths are resolved to absolute form so `./foo.py` and `foo.py` are treated as the same file.
+
+    ```python
+    from pathlib import Path
+
+    # Session state the harness owns: files whose real bytes the model has seen.
+    READ_FILES: set[str] = set()
+
+    def _key(path: str) -> str:
+        # Canonicalize so different spellings of the same file collapse.
+        return str(Path(path).resolve())
+
+    def read_file(path: str, offset: int = 0, limit: int = 2000) -> ToolResult:
+        p = Path(path)
+        if not p.exists():
+            return ToolResult(f"Error: {path} does not exist.", is_error=True)
+        lines = p.read_text().splitlines()
+        window = lines[offset : offset + limit]
+        numbered = "\n".join(f"{offset + i + 1:6d}\t{ln}"
+                             for i, ln in enumerate(window))
+        truncated = "" if offset + limit >= len(lines) else \
+            f"\n... ({len(lines) - offset - limit} more lines; use offset to continue)"
+        READ_FILES.add(_key(path))          # register the successful read
+        return ToolResult(numbered + truncated)
+
+    def edit_file(path: str, old_string: str, new_string: str) -> ToolResult:
+        # NEW: read-before-edit precondition, enforced deterministically.
+        if _key(path) not in READ_FILES:
+            return ToolResult(
+                f"Error: {path} has not been read this session. Call "
+                f"read_file({path!r}) first so your edit anchors to the "
+                f"file's actual current contents.",
+                is_error=True,
+            )
+
+        p = Path(path)
+        if not p.exists():
+            return ToolResult(f"Error: {path} does not exist.", is_error=True)
+
+        text = p.read_text()
+        count = text.count(old_string)
+        if count == 0:
+            return ToolResult(
+                f"Error: old_string not found in {path}. Re-read the file; the "
+                f"text you supplied does not match the current contents.",
+                is_error=True,
+            )
+        if count > 1:
+            return ToolResult(
+                f"Error: old_string appears {count} times in {path}. Provide more "
+                f"surrounding context so the match is unique.",
+                is_error=True,
+            )
+
+        p.write_text(text.replace(old_string, new_string))
+        return ToolResult(f"Edited {path}: 1 replacement.")
+    ```
+
+    Notes consistent with the chapter's design: the guard returns `is_error=True` with a message that *teaches recovery* ("Call `read_file(...)` first"), so a model that tries a blind edit is bounced into the correct sequence rather than crashing the loop. Because reads register on success only, a file that failed to read (nonexistent) is not marked read, so a subsequent edit is still blocked. One subtlety worth a comment in real code: if an edit invalidates the model's mental picture you may choose to *keep* the file marked read (it was genuinely read) — the unique-match check already guards against stale anchors on the next edit.
+
+**5.** Implement the **sub-agent** primitive from Anatomy V. Write `run_subagent(instruction, tool_schemas)` that runs an *exploratory* task in a fresh, isolated context and returns only a short distilled string to the caller — never the sub-agent's dozens of intermediate tool results. Reuse the chapter's `agent_loop`. Then state, in one sentence each, the two properties this buys the main agent and the one cost it incurs.
+
+??? note "Solution"
+    The whole point of context isolation is that the sub-agent gets its *own* `messages` transcript (created inside `agent_loop`), burns its exploration budget there, and hands back only the final assistant text. `agent_loop` already returns `(resp, messages)` and terminates structurally when the model emits no tool call, so we just extract the text blocks of that final `resp` and discard everything else.
+
+    ```python
+    SUBAGENT_SYSTEM = (
+        "You are a focused sub-agent. Carry out the single instruction below "
+        "using the available tools, then reply with a SHORT distilled answer "
+        "(a few lines) and no tool calls. Do not ask questions; do not plan "
+        "beyond the instruction. Your entire transcript is discarded — only "
+        "your final message is returned to the caller, so make it self-contained."
+    )
+
+    def run_subagent(instruction: str, tool_schemas: list,
+                     max_turns: int = 20, token_budget: int = 100_000) -> ToolResult:
+        """Run an exploratory task in an ISOLATED context and return only the
+        distilled result. The sub-agent's own reads/searches never touch the
+        parent's transcript -- that is the entire value of the pattern."""
+        final, _messages = agent_loop(
+            SUBAGENT_SYSTEM, instruction, tool_schemas,
+            max_turns=max_turns, token_budget=token_budget,
+        )
+        if final is None:
+            return ToolResult(
+                "Sub-agent hit its budget without finishing; "
+                "narrow the instruction and retry.", is_error=True)
+        # Keep ONLY the text of the final (no-tool-call) message.
+        text = "".join(b.text for b in final.content if b.type == "text").strip()
+        return ToolResult(text or "(sub-agent returned no text)")
+    ```
+
+    The main agent invokes it like any other tool — e.g. `run_subagent("Find every place a User object is constructed; report file:line for each.", TOOL_SCHEMAS)` — and its context absorbs the three-line answer, not the forty file reads that produced it.
+
+    - **Property 1 (context cleanliness):** the sub-agent's expensive, dead-end-heavy exploration is firewalled into a throwaway transcript, so the main agent's precious context stays high signal-to-noise.
+    - **Property 2 (right-sized budgets):** each agent gets a context/turn budget matched to its job, so exploration cannot starve the main task of window.
+    - **Cost:** latency and non-shareable state — a sub-agent is a whole nested loop that runs before the parent can proceed, and it cannot share intermediate results with the parent, so it only pays off for parallelizable, summarizable work (search, investigation), not tightly coupled reasoning.

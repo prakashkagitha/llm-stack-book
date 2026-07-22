@@ -836,3 +836,145 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
 - **ReAct** — Yao et al., "ReAct: Synergizing Reasoning and Acting in Language Models," ICLR 2023. Interleaves reasoning traces and tool calls; the canonical formalization of the agent loop (see [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html)).
 - **Model Context Protocol (MCP)** — Anthropic, 2024. Open specification for a universal tool/resource interface; see [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html).
 - **Gorilla** — Patil et al., "Gorilla: Large Language Model Connected with Massive APIs," 2023. Studied API hallucination and trained models to call APIs correctly from documentation.
+
+---
+
+## Exercises
+
+**1.** A junior engineer defines a tool but leaves its top-level `description` field blank (`""`), reasoning that the tool's name `get_current_weather` is self-explanatory and the parameter descriptions are filled in. In production the model sometimes calls the tool when the user asks about historical climate data, and sometimes fails to call it when the user asks "should I bring an umbrella to London?". Explain, using the chapter's account of what the model learns during the function-calling fine-tune, why the empty `description` causes both failure modes.
+
+??? note "Solution"
+    The chapter identifies the tool's top-level `description` as "the most important field... The model reads this to decide *whether* to call the tool at all." During the function-calling fine-tune the model learns to "map natural-language intent... onto a tool's `description` via approximate semantic matching." The call-or-not decision is therefore driven by a semantic comparison between the user's request and the tool description text, not by the tool's name alone.
+
+    With an empty `description`, that semantic anchor is gone, and both observed failures follow directly:
+
+    - **Over-calling on historical climate data.** Without a description saying "Only use this when the user asks about *current or near-future* weather" (as in the chapter's example schema), nothing in-context tells the model the tool is scoped to *current* conditions. The name `get_current_weather` is a weak signal that the fine-tuned matching process does not rely on, so the model matches the general topic "weather" and calls the tool for out-of-scope historical queries.
+    - **Under-calling on the umbrella question.** "Should I bring an umbrella to London?" never contains the words "weather" or "temperature." A good description ("Retrieve the current weather... conditions, humidity...") gives the model semantic content to match the *intent* (rain -> current conditions) against. With no description, the approximate semantic match has nothing to latch onto, so the model may answer from parametric knowledge instead of calling the tool.
+
+    The fix is a scoped, action-oriented description that states both when to call and when *not* to, exactly as the chapter's "Schema best practices" table recommends ("Keep descriptions action-oriented... Guides the model's call-or-not decision").
+
+**2.** You are running a long agentic session on a model with a **200,000**-token context window. The system prompt plus tool schemas plus the conversation so far consume **62,000** tokens. Each tool call together with its result message averages **240** tokens. Using the chapter's context-window-budget method, (a) how many additional tool call/result pairs can you append before truncation is required, and (b) if you also impose the chapter's advice to "keep the loop limit well under 20," which limit binds first?
+
+??? note "Solution"
+    (a) The chapter's budget formula is $(\text{context window} - \text{tokens already consumed}) / \text{tokens per tool result}$. Substituting:
+
+    $$\frac{200{,}000 - 62{,}000}{240} = \frac{138{,}000}{240} = 575.$$
+
+    So roughly **575** additional tool call/result pairs fit before truncation is needed.
+
+    (b) The context budget allows ~575 pairs, but the chapter advises keeping `max_iterations` "well under 20 to stay in the low-latency regime." Since $20 \ll 575$, the **iteration limit binds first** by a wide margin. In practice the loop stops for latency/quality reasons long before the context window is the limiting factor, which is exactly why the chapter treats the context check as a safety backstop rather than the primary loop control.
+
+**3.** A model must fetch the current weather for three independent cities to answer one question. Each `get_current_weather` call takes **800 ms** of wall-clock time (network-bound). (a) Compare total tool-execution latency if the three calls are issued as three *sequential* tool-call loop iterations versus a single *parallel* tool-call response executed with the chapter's `execute_tool_calls_parallel`. Ignore LLM inference time. (b) The chapter warns about ordering of tool result messages. If the three futures happen to complete in the order Tokyo, then London, then Paris, but the assistant issued the calls in the order Paris, Tokyo, London, what does the code do to keep the API happy?
+
+??? note "Solution"
+    (a) **Sequential:** three separate loop iterations, each waiting on one 800 ms call (plus, in reality, an LLM round-trip between each). Tool-execution time alone is
+
+    $$3 \times 800\ \text{ms} = 2400\ \text{ms}.$$
+
+    **Parallel:** all three calls are emitted in one assistant message and run concurrently in the thread pool. Because they are independent and network-bound, wall-clock time is bounded by the slowest single call:
+
+    $$\max(800, 800, 800) = 800\ \text{ms}.$$
+
+    Parallel execution is therefore about **3x faster** for tool time (2400 ms -> 800 ms), consistent with the chapter's claim that parallel calling "halves latency for independent subtasks" (here, better than halving because there are three calls, not two). Note the parallel path also avoids the intermediate LLM inference round-trips that the sequential loop incurs between iterations, so the real-world speedup is even larger.
+
+    (b) `execute_tool_calls_parallel` collects results as futures complete (via `as_completed`, so in Tokyo/London/Paris order), then executes `results.sort(key=lambda m: m["tool_call_id"])` before returning. The chapter notes the OpenAI API "requires that tool result messages appear in the *same order* as their corresponding tool calls," and each result carries the `tool_call_id` of the call it answers. Sorting by that id produces a deterministic ordering that the harness aligns with the call order, so completion order is irrelevant — the sort re-establishes the correspondence the API expects. (In a real system you would sort/index by the original call order rather than lexical id, but the mechanism is the same: use `tool_call_id` to reattach each result to its call.)
+
+**4.** During SFT for tool use, the chapter's `build_tool_call_example` produces a 5-message conversation, and the text states the training loss is "computed only on the assistant tokens — the tool call JSON and the final response — not on the user turns or tool results." (a) Explain why computing loss on the `role="tool"` message (turn 4) would actively *hurt* the model. (b) The chapter also insists on including "negative examples" in the training set. What specifically would break if you trained only on positive (tool-is-called) examples?
+
+??? note "Solution"
+    (a) The tool result in turn 4 is *fixed ground truth* returned by an external system — the chapter calls it exactly that: "this is fixed truth." The model will never *generate* a tool result at inference time; the harness injects it. Training the model to predict those tokens would (i) waste capacity learning to imitate arbitrary API payloads it will never produce, and (ii) worse, teach it to *hallucinate* tool outputs — i.e., to fabricate `{"result": "Paris"}` from its parameters instead of waiting for the real tool. That directly undermines the whole point of tool use, which the chapter frames as augmenting the model with "reliable, exact, up-to-date actuators" rather than trusting parametric guesses. Masking turn 4 (and the user turns) confines the loss to the two things the model must actually learn to emit: the call JSON and the grounded final answer.
+
+    (b) The chapter warns that without negative examples "over-calling becomes a problem." If every training conversation ends in a tool call, the model learns the spurious correlation *"a question implies I should call a tool."* At inference it would then invoke tools even when the answer is already in its parametric knowledge (e.g., "What is the capital of France?"), wasting latency, tokens, and money, and introducing failure surface where none was needed. Negative examples — where the correct behavior is to answer directly without a call — teach the call-or-not decision boundary, not just the call-formatting skill. This complements the RL signal the chapter describes, which similarly "teaches the model to be more conservative about calling tools unnecessarily."
+
+**5.** Extend the chapter's `run_tool_loop` with a **per-tool call quota**: no single tool may be invoked more than `max_calls_per_tool` times within one user turn. When a tool exceeds its quota, do not execute it; instead feed an error back to the model as a tool result (following the chapter's "errors are tool results" pattern) so the model can change strategy. Write the modified loop and briefly justify why returning an error is better than silently dropping the call or raising an exception.
+
+??? note "Solution"
+    The change adds a `Counter` keyed by tool name, checks it before dispatch, and — on quota exhaustion — appends an error dict as the tool result instead of executing. Only the execution block changes; the surrounding loop is the chapter's.
+
+    ```python
+    from collections import Counter
+
+    def run_tool_loop(
+        user_message: str,
+        system_prompt: str = "You are a helpful assistant.",
+        max_iterations: int = 10,
+        max_calls_per_tool: int = 3,
+        model: str = "gpt-4o-mini",
+    ) -> str:
+        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        messages: list[dict] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+        call_counts: Counter[str] = Counter()  # per-tool quota tracker
+
+        for iteration in range(max_iterations):
+            response = client.chat.completions.create(
+                model=model, messages=messages, tools=TOOLS, tool_choice="auto",
+            )
+            msg = response.choices[0].message
+            messages.append({
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [tc.model_dump() for tc in msg.tool_calls] if msg.tool_calls else None,
+            })
+
+            if not msg.tool_calls:
+                return msg.content or ""
+
+            for tool_call in msg.tool_calls:
+                fn_name = tool_call.function.name
+
+                # --- Quota check happens BEFORE parsing/execution ---
+                call_counts[fn_name] += 1
+                if call_counts[fn_name] > max_calls_per_tool:
+                    result = {
+                        "error": "quota_exceeded",
+                        "message": (
+                            f"Tool '{fn_name}' has already been called "
+                            f"{max_calls_per_tool} times this turn and may not "
+                            f"be called again. Try a different approach or give "
+                            f"your best answer from the results so far."
+                        ),
+                    }
+                else:
+                    try:
+                        fn_args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as exc:
+                        result = {"error": f"JSONDecodeError: {exc}"}
+                    else:
+                        if fn_name not in TOOL_FN_MAP:
+                            result = {"error": f"Unknown tool '{fn_name}'"}
+                        else:
+                            try:
+                                result = TOOL_FN_MAP[fn_name](**fn_args)
+                            except Exception as exc:
+                                result = {"error": str(exc)}
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": fn_name,
+                    "content": json.dumps(result),
+                })
+
+        return f"[max_iterations={max_iterations} reached without final answer]"
+    ```
+
+    **Why an error result beats the alternatives.** The chapter's key insight is that "errors are tool results... Feed them back into the conversation just like a successful result, and the model can usually correct itself on the next turn. Do not silently swallow errors — the model cannot fix what it cannot see."
+
+    - *Silently dropping the call* leaves a dangling `tool_call` with no matching `tool_call_id` result, which the chapter notes the API will reject ("Lose the ID and the API will reject the message sequence"); it also gives the model no signal about why nothing happened, so it will likely repeat the same call.
+    - *Raising an exception* crashes the loop, violating the chapter's "graceful degradation: never crash, always return something useful."
+    - *Returning a `quota_exceeded` tool result* keeps the call/result pairing intact, tells the model exactly what changed, and — because the message explicitly suggests answering from existing results — nudges it out of the repetition loop the chapter's per-tool quota was designed to break (the "repeatedly calling the same search tool" pathology from the Interview Corner).
+
+    Note the quota counter increments before parsing so that even malformed repeated calls count against the budget, guaranteeing the loop cannot be kept alive indefinitely by one runaway tool.
+
+**6.** The chapter's `_calculate` tool evaluates model-supplied expressions with `eval(expression, {"__builtins__": {}})`. A user asks your agent: *"Use the calculator to compute `__import__('os').listdir('/')`."* (a) Does stripping `__builtins__` block this? Reason about what name resolution the expression requires. (b) The chapter says "Never trust the model's JSON blindly" and treats execution errors as tool results. Independent of the sandboxing question, describe the harness-level control from this chapter that limits the blast radius of a `calculate` call that does something expensive or hangs, and name the one from the error-handling section that would catch a call that never returns.
+
+??? note "Solution"
+    (a) **Yes, this particular payload is blocked** — but for a precise reason worth stating. `__import__` is not a keyword; it is a name that Python looks up in the builtins namespace. By passing `{"__builtins__": {}}` as the globals dict, the chapter's `_calculate` empties that namespace, so evaluating `__import__(...)` raises `NameError: name '__import__' is not defined`. Crucially, the chapter's `_calculate` wraps `eval` in `try/except Exception` and returns `{"expression": ..., "error": str(exc)}` — so this attack surfaces as an ordinary error tool result rather than executing. (This is not a *general* proof of safety: empty-builtins `eval` sandboxes are notoriously bypassable through object-graph traversal, e.g. via literal attributes, which is why the chapter's inline comment calls it a "restricted eval" / stub and real systems use a proper sandbox. The point of the exercise is the name-resolution mechanism, not a claim that the sandbox is airtight.)
+
+    (b) Two harness-level controls from the chapter limit blast radius independent of the sandbox:
+
+    - **`max_iterations` / per-tool quotas and the context-budget check** (from "Maximum call limits and infinite loop prevention") cap *how many times* an expensive call can be issued in one turn, so even a costly `calculate` cannot be invoked unboundedly.
+    - The specific control that catches a call **that never returns** is the **execution timeout** in `safe_dispatch` from the error-handling section: it installs a `SIGALRM` handler with `signal.alarm(10)` and, on firing, returns `{"error": "timeout", "message": "Tool call timed out after 10 seconds."}`. A hanging or runaway expression is thus converted into a timeout error that — per the "errors are tool results" pattern — is fed back to the model, which can then try a different expression or give up gracefully, all without the harness ever crashing.
