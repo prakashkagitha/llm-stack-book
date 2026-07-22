@@ -479,3 +479,109 @@ From here, RoPE'd attention slots into [a full Transformer block](../02-transfor
 - Chen, Wong, Chen, Tian — *Extending Context Window of Large Language Models via Positional Interpolation* (2023). Position Interpolation.
 - Peng, Quesnelle, Fan, Shippole — *YaRN: Efficient Context Window Extension of Large Language Models* (2023). NTK-by-parts plus attention temperature; the dominant production extension method.
 - Kazemnejad, Padhi, Natesan Ramamurthy, Das, Reddy — *The Impact of Positional Encoding on Length Generalization in Transformers* (2023). The NoPE result for decoder-only models.
+
+## Exercises
+
+**1.** A colleague claims that a Transformer with no positional scheme can still tell "dog bites man" from "man bites dog" because the words are in different places in the input tensor. Using the permutation-equivariance argument from this chapter, explain precisely why they are wrong for a *bidirectional* (no causal mask) encoder. Then explain why the situation is subtly different for a *decoder-only* model with a causal mask (the NoPE result).
+
+??? note "Solution"
+    Let $P$ be the permutation matrix that swaps the "dog" and "man" rows of the input $X$. Self-attention computes $Q=XW_Q$, $K=XW_K$, $V=XW_V$, and permuting the input to $PX$ permutes every projection: $Q\to PQ$, $K\to PK$, $V\to PV$. The score matrix becomes $PQ(PK)^\top = PQK^\top P^\top$, the row-wise softmax commutes with the permutation, and the output is $P\cdot\operatorname{Attention}(Q,K,V)$. So permuting the input just permutes the output rows by the *same* permutation and changes nothing else. In a bidirectional encoder, the representation computed for the token "bites" is therefore identical whether the sentence is "dog bites man" or "man bites dog" — the two orderings are the *same bag of three vectors* to attention, and the MLPs act per-position so they cannot mix order back in either. The colleague is wrong: the tensor *slots* differ, but nothing in the computation reads absolute slot index, so word order is invisible. It must be injected explicitly (Approach A or B).
+
+    The decoder-only case is different because the **causal mask breaks the symmetry**. Token $i$ may attend only to $\{0,\dots,i\}$, so token $i$ and token $j>i$ see attended-sets of *different sizes*. Permuting the sequence changes which tokens fall inside each token's causal window, so the computation is no longer permutation-equivariant. The model can, in principle, count how many tokens are visible (the size of its attended set) and thereby recover absolute position implicitly — which is exactly why NoPE (no explicit encoding) can still learn and even length-generalize in decoder-only models. The causal mask is itself doing positional work.
+
+**2.** Using the sinusoidal formula from the chapter with `d_model = 8` and `base = 10000`, compute the four per-pair divisors `div_term[k]` (for $k=0,1,2,3$) and the corresponding wavelengths of each sine/cosine. Which dimension pair has the finest positional resolution, and which has the longest range?
+
+??? note "Solution"
+    The divisor for pair $k$ is $\text{base}^{2k/d} = 10000^{2k/8} = 10000^{k/4}$:
+
+    - $k=0$: $10000^{0} = 1$
+    - $k=1$: $10000^{1/4} = 10$
+    - $k=2$: $10000^{1/2} = 100$
+    - $k=3$: $10000^{3/4} = 1000$
+
+    Each pair oscillates as $\sin(\text{pos}/\text{div})$, i.e. angular frequency $\omega_k = 1/\text{div}_k$, so the wavelength is $2\pi\cdot\text{div}_k$:
+
+    - $k=0$: $2\pi\cdot 1 \approx 6.28$ tokens
+    - $k=1$: $2\pi\cdot 10 \approx 62.8$ tokens
+    - $k=2$: $2\pi\cdot 100 \approx 628$ tokens
+    - $k=3$: $2\pi\cdot 1000 \approx 6283$ tokens
+
+    Pair $k=0$ (wavelength about 6 tokens) turns fastest and gives the **finest local resolution**; pair $k=3$ (wavelength about 6283 tokens) turns slowest and encodes the **longest range**. This is the geometric frequency ladder: fast dims resolve nearby positions, slow dims span the whole sequence — the exact same ladder RoPE reuses.
+
+**3.** A model has head dimension $d = 128$ and was trained with RoPE at `base = 10000`. You want to serve it at $4\times$ the training length ($s = 4$) using NTK-aware scaling.
+
+  (a) Compute the new base $\text{base}'$.
+  (b) By what factor does the *fastest* pair's frequency $\theta_0$ change, and by what factor does the *slowest* pair's frequency $\theta_{63}$ change? Interpret both.
+  (c) Contrast this with what Position Interpolation would do to those same two frequencies.
+
+??? note "Solution"
+    (a) NTK-aware scaling uses $\text{base}' = \text{base}\cdot s^{\,d/(d-2)}$. Here $d/(d-2) = 128/126 \approx 1.01587$, so
+
+    $$\text{base}' = 10000 \cdot 4^{1.01587}.$$
+
+    Compute $4^{1.01587} = e^{1.01587\ln 4} = e^{1.01587\cdot 1.38629} = e^{1.40831} \approx 4.089$. Thus $\text{base}' \approx 10000\cdot 4.089 \approx 40{,}890$.
+
+    (b) With $\theta_k = \text{base}^{-2k/d}$, the change factor for pair $k$ is $(\text{base}'/\text{base})^{-2k/d} = 4.089^{-k/64}$.
+
+    - Fastest pair $k=0$: factor $= 4.089^{0} = 1.000$. The fast (local) dimension is **essentially unchanged** — NTK deliberately leaves it alone so local resolution is preserved.
+    - Slowest pair $k=63$: factor $= 4.089^{-63/64} = 4.089^{-0.9844} = e^{-0.9844\cdot 1.40831} = e^{-1.3863} \approx 0.250$. The slow (long-range) dimension's frequency is **cut to about $1/4$**, i.e. its wavelength stretches about $4\times$, keeping its angle inside the trained range at the extended length.
+
+    So NTK stretches non-uniformly: barely touching fast dims, stretching slow dims by roughly the full scale factor $s=4$.
+
+    (c) Position Interpolation squeezes *every* position by $s$: $\theta_k^{\text{PI}} = \theta_k/s$. That multiplies **both** $\theta_0$ and $\theta_{63}$ by $1/4 = 0.25$ uniformly. The difference is stark: PI needlessly cuts the fast pair's frequency to $1/4$ (destroying local resolution that was never the problem), whereas NTK leaves $\theta_0$ at factor $1.0$ and only stretches the slow pair. That is precisely why NTK often extends context with zero fine-tuning while PI usually needs a short fine-tune to recover the lost local precision.
+
+**4.** The chapter implements the Llama `rotate_half` convention (pairing dim $k$ with dim $k+d/2$) and verifies the relative-position property. Implement the **interleaved** convention instead (pairs are adjacent dims $(0,1),(2,3),\dots$), and numerically verify that it too satisfies $\langle f(q,m), f(k,n)\rangle = g(q,k,\,m-n)$.
+
+??? note "Solution"
+    In the interleaved convention, pair $k$ occupies dims $(2k, 2k+1)$ and is rotated by angle $m\theta_k$ with $\theta_k = \text{base}^{-2k/d}$. Each pair applies the standard $2\times 2$ rotation $(x_0,x_1)\mapsto(x_0\cos - x_1\sin,\; x_0\sin + x_1\cos)$.
+
+    ```python
+    import torch
+
+    def rope_interleaved(x, pos, base=10000.0):
+        """Apply RoPE (interleaved convention) to a single vector x at position `pos`.
+        Pairs are adjacent dims (0,1),(2,3),...; pair k rotates by pos * base^(-2k/d)."""
+        d = x.shape[-1]
+        half = d // 2
+        k = torch.arange(half).float()             # pair indices 0..d/2-1
+        theta = base ** (-2.0 * k / d)             # angular frequency per pair
+        ang = pos * theta                          # (d/2,)
+        cos, sin = ang.cos(), ang.sin()
+        x0 = x[0::2]                                # even dims -> first  element of each pair
+        x1 = x[1::2]                                # odd  dims -> second element of each pair
+        out = torch.empty_like(x)
+        out[0::2] = x0 * cos - x1 * sin
+        out[1::2] = x0 * sin + x1 * cos
+        return out
+
+    torch.manual_seed(7)
+    d = 64
+    q = torch.randn(d); k = torch.randn(d)
+    m, n = 25, 10                                   # offset m - n = 15
+    lhs = rope_interleaved(q, m) @ rope_interleaved(k, n)     # absolute positions 25, 10
+    rhs = rope_interleaved(q, m - n) @ rope_interleaved(k, 0) # relative: offset 15, 0
+    print(float(lhs), float(rhs))
+    assert torch.allclose(lhs, rhs, atol=1e-4), "interleaved RoPE relative property failed!"
+    print("Interleaved RoPE relative-position property verified.")
+    ```
+
+    The two dot products match because each pair contributes $\operatorname{Re}(q_k \bar k_k\, e^{i(m-n)\theta_k})$, which depends only on the offset $m-n$ — the absolute positions cancel exactly as in the 2-D derivation. Note this is a *different pairing* of dimensions from `rotate_half`, so its per-vector outputs differ; but because the model is trained end-to-end with a consistent convention, the two produce mathematically equivalent models (one is a fixed permutation of the other).
+
+**5.** RoPE rotates $Q$ and $K$ but leaves $V$ untouched, and its rotation of key $n$ depends only on $n$.
+
+  (a) Explain why rotating $V$ would be a mistake, in terms of what the score versus the value represent.
+  (b) Explain why the "rotation of key $n$ depends only on $n$" fact is exactly what makes RoPE KV-cache-safe, and why a *learned absolute* table is also cache-safe yet still fails the long-context test for a different reason.
+
+??? note "Solution"
+    (a) Position should modulate *who attends to whom* (the similarity), not *what content is retrieved* (the payload). The score $q_m^\top R_\Theta(n-m)\,k_n$ is the right place for relative position: it decides how strongly query $m$ selects key $n$. The value $v_n$ is the information token $n$ hands back *once selected*; the attention output is a convex blend $\sum_n a_{mn} v_n$ of these payloads. Rotating $v_n$ by position would entangle position into the retrieved content itself, so the output would carry a position-dependent distortion of the payload rather than a clean weighted average of the original values — breaking the "values are a convex blend of payloads" picture. Only the *similarity* needs position, so RoPE touches $Q$ and $K$ only.
+
+    (b) The KV cache stores, for each past token $n$, its key and value so they are computed once and reused as the sequence grows. RoPE applies $R_\Theta(n)$ to key $n$, and this rotation depends *only on the token's own absolute index $n$* — never on how long the sequence currently is. So the cached, already-rotated key for token $n$ is valid whether the sequence has length 100 or 100000; no cached key ever needs recomputation. (The relative offset still emerges at score time because $R_\Theta(m)^\top R_\Theta(n) = R_\Theta(n-m)$.)
+
+    A learned absolute table is *also* cache-safe for the same structural reason — position $n$'s vector depends only on $n$, so the cached key is stable. But it fails long context for a completely different reason: the table has a **hard architectural ceiling** at $L_{\max}$. There is simply no parameter row for position $L_{\max}+1$, so the model cannot extrapolate by even one token, and there is no continuous frequency ladder to stretch (no PI/NTK/YaRN knob exists). RoPE's advantage is not cache-safety per se — it is that its encoding is a *continuous, manipulable* function of position with no ceiling.
+
+**6.** You download a long-context model whose config already advertises `rope_scaling` with a YaRN factor of 8 (extended from a 4K pretraining length to 32K). You want 64K, so you set an additional linear scale of 2 at serving time and observe that (a) perplexity at 64K looks fine but (b) needle-in-a-haystack retrieval collapses even at 16K, well within the advertised 32K. Diagnose both observations using the chapter's warnings.
+
+??? note "Solution"
+    (b) first, the root cause: RoPE-scaling configs are **not idempotent and not freely composable**. The model was already trained with a YaRN factor of 8 relative to the 4K pretraining length. Layering an *additional* linear scale of 2 on top does not compound to a clean $8\times 2$ — it double-counts the frequency stretch. The frequencies are now squeezed far more than any regime the model was trained on, so its learned attention patterns over relative offsets are corrupted at *every* length, including 16K, which is why retrieval collapses even inside the advertised 32K window. The chapter's warning is exactly this: check the published `rope_theta`/`rope_scaling` before adding your own, and set any scale relative to the *original pretraining* length (4K here), not the current advertised 32K — so if you truly need 64K you should reconfigure a single YaRN factor of 16 relative to 4K, not stack a second factor.
+
+    (a) the reason the damage was invisible in perplexity: perplexity is dominated by the *easy local tokens*, whose prediction leans on nearby context that the corrupted long-range dimensions barely affect. A context-extended (or here, mis-extended) model can therefore post a deceptively low perplexity while completely failing to *use* information from far away. That is precisely why the chapter insists on validating extended context with a targeted long-range **retrieval** probe (needle-in-a-haystack, RULER-style tasks) rather than perplexity. The retrieval collapse is the true signal; the healthy perplexity is a false reassurance.

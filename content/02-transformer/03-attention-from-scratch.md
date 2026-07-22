@@ -480,3 +480,120 @@ From here the path forks in three directions, all of which build directly on thi
 - Alammar — *The Illustrated Transformer* (blog). A widely used visual walkthrough of Q/K/V and the attention computation.
 - Karpathy — *nanoGPT* (code repository) and *Let's build GPT* (video). A minimal, readable from-scratch implementation of causal self-attention inside a full GPT.
 - Elhage et al. (Anthropic) — *A Mathematical Framework for Transformer Circuits* (2021). Reads attention as soft retrieval/information-movement and introduces QK and OV circuits and induction heads.
+
+## Exercises
+
+**1.** In the soft-retrieval framing, a token's representation is projected into three roles — query, key, and value — via learned matrices $W_Q, W_K, W_V$. Explain in one or two sentences what each of the three roles "says," and then explain why we need *three separate* projections rather than, say, using the raw input $x_i$ directly as query, key, and value all at once.
+
+??? note "Solution"
+    The three roles, as the chapter frames them:
+
+    - The **query** $q_i = x_i W_Q$ says "here is what I am looking for."
+    - The **key** $k_i = x_i W_K$ says "here is what I contain — address me with this."
+    - The **value** $v_i = x_i W_V$ says "if you decide to read me, here is the information I hand back."
+
+    We need three *separate* learned projections because the token plays three genuinely different jobs, and the optimal representation for each job is different. What makes a token a good *match target* (its key) need not be what a token is *looking for* (its query), and neither need equal the *payload* it should hand back (its value). If we forced query = key = value = $x_i$, then the score matrix would be $x x^\top$, which is symmetric ($s_{ij} = s_{ji}$) — token $i$ would necessarily attend to $j$ exactly as much as $j$ attends to $i$, and the "content returned" could not differ from the "address used to find it." Separate projections give the model three independent degrees of freedom, letting attention express asymmetric, directional relationships (e.g. "the pronoun looks back to its antecedent" without the antecedent equally looking forward) and letting the returned content be a learned transformation of the matched token rather than the token itself.
+
+**2.** The chapter states that an attention output is a *convex combination* of the value vectors, so it "can never extrapolate beyond the values it is given." Suppose a single query attends over three values $v_1 = [0, 0]$, $v_2 = [10, 0]$, $v_3 = [0, 10]$ with attention weights $a = [0.5, 0.3, 0.2]$. Compute the output vector. Then argue briefly why no choice of softmax weights could ever produce the output $[12, 0]$.
+
+??? note "Solution"
+    The output is the attention-weighted sum $o = \sum_j a_j v_j$:
+
+    $$
+    o = 0.5\,[0,0] + 0.3\,[10,0] + 0.2\,[0,10] = [0,0] + [3,0] + [0,2] = [3,\ 2].
+    $$
+
+    So $o = [3, 2]$.
+
+    Softmax weights are always strictly positive and sum to 1 ($a_j > 0$, $\sum_j a_j = 1$), so the output is a **convex combination** of $v_1, v_2, v_3$ — it must lie inside their convex hull (here, the triangle with corners $[0,0]$, $[10,0]$, $[0,10]$). The point $[12, 0]$ has a first coordinate of 12, but the largest first coordinate available among the values is $10$ (from $v_2$), and since $o_1 = \sum_j a_j v_{j,1}$ is a weighted average of $\{0, 10, 0\}$ with weights that sum to 1, we have $o_1 \le \max_j v_{j,1} = 10 < 12$. A weighted average can never exceed its largest input, so $[12, 0]$ is unreachable. Attention can interpolate among values but never extrapolate past their hull.
+
+**3.** (Quantitative — the scale factor.) Consider a query scoring against three keys, producing *raw* (un-scaled) dot-product scores $s = [12, 6, 0]$ at head dimension $d_k = 36$.
+
+   (a) Compute the softmax attention weights on the **raw** scores.
+
+   (b) Now apply the $1/\sqrt{d_k}$ scaling and recompute the weights on the scaled scores.
+
+   (c) Comment on what the comparison shows about gradient flow, referencing the softmax Jacobian.
+
+??? note "Solution"
+    **(a) Raw scores $[12, 6, 0]$.** Subtract the max (12) for stability, so exponents are of $[0, -6, -12]$:
+
+    $$
+    e^0 = 1, \quad e^{-6} \approx 0.002479, \quad e^{-12} \approx 0.000006.
+    $$
+
+    Sum $\approx 1.002485$. Weights:
+
+    $$
+    a \approx \left[\tfrac{1}{1.002485},\ \tfrac{0.002479}{1.002485},\ \tfrac{0.000006}{1.002485}\right] \approx [0.99753,\ 0.00247,\ 0.00001].
+    $$
+
+    This is essentially one-hot on the first key.
+
+    **(b) Scaled scores.** $\sqrt{d_k} = \sqrt{36} = 6$, so $\tilde{s} = [12, 6, 0]/6 = [2, 1, 0]$. Exponentiate (subtract max = 2, exponents $[0, -1, -2]$):
+
+    $$
+    e^0 = 1, \quad e^{-1} \approx 0.3679, \quad e^{-2} \approx 0.1353.
+    $$
+
+    Sum $\approx 1.5032$. Weights:
+
+    $$
+    a \approx [0.6652,\ 0.2447,\ 0.0900].
+    $$
+
+    Still peaked on the first key (correctly — it was the best match), but far softer.
+
+    **(c)** The raw-score distribution $[0.998, 0.002, 0.00001]$ is nearly one-hot. The softmax Jacobian is $J = \operatorname{diag}(a) - a a^\top$; when $a$ is one-hot, every entry of $J$ collapses toward zero, so almost no gradient flows back to the queries and keys — training would stall. The scaled distribution $[0.665, 0.245, 0.090]$ keeps all three weights well away from 0 and 1, so $J$ has healthy non-zero entries and gradient propagates to all keys and to the query. Identical raw data; the single $\div\sqrt{d_k}$ is the difference between a live and a dead backward pass.
+
+**4.** (Conceptual — masking.) The `mask` argument sets forbidden scores to $-\infty$ before softmax. (a) Why $-\infty$ specifically, rather than $0$? (b) The chapter warns that in float16/bfloat16 you should use a large finite negative number instead of true $-\infty$. Describe the exact failure that true $-\infty$ can cause, and when it arises.
+
+??? note "Solution"
+    **(a)** A mask must make a forbidden position receive *exactly zero* attention weight after softmax. Softmax exponentiates its input, and $e^{-\infty} = 0$, so setting a forbidden score to $-\infty$ guarantees that position contributes nothing to the normalizer and gets weight exactly 0. Setting it to $0$ would instead give $e^{0} = 1$ — a *large* weight (0 is a perfectly ordinary, even competitive, score), so the forbidden position would actually receive substantial attention. Zero is a score, not an "off" switch; $-\infty$ is the additive identity that softmax maps to zero weight.
+
+    **(b)** The danger is a row that is *entirely* masked — every key forbidden — which can happen with a padding bug (e.g. a fully-`<pad>` row, or a causal-plus-padding AND that leaves a query with no allowed key). If every score in the row is true $-\infty$, the numerically stable softmax first subtracts the per-row max, which is also $-\infty$, computing $\exp(-\infty - (-\infty)) = \exp(\text{NaN}) = \text{NaN}$. That NaN then propagates through the weighted sum and, via autograd, poisons the entire batch's gradients. Production kernels avoid this by using a large *finite* negative number (e.g. the most-negative representable value of the dtype, or $-10^9$ in fp32): a fully-masked row then produces a uniform-ish but finite distribution rather than NaN, and kernels additionally guard against fully-masked rows. The bug only bites when a whole row is masked; a partially-masked row subtracts a finite max and is fine even with true $-\infty$ on the forbidden entries.
+
+**5.** (Implementation.) *Temperature-controlled attention.* Extend the NumPy `scaled_dot_product_attention` from the chapter to accept a `temperature` parameter $\tau > 0$ that divides the scaled scores before softmax (so the effective scores are $\frac{QK^\top}{\tau\sqrt{d_k}}$). Then, using the chapter's hand-check keys/values and query, describe qualitatively what happens to the attention weights as $\tau \to 0^+$ and as $\tau \to \infty$.
+
+??? note "Solution"
+    Only one line changes — an extra divide by `temperature` right after the $\sqrt{d_k}$ scaling. Everything else (the stable `softmax`, the masking, the weighted sum) is unchanged from the chapter.
+
+    ```python
+    import numpy as np
+
+    def scaled_dot_product_attention(Q, K, V, mask=None, temperature=1.0):
+        """Scaled dot-product attention with an explicit softmax temperature.
+
+        temperature (tau > 0) divides the scaled scores before softmax:
+            effective scores = (Q @ K.T) / (sqrt(d_k) * tau)
+        tau = 1.0 recovers the standard chapter behavior.
+        """
+        assert temperature > 0, "temperature must be positive"
+        d_k = Q.shape[-1]
+
+        scores = Q @ K.T                      # (n_q, n_k) raw similarities
+        scores = scores / np.sqrt(d_k)        # standard sqrt(d_k) scaling
+        scores = scores / temperature         # <-- the one new line
+
+        if mask is not None:
+            scores = np.where(mask, scores, -np.inf)
+
+        weights = softmax(scores, axis=-1)    # reuse the chapter's stable softmax
+        out = weights @ V
+        return out, weights
+    ```
+
+    Quick check on the chapter's hand example ($K$ axis-aligned, $V \in \{[10,10],[20,20],[30,30]\}$, $Q = [[0.1, 3.0, 0.1, 0.0]]$):
+
+    ```python
+    for tau in (0.1, 1.0, 10.0):
+        out, w = scaled_dot_product_attention(Q, K, V, temperature=tau)
+        print(tau, np.round(w, 3), np.round(out, 2))
+    ```
+
+    Behavior:
+
+    - **$\tau \to 0^+$ (low temperature):** dividing by a tiny $\tau$ blows the score gaps up without bound, so softmax **sharpens toward a one-hot** distribution on the single best-matching key (here key 1). The weights approach $[0, 1, 0]$ and the output approaches exactly $v_1 = [20, 20]$ — hard retrieval / $\arg\max$ recovered in the limit.
+    - **$\tau \to \infty$ (high temperature):** dividing by a huge $\tau$ crushes all score differences toward 0, so softmax **flattens toward uniform**, $[1/3, 1/3, 1/3]$. The output approaches the plain average of the values, $\tfrac{1}{3}([10,10]+[20,20]+[30,30]) = [20, 20]$ — the query stops discriminating among keys.
+
+    So $\tau$ is exactly a temperature knob on the attention distribution: small $\tau$ = confident/peaked, large $\tau$ = diffuse/uniform. This is the same temperature effect the chapter attributes to the $\sqrt{d_k}$ scale — dividing scaled scores by $\sqrt{d_k}$ is itself an implicit temperature of $\sqrt{d_k}$ relative to the raw scores.

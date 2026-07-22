@@ -926,3 +926,148 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
 - Press & Wolf — *Using the Output Embedding to Tie Word Vectors* (2017). The justification for weight tying between the input embedding and output head.
 - Holtzman, Buys, Du, Forbes, Choi — *The Curious Case of Neural Text Degeneration* (2020). Diagnoses repetitive/degenerate sampling and introduces top-p (nucleus) sampling.
 - Loshchilov & Hutter — *Decoupled Weight Decay Regularization* (AdamW, 2019). The optimizer and the matmul-vs-bias weight-decay split used in the training loop.
+
+## Exercises
+
+**1.** The chapter's practitioner tip says the *first* logged training loss should land near $\ln V$, and calls this "the cheapest sanity check that your data, masking, and loss are wired correctly." For the character-level Tiny Shakespeare run with $V = 65$, compute that expected value. Then explain: if your very first logged loss instead came out around $0.05$, what has almost certainly gone wrong, and why is that *worse* news than a first loss of, say, $4.9$?
+
+??? note "Solution"
+    An untrained model has no reason to prefer any token over any other, so its predicted distribution over the $V$ next-token candidates is effectively uniform: $p_\theta(y \mid x) \approx 1/V$ for every target. The per-token cross-entropy is then
+
+    $$
+    \mathcal{L} = -\log \tfrac{1}{V} = \log V = \ln 65 \approx 4.174.
+    $$
+
+    So a healthy first loss lands near **4.17**.
+
+    A first loss of $\approx 0.05$ is *too good to be true*: $0.05$ nats corresponds to the model already assigning probability $e^{-0.05} \approx 0.95$ to the correct next token before a single gradient step. An untrained network cannot do that honestly, so the label must be leaking. The two classic culprits the chapter names are (1) a broken off-by-one — `y` not shifted by exactly one relative to `x`, so the model is being trained to *copy* its input, a trivial task — or (2) a missing/incorrect causal mask, letting position $t$ attend to token $t+1$, the very token it must predict. This is worse news than a first loss of $4.9$ because $4.9$ is merely a bit above the uniform baseline (a slightly unlucky init or a mildly non-uniform vocabulary), and it will descend normally; whereas $0.05$ means the objective itself is corrupted. Autograd is silent about it, the shapes all check out, and the model will learn to exploit the leak and then generalize terribly. A too-low loss should be trusted *less* than a too-high one.
+
+**2.** Use the chapter's rule $N \approx 12\, n_\text{layer}\, n_\text{embd}^2$ for the transformer body to size GPT-2 small: $n_\text{layer}=12$, $n_\text{head}=12$, $n_\text{embd}=768$, $\text{vocab\_size}=50257$, $\text{block\_size}=1024$, weight tying on. Compute (a) the body parameter count, (b) the token- and position-embedding counts, (c) the grand total, and (d) the fraction of the total that the (tied) token embedding represents. Contrast this fraction with the ~1% the chapter found for the tiny-vocab default model.
+
+??? note "Solution"
+    **(a) Body.** $12 \, n_\text{layer}\, n_\text{embd}^2 = 12 \cdot 12 \cdot 768^2$. Since $768^2 = 589{,}824$,
+
+    $$
+    12 \cdot 12 \cdot 589{,}824 = 144 \cdot 589{,}824 = 84{,}934{,}656 \approx 84.9\text{M}.
+    $$
+
+    **(b) Embeddings.** Token table $V \times n_\text{embd} = 50257 \cdot 768 = 38{,}597{,}376 \approx 38.6\text{M}$. Position table $\text{block\_size} \times n_\text{embd} = 1024 \cdot 768 = 786{,}432 \approx 0.79\text{M}$. The `lm_head` is tied to `wte`, so it costs zero extra.
+
+    **(c) Grand total.**
+
+    $$
+    84.93\text{M} + 38.60\text{M} + 0.79\text{M} \approx 124.3\text{M},
+    $$
+
+    which is exactly the famous "GPT-2 small = 124M parameters."
+
+    **(d) Embedding fraction.** $38{,}597{,}376 / 124{,}318{,}464 \approx 0.31$, i.e. **~31%** of the model is the token embedding. This is a world apart from the tiny-vocab default, where a 65-token embedding was $\approx 1\%$ of the model. The chapter's point stands: the tied embedding is a rounding error only when the vocabulary is small; with a realistic 50k BPE vocabulary it becomes a major fraction of a small model, which is exactly why weight tying (saving one such matrix) matters so much at this scale.
+
+**3.** The constructor scales every `c_proj.weight` (the sublayer output projections) by $1/\sqrt{2\, n_\text{layer}}$ relative to the base init std of $0.02$. (a) Derive why the residual stream's variance would otherwise grow roughly linearly in depth, and why $1/\sqrt{2\, n_\text{layer}}$ is the right correction. (b) Where does the factor of $2$ come from? (c) For the default model ($n_\text{layer}=6$), what numerical std does each `c_proj.weight` get initialized to?
+
+??? note "Solution"
+    **(a) Variance growth.** The residual stream is purely additive: each block does $x \leftarrow x + \text{Attn}(\cdot)$ and then $x \leftarrow x + \text{MLP}(\cdot)$, never overwriting. Model each sublayer's contribution as roughly zero-mean with variance $\approx \sigma^2$, and (at init, with independent random weights) approximately uncorrelated with the terms already in the stream. Variances of independent terms add, so after $k$ such additions the stream's variance is $\approx k\,\sigma^2$. A network with $n_\text{layer}$ blocks performs $2\, n_\text{layer}$ additions, giving a final variance $\approx 2\, n_\text{layer}\,\sigma^2$ — it grows linearly with depth, and a stream whose scale blows up with depth destabilizes training.
+
+    To hold the accumulated variance roughly constant regardless of depth, we want each contribution to have variance $\sigma^2 / (2\, n_\text{layer})$ instead of $\sigma^2$. Since the variance of a linear layer's output is proportional to the variance of its weights, and standard deviation is the square root of variance, we shrink each output projection's init std by $\sqrt{1/(2\, n_\text{layer})} = 1/\sqrt{2\, n_\text{layer}}$. Then the $2\, n_\text{layer}$ contributions sum back to a variance of order $\sigma^2$ — bounded, not depth-dependent.
+
+    **(b) The factor of 2.** Each block writes to the residual stream *twice* — once from attention, once from the MLP — so a stack of $n_\text{layer}$ blocks contributes $2\, n_\text{layer}$ additive terms, not $n_\text{layer}$. That is precisely the count we must divide the variance by.
+
+    **(c) Numerical value.** With $n_\text{layer}=6$:
+
+    $$
+    \text{std} = \frac{0.02}{\sqrt{2 \cdot 6}} = \frac{0.02}{\sqrt{12}} = \frac{0.02}{3.4641} \approx 0.00577.
+    $$
+
+    So every `c_proj.weight` is initialized $\sim \mathcal{N}(0,\, 0.00577^2)$, about $3.46\times$ smaller in std than the $0.02$ used for the other linear layers.
+
+**4.** At a given position the model emits logits $z = [2.0,\ 1.0,\ 0.0]$ over a 3-token vocabulary. Compute the sampling distribution at temperature $\tau = 1.0$ and at $\tau = 0.5$. Which token becomes more dominant as you lower the temperature, and by how much does its probability change? (Do the arithmetic to two or three significant figures; $e \approx 2.71828$.)
+
+??? note "Solution"
+    Temperature divides the logits before softmax: $p_i \propto \exp(z_i / \tau)$.
+
+    **At $\tau = 1.0$**, exponentiate the raw logits:
+
+    $$
+    e^{2.0} = 7.389,\quad e^{1.0} = 2.718,\quad e^{0.0} = 1.000,\quad \text{sum} = 11.107.
+    $$
+
+    $$
+    p = \left[\tfrac{7.389}{11.107},\ \tfrac{2.718}{11.107},\ \tfrac{1.000}{11.107}\right] \approx [0.665,\ 0.245,\ 0.090].
+    $$
+
+    **At $\tau = 0.5$**, divide each logit by $0.5$ (i.e. double them) to get $[4.0,\ 2.0,\ 0.0]$, then exponentiate:
+
+    $$
+    e^{4.0} = 54.598,\quad e^{2.0} = 7.389,\quad e^{0.0} = 1.000,\quad \text{sum} = 62.987.
+    $$
+
+    $$
+    p = \left[\tfrac{54.598}{62.987},\ \tfrac{7.389}{62.987},\ \tfrac{1.000}{62.987}\right] \approx [0.867,\ 0.117,\ 0.016].
+    $$
+
+    Lowering the temperature **sharpens** the distribution: the top token's probability rises from $0.665$ to $0.867$ (an increase of about $0.20$, or ~30% relative), while the tail tokens are suppressed. This matches the chapter's worked example intuition — smaller $\tau$ makes the argmax token nearly certain and the text "safer"/more repetitive; larger $\tau$ flattens the distribution and makes rare tokens viable.
+
+**5.** The Interview Corner suggests adding "a repetition penalty that down-weights recently emitted tokens" as a fix for degenerate loops. Extend the chapter's `generate` function with a `repetition_penalty` argument (a float, default `1.0` = off) implementing the CTRL-style rule: before sampling, for every token id already present in the running sequence, divide its logit by the penalty if the logit is positive and multiply it by the penalty if the logit is negative (so a penalty $> 1$ always makes an already-seen token *less* likely). Show the modified core of the loop, and explain why the sign-dependent branch is necessary.
+
+??? note "Solution"
+    Insert the penalty step right after taking the last-position logits and before top-k filtering, so it operates on raw (temperature-scaled) logits:
+
+    ```python
+    @torch.no_grad()
+    def generate(model, idx, max_new_tokens, temperature=1.0,
+                 top_k=None, top_p=None, repetition_penalty=1.0):
+        model.eval()
+        for _ in range(max_new_tokens):
+            idx_cond = idx if idx.size(1) <= model.config.block_size \
+                       else idx[:, -model.config.block_size:]
+            logits, _ = model(idx_cond)                 # (B, 1, vocab_size)
+            logits = logits[:, -1, :] / temperature     # (B, vocab_size)
+
+            # --- Repetition penalty (CTRL-style) ---
+            if repetition_penalty != 1.0:
+                for b in range(idx.size(0)):
+                    seen = torch.unique(idx[b])         # token ids already generated
+                    s = logits[b, seen]
+                    # Divide positive logits, multiply negative ones -> both shrink
+                    # the token's probability when repetition_penalty > 1.
+                    logits[b, seen] = torch.where(
+                        s > 0, s / repetition_penalty, s * repetition_penalty)
+
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("inf")
+
+            probs = F.softmax(logits, dim=-1)
+            # ... (top-p block unchanged) ...
+            next_id = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, next_id), dim=1)
+        return idx
+    ```
+
+    **Why the sign-dependent branch is necessary.** The goal is that a penalty $> 1$ *always reduces* a seen token's probability, and softmax is monotonic in the logit: lowering a logit lowers its probability. So we must always move the logit toward $-\infty$. For a positive logit, *dividing* by a number $> 1$ shrinks it toward $0$ (lower) — good. But for a *negative* logit, dividing by $>1$ would move it toward $0$, i.e. make it *larger* — the opposite of what we want. Multiplying a negative logit by a number $>1$ instead makes it more negative (lower) — good. A single unconditional "divide by penalty" rule would therefore *reward* already-seen tokens whose logits happen to be negative, silently doing the opposite of a repetition penalty for exactly the tokens the model is least sure about. The `torch.where(s > 0, ...)` branch is what guarantees the penalty always pushes in the intended direction.
+
+**6.** The chapter states our default ~10.7M-parameter model produces "a checkpoint of roughly 130 MB in fp32 ... the model weights plus AdamW's two moment buffers per parameter (~3x the raw parameter count)." (a) Implement a `get_num_params(self, non_embedding=True)` method on `GPT` that returns the parameter count and, when `non_embedding=True`, subtracts the learned position embedding `wpe` (note the tied `wte`/`lm_head` matrix is counted only once because it is a single shared tensor). (b) Using the total count $\approx 10.74\text{M}$, work out the fp32 checkpoint size arithmetic and confirm the ~130 MB figure.
+
+??? note "Solution"
+    **(a) The method.** Because `wte.weight` and `lm_head.weight` are the *same* tensor object, `self.parameters()` already yields it once, so a plain `sum(p.numel() ...)` does not double-count the tied matrix. We only need to optionally subtract the position table:
+
+    ```python
+    def get_num_params(self, non_embedding=True):
+        """Total parameter count. With non_embedding=True, subtract the learned
+        position embedding wpe. The token embedding wte is NOT subtracted here
+        because it is tied to lm_head and thus does real work at the output."""
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+    ```
+
+    For the default config this returns $10{,}740{,}096 - 98{,}304 = 10{,}641{,}792 \approx 10.64\text{M}$ non-embedding parameters, matching the body-dominated count from the chapter's worked example. (Only `wpe` is subtracted: `wte` is tied to the output head, so it participates in producing logits and is conventionally counted as "real" model capacity.)
+
+    **(b) Checkpoint size.** Take the full count $N \approx 10.74\text{M}$ parameters. In fp32 each number is 4 bytes.
+
+    - **Weights:** $10.74\text{M} \times 4\ \text{B} \approx 42.96\ \text{MB}$.
+    - **AdamW state:** AdamW keeps a first-moment ($m$) and a second-moment ($v$) buffer per parameter, i.e. two more fp32 numbers each: $2 \times 10.74\text{M} \times 4\ \text{B} \approx 85.9\ \text{MB}$.
+    - **Total:** $42.96 + 85.9 \approx 128.9\ \text{MB} \approx 130\ \text{MB}$.
+
+    That is the "~3x the raw parameter count" the chapter cites: one copy of weights plus two optimizer moments $= 3$ fp32 values per parameter, so $3 \times 10.74\text{M} \times 4\ \text{B} \approx 128.9\ \text{MB}$. (RNG state and the small config object add only kilobytes.) This is exactly why a single-GPU checkpoint is trivial to write, and why the interesting checkpointing problems only appear at multi-node scale.

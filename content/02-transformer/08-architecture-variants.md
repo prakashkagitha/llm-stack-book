@@ -678,3 +678,174 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
 - Vaswani, Shazeer, Parmar, et al. *Attention Is All You Need*. NeurIPS 2017.
 - Touvron, Lavril, Izacard, et al. *LLaMA: Open and Efficient Foundation Language Models*. arXiv 2023. (Exemplary decoder-only design at scale.)
 - Andrej Karpathy. *nanoGPT* (GitHub). Reference implementation of a minimal decoder-only transformer.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) A colleague proposes taking a pre-trained BERT (encoder-only) model and using it to generate text one token at a time, exactly like GPT: feed the prompt, read the logits at the last position, sample a token, append it, and repeat. Explain precisely why this does not give you the same behaviour as a decoder-only model, referring to the attention mask. What are the *two* distinct problems?
+
+??? note "Solution"
+    The problem is the mask. Every BERT block uses a **fully bidirectional** mask, so the hidden state at any position $i$ is a function of *all* tokens in the input window, including tokens at positions $> i$.
+
+    **Problem 1 — information leakage during training vs. inference mismatch.** BERT was never trained to predict a token from left context alone. Its representations are optimized to reconstruct a masked token using both sides. If you run it autoregressively and read the last-position logits, that position attended only to tokens that already exist (the prompt so far), which is exactly the regime BERT was *not* trained in for that head. The MLM head predicts a token *given that the position is a `[MASK]` surrounded by real context on both sides*; a bare next-position prediction is out of distribution.
+
+    **Problem 2 — no causal structure means no cheap incremental decoding, and full recomputation.** To extend the sequence you must re-run the *entire* bidirectional stack over the whole sequence at every step, because a bidirectional model has no valid KV cache: adding a new token on the right changes the attention (and hence the hidden states) of *every earlier position*, since earlier positions are allowed to attend rightward. A causal model does not have this problem — earlier positions never see the new token, so their K/V entries are frozen and cacheable. So BERT-as-generator is both statistically wrong (out-of-distribution) and computationally $O(T)$ times more expensive per generated token.
+
+    This is exactly the point made in the chapter's Interview Corner follow-up: to predict token $t$ bidirectionally you would need to attend to token $t$ itself, which leaks the answer, so you must mask future tokens — at which point you have thrown away the bidirectional context that justified using an encoder.
+
+**2.** (Quantitative) Consider a single attention head over a sequence of length $T = 4$. For the **query at position 1** (0-indexed), the pre-softmax logits over the four key positions are
+
+$$
+L_{1,:} = [\,2.0,\; 3.0,\; 0.0,\; 1.0\,].
+$$
+
+Using $e^{2}\approx 7.389$, $e^{3}\approx 20.086$, $e^{1}\approx 2.718$, $e^{0}=1$, compute the attention weights this query places on each key under (a) an **encoder** (bidirectional) mask, (b) a **decoder** (causal) mask, and (c) a **prefix-LM** mask with `prefix_len = 3`. Round to three decimals.
+
+??? note "Solution"
+    We softmax the *visible* logits; masked keys get weight 0.
+
+    **(a) Bidirectional — all four keys visible.**
+    $$\text{sum} = 7.389 + 20.086 + 1 + 2.718 = 31.193$$
+    $$A_{1,:} = \left[\tfrac{7.389}{31.193},\ \tfrac{20.086}{31.193},\ \tfrac{1}{31.193},\ \tfrac{2.718}{31.193}\right] = [\,0.237,\ 0.644,\ 0.032,\ 0.087\,].$$
+
+    **(b) Causal — query at position 1 sees only keys $0$ and $1$.** Keys 2 and 3 are $-\infty$.
+    $$\text{sum} = 7.389 + 20.086 = 27.475$$
+    $$A_{1,:} = \left[\tfrac{7.389}{27.475},\ \tfrac{20.086}{27.475},\ 0,\ 0\right] = [\,0.269,\ 0.731,\ 0,\ 0\,].$$
+
+    **(c) Prefix-LM, `prefix_len = 3`.** Position 1 lies inside the prefix (positions 0,1,2), so within the prefix block it attends *bidirectionally* — it can see keys 0, 1, and 2 — but key 3 is a generation token and stays masked.
+    $$\text{sum} = 7.389 + 20.086 + 1 = 28.475$$
+    $$A_{1,:} = \left[\tfrac{7.389}{28.475},\ \tfrac{20.086}{28.475},\ \tfrac{1}{28.475},\ 0\right] = [\,0.259,\ 0.705,\ 0.035,\ 0\,].$$
+
+    Notice the trend from the chapter's worked example: prefix-LM lets this prefix token pull in key 2 (which the strictly causal model could not see), giving it a richer representation, while it still refuses to peek at the future generation token 3.
+
+**3.** (Quantitative) The chapter's `make_prefix_lm_mask` starts from a full causal mask and then fills in the top-left prefix block. Derive a closed-form expression for the total number of *allowed* (query, key) attention pairs in a prefix-LM mask of total length $T$ with prefix length $p$. Then evaluate it for $T = 1024,\ p = 256$, and confirm your formula reproduces the count for the chapter's printed $T=6,\ p=3$ example.
+
+??? note "Solution"
+    A pure **causal** mask allows key $j \le i$, i.e. the lower triangle including the diagonal:
+    $$\text{causal pairs} = \frac{T(T+1)}{2}.$$
+
+    The prefix-LM mask additionally turns on the *upper* triangle of the top-left $p \times p$ block (the entries where query $i < p$, key $j < p$, and $j > i$ — the ones causal masking had left off). The number of such strictly-above-diagonal entries in a $p \times p$ block is
+    $$\frac{p(p-1)}{2}.$$
+
+    So the total allowed pairs are
+    $$\boxed{\ \frac{T(T+1)}{2} + \frac{p(p-1)}{2}\ }.$$
+
+    **Evaluate $T=1024,\ p=256$:**
+    $$\frac{1024\cdot 1025}{2} = 524{,}800, \qquad \frac{256\cdot 255}{2} = 32{,}640,$$
+    $$\text{total} = 524{,}800 + 32{,}640 = 557{,}440 \text{ allowed pairs}.$$
+
+    **Check against $T=6,\ p=3$:**
+    $$\frac{6\cdot 7}{2} + \frac{3\cdot 2}{2} = 21 + 3 = 24.$$
+    Counting the `0` entries in the chapter's printed mask row by row gives $3+3+3+4+5+6 = 24$. The formula matches.
+
+**4.** (Quantitative) The chapter notes that causal LM (CLM) extracts a learning signal at *every* position, while masked LM (MLM) computes loss only over the selected positions. For a training corpus fed in sequences of length $T = 512$ using BERT's default `mask_prob = 0.15`: (a) how many loss-contributing positions does each objective produce per sequence, and what is the ratio? (b) If both models are trained for the same number of sequences, roughly how many more supervised token-predictions does CLM see? (c) Give one reason MLM is nonetheless sometimes preferred despite this efficiency gap.
+
+??? note "Solution"
+    **(a)** CLM computes a next-token loss at all $T$ positions:
+    $$\text{CLM signals} = T = 512 \text{ per sequence.}$$
+    MLM computes loss only over the selected (~15%) positions (in the chapter's `apply_mlm_mask`, `labels[selected] = ...` covers *all* selected tokens, including the 10% left unchanged):
+    $$\text{MLM signals} = 0.15 \times 512 = 76.8 \approx 77 \text{ per sequence.}$$
+    $$\text{ratio} = \frac{512}{76.8} \approx 6.67.$$
+
+    **(b)** For the same number of sequences, CLM produces about **6.7$\times$** as many token-prediction gradient signals. Over, say, 1 million sequences that is $512\text{M}$ CLM predictions vs. $\approx 76.8\text{M}$ MLM predictions — roughly $435$ million *more* supervised predictions for CLM.
+
+    **(c)** MLM's per-token representations are **bidirectional** — each prediction is conditioned on both left and right context — which produces higher-quality contextual embeddings for *discrimination* tasks (classification, NER, retrieval) than causal representations that see only left context. The chapter notes this advantage is real but "diminishes with scale." (An orthogonal fix is ELECTRA's replaced-token-detection objective, which recovers the all-positions signal while keeping bidirectionality.)
+
+**5.** (Implementation) The chapter ships a `CausalSelfAttention` module with the causal mask hard-wired into a buffer. Refactor it into a single **mask-agnostic** `MaskedSelfAttention` module whose `forward` accepts an explicit boolean mask of shape `(T, T)` (`True` = allowed), so that the *same* module can implement encoder (bidirectional), decoder (causal), and prefix-LM attention just by passing a different mask. Then, using the chapter's `bidirectional_mask`, `causal_mask`, and `prefix_lm_mask` helpers, show that all three run and that the causal and prefix-LM outputs differ. Keep the chapter's fused-QKV, multi-head style.
+
+??? note "Solution"
+    ```python
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+
+    class MaskedSelfAttention(nn.Module):
+        """Multi-head self-attention that takes the mask as a forward argument.
+        mask: (T, T) bool, True where attention is allowed."""
+
+        def __init__(self, d_model: int, n_heads: int):
+            super().__init__()
+            assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+            self.d_k     = d_model // n_heads
+            self.n_heads = n_heads
+            self.d_model = d_model
+            self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
+            self.out = nn.Linear(d_model, d_model, bias=False)
+
+        def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            """
+            x:    (B, T, D)
+            mask: (T, T) bool, True = allowed to attend
+            returns: (B, T, D)
+            """
+            B, T, D = x.shape
+            H, d_k = self.n_heads, self.d_k
+
+            qkv = self.qkv(x)                     # (B, T, 3D)
+            Q, K, V = qkv.split(D, dim=-1)        # each (B, T, D)
+
+            def reshape(t: torch.Tensor) -> torch.Tensor:
+                return t.view(B, T, H, d_k).transpose(1, 2)   # (B, H, T, d_k)
+
+            Q, K, V = map(reshape, (Q, K, V))
+
+            scores = Q @ K.transpose(-2, -1) * (d_k ** -0.5)  # (B, H, T, T)
+
+            # Broadcast (T, T) mask over batch and heads; forbidden -> -inf.
+            scores = scores.masked_fill(~mask[None, None, :, :], float('-inf'))
+
+            attn = F.softmax(scores, dim=-1)      # (B, H, T, T)
+            out  = attn @ V                        # (B, H, T, d_k)
+            out  = out.transpose(1, 2).contiguous().view(B, T, D)
+            return self.out(out)
+
+
+    # --- Reuse the chapter's mask helpers ---
+    def causal_mask(T, device=torch.device("cpu")):
+        return torch.tril(torch.ones(T, T, dtype=torch.bool, device=device))
+
+    def bidirectional_mask(T, device=torch.device("cpu")):
+        return torch.ones(T, T, dtype=torch.bool, device=device)
+
+    def prefix_lm_mask(prefix_len, total_len, device=torch.device("cpu")):
+        m = causal_mask(total_len, device)
+        m[:prefix_len, :prefix_len] = True
+        return m
+
+
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        B, T, D, H = 1, 6, 32, 4
+        attn = MaskedSelfAttention(D, H)
+        x = torch.randn(B, T, D)
+
+        out_bi     = attn(x, bidirectional_mask(T))
+        out_causal = attn(x, causal_mask(T))
+        out_prefix = attn(x, prefix_lm_mask(3, T))
+
+        print("shapes:", out_bi.shape, out_causal.shape, out_prefix.shape)
+        # Position 0 under causal sees only itself; under bidirectional it sees all
+        # -> the row-0 outputs must differ.
+        print("bi vs causal differ at pos 0 :",
+              not torch.allclose(out_bi[:, 0], out_causal[:, 0], atol=1e-6))
+        # Prefix (prefix_len=3) lets rows 0..2 attend bidirectionally within the
+        # prefix, so early rows differ from strictly-causal; row 5 is identical
+        # (last position is causal-visible-to-all under both masks).
+        print("causal vs prefix differ at pos 1:",
+              not torch.allclose(out_causal[:, 1], out_prefix[:, 1], atol=1e-6))
+        print("causal vs prefix same   at pos 5:",
+              torch.allclose(out_causal[:, 5], out_prefix[:, 5], atol=1e-6))
+    ```
+
+    Expected output:
+
+    ```text
+    shapes: torch.Size([1, 6, 32]) torch.Size([1, 6, 32]) torch.Size([1, 6, 32])
+    bi vs causal differ at pos 0 : True
+    causal vs prefix differ at pos 1: True
+    causal vs prefix same   at pos 5: True
+    ```
+
+    The single module now realizes all three architecture families. The only thing that changed between an encoder, a decoder, and a prefix-LM is the boolean mask handed to `forward` — which is exactly the chapter's central thesis: *the mask is the architecture*. Note that position 5 (the last token) yields identical causal and prefix-LM outputs because under both masks it is allowed to attend to every earlier position; the masks only diverge inside the prefix block.

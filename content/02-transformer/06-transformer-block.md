@@ -590,3 +590,188 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 - Geva et al., *Transformer Feed-Forward Layers Are Key-Value Memories* (EMNLP 2021) — mechanistic interpretation of the FFN.
 - Elhage et al., *A Mathematical Framework for Transformer Circuits* (Anthropic, 2021) — the residual stream framing of transformer computation.
 - Touvron et al., *Llama 2* (Meta AI, 2023) — practical reference for the pre-norm + RMSNorm + SwiGLU design.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) A colleague builds a 96-layer decoder-only transformer but, to "simplify" the block, removes both residual connections so that each block computes $\mathbf{x}' = \text{FFN}(\text{Norm}(\text{Attn}(\text{Norm}(\mathbf{x}))))$ with no skip paths. Training loss immediately plateaus and never improves. Using the gradient-flow argument from this chapter, explain why. What single term in the backward-pass product is responsible for the identity "gradient highway," and why does removing residuals reintroduce the vanishing-gradient problem?
+
+??? note "Solution"
+    With residuals, the gradient of the loss with respect to the block input expands as
+
+    $$
+    \frac{\partial \mathcal{L}}{\partial \mathbf{x}_0} = \prod_{l=1}^{L} \left(I + \frac{\partial F_l}{\partial \mathbf{x}_{l-1}}\right) \frac{\partial \mathcal{L}}{\partial \mathbf{x}_L}.
+    $$
+
+    The load-bearing term is the identity matrix $I$ inside each factor. Even when every sublayer Jacobian $\frac{\partial F_l}{\partial \mathbf{x}_{l-1}}$ is near zero (which is exactly the case at initialization, where $F(\mathbf{x}) \approx \mathbf{0}$), each factor is still approximately $I$, so their product stays close to $I$ and gradient signal reaches $\mathbf{x}_0$ undiminished.
+
+    Removing the residuals deletes the $I$ from every factor, so the product collapses to the plain chain
+
+    $$
+    \prod_{l=1}^{L} \frac{\partial F_l}{\partial \mathbf{x}_{l-1}}.
+    $$
+
+    This is a product of 96 Jacobians whose singular values are generically not exactly 1. If they are typically below 1 the product shrinks exponentially (vanishing gradients); if above 1 it grows exponentially (exploding gradients). At 96 layers the vanishing case wins with overwhelming probability at initialization: the early layers receive essentially zero gradient, cannot learn, and the loss plateaus. This is precisely the failure mode that residual connections were introduced to cure, and why deep vanilla stacks of the same depth do not converge while pre-norm residual transformers do.
+
+**2.** (Quantitative) Let $\mathbf{x} = [2.0,\ -2.0,\ 4.0,\ 0.0]$ with $d = 4$, $\epsilon = 0$, $\boldsymbol{\gamma} = \mathbf{1}$, $\boldsymbol{\beta} = \mathbf{0}$. Compute by hand (a) the LayerNorm output and (b) the RMSNorm output. Then state, in one sentence, the structural difference you observe between the two outputs.
+
+??? note "Solution"
+    **(a) LayerNorm.**
+
+    $\mu = (2 - 2 + 4 + 0)/4 = 1.0$
+
+    $\sigma^2 = [(2-1)^2 + (-2-1)^2 + (4-1)^2 + (0-1)^2]/4 = [1 + 9 + 9 + 1]/4 = 20/4 = 5.0$
+
+    $\text{std} = \sqrt{5} \approx 2.236$
+
+    Output $= (\mathbf{x} - \mu)/\text{std}$:
+
+    - $(2-1)/2.236 = 0.447$
+    - $(-2-1)/2.236 = -1.342$
+    - $(4-1)/2.236 = 1.342$
+    - $(0-1)/2.236 = -0.447$
+
+    LayerNorm output $= [0.447,\ -1.342,\ 1.342,\ -0.447]$ — mean 0, unit variance.
+
+    **(b) RMSNorm.**
+
+    $\text{RMS}(\mathbf{x}) = \sqrt{(2^2 + (-2)^2 + 4^2 + 0^2)/4} = \sqrt{(4 + 4 + 16 + 0)/4} = \sqrt{24/4} = \sqrt{6} \approx 2.449$
+
+    Output $= \mathbf{x}/\text{RMS}$:
+
+    - $2/2.449 = 0.816$
+    - $-2/2.449 = -0.816$
+    - $4/2.449 = 1.633$
+    - $0/2.449 = 0.0$
+
+    RMSNorm output $= [0.816,\ -0.816,\ 1.633,\ 0.0]$.
+
+    **Structural difference:** LayerNorm re-centers the vector to zero mean before scaling, so the sign/offset pattern is shifted; RMSNorm only rescales magnitude and leaves the offset structure intact — note RMSNorm keeps the third-component-largest, the fourth exactly zero, and does not force the mean to zero (its output mean is $0.408$, not $0$).
+
+**3.** (Conceptual) Pre-norm architectures leave the last block's output un-normalized on the residual stream. (a) Why do GPT-2, Llama, and friends therefore add a *final* norm (`ln_f` / `norm`) after the last block, and what specifically would degrade without it? (b) The original post-norm transformer required learning-rate *warmup* to train; pre-norm does not. Give the one-line mechanical reason, referencing how gradients scale in each layout.
+
+??? note "Solution"
+    **(a) Final norm.** In pre-norm, each block computes $\mathbf{x}' = \mathbf{x} + F(\text{Norm}(\mathbf{x}))$, so the normalization only ever touches the *input* to a sublayer — it never normalizes the value that leaves the last block. As the chapter's variance discussion notes, the residual stream grows across depth (roughly $\mathcal{O}(\sqrt{l})$, and up to a norm of $\approx 128$ in the worked $L=32$ example), so the final block emits a vector of large and layer-count-dependent magnitude. Feeding that directly into the language-model head would send poorly-conditioned, large-magnitude logits into the softmax, hurting stability and calibration. Inserting a final RMSNorm/LayerNorm rescales the stream back to a well-conditioned unit scale before the LM head projection, which is why every pre-norm model adds one.
+
+    **(b) Warmup.** In post-norm the normalization sits on top of the residual sum, so the gradient with respect to the pre-norm input scales as $1/\text{std}$ of that sum; early in training $F(\mathbf{x}) \approx \mathbf{0}$ makes the sum's variance small and volatile, producing huge, noisy gradients that only slow warmup can survive. In pre-norm the unnormalized skip path always contributes a clean unit-variance gradient path backward regardless of what $F$ outputs, so gradients stay bounded from step one and no warmup is needed.
+
+**4.** (Quantitative) You are sizing a SwiGLU FFN for a model with $d = 2048$, using this chapter's reference recipe: set the inner dimension to $\lfloor 8d/3 \rfloor$ rounded *up* to the nearest multiple of 64, and use no bias. (a) Compute $d_\text{ff}$. (b) Compute the total FFN parameter count. (c) Compare it against a standard two-matrix FFN with the classic $d_\text{ff} = 4d$ expansion, and comment on why the $8/3$ factor is chosen.
+
+??? note "Solution"
+    **(a) Inner dimension.**
+
+    $8d/3 = 8 \times 2048 / 3 = 16384/3 = 5461.33\ldots$, so $\lfloor 8d/3 \rfloor = 5461$.
+
+    Round up to a multiple of 64: $64 \times \lceil 5461/64 \rceil = 64 \times \lceil 85.33 \rceil = 64 \times 86 = 5504$.
+
+    So $d_\text{ff} = 5504$.
+
+    **(b) SwiGLU parameter count.** SwiGLU has three matrices ($W_\text{gate}, W_\text{up}: d \to d_\text{ff}$ and $W_\text{down}: d_\text{ff} \to d$), each with $d \cdot d_\text{ff}$ entries and no bias:
+
+    $$
+    3 \cdot d \cdot d_\text{ff} = 3 \times 2048 \times 5504 = 3 \times 11{,}272{,}192 = 33{,}816{,}576 \approx 33.8\text{M}.
+    $$
+
+    **(c) Comparison with the classic $4d$ FFN.** A standard two-matrix FFN with $d_\text{ff} = 4d = 8192$ has
+
+    $$
+    2 \cdot d \cdot d_\text{ff} = 2 \times 2048 \times 8192 = 33{,}554{,}432 \approx 33.6\text{M}.
+    $$
+
+    The two are essentially equal ($33.8\text{M}$ vs $33.6\text{M}$). That is exactly the point of the $8/3$ factor: SwiGLU spends a third matrix on the gate, so to hold parameters and FLOPs roughly fixed against the classic $4\times$ MLP you shrink the inner width by $2/3$, giving $\tfrac{2}{3}\cdot 4d = 8d/3$. This lets SwiGLU's better quality-per-parameter be measured fairly, without simply throwing more parameters at the FFN.
+
+**5.** (Implementation) Gemma 2 uses **GeGLU** instead of SwiGLU — the same gated FFN but with GELU as the gating nonlinearity instead of Swish. Starting from the chapter's `SwiGLUFFN`, implement a `GeGLUFFN` module in the same style (same $8d/3$-rounded-to-64 default width, no-bias linears, internal dropout). What is the *only* line that must change, and why does the parameter count stay identical?
+
+??? note "Solution"
+    GeGLU is $W_\text{down}(\text{GELU}(W_\text{gate}\mathbf{x}) \odot (W_\text{up}\mathbf{x}))$. Structurally it is identical to SwiGLU; only the pointwise gate function changes from `F.silu` (Swish) to `F.gelu`. Because both are pointwise activations applied to the gate branch, they add *no* parameters, so the three-matrix parameter count is unchanged.
+
+    ```python
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    from typing import Optional
+
+
+    class GeGLUFFN(nn.Module):
+        """
+        Feed-forward sublayer using the GeGLU gated activation (Gemma 2).
+
+        FFN(x) = W_down( GELU(W_gate x) ⊙ W_up x )
+
+        Identical to SwiGLUFFN except the gate uses GELU instead of Swish.
+        """
+
+        def __init__(self, dim: int, hidden_dim: Optional[int] = None,
+                     bias: bool = False, dropout: float = 0.0):
+            super().__init__()
+            if hidden_dim is None:
+                # 8/3 * dim, rounded up to nearest multiple of 64
+                hidden_dim = int(8 * dim / 3)
+                hidden_dim = 64 * ((hidden_dim + 63) // 64)
+
+            self.w_gate = nn.Linear(dim, hidden_dim, bias=bias)
+            self.w_up   = nn.Linear(dim, hidden_dim, bias=bias)
+            self.w_down = nn.Linear(hidden_dim, dim, bias=bias)
+            self.dropout = nn.Dropout(dropout)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            gate = F.gelu(self.w_gate(x))   # ONLY change: F.silu -> F.gelu
+            up   = self.w_up(x)
+            fused = gate * up
+            return self.dropout(self.w_down(fused))
+    ```
+
+    The single load-bearing change is `F.silu(...)` becoming `F.gelu(...)` on the gate branch. Everything else — matrix shapes, the elementwise product, the down-projection, dropout — is untouched, so the parameter count is exactly the same $3 \cdot d \cdot d_\text{ff}$ as SwiGLU.
+
+**6.** (Implementation, harder) PaLM and GPT-NeoX use the **parallel** block layout from this chapter,
+
+$$
+\mathbf{x}' = \mathbf{x} + \text{Attn}(\text{Norm}(\mathbf{x})) + \text{FFN}(\text{Norm}(\mathbf{x})),
+$$
+
+where attention and FFN read the *same* normalized input. Using the chapter's `RMSNorm`, `MinimalMHA`, and `SwiGLUFFN`, implement a `ParallelTransformerBlock` with the same constructor signature as `TransformerBlock`. Compared with the sequential block, how many normalization calls does it make per forward pass, and what hardware optimization does the shared normalized input enable?
+
+??? note "Solution"
+    The key structural change from the sequential `TransformerBlock` is that both sublayers consume one *shared* normalized tensor `h = self.norm(x)`, and their outputs are both added back to the *same* original residual `x` (rather than the FFN reading the post-attention stream).
+
+    ```python
+    import torch
+    import torch.nn as nn
+    from typing import Optional
+
+
+    class ParallelTransformerBlock(nn.Module):
+        """
+        Parallel attention + FFN block (PaLM / GPT-NeoX):
+
+            h = Norm(x)
+            x' = x + Attn(h) + FFN(h)
+
+        Both sublayers read the SAME normalized input h, and their outputs
+        are summed into the residual stream in one shot.
+        """
+
+        def __init__(self, dim: int, n_heads: int,
+                     ffn_hidden: Optional[int] = None,
+                     bias: bool = False,
+                     dropout: float = 0.0,
+                     norm_eps: float = 1e-6):
+            super().__init__()
+            # Single shared normalization instead of one per sublayer
+            self.norm = RMSNorm(dim, eps=norm_eps)
+            self.attn = MinimalMHA(dim, n_heads, bias=bias)
+            self.ffn  = SwiGLUFFN(dim, ffn_hidden, bias=bias, dropout=dropout)
+            self.res_drop = nn.Dropout(dropout)
+
+        def forward(self, x: torch.Tensor,
+                    mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+            h = self.norm(x)                      # ONE norm call, shared
+            attn_out = self.res_drop(self.attn(h, mask))
+            ffn_out  = self.res_drop(self.ffn(h))
+            return x + attn_out + ffn_out         # single residual update
+    ```
+
+    **Norm calls:** the sequential block calls `RMSNorm` **twice** per forward pass (once before attention, once before the FFN); the parallel block calls it **once**, saving a normalization and one residual addition per block.
+
+    **Hardware optimization:** because attention and the FFN now consume the identical input `h`, their input projections — attention's QKV projection and the FFN's $W_\text{gate}$/$W_\text{up}$ projections — can be fused into a single large matrix multiply on `h`. As the chapter notes, this is a throughput win on hardware whose memory bandwidth is slow relative to compute, since one big GEMM launches more efficiently than several smaller ones. The gradient flow differs slightly from the sequential layout but empirically yields similar quality.

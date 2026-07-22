@@ -462,3 +462,169 @@ From here, the cache reappears everywhere downstream: the serving systems that *
 - Michel, Levy, Neubig — *Are Sixteen Heads Really Better than One?* (2019). Evidence that many heads are prunable, motivating the head-sharing intuition behind MQA/GQA.
 - Elhage, Nanda, Olsson, et al. (Anthropic) — *A Mathematical Framework for Transformer Circuits* (2021). Reads individual heads as interpretable information-movement operations (induction heads, previous-token heads).
 - Dao, Fu, Ermon, Rudra, Ré — *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022). The IO-aware kernel that makes reading the KV cache efficient and underlies the fused `scaled_dot_product_attention` used throughout this chapter.
+
+## Exercises
+
+**1.** The chapter states that MHA's parameter count is $P_\text{MHA} = 4\,d_\text{model}^2$, *independent of the number of heads $h$*. Yet it also argues that heads are what give the model its expressive power. Reconcile these two claims: if adding heads doesn't add parameters, where does the extra expressivity come from, and what exactly does the choice of $h$ trade off against? What would you lose by setting $h = 1$, and what would you lose by setting $h = d_\text{model}$ (so $d_h = 1$)?
+
+??? note "Solution"
+    The parameter count is fixed because the four projections $W_Q, W_K, W_V, W_O$ are each $d_\text{model}\times d_\text{model}$ no matter how you slice the output into heads. Choosing $h$ does not change *how many* parameters exist — it only changes how the same $d_\text{model}$ output dimensions are **partitioned** into subspaces for the attention operation. Concretely, the block-diagonal reshape `(B, L, d_model) -> (B, h, L, d_h)` re-interprets one big projection as $h$ small ones; the total matrix is identical.
+
+    The expressivity does not come from parameters — it comes from running $h$ **independent softmaxes** in $h$ separate $d_h$-dimensional subspaces. A single head is forced to average all "kinds" of relevance into one probability distribution (one blurry blend); $h$ heads let the model hold $h$ sharp, specialized retrieval patterns simultaneously and then fuse them through $W_O$.
+
+    So $h$ trades off **number of parallel retrieval patterns** against **the dimensionality of each retrieval subspace** ($d_h = d_\text{model}/h$), at fixed parameter budget:
+
+    - $h = 1$: maximal $d_h = d_\text{model}$, so each key/query lives in the full space, but only *one* attention distribution — you lose the ability to attend to several kinds of relationship at once (the bottleneck the chapter opens with).
+    - $h = d_\text{model}$ (so $d_h = 1$): maximally many heads, but each head does its dot product in a **1-dimensional** subspace. A 1-D key/query gives an extremely impoverished similarity function (essentially a scalar comparison), and $\sqrt{d_h}=1$ scaling with degenerate geometry — the heads can no longer express rich relevance. Also the KV cache stays fixed at $2\,d_\text{model}$ regardless, since $h\,d_h = d_\text{model}$.
+
+    The practical sweet spot ($d_h$ of 64--128) keeps each head's subspace large enough to express a meaningful similarity while giving enough heads to specialize.
+
+**2.** Consider a Mistral-7B-style configuration: $L_\text{layers} = 32$, $d_\text{model} = 4096$, $h = 32$ query heads with $d_h = 128$, and GQA with $g = 8$ KV heads, stored in bf16 ($P = 2$ bytes). You are serving a batch of $B = 16$ concurrent requests each at context length $S = 8192$.
+
+   (a) Compute the total GQA KV-cache size in bytes (and GB).
+   (b) What would the cache be if this model used standard MHA instead?
+   (c) State the reduction factor and confirm it equals $h/g$.
+
+??? note "Solution"
+    Use the GQA cache formula $\text{KV bytes} = 2\, B\, L_\text{layers}\, S\, g\, d_h\, P$.
+
+    **(a) GQA ($g = 8$):**
+
+    $$
+    2 \times 16 \times 32 \times 8192 \times 8 \times 128 \times 2 \ \text{bytes}.
+    $$
+
+    Step by step: $2 \times 16 = 32$; $\times 32 = 1024$; $\times 8192 = 8{,}388{,}608$; $\times 8 = 67{,}108{,}864$; $\times 128 = 8{,}589{,}934{,}592$; $\times 2 = 17{,}179{,}869{,}184$ bytes.
+
+    That is $\approx 1.72 \times 10^{10}$ bytes $= \mathbf{16\ GiB}$ (i.e. $\approx 17.2$ GB in base-10).
+
+    **(b) MHA ($g \to h = 32$):** replace $g = 8$ with $32$, a factor of $4$ larger:
+
+    $$
+    17{,}179{,}869{,}184 \times 4 = 68{,}719{,}476{,}736\ \text{bytes} \approx \mathbf{64\ GiB}\ (\approx 68.7\ \text{GB}).
+    $$
+
+    **(c)** Reduction factor $= 68.7 / 17.2 = 4\times$, which equals $h/g = 32/8 = 4$. The GQA cache is proportional to $g$, so replacing $h = 32$ KV heads with $g = 8$ saves exactly $32/8 = 4\times$ — the difference between a batch that fits on a single 80 GB GPU and one that does not.
+
+**3.** GQA shrinks not only the *cache* but also the *parameters* of the K/V projections. For the same config as Exercise 2 ($d_\text{model} = 4096$, $h = 32$, $d_h = 128$, $g = 8$), compute the per-layer attention parameter count for (a) MHA and (b) GQA (ignore biases). Express the GQA total as a fraction of the MHA total. Why is the parameter saving so much *smaller* than the $4\times$ cache saving from Exercise 2?
+
+??? note "Solution"
+    The four projections in the GQA module (from the chapter's code) are:
+
+    - $W_Q$: $d_\text{model} \to h\,d_h = d_\text{model}$, i.e. $d_\text{model}^2$ params.
+    - $W_K$: $d_\text{model} \to g\,d_h$, i.e. $d_\text{model}\cdot g\,d_h$ params.
+    - $W_V$: $d_\text{model} \to g\,d_h$, same as $W_K$.
+    - $W_O$: $h\,d_h \to d_\text{model} = d_\text{model}^2$ params.
+
+    Note $h\,d_h = 32 \times 128 = 4096 = d_\text{model}$, and $g\,d_h = 8 \times 128 = 1024$.
+
+    **(a) MHA** ($g = h$, so all four are $d_\text{model}^2$):
+
+    $$
+    P_\text{MHA} = 4\,d_\text{model}^2 = 4 \times 4096^2 = 67{,}108{,}864 \approx 67.1\text{M}.
+    $$
+
+    **(b) GQA:**
+
+    $$
+    P_\text{GQA} = 2\,d_\text{model}^2 + 2\,d_\text{model}\,(g\,d_h) = 2(4096^2) + 2(4096 \times 1024).
+    $$
+
+    $2 \times 16{,}777{,}216 = 33{,}554{,}432$ (the $W_Q, W_O$ pair); $2 \times 4{,}194{,}304 = 8{,}388{,}608$ (the $W_K, W_V$ pair). Total $= 41{,}943{,}040 \approx 41.9\text{M}$.
+
+    **Fraction:** $41{,}943{,}040 / 67{,}108{,}864 = 0.625 = \mathbf{5/8}$.
+
+    **Why smaller than the cache saving:** only $W_K$ and $W_V$ shrink with $g$; $W_Q$ and $W_O$ are untouched because GQA keeps all $h$ query heads and the full-width output. So GQA shrinks *half* of the projection matrices (the K/V half), and even those shrink to $g/h = 1/4$ of their size — halving-then-quartering the K/V half gives the modest $5/8$ overall ratio. The **cache**, by contrast, depends *only* on the KV-head count, so it enjoys the full $h/g = 4\times$ reduction. This is the chapter's central point restated numerically: GQA's value is overwhelmingly about the **cache**, not the parameters.
+
+**4.** The `GroupedQueryAttention` module in the chapter runs a full-sequence forward pass but never demonstrates the actual inference-time saving, which only appears when you **cache** across decode steps. Add an incremental decode method `decode_step(self, x_t, cache=None)` that: takes the hidden state of a *single* new token `x_t` of shape `(B, 1, d_model)`; appends its key/value to a running cache; and returns the attention output plus the updated cache. Crucially, the cache must store the **unrepeated** K/V (size $\propto$ `n_kv_heads`), doing the `repeat_kv` broadcast only at compute time — this is where the memory saving lives. Show a short driver that decodes a few steps and confirms the cached tensors have `n_kv_heads` heads, not `n_heads`.
+
+??? note "Solution"
+    The key design choices: (1) cache `(k, v)` *before* `repeat_kv`, so the stored tensors have shape `(B, n_kv_heads, L, d_h)`; (2) concatenate the new token's K/V along the sequence axis (`dim=2`); (3) call SDPA with `is_causal=False`, because the single query is the newest token and legitimately attends to *all* cached keys (there is nothing "in the future" to mask).
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    @torch.no_grad()
+    def decode_step(self, x_t, cache=None):
+        """One autoregressive step with a KV cache.
+
+        x_t   : (B, 1, d_model)  hidden state of the single new token
+        cache : (k, v) each (B, n_kv_heads, L_past, d_h), or None on the first step
+        returns: (out (B, 1, d_model), new_cache)
+        """
+        B, _, _ = x_t.shape
+        Dh, Hkv, Hq = self.head_dim, self.n_kv_heads, self.n_heads
+
+        q     = self.W_q(x_t).view(B, 1, Hq,  Dh).transpose(1, 2)   # (B, Hq,  1, Dh)
+        k_new = self.W_k(x_t).view(B, 1, Hkv, Dh).transpose(1, 2)   # (B, Hkv, 1, Dh)
+        v_new = self.W_v(x_t).view(B, 1, Hkv, Dh).transpose(1, 2)   # (B, Hkv, 1, Dh)
+
+        if cache is not None:
+            k_past, v_past = cache
+            k_new = torch.cat([k_past, k_new], dim=2)   # grow along sequence axis
+            v_new = torch.cat([v_past, v_new], dim=2)
+        new_cache = (k_new, v_new)   # <-- stored UNREPEATED: only Hkv heads
+
+        # Broadcast to Hq heads only for the kernel; not stored.
+        k = repeat_kv(k_new, self.n_rep)                # (B, Hq, L, Dh)
+        v = repeat_kv(v_new, self.n_rep)                # (B, Hq, L, Dh)
+
+        # The lone query attends to every cached key -> no causal mask needed.
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        out = out.transpose(1, 2).contiguous().view(B, 1, Hq * Dh)
+        return self.W_o(out), new_cache
+
+    # Attach to the class and drive a few decode steps.
+    GroupedQueryAttention.decode_step = decode_step
+
+    torch.manual_seed(0)
+    B, d_model, n_heads = 2, 64, 8
+    attn = GroupedQueryAttention(d_model, n_heads, n_kv_heads=2)  # GQA, g=2
+    attn.eval()
+
+    cache = None
+    for step in range(4):
+        x_t = torch.randn(B, 1, d_model)
+        y_t, cache = attn.decode_step(x_t, cache)
+
+    k_cache, v_cache = cache
+    print("output per step:", tuple(y_t.shape))     # (2, 1, 64)
+    print("cached K shape :", tuple(k_cache.shape)) # (2, 2, 4, 8)  <- 2 KV heads, len 4
+    assert k_cache.shape[1] == attn.n_kv_heads       # 2, NOT n_heads (8)
+    assert k_cache.shape[2] == 4                      # grew by one per step
+    print("cache stores n_kv_heads, not n_heads -> that is the saving.")
+    ```
+
+    The assertions make the point precise: after 4 steps the cache holds `(B, 2, 4, 8)`, i.e. `n_kv_heads = 2` heads, not `n_heads = 8`. Had we cached the post-`repeat_kv` tensors, we would have stored `(B, 8, 4, 8)` — 4x larger — throwing away the entire benefit of GQA. Setting `n_kv_heads=1` (MQA) or `n_kv_heads=n_heads` (MHA) exercises the same code with a $1\times$ or $8\times$ cache respectively.
+
+**5.** DeepSeek-V2's MLA is quoted in the chapter as giving "a KV cache comparable to GQA with 2.25 KV groups." Derive that number. Assume the *content* latent has dimension $d_c = 512$ and the *decoupled RoPE* key adds a single shared per-token key of dimension $d_h^R = 64$; the GQA baseline uses $d_h = 128$. Then explain conceptually why MLA needs that separate RoPE key at all — i.e., why the position information cannot simply ride inside the compressed latent.
+
+??? note "Solution"
+    **Deriving the 2.25 groups.** Count cached *elements per token per layer*.
+
+    - **MLA** caches two objects: the content latent $c^{KV}$ of size $d_c = 512$, and one shared decoupled-RoPE key of size $d_h^R = 64$. There is **no factor of 2** for K and V, because the single latent $c^{KV}$ is up-projected into *both* keys and values (it encodes both), and the RoPE key is a single shared vector. So
+
+      $$
+      \text{MLA elements} = d_c + d_h^R = 512 + 64 = 576.
+      $$
+
+    - **GQA** with $g$ groups caches keys *and* values for $g$ heads of width $d_h$:
+
+      $$
+      \text{GQA elements} = 2\,g\,d_h = 2 \times g \times 128 = 256\,g.
+      $$
+
+    Set them equal to find the equivalent group count:
+
+    $$
+    256\,g = 576 \quad\Longrightarrow\quad g = \frac{576}{256} = \mathbf{2.25}.
+    $$
+
+    So MLA's cache footprint matches GQA at $g = 2.25$ — smaller than the usual $g = 8$ GQA by a factor $8/2.25 \approx 3.6\times$ — while, per the chapter, retaining full multi-head expressivity (all heads are reconstructed from the shared latent), which a literal $g = 2.25$ GQA could never do.
+
+    **Why the separate RoPE key is necessary.** MLA's efficiency rests on the **weight-absorption trick**: because the up-projection $W^{UK}$ is linear and *position-independent*, the score $q^\top k = q^\top W^{UK} c^{KV} = (W^{UK\top} q)^\top c^{KV}$ can be computed *directly against the cached latent* $c^{KV}$, folding $W^{UK}$ into the query projection. This is what lets MLA both cache a tiny latent and avoid materializing full per-head keys at decode time.
+
+    RoPE breaks this. RoPE applies a **position-dependent rotation** $R_t$ to each key: $k_t \mapsto R_t k_t$. That rotation sits *between* the query and the latent and depends on the token position $t$, so it cannot be pre-folded into the fixed, position-independent $W^{UK}$ — a different $R_t$ is needed for every token, defeating absorption. If you forced the positional information through the compressed content latent, you would have to un-absorb and re-materialize position-rotated keys for every cached token at every step, losing exactly the compute win MLA was designed to keep.
+
+    DeepSeek's fix is to **decouple** position from content: split each key into a large content part (no RoPE, carried by $c^{KV}$, fully absorbable) and a small positional part $d_h^R = 64$ that *does* carry RoPE and is cached separately as a single shared per-token key. Position lives only in that small side channel, the big content path stays absorbable, and the total cache ($d_c + d_h^R$) stays tiny — the best of both worlds.
