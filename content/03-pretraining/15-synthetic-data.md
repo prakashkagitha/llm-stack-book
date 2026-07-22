@@ -637,3 +637,108 @@ The throughline across all five: **synthetic data converts compute into targeted
 - Zelikman et al., *STaR: Bootstrapping Reasoning with Reasoning*; and rejection-sampling fine-tuning as used in the **Llama** and **DeepSeek-R1** post-training reports.
 - Muennighoff et al., *Scaling Data-Constrained Language Models* (how many epochs of real data are worth fresh tokens).
 - Cheng et al., *Instruction Pre-Training: Language Models Are Supervised Multitask Learners*.
+
+---
+
+## Exercises
+
+**1.** A colleague sets up a training loop where each new model generation is trained *only* on text sampled from the previous generation, discarding the original web corpus to "save storage." After a dozen rounds the outputs are bland and repetitive. Name the failure mode, explain the mechanism in one or two sentences, and describe the single change that would have prevented it — connecting your answer to why WRAP keeps the source document and why FineWeb-Edu is safe by construction.
+
+??? note "Solution"
+    This is **model collapse** driven by **recursive replacement**. The mechanism: each generation fits a distribution to finite samples of the previous generation's output. Maximum-likelihood variance estimates carry sampling noise, and because the next round samples *from the fitted distribution*, that noise systematically erodes variance round after round — the tails (rare words, unusual constructions, long-tail facts) disappear and the distribution narrows toward its mean. The toy Gaussian in the chapter makes this exact: expected variance decays like $\mathbb{E}[\hat\sigma^2_t] \approx \sigma^2 (1 - 1/n)^t$.
+
+    The single change: **accumulate instead of replace** — keep the full original real corpus and *add* synthetic on top of it each round rather than throwing the real data away. The real data re-injects the true variance every round and re-anchors the distribution, which halts the decay. This is why every good recipe in the chapter keeps the real data: WRAP keeps the source document (so facts are inherited and the natural distribution is preserved), instruction-augmentation interleaves the original passage, and FineWeb-Edu *is* real data (it only *selects* the web, never replacing it). The failure mode is recursive replacement, not synthetic data per se.
+
+**2.** You are doing rejection-sampling reasoning distillation. Your teacher solves a given problem on any single attempt with probability $p = 0.25$ (independent attempts). (a) With $K = 8$ samples per problem, what is the probability you obtain at least one correct trace? (b) How many samples $K$ would you need so that the probability of at least one correct trace reaches $0.99$? (c) In one sentence, explain why this "over-generate, filter hard" scheme still yields a *high-precision* SFT dataset even though the teacher is wrong 75% of the time per attempt.
+
+??? note "Solution"
+    (a) The probability of *no* correct trace in $K$ independent attempts is $(1-p)^K$, so the coverage is
+    $$
+    1 - (1-p)^K = 1 - 0.75^{8}.
+    $$
+    Compute $0.75^8$: $0.75^2 = 0.5625$, $0.75^4 = 0.5625^2 \approx 0.3164$, $0.75^8 = 0.3164^2 \approx 0.1001$. So coverage $\approx 1 - 0.100 = 0.900$, about **90%**.
+
+    (b) Require $1 - 0.75^K \ge 0.99$, i.e. $0.75^K \le 0.01$. Take logs:
+    $$
+    K \ge \frac{\ln 0.01}{\ln 0.75} = \frac{-4.605}{-0.2877} \approx 16.01.
+    $$
+    Since $K$ must be an integer *and* the threshold is just above 16, round **up**: $K = 16$ still falls short ($0.75^{16} \approx 0.01002 > 0.01$, coverage $\approx 0.98998$), so you need **$K = 17$** samples per problem to reach 99% coverage ($0.75^{17} \approx 0.0075$, coverage $\approx 0.9925$).
+
+    (c) Because *verification*, not generation, sets the label: every trace we keep has a final answer that objectively matches the gold answer, so the wrong 75% are discarded before training. Over-generation buys *coverage* of solvable problems; hard filtering keeps *precision* near 100%. This is the verification asymmetry — an unreliable generator plus a reliable checker yields a reliable dataset.
+
+**3.** A 1-trillion-parameter model is Chinchilla-optimal at 20 tokens per parameter, so it wants $20\text{T}$ training tokens. Your deduplicated, clean, English web supply is $10\text{T}$ tokens. (a) If you simply repeat this corpus to reach $20\text{T}$ tokens, how many epochs is that, and does the chapter consider it within the "safe" repetition zone? (b) You instead adopt a 1:1 natural:synthetic WRAP mix: keep each real token once and generate an equal volume of rephrasings. How many total tokens do you get, what fraction is synthetic, and how does that fraction compare to the chapter's recommended cap? (c) Why is the WRAP option preferable to the repetition option even though both reach $20\text{T}$ tokens?
+
+??? note "Solution"
+    (a) $20\text{T} / 10\text{T} = 2$ epochs. The chapter (citing Muennighoff et al.) says up to roughly 4 epochs of repeated data is about as good as fresh data, after which value decays fast. Two epochs is comfortably inside that safe zone.
+
+    (b) A 1:1 mix gives $10\text{T}$ real $+ 10\text{T}$ synthetic $= 20\text{T}$ total tokens, of which the synthetic fraction is $10/20 = 50\%$. The chapter's default caps synthetic "around one-third to one-half" of the blend, so 50% sits right at the upper edge of the recommended range — acceptable, but you would not want to push synthetic higher for rephrase-style data.
+
+    (c) Repetition re-shows the model the *same* tokens, which gives diminishing signal and risks memorization; the second epoch adds little new information. WRAP rephrasings carry the *same facts* re-expressed in clean styles at higher signal-per-token, so each real token is seen only once while its information is reinforced through a stylistically different, grounded variant — you gain effective token efficiency (the ~3x WRAP result) rather than merely re-reading. Crucially the mix still keeps every original token once, preserving the natural tails.
+
+**4.** Consider the "replace"-regime toy model of collapse with expected variance $\sigma^2 (1 - 1/n)^t$ after $t$ generations, where $n$ is the number of samples drawn per generation. (a) With $n = 25$ samples per generation, after how many generations does the expected variance fall to half its original value? (b) You want to slow collapse so that the half-life is at least 100 generations. What is the smallest $n$ that achieves this? (c) What does this tell you about controlling collapse purely by increasing $n$, versus the accumulate regime?
+
+??? note "Solution"
+    (a) The per-generation retention factor is $1 - 1/25 = 0.96$. Solve $0.96^t = 0.5$:
+    $$
+    t = \frac{\ln 0.5}{\ln 0.96} = \frac{-0.6931}{-0.04082} \approx 17 \text{ generations.}
+    $$
+
+    (b) Require the half-life $t_{1/2} = \dfrac{\ln 0.5}{\ln(1 - 1/n)} \ge 100$. Since $\ln(1-1/n)$ is negative, this means $\ln(1 - 1/n) \ge \dfrac{\ln 0.5}{100} = -0.006931$. Exponentiate:
+    $$
+    1 - \frac{1}{n} \ge e^{-0.006931} \approx 0.993093 \quad\Rightarrow\quad \frac{1}{n} \le 0.006907 \quad\Rightarrow\quad n \ge 144.8.
+    $$
+    So the smallest integer is **$n = 145$** samples per generation.
+
+    (c) Increasing $n$ only *slows* the decay — it stretches the half-life ($n=25 \to 17$, $n=145 \to 100$, and in the chapter $n=50 \to 34$, $n=100 \to 69$) but the variance still trends to zero for any finite $n$ because $(1-1/n)^t \to 0$ as $t \to \infty$. More samples buys time, never immunity. Only re-injecting real data (the accumulate regime) actually halts the decay, because the real samples keep re-supplying the true variance every round. This is the quantitative case for always anchoring with real data rather than trying to out-sample collapse.
+
+**5.** The `distill_reasoning` function keeps correct traces but reports nothing about *how hard* the problems were. Write a function `coverage_report(problems, llm, K=8)` that, reusing the chapter's `extract_final_answer` and `verify`, samples $K$ traces per problem and returns, for each problem, the empirical per-attempt solve rate $\hat p$ (fraction of the $K$ traces that were correct), plus two corpus-level numbers: the **coverage** (fraction of problems solved at least once) and the count of "too-easy" problems (solved on every attempt, which the chapter says should be capped so they do not swamp the dataset). Keep the batched-generation style of the chapter.
+
+??? note "Solution"
+    The key is to batch all $K \times |\text{problems}|$ completions in one `llm.generate` call (throughput dominates), track which problem each completion belongs to with an `owners` list exactly as `distill_reasoning` does, then tally correct traces per problem. The empirical solve rate $\hat p_i$ is `correct_i / K`; a problem is *solved* if $\hat p_i > 0$ and *too easy* if $\hat p_i = 1$.
+
+    ```python
+    def coverage_report(problems, llm, K=8):
+        """
+        Sample K traces per problem, verify each against gold, and report
+        per-problem empirical solve rate plus corpus-level difficulty stats.
+        Reuses extract_final_answer() and verify() from the chapter.
+        """
+        # Build K identical CoT prompts per problem, one big batched call.
+        prompts, owners = [], []
+        for i, p in enumerate(problems):
+            cot = (p["question"] +
+                   "\n\nThink step by step, then give the final answer "
+                   "in \\boxed{}.")
+            for _ in range(K):
+                prompts.append(cot); owners.append(i)
+
+        outs = llm.generate(prompts, sampling_params=dict(
+            temperature=0.8, top_p=0.95, max_tokens=2048))
+
+        # Count correct traces per problem.
+        correct = [0] * len(problems)
+        for owner, out in zip(owners, outs):
+            pred = extract_final_answer(out.outputs[0].text)
+            if verify(pred, problems[owner]["gold"]):
+                correct[owner] += 1
+
+        per_problem = []
+        solved = too_easy = 0
+        for i, c in enumerate(problems):
+            p_hat = correct[i] / K
+            per_problem.append({"question": problems[i]["question"],
+                                "p_hat": p_hat,
+                                "n_correct": correct[i]})
+            if correct[i] > 0:
+                solved += 1
+            if correct[i] == K:          # solved on every single attempt
+                too_easy += 1
+
+        return {
+            "per_problem": per_problem,
+            "coverage": solved / max(1, len(problems)),   # >=1 correct
+            "n_too_easy": too_easy,                        # p_hat == 1.0
+        }
+    ```
+
+    Interpretation, tying back to the chapter: `coverage` is the empirical version of the $1-(1-p)^K$ formula from Exercise 2 — it tells you what fraction of the problem bank is reachable at this $K$. A large `n_too_easy` count is the curriculum warning the chapter flags: those problems yield near-identical correct traces and, left uncapped, would dominate the SFT set, so `distill_reasoning`'s `max_keep_per_problem` cap (and, ideally, dropping trivially-easy problems entirely) enforces the needed balance. Problems with $\hat p = 0$ are candidates for a stronger teacher or for RLVR rather than distillation.

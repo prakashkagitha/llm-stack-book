@@ -497,3 +497,145 @@ def fit_cpt_trajectory(tokens, losses):
 - **Komatsuzaki et al., "Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints" (2022)** — the dense-to-MoE upcycling recipe.
 - **Wu et al., "FOCUS: Effective Embedding Initialization for Monolingual Specialization of Multilingual Models" (2023)** — sub-token-mean embedding initialization for vocabulary/tokenizer transfer.
 - **Wu et al., "BloombergGPT" (2023)** and **Chen et al., "Meditron" / SaulLM legal-LM reports (2023–2024)** — real domain-adaptive pretraining recipes for finance, medicine, and law.
+
+## Exercises
+
+**1.** *(Conceptual.)* A colleague wants to specialize your base model on legal text. The base model finished its cosine schedule at its floor LR $\eta_{\min} = 3\times10^{-5}$, and your colleague proposes simply resuming training on the legal corpus at exactly $\eta_{\min}$, "since that's where the model left off." (a) Which horn of the stability–plasticity dilemma does this proposal fall on, and what will the legal-domain loss curve look like? (b) Your colleague, told to "raise the LR," instead jumps straight to $3\times10^{-4}$ with no warmup. What goes wrong mechanically? (c) After you finally run a proper re-warm, the loss on *both* the legal set and the held-out base set spikes upward in the first few hundred steps. Should you abort? Why or why not?
+
+??? note "Solution"
+    **(a)** Resuming at $\eta_{\min}$ falls on the **plasticity** (learning) horn: the LR is in "polish" mode, gradients are tiny, and the model absorbs almost nothing from the new legal distribution. The legal-domain loss curve will be nearly flat — it barely drops below where it started. You paid compute and learned little.
+
+    **(b)** Jumping straight to $3\times10^{-4}$ (a $10\times$ increase over the floor) with no re-warmup applies a large gradient step into a region for which the optimizer's stale Adam second-moment estimates $v_t$ are miscalibrated (they were tuned to the tiny end-of-run gradients). The result is a sharp loss spike and sometimes outright divergence. The fix is to re-warm over at least a few hundred steps and to reset (or carefully recalibrate) the optimizer state so $v_t$ rebuilds against the new data.
+
+    **(c)** **Do not abort.** The transient spike on both old and new data is the expected, documented consequence of raising the LR (Ibrahim et al.); the loss recovers and typically settles *below* where it started once you re-decay. The correct diagnostic is the *settled* loss after re-decay, not the spike. Aborting here would throw away a run that is behaving exactly as designed.
+
+**2.** *(Quantitative — replay accounting.)* You must ensure the model actually *sees* at least $50$ B tokens of new-domain (biomedical) text, and you want a replay ratio of $r = 0.2$ general-text tokens to fight forgetting. (a) What is the total CPT token budget $D$, and how many replay tokens does that imply? (b) Relative to a hypothetical replay-free run that also sees $50$ B new tokens, what percentage of *extra* compute does the replay cost? (c) Ibrahim et al. found the marginal benefit of replay above ~25–50% is small, and even 5% helps a lot. Given that, is $r=0.2$ a defensible choice here?
+
+??? note "Solution"
+    **(a)** New tokens are the $(1-r)$ share of the stream: $50 = (1-r)\,D = 0.8\,D$, so
+    $$
+    D = \frac{50}{0.8} = 62.5\ \text{B tokens}.
+    $$
+    Replay tokens are $r\,D = 0.2 \times 62.5 = 12.5$ B. Check: $50 + 12.5 = 62.5$ B. 
+
+    **(b)** The replay-free run processes $50$ B tokens; this run processes $62.5$ B. Since compute scales with tokens ($C \approx 6ND$ at fixed $N$), the extra cost is
+    $$
+    \frac{62.5 - 50}{50} = 25\%\ \text{more compute}.
+    $$
+    (Equivalently, adding replay at ratio $r$ on top of a fixed new-token target multiplies compute by $1/(1-r)$.)
+
+    **(c)** Yes. $r=0.2$ sits comfortably in the useful band: well above the 5% that already buys most of the anti-forgetting benefit, and below the ~25–50% region where returns flatten. For a large biomedical shift, spending 25% extra compute to substantially protect general-language ability is a reasonable trade — and you could drop toward $r=0.05$–$0.1$ if the compute budget were tighter, accepting somewhat more forgetting.
+
+**3.** *(Quantitative — compute budgeting.)* Your base model has $N = 3\times10^{9}$ parameters and was pretrained on $1.5$ T tokens. You plan a $30$ B-token domain-adaptive pass on a cluster of $16$ H100s, each sustaining an *achieved* $4\times10^{14}$ FLOP/s. Using the $C \approx 6ND$ estimate: (a) What is the CPT FLOP cost and the wall-clock time? (b) What fraction of the original pretraining *token* budget is this pass?
+
+??? note "Solution"
+    **(a)** With $N = 3\times10^{9}$ and $D = 3\times10^{10}$,
+    $$
+    C \approx 6ND = 6 \times 3\times10^{9} \times 3\times10^{10} = 5.4\times10^{20}\ \text{FLOPs}.
+    $$
+    Aggregate throughput is $16 \times 4\times10^{14} = 6.4\times10^{15}$ FLOP/s, so
+    $$
+    t \approx \frac{5.4\times10^{20}}{6.4\times10^{15}} = 8.44\times10^{4}\ \text{s} \approx 23.4\ \text{hours}.
+    $$
+
+    **(b)** $D_{\text{cpt}} / D_{\text{base}} = 30\ \text{B} / 1{,}500\ \text{B} = 0.02 = 2\%$. This is squarely in the typical DAPT magnitude (single-digit percent of the base run) — the leverage that makes CPT worthwhile: a day of compute versus the months-long original run.
+
+**4.** *(Conceptual — why upcycling preserves the function.)* Look at the `UpcycledMoE.forward` code. At initialization every expert is a deep copy of the same dense MLP. (a) Show that at step 0 the MoE layer reproduces the dense MLP's output *exactly*, and note precisely which line makes this independent of the router's logits. (b) The chapter's prose says the layer computes the dense output "approximately, if the router is roughly uniform." Reconcile that hedge with your exact result in (a). (c) Name the failure mode the chapter warns about for freshly-added routers, and explain why it becomes a real risk only *after* step 0.
+
+??? note "Solution"
+    **(a)** Let $g(x)$ be the shared expert function (all experts are identical clones, so $\text{expert}_e(x) = g(x)$ for every $e$). The forward pass selects the top-$k$ experts, renormalizes their gate weights with `w = w / w.sum(-1, keepdim=True)` so that $\sum_{\text{slot}} w_{\text{slot}} = 1$, then accumulates $\sum_{\text{slot}} w_{\text{slot}}\,\text{expert}(x)$. Since every expert returns the same $g(x)$,
+    $$
+    \text{out}(x) = \sum_{\text{slot}=1}^{k} w_{\text{slot}}\, g(x) = g(x)\sum_{\text{slot}} w_{\text{slot}} = g(x).
+    $$
+    The result equals the dense MLP output *exactly*, and the **renormalization line** (`w = w / w.sum(...)`) is what makes it independent of the router logits: whatever top-$k$ experts are chosen and with whatever raw softmax weights, the renormalized weights sum to 1 and multiply the single shared $g(x)$.
+
+    **(b)** The "approximately / roughly uniform" hedge is the *general* statement for an upcycle where the top-$k$ selection could differ or where only a subset of experts are exact clones; it also covers implementations that do **not** renormalize the top-$k$ weights (there the output is $g(x)\sum w_{\text{slot}}$, which depends on how much softmax mass the top-$k$ captured, i.e. on router uniformity). For *this specific code* — identical experts *and* renormalized top-$k$ weights — the preservation is exact, so the hedge is conservative here.
+
+    **(c)** **Router collapse**: the freshly-initialized router learns to send all tokens to a single expert (or a few), leaving the others untrained. It is not a risk at step 0 precisely because all experts are identical — routing is then irrelevant to the output, and the small-init router keeps logits near-uniform. Once CPT begins and experts start to *differentiate*, the router's choices start to matter, and without an auxiliary load-balancing loss (chapter 2.9) the positive feedback loop toward one expert can take over. Hence you must tune load balancing and capacity factors *during* the upcycling CPT.
+
+**5.** *(Quantitative — loss-trajectory planning.)* You ran a short pilot and `fit_cpt_trajectory` returned the shifted power law $\mathcal{L}_{\text{new}}(D) = \mathcal{L}_\infty + A/(D_0 + D)^{\alpha}$ with $\mathcal{L}_\infty = 2.00$, $A = 200$, $D_0 = 1\times10^{9}$, $\alpha = 0.30$ (tokens in absolute counts). (a) Predict the new-domain loss at the planned full budget of $D = 40$ B tokens. (b) Using `tokens_for_target`, how many tokens would you need to reach a loss of $2.10$? (c) What does the answer to (b), compared to the $40$ B plan, tell you about where the "knee" of this curve is?
+
+??? note "Solution"
+    **(a)** At $D = 4\times10^{10}$, $D_0 + D = 4.1\times10^{10}$. Then
+    $$
+    (4.1\times10^{10})^{0.3} = \exp(0.3\ln 4.1\times10^{10}) = \exp(0.3 \times 24.44) = \exp(7.33) \approx 1.53\times10^{3},
+    $$
+    so
+    $$
+    \mathcal{L}_{\text{new}}(40\text{B}) = 2.00 + \frac{200}{1.53\times10^{3}} \approx 2.00 + 0.131 = 2.13.
+    $$
+
+    **(b)** Inverting the law (the `tokens_for_target` branch, valid since $2.10 > \mathcal{L}_\infty = 2.00$):
+    $$
+    D = \left(\frac{A}{\text{target} - \mathcal{L}_\infty}\right)^{1/\alpha} - D_0 = \left(\frac{200}{0.10}\right)^{1/0.3} - 10^{9} = (2000)^{3.333} - 10^{9}.
+    $$
+    $(2000)^{3.333} = \exp(3.333 \times \ln 2000) = \exp(3.333 \times 7.601) = \exp(25.34) \approx 1.01\times10^{11}$, so
+    $$
+    D \approx 1.01\times10^{11} - 1\times10^{9} \approx 1.0\times10^{11} = 100\ \text{B tokens}.
+    $$
+
+    **(c)** Going from the settled $2.13$ at $40$ B down to $2.10$ costs $\sim 100$ B tokens — **2.5$\times$ the budget for a $0.03$-nat gain**. Because loss is $\mathcal{L}_\infty + A/(D_0+D)^\alpha$ with small $\alpha$, returns diminish sharply: you are already past the knee at $40$ B. The rational move is to stop near the current plan (or reallocate the extra compute to replay / a larger model) rather than chase $2.10$.
+
+**6.** *(Implementation — verify function-preserving depth growth.)* The `grow_depth_identity` function claims the grown model computes the *same* function as the original at step 0. Write a small runnable harness that builds a toy residual transformer, records its output on a batch, grows it, and asserts the output is unchanged. Then explain in one sentence which lines of `grow_depth_identity` are responsible for the invariance.
+
+??? note "Solution"
+    A minimal harness using blocks of the residual form the function assumes ($x \mapsto x + \text{attn}(...)$; $x \mapsto x + \text{mlp}(...)$), with the projection names `attn.o_proj` and `mlp.down_proj` that `grow_depth_identity` zeroes:
+
+    ```python
+    import torch, torch.nn as nn
+
+    class ToyAttn(nn.Module):
+        def __init__(self, d):
+            super().__init__()
+            self.qkv    = nn.Linear(d, d)
+            self.o_proj = nn.Linear(d, d)      # residual output projection
+        def forward(self, x):
+            return self.o_proj(torch.relu(self.qkv(x)))
+
+    class ToyMLP(nn.Module):
+        def __init__(self, d):
+            super().__init__()
+            self.up_proj   = nn.Linear(d, 4 * d)
+            self.down_proj = nn.Linear(4 * d, d)   # residual output projection
+        def forward(self, x):
+            return self.down_proj(torch.relu(self.up_proj(x)))
+
+    class ToyBlock(nn.Module):
+        def __init__(self, d):
+            super().__init__()
+            self.ln1, self.ln2 = nn.LayerNorm(d), nn.LayerNorm(d)
+            self.attn, self.mlp = ToyAttn(d), ToyMLP(d)
+        def forward(self, x):
+            x = x + self.attn(self.ln1(x))
+            x = x + self.mlp(self.ln2(x))
+            return x
+
+    class ToyModel(nn.Module):
+        def __init__(self, d, L):
+            super().__init__()
+            self.layers = nn.ModuleList(ToyBlock(d) for _ in range(L))
+            self.config = type("cfg", (), {"num_layers": L})()
+        def forward(self, x):
+            for layer in self.layers:
+                x = layer(x)
+            return x
+
+    torch.manual_seed(0)
+    model = ToyModel(d=16, L=4)
+    x = torch.randn(2, 5, 16)
+
+    with torch.no_grad():
+        before = model(x)
+    grow_depth_identity(model, insert_after=[1, 3])   # from the chapter
+    with torch.no_grad():
+        after = model(x)
+
+    print("layers:", model.config.num_layers)                 # 4 -> 6
+    print("max abs diff:", (before - after).abs().max().item())
+    assert torch.allclose(before, after, atol=1e-6)
+    print("function preserved at init: OK")
+    ```
+
+    Running this prints `layers: 6` and a max abs difference at the level of floating-point noise (`~1e-7`), and the assertion passes.
+
+    **Why it works:** the lines `twin.attn.o_proj.weight.zero_()` and `twin.mlp.down_proj.weight.zero_()` (and their bias zeroing) make each inserted block's attention and MLP sublayers output exactly $0$, so — because the block is residual, $x \mapsto x + f(x)$ with $f(x) = 0$ — the twin is the identity map and passes its input through unchanged, leaving the whole network's function identical at step 0.

@@ -560,3 +560,160 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
 - Ashish Vaswani et al. — *Attention Is All You Need* (2017). The attention operator FlashAttention accelerates; the from-scratch version is in [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html).
 - The `Dao-AILab/flash-attention` GitHub repository — production CUDA kernels, the `flash_attn` Python API, and the varlen/packed-sequence entry points.
 - The OpenAI Triton tutorials — the fused-attention example is the canonical place to see a FlashAttention-style kernel written in a high-level GPU language; see [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html).
+
+## Exercises
+
+**1.** Naive attention and FlashAttention execute the *same* number of floating-point operations, yet FlashAttention is far faster on a real GPU. In one or two paragraphs, explain (a) why the FLOP count is not what determines the wall-clock time here, and (b) precisely which step in the naive kernel is responsible for the slowdown. Then state what would happen to the *relative* speedup if you ran attention on a hypothetical GPU whose HBM bandwidth equalled its SRAM bandwidth.
+
+??? note "Solution"
+    **(a) Why FLOPs do not decide the runtime.** A kernel's wall-clock time is set by whichever resource it saturates. Attention has *low arithmetic intensity*: the two matmuls are $O(N^2 d)$ FLOPs, but the standard kernel also moves $\Theta(N^2)$ elements to and from HBM. On modern hardware the tensor cores deliver hundreds of TFLOP/s while HBM delivers only a few TB/s, so the ratio of "FLOPs the chip can do per byte HBM can deliver" is large — and attention supplies far fewer FLOPs per byte than that. The kernel therefore spends most of its time waiting on memory transactions while the tensor cores sit idle. It is *memory-bound*, so counting FLOPs measures the wrong resource; you must count HBM bytes.
+
+    **(b) The responsible step.** The culprit is **materializing the $N \times N$ intermediates $S = QK^\top/\sqrt d$ and $P = \operatorname{softmax}(S)$ in HBM.** The naive kernel writes $S$ to HBM, reads it back to apply softmax, writes $P$, then reads $P$ again to multiply by $V$. Those four $\Theta(N^2)$ trips across the slow bus dominate. The matmuls themselves were never the bottleneck. FlashAttention keeps the score tile in SRAM and never writes $S$ or $P$ to HBM, which is the entire source of the speedup.
+
+    **(c) Equal bandwidths.** If HBM were as fast as SRAM, moving the $N^2$ intermediates would no longer be disproportionately expensive — the memory hierarchy would be flat, arithmetic intensity would stop mattering, and the kernel would become compute-bound (limited by the matmuls both algorithms share). Since both do the same FLOPs, the FlashAttention advantage would shrink toward negligible. The speedup exists *only because HBM is much slower than SRAM*; remove that gap and you remove the win. (This is also why FlashAttention does nothing for an already compute-bound dense matmul.)
+
+**2.** Stream the logits $x = [3,\,1,\,6,\,2]$ through the online-softmax recurrence with block size 2 (block one is $[3,1]$, block two is $[6,2]$). Carry the running max $m$ and running denominator $\ell$ by hand, showing the correction factor $\alpha$ explicitly at the second block. Then (a) confirm your final $\ell$ matches the two-pass reference $\sum_i e^{x_i - \max_j x_j}$, and (b) report the row logsumexp $L = m + \log \ell$ that the forward pass would save for the backward pass. Use $e^{-2}=0.135335$, $e^{-3}=0.049787$, $e^{-4}=0.018316$, $e^{-5}=0.006738$.
+
+??? note "Solution"
+    **Block 1** $[3,1]$: local max $\tilde m = 3$, so $m = 3$ (no prior state, $\alpha \to 0$). Exponentiate against $m=3$:
+    $$\ell = e^{3-3} + e^{1-3} = 1 + e^{-2} = 1 + 0.135335 = 1.135335.$$
+
+    **Block 2** $[6,2]$: local max $\tilde m = 6$, so $m_{\text{new}} = \max(3,6) = 6$. The correction factor re-bases the old denominator from scale $m=3$ down to scale $m=6$:
+    $$\alpha = e^{\,m - m_{\text{new}}} = e^{3-6} = e^{-3} = 0.049787.$$
+    Rescale the old sum and add the new block's terms (exponentiated against $6$):
+    $$\ell = \alpha \cdot 1.135335 + \big(e^{6-6} + e^{2-6}\big) = 0.049787 \times 1.135335 + (1 + e^{-4}).$$
+    $$\ell = 0.056523 + (1 + 0.018316) = 0.056523 + 1.018316 = 1.074839.$$
+
+    **(a) Reference check.** Global max is $6$, so
+    $$\ell^\star = e^{3-6} + e^{1-6} + e^{6-6} + e^{2-6} = e^{-3} + e^{-5} + 1 + e^{-4} = 0.049787 + 0.006738 + 1 + 0.018316 = 1.074841.$$
+    The streaming value $1.074839$ matches $1.074841$ to round-off — exactly as the correctness proof guarantees. The single multiply by $\alpha$ re-based block 1's entire contribution (accumulated against its local max of 3) onto the true max of 6, with no second pass over the data.
+
+    **(b) Saved logsumexp.**
+    $$L = m + \log \ell = 6 + \log(1.074841) = 6 + 0.072172 = 6.072172.$$
+    This one scalar is what the backward pass uses to reconstruct the normalized weights via $\exp(S_{ij} - L_i)$.
+
+**3.** Consider a single-head forward pass at sequence length $N = 16{,}384$ and head dimension $d = 128$, in fp16 (2 bytes/element); the saved logsumexp $L$ is fp32 (4 bytes/element).
+
+  (a) How many bytes does the naive score matrix $S$ occupy?
+
+  (b) FlashAttention's only persistent extra allocations are the output $O$ ($N \times d$) and the per-row statistic $L$ ($N$). How many bytes is that, and what is the ratio of (a) to (b)?
+
+  (c) The chapter gives FlashAttention's HBM traffic as $\Theta(N^2 d^2 / M)$ versus naive's $\Theta(N^2)$, i.e. a reduction factor of $M/d^2$ where $M$ is SRAM size in elements. If an SM has $M = 131{,}072$ elements of usable SRAM, what is the reduction factor at this $d$?
+
+??? note "Solution"
+    **(a)** $S$ has $N^2 = 16{,}384^2 = 268{,}435{,}456$ entries, at 2 bytes each:
+    $$268{,}435{,}456 \times 2 = 536{,}870{,}912 \text{ bytes} = 512 \text{ MB}.$$
+
+    **(b)** Output $O$: $N \times d = 16{,}384 \times 128 = 2{,}097{,}152$ elements $\times 2$ bytes $= 4{,}194{,}304$ bytes $= 4$ MB. Statistic $L$: $N = 16{,}384$ elements $\times 4$ bytes $= 65{,}536$ bytes $= 64$ KB. Total:
+    $$4{,}194{,}304 + 65{,}536 = 4{,}259{,}840 \text{ bytes} \approx 4.06 \text{ MB}.$$
+    Ratio (a)/(b):
+    $$\frac{536{,}870{,}912}{4{,}259{,}840} \approx 126.$$
+    So the single $N^2$ score matrix is roughly $126\times$ larger than *all* of FlashAttention's persistent extra memory — and $L$ alone (64 KB) is negligible next to $O$. This is the concrete face of the $O(N^2) \to O(N)$ memory drop.
+
+    **(c)** $d^2 = 128^2 = 16{,}384$. Reduction factor:
+    $$\frac{M}{d^2} = \frac{131{,}072}{16{,}384} = 8.$$
+    FlashAttention moves about $8\times$ fewer HBM bytes than the naive kernel at these parameters — an order-of-magnitude-scale win, and it grows as SRAM $M$ grows (bigger tiles $\Rightarrow$ fewer streaming passes over $K,V$).
+
+**4.** Modify the chapter's `flash_attention_forward` to implement **sliding-window causal attention**: query $i$ attends only to keys $j$ with $i - W < j \le i$ (a causal window of width $W$). Write the changed inner loop, exploit the window to *skip* key-blocks that fall entirely outside it (both future blocks and blocks past the left edge), and verify against a materialized reference. Keep the chapter's `-inf` guards so fully-masked rows do not produce `nan`.
+
+??? note "Solution"
+    Only the masking predicate and the block-skip logic change; the online-softmax update is identical to the chapter's (including the two `-inf` guards for rows whose visible keys have not appeared yet). The window keeps columns satisfying `cols <= rows` (causal) *and* `cols > rows - W` (left edge). A key-block $[j_0, j_1)$ can be skipped entirely if it is all in the future ($j_0 >$ every row index, i.e. $j_0 > i_1 - 1$) or entirely left of the window for every row in the query tile ($j_1 - 1 < i_0 - W + 1$).
+
+    ```python
+    import numpy as np
+
+    def flash_attention_forward_swa(Q, K, V, W, Br=32, Bc=32):
+        """Sliding-window causal attention: query i attends to keys i-W < j <= i."""
+        N, d = Q.shape
+        scale = 1.0 / np.sqrt(d)
+        O = np.zeros((N, d))
+        L = np.zeros(N)
+
+        for i0 in range(0, N, Br):
+            i1 = min(i0 + Br, N)
+            Qi = Q[i0:i1]
+            br = i1 - i0
+
+            m_i = np.full(br, -np.inf)
+            l_i = np.zeros(br)
+            O_i = np.zeros((br, d))
+
+            for j0 in range(0, N, Bc):
+                j1 = min(j0 + Bc, N)
+
+                # --- window-aware block skipping ---
+                if j0 > i1 - 1:          # block entirely in the future -> and all later blocks too
+                    break
+                if j1 - 1 < i0 - W + 1:  # block entirely left of the window for every row
+                    continue
+
+                Kj = K[j0:j1]
+                Vj = V[j0:j1]
+                Sij = (Qi @ Kj.T) * scale
+
+                rows = np.arange(i0, i1)[:, None]
+                cols = np.arange(j0, j1)[None, :]
+                keep = (cols <= rows) & (cols > rows - W)      # causal AND window
+                Sij = np.where(keep, Sij, -np.inf)
+
+                # --- online-softmax update (unchanged from the chapter) ---
+                m_block = Sij.max(axis=1)
+                m_new = np.maximum(m_i, m_block)
+                m_new = np.where(np.isneginf(m_new), 0.0, m_new)
+
+                P = np.exp(Sij - m_new[:, None])
+                alpha = np.exp(m_i - m_new)
+                alpha = np.where(np.isneginf(m_i), 0.0, alpha)
+
+                l_i = alpha * l_i + P.sum(axis=1)
+                O_i = alpha[:, None] * O_i + P @ Vj
+                m_i = m_new
+
+            l_safe = np.where(l_i == 0.0, 1.0, l_i)
+            O[i0:i1] = O_i / l_safe[:, None]
+            L[i0:i1] = m_i + np.log(l_safe)
+
+        return O, L
+
+
+    # ---- reference and verification ----
+    def reference_swa(Q, K, V, W):
+        d = Q.shape[-1]; N = Q.shape[0]
+        S = (Q @ K.T) / np.sqrt(d)
+        rows = np.arange(N)[:, None]; cols = np.arange(N)[None, :]
+        keep = (cols <= rows) & (cols > rows - W)
+        S = np.where(keep, S, -np.inf)
+        S = S - S.max(axis=1, keepdims=True)
+        P = np.exp(S); P /= P.sum(axis=1, keepdims=True)
+        return P @ V
+
+    rng = np.random.default_rng(7)
+    N, d, W = 100, 16, 24
+    Q = rng.normal(size=(N, d)); K = rng.normal(size=(N, d)); V = rng.normal(size=(N, d))
+    O_flash, _ = flash_attention_forward_swa(Q, K, V, W, Br=32, Bc=32)
+    O_ref = reference_swa(Q, K, V, W)
+    print("max abs error:", np.abs(O_flash - O_ref).max())   # ~1e-15
+    ```
+
+    The maximum error is $\sim 10^{-15}$ — exact up to round-off, like the chapter's causal check. Note the `break` for future blocks and the `continue` for blocks past the left edge together mean each query block only ever touches the $O(W/B_c)$ key-blocks inside its window, so for $W \ll N$ the work per query block is constant rather than growing with $N$ — the same "masking is nearly free" idea, now bounding total work to $O(N W)$.
+
+**5.** The backward pass reconstructs each probability tile as $P_{ij} = \exp(S_{ij} - L_i)$ instead of storing $P$, using the saved logsumexp $L_i = m_i + \log \ell_i$.
+
+  (a) Prove that this reconstruction is *already normalized*, i.e. that $\sum_j P_{ij} = 1$ for each row $i$ (over the row's visible keys), so no extra division is needed in backward.
+
+  (b) At $N = 16{,}384$, $d = 128$, fp16, quantify the HBM memory that recomputation *saves* (storing $L$ instead of $P$) and identify the compensating cost. Reuse numbers from Exercise 3 where useful.
+
+??? note "Solution"
+    **(a) Normalization.** By definition $L_i = m_i + \log \ell_i$ where $m_i = \max_j S_{ij}$ and $\ell_i = \sum_j e^{S_{ij} - m_i}$ (both over row $i$'s visible keys, from the forward pass). Then
+    $$\sum_j P_{ij} = \sum_j e^{S_{ij} - L_i} = e^{-L_i} \sum_j e^{S_{ij}} = e^{-(m_i + \log \ell_i)} \sum_j e^{S_{ij}}.$$
+    Factor $e^{m_i}$ out of the sum: $\sum_j e^{S_{ij}} = e^{m_i} \sum_j e^{S_{ij} - m_i} = e^{m_i}\,\ell_i$. Substituting,
+    $$\sum_j P_{ij} = e^{-m_i}\, e^{-\log \ell_i} \cdot e^{m_i}\,\ell_i = \frac{\ell_i}{\ell_i} = 1.$$
+    So $\exp(S_{ij} - L_i)$ is exactly the row-normalized softmax weight — the logsumexp $L_i$ folds the max-subtraction *and* the normalizer into a single number, and it is numerically stable because $S_{ij} - L_i \le S_{ij} - m_i \le 0$, so no exponent is positive. This is why the forward pass saves $L$ and nothing else.
+
+    **(b) Memory saved vs. cost.** Storing $P$ for the backward pass would cost the full $N^2$ matrix in HBM. From Exercise 3(a), at fp16 that is
+    $$N^2 \times 2 = 536{,}870{,}912 \text{ bytes} = 512 \text{ MB}.$$
+    Recomputation instead keeps only $L$ (from Exercise 3(b)):
+    $$N \times 4 = 65{,}536 \text{ bytes} = 64 \text{ KB}.$$
+    So recomputation saves $512\text{ MB} - 64\text{ KB} \approx 512$ MB of HBM per head, and avoids the $\Theta(N^2)$ HBM *read* of that stored matrix during backward — a factor of about $512\,\text{MB} / 64\,\text{KB} = 8192\times$ less stored state.
+
+    The compensating cost is FLOPs: backward must **recompute** the score tile $S_{ij} = Q_i K_j^\top / \sqrt d$, one extra $O(N^2 d)$ matmul it could otherwise have skipped. But attention is memory-bound, so those extra matmul FLOPs run on tensor cores that were idle anyway, while the $O(N^2)$ HBM traffic we removed was the actual bottleneck. Trading idle FLOPs for eliminated bytes is exactly the right direction on the memory-bound side of the roofline.

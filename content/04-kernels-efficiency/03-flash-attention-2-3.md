@@ -477,3 +477,144 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
 - Jerry Chee, Yaohui Cai, Volodymyr Kuleshov, Christopher De Sa, *QuIP: 2-Bit Quantization of Large Language Models With Guarantees* (2023) — origin of incoherent processing via random orthogonal/Hadamard rotations.
 - NVIDIA, *Hopper Architecture Whitepaper* and the CUTLASS library / CUDA programming guide — authoritative references for `wgmma`, TMA, asynchronous barriers, and FP8 tensor cores.
 - The `Dao-AILab/flash-attention` repository — production kernels and the GQA/causal/varlen variants you will actually call.
+
+## Exercises
+
+**1.** FlashAttention-1 already minimized HBM traffic to the theoretical minimum for exact attention. Yet FA2 is roughly $2\times$ faster on the *same* A100. Explain in one or two sentences why the two facts are not contradictory, and name the bottleneck FA2 actually attacks.
+
+??? note "Solution"
+    They are not contradictory because FA1's bottleneck was never memory bandwidth — it was **compute utilization**. FA1 ran at only ~25-40% of the A100's tensor-core FLOP peak while a well-tuned dense GEMM hits 80-90%. The idle time came from **occupancy and instruction mix**: SMs sitting empty (too few thread blocks) and cycles spent on slow non-matmul work (rescales, `exp`, inter-warp reductions through shared memory) rather than on the tensor cores. FA2's three edits — deferred normalization, sequence-length parallelism, and split-Q warp partitioning — raise utilization without changing the HBM traffic at all. Minimizing memory traffic and maximizing compute utilization are two orthogonal axes; FA1 nailed the first and left the second on the table.
+
+**2.** In the FA2 reference recurrence, the per-iteration correction factor $\alpha = e^{m - m^{\text{new}}}$ is applied to *both* the running denominator $\ell$ and the unnormalized accumulator $\tilde{O}$, but the division by $\ell$ is deferred to the end. Suppose a well-meaning "optimizer" also tries to defer the $\alpha$ multiplication on $\tilde{O}$ (i.e., drops the `alpha.unsqueeze(1) * Oi` term and just does `Oi = Oi + Pij @ vj`). Does the kernel still compute exact attention? Explain precisely what breaks.
+
+??? note "Solution"
+    No — dropping the $\alpha$ multiplication on $\tilde{O}$ produces **wrong** results. The two factors play different roles and only one can be deferred.
+
+    - The **division by $\ell$** can be deferred because it is a single global scaling applied identically to every term of the sum $\sum_j P_{ij} V_j$. Multiplying the final accumulator by $1/\ell$ is algebraically identical to dividing each contribution as it arrives, so you can safely wait until the end.
+    - The **$\alpha$ correction cannot be deferred**, because each inner iteration recomputes $P_{ij} = \exp(S_{ij} - m^{\text{new}})$ against the *current* running max $m^{\text{new}}$, which changes from block to block. Contributions accumulated under an *older, smaller* max are exponentiated with the wrong offset; $\alpha = e^{m^{\text{old}} - m^{\text{new}}}$ retroactively rescales every already-accumulated term so it is consistent with the new max. If you drop it, early blocks' contributions are left multiplied by $e^{m^{\text{old}}}$ while later blocks carry $e^{m^{\text{new}}}$, and the sum mixes incompatible scales.
+
+    Concretely: after processing block 1 with max $m_1$, $\tilde{O} = \sum P^{(1)} V_1$ where $P^{(1)} = e^{S_1 - m_1}$. If block 2 raises the max to $m_2 > m_1$, the correct running accumulator is $e^{m_1 - m_2}\sum P^{(1)} V_1 + \sum e^{S_2 - m_2} V_2$. Without $\alpha$ you would compute $\sum e^{S_1 - m_1} V_1 + \sum e^{S_2 - m_2} V_2$, whose two halves are normalized against different maxima — not any valid softmax. The denominator $\ell$ would also then be inconsistent with the numerator. So $\alpha$ on $\tilde{O}$ is load-bearing; only the $\ell$ division is deferrable.
+
+**3.** *(Quantitative.)* Reproduce and extend the chapter's "FLOPs are not fungible" calculation for a smaller head. Take one attention head, full (non-causal) attention, sequence length $N = 4096$, head dimension $d = 64$. Assume the two matmuls cost $4N^2 d$ FLOPs total, the non-matmul softmax work is $\approx 5N^2$ FLOPs, tensor cores run at $312$ TFLOP/s, and the special-function unit doing `exp`/max runs at $20$ TFLOP/s. Compute (a) the matmul time, (b) the non-matmul time, and (c) the non-matmul share of total runtime *assuming no overlap*. Then (d) state what the number becomes if FA3's ping-pong scheduling perfectly overlaps the softmax with matmul.
+
+??? note "Solution"
+    (a) Matmul FLOPs and time:
+
+    $$
+    4 N^2 d = 4 \cdot (4096)^2 \cdot 64 = 4 \cdot 1.6777 \times 10^7 \cdot 64 \approx 4.295 \times 10^{9}\ \text{FLOPs}.
+    $$
+
+    $$
+    t_{\text{mm}} = \frac{4.295 \times 10^{9}}{3.12 \times 10^{14}\ \text{FLOP/s}} \approx 1.377 \times 10^{-5}\ \text{s} \approx 13.8\ \mu s.
+    $$
+
+    (b) Non-matmul FLOPs and time:
+
+    $$
+    5 N^2 = 5 \cdot (4096)^2 \approx 8.389 \times 10^{7}\ \text{FLOPs}.
+    $$
+
+    $$
+    t_{\text{sfu}} = \frac{8.389 \times 10^{7}}{2.0 \times 10^{13}\ \text{FLOP/s}} \approx 4.19 \times 10^{-6}\ \text{s} \approx 4.2\ \mu s.
+    $$
+
+    (c) With no overlap the total is $t_{\text{mm}} + t_{\text{sfu}} \approx 13.8 + 4.2 = 18.0\ \mu s$, so the non-matmul share is
+
+    $$
+    \frac{4.2}{18.0} \approx 0.23 = 23\%.
+    $$
+
+    Note the softmax is still only ~1.9% of the FLOP *count* ($8.39\times10^7$ of $4.38\times10^9$), yet ~23% of the *time* — and the share is *larger* than the chapter's $d=128$, $N=8192$ example (~14%) because softmax work scales as $N^2$ while matmul work scales as $N^2 d$, so shrinking $d$ makes the non-matmul fraction of time grow.
+
+    (d) If ping-pong scheduling perfectly overlaps the softmax behind matmul work, the runtime becomes $\max(t_{\text{mm}}, t_{\text{sfu}}) = 13.8\ \mu s$ (the tensor cores are the long pole and the SFU work hides completely underneath them). The softmax's contribution to wall-clock time drops from 23% to effectively 0%, which is exactly the win FA3 chases. (In practice overlap is imperfect, but this is the ceiling.)
+
+**4.** In FA2's split-Q warp layout each warp owns a slice of the $B_r$ query rows and needs no inter-warp reduction, whereas FA1's split-K layout forced a shared-memory reduction plus a `__syncthreads()` every inner iteration. (a) Why does split-Q eliminate the reduction — what property of the query-row partition makes the warps independent? (b) What does split-Q now *require* of the $K_j, V_j$ tiles, and why is shared memory well suited to satisfying it? (c) The chapter says the backward pass instead parallelizes over *key* blocks. Give the one-sentence reason the forward and backward pick opposite axes.
+
+??? note "Solution"
+    (a) The softmax and the output for a given query row are computed entirely from that row's score vector against *all* keys; different query rows never share a partial sum. So partitioning the tile by query rows gives each warp a set of **completely independent output rows** — warp 0 produces the final output for rows 0-15, warp 1 for rows 16-31, etc. There is nothing to combine across warps. Split-K, by contrast, gave each warp a slice of key *columns*, so each warp held only a *partial* sum over its column slice; the final output for any row is a sum across all warps' partials, which forces the shared-memory reduction and barrier.
+
+    (b) Split-Q requires that every warp have access to the *full* $K_j, V_j$ tile (each warp computes full-width scores $Q_{\text{rows}} K_j^\top$ and the full $P_{ij} V_j$ for its rows). Shared memory is ideal because this is a **broadcast read**: all warps read the same $K_j/V_j$ bytes, read-only, with no write-back — exactly the access pattern shared memory handles efficiently (no bank-conflict-inducing writes, no synchronization needed among readers).
+
+    (c) You parallelize over the axis that makes the reduction *local*: the forward reduces over keys (so make queries the independent/parallel axis), while the backward must accumulate $dK$ and $dV$, which are reductions *over query blocks* — so making key/value blocks the parallel axis keeps each thread block's $dK_j, dV_j$ accumulation local and avoids atomic adds.
+
+**5.** *(Implementation.)* The reference `flash_attention_2_reference` in the chapter handles a full and a causal mask. Extend it to support a **sliding-window** (local) attention mask of width $w$: query position $q$ may attend only to key positions $k$ with $q - w < k \le q$ (a causal window of the last $w$ keys, including itself). Your implementation must (a) still skip entire key blocks that fall completely outside the window (the load-balancing point from the chapter's causal aside), and (b) mask the partial-overlap blocks correctly. Verify against a dense reference.
+
+??? note "Solution"
+    The key ideas: a key block $[j, j+B_c)$ is entirely outside the window for query block $[i, i+B_r)$ if it is all in the future ($j > i + B_r - 1$, same as causal) *or* entirely too far in the past — the newest query row is $i + B_r - 1$ and it can see back only to $k > (i+B_r-1) - w$, so if the block's last key $j + B_c - 1 \le (i) - w$... more carefully, the *oldest* query row $i$ sees back to $k > i - w$, so a block is fully in the past when its newest key $j + B_c - 1 < i - w + 1$, i.e. $j + B_c - 1 \le i - w$. Within a surviving block we apply both the causal bound $k \le q$ and the window bound $k > q - w$.
+
+    ```python
+    import torch
+
+    def flash_attention_2_sliding_window(Q, K, V, w, Br=64, Bc=64):
+        """
+        Exact FA2 recurrence with a sliding-window causal mask of width w:
+        query q attends to keys k with (q - w) < k <= q.
+        Skips key blocks fully outside the window; masks partial-overlap blocks.
+        """
+        N, d = Q.shape
+        O = torch.zeros_like(Q)
+        for i in range(0, N, Br):
+            qi = Q[i:i+Br]
+            br = qi.shape[0]
+            Oi = torch.zeros(br, d)
+            mi = torch.full((br,), -float('inf'))
+            li = torch.zeros(br)
+
+            q_lo, q_hi = i, i + br - 1                     # query row range in this block
+            for j in range(0, N, Bc):
+                kj = K[j:j+Bc]; vj = V[j:j+Bc]
+                bc = kj.shape[0]
+                k_lo, k_hi = j, j + bc - 1                 # key range in this block
+
+                # ---- block-level skip (load balancing) ----
+                # entirely in the future: even the last query can't reach k_lo
+                if k_lo > q_hi:
+                    break                                 # all later blocks are future too
+                # entirely past the window: even the oldest query (q_lo) can't reach k_hi
+                # q_lo attends to k > q_lo - w, so block is dead if k_hi <= q_lo - w
+                if k_hi <= q_lo - w:
+                    continue
+
+                Sij = (qi @ kj.T) / (d ** 0.5)            # (br, bc)
+                qpos = torch.arange(q_lo, q_lo + br).unsqueeze(1)   # (br,1)
+                kpos = torch.arange(k_lo, k_lo + bc).unsqueeze(0)   # (1,bc)
+                # causal upper bound AND window lower bound
+                mask = (kpos > qpos) | (kpos <= qpos - w)
+                Sij = Sij.masked_fill(mask, -float('inf'))
+
+                mij = Sij.max(dim=1).values
+                mi_new = torch.maximum(mi, mij)
+                # A block can survive the block-level skip yet still leave SOME
+                # query rows fully masked (e.g. the newest rows of this query
+                # block vs. an old key block). Those rows have mi_new = -inf and
+                # exp(-inf - (-inf)) = nan. Guard them: they contribute nothing,
+                # so force Pij -> 0 and alpha -> 1 (their Oi, li stay 0).
+                dead = torch.isinf(mi_new)
+                safe = torch.where(dead, torch.zeros_like(mi_new), mi_new)
+                Pij = torch.exp(Sij - safe.unsqueeze(1)).masked_fill(dead.unsqueeze(1), 0.0)
+                alpha = torch.where(dead, torch.ones_like(mi), torch.exp(mi - safe))
+                li = alpha * li + Pij.sum(dim=1)
+                Oi = alpha.unsqueeze(1) * Oi + Pij @ vj
+                mi = mi_new
+
+            O[i:i+br] = Oi / li.unsqueeze(1)
+        return O
+
+
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        N, d, w = 256, 64, 48
+        Q, K, V = torch.randn(N, d), torch.randn(N, d), torch.randn(N, d)
+
+        # dense reference with the same sliding-window mask
+        S = Q @ K.T / d**0.5
+        q = torch.arange(N).unsqueeze(1); k = torch.arange(N).unsqueeze(0)
+        allowed = (k <= q) & (k > q - w)
+        S = S.masked_fill(~allowed, -float('inf'))
+        ref = torch.softmax(S, dim=-1) @ V
+
+        out = flash_attention_2_sliding_window(Q, K, V, w)
+        print("max abs error:", (ref - out).abs().max().item())   # ~1e-6
+    ```
+
+    Notes on correctness of the skip logic. The future test `k_lo > q_hi` lets us `break` (all subsequent blocks have larger `k_lo`, so they are future too), exactly the causal load-balancing shortcut from the chapter. The past test `k_hi <= q_lo - w` uses `continue` (not `break`) because later blocks move *forward* in time and re-enter the window. The `dead`-row guard is the one subtlety people miss: the block-level skips are decided from the *extreme* query rows ($q_{\text{lo}}, q_{\text{hi}}$), so a block can survive yet still leave *some* rows in the middle of the query block with no in-window key inside *that particular block* — e.g. the newest rows of query block $[64,128)$ have no window overlap with key block $[0,64)$ even though the oldest rows do. Those rows get `mi_new = -inf` and would compute `exp(-inf - (-inf)) = nan` without the guard. Globally every query $q$ still attends to at least the diagonal $k = q$ (for $w \ge 1$), so $\ell > 0$ and the final division is safe; the guard only handles the per-block gap. The result matches the dense reference to floating-point error (~$10^{-6}$), confirming exact windowed attention.

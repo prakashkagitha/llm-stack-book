@@ -512,3 +512,97 @@ Despite these caveats, the roofline remains the most valuable single tool in per
 - Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022) — the canonical example of an IO-aware, roofline-driven kernel redesign.
 - NVIDIA *Nsight Systems* and *Nsight Compute* documentation, and the *CUDA C++ Programming Guide* — the practical profiling tools, including Nsight Compute's built-in roofline analysis.
 - PyTorch documentation for `torch.profiler` and `torch.utils.flop_counter` — operator-level profiling and exact FLOP accounting on a real graph.
+
+## Exercises
+
+**1.** (Conceptual) A colleague benchmarks a LayerNorm kernel, finds it runs at 4% of the GPU's peak FLOP/s, and concludes "the kernel is badly written — it's wasting 96% of the compute." Using the roofline vocabulary of this chapter, explain why this conclusion is likely wrong, and state what single measurement would settle the question.
+
+??? note "Solution"
+    Low FLOP-utilization is *expected*, not pathological, for a memory-bound kernel. LayerNorm reads each element, does a handful of arithmetic ops, and writes it back, giving an arithmetic intensity well under $1$ FLOP/B (the chapter's `kernel_verdict` example puts it there explicitly). On an A100 the ridge point is $I^\* = \pi/\beta \approx 156$ FLOP/B, so a kernel at $I \approx 0.5$ is deep in the memory-bound regime. Its performance ceiling is *not* $\pi$ but $\beta I$, which for $I \approx 0.5$ is roughly $0.5/156 \approx 0.3\%$ of peak FLOP/s. A kernel achieving a few percent of peak FLOP/s is therefore already near — or even above — its bandwidth ceiling; the arithmetic units are *supposed* to sit idle because the kernel is waiting on HBM.
+
+    The one measurement that settles it: the **achieved memory bandwidth** (bytes moved / time), compared to peak HBM bandwidth $\beta$. If the kernel is at, say, 80-90% of peak bandwidth, it is running essentially as fast as physics allows and is not "wasting" anything — the only way to speed it up is to move fewer bytes (e.g. fuse it into an adjacent kernel so its input/output never round-trips to HBM), not to reduce FLOPs. Nsight Compute reports exactly this as **Memory Throughput (% of peak)** alongside SM Throughput.
+
+**2.** (Quantitative) An H100 SXM has peak bf16 tensor-core throughput $\pi \approx 990$ TFLOP/s and HBM3 bandwidth $\beta \approx 3.35$ TB/s. (a) Compute its ridge point $I^\*$. (b) A kernel has arithmetic intensity $I = 40$ FLOP/B. Is it compute- or memory-bound on this H100? (c) What is its performance ceiling in TFLOP/s? (d) The same kernel ran on an A100 ($\pi = 312$ TFLOP/s, $\beta = 2.0$ TB/s, $I^\* \approx 156$). Was it compute- or memory-bound there, and what does the *change of machine* alone do to its classification?
+
+??? note "Solution"
+    **(a)** $I^\* = \dfrac{\pi}{\beta} = \dfrac{990 \times 10^{12}}{3.35 \times 10^{12}} \approx 295.5\ \text{FLOP/B}$ — matching the chapter's stated H100 ridge of ~295 FLOP/B.
+
+    **(b)** $I = 40 < 295$, so on the H100 the kernel is **memory-bound**.
+
+    **(c)** For a memory-bound kernel the ceiling is the memory roof $\beta I$:
+    $$
+    \beta I = 3.35 \times 10^{12}\ \text{B/s} \times 40\ \text{FLOP/B} = 1.34 \times 10^{14}\ \text{FLOP/s} = 134\ \text{TFLOP/s}.
+    $$
+    So it can reach at most 134 of the 990 TFLOP/s available — about 14% of peak, and that is its *best possible* result.
+
+    **(d)** On the A100, $I = 40$ vs $I^\* \approx 156$, so it was **also memory-bound** there (ceiling $\beta I = 2.0\times10^{12}\times40 = 80$ TFLOP/s). The kernel's intensity $I=40$ is a fixed property of the algorithm; it did not change. But because each generation raises $\pi/\beta$, the *same* $I$ sits further below the (higher) ridge on newer hardware — the H100 makes the kernel look "more memory-bound," which is the chapter's point that generation-over-generation the ridge drifts right and more kernels fall into the memory-bound regime.
+
+**3.** (Quantitative) Using the $6N$ / $2N$ rules, estimate compute for a 70B-parameter model. (a) Training over $D = 2$ trillion tokens: how many total FLOPs, and how many A100-days at 40% MFU (312 TFLOP/s peak)? (b) Single-stream bf16 decode on one A100 (2.0 TB/s HBM): what is the token/s ceiling, and what fraction of the A100's 312 TFLOP/s does decode actually use?
+
+??? note "Solution"
+    **(a) Training FLOPs.** $C_{\text{train}} \approx 6ND = 6 \times 7.0\times10^{10} \times 2.0\times10^{12} = 8.4\times10^{23}$ FLOPs.
+
+    Useful FLOP/s per A100 at 40% MFU: $0.40 \times 312\times10^{12} = 1.248\times10^{14}$ FLOP/s. One A100-day delivers $1.248\times10^{14} \times 86{,}400\ \text{s} \approx 1.078\times10^{19}$ FLOPs. Therefore
+    $$
+    \frac{8.4\times10^{23}}{1.078\times10^{19}} \approx 7.8\times10^{4}\ \text{A100-days} \approx 78{,}000\ \text{A100-days}.
+    $$
+    (Equivalently ~215 A100-years, or about 8 days on a 10,000-GPU cluster — a sanity check that frontier training runs need thousands of GPUs.)
+
+    **(b) Decode ceiling.** Weights: $70\times10^{9} \times 2\ \text{bytes} = 1.4\times10^{11}$ B $= 140$ GB — which already exceeds one A100-80GB, but taking the bandwidth math at face value, time to stream them once is
+    $$
+    t_{\text{token}} \ge \frac{1.4\times10^{11}}{2.0\times10^{12}} = 0.070\ \text{s} \Rightarrow \approx 14.3\ \text{tok/s ceiling}.
+    $$
+    Decode FLOPs: $2N = 1.4\times10^{11}$ FLOP/token. At 14.3 tok/s that is $1.4\times10^{11}\times14.3 \approx 2.0\times10^{12}$ FLOP/s $= 2.0$ TFLOP/s, i.e. $2.0/312 \approx 0.64\%$ of peak compute. Decode is brutally bandwidth-bound — the FLOP units are essentially idle, exactly as the chapter's decode analysis predicts.
+
+**4.** (Quantitative) Consider the attention **score** computation $QK^\top$ for one attention head, batch $B=1$, sequence length $s=8192$, head dimension $d_h = 128$, in bf16. The score matrix $S = QK^\top$ is $s\times s$. (a) Count the FLOPs and the HBM bytes if $Q$, $K$ are read from HBM and the full $s\times s$ score matrix is written to HBM (the naive, non-fused approach). (b) Compute the arithmetic intensity and classify it on an A100 ($I^\* \approx 156$). (c) In one sentence, what does FlashAttention change about part (a)'s byte count, and why does that move the kernel on the roofline?
+
+??? note "Solution"
+    **(a)** FLOPs for $QK^\top$: it is a matmul $(s\times d_h)(d_h\times s) \to (s\times s)$, costing $2\, s^2 d_h = 2 \times 8192^2 \times 128 = 2 \times 6.71\times10^{7} \times 128 \approx 1.72\times10^{10}$ FLOPs.
+
+    Bytes (bf16 = 2 B/element): read $Q$ ($s\times d_h$) and $K$ ($s\times d_h$) $= 2 \times (8192\times128) \times 2\ \text{B} = 2 \times 1.05\times10^{6} \times 2 \approx 4.19\times10^{6}$ B; write $S$ ($s\times s$) $= 8192^2 \times 2\ \text{B} = 6.71\times10^{7}\times2 \approx 1.34\times10^{8}$ B. Total $\approx 1.38\times10^{8}$ B — utterly dominated by writing the score matrix.
+
+    **(b)** $I = \dfrac{1.72\times10^{10}}{1.38\times10^{8}} \approx 125\ \text{FLOP/B}$. Since $125 < 156$, it is **memory-bound** on the A100 — and this counts only the $QK^\top$ write; a faithful naive attention also *reads* $S$ back for the softmax and reads it again for $S V$, roughly tripling the $s^2$ traffic and pushing $I$ far lower (well under ~45 FLOP/B), so real materialized attention is decisively memory-bound. The huge $s\times s$ intermediate is the culprit: its byte cost scales as $s^2$ while the useful reuse does not.
+
+    **(c)** FlashAttention never writes the full $s\times s$ score matrix to HBM — it tiles $Q$, $K$, $V$, computes the softmax online in on-chip SRAM, and only writes the $s\times d_h$ output. Removing the $\propto s^2$ HBM traffic collapses the denominator of $I$, raising arithmetic intensity so the kernel moves right past the ridge into the compute-bound regime (do the same FLOPs, move far fewer bytes).
+
+**5.** (Implementation) Extend the chapter's `kernel_verdict` function into a `precision_sweep(flops, elems, seconds_by_dtype)` helper that, given a kernel's FLOP count, its element count `elems` (the number of values it reads+writes, dtype-independent), and a dict mapping dtype name -> measured seconds, reports for each dtype the bytes moved, the arithmetic intensity, and the bound classification. Use it to show quantitatively why halving the byte width helps a memory-bound kernel. Assume bytes-per-element of 4 (fp32), 2 (bf16), 1 (fp8). Keep the A100 ridge ($\pi=312$, $\beta=2.0$).
+
+??? note "Solution"
+    The key idea: intensity $I = \text{FLOPs} / (\text{elems} \times \text{bytes\_per\_elem})$. FLOPs are fixed by the algorithm, but narrower dtypes move fewer bytes, so $I$ *rises* as precision drops — exactly the "double win" the chapter describes for memory-bound kernels.
+
+    ```python
+    def precision_sweep(flops, elems, seconds_by_dtype,
+                        peak_tflops=312, hbm_TBs=2.0):
+        """For each dtype, recompute bytes/intensity/bound from a shared FLOP count.
+        `elems` = number of values touched (read+write), dtype-independent.
+        `seconds_by_dtype` maps dtype name -> measured kernel time (s)."""
+        bytes_per_elem = {"fp32": 4, "bf16": 2, "fp8": 1}
+        ridge = peak_tflops / hbm_TBs                  # FLOP/B, = 156 on A100
+        out = {}
+        for dtype, secs in seconds_by_dtype.items():
+            bpe = bytes_per_elem[dtype]
+            bytes_moved = elems * bpe
+            intensity = flops / bytes_moved
+            achieved = flops / secs / 1e12            # TFLOP/s
+            roof = min(peak_tflops, hbm_TBs * intensity)  # TFLOP/s ceiling
+            out[dtype] = {
+                "bytes_MB": round(bytes_moved / 1e6, 2),
+                "intensity_FLOP_per_B": round(intensity, 3),
+                "bound": "compute" if intensity > ridge else "memory",
+                "achieved_TFLOPs": round(achieved, 1),
+                "ceiling_TFLOPs": round(roof, 1),
+            }
+        return out
+
+    # A memory-bound elementwise-ish kernel: N values, ~2 FLOPs each,
+    # read+write => elems = 2N touched values.
+    N = 8 * 2048 * 4096
+    flops = 2 * N
+    elems = 2 * N
+    # If it is bandwidth-bound, time scales ~linearly with bytes moved:
+    # fp32 baseline 200 us, bf16 ~half the bytes ~half the time, fp8 ~quarter.
+    times = {"fp32": 200e-6, "bf16": 100e-6, "fp8": 50e-6}
+    import pprint; pprint.pprint(precision_sweep(flops, elems, times))
+    ```
+
+    What it shows: with $2N$ FLOPs and $2N$ touched values, intensity is $I = 2N / (2N \cdot \text{bpe}) = 1/\text{bpe}$ FLOP/B — so $0.25$ (fp32), $0.5$ (bf16), $1.0$ (fp8). All three are far below the ridge of $156$, so the classification stays **memory**-bound in every case. But because the kernel is bandwidth-bound, halving the byte width (fp32 -> bf16 -> fp8) halves the bytes that must cross HBM and therefore roughly halves the runtime — the modeled times drop $200 \to 100 \to 50\ \mu s$. That is the chapter's point made concrete: on a memory-bound kernel you win by *moving fewer bytes*, and dropping precision does exactly that (while also raising the intensity toward the ridge). Note it does **not** reduce FLOPs — the FLOP count is identical across all three columns.

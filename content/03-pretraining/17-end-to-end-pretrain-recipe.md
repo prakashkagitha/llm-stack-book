@@ -594,3 +594,153 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 - [ ] `eval_ppl.py` run against the held-out `val_*.bin` shard; perplexity in the right order of magnitude for your scale.
 - [ ] (Optional, larger scales) `lm_eval` run on a standard task with honest expectations about small-model scores.
 - [ ] `sample.py` run against the latest checkpoint; output read by a human, not just its loss number.
+
+## Exercises
+
+**1.** (Conceptual, warm-up.) The chapter says the very first logged training loss should land near $\ln(\text{vocab})$. Compute that number for the `vocab=50304` models used throughout, and state what it represents. Then: on your first laptop run you instead see a step-0 loss of about $6.9$. Which of the three "loss not dropping" suspects from Stage 7 does this specific number point at, and why?
+
+??? note "Solution"
+    The expected step-0 loss is the cross-entropy of a *uniform* next-token distribution over the vocabulary — a model that has learned nothing yet assigns probability $1/V$ to every token, giving a per-token loss of
+
+    $$
+    -\ln\!\left(\tfrac{1}{V}\right) = \ln(V) = \ln(50304) \approx 10.83 \text{ nats/token.}
+    $$
+
+    This is the entropy of a fair 50304-sided die; it is the "no information" baseline every healthy run starts from before it learns even trivial token-frequency statistics.
+
+    A step-0 loss of $6.9$ is *far below* $10.83$ — the model appears to already "know" something at initialization, which is impossible for freshly-initialized weights on a correctly-labeled task. Note that $6.9 \approx \ln(1000)$: the loss looks like a uniform distribution over roughly a **thousand** tokens, not fifty thousand. That is the signature of a **corrupt / degenerate shard** (the third Stage-7 suspect): if the data your loader is feeding only ever contains a small handful of distinct token IDs (e.g. a shard that is mostly padding or a few repeated tokens, or bytes being misread so only a narrow ID range appears), the effective prediction problem is over a much smaller alphabet and the entropy floor drops accordingly. It is *not* the off-by-one target-shift bug (that produces a loss stuck near or above $\ln V$, not below it) and it is *not* a too-low learning rate (that keeps you *at* $\ln V$, it doesn't start you below it). The Stage-7 fix applies: pull one batch, decode `x` back to text, and look at the actual bytes — a shard that decodes to repeated garbage is visible instantly.
+
+**2.** (Quantitative, tokens-per-step.) Using the tokens-per-step identity from Stage 4, compute the tokens/step for the **8-GPU node** launch command (`--local-bsz 16 --grad-accum 4`, `ctx=1024`, `--nproc_per_node=8`). Then compute how many tokens the run of `--steps 40000` actually consumes, and check it against the "~25-40B tokens" entry in the four-scale table.
+
+??? note "Solution"
+    The identity is
+
+    $$
+    \text{tokens/step} = \text{local\_bsz} \times \text{ctx} \times \text{world\_size} \times \text{grad\_accum}.
+    $$
+
+    For the 8-GPU node, `world_size` equals `--nproc_per_node = 8`, so
+
+    $$
+    16 \times 1024 \times 8 \times 4 = 524{,}288 \approx 0.52\text{M tokens/step.}
+    $$
+
+    Over `--steps 40000`:
+
+    $$
+    524{,}288 \times 40{,}000 = 20{,}971{,}520{,}000 \approx 21.0 \text{B tokens.}
+    $$
+
+    That is $\approx 21$B tokens, which sits just under the "~25-40B" table entry — consistent to the order of magnitude the chapter promises (the table row is a planning ballpark, and one could reach the middle of that band by nudging `--steps` up to ~60k or raising `grad_accum`). Sanity check against the 124M single-GPU row in the text: $8 \times 1024 \times 1 \times 40 = 327{,}680 \approx 0.33$M, exactly the number worked in Stage 4.
+
+**3.** (Quantitative, parameter count.) Use the chapter's approximation $\text{params} \approx 12\, n_{\text{layer}}\, d_{\text{model}}^2 + \text{vocab}\cdot d_{\text{model}}$ to estimate the parameter count of the **8-GPU-node** config (`n_layer=24`, `d_model=2048`, `vocab=50304`). Does it match the "~1.3B" label? Then explain, in one sentence, why the embedding term matters much less here than it does for the 124M model.
+
+??? note "Solution"
+    Block (matmul) term:
+
+    $$
+    12 \times 24 \times 2048^2 = 12 \times 24 \times 4{,}194{,}304 = 1{,}207{,}959{,}552.
+    $$
+
+    Embedding/head term (tied, counted once):
+
+    $$
+    50304 \times 2048 = 103{,}022{,}592.
+    $$
+
+    Total:
+
+    $$
+    1{,}207{,}959{,}552 + 103{,}022{,}592 = 1{,}310{,}982{,}144 \approx 1.31\text{B},
+    $$
+
+    matching the "~1.3B" label.
+
+    Why the embedding matters less: the block term grows as $d_{\text{model}}^2$ while the embedding term grows only linearly as $\text{vocab}\cdot d_{\text{model}}$, so as the model widens and deepens the $12\,n_{\text{layer}}\,d^2$ transformer stack dominates. Concretely the embedding is only $103\text{M}/1311\text{M} \approx 7.9\%$ of the 1.3B model, versus $38.6\text{M}/123.6\text{M} \approx 31\%$ of the 124M model — the vocabulary is a fixed 50304 rows at both scales, so its relative weight shrinks as everything else grows.
+
+**4.** (Conceptual, the dtype contract.) You decide to switch from GPT-2's 50304-padded vocabulary to a 128k-entry multilingual tokenizer, and you change only the `vocab` argument passed to `GPT` (and the `50304` in the loss `view`). You leave `prepare.py` writing `np.uint16` and `ShardedTokenLoader` reading `np.uint16`. Training runs without crashing, but the loss never drops below a high plateau. What exactly went wrong at the byte level, and what is the two-part fix the chapter insists on?
+
+??? note "Solution"
+    `np.uint16` can represent only the integers $0$ through $65{,}535$. A 128k-vocabulary tokenizer emits IDs up to $\approx 131{,}071$, so the moment `prepare.py` calls `np.array(buf, dtype=np.uint16)`, every token ID above 65,535 **silently wraps modulo 65,536** — token $70{,}000$ becomes $70{,}000 - 65{,}536 = 4{,}464$, token $131{,}071$ becomes $65{,}535$, and so on. No exception is raised; NumPy just truncates. The on-disk shard now contains corrupted IDs that collide two distinct real tokens onto the same stored value, destroying the correspondence between the bytes on disk and the tokenizer's actual vocabulary. The loader faithfully reads these wrapped values back as `uint16`, so training "works" but is learning from scrambled targets — hence the high loss plateau.
+
+    The chapter's rule is: **the writer's dtype and the loader's dtype must match exactly, and both must be wide enough for the vocabulary.** For a vocabulary above 65,536 the two-part fix is to change *both sides together* to a 32-bit integer type — `prepare.py`'s `np.array(..., dtype=np.uint32)` **and** the loader's `np.memmap(f, dtype=np.uint32, mode="r")`. Changing only one side (or only the `GPT(vocab=...)` argument, as in this problem) is precisely the silent-corruption failure the "dtype reconciliation" box warns about. `uint16` is safe only because the chapter *fixed* `vocab=50304 < 65536`.
+
+**5.** (Quantitative, MFU.) You run the 1.3B model on the 8-GPU node and measure a sustained **140,000 tokens/s**. Each GPU is an A100 with a bf16 dense peak of ~312 TFLOP/s. Use the chapter's `mfu()` accounting (the $6N$ rule) to compute MFU. Is it in the healthy range from Stage 6's mini-table? Then: if you had mistakenly plugged in `num_params=124e6` instead of the true 1.3B, would your reported MFU be too high or too low, and by what factor?
+
+??? note "Solution"
+    The $6N$ rule gives forward+backward FLOPs per token as $6 \times N_{\text{params}}$:
+
+    $$
+    \text{flops/token} = 6 \times 1.31\times10^{9} = 7.86\times10^{9}.
+    $$
+
+    Achieved FLOP/s at 140,000 tokens/s:
+
+    $$
+    7.86\times10^{9} \times 140{,}000 = 1.10\times10^{15} \text{ FLOP/s.}
+    $$
+
+    Aggregate peak over 8 A100s:
+
+    $$
+    8 \times 312\times10^{12} = 2.496\times10^{15} \text{ FLOP/s.}
+    $$
+
+    MFU:
+
+    $$
+    \frac{1.10\times10^{15}}{2.496\times10^{15}} = 0.441 \approx 44\%.
+    $$
+
+    That is squarely inside Stage 6's healthy "~40-55%" band for GPU scales, and matches the "~40-50% (FSDP FULL_SHARD)" entry in the four-scale table.
+
+    If you had used `num_params=124e6`, the numerator would shrink by the ratio $124\text{M}/1{,}310\text{M} \approx 0.0946$, i.e. by about $10.6\times$. MFU is *linear* in `num_params`, so your reported figure would be $\approx 44\% \times 0.0946 \approx 4.2\%$ — **too low, by roughly a factor of 10.** (This is the classic MFU footgun: MFU is only meaningful when $N$ is the model's *actual* parameter count.)
+
+**6.** (Implementation, hard.) Stage 7 lists a "skip-bad-batch guard that discards steps with implausibly high loss before they reach the optimizer" as one of the standing defenses against Adam-amplified loss spikes. Implement it. Modify the Stage-5 per-step body so that a step whose loss is more than `SKIP_FACTOR` times a running baseline is thrown away (gradients zeroed, no `opt.step()`), and the baseline is updated only from *accepted* steps. Keep the gradient-accumulation and DDP `no_sync()` structure intact, and keep the chapter's code style.
+
+??? note "Solution"
+    Maintain an exponential moving average of the accepted per-step loss as the baseline, and compare each new step against it *after* accumulation but *before* clipping and the optimizer step. Because each micro-batch loss is already divided by `grad_accum`, summing `loss.item()` over the micro-loop reconstructs the mean loss for the step:
+
+    ```python
+    # (contextlib imported at the top of train.py, as in Stage 5)
+    loss_ema   = None      # running baseline of accepted per-step loss
+    SKIP_FACTOR = 4.0      # discard a step whose loss > 4x the recent baseline
+    EMA_DECAY   = 0.99     # baseline half-life ~ 70 steps
+
+    for step in range(args.steps):
+        for grp in opt.param_groups:
+            grp["lr"] = lr_at(step, args.warmup, args.steps, args.lr, args.lr * 0.1)
+        opt.zero_grad(set_to_none=True)
+
+        step_loss = 0.0
+        for micro in range(args.grad_accum):
+            x, y = loader.batch(device)
+            last = micro == args.grad_accum - 1
+            sync = contextlib.nullcontext() if last or args.parallel != "ddp" else model.no_sync()
+            with sync:
+                loss = nn.functional.cross_entropy(model(x).view(-1, 50304),
+                                                   y.view(-1)) / args.grad_accum
+                loss.backward()
+            step_loss += loss.item()          # sum of (already /grad_accum) -> mean over micro-batches
+
+        # skip-bad-batch guard: throw the step away before it can reach the optimizer.
+        if loss_ema is not None and step_loss > SKIP_FACTOR * loss_ema:
+            opt.zero_grad(set_to_none=True)   # discard this step's (anomalous) gradients
+            print(f"step {step}: SKIP (loss {step_loss:.3f} > {SKIP_FACTOR}x baseline {loss_ema:.3f})")
+            continue                          # no clip(), no opt.step(), baseline unchanged
+
+        clip()                                # global-norm clip, DDP or FSDP-sharded-aware
+        opt.step()
+        # update the baseline only from accepted steps
+        loss_ema = step_loss if loss_ema is None else EMA_DECAY * loss_ema + (1 - EMA_DECAY) * step_loss
+
+        if step > 0 and step % args.ckpt_every == 0:
+            save_checkpoint(model, step, args.ckpt_dir, rank)
+    ```
+
+    Key points, all grounded in the chapter:
+
+    - The guard fires *after* `loss.backward()` (we still need the forward/backward to know the loss) but *before* `clip()` and `opt.step()`, so an anomalous batch's gradient is computed and then thrown away with `zero_grad` — it never updates the AdamW moment buffers. This is what stops the Stage-7 amplification mechanism, where Adam's $\hat m_t / \sqrt{\hat v_t}$ turns one bad gradient into an outsized step.
+    - The baseline is an EMA of **accepted** steps only (`continue` skips the update), so a run of spikes cannot ratchet the threshold up to accept itself.
+    - `loss_ema is None` accepts the first real step unconditionally (there is no baseline yet). One practical caveat: during the first ~`warmup` steps the loss is still falling fast from $\ln(50304)\approx 10.83$, so `step_loss` is generally *below* the baseline and the guard stays silent — exactly when you want it to (early loss drops are legitimate, not spikes). If you find warmup steps being skipped, gate the guard behind `step >= args.warmup`.
+    - `SKIP_FACTOR` and `EMA_DECAY` are the two knobs: too small a factor discards useful hard batches; too large and genuine spikes slip through. Values of $3$-$5$ are typical, consistent with the mini-table's "repeated spikes >5x baseline" cause-for-concern threshold.
