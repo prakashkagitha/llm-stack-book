@@ -675,6 +675,7 @@ class CircuitBreakerGuard:
         self.fallback = fallback_fn
         self.failure_count = 0
         self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
         self.open_until = 0.0   # timestamp when circuit may close
 
     @property
@@ -693,7 +694,7 @@ class CircuitBreakerGuard:
             self.failure_count += 1
             if self.failure_count >= self.failure_threshold:
                 # Open the circuit for recovery_timeout seconds
-                self.open_until = time.monotonic() + 30.0
+                self.open_until = time.monotonic() + self.recovery_timeout
             # Fail closed on a single error
             return {"blocked": True, "reason": "safety_service_unavailable"}
 ```

@@ -405,7 +405,7 @@ def ndcg_at_k(retrieved_rels, ideal_rels, k=5):
 
 # Retrieved pages had relevances [1, 0, 1, 0, 0]; one other relevant page (rel 1)
 # existed but was missed, so the ideal top-5 is [1, 1, 1, 0, 0].
-print(round(ndcg_at_k([1, 0, 1, 0, 0], [1, 1, 1, 1, 0], k=5), 4))
+print(round(ndcg_at_k([1, 0, 1, 0, 0], [1, 1, 1, 0, 0], k=5), 4))
 ```
 
 A few measurement subtleties specific to this setting:

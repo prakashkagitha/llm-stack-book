@@ -270,7 +270,7 @@ n = max_concurrent_requests(
     num_layers=32, num_kv_heads=8, head_dim=128,
     avg_ctx_tokens=2048, bytes_per_elem=2,
 )
-print(n)  # -> ~488 concurrent 2k-token sequences fit in KV cache
+print(n)  # -> 223 concurrent 2k-token sequences fit in KV cache
 ```
 
 For a 70B model the weights alone (≈140 GB in bf16) exceed one 80 GB GPU, forcing **tensor parallelism** (TP) across GPUs — covered in [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html). The sizing rule then operates per-shard: with TP=4, each GPU holds a quarter of the weights and a quarter of each layer's KV, and the four GPUs together form *one replica*. PagedAttention ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)) is what lets you actually pack memory to near this theoretical $N_{\text{concurrent}}$ instead of wasting it on fragmentation and worst-case pre-allocation.
