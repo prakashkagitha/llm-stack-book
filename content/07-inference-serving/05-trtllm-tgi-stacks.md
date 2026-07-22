@@ -205,6 +205,13 @@ TGI implements a "token budget" scheduler: each request is assigned a `max_total
 # Simplified pseudocode illustrating TGI's waiting queue logic
 # Real implementation is in Rust + a Python model server side
 
+from dataclasses import dataclass
+
+@dataclass
+class Request:
+    current_length: int
+    max_total_tokens: int
+
 class TGIScheduler:
     def __init__(self, max_batch_total_tokens: int):
         self.max_batch_total_tokens = max_batch_total_tokens

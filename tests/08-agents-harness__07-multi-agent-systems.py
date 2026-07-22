@@ -41,7 +41,6 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import patch
 
 try:
     import autogen
@@ -198,14 +197,34 @@ assert demo_board.read_latest("critic:status").content == "No findings to critiq
 
 # research_agent + critic_agent (happy path) with call_model mocked at the
 # network boundary so the surrounding blackboard logic runs for real.
-with patch(__name__ + ".call_model", side_effect=[
+#
+# NOTE: `unittest.mock.patch("__main__.call_model", ...)` does not work when
+# this file is `exec`'d (as ci_sim_run.py does, and as the CI workflow's
+# `python3 tests/*.py` also effectively does under `__name__ == "__main__"`)
+# because `sys.modules["__main__"]` is the *runner* module, not this script's
+# namespace. `research_agent`/`critic_agent` resolve `call_model` via their
+# own `__globals__` (this module's globals), so we monkeypatch it directly by
+# rebinding the name -- equivalent in effect to `patch`, just robust to how
+# the file is invoked.
+_mock_call_model_calls = 0
+_mock_responses = iter([
     "Mixture-of-experts models route each token to a subset of experts.",
     "The claim about routing lacks a citation; otherwise reasonable.",
-]) as mocked_call_model:
-    research_agent(demo_board, "mixture-of-experts routing")
-    critic_agent(demo_board)
+])
+_real_call_model = call_model
 
-assert mocked_call_model.call_count == 2
+def call_model(system: str, user: str, model: str = "gpt-4o-mini",
+                temperature: float = 0.3, max_tokens: int = 1024) -> str:
+    global _mock_call_model_calls
+    _mock_call_model_calls += 1
+    return next(_mock_responses)
+
+research_agent(demo_board, "mixture-of-experts routing")
+critic_agent(demo_board)
+
+call_model = _real_call_model  # restore the "no real network calls" guard
+
+assert _mock_call_model_calls == 2
 research_entry = demo_board.read_latest("research:findings")
 critique_entry = demo_board.read_latest("critic:critique")
 assert research_entry.content.startswith("Mixture-of-experts")
@@ -452,31 +471,38 @@ def _toy_scorer(task: str, output: str) -> float:
     # Score climbs with task length (simulating "more context -> better output")
     return min(1.0, len(task) / 120.0)
 
-with patch(__name__ + ".call_model", return_value="Add more specifics and a citation."):
-    result = self_critique_loop(
-        orchestrator_prompt="unused in this fragment",
-        worker_fn=_toy_worker,
-        scoring_fn=_toy_scorer,
-        task="Summarize mixture-of-experts routing in one sentence.",
-        threshold=0.8,
-        max_retries=5,
-    )
+# Monkeypatch `call_model` by direct rebinding (see the note in block #3 above
+# for why `unittest.mock.patch("__main__....")` is not usable here).
+_real_call_model = call_model
+call_model = lambda system, user, **kw: "Add more specifics and a citation."
+
+result = self_critique_loop(
+    orchestrator_prompt="unused in this fragment",
+    worker_fn=_toy_worker,
+    scoring_fn=_toy_scorer,
+    task="Summarize mixture-of-experts routing in one sentence.",
+    threshold=0.8,
+    max_retries=5,
+)
 assert result.startswith("draft(len=")
 print(f"[self_critique_loop] result={result!r}")
 
 # Exhausted-retries path: a scorer that never reaches threshold must still
 # return the best-effort output rather than raising.
-with patch(__name__ + ".call_model", return_value="Still not good enough."):
-    exhausted_result = self_critique_loop(
-        orchestrator_prompt="unused in this fragment",
-        worker_fn=_toy_worker,
-        scoring_fn=lambda task, output: 0.1,
-        task="short",
-        threshold=0.99,
-        max_retries=2,
-    )
+call_model = lambda system, user, **kw: "Still not good enough."
+
+exhausted_result = self_critique_loop(
+    orchestrator_prompt="unused in this fragment",
+    worker_fn=_toy_worker,
+    scoring_fn=lambda task, output: 0.1,
+    task="short",
+    threshold=0.99,
+    max_retries=2,
+)
 assert exhausted_result.startswith("draft(len=")
 print(f"[self_critique_loop] exhausted_result={exhausted_result!r}")
+
+call_model = _real_call_model  # restore the "no real network calls" guard
 
 
 print("\nAll tested blocks (#2, #3, #5, #6, #8, #9) executed successfully.")

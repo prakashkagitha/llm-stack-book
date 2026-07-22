@@ -1,11 +1,16 @@
 # The LLM Stack — From Silicon to Agents
 
+[![Deploy](https://github.com/prakashkagitha/llm-stack-book/actions/workflows/deploy.yml/badge.svg)](https://github.com/prakashkagitha/llm-stack-book/actions/workflows/deploy.yml)
+[![Code tests](https://github.com/prakashkagitha/llm-stack-book/actions/workflows/test.yml/badge.svg)](https://github.com/prakashkagitha/llm-stack-book/actions/workflows/test.yml)
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+
 A book-length, ground-up treatment of the entire large language model stack: from GPU silicon and numerics, through the transformer and its training, to inference serving, agents, retrieval, evaluation, and safety.
 
 **📖 Read it online: https://prakashkagitha.github.io/llm-stack-book/**
 
 - **134 chapters** across 14 parts (foundations → transformer → pretraining → kernels → post-training → RL infra → inference → agents → RAG → multimodal → evaluation → production → interpretability/safety → appendix)
-- **326 hand-built SVG figures and animations**, theme-aware and reduced-motion safe
+- **690 hand-built SVG figures and animations**, theme-aware and reduced-motion safe
+- **CI-tested code** — every runnable code block is assembled into `tests/` and executed on CPU in CI ([`test.yml`](.github/workflows/test.yml)); ~45 real bugs were caught and fixed this way
 - A companion **interview prep** track at [`/interview/`](https://prakashkagitha.github.io/llm-stack-book/interview/)
 
 ## Repository layout

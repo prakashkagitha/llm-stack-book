@@ -9,29 +9,41 @@ Blocks covered:
                   7B model across torch dtypes. Runs verbatim (pure torch,
                   no GPU needed).
   #21 (line ~602) SGLang structured-generation example (`sgl.function` /
-                  `sgl.gen` / `run_batch`). `sglang` is not in the guaranteed
-                  CI import set and the block's whole point is orchestrating
-                  a *live* inference backend (constrained decoding over a
-                  running model) -- there is no boundary we can mock without
-                  reimplementing SGLang's runtime, which would bypass the
-                  very logic being demonstrated. SKIPPED, guarded import only.
+                  `sgl.gen` / `run_batch`). `sglang` is not installed in this
+                  environment (nor in the guaranteed CI import set), and even
+                  if it were, running it for real means talking to a live
+                  model-serving backend (network). We substitute a tiny,
+                  shape-correct offline fake for just the `sgl` surface this
+                  block touches (system/user/assistant/gen, the
+                  `@sgl.function` decorator, `.run_batch`) -- the same
+                  "stub the model/runtime, keep the book's own logic" pattern
+                  used for SentenceTransformer/AutoModel stubs elsewhere. The
+                  book's `classify_sentiment` function and its batched,
+                  forked call run verbatim against that fake backend.
   #23 (line ~688) GRPO with TRL -- `reward_fn` is pure Python (no external
                   dependency) and is the actual interesting logic of this
                   block, so it is copied verbatim and CALLED with tiny sample
-                  completions. `GRPOConfig`/`GRPOTrainer` come from the
-                  optional `trl` package (guarded import); config
-                  construction is exercised when `trl` is installed, and the
-                  actual `trainer.train()` call is always skipped since it
-                  needs a real model, dataset and GPU.
+                  completions. `GRPOConfig`/`GRPOTrainer` construction and
+                  `trainer.train()` are intentionally NOT instantiated: they
+                  need a real model, dataset and GPU, and GRPOConfig's
+                  accepted kwargs are version-fragile across trl releases
+                  (confirmed by hand against the trl installed here: the
+                  book's `max_new_tokens` kwarg is not a valid GRPOConfig
+                  field in trl 1.9.0, which renamed/removed it). Only the
+                  pure-Python reward_fn -- the actually CPU-testable logic in
+                  this block -- is exercised.
   #24 (line ~724) wandb experiment-tracking loop -- `wandb` is an optional
                   third-party package that talks to a network API by
-                  default. We patch `sys.modules['wandb']` with a small fake
-                  module (init/log/finish/Table) so the block's own logic
-                  (the metric-logging loop, the eval Table construction)
-                  executes verbatim and offline against canned fixtures for
-                  `dataloader`, `train_step`, `scheduler`, `grad_norm`,
-                  `tokens_per_sec`, and `eval_samples` (not defined within
-                  this chapter's shown blocks -- minimal honest glue).
+                  default, and is blocked outright under ci_sim. We ALWAYS
+                  substitute a tiny in-memory fake module (init/log/finish/
+                  Table) regardless of whether the real package happens to be
+                  importable, so no network call can ever be attempted. The
+                  block's own logic (the metric-logging loop, the eval Table
+                  construction) executes verbatim and offline against canned
+                  fixtures for `dataloader`, `train_step`, `scheduler`,
+                  `grad_norm`, `tokens_per_sec`, and `eval_samples` (not
+                  defined within this chapter's shown blocks -- minimal
+                  honest glue).
 
 Blocks intentionally SKIPPED (per task spec):
   #0, #1, #2, #3, #4   -- shell / conda / env-var snippets
@@ -57,25 +69,24 @@ Blocks intentionally SKIPPED (per task spec):
   #30                  -- shell (one-liner reference commands)
 """
 
-import sys
-import unittest.mock as mock
+import types
 
 import torch
 
 try:
-    from trl import GRPOConfig  # noqa: F401  (GRPOTrainer itself never invoked)
+    import trl  # noqa: F401  (only used to sanity-check attrs exist; never called)
 except Exception:
-    GRPOConfig = None
+    trl = None
 
 try:
-    import sglang as sgl  # noqa: F401
+    import sglang  # noqa: F401  (never actually used -- see block #21 below)
 except Exception:
-    sgl = None
-# SKIP(import + needs live backend): sglang is not in the guaranteed CI
-# import set, and `sgl.function` / `run_batch` require a running model
-# server to produce anything -- there is no offline boundary to mock without
-# reimplementing SGLang's execution engine. Block #21 is left
-# defined-not-called.
+    sglang = None
+
+try:
+    import wandb  # noqa: F401  (never actually used -- see block #24 below)
+except Exception:
+    wandb = None
 
 
 # ============================================================
@@ -116,10 +127,85 @@ print("[block #5] dtype cheatsheet OK")
 
 
 # ============================================================
+# Block #21 (line ~602) -- SGLang structured generation
+# ============================================================
+# `import sglang as sgl` -- sglang isn't installed here (and isn't part of
+# CI's guaranteed set either), and even if it were, `sgl.function`/
+# `run_batch` need a live model-serving backend to produce anything. We
+# ALWAYS use a tiny offline fake for just the module surface this block
+# touches, so no network/model call is ever attempted, and so the book's own
+# `classify_sentiment` function + batched call run for real against it.
+
+class _FakeGenSpec:
+    def __init__(self, name, choices=None, max_tokens=None):
+        self.name = name
+        self.choices = choices
+        self.max_tokens = max_tokens
+
+
+class _FakeSglState(dict):
+    def __iadd__(self, other):
+        if isinstance(other, _FakeGenSpec):
+            # Stand-in for constrained decoding: deterministically pick the
+            # first allowed choice (a real engine would sample under the
+            # choice-list constraint against actual model logits).
+            self[other.name] = other.choices[0] if other.choices else None
+        # system()/user()/assistant(str) contributions are plain strings and
+        # aren't needed for this test's assertions.
+        return self
+
+
+class _FakeSglFunction:
+    def __init__(self, fn):
+        self._fn = fn
+
+    def run_batch(self, kwargs_list, progress_bar=False):
+        states = []
+        for kwargs in kwargs_list:
+            state = _FakeSglState()
+            self._fn(state, **kwargs)
+            states.append(state)
+        return states
+
+
+sgl = types.SimpleNamespace(
+    function=lambda fn: _FakeSglFunction(fn),
+    system=lambda text: text,
+    user=lambda text: text,
+    assistant=lambda x: x,
+    gen=lambda name, choices=None, max_tokens=None: _FakeGenSpec(name, choices, max_tokens),
+)
+
+# SGLang's structured generation: constrain output to a JSON schema
+@sgl.function
+def classify_sentiment(s, review):
+    s += sgl.system("You are a sentiment classifier.")
+    s += sgl.user(review)
+    s += sgl.assistant(
+        sgl.gen("sentiment",
+                choices=["positive", "negative", "neutral"],  # constrained
+                max_tokens=1)
+    )
+
+# Fork for parallel evaluation of multiple reviews
+reviews = ["This movie was great!", "Terrible service.", "It was okay."]
+states = classify_sentiment.run_batch(
+    [{"review": r} for r in reviews],
+    progress_bar=True,
+)
+for state, review in zip(states, reviews):
+    print(f"{review!r} -> {state['sentiment']}")
+
+assert len(states) == len(reviews)
+assert all(state["sentiment"] in ["positive", "negative", "neutral"] for state in states)
+print("[block #21] sglang @function/run_batch pattern OK (offline fake backend)")
+
+
+# ============================================================
 # Block #23 (line ~688) -- GRPO reward function (from TRL example)
 # ============================================================
-# from trl import GRPOTrainer, GRPOConfig  (guarded above; GRPOTrainer unused
-# here since trainer.train() always needs a real model/dataset/GPU)
+# from trl import GRPOTrainer, GRPOConfig  (guarded above; GRPOTrainer/
+# GRPOConfig deliberately never instantiated -- see module docstring)
 
 def reward_fn(completions, prompts, **kwargs):
     """Custom reward: give +1 if response contains a number, else 0."""
@@ -133,24 +219,14 @@ rewards = reward_fn(sample_completions, sample_prompts)
 assert rewards == [1.0, 0.0], rewards
 print(f"[block #23] reward_fn({sample_completions!r}) -> {rewards}")
 
-if GRPOConfig is not None:
-    # trl is installed: cheap, GPU-free part of the block (building the
-    # config dataclass) can run for real too.
-    grpo_config = GRPOConfig(
-        output_dir="/tmp/llama3-grpo-test",
-        num_train_epochs=1,
-        per_device_train_batch_size=4,
-        learning_rate=1e-6,
-        bf16=False,
-        num_generations=8,
-        max_new_tokens=256,
-        report_to=[],
-    )
-    print(f"[block #23] GRPOConfig constructed: output_dir={grpo_config.output_dir}")
-else:
-    print("[block #23] SKIP(import): trl not installed -- GRPOConfig/"
-          "GRPOTrainer construction and trainer.train() skipped "
-          "(needs a real model + dataset + GPU regardless)")
+# SKIP(needs-gpu, version-fragile): GRPOConfig(...) / GRPOTrainer(...) /
+# .train() are intentionally NOT instantiated here, even when `trl` happens
+# to be installed. GRPOConfig's accepted kwargs have changed across trl
+# releases (e.g. `max_new_tokens` is not a valid GRPOConfig field in trl
+# 1.9.0 -- confirmed by hand), and GRPOTrainer.train() needs a real model,
+# dataset, and GPU regardless of config-shape issues.
+print("[block #23] SKIP(needs-gpu, version-fragile): GRPOConfig/GRPOTrainer "
+      "construction and trainer.train() skipped")
 
 
 # ============================================================
@@ -159,10 +235,10 @@ else:
 # The book's block does `import wandb`, calls wandb.init/log/finish, and
 # references `dataloader`, `train_step`, `scheduler`, `grad_norm`,
 # `tokens_per_sec`, `eval_samples` from earlier (unshown, GPU-only) chapter
-# context. We supply minimal honest CPU fixtures for those names and patch
-# `sys.modules["wandb"]` with a tiny fake module so no network call is ever
-# made (whether or not the real `wandb` package happens to be installed),
-# then exec the block's code VERBATIM so its own logging logic runs for real.
+# context. We ALWAYS use a tiny in-memory fake wandb object -- regardless of
+# whether the real `wandb` package happens to be importable -- so no network
+# call is ever attempted, and supply minimal honest CPU fixtures for the
+# training-loop names the block assumes are already in scope.
 
 class _FakeWandbTable:
     def __init__(self, columns=None, data=None):
@@ -182,19 +258,35 @@ class _FakeWandbRun:
         pass
 
 
-_fake_run = _FakeWandbRun()
-_fake_wandb = mock.MagicMock()
-_fake_wandb.init = mock.MagicMock(return_value=_fake_run)
-_fake_wandb.log = _fake_run.log
-_fake_wandb.finish = _fake_run.finish
-_fake_wandb.Table = _FakeWandbTable
+class _FakeWandbModule:
+    Table = _FakeWandbTable
+
+    def __init__(self):
+        self.run = None
+
+    def init(self, **kwargs):
+        self.run = _FakeWandbRun(**kwargs)
+        return self.run
+
+    def log(self, metrics, step=None):
+        assert self.run is not None, "wandb.log called before wandb.init"
+        self.run.log(metrics, step=step)
+
+    def finish(self):
+        if self.run is not None:
+            self.run.finish()
+
+
+wandb = _FakeWandbModule()  # offline fake -- see comment above; never the real package
+
+import os
 
 # Minimal honest fixtures standing in for earlier (unshown / GPU-only)
 # training-loop state that block #24 assumes is already in scope.
-_dataloader = [{"x": 1.0}, {"x": 2.0}, {"x": 0.5}]
+dataloader = [{"x": 1.0}, {"x": 2.0}, {"x": 0.5}]
 
 
-def _train_step(batch):
+def train_step(batch):
     return torch.tensor(batch["x"] * 0.1)
 
 
@@ -203,18 +295,14 @@ class _FixedScheduler:
         return [2e-4]
 
 
-_scheduler = _FixedScheduler()
-_grad_norm = 0.83
-_tokens_per_sec = 12345.0
-_eval_samples = [
+scheduler = _FixedScheduler()
+grad_norm = 0.83
+tokens_per_sec = 12345.0
+eval_samples = [
     ("What is 2+2?", "4", 1.0),
     ("Capital of France?", "Paris", 1.0),
     ("Name a color.", "green", 0.5),
 ]
-
-_block_24_src = '''
-import wandb
-import os
 
 # --- Initialize a run ---
 wandb.init(
@@ -252,27 +340,16 @@ wandb.log({"eval/samples": wandb.Table(columns=columns, data=rows)})
 
 # --- Finish the run ---
 wandb.finish()
-'''
 
-with mock.patch.dict(sys.modules, {"wandb": _fake_wandb}):
-    exec(_block_24_src, {
-        "dataloader": _dataloader,
-        "train_step": _train_step,
-        "scheduler": _scheduler,
-        "grad_norm": _grad_norm,
-        "tokens_per_sec": _tokens_per_sec,
-        "eval_samples": _eval_samples,
-    })
-
-# The loop above logs at step % 10 == 0 -> only step 0 out of 3 tiny batches.
-metric_logs = [m for (s, m) in _fake_run.logged if "train/loss" in m]
-assert len(metric_logs) == 1
+_logged = wandb.run.logged
+metric_logs = [m for (s, m) in _logged if "train/loss" in m]
+assert len(metric_logs) == 1  # only step 0 of 3 tiny batches hits step % 10 == 0
 assert abs(metric_logs[0]["train/loss"] - 0.1) < 1e-6  # train_step(batch0)=0.1*1.0
-table_logs = [m for (s, m) in _fake_run.logged if "eval/samples" in m]
+table_logs = [m for (s, m) in _logged if "eval/samples" in m]
 assert len(table_logs) == 1
 assert table_logs[0]["eval/samples"].columns == ["prompt", "generation", "reward"]
 assert len(table_logs[0]["eval/samples"].data) == 3
-print(f"[block #24] wandb loop OK, logged {len(_fake_run.logged)} events "
+print(f"[block #24] wandb loop OK, logged {len(_logged)} events "
       f"(metrics={metric_logs[0]}, table_rows={len(table_logs[0]['eval/samples'].data)})")
 
 

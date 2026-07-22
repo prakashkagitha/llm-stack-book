@@ -38,6 +38,15 @@ RULES = """HARD RULES (these make the test HONEST — violating them defeats the
 - Minimal honest glue is allowed: small fixtures/toy tensors, tiny shapes, fixed seeds, and
   CPU dtype (float32) substitutions where a block only differs by device. Keep runtime under
   ~60s and memory small.
+- INSTANTIATING A REAL MODEL IS NETWORK, even if a local cache makes it "work" here: SentenceTransformer(...),
+  CrossEncoder(...), AutoModel/AutoTokenizer.from_pretrained(...), transformers.pipeline(...), mteb.get_model(...),
+  trl configs (GRPOConfig/SFTConfig — also version-fragile), tensorrt_llm/vllm engines. CI has neither the
+  package nor the weights. For such a block: replace the model object with a tiny SHAPE-CORRECT offline STUB
+  (e.g. a fake with .encode returning a deterministic (N, dim) float32 array) so the block's surrounding
+  logic still runs, OR `# SKIP(network): ...` it. Do NOT call a real model.
+- ASSERTIONS MUST BE DETERMINISTIC: seed all RNG (np.random.seed / torch.manual_seed) before any random data;
+  never assert a fitted/optimized constant to a tight tolerance that varies by scipy/numpy version — assert the
+  robust, order-of-magnitude or exponent quantity the chapter actually claims is stable.
 - ALLOWED IMPORTS (guaranteed in CI): numpy, torch (CPU), einops, scikit-learn (sklearn), and the
   Python standard library. ANY OTHER third-party import (openai, anthropic, transformers,
   sentence_transformers, qdrant_client, faiss, datasets, dspy, tiktoken, cohere, ...) MUST be wrapped
@@ -82,8 +91,9 @@ Do this:
    them so the chapter's code runs as a whole). Add minimal honest glue and tiny fixtures so it
    executes on CPU. Every tested block should actually EXECUTE (a function defined by a block must be
    CALLED with a tiny input; a class must be instantiated and used).
-3. RUN it: `cd {ROOT} && python3 tests/{slug}.py` (or `python3 -m pytest tests/{slug}.py -q` if you
-   write pytest-style). Iterate until it runs clean OR every remaining failure is an honestly-SKIPPED
+3. RUN it UNDER THE SIMULATED CI ENV: `cd {ROOT} && python3 scripts/ci_sim_run.py tests/{slug}.py`
+   (ci_sim_run.py blocks every package CI lacks -- transformers, sentence_transformers, trl, wandb,
+   matplotlib, requests, ... -- so it catches non-hermetic code exactly as CI will). It MUST pass there. Iterate until it runs clean OR every remaining failure is an honestly-SKIPPED
    block. If a failure is a REAL bug in the book's code, fix content/{cid}.md and mirror it in the test.
 
 {RULES}
@@ -96,7 +106,8 @@ def verify_prompt(cid, slug):
 Test file: {ROOT}/tests/{slug}.py
 
 Read the test AND the chapter. Then:
-1. RE-RUN it: `cd {ROOT} && python3 tests/{slug}.py` (or pytest). It must pass.
+1. RE-RUN it UNDER THE SIMULATED CI ENV: `cd {ROOT} && python3 scripts/ci_sim_run.py tests/{slug}.py`.
+   It MUST pass there (this is what CI runs -- packages like sentence_transformers/trl are absent).
 2. Check FAITHFULNESS (this is the point): the test runs the book's ACTUAL code; there is NO blanket
    try/except swallowing errors, NO trivial stub bypassing the demonstrated logic, NO removed asserts.
    Each "tested" block is actually executed (functions called, classes used), not just imported.

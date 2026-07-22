@@ -12,107 +12,94 @@ Skipped blocks:   #3  (needs GPU/HF model download: AutoModel/AutoTokenizer
                        on a real HF model with a real training loop -- not a
                        standalone unit of logic, needs network + real data)
 
-Two heavy third-party libraries used by the book's code (`sentence_transformers`,
-`qdrant_client`) are not installed in this environment and normally require a
-network call to download model weights / a live server. Rather than skip the
-blocks that use them outright, we inject lightweight stand-in modules into
-sys.modules that implement the same call surface (CrossEncoder.predict/.fit,
-QdrantClient.search, Filter/FieldCondition/MatchValue/Range) so that the
+Two third-party libraries used by the book's code (`sentence_transformers`,
+`qdrant_client`) are not guaranteed in CI and normally require a network call
+to download model weights / a live server. Rather than skip the blocks that
+use them outright, each import is guarded with try/except; when the real
+package is unavailable (always true under the CI-sim harness, which blocks
+these imports outright) we fall back to a tiny, deterministic, offline stand-in
+class with the same call surface (CrossEncoder.predict, Filter/FieldCondition/
+MatchValue/Range as plain data holders, a fake client's .search()) so that the
 *book's own logic* (pair construction, sorting, filter-condition assembly)
 executes for real. Only the external network/model call is faked.
 """
 
 from __future__ import annotations
 
-import sys
-import types
+import zlib
+
 import numpy as np
 
 # ============================================================================
-# Stand-in modules for heavy/network-dependent third-party libraries.
-# These must be registered in sys.modules BEFORE the book's blocks import them.
+# Guarded imports for third-party libraries not guaranteed in CI
+# (`sentence_transformers`, `qdrant_client`). When unavailable -- which is
+# always true under the CI-sim harness, since it blocks these imports outright
+# -- fall back to tiny, deterministic, offline stand-ins that preserve the
+# exact call surface the book's code below uses (CrossEncoder.predict,
+# Filter/FieldCondition/MatchValue/Range as plain data holders, a client with
+# .search()). This lets the book's OWN logic (pair construction, sorting,
+# filter-condition assembly) execute for real; only the external network/model
+# call is faked.
 # ============================================================================
+try:
+    from sentence_transformers import CrossEncoder
+except Exception:
+    CrossEncoder = None
 
-# ---- fake `sentence_transformers` ----
-_st_mod = types.ModuleType("sentence_transformers")
+if CrossEncoder is None:
 
+    class CrossEncoder:
+        """Stands in for sentence_transformers.CrossEncoder (no network/model download)."""
 
-class _FakeCrossEncoder:
-    """Stands in for sentence_transformers.CrossEncoder (no network/model download)."""
+        def __init__(self, model_name, max_length=512, num_labels=1):
+            self.model_name = model_name
+            self.max_length = max_length
+            self.num_labels = num_labels
 
-    def __init__(self, model_name, max_length=512, num_labels=1):
-        self.model_name = model_name
-        self.max_length = max_length
-        self.num_labels = num_labels
-
-    def predict(self, pairs, batch_size=32):
-        # Deterministic, content-dependent "relevance" score so sorting is
-        # non-trivial: longer passages that share more words with the query
-        # score higher. This is a stand-in, but it exercises real sorting.
-        scores = []
-        for query, passage in pairs:
-            q_words = set(query.lower().split())
-            p_words = passage.lower().split()
-            overlap = sum(1 for w in p_words if w in q_words)
-            scores.append(float(overlap) + 0.001 * len(passage))
-        return np.array(scores, dtype=np.float32)
-
-    def fit(self, **kwargs):
-        return None
-
-
-class _FakeInputExample:
-    def __init__(self, texts, label):
-        self.texts = texts
-        self.label = label
+        def predict(self, pairs, batch_size=32):
+            # Deterministic, content-dependent "relevance" score so sorting is
+            # non-trivial: passages that share more words with the query
+            # score higher. This is a stand-in, but it exercises real sorting.
+            scores = []
+            for query, passage in pairs:
+                q_words = set(query.lower().split())
+                p_words = passage.lower().split()
+                overlap = sum(1 for w in p_words if w in q_words)
+                scores.append(float(overlap) + 0.001 * len(passage))
+            return np.array(scores, dtype=np.float32)
 
 
-_st_mod.CrossEncoder = _FakeCrossEncoder
-_st_mod.InputExample = _FakeInputExample
-sys.modules["sentence_transformers"] = _st_mod
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
+except Exception:
+    QdrantClient = Filter = FieldCondition = MatchValue = Range = None
 
-# ---- fake `qdrant_client` ----
-_qc_mod = types.ModuleType("qdrant_client")
-_qc_models_mod = types.ModuleType("qdrant_client.models")
+if QdrantClient is None:
 
+    class QdrantClient:
+        """Stands in for qdrant_client.QdrantClient (used only as a type hint here)."""
 
-class _FakeFieldCondition:
-    def __init__(self, key, match=None, range=None):
-        self.key = key
-        self.match = match
-        self.range = range
+        pass
 
+    class MatchValue:
+        def __init__(self, value):
+            self.value = value
 
-class _FakeMatchValue:
-    def __init__(self, value):
-        self.value = value
+    class Range:
+        def __init__(self, gte=None, lte=None):
+            self.gte = gte
+            self.lte = lte
 
+    class FieldCondition:
+        def __init__(self, key, match=None, range=None):
+            self.key = key
+            self.match = match
+            self.range = range
 
-class _FakeRange:
-    def __init__(self, gte=None, lte=None):
-        self.gte = gte
-        self.lte = lte
-
-
-class _FakeFilter:
-    def __init__(self, must=None):
-        self.must = must or []
-
-
-class _FakeQdrantClient:
-    """Stands in for qdrant_client.QdrantClient (no live server needed)."""
-
-    pass
-
-
-_qc_models_mod.Filter = _FakeFilter
-_qc_models_mod.FieldCondition = _FakeFieldCondition
-_qc_models_mod.MatchValue = _FakeMatchValue
-_qc_models_mod.Range = _FakeRange
-_qc_mod.QdrantClient = _FakeQdrantClient
-_qc_mod.models = _qc_models_mod
-sys.modules["qdrant_client"] = _qc_mod
-sys.modules["qdrant_client.models"] = _qc_models_mod
+    class Filter:
+        def __init__(self, must=None):
+            self.must = must or []
 
 
 def _section(name: str) -> None:
@@ -184,13 +171,8 @@ assert len(chunks[0].split()) == 50
 # consecutive chunks must overlap by exactly `overlap` words
 assert chunks[0].split()[-10:] == chunks[1].split()[:10]
 
-# Also verify the docstring's own worked example.
-# BUG FIX (mirrors fix applied to the book): the docstring claimed
-# `ceil((1000-2)/(10-2)) = 123 chunks`, but the actual loop (start=0, step=8,
-# stopping once `end == len(tokens)`) produces 125 chunks for these inputs --
-# confirmed by running the real fixed_chunk() code below. Fixed the docstring's
-# formula/expected value to match reality (125), rather than silently dropping
-# the mismatched example.
+# Also verify the docstring's own worked example (book line ~57-59):
+# ceil((1000-10)/(10-2)) + 1 = 125 chunks.
 example_chunks = list(fixed_chunk("word " * 1000, chunk_size=10, overlap=2))
 assert len(example_chunks) == 125, f"docstring example: expected 125, got {len(example_chunks)}"
 
@@ -273,7 +255,6 @@ result = semantic_chunk(sample, mock_embed, threshold=0.5, min_sentences=2)
 print(f"Produced {len(result)} semantic chunks")
 
 assert isinstance(result, list) and len(result) > 0
-assert sum(len(c.split(". ")) for c in "".join(result)) >= 0  # smoke check
 # every original sentence must appear in exactly one output chunk
 joined = " ".join(result)
 for s in sample:
@@ -290,13 +271,6 @@ _section("Block #2: structural_chunking.py")
 import re
 
 
-# BUG FIX (mirrors fix applied to the book): the original regex
-#   HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
-# only captures the leading "#" markers + whitespace, NOT the heading title
-# text that follows on the same line. That means `current_heading` ends up
-# being just "#", "##", etc. -- losing exactly the metadata the docstring
-# promises ("the nearest parent heading (for metadata)"). Fixed to capture
-# the hashes and the title text separately.
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
 
@@ -575,10 +549,9 @@ print("Block #4 OK")
 # ============================================================================
 _section("Block #5: cross_encoder_rerank.py")
 
-try:                       # SKIP(network): downloads a cross-encoder model; rerank() is defined, not called in CI
-    from sentence_transformers import CrossEncoder
-except Exception:
-    CrossEncoder = None
+# `CrossEncoder` here resolves to the real sentence_transformers class if the
+# package happens to be installed, otherwise to the offline stand-in defined
+# near the top of this file (see the guarded-import section above).
 
 
 def rerank(
@@ -803,11 +776,12 @@ print("Block #8 OK")
 # ============================================================================
 _section("Block #9: metadata_filtering.py")
 
-try:                       # SKIP(service): needs a running Qdrant; filtered_search() is defined, not called in CI
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
-except Exception:
-    QdrantClient = Filter = FieldCondition = MatchValue = Range = None
+# `QdrantClient` / `Filter` / `FieldCondition` / `MatchValue` / `Range` here
+# resolve to the real qdrant_client classes if the package happens to be
+# installed, otherwise to the offline stand-ins defined near the top of this
+# file (see the guarded-import section above). The client instance passed to
+# filtered_search() below is always the fake `_FakeSearchClient` regardless,
+# since a real QdrantClient would need a live server.
 
 
 def filtered_search(
@@ -998,20 +972,6 @@ print("Block #10 OK")
 
 # ============================================================================
 # Block #11 (line ~913) -- rag_pipeline.py
-#
-# BUG FIX (mirrors fix applied to the book): the original code read
-#     dense_index,  # vector store with .search(embedding, top_k) -> list[Document]
-#     ...
-#     dense_results_raw = dense_index.search(query_embedding, top_k=config.dense_top_k)
-#     dense_results = [(i, float(s)) for i, s in enumerate(dense_results_raw)]
-# This re-indexes dense results by their *position in the top-k list*
-# (0, 1, 2, ...) instead of by their *corpus document index* -- but
-# reciprocal_rank_fusion() and the `all_docs[idx]` lookup right below both
-# assume `idx` is the real corpus index (exactly what BM25Index.search() and
-# dense_search() from Section 3 both return). Left as written, RRF would
-# silently fuse BM25 hits against the wrong documents for any query where the
-# top dense hit isn't corpus document 0. Fixed to consume (idx, score) pairs
-# directly, matching dense_search()'s actual and documented return type.
 # ============================================================================
 _section("Block #11: rag_pipeline.py")
 
@@ -1130,11 +1090,13 @@ class _FakeDenseIndex:
 
 
 def _pipeline_embed_fn(texts: list[str]) -> np.ndarray:
-    # deterministic pseudo-embedding derived from text hash, so the query
-    # embedding is reproducible across runs
+    # Deterministic pseudo-embedding derived from a text hash, so the query
+    # embedding is reproducible across runs. Uses zlib.crc32 rather than the
+    # builtin hash(), which is randomized per-process (PYTHONHASHSEED) for
+    # strings and would make this non-deterministic across runs/machines.
     out = np.zeros((len(texts), 16), dtype=np.float32)
     for i, t in enumerate(texts):
-        rng = np.random.default_rng(abs(hash(t)) % (2**32))
+        rng = np.random.default_rng(zlib.crc32(t.encode("utf-8")))
         out[i] = rng.standard_normal(16).astype(np.float32)
         out[i] /= np.linalg.norm(out[i]) + 1e-9
     return out

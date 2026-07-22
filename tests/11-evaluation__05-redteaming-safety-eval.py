@@ -25,28 +25,25 @@ Skipped blocks:
 `sentence_transformers` is an optional third-party dependency (and even when
 installed, `SentenceTransformer("all-MiniLM-L6-v2")` triggers a HuggingFace
 Hub download on first use) so it is not permitted to touch the network here.
-We install a tiny fake `sentence_transformers` module into `sys.modules`
-*before* block #4's own `from sentence_transformers import SentenceTransformer`
-import runs, so the block's own code executes verbatim -- import, instantiate,
-`.encode(..., convert_to_tensor=True, normalize_embeddings=True)`, cosine
-similarity via `torch.dot` -- entirely offline. The fake encoder is a
-deterministic seeded projection: it does not claim to reproduce real semantic
-similarity, only to exercise the block's embed -> cosine-similarity -> threshold
-logic end to end.
+Block #4 guards its `from sentence_transformers import SentenceTransformer`
+import and falls back to a tiny deterministic offline stub with the same
+`.encode(..., convert_to_tensor=True, normalize_embeddings=True)` call
+signature, so the block's own embed -> cosine-similarity -> threshold logic
+still runs verbatim, entirely offline. The fake encoder is a deterministic
+seeded projection: it does not claim to reproduce real semantic similarity,
+only to exercise that logic end to end.
 """
 
 from __future__ import annotations
 
 import hashlib
-import sys
-import types
 
 import numpy as np
 import torch
 
 # ---------------------------------------------------------------------------
-# Mock the `sentence_transformers` package boundary (used by block #4) so no
-# network/model-hub call ever happens, while the block's own logic still runs.
+# Offline stand-in for sentence_transformers.SentenceTransformer, used by
+# block #4 only if the real package is unavailable (see guarded import below).
 # ---------------------------------------------------------------------------
 
 
@@ -66,10 +63,6 @@ class _FakeSentenceTransformer:
         arr = np.stack(vecs)
         return torch.from_numpy(arr) if convert_to_tensor else arr
 
-
-_fake_st_module = types.ModuleType("sentence_transformers")
-_fake_st_module.SentenceTransformer = _FakeSentenceTransformer
-sys.modules["sentence_transformers"] = _fake_st_module
 
 # `openai` is imported by block #0 (SKIPPED: network). Guard per the rules so
 # this module still loads in CI without the package installed.
@@ -340,7 +333,10 @@ print(f"[block #3] compute_bias_score -> {_bias}")
 # =============================================================================
 
 import torch  # noqa: F811 (already imported above; matches book's own import)
-from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers import SentenceTransformer  # noqa: F401
+except Exception:
+    SentenceTransformer = _FakeSentenceTransformer  # offline stub installed above
 from typing import List, Tuple
 
 model_embed = SentenceTransformer("all-MiniLM-L6-v2")  # lightweight encoder
