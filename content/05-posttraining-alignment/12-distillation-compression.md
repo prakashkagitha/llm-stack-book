@@ -536,6 +536,167 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
 - Li et al., "EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty," arXiv 2024.
 - Leviathan, Kalman & Matias, "Fast Inference from Transformers via Speculative Decoding," ICML 2023.
 
+## Exercises
+
+**1.** In the KD loss the temperature-scaled KL term is multiplied by $\tau^2$. Explain in your own words *why* this factor is needed, and describe concretely what goes wrong if you distill at $\tau = 4$ but forget the factor while keeping the blend weight $\alpha = 0.3$.
+
+??? note "Solution"
+    Applying a temperature $\tau > 1$ before the softmax divides every logit by $\tau$. Because the softmax gradient with respect to the logits scales like $1/\tau$ on each side (student and teacher), the gradient of the KL term scales like $1/\tau^2$ overall. So *softening* the distributions to expose the teacher's "dark knowledge" comes with an unwanted side effect: the gradient magnitude collapses by $1/\tau^2$. Multiplying the KL loss by $\tau^2$ exactly cancels this shrinkage, so the size of the distillation gradient is invariant to the choice of $\tau$. That decouples the two roles of temperature — *how soft the targets are* vs *how strong the update is*.
+
+    Concretely at $\tau = 4$ the factor is $\tau^2 = 16$. Forgetting it makes the KD gradient $16\times$ smaller than it should be. In the blended loss $\mathcal{L} = \alpha\,\mathcal{L}_\text{CE} + (1-\alpha)\,\mathcal{L}_\text{KD}$ with $\alpha = 0.3$, the hard-label CE term keeps its full gradient while the soft KD term is effectively down-weighted by another factor of 16. The $(1-\alpha)=0.7$ nominal weight on distillation is silently reduced to about $0.7/16 \approx 0.044$ in gradient terms, so the student is trained almost entirely on hard labels and the distillation signal is nearly wasted — you pay the full cost of running the teacher for almost no benefit.
+
+**2.** A teacher outputs logits $z^T = [2.0, 1.0, 0.0]$ over three tokens. Compute the softmax probabilities at $\tau = 1$ and at $\tau = 2$ (work to 3 decimals). Comment on what the change does to the "dark knowledge" available to the student.
+
+??? note "Solution"
+    At $\tau = 1$ we exponentiate the raw logits:
+
+    $$
+    e^{2.0}=7.389,\quad e^{1.0}=2.718,\quad e^{0.0}=1.000,\quad \text{sum}=11.107
+    $$
+
+    $$
+    p = [7.389, 2.718, 1.000]/11.107 = [0.665,\ 0.245,\ 0.090]
+    $$
+
+    At $\tau = 2$ the scaled logits are $z^T/\tau = [1.0, 0.5, 0.0]$:
+
+    $$
+    e^{1.0}=2.718,\quad e^{0.5}=1.649,\quad e^{0.0}=1.000,\quad \text{sum}=5.367
+    $$
+
+    $$
+    p_\tau = [2.718, 1.649, 1.000]/5.367 = [0.506,\ 0.307,\ 0.186]
+    $$
+
+    Raising the temperature moves probability mass off the top token (0.665 -> 0.506) and onto the two non-dominant tokens (0.245 -> 0.307 and 0.090 -> 0.186). The *relative ordering* is preserved, but the runner-up tokens now carry much more probability, so the KL target tells the student explicitly that token 1 is a strong alternative and token 2 a weaker-but-real one. That inter-token structure is the "dark knowledge" a hard one-hot label ($[1,0,0]$) throws away entirely.
+
+**3.** Speculative decoding accepts a draft token with probability $\min\!\left(1, p_t/p_d\right)$, giving expected acceptance $\alpha = \mathbb{E}_{x \sim p_d}\!\big[\min(1, p_t(x)/p_d(x))\big]$. For a target distribution $p_t = [0.5, 0.3, 0.2]$, compute $\alpha$ for two candidate draft models: draft A $= [0.4, 0.4, 0.2]$ and draft B $= [0.7, 0.2, 0.1]$. Which draft is better, and how does the answer relate to the distillation objective?
+
+??? note "Solution"
+    Using the identity $\alpha = \sum_x p_d(x)\,\min(1, p_t(x)/p_d(x)) = \sum_x \min(p_d(x), p_t(x))$ (the total overlapping mass of the two distributions):
+
+    Draft A vs target:
+
+    $$
+    \min(0.4,0.5)+\min(0.4,0.3)+\min(0.2,0.2) = 0.4+0.3+0.2 = 0.9
+    $$
+
+    Draft B vs target:
+
+    $$
+    \min(0.7,0.5)+\min(0.2,0.3)+\min(0.1,0.2) = 0.5+0.2+0.1 = 0.8
+    $$
+
+    Draft A has the higher acceptance rate ($\alpha = 0.9$ vs $0.8$), so it is the better draft. Draft A's distribution is closer to the target's, which is exactly what distillation optimizes: minimizing $\text{KL}(p_t \,\|\, p_d)$ drives $p_d \to p_t$, increases the overlapping mass, and therefore raises the acceptance rate. This is why training a draft model with KD from the target model measurably improves speculative-decoding throughput.
+
+**4.** During one training step a distillation run reports a hard-label cross-entropy of $\mathcal{L}_\text{CE} = 2.0$ and a *temperature-scaled but not yet $\tau^2$-corrected* KL value of $0.05$, using $\tau = 4$ and $\alpha = 0.3$. Compute the total loss (a) with the $\tau^2$ factor applied and (b) without it. What fraction of the total loss comes from distillation in each case?
+
+??? note "Solution"
+    The blended loss is $\mathcal{L} = \alpha\,\mathcal{L}_\text{CE} + (1-\alpha)\,\mathcal{L}_\text{KD}$ with $\alpha = 0.3$, so the CE contribution is $0.3 \times 2.0 = 0.6$ in both cases.
+
+    (a) With the factor, $\mathcal{L}_\text{KD} = \tau^2 \times 0.05 = 16 \times 0.05 = 0.8$. Distillation contribution $= 0.7 \times 0.8 = 0.56$.
+
+    $$
+    \mathcal{L} = 0.6 + 0.56 = 1.16,\qquad \text{KD share} = 0.56/1.16 \approx 48.3\%
+    $$
+
+    (b) Without the factor, $\mathcal{L}_\text{KD} = 0.05$. Distillation contribution $= 0.7 \times 0.05 = 0.035$.
+
+    $$
+    \mathcal{L} = 0.6 + 0.035 = 0.635,\qquad \text{KD share} = 0.035/0.635 \approx 5.5\%
+    $$
+
+    With the correct $\tau^2$ factor distillation and CE contribute roughly equally (48% vs 52%); without it the KD term is a negligible ~5.5% of the loss, matching the pitfall from Exercise 1 — the student is trained almost entirely on hard labels.
+
+**5.** *Implementation.* MiniLLM argues that language-model distillation should minimize the *reverse* KL $\text{KL}(p_\text{student} \,\|\, q_\text{teacher})$ instead of the forward KL used in the chapter's `kd_loss`, so the student avoids spreading probability onto low-probability teacher regions. Modify `kd_loss` to compute the reverse-KL variant while keeping temperature scaling, the $\tau^2$ factor, the ignore-index masking, and the blend with hard-label CE.
+
+??? note "Solution"
+    Forward KL is $\sum_v q\log(q/p)$; reverse KL is $\sum_v p\log(p/q)$, i.e. we swap the roles of student and teacher. We now need the student's *probabilities* (weighted average) and both log-probabilities. `F.kl_div(input=log_target, target=source)` computes $\sum \text{source}\cdot(\log \text{source} - \log\text{target})$, so to get $\text{KL}(p\|q)$ we pass `input = log_q` and `target = p`.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def kd_loss_reverse(
+        student_logits: torch.Tensor,    # (B, T, V)
+        teacher_logits: torch.Tensor,    # (B, T, V)
+        labels: torch.Tensor,            # (B, T)
+        temperature: float = 2.0,
+        alpha: float = 0.3,
+        ignore_index: int = -100,
+    ):
+        """alpha * CE(student, hard) + (1-alpha) * KL(student_soft || teacher_soft)."""
+        B, T, V = student_logits.shape
+
+        # 1. Hard-label CE (unchanged)
+        ce = F.cross_entropy(
+            student_logits.reshape(B * T, V),
+            labels.reshape(B * T),
+            ignore_index=ignore_index,
+        )
+
+        # 2. Reverse KL on valid (non-ignored) positions
+        valid = (labels != ignore_index).reshape(B * T)
+        s_flat = student_logits.reshape(B * T, V)[valid]
+        t_flat = teacher_logits.reshape(B * T, V)[valid]
+
+        # Student provides the "source" distribution p; teacher the log-target log q
+        s_log_probs = F.log_softmax(s_flat / temperature, dim=-1)   # log p
+        s_probs     = s_log_probs.exp()                            # p
+        t_log_probs = F.log_softmax(t_flat / temperature, dim=-1)  # log q
+
+        # KL(p || q) = sum_v p * (log p - log q)
+        # F.kl_div(input=log q, target=p) = sum_v p*(log p - log q)
+        kl = F.kl_div(t_log_probs, s_probs, reduction="batchmean")
+        kl = kl * (temperature ** 2)   # keep gradient scale invariant to tau
+
+        loss = alpha * ce + (1.0 - alpha) * kl
+        return loss, ce.detach(), kl.detach()
+    ```
+
+    The three substantive changes versus the forward-KL version: (i) we compute the student's `s_probs` as the distribution being averaged over; (ii) we call `F.kl_div` with the *teacher's* log-probs as `input` and the *student's* probs as `target`, which flips the divergence direction; (iii) everything else — temperature scaling, the `* temperature**2` factor, `ignore_index` masking, and the CE blend — is preserved. Note that because `s_probs` now depends on the student and multiplies the gradient, reverse KL is "mode-seeking": it heavily penalizes the student for putting mass where the teacher assigns near-zero probability, which is the behavior MiniLLM wants.
+
+**6.** *Implementation.* The chapter's `wanda_prune_layer` scores weights by $|w_{ij}| \cdot \|x_j\|_2$. Implement the plain **magnitude** baseline (`magnitude_prune_layer`, score $= |w_{ij}|$, same 50% global threshold and mask convention) and write a short check that constructs a weight matrix where magnitude and Wanda disagree on which weights to keep. Explain what feature of the activations produces the disagreement.
+
+??? note "Solution"
+    The magnitude baseline is the Wanda function with the activation term removed — score by absolute weight only:
+
+    ```python
+    import torch
+
+    def magnitude_prune_layer(
+        weight: torch.Tensor,       # (out_features, in_features)
+        sparsity: float = 0.5,
+    ) -> torch.Tensor:
+        """Unstructured magnitude pruning. Returns a binary mask (1 = keep, 0 = prune)."""
+        scores = weight.abs()                                # no activation term
+        n_prune = int(sparsity * scores.numel())
+        threshold = scores.flatten().kthvalue(n_prune).values
+        mask = (scores > threshold).float()                  # 1 = keep
+        return mask
+    ```
+
+    A check where the two criteria disagree. Give one input feature a large weight but a tiny activation norm, and another a smaller weight but a large activation norm:
+
+    ```python
+    from types import SimpleNamespace  # not needed; illustrative only
+
+    # 1 output, 2 input features
+    W = torch.tensor([[1.0, 0.5]])          # feature 0 has the larger weight
+    act = torch.tensor([0.1, 10.0])         # but feature 1 dominates at runtime
+
+    # Magnitude keeps the top 50% (1 of 2) purely by |w|: keeps feature 0.
+    m_mag = magnitude_prune_layer(W, sparsity=0.5)
+
+    # Wanda scores: |1.0|*0.1 = 0.10  vs  |0.5|*10.0 = 5.0  -> keeps feature 1.
+    m_wanda = wanda_prune_layer(W, act, sparsity=0.5)
+
+    print("magnitude keeps:", m_mag.tolist())   # [[1.0, 0.0]] -> feature 0
+    print("wanda keeps:    ", m_wanda.tolist())  # [[0.0, 1.0]] -> feature 1
+    ```
+
+    The disagreement is produced by *activation scale*. Magnitude pruning assumes every input feature is equally important, so it keeps the numerically larger weight (feature 0). Wanda multiplies by $\|x_j\|_2$, so it recognizes that feature 1, despite its smaller weight, contributes far more to the layer's output because its activations are ~100x larger ($0.5 \times 10 = 5.0$ vs $1.0 \times 0.1 = 0.1$). Whenever the per-feature activation norms are highly non-uniform — which is common in LLMs, where a few "outlier" feature dimensions carry disproportionate magnitude — the two criteria diverge, and Wanda's activation-aware score is the better predictor of which weights actually matter at runtime.
+
 !!! key "Key Takeaways"
 
     - Knowledge distillation trains a student to match a teacher's *soft probability distribution*, not just its hard predictions. The KD loss is a temperature-scaled KL divergence, and the $\tau^2$ factor must be included to keep gradient magnitude invariant to temperature.

@@ -716,3 +716,171 @@ Key practical points:
 - DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*, arXiv 2025.
 - Schulman et al., *Proximal Policy Optimization Algorithms*, arXiv 2017 (the RL backbone for many reasoning training pipelines).
 - Silver et al., *Mastering the Game of Go without Human Knowledge* (AlphaGo Zero), Nature 2017 (MCTS/PUCT foundations).
+
+## Exercises
+
+**1.** *(Conceptual)* The chapter argues that chain-of-thought "converts the fixed-depth network into a variable-depth one." A plain transformer has a fixed number of layers $L$, yet CoT lets it solve problems that seem to require more than $L$ sequential steps of computation. Explain the mechanism that makes this possible. In your answer, address: (a) why a single forward pass is limited to bounded-depth computation, and (b) what resource CoT uses to store and reuse intermediate results across steps.
+
+??? note "Solution"
+    (a) A transformer computes each output token in one forward pass through its $L$ layers. Every layer performs a shallow (bounded) amount of computation, and information can only flow "downward" through this fixed stack. There is no recurrence *within* a single token's computation, so the depth of any purely-internal computation is capped by $L$. This is the "bounded-depth circuit" the chapter refers to: for a multi-hop deduction that needs more than $L$ dependent steps, a single pass cannot get there, and it cannot look back to correct an early mistake.
+
+    (b) CoT uses the **context window (the token stream) as external, rewritable memory**. When the model emits an intermediate result (e.g., "2 cans x 3 balls/can = 6 balls") into the output, that value becomes part of the context that later tokens attend to. Each new reasoning step is again only a shallow, bounded-depth computation, but it can *condition on* the results of all previous steps via attention. Chaining $k$ shallow steps through the token stream therefore composes into a computation of effective depth proportional to $k$ (the length of the trace), rather than to $L$. In effect the attention mechanism reads back previously written intermediate state, turning a fixed-depth circuit into a variable-depth sequential program whose depth is governed by how many reasoning tokens the model chooses to emit.
+
+**2.** *(Quantitative)* A model answers a particular problem correctly with probability $p$ on a single sampled trace, and errors are independent across samples. You apply self-consistency (majority vote) with $N = 3$ samples; the vote is "correct" when at least 2 of the 3 traces are correct.
+
+   (a) For $p = 0.70$, compute $P(\text{majority correct})$ by hand and state the change relative to a single sample.
+
+   (b) Repeat for $p = 0.40$. What does the sign of the change illustrate about a claim made in the chapter?
+
+??? note "Solution"
+    With $N = 3$, majority requires $k \ge 2$ correct out of 3:
+
+    $$
+    P(\text{majority correct}) = \binom{3}{2} p^2 (1-p) + \binom{3}{3} p^3 = 3 p^2 (1-p) + p^3.
+    $$
+
+    (a) $p = 0.70$:
+
+    $$
+    3 (0.70)^2 (0.30) + (0.70)^3 = 3 (0.49)(0.30) + 0.343 = 0.441 + 0.343 = 0.784.
+    $$
+
+    Majority vote raises accuracy from $0.700$ to $0.784$, a gain of $+0.084$.
+
+    (b) $p = 0.40$:
+
+    $$
+    3 (0.40)^2 (0.60) + (0.40)^3 = 3 (0.16)(0.60) + 0.064 = 0.288 + 0.064 = 0.352.
+    $$
+
+    Here accuracy *drops* from $0.400$ to $0.352$, a change of $-0.048$. The sign flips at $p = 0.5$: majority vote amplifies a signal that is already better than chance but actively degrades one that is worse than chance. This is the chapter's point that self-consistency "amplifies a strong signal but cannot rescue a weak one" -- voting concentrates probability on whatever the model most often produces, which only helps when the single-sample accuracy is above $\tfrac{1}{2}$ (for the two-outcome case).
+
+**3.** *(Conceptual)* The chapter's "Common pitfall" warns that best-of-N with an *outcome* reward model (ORM) degrades as $N$ grows large (e.g., $N = 256$), and recommends switching to a process reward model (PRM) once $N \gtrsim 32$. (a) Explain why increasing $N$ makes an ORM *worse* rather than monotonically better. (b) Explain concretely why a PRM is more robust to this failure, referencing how PRM scores are aggregated in the chapter's PRM-guided best-of-N.
+
+??? note "Solution"
+    (a) Best-of-N returns the single sample the verifier scores highest. As $N$ grows, you are drawing more and more samples from the tails of the model's distribution, including outputs that are individually improbable. The ORM only sees the final answer/full trace and outputs one scalar; it was trained on a limited distribution of complete solutions. With enough draws, some low-probability output will happen to hit the ORM's blind spots -- e.g., correct-looking formatting or a circular argument that "pattern-matches to correct" without sound reasoning. Because best-of-N explicitly selects the *maximum* scorer, it acts as an optimizer against the ORM's imperfections: large $N$ is precisely the regime that surfaces these reward-hacking outputs. So expected quality can peak and then fall as $N$ increases -- this is over-optimization of an imperfect proxy.
+
+    (b) A PRM scores *each reasoning step* $r_\text{PRM}(x, y_{1:t})$, and the chapter aggregates these into a trace score using the minimum (the "weakest link"), $s_i = \min_t r_\text{PRM}(x, y_{1:t})$, or the product $\prod_t r_\text{PRM}(x, y_{1:t})$. To score highly under either rule a trace must be judged sound at *every* step, not just at the end. A lucky-but-flawed trace that reaches a plausible final answer through a broken intermediate step is caught by that step's low PRM score, which drags down the min (and the product). This gives many independent gates a hackable output must pass, making the aggregate far harder to fool than a single final-answer scalar -- which is why PRM-guided search scales further before saturating.
+
+**4.** *(Quantitative)* Consider one MCTS selection step using the chapter's PUCT rule,
+   $\text{score}(s,a) = Q(s,a) + c_\text{puct}\, P(a\mid s)\, \dfrac{\sqrt{N(s)}}{1 + N(s,a)}$, with $c_\text{puct} = 2$ and parent visit count $N(s) = 25$. The parent has two children:
+
+   - Child A (well-explored): $Q = 0.80$, $P = 0.30$, $N(s,a) = 16$.
+   - Child B (barely explored): $Q = 0.40$, $P = 0.50$, $N(s,a) = 1$.
+
+   Compute both PUCT scores and state which child is selected. Interpret the result in terms of the exploration/exploitation tradeoff.
+
+??? note "Solution"
+    First, $\sqrt{N(s)} = \sqrt{25} = 5$ and $c_\text{puct} = 2$.
+
+    Child A:
+
+    $$
+    \text{score}_A = 0.80 + 2 \cdot 0.30 \cdot \frac{5}{1 + 16} = 0.80 + \frac{3.0}{17} = 0.80 + 0.176 = 0.976.
+    $$
+
+    Child B:
+
+    $$
+    \text{score}_B = 0.40 + 2 \cdot 0.50 \cdot \frac{5}{1 + 1} = 0.40 + \frac{5.0}{2} = 0.40 + 2.50 = 2.90.
+    $$
+
+    Since $2.90 > 0.976$, **Child B is selected**.
+
+    Interpretation: Child A has the higher exploitation term ($Q = 0.80$ vs $0.40$), so on estimated value alone A looks better. But A has already been visited 16 times, so its exploration bonus is small ($0.176$), while B has been visited only once and carries a high prior ($P = 0.50$), giving it a large bonus ($2.50$). PUCT therefore steers the search toward the under-explored, high-prior branch even though its current mean value is lower. This is exactly the intended behavior: the exploration term shrinks as $1/(1 + N(s,a))$, so nodes get revisited until their visit counts are large enough that the (now well-estimated) $Q$ term dominates the choice.
+
+**5.** *(Quantitative)* The chapter models best-of-N accuracy with the power law $\text{acc}(N) = 1 - \epsilon\, N^{-\alpha}$. Suppose you measure $\text{acc}(1) = 0.50$ and $\text{acc}(16) = 0.75$.
+
+   (a) Solve for $\epsilon$ and $\alpha$.
+
+   (b) Predict $\text{acc}(64)$.
+
+   (c) The chapter says typical $\alpha$ is "on the order of 0.1--0.3." Is your fitted value in range, and what would a *larger* $\alpha$ mean for the payoff of extra samples?
+
+??? note "Solution"
+    (a) At $N = 1$, $N^{-\alpha} = 1$ for any $\alpha$, so
+
+    $$
+    \text{acc}(1) = 1 - \epsilon = 0.50 \;\Rightarrow\; \epsilon = 0.50.
+    $$
+
+    At $N = 16$:
+
+    $$
+    0.75 = 1 - 0.50 \cdot 16^{-\alpha} \;\Rightarrow\; 16^{-\alpha} = \frac{1 - 0.75}{0.50} = 0.50.
+    $$
+
+    Taking logs, $-\alpha \ln 16 = \ln 0.5$, so
+
+    $$
+    \alpha = \frac{\ln 2}{\ln 16} = \frac{\ln 2}{4 \ln 2} = \frac{1}{4} = 0.25.
+    $$
+
+    (b) With $\epsilon = 0.50$, $\alpha = 0.25$, and $64^{0.25} = (2^6)^{1/4} = 2^{1.5} = 2.828$:
+
+    $$
+    \text{acc}(64) = 1 - 0.50 \cdot 64^{-0.25} = 1 - \frac{0.50}{2.828} = 1 - 0.177 = 0.823 \approx 0.82.
+    $$
+
+    (c) $\alpha = 0.25$ sits inside the quoted $0.1$--$0.3$ band. A larger $\alpha$ means the residual error $\epsilon N^{-\alpha}$ falls off faster as $N$ grows, so each additional doubling of samples buys a bigger accuracy improvement -- the search "scales better." (Concretely, doubling $N$ multiplies the error term by $2^{-\alpha}$, so bigger $\alpha$ = more error killed per doubling.) This is why the chapter notes that PRM-guided search, which exhibits steeper and longer scaling, effectively behaves like a larger-$\alpha$ regime than ORM-guided best-of-N.
+
+**6.** *(Implementation)* The chapter's PRM-guided best-of-N uses the minimum step score (the "weakest link"), while the boxed equation instead uses the product of step scores. (a) Implement a single function `prm_best_of_n(traces, step_scores, aggregation)` that selects the best trace index under `aggregation in {"min", "product", "last"}`, matching the chapter's definitions. (b) Implement `weighted_self_consistent_answer(answers, weights)`: a weighted majority vote that reduces to ordinary self-consistency when all weights are equal, so PRM/ORM confidence can be folded into voting. Keep the style consistent with the chapter's code.
+
+??? note "Solution"
+    (a) Each trace is a list of step strings, and `step_scores[i][t]` is the PRM probability $r_\text{PRM}(x, y_{i,1:t})$ for the prefix ending at step $t$ of trace $i$. We aggregate per trace, then take the arg-max.
+
+    ```python
+    from typing import List
+
+    def prm_best_of_n(
+        traces: List[List[str]],         # each trace = list of step strings
+        step_scores: List[List[float]],  # per-step PRM probs, aligned with traces
+        aggregation: str = "min",
+    ) -> int:
+        """
+        Return the index of the best trace under the chosen PRM aggregation:
+          - 'min'     : weakest-link score  min_t r(x, y_{1:t})
+          - 'product' : product of step scores  prod_t r(x, y_{1:t})
+          - 'last'    : score of the final step only
+        """
+        def aggregate(scores: List[float]) -> float:
+            if not scores:
+                return 0.0                      # empty trace: worst possible
+            if aggregation == "min":
+                return min(scores)
+            if aggregation == "product":
+                p = 1.0
+                for s in scores:
+                    p *= s
+                return p
+            if aggregation == "last":
+                return scores[-1]
+            raise ValueError(f"unknown aggregation: {aggregation}")
+
+        trace_values = [aggregate(s) for s in step_scores]
+        return max(range(len(traces)), key=lambda i: trace_values[i])
+    ```
+
+    Note that `min` and `product` are both dominated by weak steps (a single near-zero step tanks the whole trace), which is what makes them robust to the reward-hacking failure in Exercise 3; `last` only trusts the final step and is closest in spirit to an ORM.
+
+    (b) Weighted majority vote tallies a per-answer sum of weights instead of raw counts. With all weights equal this is just counting, so it recovers the chapter's `Counter`-based `self_consistent_answer`.
+
+    ```python
+    from typing import List
+
+    def weighted_self_consistent_answer(
+        answers: List[str],
+        weights: List[float],
+    ) -> str:
+        """
+        Majority vote weighted by per-trace quality (e.g. ORM/PRM score).
+        Reduces to plain self-consistency when all weights are equal.
+        """
+        tally: dict[str, float] = {}
+        for a, w in zip(answers, weights):
+            tally[a] = tally.get(a, 0.0) + w
+        # arg-max over accumulated weight; ties broken by first-seen order
+        return max(tally, key=tally.get)
+    ```
+
+    Sanity check: `weighted_self_consistent_answer(["7","7","3"], [1,1,1])` returns `"7"` (2 votes vs 1), identical to unweighted voting. But `weighted_self_consistent_answer(["7","7","3"], [0.1, 0.1, 0.9])` returns `"3"`, because the single high-confidence trace (weight $0.9$) outweighs the two low-confidence ones ($0.1 + 0.1 = 0.2$) -- letting a verifier's quality signal override raw vote count.

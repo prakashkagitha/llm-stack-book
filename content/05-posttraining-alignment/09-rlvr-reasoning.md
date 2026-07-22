@@ -477,3 +477,148 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
 - Lightman, Kosaraju, et al. (OpenAI), **Let's Verify Step by Step** (2023) — process reward models and step-level verification, the contrast to outcome-only RLVR.
 - Yue, et al., **Does Reinforcement Learning Really Incentivize Reasoning Capacity Beyond the Base Model?** (2025) — the pass@k critique arguing RLVR mainly *elicits* latent base-model ability.
 - The **`math-verify`** library and **veRL / TRL** repositories — production verifiers and RLVR training loops; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html) and [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html).
+
+## Exercises
+
+**1.** *(Conceptual — why not string equality.)* The chapter insists a math verifier must "parse, normalize to a canonical form, compare for equivalence — never raw strings." Suppose you shipped a lazy verifier that used exact string equality between the extracted `\boxed{}` content and the gold answer. For the gold answer `1/2`, name three *correct* model outputs this checker would mark wrong (accuracy 0), and then explain the concrete *behavioral distortion* this false-negative pattern would train into the policy. Why is a 5% false-negative rate in a verifier described as "far worse than the same rate in SFT data"?
+
+??? note "Solution"
+    A string-equality checker against gold `1/2` would reject, among others:
+
+    - `\boxed{0.5}` — the decimal form (different characters, same value).
+    - `\boxed{0.50}` — trailing-zero decimal.
+    - `\boxed{\frac{1}{2}}` — the LaTeX `\frac` form the model is often *asked* to produce.
+    - (also `\boxed{2/4}`, `\boxed{ 1/2 }` with spaces, etc.)
+
+    Each of these is mathematically correct yet scored 0. Because RLVR's only signal is the reward, the optimizer does not learn "these are equivalent"; it learns "outputs that *look like* `1/2` earn reward and outputs that look like `0.5` do not." The behavioral distortion is that the policy is pushed to **avoid decimal and `\frac` forms and mimic the verifier's exact surface quirks**, distorting its answer formatting for no mathematical reason — a reward hack driven by a *buggy checker* rather than by the model finding a real exploit.
+
+    A 5% false-negative rate is worse than 5% mislabeled SFT data because **RL amplifies the reward signal directly**: those 5% are examples where the model did exactly the right thing and is *punished* for it, so the gradient actively pushes probability mass away from correct behavior. In SFT the model merely fails to learn from 5% of examples; in RLVR the model is trained *against* the truth on those 5%, and the mislabeling compounds over thousands of steps while your eval-vs-train gap silently widens (the chapter's "log verifier false-negatives as a first-class metric" tip).
+
+**2.** *(Quantitative — GRPO advantages and the dead group.)* You run one R1-Zero-style GRPO step on a math prompt (accuracy reward only, no format term). A group of $G=5$ samples yields two correct and three wrong answers, so $R = \{1.0,\,1.0,\,0.0,\,0.0,\,0.0\}$. Using std-normalized GRPO advantages $\hat A_i = (R_i-\bar R)/(\sigma+\varepsilon)$ with population std $\sigma$ and $\varepsilon = 10^{-4}$: (a) compute $\bar R$, $\sigma$, and the advantage for a correct and for a wrong sample; (b) now suppose the *same* prompt had produced five wrong answers instead, $R=\{0,0,0,0,0\}$ — compute all advantages and state what the policy learns from this second group and why.
+
+??? note "Solution"
+    **(a)** Mean: $\bar R = (1.0+1.0+0+0+0)/5 = 2.0/5 = 0.4$.
+
+    Deviations $R_i-\bar R$: correct $\to +0.6$, wrong $\to -0.4$.
+
+    Population variance: $\sigma^2 = \frac{2(0.6)^2 + 3(-0.4)^2}{5} = \frac{2(0.36)+3(0.16)}{5} = \frac{0.72+0.48}{5} = \frac{1.20}{5} = 0.24$.
+
+    So $\sigma = \sqrt{0.24} \approx 0.4899$, and denominator $\sigma+\varepsilon \approx 0.4900$.
+
+    $$
+    \hat A_{\text{correct}} = \frac{+0.6}{0.4900} \approx +1.22, \qquad
+    \hat A_{\text{wrong}} = \frac{-0.4}{0.4900} \approx -0.82.
+    $$
+
+    The two correct trajectories are pushed up ($+1.22$), the three wrong ones down ($-0.82$); the group is "alive" because it contains both outcomes.
+
+    **(b)** With $R=\{0,0,0,0,0\}$: $\bar R = 0$, every deviation $R_i-\bar R = 0$, so $\hat A_i = 0/(0+10^{-4}) = 0$ for all five. The policy learns **nothing** from this group — every advantage is zero, so the gradient contribution is zero. This is the **dead-group** problem: with a group of identical (here, uniformly failing) outcomes there is no reward variance, hence no learning signal. It is exactly why R1-Zero needs a base model that *sometimes succeeds* and a difficulty-calibrated / curriculum prompt set: the group must mix successes and failures for correctness pressure to produce any gradient.
+
+**3.** *(Quantitative — the difficulty sweet spot.)* With a binary accuracy reward, a GRPO group is "dead" (all advantages zero) exactly when all $G$ samples get the same outcome. Model each of the $G$ samples as an independent Bernoulli success with per-attempt probability $p$ (the base model's pass@1 on that prompt). (a) Write the probability that a group of size $G$ is dead. (b) Evaluate it for $G=8$ at $p=0.1$, $p=0.5$, and $p=0.9$. (c) Explain how this justifies the chapter's curriculum advice of keeping prompts the model solves roughly 20–60% of the time.
+
+??? note "Solution"
+    **(a)** A group is dead iff all $G$ samples succeed or all $G$ fail:
+    $$
+    P_{\text{dead}}(p,G) = p^{G} + (1-p)^{G}.
+    $$
+
+    **(b)** For $G=8$:
+
+    - $p=0.1$: $0.1^{8} + 0.9^{8} \approx 10^{-8} + 0.4305 \approx \mathbf{0.4305}$.
+    - $p=0.5$: $0.5^{8} + 0.5^{8} = 2\cdot 0.00390625 = \mathbf{0.0078}$.
+    - $p=0.9$: $0.9^{8} + 0.1^{8} \approx 0.4305 + 10^{-8} \approx \mathbf{0.4305}$ (symmetric with $p=0.1$).
+
+    **(c)** The dead-group probability is minimized when $p$ is near $0.5$ and blows up toward the extremes: at $p=0.1$ or $p=0.9$ roughly **43%** of groups yield no gradient, but at $p=0.5$ only about **0.8%** do. Prompts that are almost always failed ($p\to 0$) or almost always solved ($p\to 1$) waste compute on dead groups. Keeping difficulty in the ~20–60% band (where $P_{\text{dead}}$ stays small) maximizes the fraction of groups with mixed outcomes and hence usable learning signal — and as the policy improves and a prompt's $p$ drifts toward 1, curriculum ramps in harder prompts to keep it in the productive band.
+
+**4.** *(Implementation — defend the answer extractor against `\boxed{}` spam.)* The chapter lists "dumping many `\boxed{}` candidates hoping one matches" as a real verifier parsing exploit, with the defense "take the last boxed answer only, penalize multiple final answers." `extract_boxed_answer` already takes the *last* box, but that still lets a model hedge across several *distinct* guesses. Implement `extract_all_boxed(text)` (returns every `\boxed{}` payload, with brace matching) and a guarded reward `math_is_correct_guarded(response, gold)` that returns `0.0` whenever the response contains more than one *distinct* final answer (after numeric normalization), and otherwise defers to `math_is_correct`. Note one false-negative risk your guard introduces.
+
+??? note "Solution"
+    ```python
+    import re
+    from fractions import Fraction
+
+    def extract_all_boxed(text: str) -> list[str]:
+        r"""Return the payload of EVERY \boxed{...}, with proper brace matching."""
+        out, start = [], 0
+        while True:
+            idx = text.find(r"\boxed", start)
+            if idx == -1:
+                break
+            i = text.find("{", idx)
+            if i == -1:
+                break
+            depth, j, val = 0, i, None
+            while j < len(text):
+                if text[j] == "{":
+                    depth += 1
+                elif text[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        val = text[i + 1 : j].strip()
+                        break
+                j += 1
+            if val is None:            # unbalanced braces: stop
+                break
+            out.append(val)
+            start = j + 1
+        return out
+
+    def _canon(v: str):
+        """Canonical key for distinctness: numeric value if parseable, else norm string."""
+        n = normalize_numeric(v)          # from the chapter's math verifier
+        if n is not None:
+            return ("num", float(n)) if isinstance(n, float) else ("num", n)
+        return ("str", re.sub(r"\s+", "", v).lower())
+
+    def math_is_correct_guarded(response: str, gold: str) -> float:
+        """Zero the reward if the model hedged across multiple DISTINCT final answers."""
+        boxed = extract_all_boxed(response)
+        if len({_canon(v) for v in boxed}) > 1:
+            return 0.0                    # boxed-spam / hedging hack -> no reward
+        return math_is_correct(response, gold)
+
+    # repeated identical answers are fine; distinct hedges are punished
+    assert math_is_correct_guarded(r"\boxed{1/2} ... \boxed{0.5}", "0.5") == 1.0   # same value
+    assert math_is_correct_guarded(r"\boxed{1} \boxed{2} \boxed{3}", "3") == 0.0   # hedging
+    ```
+
+    `_canon` reuses `normalize_numeric`, so `\boxed{1/2}` and `\boxed{0.5}` collapse to the same `Fraction(1, 2)` and count as *one* answer (no penalty for restating), while genuinely different guesses like `\boxed{1}`, `\boxed{2}`, `\boxed{3}` form a set of size 3 and trip the guard.
+
+    **False-negative risk:** models legitimately write *intermediate* `\boxed{}` expressions mid-derivation (the reason `extract_boxed_answer` takes the last one). A model that boxes a wrong intermediate result and then boxes the correct final answer now gets zeroed even though its final answer is right — a verifier false-negative that poisons training. A softer, safer version only triggers when the number of distinct boxes is large (e.g. `> 3`), or restricts the distinctness check to boxes appearing after the last `</think>` / in the answer region, trading a little exploit coverage for far fewer false negatives.
+
+**5.** *(Implementation — cache the sandbox to survive the throughput bottleneck.)* The chapter warns that with $G=16$ samples $\times$ thousands of prompts $\times$ multiple tests you may execute *millions* of short programs per epoch, and that "caching identical (code, test) pairs" is essential. Wrap `run_in_sandbox` with a memoizing `run_in_sandbox_cached` keyed on `(source_code, stdin)`, so `code_reward` never re-runs an identical execution. State the key correctness assumption the cache relies on and one case where it breaks.
+
+??? note "Solution"
+    ```python
+    _sandbox_cache: dict[tuple[str, str], tuple] = {}
+
+    def run_in_sandbox_cached(source_code: str, stdin: str = "", timeout: float = 6.0):
+        """Memoized run_in_sandbox: identical (code, stdin) executes at most once."""
+        key = (source_code, stdin)
+        hit = _sandbox_cache.get(key)
+        if hit is not None:
+            return hit
+        result = run_in_sandbox(source_code, stdin, timeout)   # (ok, stdout, stderr)
+        _sandbox_cache[key] = result
+        return result
+    ```
+
+    Then `code_reward` calls `run_in_sandbox_cached(harness, stdin=tc["input"])` in place of `run_in_sandbox`. Within a GRPO group many of the $G$ samples produce byte-identical programs, and across epochs the *same* prompt is revisited — so the same `(harness, stdin)` pair recurs constantly and the cache turns millions of executions into a small number of unique ones.
+
+    **Key assumption:** execution is a *pure function* of `(source_code, stdin)` — same code + same input always yields the same `(ok, stdout, stderr)`. This holds for the deterministic algorithmic problems RLVR typically uses.
+
+    **Where it breaks:** any nondeterministic program — one that reads the clock, uses an unseeded RNG, depends on wall-time, hashing/set-iteration order, or (in principle) network/environment state. For such code a cached result may not match a fresh run, so caching is only sound when the harness pins determinism (seed RNGs, no network — which the sandbox already blocks, no time-dependence). A secondary caveat: the cache is unbounded here; a production version needs an LRU/size cap so it does not grow without limit over an epoch.
+
+**6.** *(Conceptual — is formal-math RLVR truly unhackable?)* A colleague argues: "A Lean proof kernel has *zero* false positives, so a Lean-based RLVR run is completely unhackable — unlike the math checker (normalization gaps) or the code sandbox (escapes, test leakage)." Using §"Building real verifiers III," explain what is right about this and identify the residual trust surface that keeps even formal RLVR from being *fully* airtight. Name the two concrete exploits the chapter lists at that boundary and the defenses.
+
+??? note "Solution"
+    **What's right.** The kernel really does eliminate the failure modes of the other verifiers. Under Curry–Howard a proof is a term and checking it is type-checking against the theorem's type, done by a small, trusted, heavily-scrutinized kernel. There is no answer-normalizer to fool (so no `0.5`-vs-`1/2` gap) and no execution environment to escape (so no sandbox break or test-leak hard-coding). A prover model gains *nothing* from a plausible-but-wrong tactic script: it simply fails to compile and scores 0. For the question "is this proof valid relative to these axioms," $V(q,o)\in\{0,1\}$ is not a proxy for correctness — it *is* correctness.
+
+    **The residual trust surface.** The *proof* is unforgeable, but the *statement being proved* is human- or model-produced. The trust surface relocates from "is the proof correct" to "does the formal statement faithfully capture the intended problem." This is the **autoformalization** boundary, and it is why the chapter calls formal RLVR *much smaller* trust surface, not *zero*.
+
+    **The two concrete exploits and defenses:**
+
+    1. **Statement-level false positive (mis-formalization).** A statement with contradictory hypotheses makes *anything* provable, and a statement weaker than intended is trivially satisfied — the model earns reward 1 for a valid proof of the *wrong theorem*. Defense: audit the statement bank — e.g. check that a statement and its negation are not *both* trivially provable (a signature of vacuous/contradictory hypotheses), and use human review of statement banks; invest in autoformalization quality.
+    2. **`sorry` / axiom-injection.** The proof leaves a hole (`sorry`) or smuggles in an unaudited/false axiom, so the kernel "accepts" a term that assumes what it was supposed to prove. Defense: reject any proof that uses `sorry`, unsafe escape hatches, or unaudited axioms.
+
+    So the colleague is *mostly* right — formal math is where RLVR's promise is most fully realized — but "unhackable" should be evaluated by how close the domain sits to the proof kernel: the kernel itself is airtight, while the statement-generation boundary around it still needs auditing.

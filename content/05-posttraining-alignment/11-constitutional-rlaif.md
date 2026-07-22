@@ -813,3 +813,189 @@ def run_alignment_pipeline(
 - Chen et al., "Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models," 2024. SPIN: using the model's own outputs as the rejected baseline.
 - Burns et al., "Weak-to-Strong Generalization: Eliciting Strong Capabilities With Weak Supervision," OpenAI, 2023. Empirical study of the scalable oversight setting with bootstrapping and confidence-weighting interventions.
 - Anthropic Model Card and Constitution — publicly released at anthropic.com, describing the principles used in Claude's CAI training.
+
+---
+
+## Exercises
+
+**1.** The chapter argues that AI feedback sidesteps three compounding problems with human annotation — *volume*, *consistency*, and *latency*. For each of the three, name the specific property of an AI judge that resolves it, and then explain why a constitution is still needed even after the AI judge has solved all three.
+
+??? note "Solution"
+    - **Volume.** The AI judge scores millions of samples per hour, so generation throughput and labeling throughput match. The chapter cites roughly 100 M labels/day for AI versus ~1 M/month for a large human team.
+    - **Consistency.** The judge can be run at a deterministic (or low) temperature, so the same comparison prompt maps to the same verdict. This replaces the ~60-80% inter-annotator agreement of humans with a repeatable rule, eliminating label noise from rater disagreement.
+    - **Latency.** The feedback loop closes in milliseconds rather than the hours-to-days a human annotation job takes, so an online RL algorithm like PPO can receive reward signals fast enough that the reward/preference model need not be frozen for the whole run.
+
+    Why a constitution is still needed: solving volume, consistency, and latency only makes the judge *fast, cheap, and repeatable* — it does not make the judge *correct*. The AI judge's preferences are learned from its own training data, not ground truth, so it can encode biases and errors invisibly (the "bias amplification" risk). A constitution makes the evaluation criterion explicit and human-auditable: instead of trusting an opaque learned preference, the judge is asked to choose the response that best satisfies a stated, human-readable principle. That is the only part of the loop a human can inspect and correct.
+
+**2.** In the RFT worked example, the seed policy $\pi_0$ solves 30% of problems at $k=1$ and reaches pass@32 $\approx$ 70%. Assume that for a single problem, each of the $k$ independent samples is correct with the same probability $p$, so that pass@$k = 1 - (1-p)^k$.
+
+  (a) Using the pass@32 = 0.70 figure, solve for the implied per-sample success probability $p$ on the *average problem that has any chance of being solved*, and compare it to the greedy accuracy of 30%.
+
+  (b) With that same $p$, what would pass@8 be? Comment on the diminishing return of increasing $k$.
+
+??? note "Solution"
+    **(a)** Solve $1 - (1-p)^{32} = 0.70$, i.e. $(1-p)^{32} = 0.30$.
+
+    $$
+    1-p = 0.30^{1/32} = \exp\!\left(\frac{\ln 0.30}{32}\right) = \exp\!\left(\frac{-1.204}{32}\right) = \exp(-0.03763) \approx 0.9631.
+    $$
+
+    So $p \approx 1 - 0.9631 = 0.0369$, about **3.7% per sample**.
+
+    This is far below the 30% greedy ($k=1$) accuracy. The reason: greedy decoding picks the single highest-probability continuation, which is much more likely to be correct than an average temperature-0.8 sample. The pass@32 metric aggregates 32 low-probability-of-correctness *sampled* attempts, each individually weak, but the *union* over 32 tries still reaches 70%. RFT exploits exactly this gap — it harvests the rare correct samples and trains on them, converting sampling-time compute into greedy capability.
+
+    **(b)** With $p = 0.0369$:
+
+    $$
+    \text{pass@8} = 1 - (1-0.0369)^8 = 1 - 0.9631^8.
+    $$
+
+    $0.9631^8 = \exp(8 \ln 0.9631) = \exp(8 \times -0.03763) = \exp(-0.3010) \approx 0.740.$
+
+    So pass@8 $\approx 1 - 0.740 = 0.26$, i.e. about **26%**.
+
+    Diminishing returns: pass@$k = 1-(1-p)^k$ is concave in $k$, so each additional sample adds less coverage than the one before it — it can only help on problems not yet solved, and $(1-p)^k$ decays geometrically. Numerically, the first 8 samples buy ~26 points of coverage (~3.3 points/sample), whereas the next 24 samples (from $k=8$ to $k=32$) buy ~44 more points (~1.8 points/sample); beyond that, once most solvable problems are already covered, extra samples mostly re-solve them. This is why ReST raises the reward threshold each round instead of only cranking $k$.
+
+**3.** Consider the cost table in "RLAIF vs Human Preference." Suppose you need a preference dataset of **5 million** labels. Human labels cost USD 0.20 each; AI labels cost USD 0.004 each, but your RLAIF protocol uses `n_votes = 5` judge calls per example plus discards examples that fail the consistency filter, keeping only 80% of them.
+
+  (a) Compute the human total cost, the AI total cost (accounting for the 5 votes and the 20% discard), and the cost ratio.
+
+  (b) The discard means you must *label more than 5 M candidate examples* to end up with 5 M kept labels. Redo the AI cost accounting for that.
+
+??? note "Solution"
+    **(a)** Human cost: $5{,}000{,}000 \times \$0.20 = \$1{,}000{,}000$.
+
+    AI cost, treating the 5 M as the number of *kept* examples but paying 5 votes each on those kept examples only (ignoring discard for the moment): each kept example costs $5 \times \$0.004 = \$0.02$. So $5{,}000{,}000 \times \$0.02 = \$100{,}000$.
+
+    Cost ratio: $\$1{,}000{,}000 / \$100{,}000 = 10\times$ cheaper for AI.
+
+    **(b)** With a 20% discard, only 80% of *candidate* examples survive the consistency filter. To keep 5 M, you must label
+
+    $$
+    N_\text{candidate} = \frac{5{,}000{,}000}{0.80} = 6{,}250{,}000 \text{ candidate examples.}
+    $$
+
+    Every candidate — kept or discarded — still costs 5 judge calls, because you must run the votes before you know whether it is consistent. So:
+
+    $$
+    \text{AI cost} = 6{,}250{,}000 \times 5 \times \$0.004 = 6{,}250{,}000 \times \$0.02 = \$125{,}000.
+    $$
+
+    Revised cost ratio: $\$1{,}000{,}000 / \$125{,}000 = 8\times$ cheaper. The vote ensemble and discard eat into the headline cost advantage (from ~50x at 1 vote and no discard down to 8x here), but AI feedback remains far cheaper while also buying position-debiasing and noise reduction.
+
+**4.** Look at the `robust_ai_label` function. It performs position-debiasing by alternating the A/B order across the `n_votes` calls, but the *final* returned `PreferencePair` sets `principle=sample_principle()` — a *freshly sampled* principle, unrelated to any principle actually used during the votes. Explain why this is a latent bug (what does it corrupt downstream?), and write a corrected version of the relevant lines that records the principle that the majority verdict was actually judged under.
+
+??? note "Solution"
+    **Why it is a bug.** Each vote inside the loop calls `ai_label_pair`, which itself samples a principle and judges the pair *under that principle*, recording it in `pair.principle`. But the returned aggregate `PreferencePair` throws all of that away and calls `sample_principle()` again, attaching an arbitrary new principle that had nothing to do with how the winner was chosen. Downstream, the `principle` field is metadata that says "this preference was decided under this criterion." If a reward model or an audit later conditions on, filters by, or analyzes preferences per-principle (e.g., "show me all harm-related judgments"), the labels are mislabeled — a harm-principle verdict could be tagged as a privacy principle. It silently corrupts the provenance of every kept example, defeating the auditability that is the whole point of a constitution.
+
+    **Corrected version.** Track the principle alongside each vote and carry the one associated with the majority-winning verdict (using a representative vote for the majority side):
+
+    ```python
+    votes = []
+    rationales = []
+    principles = []  # NEW: record the principle each vote was judged under
+
+    for i in range(n_votes):
+        if i % 2 == 0:
+            pair = ai_label_pair(model_generate, prompt, response_a, response_b)
+        else:
+            pair_swapped = ai_label_pair(model_generate, prompt, response_b, response_a)
+            if pair_swapped.chosen == response_b:
+                pair = PreferencePair(
+                    prompt=prompt, chosen=response_a, rejected=response_b,
+                    principle=pair_swapped.principle,
+                    judge_rationale=pair_swapped.judge_rationale,
+                )
+            else:
+                pair = PreferencePair(
+                    prompt=prompt, chosen=response_b, rejected=response_a,
+                    principle=pair_swapped.principle,
+                    judge_rationale=pair_swapped.judge_rationale,
+                )
+
+        votes.append(pair.chosen)
+        rationales.append(pair.judge_rationale)
+        principles.append(pair.principle)  # NEW
+
+    vote_counter = Counter(votes)
+    majority_response, majority_count = vote_counter.most_common(1)[0]
+    consistency = majority_count / n_votes
+    if consistency < consistency_threshold:
+        return None
+
+    # Pick a principle from a vote that actually agreed with the majority verdict.
+    majority_principle = next(
+        principles[i] for i in range(n_votes) if votes[i] == majority_response
+    )
+
+    rejected_response = response_b if majority_response == response_a else response_a
+    return PreferencePair(
+        prompt=prompt,
+        chosen=majority_response,
+        rejected=rejected_response,
+        principle=majority_principle,   # FIXED: no longer a random fresh sample
+        judge_rationale=rationales[0],
+    )
+    ```
+
+**5.** Implement a `star_dataset` function in the chapter's style that realizes the STaR construction
+
+  $$
+  \mathcal{D}_\text{STaR} = \{(x, r_\text{sampled}, y^*) : r \text{ correct}\} \cup \{(x \| y^*, r_\text{hint}, y^*) : r \text{ incorrect}\}
+  $$
+
+  Given a `model_generate` callable, a list of `(question, gold_answer)` pairs, an `answer_checker(question, rationale) -> bool`, and a sample budget `k`, it should: for each problem, sample up to `k` rationales; if any is correct, keep the first correct `(question, rationale)`; otherwise fall back to *rationalization* by prompting the model with the gold answer revealed as a hint, and keep the resulting hint-conditioned rationale. Return a list of `(prompt, rationale)` training pairs. Explain in one sentence why the hint branch is what prevents zero training signal on hard problems.
+
+??? note "Solution"
+    ```python
+    from typing import Callable
+
+    def star_dataset(
+        model_generate: Callable[[str], str],
+        problems: list[tuple[str, str]],       # (question, gold_answer)
+        answer_checker: Callable[[str, str], bool],  # (question, rationale) -> correct?
+        k: int = 8,
+    ) -> list[tuple[str, str]]:
+        """
+        Build the STaR training set.
+
+        For each (question, gold_answer):
+          - Sample up to k chain-of-thought rationales cold.
+          - If one is correct, keep (question_prompt, rationale)   [self-generated branch].
+          - Else, reveal the gold answer as a hint and ask the model to
+            construct a rationale leading to it; keep that              [rationalization branch].
+
+        Returns a list of (prompt, rationale) pairs suitable for SFT.
+        """
+        dataset = []
+        for question, gold_answer in problems:
+            cold_prompt = f"Question: {question}\n\nLet's think step by step.\nRationale:"
+
+            kept = None
+            # --- Self-generated branch: sample up to k cold attempts ---
+            for _ in range(k):
+                rationale = model_generate(cold_prompt).strip()
+                if answer_checker(question, rationale):
+                    kept = (cold_prompt, rationale)
+                    break
+
+            # --- Rationalization (hint) branch: only if all k attempts failed ---
+            if kept is None:
+                hint_prompt = (
+                    f"Question: {question}\n\n"
+                    f"(Hint: the correct answer is {gold_answer}.)\n\n"
+                    f"Write a step-by-step rationale that arrives at this answer.\n"
+                    f"Rationale:"
+                )
+                hint_rationale = model_generate(hint_prompt).strip()
+                # Train the model to produce this rationale WITHOUT the hint at inference,
+                # so the stored prompt is the plain question, not the hint prompt.
+                kept = (cold_prompt, hint_rationale)
+
+            dataset.append(kept)
+        return dataset
+    ```
+
+    Why the hint branch prevents zero signal: on a hard problem where none of the $k$ cold samples is correct, the self-generated branch contributes nothing, so without rationalization that problem would be dropped from training entirely; revealing $y^*$ lets the model manufacture a correct chain-of-thought it could not find on its own, guaranteeing at least one training example per problem regardless of the model's current ability.
+
+    (Note: the stored prompt for the hint branch is the *plain* `cold_prompt`, not `hint_prompt` — at inference time no hint is available, so we train the model to emit the rationale conditioned only on the question, matching the $x \| y^*$-derived rationale but presented under $x$.)

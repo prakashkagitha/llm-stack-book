@@ -424,3 +424,99 @@ Three load-bearing ideas to carry forward:
 - Hu, et al., **OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework** — a Ray-native reference design for the components in this chapter.
 - Kwon, Li, Zhuang, et al., **Efficient Memory Management for Large Language Model Serving with PagedAttention** (vLLM, 2023) — the inference engine that powers most rollout components; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
 - HuggingFace **TRL** and the **veRL**, **OpenRLHF**, and **NeMo-Aligner** repositories — production implementations of the six components, studied in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html) through [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html).
+
+## Exercises
+
+**1.** *(Conceptual.)* The chapter's "four-copies rule" says up to four copies of the model may coexist on the cluster: the trainable **policy**, its **inference replica**, the **reference**, and a learned **reward model**. For each of the *first three*, state (a) whether it carries gradients and optimizer state, (b) whether its weights ever change during the run, and (c) roughly how many bytes-per-parameter of resident state it costs. Then explain why the R1-Zero recipe can delete one of these copies entirely, and which one.
+
+??? note "Solution"
+    | Copy | Gradients + optimizer state? | Weights change? | Resident state per param |
+    |---|---|---|---|
+    | Policy (training) | Yes | Yes (updated every step) | bf16 params (2 B) + gradients (2 B) + AdamW state (fp32 master + 2 moments ~ 12 B) ~ **16 B/param** |
+    | Policy inference replica | No | Yes, but only by being *overwritten* at weight sync (no local optimizer) | bf16 params (2 B) + KV cache (workload-dependent) |
+    | Reference | No | No (frozen SFT checkpoint) | bf16 params (2 B), forward-only |
+
+    (a)/(b)/(c): Only the policy is trainable, so only it carries gradients and AdamW state -- the dominant memory line item. The inference replica has no optimizer and never updates itself; its parameters change only because the weight-sync arrow (stage (g)) copies fresh $\theta$ into it. The reference is fully frozen: no gradients, no optimizer, weights never move, so it costs just one set of bf16 weights and is a prime candidate for CPU-offload or quantization.
+
+    R1-Zero drops the **reference model**. The reference exists only to supply $\log\pi_{\text{ref}}$ for the KL-divergence penalty $\beta\,\mathrm{KL}(\pi_\theta \Vert \pi_{\text{ref}})$. R1-Zero sets the KL term to zero (`KL_BETA = 0.0` in the toy code), so nothing ever queries the reference; it can be removed, saving a full set of weights in memory.
+
+**2.** *(Quantitative.)* Redo the chapter's memory accounting for a **13B** policy instead of 7B: KL on (reference resident), critic-free GRPO (no critic), rule-based reward (no reward model). Use bf16 = 2 B/param for weights and gradients, and AdamW = 12 B/param for optimizer state. Ignore activations and KV cache. (a) Give the size of each resident copy and the total. (b) Which single line item is largest? (c) What is the minimum number of 80 GB GPUs just to hold this static footprint?
+
+??? note "Solution"
+    Let $P = 13\times10^9$.
+
+    | Copy | Formula | Size |
+    |---|---|---|
+    | Policy weights (bf16) | $P \times 2\text{ B}$ | 26 GB |
+    | Policy optimizer (AdamW, 12 B/param) | $P \times 12\text{ B}$ | 156 GB |
+    | Policy gradients (bf16) | $P \times 2\text{ B}$ | 26 GB |
+    | Reference weights (bf16) | $P \times 2\text{ B}$ | 26 GB |
+    | Inference replica (bf16, KV ignored) | $P \times 2\text{ B}$ | 26 GB |
+
+    (a) Total $= 26 + 156 + 26 + 26 + 26 = 260$ GB.
+
+    (b) The **optimizer state, 156 GB**, dwarfs everything else -- it is 60% of the static footprint. This is exactly why the chapter stresses critic-free GRPO (no second model's optimizer state) and LoRA-RL (tiny adapter optimizer state).
+
+    (c) $260 / 80 = 3.25$, so you need at least **4** GPUs just for the static tensors -- and in practice more, because this ignores activations and the KV cache, both of which are substantial during the forward/backward and rollout phases. Even a "small" 13B GRPO run is inherently multi-GPU.
+
+**3.** *(Quantitative.)* On some cluster a synchronous GRPO step measures: generate $= 45$ s, reward $= 2$ s, train $= 12$ s, weight sync $= 3$ s. (a) What fraction of the step is generation? (b) In a *disaggregated* layout (separate training pool), what fraction of the step are the training GPUs idle, if they are busy only during train + sync? (c) If you go fully async and overlap generation of step $k{+}1$ with the train+sync of step $k$, estimate the pipelined per-step wall-clock and the resulting speedup over the synchronous step.
+
+??? note "Solution"
+    Synchronous step time: $T = 45 + 2 + 12 + 3 = 62$ s.
+
+    (a) Generation fraction $= 45 / 62 = 0.726$, i.e. **~73%** of the step -- consistent with the chapter's "60-80%, generation is the budget."
+
+    (b) Training GPUs are busy for train + sync $= 12 + 3 = 15$ s and idle for generate + reward $= 45 + 2 = 47$ s. Idle fraction $= 47 / 62 = 0.758$, i.e. the expensive training pool sits **~76% idle** every step. That single number is the motivation for colocation and async RL.
+
+    (c) In a two-stage pipeline the per-step wall-clock approaches the *longer* of the two overlapping stages:
+    $$
+    T_{\text{async}} \approx \max\big(\underbrace{45 + 2}_{\text{generate+reward}},\ \underbrace{12 + 3}_{\text{train+sync}}\big) = \max(47, 15) = 47\text{ s}.
+    $$
+    Speedup $= 62 / 47 \approx \mathbf{1.32\times}$. Note the async floor is *generation* (47 s): once you hide training behind generation, the only way to go faster is to attack the generation phase itself -- again, generation is the budget.
+
+**4.** *(Conceptual.)* On a *fresh* batch, before any optimizer step, the importance ratio $r = \exp(\log\pi_\theta - \log\pi_{\theta_{\text{old}}})$ should equal exactly $1.0$ for every token. In a real disaggregated system it often does not -- it sits systematically at, say, $0.9$ or $1.1$. Explain the mechanism, why it biases the gradient, and give three ways to handle it.
+
+??? note "Solution"
+    **Mechanism.** $\pi_{\theta_{\text{old}}}$ (the denominator / behavior log-probs) is computed by the *rollout engine* -- vLLM or SGLang, possibly with FP8/INT8 weight-only quantization, fused kernels, and a different attention implementation. $\pi_\theta$ (the numerator) is recomputed by the *learner* in bf16 with different kernels. On fresh data the underlying weights are identical, but the two stacks evaluate the *same* tokens with *different numerics*, so their per-token log-probs differ slightly. The ratio therefore has a systematic offset even though no learning has happened -- ratios that should be $1.0$ instead cluster around $0.9$ or $1.1$.
+
+    **Why it biases the gradient.** The policy-gradient surrogate weights each token by $r \cdot A$. If $r$ is systematically off from $1.0$ due to a numerics gap rather than a genuine policy change, every token's contribution is mis-scaled, so the gradient is biased away from the true policy gradient. Because it looks numerically fine (no NaNs, loss is finite), the run "looks healthy but won't improve" -- the chapter calls this the single most common silent RL bug.
+
+    **Three fixes** (from the warning box):
+
+    1. **Recompute behavior log-probs in the trainer's numerics** -- discard vLLM's log-probs and take $\log\pi_{\theta_{\text{old}}}$ from a trainer forward pass, so numerator and denominator share numerics and $r = 1$ exactly at step 0. (The toy code does exactly this: it recomputes `old_lp` with `token_logprobs(policy, ...)`.)
+    2. **Explicit importance-sampling correction** between sampler and trainer (truncated importance sampling), i.e. carry a correction ratio for the sampler-vs-trainer distribution gap rather than assuming it is $1$.
+    3. **Monitor the sampler-vs-trainer log-prob gap** as a first-class health metric so a growing mismatch is caught before it silently corrupts a long run.
+
+**5.** *(Implementation.)* In GRPO a group of $G$ responses whose rewards are *all identical* (all solved, or all failed) produces a **zero advantage** for every token in the group, and therefore no learning signal -- pure wasted generation. Modify the chapter's `grpo_advantage` into a version that (a) still returns the per-response advantages, and (b) also returns the fraction of groups that were degenerate (zero reward variance), so you can log it as a health/curriculum metric. Show the code and explain, using the surrogate loss, why such groups contribute no gradient.
+
+??? note "Solution"
+    ```python
+    def grpo_advantage_monitored(rewards, group_size, var_eps=1e-8):
+        """Group-relative advantage plus a diagnostic: the fraction of groups
+        with no reward variance (all responses scored identically). Those groups
+        yield zero advantage -> zero gradient -> wasted rollout compute."""
+        g   = rewards.view(-1, group_size)
+        std = g.std(dim=1, keepdim=True)
+        adv = (g - g.mean(dim=1, keepdim=True)) / (std + 1e-4)   # same as chapter
+        degenerate = (std <= var_eps).float()                   # 1.0 per dead group
+        frac_degenerate = degenerate.mean().item()
+        return adv.reshape(-1), frac_degenerate
+    ```
+
+    Usage in the outer loop mirrors the chapter's `rl_iteration`:
+
+    ```python
+    advantage, frac_dead = grpo_advantage_monitored(rewards, G)
+    # ... learner epochs as before ...
+    print("frac_degenerate_groups", round(frac_dead, 3))
+    ```
+
+    **Why degenerate groups give no gradient.** GRPO's advantage for response $i$ in a group is
+    $$
+    A_i = \frac{r_i - \mathrm{mean}(r_{1..G})}{\mathrm{std}(r_{1..G}) + \epsilon}.
+    $$
+    If every reward in the group is identical, then $r_i = \mathrm{mean}(r_{1..G})$ for all $i$, so the numerator is exactly $0$ and $A_i = 0$ for every response in the group. In the learner the token loss is
+    $$
+    -\min\!\big(r_{i,t} A_i,\ \mathrm{clip}(r_{i,t}, 1-\epsilon, 1+\epsilon)\, A_i\big) + \beta\,\mathrm{KL},
+    $$
+    and with $A_i = 0$ the entire surrogate term vanishes for all those tokens; only the KL term (if any) survives, which pulls toward the reference rather than teaching the task. So every token generated for a degenerate group cost a full decode but produced no task-learning signal. A high `frac_degenerate` is an actionable curriculum signal: the prompts are too easy (all-solved) or too hard (all-failed) for the current policy, and the rollout budget is being wasted -- motivating harder/easier prompt selection or filtering those groups out of the learner batch to reclaim compute.
