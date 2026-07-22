@@ -353,9 +353,17 @@ def build_collection(coll):
         crumb = (f'<div class="chapter-eyebrow">{html.escape(c["part_title"])}</div>')
         reading = max(1, round(words / 220))     # ~220 wpm technical reading
         updated = git_last_date(c["md_path"])
+        nb_rel = f'{c["part_dir"]}/{c["file"]}.ipynb'
+        colab = ""
+        if os.path.exists(os.path.join(ROOT, "notebooks", nb_rel)):
+            colab = ('<span class="cm-dot">·</span>'
+                     f'<a class="cm-colab" target="_blank" rel="noopener" '
+                     f'href="https://colab.research.google.com/github/prakashkagitha/llm-stack-book/blob/main/notebooks/{nb_rel}">'
+                     '&#9654; Run the code (Colab)</a>')
         chapter_meta = (f'<div class="chapter-meta"><span>{reading} min read</span>'
                         f'<span class="cm-dot">·</span>'
-                        f'<span>Updated <time datetime="{updated}">{updated}</time></span></div>')
+                        f'<span>Updated <time datetime="{updated}">{updated}</time></span>'
+                        f'{colab}</div>')
         canonical = SITE_BASE + (f'{coll.out_subdir}/' if coll.out_subdir else "") + c["url"]
 
         prev_c = flat[idx - 1] if idx > 0 else None

@@ -10,7 +10,8 @@ A book-length, ground-up treatment of the entire large language model stack: fro
 
 - **134 chapters** across 14 parts (foundations → transformer → pretraining → kernels → post-training → RL infra → inference → agents → RAG → multimodal → evaluation → production → interpretability/safety → appendix)
 - **690 hand-built SVG figures and animations**, theme-aware and reduced-motion safe
-- **CI-tested code** — every runnable code block is assembled into `tests/` and executed on CPU in CI ([`test.yml`](.github/workflows/test.yml)); ~45 real bugs were caught and fixed this way
+- **CI-tested code** — every runnable code block is assembled into `tests/` and executed on CPU in CI ([`test.yml`](.github/workflows/test.yml)); ~50 real bugs were caught and fixed this way
+- **Runnable notebooks** — one **Colab-openable** notebook per chapter in [`notebooks/`](notebooks/README.md), built from the CI-verified code: read the chapter, run it in your browser
 - A companion **interview prep** track at [`/interview/`](https://prakashkagitha.github.io/llm-stack-book/interview/)
 
 ## Repository layout
