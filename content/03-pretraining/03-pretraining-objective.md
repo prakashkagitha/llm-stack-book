@@ -495,8 +495,12 @@ if __name__ == "__main__":
     print(f"Doc boundaries masked: {(mask_1d == 0).sum().item()} positions")
 
     # Batch of 2 sequences (in real training, batch of hundreds)
-    tokens_batch   = tokens_1d.unsqueeze(0).expand(2, -1).clone()   # (2, 64)
-    mask_batch     = mask_1d.unsqueeze(0).expand(2, -1).clone()     # (2, 64)
+    tokens_batch   = tokens_1d.unsqueeze(0).expand(2, -1).clone()      # (2, 64)
+    # mask_1d[t] flags whether the prediction of token t+1 (from doc[t]'s
+    # context) is valid; it has one entry per input position (63 of them),
+    # so the last entry (which has no "next token" in this array) is dropped
+    # to align with targets = tokens_batch[:, 1:] of length T=63.
+    mask_batch     = mask_1d[:-1].unsqueeze(0).expand(2, -1).clone()   # (2, 63)
 
     # tokens_batch has T+1=64 tokens; model sees first T=63, predicts last T=63
     model = TinyTransformerLM(vocab_size=VOCAB_SIZE, max_seq_len=CONTEXT)
