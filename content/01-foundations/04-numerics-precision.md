@@ -226,7 +226,7 @@ if __name__ == "__main__":
 
     print("\n=== fp32 stable softmax (large logits) ===")
     result_stable = stable_softmax(z_fp32)
-    print(f"  Result: {result_stable}")         # [0.2689, 0.7311, 0.0990] — correct
+    print(f"  Result: {result_stable}")         # [0.2447, 0.6652, 0.0900] — correct
 
     # Show fp16 overflow with much smaller values
     print("\n=== fp16 naive softmax (overflow at ~88) ===")
@@ -253,17 +253,17 @@ if __name__ == "__main__":
   Result: tensor([nan, nan, nan])
 
 === fp32 stable softmax (large logits) ===
-  Result: tensor([0.268941, 0.731059, 0.098946])
+  Result: tensor([0.244728, 0.665241, 0.090031])
 
 === fp16 naive softmax (overflow at ~88) ===
   Result: tensor([nan, nan, nan], dtype=torch.float16)
 
 === fp16 stable softmax ===
-  Result: tensor([0.2690, 0.7310, 0.0989], dtype=torch.float16)
+  Result: tensor([0.244751, 0.665527, 0.090088], dtype=torch.float16)
 
 === logsumexp verification ===
-  stable_logsumexp: 3.408082
-  torch reference:  3.408082
+  stable_logsumexp: 3.407606
+  torch reference:  3.407606
   match: True
 ```
 
@@ -518,11 +518,11 @@ bf16     3.3895e+38       1.1755e-38       7.8125e-03
 Value        fp16 result    bf16 result    fp32 result
 --------------------------------------------------------
 1.00e+03     1.0000e+03     1.0000e+03     1.0000e+03
-1.00e+04     1.0000e+04     1.0016e+04     1.0000e+04
-6.50e+04     6.5024e+04     6.5536e+04     6.5000e+04
-6.55e+04     inf            6.5536e+04     6.5500e+04
-1.00e+05     inf            1.0240e+05     1.0000e+05
-1.00e+38     inf            1.0182e+38     1.0000e+38
+1.00e+04     1.0000e+04     9.9840e+03     1.0000e+04
+6.50e+04     6.4992e+04     6.5024e+04     6.5000e+04
+6.55e+04     6.5504e+04     6.5536e+04     6.5500e+04
+1.00e+05     inf            9.9840e+04     1.0000e+05
+1.00e+38     inf            9.9692e+37     1.0000e+38
 
 Loss scaling demo:
   True gradient:      1.00e-08  (underflows fp16)
