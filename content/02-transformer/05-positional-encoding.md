@@ -158,6 +158,8 @@ The position dependence collapsed to a single factor $e^{i(m-n)\theta}$ — **it
 
 ### Lifting to $d$ dimensions
 
+{{tool:rope-visualizer}}
+
 A head dimension $d$ is much larger than 2, so RoPE **partitions the $d$-dimensional vector into $d/2$ consecutive pairs and rotates each pair by its own frequency.** Pair $k$ (dimensions $2k, 2k+1$) gets angular frequency
 
 $$

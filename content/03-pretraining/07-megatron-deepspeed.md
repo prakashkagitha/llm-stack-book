@@ -277,6 +277,8 @@ at the cost of additional pipeline communication per micro-batch.
 
 ### Step 4 — Set DP from what remains
 
+{{tool:parallelism-memory-planner}}
+
 $$
 \text{DP} = \frac{N_{\text{total GPUs}}}{\text{TP} \times \text{PP}}
 $$

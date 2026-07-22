@@ -153,6 +153,8 @@ class TopKProcessor:
 
 ## Top-p / Nucleus Sampling
 
+
+{{tool:sampling-explorer}}
 Holtzman et al. ("The Curious Case of Neural Text Degeneration", 2020) introduced *nucleus sampling*: sample from the smallest set of tokens whose cumulative probability exceeds $p$.
 
 $$

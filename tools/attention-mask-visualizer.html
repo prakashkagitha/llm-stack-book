@@ -1,0 +1,161 @@
+<div class="viz-tool" id="tool-attention-mask-visualizer">
+  <div class="vt-title">Attention mask visualizer</div>
+  <div class="vt-grid">
+    <label>Sequence length N (<span id="amv-Nval">8</span>)
+      <input id="amv-N" type="range" min="1" max="24" step="1" value="8">
+    </label>
+    <label>Mask type
+      <select id="amv-type">
+        <option value="causal" selected>Causal</option>
+        <option value="sliding">Sliding-window</option>
+        <option value="prefix">Prefix-LM</option>
+        <option value="bidir">Bidirectional</option>
+      </select>
+    </label>
+    <label id="amv-Wlabel" style="display:none">Window W (<span id="amv-Wval">3</span>)
+      <input id="amv-W" type="range" min="1" max="23" step="1" value="3" disabled>
+    </label>
+    <label id="amv-Plabel" style="display:none">Prefix length P (<span id="amv-Pval">3</span>)
+      <input id="amv-P" type="range" min="1" max="24" step="1" value="3" disabled>
+    </label>
+  </div>
+  <div id="amv-wrap" class="amv-wrap">
+    <svg id="amv-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <div class="amv-legend">
+    <span class="amv-sw amv-sw-on"></span> allowed
+    <span class="amv-sw amv-sw-off"></span> masked
+  </div>
+  <div class="vt-out" id="amv-out"></div>
+  <div class="vt-note" id="amv-note"></div>
+  <style>
+    #tool-attention-mask-visualizer{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-attention-mask-visualizer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-attention-mask-visualizer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-attention-mask-visualizer label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-attention-mask-visualizer input, #tool-attention-mask-visualizer select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-attention-mask-visualizer input[type=range]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-attention-mask-visualizer input[disabled]{ opacity:.45; }
+    #tool-attention-mask-visualizer .amv-wrap{ margin-top:16px; overflow-x:auto; }
+    #tool-attention-mask-visualizer svg{ display:block; }
+    #tool-attention-mask-visualizer .amv-cell.on{ fill:var(--accent,#c15b39); }
+    #tool-attention-mask-visualizer .amv-cell.off{ fill:var(--accent,#c15b39); fill-opacity:.12; }
+    #tool-attention-mask-visualizer .amv-cell{ stroke:var(--surface,#fff); stroke-width:1; }
+    #tool-attention-mask-visualizer .amv-lab{ font-size:9.5px; fill:var(--muted,#6d675d); font-family:inherit; }
+    #tool-attention-mask-visualizer .amv-axtitle{ font-size:10.5px; font-weight:600; fill:var(--muted,#6d675d); font-family:inherit; }
+    #tool-attention-mask-visualizer .amv-legend{ margin-top:10px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:.78rem; color:var(--muted,#6d675d); }
+    #tool-attention-mask-visualizer .amv-sw{ display:inline-block; width:12px; height:12px; border-radius:3px; margin-left:12px; }
+    #tool-attention-mask-visualizer .amv-sw:first-of-type{ margin-left:0; }
+    #tool-attention-mask-visualizer .amv-sw-on{ background:var(--accent,#c15b39); }
+    #tool-attention-mask-visualizer .amv-sw-off{ background:var(--accent,#c15b39); opacity:.12; }
+    #tool-attention-mask-visualizer .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-attention-mask-visualizer .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
+    #tool-attention-mask-visualizer .vt-stat .n{ font-size:1.28rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-attention-mask-visualizer .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-attention-mask-visualizer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-attention-mask-visualizer');
+    var N_in=root.querySelector('#amv-N'), Nval=root.querySelector('#amv-Nval');
+    var type_in=root.querySelector('#amv-type');
+    var W_in=root.querySelector('#amv-W'), Wval=root.querySelector('#amv-Wval'), Wlabel=root.querySelector('#amv-Wlabel');
+    var P_in=root.querySelector('#amv-P'), Pval=root.querySelector('#amv-Pval'), Plabel=root.querySelector('#amv-Plabel');
+    var wrap=root.querySelector('#amv-wrap');
+    var svg=root.querySelector('#amv-svg');
+    var out=root.querySelector('#amv-out');
+    var note=root.querySelector('#amv-note');
+
+    function allowed(i,j,type,N,W,P){
+      if(type==='causal')  return j<=i;
+      if(type==='sliding') return j<=i && j>=i-W;
+      if(type==='prefix')  return j<=i || (i<P && j<P);
+      return true; // bidirectional
+    }
+
+    function labelIdx(N){
+      if(N<=12){ var a=[]; for(var k=0;k<N;k++)a.push(k); return a; }
+      var mid=Math.floor((N-1)/2);
+      var s=[0,mid,N-1];
+      return s.filter(function(v,i){return s.indexOf(v)===i;}).sort(function(a,b){return a-b;});
+    }
+
+    function upd(){
+      var N=parseInt(N_in.value,10);
+      Nval.textContent=N;
+      var type=type_in.value;
+
+      // clamp P to current N
+      P_in.max=N;
+      var pv=parseInt(P_in.value,10);
+      if(pv>N) pv=N;
+      if(pv<1) pv=1;
+      P_in.value=pv;
+
+      var W=parseInt(W_in.value,10);
+      var P=pv;
+      Wval.textContent=W;
+      Pval.textContent=P;
+
+      var isSliding=(type==='sliding'), isPrefix=(type==='prefix');
+      Wlabel.style.display = isSliding ? 'flex' : 'none';
+      Plabel.style.display = isPrefix ? 'flex' : 'none';
+      W_in.disabled = !isSliding;
+      P_in.disabled = !isPrefix;
+
+      // --- layout ---
+      var marginLeft=34, topLabelH=14, colIdxH=16, marginTop=topLabelH+colIdxH, pad=8;
+      var maxCanvas=480;
+      var availW=(wrap.clientWidth||maxCanvas);
+      var budget=Math.min(availW,maxCanvas)-marginLeft-pad;
+      var cellSize=Math.max(14, Math.floor(budget/N));
+      var gridW=cellSize*N, gridH=cellSize*N;
+      var svgW=marginLeft+gridW+pad, svgH=marginTop+gridH+pad;
+
+      var allowedCount=0;
+      var parts=[];
+      for(var i=0;i<N;i++){
+        for(var j=0;j<N;j++){
+          var a=allowed(i,j,type,N,W,P);
+          if(a) allowedCount++;
+          var x=marginLeft+j*cellSize, y=marginTop+i*cellSize;
+          parts.push('<rect class="amv-cell '+(a?'on':'off')+'" x="'+(x+0.5)+'" y="'+(y+0.5)+'" width="'+(cellSize-1)+'" height="'+(cellSize-1)+'" rx="1"></rect>');
+        }
+      }
+      var total=N*N, masked=total-allowedCount;
+
+      var idxs=labelIdx(N);
+      idxs.forEach(function(j){
+        var x=marginLeft+j*cellSize+cellSize/2;
+        parts.push('<text class="amv-lab" x="'+x+'" y="'+(marginTop-4)+'" text-anchor="middle">'+j+'</text>');
+      });
+      idxs.forEach(function(i){
+        var y=marginTop+i*cellSize+cellSize/2+3;
+        parts.push('<text class="amv-lab" x="'+(marginLeft-4)+'" y="'+y+'" text-anchor="end">'+i+'</text>');
+      });
+      parts.push('<text class="amv-axtitle" x="'+marginLeft+'" y="11" text-anchor="start">key j &#8594;</text>');
+      var cx=7, cy=marginTop+gridH/2;
+      parts.push('<text class="amv-axtitle" x="'+cx+'" y="'+cy+'" text-anchor="middle" transform="rotate(-90 '+cx+' '+cy+')">query i &#8594;</text>');
+
+      svg.setAttribute('width', svgW);
+      svg.setAttribute('height', svgH);
+      svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
+      svg.innerHTML=parts.join('');
+
+      var desc={
+        causal:'Each query attends to itself and all earlier keys (j &le; i).',
+        sliding:'Each query attends to itself and the previous W keys (a band of width W+1).',
+        prefix:'Prefix tokens 0..P&minus;1 attend bidirectionally to the whole prefix; positions P..N&minus;1 are ordinary causal.',
+        bidir:'Every query attends to every key &mdash; no masking.'
+      }[type];
+
+      out.innerHTML =
+        '<div class="vt-stat"><div class="n">'+allowedCount+' / '+total+'</div><div class="l">Allowed cells</div></div>'+
+        '<div class="vt-stat"><div class="n">'+masked+'</div><div class="l">Masked cells (score &minus;&infin; before softmax)</div></div>';
+      note.innerHTML=desc;
+    }
+
+    root.querySelectorAll('input,select').forEach(function(e){ e.addEventListener('input',upd); });
+    window.addEventListener('resize', upd);
+    upd();
+  })();</script>
+</div>

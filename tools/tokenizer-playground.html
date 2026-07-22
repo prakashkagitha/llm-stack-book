@@ -1,0 +1,62 @@
+<div class="viz-tool" id="tool-tokenizer-playground">
+  <div class="vt-title">Tokenizer playground (heuristic estimate)</div>
+  <label class="vt-ta-label">Paste or type text
+    <textarea id="tp-text" class="vt-ta" rows="5" spellcheck="false">Tokenization turns text into integers. caf&eacute; &#129302; 12345</textarea>
+  </label>
+  <div class="vt-hint">Counts update live as you type.</div>
+  <div class="vt-out" id="tp-out"></div>
+  <div class="vt-breakdown" id="tp-breakdown"></div>
+  <div class="vt-note"><b>This is a rough heuristic estimate</b> using fixed ~4-chars-per-token / ~0.75-words-per-token ratios &mdash; <b>not</b> a real BPE tokenizer. Actual token counts depend on the specific tokenizer (gpt2, cl100k_base, o200k_base, Llama-3, &hellip;) and differ, especially for code, digits, and non-English text. Always count with the model's own tokenizer for real budgeting.</div>
+  <style>
+    #tool-tokenizer-playground{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-tokenizer-playground .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-tokenizer-playground .vt-ta-label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-tokenizer-playground .vt-ta{ width:100%; min-height:6.5em; resize:vertical; font:inherit; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.88rem; line-height:1.5; padding:10px 12px; border:1px solid var(--border-2,#94a3b8); border-radius:9px; background:var(--surface,#fff); color:var(--ink,#211f1b); box-sizing:border-box; }
+    #tool-tokenizer-playground .vt-ta:focus{ outline:2px solid var(--accent,#c15b39); outline-offset:1px; }
+    #tool-tokenizer-playground .vt-hint{ margin-top:6px; font-size:.74rem; color:var(--muted,#6d675d); }
+    #tool-tokenizer-playground .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
+    #tool-tokenizer-playground .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
+    #tool-tokenizer-playground .vt-stat .n{ font-size:1.28rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-tokenizer-playground .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-tokenizer-playground .vt-breakdown{ margin-top:12px; font-size:.8rem; color:var(--muted,#6d675d); line-height:1.5; }
+    #tool-tokenizer-playground .vt-breakdown b{ color:var(--ink,#211f1b); }
+    #tool-tokenizer-playground .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; font-style:italic; border-left:3px solid var(--border-2,#94a3b8); padding:8px 12px; background:var(--surface-3,#f0ece3); border-radius:0 7px 7px 0; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-tokenizer-playground');
+    var ta=root.querySelector('#tp-text');
+    function upd(){
+      var text=ta.value;
+      // 1. Character count = Unicode code points (NOT UTF-16 .length, so emoji count as 1)
+      var C=[...text].length;
+      // 2. UTF-8 byte count
+      var B=new TextEncoder().encode(text).length;
+      // 3. Word count = whitespace-delimited tokens
+      var trimmed=text.trim();
+      var W=trimmed==="" ? 0 : trimmed.split(/\s+/).length;
+      // 4. APPROXIMATE token count via the two heuristics from the chapter.
+      var estFromChars=C/4;          // ~4 chars per token
+      var estFromWords=W/0.75;       // ~0.75 words per token == W * 1.3333...
+      var estTokens = C===0 ? 0 : Math.round((estFromChars+estFromWords)/2);
+      // 5. Chars-per-token ratio (guard divide-by-zero)
+      var charsPerToken = estTokens>0 ? (C/estTokens) : 0;
+
+      var out=[
+        [C, 'Characters', 'Unicode code points'],
+        [B, 'Bytes (UTF-8)', 'UTF-8 bytes'],
+        [W, 'Words', 'whitespace-split'],
+        [estTokens, '~Tokens (est.)', '&asymp; estimate, not real BPE'],
+        [charsPerToken.toFixed(2), 'Chars / token', 'C &divide; est. tokens']
+      ];
+      root.querySelector('#tp-out').innerHTML=out.map(function(o){
+        return '<div class="vt-stat"><div class="n">'+o[0]+'</div><div class="l">'+o[1]+' &mdash; '+o[2]+'</div></div>';
+      }).join('');
+
+      root.querySelector('#tp-breakdown').innerHTML=
+        'Estimate = mean of two rules of thumb:&nbsp; ~4 chars/token &rarr; <b>'+Math.round(estFromChars)+'</b>'+
+        '&nbsp;&middot;&nbsp; ~0.75 words/token &rarr; <b>'+Math.round(estFromWords)+'</b>';
+    }
+    ta.addEventListener('input',upd);
+    upd();
+  })();</script>
+</div>

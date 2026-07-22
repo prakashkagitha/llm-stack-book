@@ -8,6 +8,8 @@ This chapter builds tokenization from first principles. We start with *why* subw
 
 ## Why Subwords? The Granularity Problem
 
+{{tool:tokenizer-playground}}
+
 Imagine you must choose the atomic unit of text. There are three obvious candidates, and two of them are traps.
 
 **Words.** Split on whitespace and punctuation, assign each distinct word an integer. This is how classic Natural Language Processing (NLP) worked. It fails badly for modern LLMs:

@@ -1,0 +1,138 @@
+<div class="viz-tool" id="tool-sampling-explorer">
+  <div class="vt-title">Sampling explorer: temperature, top-k, top-p</div>
+  <div class="vt-hint">Adjust the knobs to see how temperature reshapes the distribution and top-k / top-p truncate the tail.</div>
+  <div class="vt-grid vt-controls">
+    <label>Temperature <span class="vt-val" id="se-Tval">T = 1.00</span>
+      <input id="se-T" type="range" min="0.1" max="2.0" step="0.05" value="1.0">
+    </label>
+    <label>Top-k <span class="vt-val" id="se-kval">top-k = 0 (off)</span>
+      <input id="se-k" type="range" min="0" max="10" step="1" value="0">
+    </label>
+    <label>Top-p <span class="vt-val" id="se-pval">top-p = 1.00 (off)</span>
+      <input id="se-p" type="range" min="0" max="1" step="0.01" value="1.0">
+    </label>
+  </div>
+  <div class="vt-actions"><button class="vt-reset" id="se-reset" type="button">Reset</button></div>
+  <div class="vt-bars" id="se-bars"></div>
+  <div class="vt-note" id="se-caption"></div>
+  <style>
+    #tool-sampling-explorer{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-sampling-explorer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-sampling-explorer .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.5; }
+    #tool-sampling-explorer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-sampling-explorer label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-sampling-explorer .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-sampling-explorer input[type="range"]{ width:100%; accent-color:var(--accent,#c15b39); }
+    #tool-sampling-explorer .vt-actions{ margin-top:12px; }
+    #tool-sampling-explorer .vt-reset{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-sampling-explorer .vt-reset:hover{ background:var(--surface-3,#f0ece3); }
+    #tool-sampling-explorer .vt-bars{ margin-top:16px; display:flex; flex-direction:column; gap:6px; }
+    #tool-sampling-explorer .vt-bar-row{ display:grid; grid-template-columns:64px 1fr 56px; align-items:center; gap:10px; font-size:.82rem; }
+    #tool-sampling-explorer .vt-bar-label{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--ink,#211f1b); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #tool-sampling-explorer .vt-bar-track{ position:relative; height:14px; border-radius:5px; background:var(--surface-3,#f0ece3); overflow:hidden; }
+    #tool-sampling-explorer .vt-bar-fill{ position:absolute; top:0; left:0; height:100%; border-radius:5px; background:var(--accent,#c15b39); opacity:.72; transition:width .15s ease-out; }
+    #tool-sampling-explorer .vt-bar-pct{ text-align:right; font-variant-numeric:tabular-nums; color:var(--ink,#211f1b); }
+    #tool-sampling-explorer .vt-bar-row.is-cut{ opacity:.4; }
+    #tool-sampling-explorer .vt-bar-row.is-cut .vt-bar-label{ text-decoration:line-through; }
+    #tool-sampling-explorer .vt-bar-row.is-cut .vt-bar-fill{ background:var(--muted,#6d675d); opacity:.5; }
+    #tool-sampling-explorer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-sampling-explorer');
+    var tokens=["mat","floor","couch","rug","bed","sofa","table","chair","ground","roof"];
+    var logits=[5.2,3.8,3.1,2.5,2.0,1.2,0.5,-0.3,-1.0,-2.2];
+    var n=tokens.length;
+
+    var Tin=root.querySelector('#se-T'), kin=root.querySelector('#se-k'), pin=root.querySelector('#se-p');
+    var Tval=root.querySelector('#se-Tval'), kval=root.querySelector('#se-kval'), pval=root.querySelector('#se-pval');
+    var barsEl=root.querySelector('#se-bars'), capEl=root.querySelector('#se-caption');
+    var resetBtn=root.querySelector('#se-reset');
+
+    // build fixed bar rows once
+    var rowEls=tokens.map(function(tok){
+      var row=document.createElement('div'); row.className='vt-bar-row';
+      var lbl=document.createElement('div'); lbl.className='vt-bar-label'; lbl.textContent=tok;
+      var track=document.createElement('div'); track.className='vt-bar-track';
+      var fill=document.createElement('div'); fill.className='vt-bar-fill'; fill.style.width='0%';
+      track.appendChild(fill);
+      var pct=document.createElement('div'); pct.className='vt-bar-pct'; pct.textContent='0.0%';
+      row.appendChild(lbl); row.appendChild(track); row.appendChild(pct);
+      barsEl.appendChild(row);
+      return {row:row,fill:fill,pct:pct};
+    });
+
+    function compute(T,k,p){
+      // Step 1: temperature-scaled softmax over all 10
+      var s=logits.map(function(z){return z/T;});
+      var m=Math.max.apply(null,s);
+      var e=s.map(function(x){return Math.exp(x-m);});
+      var Z=e.reduce(function(a,b){return a+b;},0);
+      var probs=e.map(function(x){return x/Z;});
+
+      // Step 2: top-k filter. Tokens are already in descending-logit order,
+      // and dividing by T>0 preserves that order, so the first k indices are the top-k.
+      var keffective=(k>0 && k<n)?k:n;
+      var keptByK=[];
+      for(var i=0;i<keffective;i++) keptByK.push(i);
+
+      // Step 3: top-p / nucleus filter over survivors (already sorted descending)
+      var sumA=0;
+      for(i=0;i<keptByK.length;i++) sumA+=probs[keptByK[i]];
+      var pThresh=p;
+      var keptFinal=[];
+      var C=0;
+      for(i=0;i<keptByK.length;i++){
+        var idx=keptByK[i];
+        if(C>pThresh && keptFinal.length>=1) break;
+        keptFinal.push(idx);
+        C+=probs[idx]/sumA;
+      }
+
+      // Step 4: renormalize over kept_final using original probs
+      var sumFinal=0;
+      for(i=0;i<keptFinal.length;i++) sumFinal+=probs[keptFinal[i]];
+      var final=new Array(n).fill(0);
+      for(i=0;i<keptFinal.length;i++){
+        final[keptFinal[i]]=probs[keptFinal[i]]/sumFinal;
+      }
+      return {final:final,keptFinal:keptFinal};
+    }
+
+    function upd(){
+      var T=parseFloat(Tin.value), k=parseInt(kin.value,10), p=parseFloat(pin.value);
+
+      Tval.textContent='T = '+T.toFixed(2);
+      kval.textContent=(k===0||k>=n)?('top-k = '+k+' (off)'):('top-k = '+k);
+      pval.textContent=(p>=1.0)?('top-p = '+p.toFixed(2)+' (off)'):('top-p = '+p.toFixed(2));
+
+      var res=compute(T,k,p);
+      var final=res.final, keptFinal=res.keptFinal;
+
+      for(var i=0;i<n;i++){
+        var pct=final[i]*100;
+        rowEls[i].fill.style.width=pct+'%';
+        if(final[i]>0){
+          rowEls[i].row.classList.remove('is-cut');
+          rowEls[i].pct.textContent=pct.toFixed(1)+'%';
+        } else {
+          rowEls[i].row.classList.add('is-cut');
+          rowEls[i].pct.textContent='0.0%';
+        }
+      }
+
+      var H=0;
+      for(i=0;i<keptFinal.length;i++){
+        var q=final[keptFinal[i]];
+        if(q>0) H+=-q*Math.log(q);
+      }
+      capEl.textContent='Keeping '+keptFinal.length+' of '+n+' tokens. Entropy H = '+H.toFixed(2)+' nats.';
+    }
+
+    root.querySelectorAll('input').forEach(function(el){ el.addEventListener('input',upd); });
+    resetBtn.addEventListener('click',function(){
+      Tin.value='1.0'; kin.value='0'; pin.value='1.0'; upd();
+    });
+
+    upd();
+  })();</script>
+</div>

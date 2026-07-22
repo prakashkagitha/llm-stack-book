@@ -1,0 +1,164 @@
+<div class="viz-tool" id="tool-param-flop-counter">
+  <div class="vt-title">Parameter &amp; FLOP counter</div>
+  <div class="vt-grid">
+    <label>Layers L
+      <input id="pfc-L" type="number" value="32" step="1" min="1">
+    </label>
+    <label>Hidden size d_model
+      <input id="pfc-d" type="number" value="4096" step="1" min="1">
+    </label>
+    <label>Heads n_heads <span class="pfc-hd" id="pfc-hd"></span>
+      <input id="pfc-h" type="number" value="32" step="1" min="1">
+    </label>
+    <label>Vocab size V
+      <input id="pfc-V" type="number" value="32000" step="1000" min="1">
+    </label>
+    <label>Seq len s <span class="pfc-sval" id="pfc-sval"></span>
+      <input id="pfc-s" type="range" value="4096" step="128" min="128" max="32768">
+    </label>
+    <label>Batch B
+      <input id="pfc-B" type="number" value="1" step="1" min="1">
+    </label>
+  </div>
+  <div id="pfc-headwarn" class="pfc-warn" style="display:none;">d_model is not divisible by n_heads &mdash; head_dim is not an integer.</div>
+
+  <div class="vt-out" id="pfc-hero"></div>
+
+  <div class="pfc-cols">
+    <div class="pfc-block">
+      <div class="pfc-h">Parameter breakdown</div>
+      <div class="pfc-bar" id="pfc-bar"></div>
+      <table class="pfc-table" id="pfc-table"></table>
+    </div>
+    <div class="pfc-block">
+      <div class="pfc-h">FLOPs per token</div>
+      <table class="pfc-table" id="pfc-flops"></table>
+      <div class="pfc-callout" id="pfc-callout"></div>
+    </div>
+  </div>
+
+  <div class="vt-note">Approximate: weight matrices only (ignores biases, LayerNorm, tied vs. untied LM head). 1 MAC = 2 FLOPs. FFN assumed d_ff = 4d (vanilla); gated SwiGLU adds ~50% to MLP. Matches the chapter's 24d&sup2; + 4sd per-token-per-layer accounting.</div>
+
+  <style>
+    #tool-param-flop-counter{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-param-flop-counter .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-param-flop-counter .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-param-flop-counter label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-param-flop-counter input, #tool-param-flop-counter select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-param-flop-counter input[type="range"]{ padding:0; height:30px; }
+    #tool-param-flop-counter .pfc-hd, #tool-param-flop-counter .pfc-sval{ float:right; font-weight:600; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-param-flop-counter .pfc-warn{ margin-top:10px; font-size:.8rem; font-weight:600; color:#c0392b; }
+    #tool-param-flop-counter .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
+    #tool-param-flop-counter .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
+    #tool-param-flop-counter .vt-stat .n{ font-size:1.5rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-param-flop-counter .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-param-flop-counter .vt-stat .sub{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:4px; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    #tool-param-flop-counter .pfc-cols{ display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:20px; }
+    @media (max-width:640px){ #tool-param-flop-counter .pfc-cols{ grid-template-columns:1fr; } }
+    #tool-param-flop-counter .pfc-h{ font-weight:700; font-size:.85rem; color:var(--ink,#211f1b); margin-bottom:10px; }
+    #tool-param-flop-counter .pfc-bar{ display:flex; width:100%; height:20px; border-radius:6px; overflow:hidden; margin-bottom:10px; border:1px solid var(--border-2,#94a3b8); }
+    #tool-param-flop-counter .pfc-bar span{ height:100%; transition:width .15s ease; }
+    #tool-param-flop-counter .pfc-table{ width:100%; border-collapse:collapse; font-size:.82rem; font-variant-numeric:tabular-nums; }
+    #tool-param-flop-counter .pfc-table td{ padding:5px 4px; border-bottom:1px solid var(--border-2,#94a3b8); color:var(--ink,#211f1b); }
+    #tool-param-flop-counter .pfc-table tr:last-child td{ border-bottom:none; font-weight:700; }
+    #tool-param-flop-counter .pfc-table td.pfc-lab{ color:var(--muted,#6d675d); font-weight:400; }
+    #tool-param-flop-counter .pfc-table td.pfc-num{ text-align:right; }
+    #tool-param-flop-counter .pfc-table td.pfc-pct{ text-align:right; width:3.4em; color:var(--muted,#6d675d); }
+    #tool-param-flop-counter .pfc-swatch{ display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; }
+    #tool-param-flop-counter .pfc-callout{ margin-top:14px; padding:11px 13px; border-radius:9px; background:var(--surface-3,#f0ece3); font-size:.82rem; line-height:1.55; color:var(--ink,#211f1b); }
+    #tool-param-flop-counter .pfc-callout b{ color:var(--accent,#c15b39); }
+    #tool-param-flop-counter .pfc-badge{ display:inline-block; margin-top:8px; padding:3px 9px; border-radius:999px; background:var(--accent,#c15b39); color:#fff; font-size:.72rem; font-weight:700; }
+    #tool-param-flop-counter .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+  </style>
+
+  <script>(function(){
+    var root=document.getElementById('tool-param-flop-counter');
+    var COL_ATTN='#5b8def', COL_MLP='#c15b39', COL_EMBED='#8a8fa3';
+
+    function v(id){return parseFloat(root.querySelector('#'+id).value)||0;}
+
+    function fmtParams(p){
+      if(p>=1e9) return (p/1e9).toFixed(2)+'B';
+      if(p>=1e6) return (p/1e6).toFixed(2)+'M';
+      return (p/1e3).toFixed(1)+'K';
+    }
+    function fmtFlops(f){
+      if(f>=1e15) return (f/1e15).toFixed(2)+' PFLOP';
+      if(f>=1e12) return (f/1e12).toFixed(2)+' TFLOP';
+      if(f>=1e9)  return (f/1e9).toFixed(2)+' GFLOP';
+      return (f/1e6).toFixed(2)+' MFLOP';
+    }
+    function pct(x){ return x.toFixed(1)+'%'; }
+
+    function upd(){
+      var L=v('pfc-L'), d=v('pfc-d'), h=v('pfc-h'), V=v('pfc-V'), s=v('pfc-s'), B=v('pfc-B');
+
+      root.querySelector('#pfc-sval').textContent = s.toLocaleString();
+
+      var headOk = h>0 && (d % h === 0);
+      var headDim = h>0 ? d/h : 0;
+      root.querySelector('#pfc-hd').textContent = headOk ? ('head_dim = '+headDim) : '';
+      root.querySelector('#pfc-headwarn').style.display = headOk ? 'none' : 'block';
+
+      // params
+      var attnParams = L*4*d*d;
+      var mlpParams  = L*8*d*d;
+      var nonembedParams = attnParams + mlpParams; // = 12*L*d^2
+      var embedParams = V*d;
+      var N = nonembedParams + embedParams;
+
+      var pctAttn = N>0 ? 100*attnParams/N : 0;
+      var pctMlp  = N>0 ? 100*mlpParams/N  : 0;
+      var pctEmbed= N>0 ? 100*embedParams/N: 0;
+
+      // flops per token
+      var fwdFlopsPerToken = 2*N + 4*L*s*d;
+      var trainFlopsPerToken = 6*N + 12*L*s*d;
+      var attnTermTrain = 12*L*s*d;
+      var pctAttnOfTrain = trainFlopsPerToken>0 ? 100*attnTermTrain/trainFlopsPerToken : 0;
+      var sixNOnly = 6*N;
+
+      // per-step
+      var tokensPerStep = B*s;
+      var trainFlopsPerStep = trainFlopsPerToken*tokensPerStep;
+
+      // hero
+      root.querySelector('#pfc-hero').innerHTML =
+        '<div class="vt-stat"><div class="n">'+fmtParams(N)+'</div><div class="l">Total parameters N</div><div class="sub">= 12&middot;L&middot;d&sup2; + V&middot;d</div></div>'+
+        '<div class="vt-stat"><div class="n">'+fmtFlops(trainFlopsPerStep)+'</div><div class="l">Training FLOPs / step (fwd+bwd)</div><div class="sub">= (6N + 12&middot;L&middot;s&middot;d) &times; B&middot;s</div></div>';
+
+      // param bar
+      root.querySelector('#pfc-bar').innerHTML =
+        '<span style="width:'+pctAttn+'%;background:'+COL_ATTN+'"></span>'+
+        '<span style="width:'+pctMlp+'%;background:'+COL_MLP+'"></span>'+
+        '<span style="width:'+pctEmbed+'%;background:'+COL_EMBED+'"></span>';
+
+      // param table
+      root.querySelector('#pfc-table').innerHTML =
+        '<tr><td class="pfc-lab"><span class="pfc-swatch" style="background:'+COL_ATTN+'"></span>Attention (4d&sup2;/block)</td><td class="pfc-num">'+fmtParams(attnParams)+'</td><td class="pfc-pct">'+pct(pctAttn)+'</td></tr>'+
+        '<tr><td class="pfc-lab"><span class="pfc-swatch" style="background:'+COL_MLP+'"></span>MLP (8d&sup2;/block)</td><td class="pfc-num">'+fmtParams(mlpParams)+'</td><td class="pfc-pct">'+pct(pctMlp)+'</td></tr>'+
+        '<tr><td class="pfc-lab"><span class="pfc-swatch" style="background:'+COL_EMBED+'"></span>Embedding (V&middot;d)</td><td class="pfc-num">'+fmtParams(embedParams)+'</td><td class="pfc-pct">'+pct(pctEmbed)+'</td></tr>'+
+        '<tr><td class="pfc-lab">Total N</td><td class="pfc-num">'+fmtParams(N)+'</td><td class="pfc-pct">100%</td></tr>';
+
+      // flops table
+      root.querySelector('#pfc-flops').innerHTML =
+        '<tr><td class="pfc-lab">Forward FLOPs/token</td><td class="pfc-num">'+fmtFlops(fwdFlopsPerToken)+'</td><td class="pfc-pct" style="font-family:ui-monospace,Menlo,Consolas,monospace;">2N+4Lsd</td></tr>'+
+        '<tr><td class="pfc-lab">Training FLOPs/token</td><td class="pfc-num">'+fmtFlops(trainFlopsPerToken)+'</td><td class="pfc-pct" style="font-family:ui-monospace,Menlo,Consolas,monospace;">6N+12Lsd</td></tr>'+
+        '<tr><td class="pfc-lab">6N (params only)</td><td class="pfc-num">'+fmtFlops(sixNOnly)+'</td><td class="pfc-pct" style="font-family:ui-monospace,Menlo,Consolas,monospace;">6N</td></tr>';
+
+      // callout
+      var dominates = s >= 6*d;
+      var callout =
+        'Attention scores = <b>'+pct(pctAttnOfTrain)+'</b> of training FLOPs at s = '+s.toLocaleString()+'.<br>'+
+        'Attention FLOP term = 12&middot;L&middot;s&middot;d = <b>'+fmtFlops(attnTermTrain)+'</b>, grows linearly per token with context.<br>'+
+        'Doubling seq_len roughly doubles this term, while the 6N part stays fixed &mdash; so at long context, attention overtakes the d&sup2; terms (crossover near s &asymp; 6d, here 6d = '+(6*d).toLocaleString()+').';
+      if(dominates){
+        callout += '<br><span class="pfc-badge">Attention now dominates the FLOP budget (s &ge; 6d)</span>';
+      }
+      root.querySelector('#pfc-callout').innerHTML = callout;
+    }
+
+    root.querySelectorAll('input,select').forEach(function(e){e.addEventListener('input',upd);});
+    upd();
+  })();</script>
+</div>

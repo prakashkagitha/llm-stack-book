@@ -1,0 +1,163 @@
+<div class="viz-tool" id="tool-parallelism-memory-planner">
+  <div class="vt-title">Parallelism &amp; memory planner (ZeRO-3 / FSDP)</div>
+  <div class="vt-cols">
+    <div class="vt-col-left">
+      <div class="vt-grid">
+        <label>Parameters N (billions)
+          <input id="pmp-N" type="number" value="70" min="0.1" step="1">
+        </label>
+        <label>Total GPUs
+          <input id="pmp-G" type="number" value="512" min="1" step="1">
+        </label>
+        <label>GPU memory each (GB)
+          <input id="pmp-M" type="number" value="80" step="1">
+        </label>
+        <label>TP degree
+          <input id="pmp-TP" type="number" value="8" min="1" step="1">
+        </label>
+        <label>PP degree
+          <input id="pmp-PP" type="number" value="8" min="1" step="1">
+        </label>
+        <label>Optimizer
+          <select id="pmp-opt">
+            <option value="adam" selected>Adam (16 B/param)</option>
+            <option value="sgd">SGD (8 B/param)</option>
+          </select>
+        </label>
+      </div>
+      <div class="vt-helper">DP is inferred: DP = floor(GPUs / (TP &times; PP))</div>
+    </div>
+    <div class="vt-col-right">
+      <div class="vt-chips" id="pmp-chips"></div>
+      <div class="vt-headline">
+        <div class="n" id="pmp-headline-n">&mdash;</div>
+        <div class="l" id="pmp-headline-l">&mdash;</div>
+      </div>
+      <div class="vt-bar-wrap">
+        <div class="vt-bar-track">
+          <div class="vt-bar-fill" id="pmp-bar-fill"></div>
+          <div class="vt-bar-tick" style="left:50%"></div>
+        </div>
+        <div class="vt-bar-labels"><span>0%</span><span class="vt-bar-mid">50% headroom line</span><span>100%+</span></div>
+      </div>
+      <div class="vt-badge" id="pmp-badge">&mdash;</div>
+      <div id="pmp-banners"></div>
+    </div>
+  </div>
+  <div class="vt-note">Activation memory for one pipeline stage can roughly <b>double</b> the model-state figure at steady state (chapter Worked Example: 11 GB state + 3.2 GB activations + 2 GB buffers). Treat green (&lt;50%) as the safe target; amber means budget activations carefully. This models full <b>ZeRO-3 / FSDP</b> sharding across DP &times; TP &times; PP; ZeRO-1 (chapter Worked Example) shards only across TP &times; PP and gives a larger per-GPU figure.</div>
+  <style>
+    #tool-parallelism-memory-planner{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-parallelism-memory-planner .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-parallelism-memory-planner .vt-cols{ display:grid; grid-template-columns:1fr 1fr; gap:20px 24px; }
+    @media (max-width:640px){ #tool-parallelism-memory-planner .vt-cols{ grid-template-columns:1fr; } }
+    #tool-parallelism-memory-planner .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px 16px; }
+    #tool-parallelism-memory-planner label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-parallelism-memory-planner input, #tool-parallelism-memory-planner select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-parallelism-memory-planner .vt-helper{ margin-top:10px; font-size:.76rem; color:var(--muted,#6d675d); font-style:italic; }
+    #tool-parallelism-memory-planner .vt-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+    #tool-parallelism-memory-planner .vt-chip{ background:var(--surface-3,#f0ece3); border:1px solid var(--border-2,#94a3b8); border-radius:999px; padding:4px 10px; font-size:.72rem; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; }
+    #tool-parallelism-memory-planner .vt-headline{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:14px 16px; margin-bottom:14px; }
+    #tool-parallelism-memory-planner .vt-headline .n{ font-size:1.6rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; line-height:1.2; }
+    #tool-parallelism-memory-planner .vt-headline .l{ font-size:.8rem; color:var(--muted,#6d675d); margin-top:4px; }
+    #tool-parallelism-memory-planner .vt-bar-wrap{ margin-bottom:12px; }
+    #tool-parallelism-memory-planner .vt-bar-track{ position:relative; height:16px; border-radius:8px; background:var(--surface-3,#f0ece3); border:1px solid var(--border-2,#94a3b8); overflow:hidden; }
+    #tool-parallelism-memory-planner .vt-bar-fill{ position:absolute; left:0; top:0; bottom:0; width:0%; border-radius:8px 0 0 8px; transition:width .15s ease, background .15s ease; }
+    #tool-parallelism-memory-planner .vt-bar-fill.good{ background:var(--good,#3f9142); }
+    #tool-parallelism-memory-planner .vt-bar-fill.tight{ background:var(--warn,#e0a106); }
+    #tool-parallelism-memory-planner .vt-bar-fill.bad{ background:var(--bad,#c94f4f); }
+    #tool-parallelism-memory-planner .vt-bar-fill.over{ background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 6px, transparent 6px 12px); }
+    #tool-parallelism-memory-planner .vt-bar-tick{ position:absolute; top:0; bottom:0; width:2px; background:var(--ink,#211f1b); opacity:.35; }
+    #tool-parallelism-memory-planner .vt-bar-labels{ display:flex; justify-content:space-between; font-size:.68rem; color:var(--muted,#6d675d); margin-top:4px; }
+    #tool-parallelism-memory-planner .vt-bar-mid{ flex:1; text-align:center; }
+    #tool-parallelism-memory-planner .vt-badge{ display:inline-block; font-size:.82rem; font-weight:700; padding:6px 12px; border-radius:7px; margin-bottom:10px; }
+    #tool-parallelism-memory-planner .vt-badge.good{ background:color-mix(in srgb, var(--good,#3f9142) 16%, transparent); color:var(--good,#2c6e2f); }
+    #tool-parallelism-memory-planner .vt-badge.tight{ background:color-mix(in srgb, var(--warn,#e0a106) 18%, transparent); color:var(--warn,#8a6404); }
+    #tool-parallelism-memory-planner .vt-badge.bad{ background:color-mix(in srgb, var(--bad,#c94f4f) 16%, transparent); color:var(--bad,#a13333); }
+    #tool-parallelism-memory-planner .vt-banner{ font-size:.78rem; line-height:1.5; border-radius:8px; padding:9px 12px; margin-top:8px; }
+    #tool-parallelism-memory-planner .vt-banner.warn{ background:color-mix(in srgb, var(--warn,#e0a106) 14%, transparent); color:var(--warn,#8a6404); border:1px solid color-mix(in srgb, var(--warn,#e0a106) 40%, transparent); }
+    #tool-parallelism-memory-planner .vt-banner.err{ background:color-mix(in srgb, var(--bad,#c94f4f) 14%, transparent); color:var(--bad,#a13333); border:1px solid color-mix(in srgb, var(--bad,#c94f4f) 40%, transparent); }
+    #tool-parallelism-memory-planner .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+    @media (prefers-color-scheme:dark){
+      #tool-parallelism-memory-planner .vt-badge.good{ color:#7ee08a; } #tool-parallelism-memory-planner .vt-badge.tight{ color:#f0c04a; } #tool-parallelism-memory-planner .vt-badge.bad{ color:#f0a3a3; }
+      #tool-parallelism-memory-planner .vt-banner.warn{ color:#f0c04a; } #tool-parallelism-memory-planner .vt-banner.err{ color:#f0a3a3; }
+    }
+    :root[data-theme="dark"] #tool-parallelism-memory-planner .vt-badge.good{ color:#7ee08a; }
+    :root[data-theme="dark"] #tool-parallelism-memory-planner .vt-badge.tight{ color:#f0c04a; }
+    :root[data-theme="dark"] #tool-parallelism-memory-planner .vt-badge.bad{ color:#f0a3a3; }
+    :root[data-theme="dark"] #tool-parallelism-memory-planner .vt-banner.warn{ color:#f0c04a; }
+    :root[data-theme="dark"] #tool-parallelism-memory-planner .vt-banner.err{ color:#f0a3a3; }
+    :root[data-theme="light"] #tool-parallelism-memory-planner .vt-badge.good{ color:#2c6e2f; }
+    :root[data-theme="light"] #tool-parallelism-memory-planner .vt-badge.tight{ color:#8a6404; }
+    :root[data-theme="light"] #tool-parallelism-memory-planner .vt-badge.bad{ color:#a13333; }
+    :root[data-theme="light"] #tool-parallelism-memory-planner .vt-banner.warn{ color:#8a6404; }
+    :root[data-theme="light"] #tool-parallelism-memory-planner .vt-banner.err{ color:#a13333; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-parallelism-memory-planner');
+    function v(id){return parseFloat(root.querySelector('#'+id).value)||0;}
+    function fmt2(x){ return isFinite(x)? x.toFixed(2) : 'n/a'; }
+    function chip(text){ return '<span class="vt-chip">'+text+'</span>'; }
+    function upd(){
+      var N_b=v('pmp-N'), G=v('pmp-G'), M=v('pmp-M'),
+          TP=Math.max(1,Math.round(v('pmp-TP'))), PP=Math.max(1,Math.round(v('pmp-PP'))),
+          opt=root.querySelector('#pmp-opt').value;
+
+      var bytesPerParam = (opt==='adam') ? 16 : 8;
+      var modelDegree = TP*PP;
+      var DP = modelDegree>0 ? Math.floor(G/modelDegree) : 0;
+      var invalid = (modelDegree>G) || (DP<1);
+      var shards = modelDegree*DP;
+      var totalStateGB = bytesPerParam*N_b;
+      var perGPU_GB = (!invalid && shards>0) ? totalStateGB/shards : NaN;
+      var fraction = (!invalid && M>0 && isFinite(perGPU_GB)) ? perGPU_GB/M : NaN;
+
+      // chips
+      var chips=[
+        chip('bytes/param = '+bytesPerParam),
+        chip('DP = '+(invalid? 'n/a' : DP)),
+        chip('TP&times;PP&times;DP = '+(invalid? 'n/a' : shards)),
+        chip('total state = '+totalStateGB.toFixed(2)+' GB')
+      ];
+      root.querySelector('#pmp-chips').innerHTML=chips.join('');
+
+      // headline
+      var hn=root.querySelector('#pmp-headline-n'), hl=root.querySelector('#pmp-headline-l');
+      if(invalid){
+        hn.textContent='n/a';
+        hl.textContent='No valid configuration — see warning below';
+      } else {
+        hn.textContent='State memory per GPU = '+fmt2(perGPU_GB)+' GB';
+        hl.textContent='of '+M+' GB HBM ('+(fraction*100).toFixed(1)+'%)';
+      }
+
+      // status
+      var status, cls;
+      if(invalid){ status='—'; cls=''; }
+      else if(fraction>=1.0){ status='Does NOT fit'; cls='bad'; }
+      else if(fraction>=0.5){ status='Fits — budget activations'; cls='tight'; }
+      else { status='Fits comfortably'; cls='good'; }
+
+      var fill=root.querySelector('#pmp-bar-fill');
+      fill.className='vt-bar-fill'+(cls? ' '+cls : '');
+      var pct = invalid? 0 : Math.min(100, fraction*100);
+      fill.style.width = pct+'%';
+      if(!invalid && fraction>1){ fill.classList.add('over'); }
+
+      var badge=root.querySelector('#pmp-badge');
+      badge.textContent = invalid? 'No valid config' : status;
+      badge.className='vt-badge'+(cls? ' '+cls : (invalid? ' bad' : ''));
+
+      // banners
+      var banners=[];
+      if(invalid){
+        banners.push('<div class="vt-banner err">TP &times; PP = '+modelDegree+' exceeds total GPUs '+G+': no data-parallel replica fits. Reduce TP or PP.</div>');
+      } else if(shards!==G){
+        var idle=G-shards;
+        banners.push('<div class="vt-banner warn">TP &times; PP &times; DP = '+shards+' &ne; total GPUs '+G+'. '+idle+' GPU(s) idle because TP &times; PP = '+modelDegree+' does not evenly divide '+G+'. Pick TP, PP so that TP &times; PP divides '+G+'.</div>');
+      }
+      root.querySelector('#pmp-banners').innerHTML=banners.join('');
+    }
+    root.querySelectorAll('input,select').forEach(function(e){e.addEventListener('input',upd);});
+    upd();
+  })();</script>
+</div>

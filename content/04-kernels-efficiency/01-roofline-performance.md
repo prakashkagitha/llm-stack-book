@@ -122,6 +122,8 @@ The headline observation: **for typical $d$ and moderate $s$, the $d^2$ terms do
 
 ### The famous $6N$ rule for training
 
+{{tool:param-flop-counter}}
+
 Summing layers and adding the embedding/unembedding, the forward pass of a model with $N$ non-embedding parameters costs about $2N$ FLOPs per token (every parameter participates in one MAC = 2 FLOPs). The backward pass costs about twice the forward — you compute gradients with respect to both inputs and weights — giving roughly $4N$. Hence the rule every LLM engineer memorizes:
 
 $$

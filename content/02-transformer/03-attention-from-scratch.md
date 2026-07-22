@@ -234,6 +234,8 @@ The `mask` argument we slipped into the implementation is what makes attention f
 
 ### The causal (autoregressive) mask
 
+
+{{tool:attention-mask-visualizer}}
 A language model predicts token $t+1$ from tokens $1, \dots, t$. During training we feed the whole sequence at once for efficiency, but we must forbid each position from "peeking" at future tokens — otherwise the model could trivially copy the answer and learn nothing. We enforce this by allowing query $i$ to attend only to keys $j \le i$: a **lower-triangular** mask.
 
 $$
