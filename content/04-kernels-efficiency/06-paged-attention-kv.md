@@ -476,3 +476,158 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
 - Shoeybi, Patwary, Puri, et al. — *Megatron-LM* — for the tensor-parallel context in which each rank pages its KV shard.
 - The **vLLM** and **SGLang** repositories — the canonical production implementations of paged KV management and (in SGLang) radix-tree prefix sharing.
 - Operating-systems texts (e.g. Silberschatz, *Operating System Concepts*) on paging, page tables, and copy-on-write — the prior art PagedAttention borrows from.
+
+## Exercises
+
+**1.** *(Conceptual.)* The size formula $\text{Bytes}_{\text{KV}} = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot s \cdot b$ contains the number of **key/value** heads $H_{kv}$ but *not* the number of query heads. Explain why the KV-cache size is independent of the query-head count, and why this makes GQA/MQA a "serving decision as much as a quality one."
+
+??? note "Solution"
+
+    The KV cache stores only what must be *reused* across decode steps: the keys and values of past tokens. Queries are never cached — at each decode step there is exactly one new query (the current token), it attends over the cached K/V, and then it is discarded; it is never needed again. So only K and V occupy the cache, and their count is set by the number of KV heads $H_{kv}$, not the number of query heads.
+
+    GQA/MQA exploit exactly this asymmetry. They keep the full set of *query* heads (which preserves most of the model's representational capacity, hence quality) but let several query heads *share* one KV head, shrinking $H_{kv}$. Because $H_{kv}$ appears linearly in $\beta = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot b$, cutting KV heads from, say, 64 to 8 shrinks the per-token KV footprint 8x with no change to the query side. As the chapter's worked example shows, this is what lets a 70B GQA model have a *smaller* per-token KV footprint (0.3125 MiB/token) than a 13B multi-head model (0.78 MiB/token). Since KV memory is the binding constraint on batch size — and batch size sets decode throughput — reducing $H_{kv}$ directly buys concurrency. Hence it is chosen for serving throughput as much as for model quality.
+
+**2.** *(Quantitative.)* Consider a model with $L = 32$ layers, $H_{kv} = 8$ KV heads, $d_h = 128$, served in fp16 ($b = 2$). (a) Compute the per-token KV footprint $\beta$ in bytes and in MiB. (b) A single request has a 4000-token prompt and generates 2000 tokens (final length $s = 6000$). What is its KV cache in GiB? (c) If a GPU reserves 40 GiB of HBM for the KV pool, how many such 6000-token sequences can be held concurrently?
+
+??? note "Solution"
+
+    **(a)** Per-token footprint:
+
+    $$
+    \beta = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot b = 2 \cdot 32 \cdot 8 \cdot 128 \cdot 2 = 131{,}072 \text{ bytes/token}.
+    $$
+
+    In MiB: $131072 / 2^{20} = 0.125$ MiB/token (exactly $1/8$ MiB).
+
+    **(b)** For $s = 6000$:
+
+    $$
+    \text{Bytes}_{\text{KV}} = \beta \cdot s = 131072 \cdot 6000 = 786{,}432{,}000 \text{ bytes}.
+    $$
+
+    In GiB: $786{,}432{,}000 / 2^{30} \approx 0.732$ GiB per sequence.
+
+    **(c)** Number of concurrent sequences:
+
+    $$
+    \left\lfloor \frac{40 \text{ GiB}}{0.732 \text{ GiB}} \right\rfloor = \left\lfloor 54.6 \right\rfloor = 54 \text{ sequences}.
+    $$
+
+    (Equivalently: $40 \cdot 2^{30} / 786{,}432{,}000 \approx 54.6$, so 54 fit.) This concurrency ceiling — not FLOPs — is what caps decode throughput.
+
+**3.** *(Quantitative.)* With block size $B = 16$, contrast the internal fragmentation of contiguous vs. paged allocation for a request that reserves `max_seq_len = 2048` but actually stops after generating 100 tokens. (a) Under contiguous max-length allocation, how many token-slots are wasted, and what fraction of the reserved region is that? (b) Under paged allocation, how many blocks are allocated, how many token-slots are wasted in the final partial block, and what fraction of the *used* blocks' capacity is that?
+
+??? note "Solution"
+
+    **(a) Contiguous.** The system reserves all 2048 slots but only 100 hold real token state. Wasted slots:
+
+    $$
+    2048 - 100 = 1948 \text{ slots wasted}, \quad \frac{1948}{2048} \approx 95.1\%.
+    $$
+
+    Over 95% of the reserved region is dead space held for the request's lifetime.
+
+    **(b) Paged.** Blocks are allocated on demand. To hold 100 tokens:
+
+    $$
+    \lceil 100 / 16 \rceil = \lceil 6.25 \rceil = 7 \text{ blocks}, \text{ total capacity } 7 \cdot 16 = 112 \text{ slots}.
+    $$
+
+    Only the final block is partial: $100 \bmod 16 = 4$ tokens used in it, so $16 - 4 = 12$ slots wasted (all other blocks are full). Wasted fraction of allocated capacity:
+
+    $$
+    \frac{12}{112} \approx 10.7\%.
+    $$
+
+    And the waste is bounded by at most $B - 1 = 15$ slots regardless of sequence length, so for longer sequences the wasted fraction shrinks toward zero — versus contiguous allocation, where the waste stays enormous whenever the actual length falls far short of `max_seq_len`.
+
+**4.** *(Quantitative + conceptual.)* You run **parallel sampling**: one 800-token prompt, $k = 4$ samples of 150 output tokens each, on the 70B GQA model ($\beta \approx 0.3125$ MiB/token), block size $B = 16$. (a) Compute the total KV memory under naive contiguous allocation (no sharing). (b) Compute it under paged allocation with copy-on-write prefix sharing, counting blocks. (c) State the reduction factor, and explain in one sentence why COW copies the divergence block *per block* rather than duplicating the whole prefix.
+
+??? note "Solution"
+
+    **(a) Contiguous, no sharing.** Each of the 4 samples stores the full prompt + its output $= 800 + 150 = 950$ tokens:
+
+    $$
+    4 \cdot 950 \cdot 0.3125 \text{ MiB} = 4 \cdot 296.875 = 1187.5 \text{ MiB} \approx 1.16 \text{ GiB}.
+    $$
+
+    **(b) Paged + COW.** The 800-token prompt is stored *once* and shared by all 4 samples:
+
+    $$
+    \lceil 800 / 16 \rceil = 50 \text{ blocks (shared)}.
+    $$
+
+    Each sample privately stores its 150 output tokens:
+
+    $$
+    \lceil 150 / 16 \rceil = \lceil 9.375 \rceil = 10 \text{ blocks per sample}.
+    $$
+
+    Total blocks $= 50 + 4 \cdot 10 = 90$ blocks. Memory:
+
+    $$
+    90 \cdot 16 \cdot 0.3125 \text{ MiB} = 90 \cdot 5 = 450 \text{ MiB} \approx 0.44 \text{ GiB}.
+    $$
+
+    **(c) Reduction:** $1187.5 / 450 \approx 2.64\times$. COW copies only the single block where two sequences first differ because sharing and reference counting are tracked at *block* granularity; the identical, read-only prefix blocks stay shared and only the contested block is duplicated, turning $O(k \cdot s)$ prefix memory into one shared copy plus a per-sample tail.
+
+**5.** *(Implementation.)* Extend the chapter's `BlockManager` with a method
+
+    ```python
+    def num_free_blocks(self): ...
+    def can_allocate(self, num_tokens): ...
+    ```
+
+    where `num_free_blocks` returns the number of physical blocks currently on the free list, and `can_allocate(num_tokens)` returns `True` iff a fresh sequence of `num_tokens` tokens could be allocated right now (i.e. enough free blocks exist). Then write a short snippet that constructs a `BlockManager(num_blocks=8, block_size=16)`, checks whether a 200-token request fits, and prints the result. (Note: $\lceil 200/16 \rceil = 13$ blocks are needed, but only 8 exist.)
+
+??? note "Solution"
+
+    Both methods are pure bookkeeping over the existing free list; they add no state. `can_allocate` reuses the same block-count formula (`ceil(num_tokens / block_size)`) that `allocate` uses, so the check stays consistent with what allocation will actually consume.
+
+    ```python
+    def num_free_blocks(self):
+        """How many physical blocks are currently reclaimable."""
+        return len(self.free)
+
+    def can_allocate(self, num_tokens):
+        """True iff a NEW sequence of `num_tokens` tokens fits in free memory."""
+        n_blocks = (num_tokens + self.block_size - 1) // self.block_size
+        return n_blocks <= len(self.free)
+    ```
+
+    Driver snippet:
+
+    ```python
+    mgr = BlockManager(num_blocks=8, block_size=16)
+    need = (200 + 16 - 1) // 16          # ceil(200/16) = 13 blocks needed
+    print("free blocks:", mgr.num_free_blocks())   # 8
+    print("blocks needed for 200 tokens:", need)   # 13
+    print("can allocate 200-token request:", mgr.can_allocate(200))  # False
+    print("can allocate 100-token request:", mgr.can_allocate(100))  # ceil(100/16)=7 <= 8 -> True
+    ```
+
+    Output:
+
+    ```
+    free blocks: 8
+    blocks needed for 200 tokens: 13
+    can allocate 200-token request: False
+    can allocate 100-token request: True
+    ```
+
+    This is exactly the admission check a scheduler runs before accepting a new request: if `can_allocate` is `False`, the request waits (or the engine preempts a running sequence to free blocks), which is the paged analogue of the OS refusing to page in a process when no frames are free.
+
+**6.** *(Conceptual, harder.)* The `paged_attention_decode` kernel adds exactly one operation over a standard FlashAttention decode kernel: `phys = block_table[lb]`. (a) Why does this single indirection not change the *numerical result* of attention? (b) The chapter says non-contiguous reads are "the real cost." Explain the hardware reason, and describe the two mitigations PagedAttention uses to keep the tax small.
+
+??? note "Solution"
+
+    **(a) Numerics are unchanged.** Attention is a permutation-order-independent reduction *in structure but not in indexing*: each cached token $j$ contributes one term $\exp(q^\top k_j/\sqrt{d_h}) v_j$ to the numerator and one to the denominator. The block table only changes *where in HBM* the kernel fetches $k_j, v_j$ from; it does not change *which* $(k_j, v_j)$ pairs are gathered, their values, or the order in which logical positions are visited (the loop still walks logical blocks $0, 1, 2, \dots$ in order and, within a block, token offsets in order). Since the online-softmax accumulation (running max $m$, denominator $l$, output $out$) is mathematically the same associative reduction over the same set of terms, the final normalized output $out / l$ is bit-for-bit the same computation as a contiguous kernel reading the identical K/V. The indirection is an address translation, not a change to the math.
+
+    **(b) Cost and mitigations.** The hardware reason: GPUs achieve peak HBM bandwidth through *coalesced*, large, contiguous memory transactions and hardware prefetching. When consecutive logical blocks live at scattered physical addresses (blocks 7, 1, 4, ...), the kernel issues loads that jump around HBM, defeating prefetchers and preventing the wide coalesced bursts a fully contiguous tensor would allow — so effective bandwidth drops even though the total bytes read are the same.
+
+    Two mitigations:
+
+    1. **Keep each block internally contiguous.** A physical block stores its $B \times H_{kv} \times d_h$ K/V elements in a contiguous region, so *within* a block the loads are fully coalesced — scattering happens only at block *boundaries*, not on every element.
+    2. **Choose $B$ large enough (16+).** With a larger block, each expensive "jump to a new physical location" is amortized over $B$ tokens' worth of contiguous, coalesced reads, so the per-block indirection/setup cost is a small fraction of the useful load. (This is the same trade-off discussed in "Choosing the block size $B$": too small bloats overhead, too large reintroduces internal fragmentation.)
+
+    The net effect, per the vLLM authors, is that the paged kernel runs within a small percentage of a perfectly contiguous FlashAttention kernel — a tax overwhelmingly repaid by the larger batches the recovered memory enables.

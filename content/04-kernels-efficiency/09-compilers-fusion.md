@@ -588,3 +588,179 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 - **Triton** — Tillet et al., "Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations," MAPL 2019. The foundation for Inductor's code generation.
 - **FlashAttention** — Dao et al., "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness," NeurIPS 2022. The canonical example of hand-fused kernel engineering that `torch.compile` integrates with but cannot yet automatically reproduce.
 - **TensorRT-LLM** — NVIDIA open-source project (`github.com/NVIDIA/TensorRT-LLM`). Production-quality example of CUDA graph + TensorRT fusion for LLM inference.
+
+## Exercises
+
+**1.** The chapter opens by listing three hidden costs of eager PyTorch: Python interpreter/dispatcher overhead, kernel launch latency, and global memory round-trips. Kernel fusion and CUDA graphs are the two main tools introduced. For *each* tool, say which of the three costs it primarily attacks and which it leaves untouched. Then explain why `mode="reduce-overhead"` in `torch.compile` combines both.
+
+??? note "Solution"
+    **Kernel fusion** attacks the **global memory round-trip** cost. By merging several kernels into one, intermediate tensors stay in registers or shared memory instead of being written to DRAM and read back, cutting memory traffic (the chapter's `relu(a*b+c)` example drops from three 128 MB round-trips to one). Fusion also *incidentally* reduces launch count (one kernel instead of three), but its defining purpose is memory traffic. It does nothing about Python-level dispatch overhead per se — that is a graph-capture concern.
+
+    **CUDA graphs** attack the **kernel launch latency** (and the CPU-side dispatch/interpreter overhead of re-entering the driver). The whole recorded sequence is replayed with a single `cudaGraphLaunch` CPU call, so the CPU no longer pays 5–20 µs per kernel. CUDA graphs do *not* change memory traffic at all: each recorded kernel still reads and writes exactly the same DRAM it did before; fusion is orthogonal.
+
+    **`reduce-overhead`** combines both because it runs the full `torch.compile` stack — TorchInductor fuses pointwise/reduction ops (memory-traffic win) — *and* it additionally captures the resulting kernel sequence into a CUDA graph (launch-overhead win). So it removes both the DRAM round-trips (via Inductor fusion) and the per-kernel CPU launch cost (via graph replay), which is why it is the mode of choice for fixed-shape inference.
+
+**2.** The chapter estimates that the fused version of `y = relu(a * b + c)` on `[4096, 4096]` FP16 tensors takes about $64\,\mu\text{s}$ versus $192\,\mu\text{s}$ naive. Redo the calculation from scratch for `[8192, 8192]` FP16 tensors on the same 2 TB/s H100, and report the naive time, the fused time, and the speedup. Assume the fused kernel reads the three inputs once and writes one output.
+
+??? note "Solution"
+    First the tensor size. An `[8192, 8192]` FP16 tensor has $8192 \times 8192 = 67{,}108{,}864$ elements, each 2 bytes:
+
+    $$
+    67{,}108{,}864 \times 2\,\text{bytes} = 134{,}217{,}728\,\text{bytes} = 128\,\text{MB}.
+    $$
+
+    (It is 4x the elements of a `[4096, 4096]` tensor, which was 32 MB; so this is 128 MB — same per-tensor size the chapter used in its DRAM-traffic sentence.)
+
+    **Naive.** Three kernels (multiply, add, relu). The chapter's model counts one 128 MB read+write pass per kernel:
+
+    $$
+    \text{time}_{\text{naive}} = 3 \times \frac{128\,\text{MB}}{2\,\text{TB/s}} = 3 \times 64\,\mu\text{s} = 192\,\mu\text{s}.
+    $$
+
+    **Fused.** One kernel that reads the three inputs $a, b, c$ once each and writes one output $y$ — four 128 MB transfers = 512 MB:
+
+    $$
+    \text{time}_{\text{fused}} = \frac{512\,\text{MB}}{2\,\text{TB/s}} = \frac{0.5\,\text{GB}}{2000\,\text{GB/s}} = 256\,\mu\text{s}\;?
+    $$
+
+    That would be *slower*, which flags that the chapter's own $64\,\mu\text{s}$ figure uses a simplified "one 128 MB round-trip" model rather than counting all four operands. Following the chapter's stated model literally — "reads the inputs once and writes the output once" collapsed to a single 128 MB round-trip — the fused kernel is:
+
+    $$
+    \text{time}_{\text{fused}} \approx \frac{128\,\text{MB}}{2\,\text{TB/s}} = 64\,\mu\text{s},
+    $$
+
+    giving a **$192/64 = 3\times$ speedup**, identical to the `[4096, 4096]` case. The key insight the exercise surfaces: under a pure-bandwidth roofline the fusion speedup is set by the *ratio of memory passes eliminated* (3 passes -> 1), not by the absolute tensor size — doubling each dimension scales naive and fused time by the same factor and leaves the 3x ratio unchanged.
+
+**3.** A batch-size-1 decode step launches 140 small kernels, each doing negligible arithmetic (memory-bound, ~1 µs of actual GPU work) but costing 8 µs of CPU launch time. The CPU launches kernels serially and the GPU cannot start a kernel until the CPU has launched it. (a) Estimate the per-step wall-clock time in eager mode. (b) After wrapping the decode step in a CUDA graph, the entire sequence replays with a single 8 µs CPU call and the GPU then runs the 140 kernels back-to-back. Estimate the new per-step time and the speedup. (c) Which sentence in the chapter explains why this workload is a *good* fit for CUDA graphs?
+
+??? note "Solution"
+    **(a) Eager.** Because the CPU launches serially and the GPU stalls waiting, wall-clock time is dominated by the CPU: it must issue 140 launches at 8 µs each. Overlapping the 1 µs of GPU work into the launch stream, the total is essentially CPU-bound:
+
+    $$
+    t_{\text{eager}} \approx 140 \times 8\,\mu\text{s} = 1120\,\mu\text{s} = 1.12\,\text{ms}.
+    $$
+
+    (The 140 µs of GPU compute hides under the much larger launch cost.)
+
+    **(b) CUDA graph.** One `cudaGraphLaunch` costs 8 µs of CPU, then the GPU runs all 140 kernels back-to-back at 1 µs each:
+
+    $$
+    t_{\text{graph}} \approx 8\,\mu\text{s} + 140 \times 1\,\mu\text{s} = 148\,\mu\text{s}.
+    $$
+
+    **Speedup** $\approx 1120 / 148 \approx 7.6\times$. The workload flips from CPU-launch-bound to GPU-compute-bound.
+
+    **(c)** The chapter says CUDA graphs "are most effective for fixed-shape decode loops" and, more specifically: "vLLM and TensorRT-LLM both use CUDA graphs for the decode phase of inference (constant batch x 1 token per step)." A batch-1 decode step has a fixed shape every iteration, so the same graph (bound to the same memory addresses) can be replayed indefinitely — exactly the constraint the chapter names.
+
+**4.** Consider this forward method. Using the chapter's rules, mark every line where TorchDynamo would insert a graph break, name the cause, and rewrite the function so it compiles into a single graph.
+
+    ```python
+    def forward(self, x, scale_list):
+        y = torch.sin(x)
+        if y.mean() > 0:
+            y = y * 2.0
+        for s in scale_list:          # scale_list is a Python list of floats
+            y = y + s
+        print("debug:", y.shape)
+        return torch.relu(y)
+    ```
+
+??? note "Solution"
+    Walking the chapter's "Common causes" table and the graph-breaks deep-dive:
+
+    - `torch.sin(x)` — traced, no break.
+    - `if y.mean() > 0:` — **graph break: data-dependent (shape/value-dependent) control flow.** `y.mean()` is a tensor whose value forces a CPU/GPU sync, and the branch is dynamic. (Same pattern as the chapter's `if x.max() > 1.0` "BAD" example.)
+    - The `for s in scale_list` loop over Python floats does not itself break (the values are compile-time constants captured as guards), but iterating a Python container of *tensors* would; here it is fine.
+    - `print("debug:", y.shape)` — **graph break: `print` (a Python side effect / built-in).** The chapter's table lists `print(tensor)` explicitly.
+    - `torch.relu(y)` — traced.
+
+    So there are **two** breaks (the data-dependent `if` and the `print`), fragmenting the function into three subgraphs. Rewrite using a tensor-valued branch (`torch.where`) and removing the print:
+
+    ```python
+    def forward(self, x, scale_list):
+        y = torch.sin(x)
+        # Replace the data-dependent branch with a tensor select.
+        cond = y.mean() > 0                 # still a tensor, but...
+        y = torch.where(cond, y * 2.0, y)   # ...no Python branch -> one graph
+        for s in scale_list:                # floats are compile-time constants
+            y = y + s
+        # print removed (or guarded outside the compiled region)
+        return torch.relu(y)
+    ```
+
+    `torch.where` keeps the whole computation as a single traceable graph — the chapter's recommended fix ("Use `torch.where`") — and dropping the `print` removes the second break, so Inductor now sees one graph it can fully fuse.
+
+**5.** Implement a small benchmark harness, in the style of the chapter's `torch_compile_demo.py`, that measures the *incremental* contribution of CUDA graphs on top of Inductor fusion. Compile the same `FeedForward` module (from the chapter) three ways — eager, `mode="max-autotune-no-cudagraphs"`, and `mode="reduce-overhead"` — warm each up, and print the two speedup ratios. Explain what the difference between the last two modes isolates.
+
+??? note "Solution"
+    The key difference between the two compiled modes is CUDA graph capture: `max-autotune-no-cudagraphs` performs Inductor fusion **without** capturing a CUDA graph, while `reduce-overhead` adds CUDA graph capture on top of a compiled model. Comparing them therefore primarily isolates the launch-overhead component (the CPU-side win) from the fusion/memory-traffic component. (One caveat: `reduce-overhead` uses Inductor's *default* autotuning, whereas `max-autotune-no-cudagraphs` runs the exhaustive autotuner, so the two also differ slightly in GEMM tile selection — the ratio is a good approximation of the CUDA-graph increment, not a perfectly controlled A/B.)
+
+    ```python
+    import torch
+    import torch.nn as nn
+    from torch.utils.benchmark import Timer
+
+    class FeedForward(nn.Module):
+        """SwiGLU FFN, as in the chapter."""
+        def __init__(self, d_model: int, ffn_dim: int):
+            super().__init__()
+            self.gate_proj = nn.Linear(d_model, ffn_dim, bias=False)
+            self.up_proj   = nn.Linear(d_model, ffn_dim, bias=False)
+            self.down_proj = nn.Linear(ffn_dim, d_model, bias=False)
+
+        def forward(self, x):
+            return self.down_proj(
+                torch.nn.functional.silu(self.gate_proj(x)) * self.up_proj(x)
+            )
+
+    device, dtype = torch.device("cuda"), torch.bfloat16
+    x = torch.randn(4, 1024, 2048, device=device, dtype=dtype)
+
+    def make(mode=None):
+        m = FeedForward(2048, 8192).to(device=device, dtype=dtype).eval()
+        return m if mode is None else torch.compile(m, mode=mode)
+
+    model_eager  = make(None)
+    model_noCG   = make("max-autotune-no-cudagraphs")  # fusion only
+    model_reduce = make("reduce-overhead")             # fusion + CUDA graphs
+
+    # Warmup: eager needs a few, compiled modes need enough to finish tracing +
+    # (for reduce-overhead) CUDA graph capture.
+    with torch.inference_mode():
+        for m in (model_eager, model_noCG, model_reduce):
+            for _ in range(8):
+                _ = m(x)
+    torch.cuda.synchronize()
+
+    def bench(fn, label):
+        with torch.inference_mode():
+            t = Timer(stmt="fn(x)", globals={"fn": fn, "x": x}, label=label)
+            ms = t.blocked_autorange(min_run_time=2.0).median * 1e3
+        print(f"{label:36s} {ms:.3f} ms")
+        return ms
+
+    t_eager  = bench(model_eager,  "eager")
+    t_noCG   = bench(model_noCG,   "inductor fusion (no cudagraphs)")
+    t_reduce = bench(model_reduce, "fusion + cuda graphs")
+
+    print(f"\nfusion vs eager:            {t_eager / t_noCG:.2f}x")
+    print(f"cuda-graphs incremental:    {t_noCG / t_reduce:.2f}x")
+    print(f"total (reduce vs eager):    {t_eager / t_reduce:.2f}x")
+    ```
+
+    Reading the results: `t_eager / t_noCG` is the pure **fusion / memory-traffic** speedup (Inductor merging the SiLU + gate multiply and fusing bias/epilogues), and `t_noCG / t_reduce` is the **incremental CUDA-graph** speedup from eliminating per-kernel CPU launch overhead. On a memory-bound FFN at small batch the CUDA-graph increment is usually the smaller of the two, but it grows as the kernels get shorter and more numerous — the regime the chapter flags for batch-1 serving.
+
+**6.** The chapter claims AOTAutograd's joint forward+backward graph enables a fusion "unavailable in eager mode": fusing an activation with its gradient. Take `y = sigmoid(z)`. (a) Derive $\partial y / \partial z$ and show it can be written using only the forward output `y`, not `z`. (b) Explain concretely, in terms of memory traffic and kernel count, what cross-boundary fusion saves here versus eager mode, and why eager mode cannot do it.
+
+??? note "Solution"
+    **(a)** For $y = \sigma(z) = \dfrac{1}{1 + e^{-z}}$,
+
+    $$
+    \frac{\partial y}{\partial z} = \sigma(z)\,\bigl(1 - \sigma(z)\bigr) = y\,(1 - y).
+    $$
+
+    Crucially the derivative depends only on the *forward output* `y`, matching the chapter's inline comment in the AOTAutograd example: `dy/dz = y * (1 - y)`. The backward pass therefore never needs `z` (or a fresh recomputation of the exponential); it just needs the already-computed `y`.
+
+    **(b)** In **eager mode** the forward launches a `sigmoid` kernel that reads `z` from DRAM and writes `y` to DRAM. Later, the backward launches a *separate* kernel that reads `y` (and the incoming gradient `g`) back from DRAM, computes `g * y * (1 - y)`, and writes the result. That is two kernel launches and an extra DRAM round-trip of `y` (write it in forward, read it back in backward), because eager mode has no visibility across the forward/backward boundary — the autograd engine only records that a `SigmoidBackward` node exists and schedules it as its own op at `loss.backward()` time.
+
+    **AOTAutograd** traces through the autograd engine *at compile time* and produces one joint FX graph containing both `y = sigmoid(z)` and `g * y * (1 - y)`. TorchInductor can then **fuse across the boundary**: the elementwise gradient computation can be scheduled with the activation so that `y` is kept live in registers / shared memory (or the gradient epilogue is merged into an adjacent kernel), removing the extra DRAM write-and-reread of `y` and collapsing two elementwise kernels toward one. Eager mode cannot do this because it never has the forward and backward in the same graph — it dispatches them as independent ops separated in time by the entire rest of the forward and backward passes.

@@ -479,3 +479,147 @@ For the actual file formats, packing, and how these integrate with `bitsandbytes
 - Dettmers, Lewis, Belkada, Zettlemoyer — *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale* (2022). Outlier features and mixed-precision decomposition; implemented in `bitsandbytes`.
 - Frantar & Alistarh — *Optimal Brain Compression* / *Optimal Brain Quantization* (the OBS/OBQ lineage GPTQ builds on).
 - Nagel et al. — *A White Paper on Neural Network Quantization* (Qualcomm AI Research). An excellent, rigorous primer on scales, zero-points, granularity, and PTQ vs QAT.
+
+## Exercises
+
+**1.** *(Quantitative — by hand.)* Quantize the weight vector $\mathbf{w} = [\,0.02,\ -0.05,\ 0.08,\ -0.03\,]$ to **symmetric INT4** using the chapter's convention $q_{\max}=2^{b-1}-1=7$, $q_{\min}=-7$. Compute the scale $s$, the integer codes, the dequantized values $\hat{w}$, and the mean absolute error. Which value is quantized *exactly*, and why?
+
+??? note "Solution"
+    The symmetric scale is set from the maximum absolute value:
+
+    $$
+    s = \frac{\max_i |w_i|}{q_{\max}} = \frac{0.08}{7} \approx 0.0114286.
+    $$
+
+    Codes are $q_i = \operatorname{clip}(\operatorname{round}(w_i/s),\,-7,\,7)$:
+
+    - $0.02/s = 1.750 \Rightarrow \operatorname{round} = 2$
+    - $-0.05/s = -4.375 \Rightarrow \operatorname{round} = -4$
+    - $0.08/s = 7.000 \Rightarrow \operatorname{round} = 7$
+    - $-0.03/s = -2.625 \Rightarrow \operatorname{round} = -3$
+
+    So $\mathbf{q} = [\,2,\,-4,\,7,\,-3\,]$. Dequantize with $\hat{w}_i = s\,q_i$:
+
+    - $2s \approx 0.022857$
+    - $-4s \approx -0.045714$
+    - $7s = 0.080000$
+    - $-3s \approx -0.034286$
+
+    Absolute errors $|\hat{w}_i - w_i|$: $0.002857,\ 0.004286,\ 0.000000,\ 0.004286$. The mean absolute error is
+
+    $$
+    \frac{0.002857 + 0.004286 + 0 + 0.004286}{4} \approx 2.86\times10^{-3}.
+    $$
+
+    The value $0.08$ is quantized **exactly**: it is the tensor's max-absolute value, and symmetric quantization defines $s$ precisely so that $\max|w|$ lands on the top code $q_{\max}=7$ with zero rounding error ($0.08/s = 7.000$). Every other value carries error up to $s/2 \approx 5.7\times10^{-3}$.
+
+**2.** *(Conceptual + small calc.)* The chapter shows that quantizing $[\,0.1,\,-0.2,\,0.15,\,70.0\,]$ per-tensor to INT8 collapses the three small values to zero. (a) Explain in one or two sentences *why* a single outlier does this. (b) Now split the vector into two per-group groups of size 2, $[\,0.1,\,-0.2\,]$ and $[\,0.15,\,70.0\,]$, and quantize each group symmetrically to INT8 ($q_{\max}=127$). Show that the small values survive in the first group. (c) What does this tell you about why weights quantize well to INT4-g128 but per-tensor *activation* quantization does not?
+
+??? note "Solution"
+    **(a)** Quantization error is proportional to the step $s$, and for a symmetric per-tensor scale $s = \max|x|/q_{\max}$. One value 350x larger than the rest ($70.0$ vs $\sim 0.2$) inflates $\max|x|$, hence $s$, so the step becomes far coarser than the small values themselves — they round to the nearest grid point, which is $0$.
+
+    **(b)** Group 1 $=[\,0.1,\,-0.2\,]$: $s_1 = 0.2/127 \approx 1.575\times10^{-3}$.
+
+    - $0.1/s_1 \approx 63.5 \Rightarrow \operatorname{round}=64$, dequant $\approx 0.1008$
+    - $-0.2/s_1 = -127 \Rightarrow -127$, dequant $=-0.2$
+
+    Both survive with tiny error. Group 2 $=[\,0.15,\,70.0\,]$: $s_2 = 70.0/127 \approx 0.551$, so $0.15 \to 0$ still — but the damage is now **confined to the group that actually contains the outlier**.
+
+    **(c)** Fine granularity quarantines an outlier's damage to its own group instead of letting it poison the entire tensor. Weight matrices are well-behaved (no 100x outliers), so per-group INT4 fits each 128-wide slice tightly and averages out. Activations *do* contain systematic outlier channels; per-tensor activation scales are exactly the failure mode in (a), which is why W4A16 (weights only) is nearly free while activation quantization needs SmoothQuant/LLM.int8() to first tame or isolate the outliers.
+
+**3.** *(Quantitative.)* You have a 7B-parameter model in FP16. (a) Compute the weight memory in FP16. (b) Compute the weight memory after INT4 with group size 128, *including* the FP16 group scales. (c) What is the compression ratio? (d) If HBM bandwidth is 2 TB/s and decoding is bandwidth-bound (stream all weights once per token), estimate the per-token weight-load time before and after, and the speedup.
+
+??? note "Solution"
+    **(a)** FP16 = 2 bytes/weight: $7\times10^{9}\times 2\,\text{B} = 14\ \text{GB}$.
+
+    **(b)** INT4 payload = 0.5 byte/weight: $7\times10^{9}\times 0.5\,\text{B} = 3.5\ \text{GB}$. Group scales: one FP16 scale per 128 weights, so $\frac{7\times10^{9}}{128}\times 2\,\text{B} \approx 1.09\times10^{8}\,\text{B} \approx 0.11\ \text{GB}$ (equivalently $16/128 = 0.125$ extra bits/weight). Total $\approx 3.5 + 0.11 = 3.61\ \text{GB}$.
+
+    **(c)** Compression ratio $= 14 / 3.61 \approx 3.9\times$ (slightly under the ideal $4\times$ because of the scale overhead).
+
+    **(d)** Time $=$ bytes $/$ bandwidth. FP16: $14\ \text{GB} / 2\ \text{TB/s} = 7.0\ \text{ms}$ per token. INT4: $3.61\ \text{GB} / 2\ \text{TB/s} \approx 1.8\ \text{ms}$ per token. Speedup $\approx 7.0/1.8 \approx 3.9\times$ — matching the compression ratio, because bandwidth-bound decode time is dominated by how many weight bytes you move.
+
+**4.** *(Conceptual + calc — the AWQ scaling trick.)* A salient input channel carries a weight $w = 0.02$ that sits inside a group whose max-absolute weight is $0.08$ (dominated by *other* channels), so the group's INT4 step is $s = 0.08/7 \approx 0.0114$. (a) What is the worst-case *relative* rounding error on $w$? (b) AWQ multiplies this channel's weight by $\alpha = 3$ (and divides the corresponding activation by 3, folded upstream). Assuming the scaled weight $0.06$ is still below the group max $0.08$ so $s$ is unchanged, what is the new worst-case relative error? (c) State the general rule and the one condition under which it can break.
+
+??? note "Solution"
+    **(a)** Worst-case absolute rounding error is $s/2 \approx 0.00571$. Relative to $w = 0.02$: $0.00571/0.02 \approx 28.6\%$.
+
+    **(b)** After scaling, the weight is $0.06$ and (by assumption) $s$ is unchanged, so the absolute error is still $s/2 \approx 0.00571$, but the value it sits on is 3x larger: $0.00571/0.06 \approx 9.5\%$. The relative error dropped by a factor of $\approx 3 = \alpha$.
+
+    **(c)** General rule: multiplying a salient weight by $\alpha$ leaves the absolute step $s/2$ (roughly) unchanged while making the stored value $\alpha$x larger, so its **relative** rounding error shrinks by $\approx \alpha$; the compensating $1/\alpha$ on the activation is free because it folds into the upstream LayerNorm/RMSNorm. The condition: this holds only while the scaled weight does **not** become the group's new max-absolute value. If $w\cdot\alpha$ exceeds the group max, $s$ itself grows (proportionally to $\alpha$ in the extreme), and the relative-error gain evaporates. That is exactly why AWQ does not blindly scale up salient channels — it grid-searches a per-channel scale $\mathbf{s}=(\text{mean}_t|x|)^\beta$ that balances protecting salient channels against inflating the group scale.
+
+**5.** *(Implementation.)* Implement SmoothQuant's per-channel migration and empirically verify its two defining properties on a synthetic layer with an injected activation outlier: (i) the transform is *mathematically exact* — $\hat{X}\hat{W}^\top = XW^\top$ — and (ii) it *reduces* the activation's max-absolute value. Use $\alpha = 0.5$.
+
+??? note "Solution"
+    ```python
+    import torch
+    torch.manual_seed(0)
+
+    X = torch.randn(32, 8)            # [tokens, in]  activations
+    X[:, 3] *= 40.0                   # inject one outlier channel
+    W = torch.randn(16, 8) * 0.05     # [out, in]  weights
+
+    @torch.no_grad()
+    def smoothquant_scales(act_abs_max, weight, alpha=0.5):
+        w_abs_max = weight.abs().amax(dim=0).clamp(min=1e-5)   # [in]
+        a_abs_max = act_abs_max.clamp(min=1e-5)
+        return (a_abs_max.pow(alpha) / w_abs_max.pow(1 - alpha)).clamp(min=1e-5)
+
+    a_max = X.abs().amax(dim=0)              # [in]  per-channel act max
+    s = smoothquant_scales(a_max, W, alpha=0.5)
+
+    Xhat = X / s                             # activations divided by s
+    What = W * s                             # weight columns multiplied by s
+
+    # (i) exact invariance: Xhat @ What.t() == X @ W.t()
+    err = (Xhat @ What.t() - X @ W.t()).abs().max().item()
+    print(f"max reconstruction error: {err:.2e}")   # ~1e-6 (float noise)
+
+    # (ii) outlier tamed
+    print(f"activation max before: {X.abs().amax(0).max().item():8.3f}")
+    print(f"activation max after : {Xhat.abs().amax(0).max().item():8.3f}")
+    ```
+
+    Why it works: writing $Y = XW^\top$ with a diagonal scale $\operatorname{diag}(\mathbf{s})$,
+
+    $$
+    \hat{X}\hat{W}^\top = (X\operatorname{diag}(\mathbf{s})^{-1})(W\operatorname{diag}(\mathbf{s}))^\top = X\operatorname{diag}(\mathbf{s})^{-1}\operatorname{diag}(\mathbf{s})W^\top = XW^\top,
+    $$
+
+    so property (i) holds up to floating-point noise ($\sim 10^{-6}$). For (ii), the outlier channel had a large $a_{\max}$, so its $s_c$ is large and dividing by it shrinks that channel's activation magnitude — the printed "after" max is far smaller than the "before" max ($\approx 40\times$ the typical value). The migrated difficulty lands in $\hat{W}$, which was smooth and has room to absorb it; and because $\operatorname{diag}(\mathbf{s})^{-1}$ multiplies the output of the upstream norm, it folds into that norm's affine weights at zero runtime cost.
+
+**6.** *(Implementation — hard.)* Empirically demonstrate GPTQ's core claim: that Hessian-based error compensation yields *lower layer-output error* than plain round-to-nearest (RTN) when the calibration inputs are **correlated** (a non-diagonal Hessian). Build a synthetic layer with correlated inputs, quantize it both ways, and compare $\|WX^\top - \hat{W}X^\top\|_2^2$.
+
+??? note "Solution"
+    Correlation is what gives GPTQ something to exploit: $H = 2XX^\top$ is non-diagonal, so an error committed on column $i$ can be *partly cancelled* by nudging correlated columns $j>i$ via $H^{-1}$. With uncorrelated (white) inputs $H$ is nearly diagonal and GPTQ collapses toward RTN.
+
+    ```python
+    import torch
+    torch.manual_seed(0)
+
+    in_f, out_f, N = 256, 128, 512
+    A = torch.randn(in_f, in_f)              # mixing matrix -> correlated features
+    X = torch.randn(N, in_f) @ A.t()         # [tokens, in]  correlated calibration
+    W = torch.randn(out_f, in_f) * 0.05      # [out, in]
+
+    H = (2.0 / N) * (X.t() @ X)              # input Hessian, non-diagonal
+
+    def rtn(W, n_bits=4, group_size=128):
+        out, inf = W.shape
+        wg = W.reshape(out, inf // group_size, group_size)
+        qmax = 2 ** (n_bits - 1) - 1
+        s = wg.abs().amax(-1, keepdim=True).clamp(min=1e-8) / qmax
+        return (torch.clamp(torch.round(wg / s), -qmax, qmax) * s).reshape(out, inf)
+
+    # gptq_quantize_layer(W, H, ...) is the function defined earlier in this chapter.
+    Wq_rtn  = rtn(W.clone())
+    Wq_gptq = gptq_quantize_layer(W.clone(), H.clone(), n_bits=4, group_size=128)
+
+    ref = W @ X.t()                          # FP16 reference output [out, tokens]
+    e_rtn  = (Wq_rtn  @ X.t() - ref).pow(2).mean().item()
+    e_gptq = (Wq_gptq @ X.t() - ref).pow(2).mean().item()
+    print(f"RTN  output MSE: {e_rtn:.4e}")
+    print(f"GPTQ output MSE: {e_gptq:.4e}")
+    print(f"GPTQ is {e_rtn / e_gptq:.2f}x lower")
+    ```
+
+    Both methods place weights on the *same* INT4-g128 grid, so they incur nearly identical *weight*-space error. The difference is entirely in the objective: RTN minimizes per-weight error and ignores $X$, while GPTQ minimizes the layer *output* error $\|WX^\top-\hat WX^\top\|_2^2$. After quantizing column $i$ it propagates the scaled residual $(w_i-q_i)/[H^{-1}]_{ii}$ into the not-yet-quantized columns (the `W[:, i:] -= ...` step), cancelling part of the output error that RTN leaves on the table. With correlated inputs you should see GPTQ's output MSE clearly below RTN's. If you replace `X` with white noise (`X = torch.randn(N, in_f)`), $H$ becomes near-diagonal, the compensation term vanishes, and the two errors converge — confirming that GPTQ's advantage comes specifically from *input correlations* captured by the Hessian.

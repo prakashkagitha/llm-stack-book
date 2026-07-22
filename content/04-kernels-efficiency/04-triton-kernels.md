@@ -893,3 +893,139 @@ print(f"{ms:.3f} ms,  {flops / (ms * 1e-3) / 1e12:.1f} TFLOP/s")
 - Tri Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022), and *FlashAttention-2* (2023) — the online-softmax and work-partitioning ideas behind Kernel 4.
 - NVIDIA **CUTLASS** documentation — for the layout/tiling/pipelining concepts that Triton automates, seen from the hand-written CUDA side.
 - The **vLLM** and **Unsloth** repositories — production Triton kernels (paged/flash attention, fused MoE, RMSNorm, RoPE) worth reading once you can follow this chapter's code.
+
+## Exercises
+
+**1.** In Kernel 1 (vector add) the driver launches on `x = torch.randn(98_432)` with `BLOCK_SIZE = 1024`. Exactly how many programs does the grid contain, and how many lanes of the *last* program are masked off? Then explain what would go wrong at runtime if you deleted the `mask=mask` argument from the `tl.store` on line 101 (keeping everything else the same).
+
+??? note "Solution"
+    The grid size is `triton.cdiv(98_432, 1024) = ceil(96.125) = 97` programs. Programs `0..95` each cover a full 1024 elements, accounting for `96 * 1024 = 98_304` elements. The last program (`pid = 96`) starts at `block_start = 96 * 1024 = 98_304` and owns offsets `98_304 .. 99_327`, but only offsets `98_304 .. 98_431` are real elements. That is `98_432 - 98_304 = 128` valid lanes, so `1024 - 128 = 896` lanes are masked off (consistent with the chapter's note that `98_432 = 96 * 1024 + 128`).
+
+    Without the store mask, the last program's `tl.store` writes all 1024 lanes, including the 896 offsets `98_432 .. 99_327` that lie *past the end of* `out` (which has only 98_432 elements). This is an out-of-bounds write into whatever GPU memory follows the tensor — an illegal memory access that either corrupts unrelated data or crashes the kernel with a CUDA fault. The load side would also read past the end, but the store is the one that produces incorrect/unsafe *writes*. The mask is exactly what keeps the ragged tail correct.
+
+**2.** The chapter states the naive multi-op softmax makes about 5 passes over HBM (read to find max, read to exponentiate, write the exponentials, read them to sum, read once more to divide) while the fused kernel makes 2 (one read, one write). Take an input of shape `M = 2048`, `N = 4096` stored in fp16 (2 bytes/element), on a GPU with 2.0 TB/s of HBM bandwidth. Compute the HBM bytes moved by each version, the resulting memory-bound time for each, and the speedup. Why can no fused softmax kernel beat this speedup by much?
+
+??? note "Solution"
+    Element count: $2048 \times 4096 = 8{,}388{,}608$ elements. One full pass over the data in fp16 moves $8{,}388{,}608 \times 2 = 16{,}777{,}216$ bytes $= 16$ MiB.
+
+    - Naive (5 passes): $5 \times 16 = 80$ MiB $= 83{,}886{,}080$ bytes.
+    - Fused (2 passes): $2 \times 16 = 32$ MiB $= 33{,}554{,}432$ bytes.
+
+    Memory-bound time is bytes / bandwidth (with $2.0$ TB/s $= 2.0 \times 10^{12}$ B/s):
+
+    $$
+    t_{\text{naive}} = \frac{83{,}886{,}080}{2.0\times10^{12}} \approx 41.9\ \mu s,
+    \qquad
+    t_{\text{fused}} = \frac{33{,}554{,}432}{2.0\times10^{12}} \approx 16.8\ \mu s.
+    $$
+
+    Speedup $= 80/32 = 2.5\times$. Softmax is memory-bound (very low arithmetic intensity), so runtime is set by HBM traffic, not FLOPs. The fused kernel is already at the floor of *one read plus one write* — you cannot compute a softmax without reading every input at least once and writing every output at least once. So $2$ passes is the physical minimum and the achievable speedup over the $5$-pass path is capped at $\approx 2.5\times$; no amount of cleverness gets past it.
+
+**3.** Consider the matmul of Kernel 3 with a *different* autotune config: `BLOCK_M = 64`, `BLOCK_N = 128`, `BLOCK_K = 64`, `num_stages = 4`, fp16 inputs (2 bytes) and an fp32 accumulator (4 bytes). Compute (a) the shared-memory footprint of the pipelined A and B tiles across all stages, and (b) the size of the fp32 accumulator tile. Does the shared-memory footprint fit on an A100 (164 KiB) and an H100 (228 KiB)?
+
+??? note "Solution"
+    Each pipeline stage stages one A tile and one B tile in shared memory:
+
+    - A tile: $\text{BLOCK\_M} \times \text{BLOCK\_K} \times 2 = 64 \times 64 \times 2 = 8{,}192$ bytes $= 8$ KiB.
+    - B tile: $\text{BLOCK\_K} \times \text{BLOCK\_N} \times 2 = 64 \times 128 \times 2 = 16{,}384$ bytes $= 16$ KiB.
+    - Per stage: $8 + 16 = 24$ KiB. With `num_stages = 4`: $4 \times 24 = 96$ KiB.
+
+    (b) The accumulator is $\text{BLOCK\_M} \times \text{BLOCK\_N} \times 4 = 64 \times 128 \times 4 = 32{,}768$ bytes $= 32$ KiB, held in **registers**, not shared memory.
+
+    The $96$ KiB shared-memory footprint fits on both the A100 ($164$ KiB) and H100 ($228$ KiB). As the chapter's worked example notes, though, a $96$ KiB shared-memory budget plus a $32$ KiB register-resident accumulator leaves limited room, so pushing tiles or stages larger can cut occupancy — which is exactly why the autotuner searches these configs rather than always picking the biggest tile.
+
+**4.** Implement a fused **RMSNorm** kernel in Triton in the exact "one program per row" style of Kernel 2 (fused softmax). RMSNorm over the last dimension is
+
+$$
+\text{RMSNorm}(x)_i = \frac{x_i}{\sqrt{\tfrac{1}{N}\sum_{k=1}^{N} x_k^2 + \varepsilon}}\; w_i
+$$
+
+where `w` is a length-`N` learnable gain vector and `eps` is a small constant. Write both the `@triton.jit` kernel and its Python driver, and explain why loading padded (out-of-bounds) lanes with `other=0.0` gives the correct mean-of-squares.
+
+??? note "Solution"
+    One program owns one row. It loads the whole row and the gain vector once, reduces the sum of squares on-chip, and writes the row once — the same load/reduce/store pattern as the fused softmax.
+
+    ```python
+    import torch
+    import triton
+    import triton.language as tl
+
+
+    @triton.jit
+    def rmsnorm_kernel(
+        out_ptr, in_ptr, w_ptr,
+        in_row_stride, out_row_stride,
+        n_cols, eps,
+        BLOCK_SIZE: tl.constexpr,        # padded power-of-two >= n_cols
+    ):
+        row_idx = tl.program_id(axis=0)
+        col_offsets = tl.arange(0, BLOCK_SIZE)
+        mask = col_offsets < n_cols
+
+        # Load this row and the gain vector. Padding lanes read 0.0.
+        row_start = in_ptr + row_idx * in_row_stride
+        x = tl.load(row_start + col_offsets, mask=mask, other=0.0)
+        w = tl.load(w_ptr + col_offsets, mask=mask, other=0.0)
+
+        # Mean of squares over the REAL columns (divide by n_cols, not BLOCK_SIZE).
+        x = x.to(tl.float32)
+        mean_sq = tl.sum(x * x, axis=0) / n_cols     # block reduction -> scalar
+        rstd = 1.0 / tl.sqrt(mean_sq + eps)
+
+        out = (x * rstd) * w.to(tl.float32)
+
+        out_row_start = out_ptr + row_idx * out_row_stride
+        tl.store(out_row_start + col_offsets, out.to(out_ptr.dtype.element_ty), mask=mask)
+
+
+    def triton_rmsnorm(x: torch.Tensor, w: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        assert x.dim() == 2 and x.is_cuda and w.is_cuda
+        M, N = x.shape
+        assert w.shape == (N,)
+        BLOCK_SIZE = triton.next_power_of_2(N)
+        num_warps = 4
+        if BLOCK_SIZE >= 2048:
+            num_warps = 8
+        if BLOCK_SIZE >= 4096:
+            num_warps = 16
+
+        out = torch.empty_like(x)
+        rmsnorm_kernel[(M,)](
+            out, x, w,
+            x.stride(0), out.stride(0),
+            N, eps,
+            BLOCK_SIZE=BLOCK_SIZE,
+            num_warps=num_warps,
+        )
+        return out
+
+
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        x = torch.randn(1823, 781, device="cuda")
+        w = torch.randn(781, device="cuda")
+        ours = triton_rmsnorm(x, w)
+        ref = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6) * w
+        print("max abs error:", (ours - ref).abs().max().item())   # ~1e-6
+    ```
+
+    The padding lanes (`col_offsets >= n_cols`) are loaded as `0.0`, so their contribution to $\sum x_k^2$ is $0^2 = 0$ — they add nothing to the reduction. Crucially the mean divides by the *runtime* `n_cols`, not the padded `BLOCK_SIZE`, so the sum of squares is normalized by the true number of columns. Accumulating the sum of squares in fp32 (the `x.to(tl.float32)` cast) mirrors the chapter's "multiply low, accumulate high" discipline and avoids precision loss for wide rows. The store mask keeps the padded lanes from writing past the end of the row.
+
+**5.** Work the online-softmax recurrence of Kernel 4 **by hand** for a single query row streamed as two key blocks of one key each. The (already scaled) scores are $S^{(1)} = 2$ and $S^{(2)} = 4$; the corresponding values (with `HEAD_DIM = 1`) are $v_1 = 1$ and $v_2 = 3$. Starting from $m = -\infty$, $\ell = 0$, $O = 0$, apply the recurrence block by block: report the correction factor $\alpha$ used when block 2 arrives, the final $\ell$ and $O$ *before* normalization, and the normalized output $O/\ell$. Verify it equals the plain softmax-weighted combination of $v_1, v_2$.
+
+??? note "Solution"
+    The recurrence per block: $m_{\text{new}} = \max(m, m^{(j)})$, $\alpha = e^{\,m - m_{\text{new}}}$, then $\ell \leftarrow \alpha\,\ell + \sum e^{\,S^{(j)} - m_{\text{new}}}$ and $O \leftarrow \alpha\,O + e^{\,S^{(j)} - m_{\text{new}}} v^{(j)}$.
+
+    **Block 1** ($S^{(1)} = 2$, $v_1 = 1$): $m^{(1)} = 2$, $m_{\text{new}} = \max(-\infty, 2) = 2$, $\alpha = e^{-\infty - 2} = 0$.
+    $\ell = 0\cdot 0 + e^{2-2} = 1$. $O = 0\cdot 0 + e^{0}\cdot 1 = 1$. Commit $m = 2$.
+
+    **Block 2** ($S^{(2)} = 4$, $v_2 = 3$): $m^{(2)} = 4$, $m_{\text{new}} = \max(2, 4) = 4$.
+    Correction factor: $\alpha = e^{\,m - m_{\text{new}}} = e^{2 - 4} = e^{-2} \approx 0.13534$.
+    $\ell = \alpha \cdot 1 + e^{4-4} = 0.13534 + 1 = 1.13534$.
+    $O = \alpha \cdot 1 + e^{0}\cdot 3 = 0.13534 + 3 = 3.13534$. Commit $m = 4$.
+
+    **Normalize:** $O/\ell = 3.13534 / 1.13534 \approx 2.7616$.
+
+    **Check against plain softmax:** unnormalized weights $e^{2} = 7.389$ and $e^{4} = 54.598$, sum $= 61.987$, so the softmax weights are $w_1 = 7.389/61.987 = 0.11920$ and $w_2 = 54.598/61.987 = 0.88080$. Then $w_1 v_1 + w_2 v_2 = 0.11920\cdot 1 + 0.88080\cdot 3 = 0.11920 + 2.64240 = 2.7616$. Identical.
+
+    The point: when block 2 raised the running max from $2$ to $4$, block 1's already-accumulated $\ell$ and $O$ had been exponentiated against the *old* max, so both were rescaled by the single factor $\alpha = e^{-2}$ before block 2's contribution was added. Rescaling $\ell$ but forgetting to rescale $O$ (or vice versa) — the pitfall flagged in the chapter — would give a wrong answer here.

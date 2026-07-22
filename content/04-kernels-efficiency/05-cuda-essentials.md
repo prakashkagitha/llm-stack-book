@@ -657,3 +657,144 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 - **"Programming Massively Parallel Processors" by Kirk & Hwu** — a thorough textbook treatment of CUDA including shared memory, bank conflicts, and performance optimization.
 - **Luo et al., "A Survey of GPU Architectures and Optimization Techniques"** — for a historical perspective on how SM design has evolved across Volta, Ampere, and Hopper.
 - **NVIDIA Nsight Compute Documentation** — for the full list of hardware performance counters and roofline methodology used to diagnose kernel bottlenecks.
+
+## Exercises
+
+**1.** In the `vector_add` kernel, the launch computes `blocks = (N + threads_per_block - 1) / threads_per_block` and the kernel guards its work with `if (idx < N)`. For `N = 1 << 24` (16,777,216) and `threads_per_block = 256`, how many blocks are launched, how many total threads does that spawn, and how many of those threads take the *else* path (do no work)? Why is the guard necessary even though $N$ here is an exact multiple of 256?
+
+??? note "Solution"
+
+    $N = 2^{24} = 16{,}777{,}216$, `threads_per_block = 256`.
+
+    Blocks: $\lceil N / 256 \rceil = (16{,}777{,}216 + 255)/256 = 16{,}777{,}471 / 256 = 65{,}536$ blocks (integer division). Since $N$ is an exact multiple of 256 ($2^{24} / 2^8 = 2^{16} = 65{,}536$), the ceiling adds nothing.
+
+    Total threads: $65{,}536 \times 256 = 16{,}777{,}216 = N$. So exactly $N$ threads are spawned and **zero** threads take the else path in this particular case — every thread has real work.
+
+    The guard is still necessary because it is written for the *general* case: if $N$ were, say, $16{,}777{,}217$, the ceiling would launch $65{,}537$ blocks = $16{,}777{,}472$ threads, leaving $255$ threads with `idx >= N`. Without `if (idx < N)` those threads would read and write `A/B/C` out of bounds — an illegal memory access. Grid dimensions are quantized to whole blocks, so unless every launch dimension is guaranteed a multiple of `blockDim`, the bounds check must be present.
+
+**2.** A warp of 32 threads executes the following kernel fragment, where `data` is a per-thread value:
+
+    ```cpp
+    if (threadIdx.x % 2 == 0) {
+        y = expensive_A(data);   // takes time t_A
+    } else {
+        y = expensive_B(data);   // takes time t_B
+    }
+    ```
+
+    Explain, in terms of the SIMT execution model, why this costs roughly $t_A + t_B$ per warp rather than $\max(t_A, t_B)$. Then propose a restructuring of the *data layout* (not the math) that would let a warp execute only one of the two branches, restoring $\max$-like behavior across the grid.
+
+??? note "Solution"
+
+    **Why it costs $t_A + t_B$.** All 32 threads in a warp share one set of functional units and execute the *same* instruction each cycle (SIMT). The predicate `threadIdx.x % 2 == 0` is true for the 16 even lanes and false for the 16 odd lanes, so the warp is *divergent*. The hardware cannot run both branches at once on one instruction stream, so it executes the `then` block with the 16 odd lanes masked off (idle), then executes the `else` block with the 16 even lanes masked off. The two paths run **sequentially**, so the warp's time is $t_A + t_B$, not $\max(t_A, t_B)$ — and during each path half the lanes are wasted, halving effective throughput for a 50/50 split (as the chapter notes).
+
+    **Restructuring the data layout.** Divergence is a *within-warp* property: it only hurts when lanes of the *same* warp disagree on the branch. If we sort/partition the input so that each warp's 32 elements all belong to the same class — e.g., reorder `data` so all "A-type" elements are contiguous and all "B-type" elements are contiguous, and choose the branch from a per-*warp* (or per-block) key rather than a per-thread key — then each warp evaluates a uniform predicate and takes exactly one branch. A warp of all-even indices runs only `expensive_A` (cost $t_A$); a warp of all-odd runs only `expensive_B` (cost $t_B$). No warp pays both. The total work is unchanged, but each warp now behaves like $\max$ (in fact like a single branch), and the wasted-lane penalty disappears because the mask is all-ones within each warp.
+
+**3.** Consider a $32 \times 32$ float tile in shared memory. A warp reads down a single column: lane $i$ reads element $(i, j)$ for a fixed $j$. Using the bank model from the chapter (32 banks, 4 bytes each, bank of word index $w$ is $w \bmod 32$), compute the bank accessed by each lane (a) for the layout `float tile[32][32]` and (b) for the padded layout `float tile[32][33]`. State the conflict factor in each case and the resulting shared-memory throughput if the conflict-free rate is ~19 TB/s.
+
+??? note "Solution"
+
+    **(a) `tile[32][32]`.** Element $(i, j)$ is at word index $w = i \cdot 32 + j$. Its bank is
+    $$ w \bmod 32 = (i \cdot 32 + j) \bmod 32 = (0 + j) \bmod 32 = j. $$
+    Every lane $i = 0, \ldots, 31$ maps to the *same* bank $j$. This is a **32-way bank conflict**. The 32 accesses serialize, so throughput drops by a factor of 32: $\approx 19\,\text{TB/s} / 32 \approx 0.6\,\text{TB/s}$ (matching the chapter's worked example).
+
+    **(b) `tile[32][33]`.** Now each row is 33 words wide, so element $(i, j)$ is at word index $w = i \cdot 33 + j$. Its bank is
+    $$ (i \cdot 33 + j) \bmod 32 = (i \cdot (32 + 1) + j) \bmod 32 = (i + j) \bmod 32. $$
+    As $i$ runs $0 \ldots 31$, $(i + j) \bmod 32$ takes all 32 distinct values — one lane per bank. **Conflict factor 1** (conflict-free), so throughput is the full $\approx 19\,\text{TB/s}$. The cost is 32 wasted floats (128 bytes) per tile, which the chapter deems a worthwhile trade.
+
+**4.** The `warp_reduce_sum` function uses `__shfl_down_sync` with `delta = 16, 8, 4, 2, 1`. (a) Trace the reduction of the 8-lane case (imagine a warp of only 8 lanes, `delta = 4, 2, 1`) with initial values equal to the lane indices $0, 1, \ldots, 7$, showing lane 0's running value after each step. (b) Explain why the result is only guaranteed correct in lane 0, and why the loop uses exactly $\log_2 32 = 5$ steps for a full warp.
+
+??? note "Solution"
+
+    **(a) 8-lane trace.** Initial lane values: lane $i$ holds $i$, so `[0,1,2,3,4,5,6,7]`. `__shfl_down_sync(mask, val, delta)` gives lane $i$ the value currently in lane $i + \delta$ (lanes reading past the end keep an unused value; we only track valid contributors).
+
+    Step 1, $\delta = 4$: lane $i$ gets lane $i{+}4$'s value and adds.
+    - lane 0: $0 + 4 = 4$
+    - lane 1: $1 + 5 = 6$
+    - lane 2: $2 + 6 = 8$
+    - lane 3: $3 + 7 = 10$
+    - (lanes 4-7 add out-of-range lanes; their partial sums are no longer needed)
+
+    Now the meaningful values are `[4, 6, 8, 10, ...]`.
+
+    Step 2, $\delta = 2$: lane $i$ gets lane $i{+}2$.
+    - lane 0: $4 + 8 = 12$
+    - lane 1: $6 + 10 = 16$
+
+    Now `[12, 16, ...]`.
+
+    Step 3, $\delta = 1$: lane 0 gets lane 1.
+    - lane 0: $12 + 16 = 28$
+
+    Final lane-0 value: **28**, which equals $0+1+2+\cdots+7 = 28$. Correct.
+
+    **(b) Why only lane 0, and why 5 steps.** `__shfl_down_sync` only moves data *downward* (from higher lane to lower lane). At each step lane 0 accumulates the sum of a doubling window of lanes above it ($1, 2, 4, \ldots$), so after the last step lane 0 holds the total. Other lanes hold partial sums of *their* upward windows, and lanes near the top read past the warp boundary (undefined/stale data), so their results are not the full sum — only lane 0 is guaranteed correct. A tree reduction halves the number of unreduced partial sums each step, so summing 32 values needs $\log_2 32 = 5$ halvings, hence `delta = 16, 8, 4, 2, 1`.
+
+**5.** Reproduce the chapter's memory-traffic worked example for a *non-square* projection: an FFN up-projection with $M = 8192$ (tokens), $K = 4096$ (hidden), $N = 16384$ ($4\times$ expansion). Compute (a) total FLOPs, (b) global-memory read traffic in bytes for the tiled kernel (each element of $A$ and $B$ read once, FP32), and (c) the arithmetic intensity. Using the A100 roofline crossover of ~156 FLOP/byte given in the chapter, is this kernel compute-bound?
+
+??? note "Solution"
+
+    **(a) FLOPs.** $2 \cdot M \cdot N \cdot K = 2 \cdot 8192 \cdot 16384 \cdot 4096$.
+    $8192 \cdot 16384 = 134{,}217{,}728 \approx 1.342 \times 10^8$. Times $4096$: $\approx 5.498 \times 10^{11}$. Times 2: $\approx 1.10 \times 10^{12}$ FLOPs ($\approx 1.1$ TFLOP).
+
+    **(b) Read bytes (tiled, each element loaded once).** Elements read $= M\cdot K + K\cdot N = 8192\cdot 4096 + 4096\cdot 16384$.
+    - $A$: $8192 \cdot 4096 = 33{,}554{,}432$ floats.
+    - $B$: $4096 \cdot 16384 = 67{,}108{,}864$ floats.
+    - Total: $100{,}663{,}296$ floats $\times 4$ bytes $= 402{,}653{,}184$ bytes $\approx 402.7$ MB $\approx 0.403$ GB.
+
+    **(c) Arithmetic intensity.** $\dfrac{1.10 \times 10^{12}\ \text{FLOP}}{4.03 \times 10^{8}\ \text{bytes}} \approx 2.73 \times 10^{3} \approx 2731$ FLOP/byte.
+
+    **Compute-bound?** $2731 \gg 156$, so yes — firmly compute-bound, even more so than the square $4096^3$ case (~1024 FLOP/byte). Intuitively, the larger $N$ and $M$ raise the FLOPs (which scale with $MNK$) faster than the read traffic (which scales with $MK + KN$), pushing arithmetic intensity higher.
+
+**6.** Implement a fused kernel `fused_bias_gelu` that computes `C = gelu(A + bias)` element-wise, following the style of `fused_bias_relu_scale` in the chapter. Use the tanh approximation of GELU,
+    $$ \text{gelu}(x) = 0.5\,x\left(1 + \tanh\!\left[\sqrt{2/\pi}\,(x + 0.044715\,x^3)\right]\right), $$
+    and provide both a scalar version and a `float4` vectorized version. Briefly state why fusing bias-add and GELU into one kernel saves HBM traffic versus two separate PyTorch ops.
+
+??? note "Solution"
+
+    ```cpp
+    // Fused bias-add + GELU (tanh approximation): C = gelu(A + bias)
+    // One pass: load A and bias once, compute in registers, write C once.
+    __device__ __forceinline__ float gelu_tanh(float x) {
+        const float k0 = 0.7978845608028654f;  // sqrt(2/pi)
+        const float k1 = 0.044715f;
+        float inner = k0 * (x + k1 * x * x * x);
+        return 0.5f * x * (1.0f + tanhf(inner));
+    }
+
+    // Scalar version: one element per thread
+    __global__ void fused_bias_gelu(
+        const float* __restrict__ A,     // [N]
+        const float* __restrict__ bias,  // [N]
+        float* __restrict__ C,           // [N]
+        int N
+    ) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < N) {
+            float val = A[idx] + bias[idx];   // bias-add
+            C[idx] = gelu_tanh(val);          // GELU in registers
+        }
+    }
+
+    // Vectorized version: 4 elements per thread via float4 (16-byte loads)
+    __global__ void fused_bias_gelu_vec4(
+        const float4* __restrict__ A,
+        const float4* __restrict__ bias,
+        float4* __restrict__ C,
+        int N4  // N / 4
+    ) {
+        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx < N4) {
+            float4 a = A[idx];
+            float4 b = bias[idx];
+            float4 res;
+            res.x = gelu_tanh(a.x + b.x);
+            res.y = gelu_tanh(a.y + b.y);
+            res.z = gelu_tanh(a.z + b.z);
+            res.w = gelu_tanh(a.w + b.w);
+            C[idx] = res;
+        }
+    }
+    ```
+
+    **Why fusing saves HBM traffic.** Done as two separate PyTorch ops, `t = A + bias` writes the full intermediate `t` to HBM ($N$ writes), then `gelu(t)` reads it back ($N$ reads) and writes the output — roughly $N$ reads of $A$/`bias`, $N$ writes of `t`, $N$ reads of `t`, $N$ writes of `C`. The fused kernel loads $A$ and `bias` once, holds the sum in a register, applies GELU, and writes `C` once — eliminating the entire round-trip of the `t` intermediate through HBM. Since element-wise ops are memory-bandwidth-bound, cutting the number of HBM passes is the dominant speedup, exactly the design philosophy behind FlashAttention and quantized fused kernels described in the chapter. The `float4` variant additionally moves 16 bytes per thread per transaction instead of 4, pushing effective bandwidth toward the hardware maximum.

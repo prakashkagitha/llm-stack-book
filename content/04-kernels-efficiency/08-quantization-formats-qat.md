@@ -643,3 +643,124 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 - **llama.cpp** (Georgi Gerganov) — `github.com/ggerganov/llama.cpp` — the canonical k-quant and GGUF implementation; the source code in `ggml-quants.c` is the reference for Q4_K_M/Q5_K_M internals.
 - **Sheng et al., "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU"**, ICML 2023 — demonstrates INT4 KV cache quantization and CPU offloading.
 - **NVIDIA Transformer Engine** (`github.com/NVIDIA/TransformerEngine`) — reference implementation of FP8 training and inference on Hopper GPUs, including delayed scaling and amax history.
+
+---
+
+## Exercises
+
+**1.** Weight-only INT4 quantization does *not* change the arithmetic intensity of the GEMM — the kernel dequantizes each weight back to FP16 and runs the same FP16 multiply-accumulate as the BF16 baseline. Yet the throughput table lists INT4 W-only at roughly $2.5$–$3.5\times$ the decode throughput of BF16. Using the roofline picture from the chapter, explain why decode gets faster even though the FLOP count and the compute precision are unchanged.
+
+??? note "Solution"
+    Autoregressive decode processes one token at a time, so each weight matrix is multiplied by a single activation vector (a GEMV, batch size 1). The arithmetic intensity — FLOPs per byte moved from HBM — is very low: every weight is loaded from memory and used in essentially one multiply-accumulate. This places decode firmly on the **memory-bandwidth-bound** side of the roofline, where runtime is set by *bytes moved from HBM*, not by the GPU's peak FLOP/s.
+
+    A BF16 weight is 2 bytes; an INT4 per-group weight is $0.5$ bytes (plus negligible group-scale overhead). Because decode time is dominated by streaming the weight matrix out of HBM, cutting the bytes-per-weight by $4\times$ cuts the dominant cost by close to $4\times$. The reason the measured speedup is only $2.5$–$3.5\times$ rather than a clean $4\times$ is overhead that does *not* scale down: the on-the-fly dequantization work, unpacking two nibbles per byte, the group scales that still travel in FP16, and the FP16 multiply-accumulate itself. The compute precision is irrelevant to the win — the win comes entirely from moving fewer bytes across the memory bus, which is exactly what the roofline predicts for a bandwidth-bound regime. (This is also why kernel quality matters so much: `exllamav2`'s fused INT4 kernels sit near the top of that range, while a naive dequantize-then-GEMM path sits near the bottom.)
+
+**2.** A group of weights is quantized with **symmetric** INT4 (signed, so the positive code limit is $2^{b-1}-1 = 7$) using the chapter's per-group scale rule $s = \max(|\mathbf{w}|) / (2^{b-1}-1)$. Suppose the group's largest-magnitude weight is $\max(|\mathbf{w}|) = 0.84$.
+
+   (a) Compute the scale $s$.
+   (b) Give the worst-case absolute quantization error for any weight in this group.
+   (c) A single weight in the group has value $w = 0.30$. What integer code $q$ does it map to, and what is its dequantized value $\hat{w}$ and error?
+
+??? note "Solution"
+    **(a)** $s = \dfrac{0.84}{7} = 0.12$.
+
+    **(b)** For a linear quantizer the reconstruction lands on the nearest multiple of $s$, so the rounding error per element is bounded by half a step: $\dfrac{s}{2} = \dfrac{0.12}{2} = 0.06$. Any weight inside the representable range is reconstructed to within $0.06$ of its true value.
+
+    **(c)** Symmetric quantization has zero-point $z = 0$, so $q = \operatorname{round}(w/s) = \operatorname{round}(0.30 / 0.12) = \operatorname{round}(2.5) = 2$ (round-half-to-even; either $2$ or $3$ is acceptable if a different rounding rule is used — take $2$). This is within $[-8, 7]$, so no clipping. Dequantized value: $\hat{w} = s \cdot q = 0.12 \times 2 = 0.24$. Error: $|0.30 - 0.24| = 0.06$, which sits exactly at the $s/2$ bound derived in (b).
+
+**3.** The chapter states that `Q4_K_M` costs about $4.5$ bits/weight, and gives the exact `block_q4_K` layout: two fp16 super-block scales `d, dmin`; a 12-byte array `scales[12]` holding the sixteen 6-bit sub-block scales and mins; and `qs[128]`, the 256 packed 4-bit weights. Each super-block covers **256 weights**. Derive the $4.5$ bits/weight figure from this struct, and identify how many bits of that total are "pure payload" (the 4-bit weights) versus metadata overhead.
+
+??? note "Solution"
+    Add up the bytes in one super-block, then divide by the 256 weights it encodes.
+
+    - `d` and `dmin`: two fp16 values = $2 \times 2 = 4$ bytes = $32$ bits.
+    - `scales[12]`: $12$ bytes = $96$ bits. (This is $16$ six-bit values packed: $16 \times 6 = 96$ bits, which is exactly $12$ bytes — the packing is tight.)
+    - `qs[128]`: $128$ bytes = $1024$ bits. ($256$ weights $\times 4$ bits $= 1024$ bits, two nibbles per byte.)
+
+    Total per super-block: $32 + 96 + 1024 = 1152$ bits for $256$ weights.
+
+    $$
+    \frac{1152 \text{ bits}}{256 \text{ weights}} = 4.5 \text{ bits/weight}
+    $$
+
+    **Payload vs. overhead:** the pure 4-bit weight payload is $1024/256 = 4.0$ bits/weight. The remaining $128/256 = 0.5$ bits/weight is metadata — the two fp16 super-block scales ($32/256 = 0.125$ bits/weight) plus the sixteen 6-bit sub-block scales/mins ($96/256 = 0.375$ bits/weight). So Q4_K_M pays a half-bit-per-weight tax over a hypothetical flat 4-bit format, and spends it on two levels of scale granularity (per-256 super-block and per-32 sub-block), which is exactly the block-level mixed precision that buys back accuracy.
+
+**4.** Consider the chapter's KV-cache setting: a model with $L = 32$ layers, $H = 32$ heads, head dimension $D = 128$, decoding a single sequence ($B=1$) out to $T = 8192$ tokens. The cache stores both $K$ and $V$.
+
+   (a) Compute the BF16 KV-cache size in GB.
+   (b) Now quantize to INT8 per-token, exactly as `quantize_kv_int8` does: one INT8 byte per element, plus **one fp16 scale per (layer, head, token)** for each of $K$ and $V$. Compute the INT8 size and express it as a percentage of the BF16 size. (Use $1\text{ GB} = 10^9$ bytes.)
+
+??? note "Solution"
+    **(a)** Number of $K$ elements across all layers = $L \times H \times D \times T = 32 \times 32 \times 128 \times 8192$.
+
+    Step by step: $32 \times 32 = 1024$; $1024 \times 128 = 131072$; $131072 \times 8192 = 1{,}073{,}741{,}824 \approx 1.07 \times 10^9$ elements. $V$ is the same, so $K+V \approx 2.147 \times 10^9$ elements. At $2$ bytes each (BF16):
+
+    $$
+    2.147 \times 10^9 \times 2 = 4.29 \times 10^9 \text{ bytes} \approx 4.29 \text{ GB}.
+    $$
+
+    **(b)** INT8 quantized values: $1$ byte per element $= 2.147 \times 10^9$ bytes.
+
+    Scales: one fp16 ($2$-byte) scale per (layer, head, token), for each of $K$ and $V$. Number of scales $= 2 \times L \times H \times T = 2 \times 32 \times 32 \times 8192 = 2 \times 8{,}388{,}608 = 1.678 \times 10^7$. At $2$ bytes each: $3.36 \times 10^7$ bytes $\approx 0.034$ GB.
+
+    Total INT8 size $\approx 2.147 \times 10^9 + 0.034 \times 10^9 = 2.18 \times 10^9$ bytes $\approx 2.18$ GB.
+
+    As a fraction of BF16: $\dfrac{2.18}{4.29} \approx 0.508$, i.e. **about $51\%$** of the BF16 footprint. The scale overhead is tiny ($\sim 1.5\%$ of the compressed size) because each scale is shared across the $D = 128$ elements of one head's vector — so INT8 KV lands essentially at the ideal $2\times$ reduction.
+
+**5.** The chapter's `FakeQuantLinear.forward` contains a deliberately "simplified" bug: it computes a proper per-group scale with `get_scale`, then throws it away by calling `STEQuantize.apply(self.weight, 1.0, self.bits)` with a hard-coded scale of `1.0`. Explain why passing `1.0` produces near-useless quantization for typical weights, then fix `forward` so it actually fake-quantizes on the per-group scale grid (still using the straight-through estimator). Include a short test that shows the fixed version has much lower weight-reconstruction MSE.
+
+??? note "Solution"
+    **Why `1.0` is broken.** `STEQuantize.forward` divides by the scale, clamps to $[q_\text{min}, q_\text{max}] = [-8, 7]$ for 4 bits, rounds, and multiplies back. With `scale = 1.0`, the "grid" is just the integers $\{-8, \dots, 7\}$. Pretrained weights are roughly $\mathcal{N}(0, \sigma)$ with $\sigma \approx 0.02$–$0.1$; essentially every weight has magnitude far below $0.5$, so it rounds to **$0$**. The layer effectively zeros its weights — catastrophic error. The whole point of `get_scale` is to rescale each group so its largest weight maps to $q_\text{max} = 7$, spreading the group across all 16 codes; discarding it wastes the format.
+
+    **The fix.** Pass the computed per-group scale tensor instead of `1.0`. `STEQuantize` already broadcasts elementwise, and `get_scale` returns a tensor the same shape as `weight`, so this "just works":
+
+    ```python
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Per-group symmetric scale, one value per group of `group_size` weights
+        scale = self.get_scale(self.weight)            # same shape as weight
+        # Fake-quantize on the correct grid; STE lets gradients pass through
+        w_fq = STEQuantize.apply(self.weight, scale, self.bits)
+        return F.linear(x, w_fq, self.bias)
+    ```
+
+    (No change to `STEQuantize` is needed: `x / scale` and `x_quant * scale` both broadcast over the tensor scale, and `backward` still returns `grad_output` for the STE, plus `None` for the `scale` and `bits` arguments.)
+
+    **Test showing the improvement:**
+
+    ```python
+    import torch
+
+    torch.manual_seed(0)
+    layer = FakeQuantLinear(512, 512, bits=4, group_size=128)
+    # Give it realistic small-magnitude weights (std ~ 0.05)
+    with torch.no_grad():
+        layer.weight.normal_(0.0, 0.05)
+
+    w = layer.weight.detach()
+
+    # Broken version: scale hard-coded to 1.0
+    w_broken = STEQuantize.apply(w, 1.0, 4)
+    mse_broken = ((w - w_broken) ** 2).mean().item()
+
+    # Fixed version: use the real per-group scale
+    scale = layer.get_scale(w)
+    w_fixed = STEQuantize.apply(w, scale, 4)
+    mse_fixed = ((w - w_fixed) ** 2).mean().item()
+
+    print(f"MSE with scale=1.0 (broken): {mse_broken:.6e}")
+    print(f"MSE with per-group scale:    {mse_fixed:.6e}")
+    print(f"Improvement factor:          {mse_broken / mse_fixed:.1f}x")
+    ```
+
+    With `scale = 1.0` every weight rounds to $0$, so `mse_broken` is essentially the mean square of the weights themselves ($\approx \sigma^2 = 0.05^2 = 2.5\times10^{-3}$). The fixed version rounds on a grid whose per-group step is $s = \max(|\mathbf{w}|)/7$; for $\sigma = 0.05$ and `group_size=128` the typical group max is $\approx 0.145$, so $s \approx 0.021$ and the quantization error variance is roughly $s^2/12 \approx 3.5\times10^{-5}$. That is about $70\times$ smaller than the broken MSE (running the script above gives `mse_broken` $\approx 2.5\times10^{-3}$, `mse_fixed` $\approx 3.4\times10^{-5}$, an improvement factor near $73\times$) — order $10^2$, confirming the scale was the whole story.
+
+**6.** The Interview Corner argues that QLoRA does **not** need a straight-through estimator, even though its base weights are stored in 4-bit NF4 — yet the QAT section insists the STE is essential precisely because $\operatorname{round}(\cdot)$ has zero gradient. Reconcile these two claims: under what condition is an STE required, and why does QLoRA escape it while plain INT4 QAT does not?
+
+??? note "Solution"
+    The STE is required exactly when **you need a gradient with respect to a quantity that passes through the rounding operation.** Rounding is piecewise-constant, so $\partial q / \partial w = 0$ almost everywhere; if $w$ is a parameter you intend to *update*, the true gradient vanishes and training stalls. The STE fabricates a usable gradient by pretending $\partial q/\partial w \approx 1$ in the backward pass — a biased but effective surrogate.
+
+    - **Plain INT4 QAT** trains the model's *own weights* through fake-quantization: $w$ is both quantized and updated. The update $w \leftarrow w - \eta\, \partial\mathcal{L}/\partial w$ needs a gradient that flows *through* $\operatorname{round}(w/s)$. Without the STE that gradient is zero, so QAT genuinely depends on it.
+
+    - **QLoRA** freezes the base weights. NF4 is applied once, up front, and those weights are **never updated** — so there is no $\partial\mathcal{L}/\partial W_\text{base}$ to compute and nothing needs to flow back through the NF4 rounding. In the forward pass the frozen NF4 weights are merely *dequantized to BF16* (a fixed lookup) and used in the matmul. The only trainable parameters are the LoRA matrices $A, B$ in BF16, and the gradient w.r.t. them, $\partial\mathcal{L}/\partial A$ and $\partial\mathcal{L}/\partial B$, involves multiplying by the already-dequantized BF16 weight matrix, which is a smooth, fully differentiable path. No rounding sits on the gradient path to $A$ or $B$, so no STE is needed.
+
+    In one line: **STE is about gradients into quantized-and-updated weights; QAT updates its quantized weights (needs STE), QLoRA freezes them and only trains a differentiable BF16 side-path (no STE).**
