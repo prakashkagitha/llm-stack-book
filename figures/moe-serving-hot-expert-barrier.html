@@ -1,0 +1,143 @@
+<figure class="viz" id="fig-moe-serving-hot-expert-barrier">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 800 470" role="img" aria-label="Four GPUs in an expert-parallel group must all reach a synchronization barrier before the all-to-all completes; when one GPU holds a hot expert its load is much taller than the rest, so the other three GPUs finish early and sit idle waiting -- the imbalance factor of max over mean quantifies how much aggregate expert compute is wasted every step. A balanced inset shows the same barrier with almost no idle time.">
+<defs>
+  <pattern id="mhsb-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <line x1="0" y1="0" x2="0" y2="7" stroke="var(--muted)" stroke-width="1.6" opacity="0.55"/>
+  </pattern>
+</defs>
+<style>
+  #fig-moe-serving-hot-expert-barrier text{ font:11px var(--sans, sans-serif); fill:var(--ink-soft); }
+  #fig-moe-serving-hot-expert-barrier .hdr{ font:700 15px var(--sans, sans-serif); }
+  #fig-moe-serving-hot-expert-barrier .sub{ font:10.5px var(--sans, sans-serif); fill:var(--muted); }
+  #fig-moe-serving-hot-expert-barrier .sect{ font:700 11.5px var(--sans, sans-serif); fill:var(--ink-soft); }
+  #fig-moe-serving-hot-expert-barrier .tiny{ font:9px var(--sans, sans-serif); fill:var(--muted); }
+  #fig-moe-serving-hot-expert-barrier .axis{ font:700 11px var(--sans, sans-serif); }
+  #fig-moe-serving-hot-expert-barrier .mono{ font:700 12px var(--mono, monospace); }
+  #fig-moe-serving-hot-expert-barrier .mono2{ font:10.5px var(--mono, monospace); fill:var(--ink-soft); }
+  #fig-moe-serving-hot-expert-barrier .waitlbl{ font:700 9.5px var(--sans, sans-serif); fill:var(--warn); }
+  #fig-moe-serving-hot-expert-barrier .cap{ font:italic 10.5px var(--sans, sans-serif); fill:var(--muted); }
+  #fig-moe-serving-hot-expert-barrier .legend{ font:10px var(--sans, sans-serif); fill:var(--ink-soft); }
+</style>
+
+<text x="400" y="22" text-anchor="middle" class="hdr">THE ALL-TO-ALL BARRIER: ONE HOT EXPERT STALLS EVERY GPU</text>
+<text x="400" y="38" text-anchor="middle" class="sub">EP group, G = 4 GPUs, one decode step -- the step finishes only when the slowest rank finishes</text>
+
+<g data-anim="1">
+  <text x="260" y="58" text-anchor="middle" class="sect">SKEWED (typical hot-expert step)</text>
+
+  
+  <rect x="72" y="158" width="76" height="162" fill="none" class="v-stroke" stroke-width="1" opacity="0.35"/>
+  <rect x="172" y="158" width="76" height="162" fill="none" class="v-stroke" stroke-width="1" opacity="0.35"/>
+  <rect x="272" y="158" width="76" height="162" fill="none" class="v-stroke" stroke-width="1" opacity="0.35"/>
+  <rect x="372" y="158" width="76" height="162" fill="none" class="v-stroke" stroke-width="1" opacity="0.35"/>
+
+  
+  <rect x="75" y="158" width="70" height="108" fill="url(#mhsb-hatch)" class="v-stroke" stroke-width="0.8" opacity="0.9"/>
+  <rect x="175" y="158" width="70" height="108" fill="url(#mhsb-hatch)" class="v-stroke" stroke-width="0.8" opacity="0.9"/>
+  <rect x="275" y="158" width="70" height="108" fill="url(#mhsb-hatch)" class="v-stroke" stroke-width="0.8" opacity="0.9"/>
+
+  <text x="210" y="202" text-anchor="middle" class="waitlbl">FLOPs</text>
+  <text x="210" y="214" text-anchor="middle" class="waitlbl">wasted</text>
+  <text x="210" y="226" text-anchor="middle" class="waitlbl">waiting</text>
+
+  
+  <g class="v-fill v-stroke" stroke-width="1">
+    <rect x="75" y="302" width="70" height="18"/>
+    <rect x="75" y="284" width="70" height="18"/>
+    <rect x="75" y="266" width="70" height="18"/>
+
+    <rect x="175" y="302" width="70" height="18"/>
+    <rect x="175" y="284" width="70" height="18"/>
+    <rect x="175" y="266" width="70" height="18"/>
+
+    <rect x="275" y="302" width="70" height="18"/>
+    <rect x="275" y="284" width="70" height="18"/>
+    <rect x="275" y="266" width="70" height="18"/>
+  </g>
+
+  <g fill="var(--warn)" fill-opacity="0.82" stroke="var(--warn)" stroke-width="1">
+    <rect x="375" y="302" width="70" height="18"/>
+    <rect x="375" y="284" width="70" height="18"/>
+    <rect x="375" y="266" width="70" height="18"/>
+    <rect x="375" y="248" width="70" height="18"/>
+    <rect x="375" y="230" width="70" height="18"/>
+    <rect x="375" y="212" width="70" height="18"/>
+    <rect x="375" y="194" width="70" height="18"/>
+    <rect x="375" y="176" width="70" height="18"/>
+    <rect x="375" y="158" width="70" height="18"/>
+  </g>
+
+  
+  <text x="110" y="338" text-anchor="middle" class="axis">GPU0</text>
+  <text x="210" y="338" text-anchor="middle" class="axis">GPU1</text>
+  <text x="310" y="338" text-anchor="middle" class="axis">GPU2</text>
+  <text x="410" y="338" text-anchor="middle" class="axis" fill="var(--warn)">GPU3</text>
+  <text x="410" y="351" text-anchor="middle" class="tiny" fill="var(--warn)">hot expert</text>
+
+  
+  <line x1="60" y1="239" x2="455" y2="239" class="v-grid" stroke-width="1.4" stroke-dasharray="5 4"/>
+</g>
+
+<g data-anim="2">
+  
+  <line x1="60" y1="158" x2="460" y2="158" stroke="var(--ink-soft)" stroke-width="3"/>
+  <line x1="60" y1="152" x2="60" y2="164" stroke="var(--ink-soft)" stroke-width="3"/>
+  <line x1="460" y1="152" x2="460" y2="164" stroke="var(--ink-soft)" stroke-width="3"/>
+  <text x="260" y="146" text-anchor="middle" class="mono2">BARRIER: all-to-all completes here</text>
+</g>
+
+<g data-anim="3">
+  <text x="400" y="362" text-anchor="middle" class="mono">IF = max / mean = 9 / 4.5 = 2.0</text>
+  <text x="400" y="379" text-anchor="middle" class="sub">an IF of 2 -&gt; roughly half the aggregate expert FLOPs sit idle waiting for GPU3, every step</text>
+
+  <text x="400" y="400" text-anchor="middle" class="cap">Because every decode step crosses the barrier, a hot expert taxes every step --</text>
+  <text x="400" y="414" text-anchor="middle" class="cap">skew lives in the p99 tail.</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="510" y="50" width="270" height="250" rx="10" class="v-fill v-stroke" stroke-width="1.2"/>
+  <text x="645" y="72" text-anchor="middle" class="sect">Balanced (IF ~ 1)</text>
+  <text x="645" y="85" text-anchor="middle" class="tiny">same 4 GPUs, flattened histogram</text>
+
+  
+  <line x1="535" y1="218" x2="755" y2="218" stroke="var(--ink-soft)" stroke-width="2.4"/>
+
+  
+  <rect x="645" y="218" width="20" height="10" fill="url(#mhsb-hatch)" class="v-stroke" stroke-width="0.6" opacity="0.9"/>
+
+  <g class="v-fill v-stroke" stroke-width="1">
+    <rect x="575" y="220" width="20" height="40"/>
+    <rect x="615" y="220" width="20" height="40"/>
+    <rect x="655" y="228" width="20" height="32"/>
+    <rect x="695" y="220" width="20" height="40"/>
+  </g>
+
+  <line x1="535" y1="260" x2="755" y2="260" class="v-grid" stroke-width="1"/>
+
+  <text x="585" y="274" text-anchor="middle" class="tiny">G0</text>
+  <text x="625" y="274" text-anchor="middle" class="tiny">G1</text>
+  <text x="665" y="274" text-anchor="middle" class="tiny">G2</text>
+  <text x="705" y="274" text-anchor="middle" class="tiny">G3</text>
+
+  <text x="645" y="291" text-anchor="middle" class="mono2">IF ~ 1.05 -- almost no wait</text>
+</g>
+
+<g data-anim="5">
+  <rect x="70" y="428" width="15" height="12" class="v-fill v-stroke" stroke-width="1"/>
+  <text x="90" y="438" text-anchor="start" class="legend">normal GPU load</text>
+
+  <rect x="235" y="428" width="15" height="12" fill="var(--warn)" fill-opacity="0.82" stroke="var(--warn)" stroke-width="1"/>
+  <text x="255" y="438" text-anchor="start" class="legend">hot GPU (straggler)</text>
+
+  <rect x="420" y="428" width="15" height="12" fill="url(#mhsb-hatch)" class="v-stroke" stroke-width="0.8"/>
+  <text x="440" y="438" text-anchor="start" class="legend">idle FLOPs (waiting)</text>
+
+  <line x1="600" y1="434" x2="622" y2="434" class="v-grid" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="628" y="438" text-anchor="start" class="legend">mean load</text>
+</g>
+
+</svg>
+<figcaption><b>The all-to-all is a synchronization barrier that completes only at the slowest GPU, so a hot expert on one rank stalls every other rank in the group.</b> With loads of 3, 3, 3, and 9 tokens per GPU (IF = max/mean = 2.0), three GPUs finish early and idle -- burning roughly half the group's aggregate expert FLOPs every single decode step -- while the balanced inset (IF ~ 1) shows the same barrier with almost no waiting, which is exactly what expert replication and dynamic rebalancing are trying to buy back.</figcaption>
+</figure>

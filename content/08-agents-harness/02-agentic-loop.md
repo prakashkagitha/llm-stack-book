@@ -648,6 +648,8 @@ def context_full(messages: list, model_context_limit: int = 128_000) -> bool:
     return estimated_tokens > MAX_CONTEXT_FRACTION * model_context_limit
 ```
 
+{{fig:agentloop-context-growth}}
+
 ### 4. Task-Specific Success Detectors
 For verifiable tasks (code execution, math), the harness can check success directly: unit tests pass, the math answer matches, the file exists. This is the gold standard but requires task-specific logic.
 

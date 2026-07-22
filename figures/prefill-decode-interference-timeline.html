@@ -1,0 +1,206 @@
+<figure class="viz" id="fig-prefill-decode-interference-timeline">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 800 430" role="img" aria-label="Timeline on one shared GPU: four decode sequences emit tokens at a small, steady inter-token latency until an 8K-token prompt arrives; its monolithic prefill occupies the GPU for many time units, stalling all decode sequences at once, then decode resumes with one huge ITL spike bridging the stall.">
+  <defs>
+    <marker id="pdit-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" class="v-muted"/>
+    </marker>
+    <marker id="pdit-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="pdit-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#3b6fd4)"/>
+    </marker>
+    <pattern id="pdit-hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="7" stroke="var(--muted,#8a94a3)" stroke-width="1.6" opacity="0.55"/>
+    </pattern>
+  </defs>
+  <style>
+    #fig-prefill-decode-interference-timeline text { fill: var(--ink-soft); }
+    #fig-prefill-decode-interference-timeline .sub { font: 600 10px var(--sans,sans-serif); }
+    #fig-prefill-decode-interference-timeline .tiny { font: 500 9px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-prefill-decode-interference-timeline .mono { font: 600 9px var(--mono,monospace); }
+    #fig-prefill-decode-interference-timeline .axis-lbl { font: 500 11px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-prefill-decode-interference-timeline .lane-lbl { font: 700 10.5px var(--sans,sans-serif); }
+    #fig-prefill-decode-interference-timeline .block-ttl { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-prefill-decode-interference-timeline .strip-txt { font: 500 11px var(--sans,sans-serif); fill: var(--ink-soft); }
+    @media (prefers-reduced-motion: reduce) {
+      #fig-prefill-decode-interference-timeline .pdit-pulse { animation: none !important; }
+    }
+  </style>
+
+
+  <g data-anim="1">
+    <text x="300" y="24" text-anchor="middle" class="sub" fill="var(--accent,#3b6fd4)">long prompt arrives, 8K tokens</text>
+    <line x1="300" y1="30" x2="300" y2="61" stroke="var(--accent,#3b6fd4)" stroke-width="1.6"
+          stroke-dasharray="3 2" marker-end="url(#pdit-arrow-accent)"/>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="95" y1="54" x2="111" y2="54" stroke="currentColor" class="v-muted" stroke-width="1.3"
+          marker-start="url(#pdit-arrow)" marker-end="url(#pdit-arrow)"/>
+    <line x1="121" y1="54" x2="137" y2="54" stroke="currentColor" class="v-muted" stroke-width="1.3"
+          marker-start="url(#pdit-arrow)" marker-end="url(#pdit-arrow)"/>
+    <text x="122" y="43" text-anchor="middle" class="tiny">ITL (small, steady)</text>
+  </g>
+
+
+  <g data-anim="2">
+    <rect x="70" y="65" width="715" height="40" rx="5" fill="var(--surface-3,#f4f6f9)" stroke="var(--border-2,#c9d2dc)" stroke-width="1"/>
+    <rect x="70" y="111" width="715" height="40" rx="5" fill="var(--surface-3,#f4f6f9)" stroke="var(--border-2,#c9d2dc)" stroke-width="1"/>
+    <rect x="70" y="157" width="715" height="40" rx="5" fill="var(--surface-3,#f4f6f9)" stroke="var(--border-2,#c9d2dc)" stroke-width="1"/>
+    <rect x="70" y="203" width="715" height="40" rx="5" fill="var(--surface-3,#f4f6f9)" stroke="var(--border-2,#c9d2dc)" stroke-width="1"/>
+    <text x="63" y="89"  text-anchor="end" class="lane-lbl">seq A</text>
+    <text x="63" y="135" text-anchor="end" class="lane-lbl">seq B</text>
+    <text x="63" y="181" text-anchor="end" class="lane-lbl">seq C</text>
+    <text x="63" y="227" text-anchor="end" class="lane-lbl">seq D</text>
+  </g>
+
+
+  <g data-anim="2" fill="var(--good,#2f9e6e)" fill-opacity="0.75">
+    <g id="pdit-phase1-A">
+      <rect x="85"  y="72" width="10" height="26" rx="2.5"/>
+      <rect x="111" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="137" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="163" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="189" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="215" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="241" y="72" width="10" height="26" rx="2.5"/>
+    </g>
+    <g id="pdit-phase1-B">
+      <rect x="85"  y="118" width="10" height="26" rx="2.5"/>
+      <rect x="111" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="137" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="163" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="189" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="215" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="241" y="118" width="10" height="26" rx="2.5"/>
+    </g>
+    <g id="pdit-phase1-C">
+      <rect x="85"  y="164" width="10" height="26" rx="2.5"/>
+      <rect x="111" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="137" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="163" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="189" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="215" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="241" y="164" width="10" height="26" rx="2.5"/>
+    </g>
+    <g id="pdit-phase1-D">
+      <rect x="85"  y="210" width="10" height="26" rx="2.5"/>
+      <rect x="111" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="137" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="163" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="189" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="215" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="241" y="210" width="10" height="26" rx="2.5"/>
+    </g>
+  </g>
+
+
+  <g data-anim="3">
+    <rect x="280" y="65" width="200" height="40" fill="url(#pdit-hatch)" opacity="0.9"/>
+    <rect x="280" y="111" width="200" height="40" fill="url(#pdit-hatch)" opacity="0.9"/>
+    <rect x="280" y="157" width="200" height="40" fill="url(#pdit-hatch)" opacity="0.9"/>
+    <rect x="280" y="203" width="200" height="40" fill="url(#pdit-hatch)" opacity="0.9"/>
+    <rect x="280" y="65" width="200" height="178" rx="8"
+          fill="var(--accent,#3b6fd4)" fill-opacity="0.12" stroke="var(--accent,#3b6fd4)" stroke-width="1.8"/>
+
+    <rect x="288" y="122" width="184" height="46" rx="6" fill="var(--surface,#ffffff)" fill-opacity="0.92"/>
+    <text x="380" y="140" text-anchor="middle" class="block-ttl" fill="var(--accent,#3b6fd4)">PREFILL</text>
+    <text x="380" y="155" text-anchor="middle" class="tiny">whole prompt, one forward pass</text>
+
+    <rect x="298" y="174" width="164" height="18" rx="5" fill="var(--surface,#ffffff)" fill-opacity="0.9"/>
+    <text x="380" y="187" text-anchor="middle" class="tiny" style="font-weight:700;">all decode sequences blocked</text>
+  </g>
+
+
+  <g data-anim="4" fill="var(--good,#2f9e6e)" fill-opacity="0.75">
+    <g id="pdit-phase3-A">
+      <rect x="500" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="526" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="552" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="578" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="604" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="630" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="656" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="682" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="708" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="734" y="72" width="10" height="26" rx="2.5"/>
+      <rect x="760" y="72" width="10" height="26" rx="2.5"/>
+    </g>
+    <g id="pdit-phase3-B">
+      <rect x="500" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="526" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="552" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="578" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="604" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="630" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="656" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="682" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="708" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="734" y="118" width="10" height="26" rx="2.5"/>
+      <rect x="760" y="118" width="10" height="26" rx="2.5"/>
+    </g>
+    <g id="pdit-phase3-C">
+      <rect x="500" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="526" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="552" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="578" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="604" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="630" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="656" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="682" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="708" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="734" y="164" width="10" height="26" rx="2.5"/>
+      <rect x="760" y="164" width="10" height="26" rx="2.5"/>
+    </g>
+    <g id="pdit-phase3-D">
+      <rect x="500" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="526" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="552" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="578" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="604" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="630" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="656" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="682" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="708" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="734" y="210" width="10" height="26" rx="2.5"/>
+      <rect x="760" y="210" width="10" height="26" rx="2.5"/>
+    </g>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="70" y1="255" x2="790" y2="255" stroke="currentColor" class="v-muted" stroke-width="1.4" marker-end="url(#pdit-arrow)"/>
+    <text x="430" y="272" text-anchor="middle" class="axis-lbl">engine iterations (time)</text>
+  </g>
+
+
+  <g data-anim="5">
+    <line x1="150" y1="300" x2="168" y2="300" stroke="currentColor" class="v-muted" stroke-width="1.3"
+          marker-start="url(#pdit-arrow)" marker-end="url(#pdit-arrow)"/>
+    <text x="159" y="292" text-anchor="middle" class="tiny">steady ITL</text>
+    <text x="196" y="304" text-anchor="middle" class="tiny" style="font-style:italic;">vs</text>
+
+    <line x1="251" y1="303" x2="500" y2="303" stroke="var(--warn,#e0a106)" stroke-width="2.4"
+          marker-start="url(#pdit-arrow-warn)" marker-end="url(#pdit-arrow-warn)" class="pdit-pulse"/>
+    <text x="375" y="324" text-anchor="middle" style="font:700 12px var(--sans,sans-serif); fill:var(--warn,#e0a106);">
+      ITL SPIKE = full prefill time -&gt; P99 violation
+    </text>
+  </g>
+
+
+  <g data-anim="5">
+    <rect x="40" y="343" width="720" height="72" rx="8" fill="var(--surface-3,#f4f6f9)" stroke="var(--border-2,#c9d2dc)" stroke-width="1"/>
+    <text x="400" y="366" text-anchor="middle" class="strip-txt">
+      Average latency hides this &#8212; the tail (P99 ITL) is set by the worst stall.
+    </text>
+    <text x="400" y="386" text-anchor="middle" class="strip-txt">
+      Chunked prefill shrinks this gap to one chunk; full disaggregation removes it entirely.
+    </text>
+    <text x="400" y="405" text-anchor="middle" class="tiny">see: chunked-prefill iteration timeline, and the disaggregated prefill/decode architecture below</text>
+  </g>
+</svg>
+<figcaption><b>On a shared GPU, a single long prompt's monolithic prefill stalls every in-flight decode sequence at once, turning a steady inter-token cadence into one giant P99 latency spike.</b> Decode sequences A&#8211;D tick along at a small, steady ITL until an 8K-token prompt arrives; its prefill occupies the GPU as one uninterruptible forward pass, so no decode tokens are emitted until it finishes. Chunked prefill (next) bounds this stall to one chunk, and full prefill/decode disaggregation (below) removes it from the decode path altogether.</figcaption>
+</figure>

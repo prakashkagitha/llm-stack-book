@@ -1,0 +1,128 @@
+<figure class="viz" id="fig-trtllm-kv-budget-and-scheduler">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-trtllm-kv-budget-and-scheduler text { fill: var(--ink-soft); }
+  #fig-trtllm-kv-budget-and-scheduler .hdr     { font: 700 13.5px var(--sans,sans-serif); }
+  #fig-trtllm-kv-budget-and-scheduler .seg-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-trtllm-kv-budget-and-scheduler .lbl     { font: 600 11px var(--sans,sans-serif); }
+  #fig-trtllm-kv-budget-and-scheduler .lbl-sm  { font: 500 10px var(--sans,sans-serif); }
+  #fig-trtllm-kv-budget-and-scheduler .lbl-xs  { font: 400 9.5px var(--sans,sans-serif); }
+  #fig-trtllm-kv-budget-and-scheduler .mono    { font: 700 11.5px var(--mono,monospace); }
+  #fig-trtllm-kv-budget-and-scheduler .muted   { fill: var(--muted); }
+  #fig-trtllm-kv-budget-and-scheduler .it      { font-style: italic; }
+</style>
+<svg viewBox="0 0 760 460" role="img" aria-label="Diagram: HBM capacity splits into a fixed model-weights segment and a larger KV-cache region tiled into sequence slots; a bold capacity boundary marks where filled slots run out, forking to two scheduler policies -- guaranteed_no_evict, which queues new requests, and max_utilization, which evicts and recomputes KV blocks to admit more; below, a slimmer INT8 KV-cache bar packs roughly twice as many slots into the same width.">
+
+<defs>
+  <marker id="kvb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+  </marker>
+  <marker id="kvb-arrow-good" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--good)"/>
+  </marker>
+  <marker id="kvb-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--warn)"/>
+  </marker>
+</defs>
+
+<text x="20" y="18" class="hdr">HBM capacity (total GPU memory)</text>
+
+<g data-anim="1">
+  <rect x="210" y="26" width="420" height="28" rx="8" fill="var(--accent2)" fill-opacity="0.10" stroke="var(--accent2)" stroke-width="1.3"/>
+  <text x="420" y="44" text-anchor="middle" class="lbl-sm" fill="var(--accent2)">one sequence ~= per-token KV cost x context length</text>
+  <path d="M 409 54 L 409 63" fill="none" stroke="var(--accent2)" stroke-width="1.4" marker-end="url(#kvb-arrow)"/>
+</g>
+
+<g data-anim="1">
+
+  <rect x="20" y="64" width="720" height="84" rx="10" fill="none" stroke="var(--border-2)" stroke-width="1.4"/>
+
+
+  <rect x="20" y="64" width="170" height="84" rx="10" class="v-fill" stroke="var(--ink-soft)" stroke-width="1.4" fill-opacity="0.55"/>
+  <text x="105" y="102" text-anchor="middle" class="seg-lbl">Model weights</text>
+  <text x="105" y="118" text-anchor="middle" class="lbl-xs muted">(fixed after load)</text>
+
+
+  <rect x="190" y="64" width="550" height="84" rx="10" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.4"/>
+  <text x="465" y="80" text-anchor="middle" class="seg-lbl" fill="var(--accent)">KV-cache region</text>
+
+
+  <g stroke-width="1.3">
+    <rect x="217" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="273" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="329" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="385" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent2)" stroke-width="2.4"/>
+    <rect x="441" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="497" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="553" y="96" width="48" height="40" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="609" y="96" width="48" height="40" rx="5" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+    <rect x="665" y="96" width="48" height="40" rx="5" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+  </g>
+</g>
+
+<g data-anim="2">
+
+  <line x1="605" y1="58" x2="605" y2="198" stroke="var(--ink-soft)" stroke-width="2.4" stroke-dasharray="7 4"/>
+  <circle cx="605" cy="198" r="4" fill="var(--ink-soft)"/>
+</g>
+
+<g data-anim="1">
+  <rect x="30" y="160" width="18" height="12" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.2"/>
+  <text x="54" y="170" class="lbl-xs muted">filled = holds a sequence</text>
+  <rect x="248" y="160" width="18" height="12" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="3 2.5"/>
+  <text x="272" y="170" class="lbl-xs muted">empty = spare capacity</text>
+  <line x1="592" y1="169" x2="601" y2="169" stroke="var(--ink-soft)" stroke-width="1.4"/>
+  <text x="588" y="173" text-anchor="end" class="lbl-sm" fill="var(--ink-soft)">capacity boundary</text>
+</g>
+
+<g data-anim="2">
+  <path d="M 605 198 C 500 198 320 200 210 213" fill="none" stroke="var(--good)" stroke-width="1.6" marker-end="url(#kvb-arrow-good)"/>
+  <path d="M 605 198 C 605 198 585 200 565 213" fill="none" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#kvb-arrow-warn)"/>
+</g>
+
+<g data-anim="3">
+  <rect x="30" y="215" width="340" height="80" rx="12" fill="var(--good)" fill-opacity="0.10" stroke="var(--good)" stroke-width="1.5"/>
+  <text x="200" y="240" text-anchor="middle" class="mono" fill="var(--good)">guaranteed_no_evict</text>
+  <text x="200" y="260" text-anchor="middle" class="lbl-sm">-&gt; new request waits in queue</text>
+  <text x="200" y="278" text-anchor="middle" class="lbl-xs muted">(protects TTFT / latency)</text>
+
+  <rect x="390" y="215" width="340" height="80" rx="12" fill="var(--warn)" fill-opacity="0.10" stroke="var(--warn)" stroke-width="1.5"/>
+  <text x="560" y="240" text-anchor="middle" class="mono" fill="var(--warn)">max_utilization</text>
+  <text x="560" y="260" text-anchor="middle" class="lbl-sm">-&gt; evict + recompute KV blocks</text>
+  <text x="560" y="278" text-anchor="middle" class="lbl-xs muted">(higher utilization, recompute cost)</text>
+</g>
+
+<g data-anim="4">
+  <text x="20" y="326" class="hdr">INT8 KV cache <tspan class="lbl-sm muted" fill="var(--muted)">(same total width, halved per-slot cost)</tspan></text>
+
+  <text x="105" y="370" text-anchor="middle" class="lbl-xs muted it">weights</text>
+  <text x="105" y="382" text-anchor="middle" class="lbl-xs muted it">(unchanged)</text>
+
+  <rect x="190" y="340" width="550" height="52" rx="9" fill="var(--accent)" fill-opacity="0.08" stroke="var(--accent)" stroke-width="1.4"/>
+  <g stroke-width="1">
+    <rect x="217" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="245" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="273" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="301" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="329" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="357" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="385" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="413" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="441" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="469" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="497" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="525" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="553" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="581" y="351" width="24" height="30" rx="3" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)"/>
+    <rect x="609" y="351" width="24" height="30" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="2.5 2"/>
+    <rect x="637" y="351" width="24" height="30" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="2.5 2"/>
+    <rect x="665" y="351" width="24" height="30" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="2.5 2"/>
+    <rect x="693" y="351" width="24" height="30" rx="3" fill="none" stroke="var(--border-2)" stroke-dasharray="2.5 2"/>
+  </g>
+
+  <text x="465" y="408" text-anchor="middle" class="lbl" fill="var(--accent)">per-token KV cost halved -&gt; ~2x concurrent sequences</text>
+</g>
+
+</svg>
+<figcaption><b>HBM splits into a fixed weights segment and a KV-cache region tiled into per-sequence slots, and the scheduler policy decides what happens when those slots run out.</b> Each slot's size is set by per-token KV cost times context length, so once the region fills, <code>guaranteed_no_evict</code> queues new requests to protect latency while <code>max_utilization</code> evicts and recomputes KV blocks from running sequences to admit more. Quantizing the KV cache to INT8 halves the per-slot cost, packing roughly twice as many concurrent sequences into the same memory region.</figcaption>
+</figure>

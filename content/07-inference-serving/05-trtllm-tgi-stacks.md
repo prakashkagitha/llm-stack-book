@@ -385,6 +385,8 @@ MLC is the right choice when you need to deploy to heterogeneous hardware (a fle
 
 ## The Tradeoff Space: A Practitioner's Framework
 
+{{fig:trtllm-kv-budget-and-scheduler}}
+
 !!! example "Worked example: memory budget for concurrent requests"
     Suppose you are serving Llama-3-70B on 4× A100-80 GB (320 GB total HBM).
 

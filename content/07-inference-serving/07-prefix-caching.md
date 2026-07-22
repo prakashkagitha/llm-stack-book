@@ -440,6 +440,8 @@ For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): 
 
 The agent use case (see [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html)) deserves particular attention. In a ReAct loop, each new turn prepends the entire conversation history. After $k$ turns with average turn length $L$, the prefix is $k \cdot L$ tokens. Without prefix caching, total prefill cost scales as $O(k^2 L)$; with caching and a warm trie, each new turn costs only $O(L)$ for the suffix, so total cost scales as $O(kL)$ — a qualitative improvement in long-horizon agent tasks.
 
+{{fig:prefixcache-agent-turn-growth}}
+
 ---
 
 ## 7.7.8 Enabling and Tuning Prefix Caching in Production

@@ -1,0 +1,94 @@
+<figure class="viz" id="fig-decode-lora-bandwidth-tax">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 720 420" role="img"
+     aria-label="Two bars normalized to 100% of one decode step. Bar A, compute FLOPs, is almost entirely the base GEMM with a tiny sliver for the LoRA correction. Bar B, memory traffic in bytes moved, is mostly base weights loaded once but has a clearly wider slice for LoRA adapter weights, because many distinct adapters are each streamed for only a few tokens. An arrow connects the two LoRA regions, labeled: same operation, sliver of FLOPs to sizable slice of bytes to bandwidth-bound.">
+  <defs>
+    <marker id="dlb-arr" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent-2,#b04e2d)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-decode-lora-bandwidth-tax text { font-family: var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+    #fig-decode-lora-bandwidth-tax .ttl   { font:700 14px var(--sans,sans-serif); }
+    #fig-decode-lora-bandwidth-tax .sub   { font:400 11px var(--sans,sans-serif); fill:var(--muted,#888); }
+    #fig-decode-lora-bandwidth-tax .lbl   { font:600 12px var(--sans,sans-serif); }
+    #fig-decode-lora-bandwidth-tax .lbl-sm{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-decode-lora-bandwidth-tax .pct   { font:700 12px var(--mono,monospace); }
+    #fig-decode-lora-bandwidth-tax .mech  { font:400 11.5px var(--sans,sans-serif); fill:var(--ink-soft,#333); }
+    #fig-decode-lora-bandwidth-tax .tag   { font:400 10px var(--sans,sans-serif); fill:var(--muted,#888); font-style:italic; }
+    #fig-decode-lora-bandwidth-tax .conn  { font:700 11px var(--sans,sans-serif); fill:var(--accent-2,#b04e2d); }
+
+    #fig-decode-lora-bandwidth-tax [data-anim] { opacity:0; }
+    @media (prefers-reduced-motion: no-preference) {
+      #fig-decode-lora-bandwidth-tax [data-anim="1"] { animation: dlb-fade 0.6s 0.1s ease forwards; }
+      #fig-decode-lora-bandwidth-tax [data-anim="2"] { animation: dlb-fade 0.6s 0.8s ease forwards; }
+      #fig-decode-lora-bandwidth-tax [data-anim="3"] { animation: dlb-fade 0.6s 1.6s ease forwards; }
+      #fig-decode-lora-bandwidth-tax [data-anim="4"] { animation: dlb-fade 0.6s 2.4s ease forwards; }
+      #fig-decode-lora-bandwidth-tax [data-anim="5"] { animation: dlb-fade 0.6s 3.1s ease forwards; }
+      @keyframes dlb-fade { from { opacity:0; transform:translateY(6px);} to { opacity:1; transform:translateY(0);} }
+      #fig-decode-lora-bandwidth-tax .dlb-pulse { animation: dlb-pulse 1s 3.3s ease-in-out 2 alternate; }
+      @keyframes dlb-pulse { from { fill-opacity:0.55; } to { fill-opacity:0.95; } }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #fig-decode-lora-bandwidth-tax [data-anim] { opacity:1; }
+    }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="360" y="22" text-anchor="middle" class="ttl">one decode step, normalized to 100%: FLOPs vs. bytes moved</text>
+    <text x="360" y="38" text-anchor="middle" class="sub">~20 adapters, ~64 tokens (illustrative) &#8212; same LoRA correction, two very different shares</text>
+  </g>
+
+  
+  <g data-anim="2">
+    <text x="40" y="76" class="lbl">Bar A &#8212; compute (FLOPs) this step</text>
+    
+    <rect x="40" y="86" width="640" height="46" rx="6" fill="var(--v-fill,var(--surface-3,#ece7da))" stroke="var(--v-stroke,var(--muted,#94a3b8))" stroke-width="1.2"/>
+    <rect x="40" y="86" width="636" height="46" rx="6" fill="var(--accent,#c15b39)" fill-opacity="0.30" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="358" y="114" text-anchor="middle" class="lbl">base GEMM</text>
+    
+    <rect id="dlb-a-sliver" x="676" y="86" width="6" height="46" fill="var(--accent-2,#b04e2d)" class="dlb-pulse"/>
+    <line x1="679" y1="86" x2="679" y2="70" stroke="var(--accent-2,#b04e2d)" stroke-width="1"/>
+    <text x="679" y="60" text-anchor="end" class="lbl-sm" fill="var(--accent-2,#b04e2d)">LoRA correction</text>
+    <text x="679" y="48" text-anchor="end" class="pct" fill="var(--accent-2,#b04e2d)">(&lt;1% of FLOPs)</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <text x="40" y="168" class="lbl">Bar B &#8212; memory traffic (bytes moved) this step</text>
+    
+    <rect x="40" y="178" width="640" height="46" rx="6" fill="var(--v-fill,var(--surface-3,#ece7da))" stroke="var(--v-stroke,var(--muted,#94a3b8))" stroke-width="1.2"/>
+    <rect x="40" y="178" width="512" height="46" fill="var(--accent,#c15b39)" fill-opacity="0.30" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+    <text x="296" y="197" text-anchor="middle" class="lbl">base weights</text>
+    <text x="296" y="212" text-anchor="middle" class="lbl-sm" fill="var(--muted,#888)">(loaded once for the whole batch)</text>
+    <rect id="dlb-b-slice" x="552" y="178" width="128" height="46" rx="6" fill="var(--accent-2,#b04e2d)" fill-opacity="0.55" stroke="var(--accent-2,#b04e2d)" stroke-width="1.4" class="dlb-pulse"/>
+    <text x="616" y="197" text-anchor="middle" class="lbl-sm" fill="var(--accent-2,#b04e2d)">LoRA adapter</text>
+    <text x="616" y="209" text-anchor="middle" class="lbl-sm" fill="var(--accent-2,#b04e2d)">weights</text>
+    <text x="616" y="238" text-anchor="middle" class="pct" fill="var(--accent-2,#b04e2d)">~20% of bytes moved</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <text x="40" y="266" class="mech">N distinct adapters, each streamed in full &#8212; each used to correct only a handful of that adapter's token-vectors.</text>
+  </g>
+
+  
+  <g data-anim="4">
+    <path d="M 679 138 C 660 155, 640 165, 618 176" fill="none" stroke="var(--accent-2,#b04e2d)" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#dlb-arr)"/>
+    <text x="430" y="300" text-anchor="middle" class="conn">same operation: sliver of FLOPs -&gt; sizable slice of bytes -&gt; bandwidth-bound</text>
+  </g>
+
+  
+  <g data-anim="5">
+    <rect x="40" y="320" width="640" height="66" rx="8" fill="var(--v-fill,var(--surface-3,#ece7da))" fill-opacity="0.5" stroke="var(--v-grid,var(--border-2,#d8d1c0))" stroke-width="1"/>
+    <text x="360" y="342" text-anchor="middle" class="mech">In decode, each adapter's weight tile is loaded from HBM to multiply just a handful of</text>
+    <text x="360" y="359" text-anchor="middle" class="mech">token-vectors &#8212; low arithmetic intensity -&gt; bandwidth-bound. Fusing the gather (loading</text>
+    <text x="360" y="376" text-anchor="middle" class="mech">each tile once per segment, not once per token) is what keeps this cheap.</text>
+  </g>
+
+  <text x="680" y="404" text-anchor="end" class="tag">illustrative proportions, not to scale / not a benchmark</text>
+</svg>
+<figcaption><b>The same LoRA correction is a sliver of FLOPs but a sizable slice of memory traffic in decode.</b> Because each of the ~20 distinct adapters in a batch must have its weights streamed from HBM even though each is used by only a handful of token-vectors, decode-time LoRA is bandwidth-bound, not compute-bound &#8212; which is why fusing the gather (loading each adapter tile once) matters so much more than shaving FLOPs.</figcaption>
+</figure>

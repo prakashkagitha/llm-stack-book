@@ -1,0 +1,167 @@
+<figure class="viz" id="fig-scalingrl-length-norm-bias">
+<svg viewBox="0 0 800 542" role="img" aria-label="Two equally wrong trajectories, one short and one long, are penalized by two different loss normalizers. Vanilla GRPO divides by sequence length, so the short trajectory gets a tall per-token penalty bar (0.25) while the long trajectory gets a short one (0.08), rewarding rambling when wrong. Dr. GRPO's constant normalizer gives both trajectories equal-height bars, making the per-token gradient length-neutral.">
+  <style>
+    #fig-scalingrl-length-norm-bias text { font-family: var(--sans,sans-serif); fill: var(--ink-soft); }
+    #fig-scalingrl-length-norm-bias .ttl-top { font: 700 13px var(--sans,sans-serif); fill: var(--ink); }
+    #fig-scalingrl-length-norm-bias .rowlbl-top { font: 600 11.5px var(--sans,sans-serif); }
+    #fig-scalingrl-length-norm-bias .note-top { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-scalingrl-length-norm-bias .panel-ttl { font: 700 13px var(--sans,sans-serif); fill: var(--ink); }
+    #fig-scalingrl-length-norm-bias .panel-sub { font: 400 10px var(--sans,sans-serif); fill: var(--muted); font-style: italic; }
+    #fig-scalingrl-length-norm-bias .formula { font-family: var(--mono,monospace); font-size: 11.5px; fill: var(--ink-soft); }
+    #fig-scalingrl-length-norm-bias .rowlbl { font: 600 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-scalingrl-length-norm-bias .val { font-family: var(--mono,monospace); font-weight: 700; font-size: 11px; fill: var(--accent); }
+    #fig-scalingrl-length-norm-bias .callout { font: 600 10.8px var(--sans,sans-serif); }
+    #fig-scalingrl-length-norm-bias .chip-txt { font: 700 10px var(--sans,sans-serif); }
+    #fig-scalingrl-length-norm-bias .foot { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft); font-style: italic; }
+    #fig-scalingrl-length-norm-bias .pen { fill: var(--accent); opacity: 0.16; stroke: var(--accent); stroke-width: 1; }
+    #fig-scalingrl-length-norm-bias .bar { fill: var(--accent); opacity: 0.88; }
+    #fig-scalingrl-length-norm-bias .panel-box { fill: var(--surface-3); opacity: 0.5; stroke: var(--border-2); stroke-width: 1; }
+    #fig-scalingrl-length-norm-bias .chip-bad { fill: var(--warn); opacity: 0.16; stroke: var(--warn); stroke-width: 1; }
+    #fig-scalingrl-length-norm-bias .chip-bad-txt { fill: var(--warn); }
+    #fig-scalingrl-length-norm-bias .chip-good { fill: var(--good); opacity: 0.16; stroke: var(--good); stroke-width: 1; }
+    #fig-scalingrl-length-norm-bias .chip-good-txt { fill: var(--good); }
+    #fig-scalingrl-length-norm-bias .callout-bad { fill: var(--warn); opacity: 0.08; stroke: var(--warn); stroke-width: 1; }
+    #fig-scalingrl-length-norm-bias .callout-good { fill: var(--good); opacity: 0.08; stroke: var(--good); stroke-width: 1; }
+    #fig-scalingrl-length-norm-bias .callout-bad-txt { fill: var(--ink-soft); }
+    #fig-scalingrl-length-norm-bias .callout-good-txt { fill: var(--ink-soft); }
+    #fig-scalingrl-length-norm-bias .divider { stroke: var(--border-2); stroke-width: 1; }
+  </style>
+
+  
+  <g data-anim="1">
+    <text x="20" y="26" class="ttl-top">Two WRONG trajectories, same per-token advantage A = -1 (illustrative)</text>
+
+    <text x="20" y="66" class="rowlbl-top">SHORT (length 4)</text>
+    <rect x="190.0" y="50.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="218.0" y="50.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="246.0" y="50.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="274.0" y="50.0" width="24" height="24" rx="3" class="pen"/>
+
+    <text x="20" y="104" class="rowlbl-top">LONG (length 12)</text>
+    <rect x="190.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="218.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="246.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="274.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="302.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="330.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="358.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="386.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="414.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="442.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="470.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+    <rect x="498.0" y="88.0" width="24" height="24" rx="3" class="pen"/>
+
+    <text x="545" y="70" class="note-top">same advantage per token &#8212;</text>
+    <text x="545" y="86" class="note-top">only the sequence length differs</text>
+
+    <line x1="14" y1="122" x2="786" y2="122" class="divider"/>
+  </g>
+
+  
+  <g data-anim="2">
+    <rect x="20" y="140" width="360" height="364" rx="8" class="panel-box"/>
+    <rect x="34" y="152" width="72" height="20" rx="10" class="chip-bad"/>
+    <text x="70" y="166" text-anchor="middle" class="chip-txt chip-bad-txt">BIAS</text>
+    <text x="115" y="166" class="panel-ttl">Vanilla GRPO</text>
+    <text x="44" y="184" class="panel-sub">divide by |o_i| &#8212; per-sequence length normalization</text>
+    <text x="44" y="204" class="formula">per-token penalty = |A| / |o_i|</text>
+
+    <text x="44" y="224" class="rowlbl">SHORT</text>
+    <text x="360" y="224" text-anchor="end" class="val">0.25 / tok</text>
+    <rect x="49.0" y="238.0" width="12" height="66.0" rx="2" class="bar"/>
+    <rect x="74.0" y="238.0" width="12" height="66.0" rx="2" class="bar"/>
+    <rect x="99.0" y="238.0" width="12" height="66.0" rx="2" class="bar"/>
+    <rect x="124.0" y="238.0" width="12" height="66.0" rx="2" class="bar"/>
+    <rect x="44.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="69.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="94.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="119.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+
+    <text x="44" y="344" class="rowlbl">LONG</text>
+    <text x="360" y="344" text-anchor="end" class="val">0.08 / tok</text>
+    <rect x="49.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="74.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="99.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="124.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="149.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="174.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="199.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="224.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="249.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="274.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="299.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="324.0" y="378.0" width="12" height="22.0" rx="2" class="bar"/>
+    <rect x="44.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="69.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="94.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="119.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="144.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="169.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="194.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="219.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="244.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="269.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="294.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="319.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+
+    <rect x="32" y="438" width="336" height="50" rx="6" class="callout-bad"/>
+    <text x="44" y="457" class="callout callout-bad-txt">Longer wrong answer -&gt; smaller per-token penalty:</text>
+    <text x="44" y="474" class="callout callout-bad-txt">the gradient rewards rambling when wrong.</text>
+  </g>
+
+  
+  <g data-anim="3">
+    <rect x="420" y="140" width="360" height="364" rx="8" class="panel-box"/>
+    <rect x="434" y="152" width="76" height="20" rx="10" class="chip-good"/>
+    <text x="472" y="166" text-anchor="middle" class="chip-txt chip-good-txt">FIXED</text>
+    <text x="519" y="166" class="panel-ttl">Dr. GRPO / token-level</text>
+    <text x="444" y="184" class="panel-sub">constant normalizer &#8212; flat mean over all tokens</text>
+    <text x="444" y="204" class="formula">per-token penalty = |A| / N  (N = fixed)</text>
+
+    <text x="444" y="224" class="rowlbl">SHORT</text>
+    <text x="760" y="224" text-anchor="end" class="val">0.15 / tok</text>
+    <rect x="449.0" y="264.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="474.0" y="264.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="499.0" y="264.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="524.0" y="264.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="444.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="469.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="494.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="519.0" y="304.0" width="22" height="22" rx="3" class="pen"/>
+
+    <text x="444" y="344" class="rowlbl">LONG</text>
+    <text x="760" y="344" text-anchor="end" class="val">0.15 / tok</text>
+    <rect x="449.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="474.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="499.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="524.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="549.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="574.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="599.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="624.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="649.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="674.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="699.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="724.0" y="360.4" width="12" height="39.6" rx="2" class="bar"/>
+    <rect x="444.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="469.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="494.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="519.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="544.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="569.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="594.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="619.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="644.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="669.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="694.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+    <rect x="719.0" y="400.0" width="22" height="22" rx="3" class="pen"/>
+
+    <rect x="432" y="438" width="336" height="50" rx="6" class="callout-good"/>
+    <text x="444" y="457" class="callout callout-good-txt">Per-token gradient is length-neutral:</text>
+    <text x="444" y="474" class="callout callout-good-txt">equal penalty per token, short or long.</text>
+  </g>
+
+  <text x="400" y="527" text-anchor="middle" class="foot">The normalizer is not cosmetic &#8212; it encodes a length policy.</text>
+</svg>
+<figcaption><b>Dividing a wrong trajectory's loss by its length shrinks the per-token penalty as the trajectory gets longer, so the gradient rewards rambling when wrong.</b> Vanilla GRPO's per-sequence length normalization gives the short trajectory a per-token penalty three times larger than the long one for the same underlying advantage; Dr. GRPO's constant normalizer (or DAPO's token-level mean) gives every token the same penalty regardless of sequence length, removing that incentive.</figcaption>
+</figure>

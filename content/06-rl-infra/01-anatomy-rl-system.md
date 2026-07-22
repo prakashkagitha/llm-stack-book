@@ -287,6 +287,8 @@ Generation (decode) and training have nearly opposite hardware appetites. Make t
 
 These columns are so different that the *best* code for each is **mutually incompatible**: vLLM lays weights out for paged tensor-parallel inference; FSDP shards them for sharded-optimizer training. You cannot, in general, hand vLLM an FSDP-sharded parameter and have it serve. So an RL system runs *both* stacks and bridges them — and the bridge is the weight-sync machinery. This is why "just call `model.generate()` inside your training loop" works for a 0.5B toy and collapses for a 70B model: naive generation is 10–30× too slow, so you *need* vLLM, which means you *need* two weight layouts, which means you *need* sync.
 
+{{fig:rlanat-two-profiles-bridge}}
+
 ### Tension 2: idle time — the loop is a relay race, not a team sport
 
 In the synchronous loop, stages run *in series*: generate, then score, then learn. While the **inference** engine generates, the **training** engine's GPUs (with their fat optimizer state) sit idle. While the **learner** trains, the inference engine sits idle. If generation is 70% of the step and training 20%, then under a strict disaggregated split your training GPUs are idle 70% of the time and your inference GPUs idle 20–30% of the time. On a cluster costing thousands of USD/hour, that idle time is the headline cost of RL.

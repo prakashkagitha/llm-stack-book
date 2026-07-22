@@ -195,6 +195,8 @@ $$
 
 and total decode time is roughly $L_g$ times that. The key term is the weight read: even with a large batch, you pay $\sim N \cdot b_{\text{param}}$ bytes of weight traffic *per decode step*, and there are $L_g$ steps. That is the tax that makes generation slow.
 
+{{fig:gtloop-decode-memory-bound}}
+
 !!! example "Worked example: where does an RL step's time go?"
     Take a 7B model in bf16 ($N=7\times10^9$, $b_{\text{param}}=2$ bytes) on a single H100 (peak bf16 ≈ 990 TFLOP/s dense; HBM bandwidth ≈ 3.35 TB/s). Batch: $P=64$ prompts, $G=8$ → $B=512$ sequences. Lengths: $L_p=512$, $L_g=1024$. PPO epochs $E=2$.
 

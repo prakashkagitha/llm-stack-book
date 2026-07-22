@@ -185,6 +185,8 @@ $$
 
 where $L_g$ is the number of tokens GPU $g$'s experts must process. Because the all-to-all completes at the slowest rank, the *effective* expert-compute time scales with IF. An IF of 1.0 is perfect; an IF of 2.0 means you are wasting half your aggregate expert FLOPs waiting on one GPU.
 
+{{fig:moe-serving-hot-expert-barrier}}
+
 ```python
 import numpy as np
 

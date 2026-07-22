@@ -34,6 +34,8 @@ We take them in turn.
 
 ## Monte-Carlo, GAE, and Group-Relative Advantages
 
+{{fig:advkl-three-advantage-families}}
+
 ### Monte-Carlo / REINFORCE with a baseline
 
 The simplest estimator assigns the same advantage to every token in a sequence:

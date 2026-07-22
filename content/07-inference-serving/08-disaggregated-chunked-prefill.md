@@ -38,6 +38,8 @@ Now imagine both phases run on the same GPU pool under a continuous batching sch
 
 2. **Decode throughput degrades under mixed batches.** When a decode step includes prefill tokens from new requests, the attention kernel must handle variable-length sequences with very different KV-cache patterns. GPU kernel efficiency drops; memory fragmentation increases; the effective batch size for decode shrinks.
 
+{{fig:prefill-decode-interference-timeline}}
+
 This is the **prefill-decode interference problem**. It is not a theoretical concern — production teams have measured it causing P99 time-to-first-token (TTFT) and P99 inter-token latency (ITL) to exceed SLOs by 2–5x under moderate load.
 
 ## Disaggregated Prefill/Decode: The Architecture

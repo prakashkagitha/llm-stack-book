@@ -81,6 +81,8 @@ $$
 
 Output tokens are expensive because they require an autoregressive decode step — one weight-loading pass per token. Input (prefill) tokens are cheap relative to output because they are processed in parallel. As a rough rule of thumb, at large batch sizes and typical prompt/completion ratios, output tokens cost roughly 3–5× more in wall-clock GPU-time — and hence dollars — per token than input tokens (the exact ratio depends on sequence lengths and batch size). Note the asymmetry is *not* about arithmetic: the FLOPs per token are essentially identical (~2P, where P is the parameter count) for a prefill token and a decode token. It is about bandwidth. A decode step reads the entire weight matrix from HBM to emit a single token, so it is memory-bound and poorly utilized; parallel prefill reads those same weights once and amortizes them across every prompt token at near-peak FLOP utilization. Output tokens are expensive because each one pays for its own weight-loading pass, not because it does more math.
 
+{{fig:econ-output-token-weight-read-toll}}
+
 Public API providers charge differently for input and output tokens for exactly this reason. When optimizing your prompt, shortening the *completion* (e.g., via structured generation or speculative decoding — see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)) has a higher ROI than shortening the prompt.
 
 ## Batching vs. Latency SLOs

@@ -104,6 +104,8 @@ Punica distinguishes the decode and prefill regimes:
 
     But in *decode* the operation is bandwidth-bound, not FLOP-bound. The base weights for the 4 projections are $4 \times 5120 \times 5120 \times 2\,\text{bytes} \approx 210\,\text{MB}$, loaded once for the whole batch. The LoRA weights are $20\,\text{adapters} \times 4\,\text{proj} \times (B{+}A)\,\text{params} = 20 \times 4 \times (5120{\cdot}16 + 16{\cdot}5120) \times 2\,\text{bytes} \approx 52\,\text{MB}$ — about a **25% bandwidth tax** on the attention-projection matmuls, even though it is only 0.6% of the FLOPs. This is exactly why decode-time LoRA hurts more than its FLOP count suggests, and why fusing the gather (avoiding redundant reloads) matters so much.
 
+{{fig:decode-lora-bandwidth-tax}}
+
 ---
 
 ## 7.14.3 S-LoRA & LoRAX: Serving Thousands of Adapters

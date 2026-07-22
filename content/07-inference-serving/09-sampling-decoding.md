@@ -483,6 +483,8 @@ def dola_logits(
     return dola_log_probs.squeeze(0)
 ```
 
+{{fig:sampling-contrastive-subtraction}}
+
 ## The Bias-Diversity Tradeoff
 
 Every decoding choice sits on a single underlying tradeoff surface. Let us make it concrete.
