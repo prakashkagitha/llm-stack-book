@@ -1131,3 +1131,169 @@ async def compute_rewards_for_batch(
 - Zheng et al., *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena* (2023) — systematic analysis of LLM judge biases and calibration.
 - Shen et al., *Loose lips sink ships: Mitigating Length Bias in Reinforcement Learning from Human Feedback* (2023) — reward shaping to control response length.
 - `google/evals`, `openai/evals` — open-source eval harness libraries with reward function implementations.
+
+## Exercises
+
+**1.** The chapter's `math_reward` is called on a completion ending in `\boxed{0.50}`, with `gold_answer = "1/2"`. Trace `math_equivalent("0.50", "1/2")` through the numbered strategy in its docstring and say which branch returns `True` and why. Then explain in one sentence why `math_reward` returns `0.1` (not `0.0`) for a well-formatted but *wrong* answer, and what training pathology the `!!! warning "Format reward gaming"` admonition warns this can cause if that idea is pushed too far.
+
+??? note "Solution"
+    First `extract_answer_from_completion` pulls `0.50` out of `\boxed{0.50}`, and `math_reward` calls `math_equivalent("0.50", "1/2")`. Both arguments are first passed through `normalize_latex_number`, which only strips `\boxed{}`, `$`, and whitespace, so they are unchanged.
+
+    - **Strategy 1 (exact string match):** `"0.50" == "1/2"` is `False`.
+    - **Strategy 2 (numeric):** `try_numeric("0.50")` is not a percentage, so it tries `float(Fraction("0.50"))`. `Fraction` accepts decimal strings, giving `Fraction(1, 2)` -> `0.5`. `try_numeric("1/2")` gives `float(Fraction("1/2"))` -> `0.5`. Both are non-`None`, `gn = 0.5 != 0`, and the relative error is
+
+    $$
+    \frac{|0.5 - 0.5|}{|0.5| + 10^{-12}} = 0 < 10^{-6}.
+    $$
+
+    So **strategy 2 returns `True`**; the symbolic sympy branch is never reached.
+
+    `math_reward` returns `0.1` on a wrong-but-formatted answer as a *format reward*: it gives dense signal early in training so the model first learns to emit `\boxed{}` before correctness rewards become reachable. Pushed too far (a large $\lambda_f$), the model games format at the expense of content — e.g. always emitting `<think>...</think>\boxed{0}` for a nonzero reward with zero correctness — which is exactly the decoupling the format-gaming warning tells you to monitor.
+
+**2.** You run RLVR on a coding task. Each training step generates **8192** completions, each needs **~80 ms** of sandbox execution, and a new step starts every **40 s**. Using the chapter's "Throughput arithmetic" method: (a) compute the required completions/second, (b) the per-worker capacity, (c) the number of workers with no headroom, and (d) a sized pool with the chapter's recommended $2\text{--}3\times$ headroom, plus its total RAM at 256 MB/worker. (e) If you instead compile C++ at 2 s per completion, how many workers (no headroom) does the *same* required throughput demand?
+
+??? note "Solution"
+    (a) Required throughput:
+
+    $$
+    8192 / 40 = 204.8 \text{ completions/second.}
+    $$
+
+    (b) Per-worker capacity at 80 ms each:
+
+    $$
+    1000 \text{ ms} / 80 \text{ ms} = 12.5 \text{ completions/second.}
+    $$
+
+    (c) Workers with no headroom:
+
+    $$
+    \lceil 204.8 / 12.5 \rceil = \lceil 16.4 \rceil = 17 \text{ workers.}
+    $$
+
+    (d) With $3\times$ headroom, $17 \times 3 = 51$ workers (round to ~50). RAM:
+
+    $$
+    51 \times 256 \text{ MB} \approx 13 \text{ GB},
+    $$
+
+    negligible against GPU memory, matching the chapter's point that sandbox overhead is cheap.
+
+    (e) At 2 s/completion, per-worker capacity is $1/2 = 0.5$ completions/second, so
+
+    $$
+    \lceil 204.8 / 0.5 \rceil = 410 \text{ workers},
+    $$
+
+    a dedicated CPU cluster — the same conclusion the chapter draws for compiled/integration-test workloads.
+
+**3.** A GRPO prompt group has **4** completions. The rule-based math verifier scores correctness as `[1, 0, 0, 0]`; all four responses contain `\boxed{}`, so the format reward is `[1, 1, 1, 1]`. Using the pipeline's combination $r = r_{\text{correctness}} + \lambda_f \cdot r_{\text{format}}$ with $\lambda_f = 0.1$, and the per-group normalization $\tilde r_i = (r_i - \mu)/(\sigma + \epsilon)$ (use population $\sigma$, i.e. `np.std` default, and ignore $\epsilon$), compute the four advantages by hand. What do they sum to, and why is that expected?
+
+??? note "Solution"
+    Combined rewards:
+
+    $$
+    r = [1 + 0.1,\ 0 + 0.1,\ 0 + 0.1,\ 0 + 0.1] = [1.1,\ 0.1,\ 0.1,\ 0.1].
+    $$
+
+    Mean:
+
+    $$
+    \mu = (1.1 + 0.1 + 0.1 + 0.1)/4 = 1.4/4 = 0.35.
+    $$
+
+    Deviations: $[0.75,\ -0.25,\ -0.25,\ -0.25]$. Population variance:
+
+    $$
+    \sigma^2 = \frac{0.75^2 + 3\cdot(0.25)^2}{4} = \frac{0.5625 + 0.1875}{4} = \frac{0.75}{4} = 0.1875,
+    $$
+
+    so $\sigma = \sqrt{0.1875} \approx 0.4330$. Advantages:
+
+    $$
+    \tilde r = \left[\frac{0.75}{0.4330},\ \frac{-0.25}{0.4330},\ \frac{-0.25}{0.4330},\ \frac{-0.25}{0.4330}\right] \approx [1.732,\ -0.577,\ -0.577,\ -0.577].
+    $$
+
+    They sum to (approximately) **0**: subtracting the group mean makes the advantages zero-mean by construction. That is the whole point of per-group normalization — the advantage signal is centered per prompt regardless of the absolute reward scale, so only *relative* quality within the group drives the update.
+
+**4.** The format-gaming warning says a too-large $\lambda_f$ lets the model win by faking format. Make it quantitative. Compare two policies under $r = r_{\text{correctness}} + \lambda_f \cdot r_{\text{format}}$, both with $r_{\text{correctness}}, r_{\text{format}} \in \{0,1\}$:
+
+- **Honest:** genuinely attempts problems; expected correctness $0.2$, but its messy outputs only emit `\boxed{}` half the time, so expected format $0.5$.
+- **Degenerate:** always emits `<think>...</think>\boxed{0}`; correctness $0$, format $1$.
+
+Find the threshold value of $\lambda_f$ above which the degenerate policy earns the higher expected reward. Comment on the chapter's recommended range $\lambda_f \in [0.1, 0.2]$.
+
+??? note "Solution"
+    Expected rewards:
+
+    $$
+    \mathbb{E}[r_{\text{honest}}] = 0.2 + \lambda_f \cdot 0.5, \qquad \mathbb{E}[r_{\text{degen}}] = 0 + \lambda_f \cdot 1.
+    $$
+
+    Degenerate wins when
+
+    $$
+    \lambda_f > 0.2 + 0.5\,\lambda_f \;\Longrightarrow\; 0.5\,\lambda_f > 0.2 \;\Longrightarrow\; \lambda_f > 0.4.
+    $$
+
+    So the gaming optimum only takes over above $\lambda_f = 0.4$. The chapter's recommended $\lambda_f \in [0.1, 0.2]$ sits comfortably below this threshold: at $\lambda_f = 0.2$, honest scores $0.2 + 0.1 = 0.3$ versus degenerate $0.2$, so honest still wins. This is the concrete reason the chapter keeps $\lambda_f$ "small (on the order of 0.1 to 0.2)" — and why, if you must raise it, you should watch the format/correctness correlation for the decoupling described in the warning.
+
+**5.** The `math_verifier.py` docstring promises to handle "Sets/tuples: `{1, 2}` == `{2, 1}`", but neither `try_numeric` nor `try_sympy` actually parses set notation, so `math_equivalent("{1, 2}", "{2, 1}")` currently returns `False`. Implement a helper `math_set_equivalent(pred, gold)` in the chapter's style that treats `{...}`, `(...)`, or `[...]` as an *unordered* collection and compares members using the existing `math_equivalent`, then wire it into `math_equivalent` as an additional branch. Show that it makes `{1, 2} == {2, 1}` and `{1/2, 0.25} == {0.5, 1/4}` return `True`.
+
+??? note "Solution"
+    Reuse `math_equivalent` for element-wise comparison so each member gets full numeric/symbolic normalization. Parse the bracketed body, split on commas, then greedily match every predicted element to an unused gold element (unordered, with multiplicity).
+
+    ```python
+    import re
+
+    def try_collection(s: str):
+        """
+        Parse "{a, b, ...}", "(a, b, ...)" or "[a, b, ...]" into a list of
+        raw element strings. Returns None if s is not bracketed.
+        (Comma-split is flat: nested collections are out of scope.)
+        """
+        s = normalize_latex_number(s)
+        m = re.match(r'^\s*[\{\(\[](.*)[\}\)\]]\s*$', s)
+        if not m:
+            return None
+        body = m.group(1).strip()
+        if not body:
+            return []
+        return [e.strip() for e in body.split(',')]
+
+
+    def math_set_equivalent(pred: str, gold: str) -> bool:
+        """True iff pred and gold are the same unordered multiset of values."""
+        ps = try_collection(pred)
+        gs = try_collection(gold)
+        if ps is None or gs is None:
+            return False
+        if len(ps) != len(gs):
+            return False
+        remaining = list(gs)
+        for p in ps:
+            for i, g in enumerate(remaining):
+                if math_equivalent(p, g):   # recurse: full normalization per element
+                    del remaining[i]
+                    break
+            else:
+                return False                # no gold element matched this pred element
+        return not remaining
+    ```
+
+    Wire it into `math_equivalent` as a branch before returning `False` (after the symbolic strategy):
+
+    ```python
+        # 4. Sets / tuples (unordered): "{1, 2}" == "{2, 1}"
+        if math_set_equivalent(pred, gold):
+            return True
+
+        return False
+    ```
+
+    Checks:
+
+    - `math_set_equivalent("{1, 2}", "{2, 1}")`: `ps=["1","2"]`, `gs=["2","1"]`; `"1"` matches `"1"`, `"2"` matches `"2"` (order irrelevant), `remaining` empties -> `True`.
+    - `math_set_equivalent("{1/2, 0.25}", "{0.5, 1/4}")`: `"1/2"` matches `"0.5"` via the numeric branch of `math_equivalent`, `"0.25"` matches `"1/4"`, `remaining` empties -> `True`.
+
+    Because element comparison delegates to `math_equivalent`, mixed formats inside a set (fractions, decimals, LaTeX) are normalized for free; the only limitation is that flat comma-splitting does not handle nested collections such as `{(1,2), (3,4)}`.

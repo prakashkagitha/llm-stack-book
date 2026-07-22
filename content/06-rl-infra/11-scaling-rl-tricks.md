@@ -375,3 +375,111 @@ The meta-point: **throughput in RL is won by overlap and by not wasting samples,
 - DeepSeek-AI, *DeepSeekMath* (GRPO) and *DeepSeek-R1* — the group-relative baseline and the RLVR reasoning recipe these tricks build on.
 - Schulman et al., *Proximal Policy Optimization Algorithms* and *High-Dimensional Continuous Control Using Generalized Advantage Estimation (GAE)* — the clipping and advantage machinery underneath.
 - The **veRL (HybridFlow)** and **OpenRLHF** repositories — production implementations of oversubscription, continuous batching, and async overlap for RL.
+
+## Exercises
+
+**1.** (Conceptual) In GRPO with a verifiable binary reward $r \in \{0,1\}$, explain why a prompt whose $G$ samples all receive the *same* reward (all correct, or all wrong) contributes *exactly zero* gradient. Then explain why the fraction of your rollout budget wasted this way tends to *increase* as training proceeds, and name the DAPO mechanism that fixes it.
+
+??? note "Solution"
+    GRPO's advantage standardizes rewards *within* the group:
+    $$
+    \hat A_i = \frac{r_i - \operatorname{mean}(\{r_j\}_{j=1}^{G})}{\operatorname{std}(\{r_j\}_{j=1}^{G})}.
+    $$
+    If every $r_j$ is identical (all $1$ or all $0$), then $r_i = \operatorname{mean}(\{r_j\})$ for every $i$, so the numerator $r_i - \operatorname{mean} = 0$ for all samples. Every $\hat A_i = 0$, and since the policy-gradient loss is a sum of terms each proportional to $\hat A_i$, the whole group's contribution to the gradient is zero. You paid for $G$ full generations and got no learning signal. (The $\operatorname{std}=0$ denominator is degenerate too, but the numerator already kills it regardless of how you regularize the denominator.)
+
+    Why the waste *grows*: early in training the model gets many prompts wrong-but-sometimes-right (pass-rate near the middle), so groups have reward variance and non-zero advantage. As training proceeds the model *masters* the easy prompts, pushing their pass-rate to $\approx 1$ — those groups become all-correct and therefore degenerate. So the fraction of all-same-reward groups climbs over the run, and an ever-larger share of the generation budget produces zero gradient. It is a throughput problem wearing a statistics costume.
+
+    The fix is **DAPO's dynamic sampling**: keep sampling fresh prompt-groups and discard any with $\operatorname{std}(r)=0$, continuing until you have accumulated a full batch of $N$ groups that all have non-zero advantage variance. Every trained group then moves the policy.
+
+**2.** (Quantitative) Take the chapter's 8-sequence batch with generated lengths
+$$
+L = [200,\ 220,\ 240,\ 260,\ 300,\ 1800,\ 320,\ 280].
+$$
+(a) Compute the generation efficiency $\eta_{\text{gen}} = \bar L / L_{\max}$ for running this batch to completion as one unit. (b) Compute the static-batching token-forwards $B\cdot L_{\max}$ and the continuous-batching token-forwards $\sum_i L_i$, and the ratio between them. (c) In one sentence, say which kind of waste (padding vs tail) the ratio in (b) measures, and which it does *not*.
+
+??? note "Solution"
+    (a) Sum: $200+220+240+260+300+1800+320+280 = 3620$. Mean: $\bar L = 3620/8 = 452.5$. Max: $L_{\max}=1800$.
+    $$
+    \eta_{\text{gen}} = \frac{452.5}{1800} \approx 0.251.
+    $$
+    So run-to-completion, only about 25% of the fleet's token-time on this batch is useful work; the single 1800-token outlier drags the rest down.
+
+    (b) Static batching pads all $B=8$ live slots to $L_{\max}=1800$ every step:
+    $$
+    B\cdot L_{\max} = 8 \times 1800 = 14400 \ \text{token-forwards}.
+    $$
+    Continuous batching pays only for real tokens:
+    $$
+    \sum_i L_i = 3620 \ \text{token-forwards}.
+    $$
+    Ratio $= 14400 / 3620 \approx 3.98$, i.e. roughly $4\times$ less compute on the same batch (matching the chapter's sketch).
+
+    (c) That $\approx 4\times$ ratio measures the elimination of **padding** waste (no more padding every sequence up to the global max). It does *not* capture **tail** waste: if these 8 are the whole batch and nothing else is queued, continuous batching still runs until the 1800-token sequence finishes with 7 slots idle. Killing the tail needs oversubscription, partial rollout, or overlap — not just continuous batching.
+
+**3.** (Quantitative) Rewards are Bernoulli: for a prompt the model solves with probability $p$, each of the $G$ independent samples is correct w.p. $p$. (a) Using the chapter's `informativeness(p) = p(1-p)`, compute the per-group reward variance at $p = 0.1,\ 0.5,\ 0.9$ and state where signal is maximal. (b) A group is *degenerate* (filtered by dynamic sampling) exactly when all $G$ samples are correct or all wrong. For $G=8$, compute the degenerate probability at $p=0.5$ and at $p=0.9$, and interpret. (c) If a fraction $f=0.35$ of generated groups turn out degenerate, what oversampling factor do you need to still deliver $N$ useful groups?
+
+??? note "Solution"
+    (a) $p(1-p)$:
+    - $p=0.1$: $0.1 \times 0.9 = 0.09$.
+    - $p=0.5$: $0.5 \times 0.5 = 0.25$.
+    - $p=0.9$: $0.9 \times 0.1 = 0.09$.
+
+    Signal (reward variance, hence group-relative advantage magnitude) is maximal at $p=0.5$ — the prompt the model solves half the time — and symmetric, vanishing toward $p=0$ or $p=1$. This is why curriculum aims the rollout budget at $p \approx 0.5$.
+
+    (b) Degenerate probability $= p^G + (1-p)^G$.
+    - $p=0.5,\ G=8$: $0.5^8 + 0.5^8 = 2 \times (1/256) = 2/256 = 1/128 \approx 0.0078$.
+    - $p=0.9,\ G=8$: $0.9^8 + 0.1^8 \approx 0.4305 + 10^{-8} \approx 0.430$.
+
+    Interpretation: a mid-difficulty prompt ($p=0.5$) is almost never filtered (< 1% degenerate), so it reliably yields signal. An easy prompt ($p=0.9$) is degenerate ~43% of the time — nearly half its groups are all-correct and wasted. As the model masters prompts (pushing $p$ toward 1), the degenerate rate climbs, which is precisely the growing-waste effect from Exercise 1 and the reason dynamic sampling's oversampling factor grows over training.
+
+    (c) You keep a fraction $(1-f)$ of generated groups, so to net $N$ useful ones you must generate
+    $$
+    \frac{N}{1-f} = \frac{N}{0.65} \approx 1.54\,N,
+    $$
+    an oversampling factor of about $1.54\times$ (matching the worked example). Because the generation layer is async and oversubscribed, this extra sampling overlaps training rather than serializing with it.
+
+**4.** (Implementation) The chapter's `run_phase` stores, per resumed token, the log-prob under the *behavior* policy in `behavior_logprobs`. Implement a function `is_corrected_surrogate(new_logprobs, behavior_logprobs, advantages, eps_low, eps_high)` that computes DAPO's decoupled clip-higher surrogate *loss* (a scalar to minimize) for one partial trajectory, using the per-token importance ratio $\rho_t = \pi_\theta(a_t)/\pi_{\text{behavior}}(a_t)$. Use the chapter's asymmetric clip bounds $[1-\varepsilon_{\text{low}},\ 1+\varepsilon_{\text{high}}]$ and a flat mean over tokens (token-level loss). Then briefly state why the *behavior* log-prob — not the current-policy log-prob — must go in the denominator.
+
+??? note "Solution"
+    The ratio uses log-probs, so $\rho_t = \exp(\log\pi_\theta(a_t) - \log\pi_{\text{behavior}}(a_t))$. The clip-higher surrogate takes the pessimistic $\min$ of the unclipped and clipped terms, then we negate and take a token-level mean (equal weight per token, per DAPO / Dr. GRPO):
+
+    ```python
+    import torch
+
+    def is_corrected_surrogate(new_logprobs, behavior_logprobs, advantages,
+                               eps_low=0.2, eps_high=0.28):
+        """Clip-higher, token-level surrogate LOSS for one partial trajectory.
+        new_logprobs, behavior_logprobs, advantages: 1-D tensors, per token.
+        Returns a scalar to MINIMIZE."""
+        # rho_t = pi_theta(a_t) / pi_behavior(a_t), computed in log space.
+        ratio = torch.exp(new_logprobs - behavior_logprobs)
+        unclipped = ratio * advantages
+        clipped = torch.clamp(ratio, 1.0 - eps_low, 1.0 + eps_high) * advantages
+        # min() = PPO's pessimistic bound; asymmetric bounds = DAPO clip-higher.
+        surrogate = torch.minimum(unclipped, clipped)
+        # Flat mean over all tokens (token-level loss, no per-length division).
+        return -surrogate.mean()
+    ```
+
+    Why the behavior policy is the denominator: a partial trajectory resumed several steps later has a prefix that was *sampled* by older weights, and importance sampling corrects the mismatch between the distribution that *produced* the tokens and the distribution you are *optimizing*. The correct ratio is $\pi_{\text{new}}/\pi_{\text{behavior}}$, where $\pi_{\text{behavior}}$ is the policy that actually drew each token (stored at sampling time in `behavior_logprobs`). Putting the current policy in the denominator would give $\rho_t \equiv 1$, discarding the correction entirely and silently biasing the gradient — exactly the failure the chapter warns about for partial rollout without IS correction.
+
+**5.** (Conceptual + short calculation) Dr. GRPO claims vanilla GRPO's per-sequence *length normalization* gives a direct gradient incentive to make *wrong* answers longer. Make this concrete: two wrong trajectories share the same negative advantage $\hat A = -1$, but have lengths $|o_1| = 100$ and $|o_2| = 1000$ tokens. Assuming the summed per-token loss magnitude for a trajectory is proportional to $|\hat A| \cdot |o_i|$ before normalization, compute the *per-token* penalty each trajectory receives (a) under vanilla GRPO's divide-by-length normalizer and (b) under Dr. GRPO's token-level (flat) mean. Explain what the model learns from (a).
+
+??? note "Solution"
+    Model the pre-normalization summed loss magnitude of a trajectory as $|\hat A|\cdot|o_i|$ (each of its $|o_i|$ tokens carries a $|\hat A|$-sized push). The *per-token* penalty is what drives each token's gradient.
+
+    (a) **Vanilla GRPO — divide by sequence length $|o_i|$.** GRPO's per-sequence mean multiplies every token's loss by the normalizer $1/|o_i|$. The summed magnitude $|\hat A|\cdot|o_i|$ therefore collapses to a per-sequence loss of $|\hat A|\cdot|o_i|/|o_i| = |\hat A|$, which spread across the sequence's $|o_i|$ tokens gives a per-token penalty of
+    $$
+    \frac{|\hat A|}{|o_i|}.
+    $$
+    Numerically, with $|\hat A|=1$:
+    - $|o_1|=100$: per-token penalty $= 1/100 = 0.010$.
+    - $|o_2|=1000$: per-token penalty $= 1/1000 = 0.001$.
+
+    The long wrong trajectory gets a $10\times$ *smaller* penalty per token. So gradient descent finds a cheap way to reduce the per-token loss on wrong answers: *make them longer*. That is a direct incentive to ramble when wrong, and it compounds — longer wrong traces inflate $L_{\max}$, worsen the tail bubble, and lower MFU over the run.
+
+    (b) **Dr. GRPO / DAPO — flat token-level mean, no per-length division.** Every valid token in the batch gets equal weight, so the per-token penalty is the same constant for both trajectories:
+    - $|o_1|=100$: per-token penalty $= |\hat A| = 1$ (up to the shared global $1/(\text{total tokens})$ factor).
+    - $|o_2|=1000$: per-token penalty $= |\hat A| = 1$ (same).
+
+    Now lengthening a wrong answer gives *no* per-token relief — each extra wrong token adds its own full penalty rather than diluting the existing one. Removing the length division makes per-token gradients length-independent and eliminates the runaway-length incentive, which is Dr. GRPO's central fix (paired with dropping the std-normalization difficulty bias).

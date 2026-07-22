@@ -471,3 +471,128 @@ Three things to internalize from this skeleton. First, **prefill runs once, deco
 - Shazeer, *Fast Transformer Decoding: One Write-Head is All You Need* (2019) — introduces Multi-Query Attention, the first major attack on KV-cache size; see [MHA, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).
 - Williams, Waterman & Patterson, *Roofline: An Insightful Visual Performance Model* (2009) — the arithmetic-intensity model underpinning the compute- vs memory-bound argument; see [The Roofline Model](../04-kernels-efficiency/01-roofline-performance.html).
 - Little, *A Proof for the Queuing Formula $L = \lambda W$* (1961) — the throughput law used for fleet sizing.
+
+## Exercises
+
+**1.** (Conceptual) A colleague proposes speeding up your serving system by increasing the decode batch size $B$ from 1 to 32, and separately by increasing the prefill batch size from 1 to 32. Using the arithmetic-intensity argument $I \approx 2N/P$, explain why the first change gives a near-32x aggregate throughput win while the second gives almost nothing. What single physical quantity ($N$, the tokens processed per forward pass) is different between the two phases *before* you batch, and why does that make batching act so differently on each?
+
+??? note "Solution"
+    The bottleneck of any matmul depends on where its arithmetic intensity $I$ sits relative to the GPU's ridge point (about 100-300 FLOP/byte for a data-center GPU). The chapter derives $I \approx 2N/P$, where $N$ is the number of tokens fed through the forward pass together and $P$ is bytes per element.
+
+    - **Decode starts memory-bound.** For a single stream, $N = 1$, so $I \approx 2/P = 1$ FLOP/byte in fp16 ($P = 2$) - roughly two orders of magnitude *below* the ridge point. The step time is set by streaming the weights from HBM, and the tensor cores sit idle. Batching $B = 32$ sequences into one decode step reads those *same weights once* and reuses them across all 32 tokens, lifting $N$ from 1 to 32 and $I$ to $\approx 2\cdot32/P = 32$ FLOP/byte. You are still (until much larger batches) memory-bound, so the step time barely changes while you now produce 32 tokens instead of 1 - hence nearly 32x aggregate throughput. The extra FLOPs ride for free on memory traffic you were already paying for.
+
+    - **Prefill starts compute-bound.** A prompt of $S$ tokens already has $N = S$ (hundreds or thousands), so $I = 2S/P$ is already well above the ridge point and the tensor cores are already saturated. Batching more prompts together raises $N$ further, but you are past the ridge - you cannot go faster than peak FLOP/s, which one prompt already reaches. So per-token throughput barely improves (and per-request latency can worsen).
+
+    The single distinguishing quantity is $N$, the tokens-per-forward-pass: it collapses from $S$ (prefill) to $1$ (single-stream decode). Batching is a lever that raises $N$; it only helps when you start below the ridge point, which is exactly the decode regime. This is the entire reason continuous batching targets decode.
+
+**2.** (Quantitative) Consider a hypothetical model with $L = 80$ layers, $H_{kv} = 8$ key/value heads (GQA), head dimension $d_h = 128$, served in bf16 ($P = 2$ bytes). Compute: (a) the KV-cache cost per token in KiB; (b) the KV-cache size of one 4096-token context in GiB; (c) how many such 4096-token contexts fit in a 50 GiB KV-cache budget.
+
+??? note "Solution"
+    Use $\text{KV bytes} = 2 \cdot B \cdot S \cdot L \cdot H_{kv} \cdot d_h \cdot P$.
+
+    (a) Per token ($B = 1$, $S = 1$):
+
+    $$
+    2 \cdot 80 \cdot 8 \cdot 128 \cdot 2 = 327{,}680 \text{ bytes} = \frac{327{,}680}{1024} = 320 \text{ KiB/token}.
+    $$
+
+    (b) One 4096-token context:
+
+    $$
+    4096 \times 320 \text{ KiB} = 1{,}310{,}720 \text{ KiB} = 1280 \text{ MiB} = 1.25 \text{ GiB}.
+    $$
+
+    (c) Number of contexts in 50 GiB:
+
+    $$
+    \frac{50 \text{ GiB}}{1.25 \text{ GiB}} = 40 \text{ concurrent 4096-token sequences}.
+    $$
+
+    Note the cache depends only on $L$, $H_{kv}$, $d_h$, $S$, and $P$ - not on the MLP width, vocabulary, or the number of *query* heads. That is why GQA (8 KV heads here instead of, say, 64) is what makes 40 concurrent long contexts feasible.
+
+**3.** (Quantitative) You serve a 13B-parameter model on an A100 with 2.0 TB/s of HBM bandwidth. Using the single-stream decode ceiling $\text{tokens/sec} \le \text{BW} / (N_{\text{params}} \cdot P)$, compute the optimistic ceiling in (a) fp16 ($P = 2$) and (b) int4 ($P = 0.5$). By what factor does quantization raise the ceiling, and why - does it add FLOPs?
+
+??? note "Solution"
+    The floor on one decode step is the time to stream all weights: $t_{\text{step}} \ge N_{\text{params}} \cdot P / \text{BW}$.
+
+    (a) fp16: weight bytes $= 13 \times 10^9 \times 2 = 26$ GB.
+
+    $$
+    t_{\text{step}} \ge \frac{26 \times 10^9}{2.0 \times 10^{12}} = 0.013 \text{ s} = 13 \text{ ms}
+    \;\Rightarrow\; \text{ceiling} \approx \frac{1}{0.013} \approx 77 \text{ tokens/sec}.
+    $$
+
+    (b) int4: weight bytes $= 13 \times 10^9 \times 0.5 = 6.5$ GB.
+
+    $$
+    t_{\text{step}} \ge \frac{6.5 \times 10^9}{2.0 \times 10^{12}} = 0.00325 \text{ s} = 3.25 \text{ ms}
+    \;\Rightarrow\; \text{ceiling} \approx \frac{1}{0.00325} \approx 308 \text{ tokens/sec}.
+    $$
+
+    Quantization raises the ceiling by exactly the ratio of $P$ values, $2 / 0.5 = 4\times$. It buys speed *not* by adding arithmetic - single-stream decode is memory-bound and the tensor cores are already idle - but by shrinking the number of bytes that must be streamed from HBM per step. Fewer weight bytes to move = faster step. (These are optimistic ceilings; real kernels hit perhaps 60-80% of peak bandwidth.)
+
+**4.** (Quantitative) Reuse the fleet from Exercise 2: $L \approx 40$ concurrent sequences fit in KV memory. Suppose each request generates on average $T = 1000$ tokens, and batched decode achieves a per-stream TPOT of 25 ms. Ignoring TTFT, use Little's law to estimate (a) the sustainable request throughput $\lambda$ and (b) the aggregate output-token throughput. (c) What happens if the arrival rate exceeds $\lambda$?
+
+??? note "Solution"
+    Little's law: $\lambda = L / W$, where $W$ is the average time a sequence stays resident.
+
+    (a) Time in system per sequence (decode only): $W \approx T \cdot \text{TPOT} = 1000 \times 0.025 \text{ s} = 25 \text{ s}$. Then
+
+    $$
+    \lambda = \frac{L}{W} = \frac{40}{25} = 1.6 \text{ requests/sec}.
+    $$
+
+    (b) At 1000 output tokens per request:
+
+    $$
+    1.6 \text{ req/s} \times 1000 \text{ tok/req} = 1600 \text{ output tokens/sec aggregate}.
+    $$
+
+    (c) If arrivals exceed $\lambda = 1.6$ req/s, the system is no longer stable: the queue grows without bound, requests wait longer before prefill, TTFT climbs steadily, and effective latency $W$ balloons. To restore stability you must raise $L$ (shrink/quantize/page the KV cache to fit more sequences), lower $W$ (faster decode via quantized weights or speculative decoding), shorten outputs, or add GPUs.
+
+**5.** (Implementation) The chapter's tokens/sec ceiling assumes the weight read dominates, which is only true for short contexts. At long context the decode step must *also* stream the growing KV cache from HBM. Using the chapter's `kv_cache_bytes` helper, implement `decode_ceiling_tps(...)` that returns the aggregate tokens/sec ceiling for a batch of $B$ sequences, each at sequence length $S$, accounting for both the weight read and the KV-cache read per step. Then evaluate it for an 8B model (16 GB fp16 weights) with $L=32$, $H_{kv}=8$, $d_h=128$, bf16, at $B=32$ and $S=8192$ on a 2.0 TB/s GPU, and compare against the weight-only ceiling.
+
+??? note "Solution"
+    Each decode step produces $B$ tokens (one per sequence) and must stream, from HBM: the weights once, plus the entire KV cache for all $B$ sequences at their current length. The step time floor is `total_bytes / BW`, and aggregate throughput is $B$ divided by that time.
+
+    ```python
+    def kv_cache_bytes(batch, seq_len, n_layers, n_kv_heads, head_dim, dtype_bytes=2):
+        """KV-cache size in bytes. Factor 2 = keys AND values."""
+        return 2 * batch * seq_len * n_layers * n_kv_heads * head_dim * dtype_bytes
+
+    def decode_ceiling_tps(weight_bytes, bw_bytes_per_s, batch, seq_len,
+                           n_layers, n_kv_heads, head_dim, dtype_bytes=2):
+        """
+        Aggregate tokens/sec ceiling for a decode step of `batch` sequences,
+        each at length `seq_len`, accounting for BOTH the one-time weight read
+        and the KV-cache read for the whole batch. Memory-bound: step time is
+        set by bytes streamed from HBM divided by bandwidth.
+        """
+        kv_bytes = kv_cache_bytes(batch, seq_len, n_layers, n_kv_heads,
+                                  head_dim, dtype_bytes)
+        bytes_per_step = weight_bytes + kv_bytes       # weights + KV, per step
+        t_step = bytes_per_step / bw_bytes_per_s       # seconds (lower bound)
+        return batch / t_step                          # tokens/sec aggregate
+
+    W_BYTES = 16e9          # 8B params * 2 bytes (fp16)
+    BW      = 2.0e12        # 2.0 TB/s
+
+    # Weight-only baseline (chapter's ceiling), aggregated over the batch:
+    baseline = 32 / (W_BYTES / BW)         # B / t_weight_only
+    full     = decode_ceiling_tps(W_BYTES, BW, batch=32, seq_len=8192,
+                                  n_layers=32, n_kv_heads=8, head_dim=128,
+                                  dtype_bytes=2)
+    print(f"weight-only ceiling : {baseline:8.0f} tok/s")
+    print(f"with KV-cache reads : {full:8.0f} tok/s")
+    ```
+
+    Working the numbers by hand. KV cache per token is $2\cdot32\cdot8\cdot128\cdot2 = 131{,}072$ bytes $\approx 128$ KiB/token (the chapter's Llama-3-8B figure). For $B=32$ sequences at $S=8192$:
+
+    $$
+    \text{KV bytes} = 32 \times 8192 \times 131{,}072 \approx 3.44 \times 10^{10} \text{ bytes} \approx 34.4 \text{ GB}.
+    $$
+
+    - Weight-only step time: $16\text{ GB} / 2.0\text{ TB/s} = 8$ ms, giving $32 / 0.008 = 4000$ tok/s.
+    - Full step: bytes $= 16 + 34.4 = 50.4$ GB, step time $= 50.4\text{e9} / 2.0\text{e12} = 25.2$ ms, giving $32 / 0.0252 \approx 1270$ tok/s.
+
+    So at long context and high batch, the KV-cache traffic ($\approx 34$ GB) dwarfs the weight traffic (16 GB) and cuts the achievable throughput by more than 3x versus the weight-only estimate. This is the quantitative reason KV-cache compression (GQA/MLA, KV quantization) matters for *decode speed*, not just for how many sequences fit - at scale the cache is both the capacity limit and a first-class consumer of the very bandwidth that bounds decode.

@@ -557,3 +557,165 @@ Read this against the single-turn GRPO loop in [TRL: HuggingFace's RL Library](.
 - **Andrychowicz et al., "Hindsight Experience Replay" (2017)** — the relabeling idea for sparse, long-horizon rewards referenced under long-horizon credit assignment.
 - **veRL / HybridFlow (Sheng et al.)** and the **TRL** repository — production frameworks whose multi-turn rollout and masking code paths implement the bookkeeping described here; read their multi-turn trainers alongside [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html).
 - **SWE-bench (Jimenez et al., 2024)** and **tau-bench / agentic tool-use benchmarks** — the evaluation targets that motivate multi-turn coding and tool-using RL; see [Agent Evaluation & Benchmarks](../08-agents-harness/08-agent-evaluation.html).
+
+## Exercises
+
+**1.** *(Conceptual.)* In the flattened trajectory, observation tokens (the `<tool_response>...</tool_response>` spans) are placed in the context window and the model conditions on them, yet the chapter insists they must receive `loss_mask = 0`. Explain precisely what the policy is trained to do if you leave the loss *on* over observation tokens, and connect this to the deployment-time failure described in the Interview Corner (a model that stops calling tools and hallucinates their outputs).
+
+??? note "Solution"
+
+    The policy-gradient / clipped-surrogate loss over a token $t_i$ pushes $\pi_\theta$ to increase (for positive advantage) or decrease (for negative advantage) the probability of *generating* $t_i$ given its context. Observation tokens were **not** sampled from $\pi_\theta$ — they were injected by the environment (a search engine, a Python interpreter). If those tokens are unmasked, the gradient trains the model to *predict the environment's output from its own weights*: to reproduce the text of a search result or a stack trace autoregressively.
+
+    Two damaging consequences follow. First, it wastes capacity forcing the model to memorize/approximate tool outputs it cannot actually know. Second, and worse, it makes hallucinating a plausible observation a rewarded behavior: in successful trajectories the observation spans co-occur with high reward, so the unmasked loss reinforces "emit fluent fake tool output." At deployment the model then produces convincing but fabricated `<tool_response>` blocks inline and skips the real tool call entirely — exactly the Interview Corner failure. The fix is to zero the loss (and the KL term, and the importance-ratio contribution) on every observation and system token, and to normalize only over action tokens. The one place observations legitimately appear is *inside the context* $s_t$ that the next action conditions on — never as an argument to $\log \pi_\theta$.
+
+**2.** *(Quantitative.)* You run GRPO with a group of $G = 4$ trajectories for one task. Their terminal rewards are $[1.0,\ 0.5,\ 0.5,\ 0.0]$. Using the chapter's trajectory-level advantage formula (population std, $\delta = 10^{-6}$), compute the group mean $\mu$, the std $\sigma$, and the scalar advantage $\hat{A}^{(g)}$ assigned to *each* of the four trajectories. Then state how many of the ~4000 action tokens in the first trajectory (8 turns, ~500 tokens each) receive that advantage, and why the middle turns get it whether or not they helped.
+
+??? note "Solution"
+
+    Mean: $\mu = \tfrac{1}{4}(1.0 + 0.5 + 0.5 + 0.0) = 0.5$.
+
+    Deviations: $0.5,\ 0,\ 0,\ -0.5$; squared: $0.25,\ 0,\ 0,\ 0.25$; sum $= 0.5$.
+
+    Population variance: $0.5 / 4 = 0.125$, so $\sigma = \sqrt{0.125} \approx 0.35355$.
+
+    Advantages $\hat{A} = (r - \mu)/(\sigma + \delta)$:
+
+    $$
+    \hat{A}^{(1)} = \frac{1.0 - 0.5}{0.35355 + 10^{-6}} \approx +1.414, \quad
+    \hat{A}^{(2)} = \hat{A}^{(3)} = \frac{0.5 - 0.5}{\ldots} \approx 0.000, \quad
+    \hat{A}^{(4)} = \frac{0.0 - 0.5}{\ldots} \approx -1.414.
+    $$
+
+    Under trajectory-level (outcome) credit, the *single* scalar $\hat{A}^{(1)} \approx +1.414$ is broadcast onto **every** action token of trajectory 1 — all ~4000 of them across all 8 turns (system and observation tokens get 0 via the mask). Every action token gets the identical advantage because the scheme has no per-turn signal to distinguish turns; it only knows the whole episode finished above the group average. A wasted or even harmful middle turn is therefore reinforced exactly as much as the decisive turn. That indiscriminate broadcast is the source of the high variance and slow long-horizon learning the chapter warns about, and it is what turn-level credit (Exercise 3) is designed to fix.
+
+**3.** *(Quantitative.)* An agent solves a task in 3 turns. The environment emits per-turn (delta) rewards $r_0 = 0.2$, $r_1 = 0.0$, $r_2 = 0.5$. Using the discounted return-to-go $G_t = \sum_{k=t}^{T-1}\gamma^{\,k-t} r_k$ with $\gamma = 0.8$, compute $G_0$, $G_1$, $G_2$. Which turn receives the most credit, and how does this compare with the trajectory-level scheme that would give all three turns the same advantage?
+
+??? note "Solution"
+
+    Work backwards ($T = 3$):
+
+    $$G_2 = r_2 = 0.50$$
+    $$G_1 = r_1 + \gamma\, G_2 = 0.0 + 0.8 \times 0.50 = 0.40$$
+    $$G_0 = r_0 + \gamma\, G_1 = 0.2 + 0.8 \times 0.40 = 0.2 + 0.32 = 0.52$$
+
+    So $G_0 = 0.52$, $G_1 = 0.40$, $G_2 = 0.50$.
+
+    Turn 0 carries the most return-to-go ($0.52$) because it collects its own immediate reward *plus* the discounted value of everything that follows, including the decisive turn 2. The idle turn 1, whose own delta was $0.0$, still receives $0.40$ purely as the discounted credit for setting up turn 2 — but it is visibly the smallest of the three, correctly marking it as the least individually productive step.
+
+    Contrast with trajectory-level credit: it would assign the *same* advantage (derived from the single terminal reward, e.g. $r = 0.7$ against a group baseline) to all three turns, giving turn 1 exactly as much credit as turns 0 and 2. The turn-level scheme localizes credit and lowers gradient variance — at the cost of needing the honest per-turn signal $[0.2, 0.0, 0.5]$ that the trajectory-level scheme does not require.
+
+**4.** *(Quantitative.)* You profile one rollout worker: generating a full trajectory costs **4 s** of GPU time, and the environment interaction (sandbox spin-up + tool round-trips) costs **6 s** of wall-clock during which the GPU is idle, for a serial episode wall-clock of 10 s. (a) What fraction of GPU time is wasted, and does the practitioner-tip threshold say to act? (b) If you run several trajectories concurrently through one inference replica so the GPU serves other episodes' actions while any one waits on its tool, how many concurrent trajectories are needed to keep the GPU continuously busy, and what is the resulting throughput speedup?
+
+??? note "Solution"
+
+    (a) With a serial episode the GPU generates for 4 s and sits idle for 6 s out of every 10 s, so GPU utilization is $4/(4+6) = 40\%$ and **60% of GPU time is wasted**. The practitioner tip says to add environment concurrency whenever env-wait exceeds ~20% of generate time; here env-wait/generate $= 6/4 = 150\%$, far above threshold, so yes — fix the concurrency before touching any algorithmic knob.
+
+    (b) To keep the GPU busy, while one trajectory spends its 6 s on the environment the GPU must have other trajectories' actions to generate. Each trajectory occupies the GPU $4$ s out of every $10$ s cycle, so the number of concurrent trajectories needed to fill the pipe is
+
+    $$
+    N = \left\lceil \frac{\text{generate} + \text{wait}}{\text{generate}} \right\rceil = \left\lceil \frac{10}{4} \right\rceil = \lceil 2.5 \rceil = 3.
+    $$
+
+    With 3 concurrent trajectories the GPU is essentially always generating (utilization $\to 100\%$), and throughput rises from one 4 s-of-GPU episode per 10 s to roughly one per 4 s — about a **2.5x speedup** (utilization $40\% \to 100\%$) with zero ML changes. This is exactly the async, decoupled-rollout fan-out the chapter recommends for hiding environment latency.
+
+**5.** *(Implementation.)* The chapter implements `assign_trajectory_advantage` (one scalar broadcast to all action tokens). Implement its turn-level counterpart. Write `assign_turn_advantage(traj, gamma)` that (i) computes the discounted return-to-go $G_t$ for each turn from `traj.turn_rewards`, and (ii) returns a per-token advantage tensor, aligned to `traj.flatten()`, where each `ASSISTANT` segment's tokens carry that turn's $G_t$ and all `SYSTEM`/`OBSERVATION` tokens carry $0$. Assume `traj.turn_rewards[k]` is the reward for the $k$-th `ASSISTANT` action, in order. Keep it consistent with the chapter's `Trajectory`/`Segment`/`Role` classes.
+
+??? note "Solution"
+
+    The key alignment fact is that the `ASSISTANT` segments appear in the same order as `turn_rewards`, so we walk the segments while incrementing a turn counter only on assistant segments, and paint each action span with its return-to-go. Returns-to-go are computed with a single backward pass.
+
+    ```python
+    import torch
+
+    def assign_turn_advantage(traj: Trajectory, gamma: float = 0.9) -> torch.Tensor:
+        """
+        Turn-level credit: discounted return-to-go G_t broadcast onto that
+        turn's ACTION tokens; SYSTEM/OBSERVATION tokens get 0.
+        Returns a [L] float tensor aligned to traj.flatten().
+        """
+        r = traj.turn_rewards or []
+        T = len(r)
+
+        # --- (i) returns-to-go G_t = sum_{k>=t} gamma^{k-t} r_k, one backward pass ---
+        G = [0.0] * T
+        running = 0.0
+        for t in reversed(range(T)):
+            running = r[t] + gamma * running
+            G[t] = running
+
+        # --- (ii) paint each ASSISTANT span with its turn's return-to-go ---
+        ids, mask = traj.flatten()                 # ids:[L], mask:[L]
+        adv = torch.zeros_like(mask)               # float [L], 0 everywhere
+        cursor = 0
+        turn = 0
+        for seg in traj.segments:
+            n = len(seg.token_ids)
+            if seg.role == Role.ASSISTANT:
+                # guard against a missing/short turn_rewards list
+                g = G[turn] if turn < T else 0.0
+                adv[cursor:cursor + n] = g
+                turn += 1
+            cursor += n
+        return adv
+    ```
+
+    Sanity checks worth asserting in a test: `adv` has the same length as `ids`; `adv` is nonzero exactly where `mask == 1` (assuming all $G_t \neq 0$); and `(adv != 0).sum()` equals the total number of action tokens. This tensor can be fed straight into `masked_grpo_loss` as the `advantages` argument in place of the broadcast scalar `mask * A` used in `agentic_grpo_step`, giving genuinely per-turn credit rather than one trajectory-wide number.
+
+**6.** *(Implementation, hard.)* The chapter's warning admonition says the most insidious masking bug is an *off-by-one*: the mask must be shifted the same way as the next-token targets, and you should unit-test it against a hand-counted trajectory. Build a trajectory with segment token counts `SYSTEM=3, ASSISTANT=2, OBSERVATION=4, ASSISTANT=2` (11 tokens total). By hand, (a) give the pre-shift `loss_mask`, (b) give the shifted mask `loss_mask[:, 1:]` that aligns with the shifted targets in `masked_grpo_loss`, and (c) write a runnable unit test that constructs this trajectory and asserts both the pre-shift and post-shift live-token counts.
+
+??? note "Solution"
+
+    (a) `flatten()` emits `mask = 1` exactly on `ASSISTANT` tokens. With order SYSTEM(3), ASSISTANT(2), OBSERVATION(4), ASSISTANT(2):
+
+    ```
+    index :  0 1 2 | 3 4 | 5 6 7 8 | 9 10
+    role  :  S S S | A A | O O O O | A A
+    mask  :  0 0 0 | 1 1 | 0 0 0 0 | 1 1     ->  mask.sum() = 4
+    ```
+
+    (b) `masked_grpo_loss` shifts targets to `token_ids[:, 1:]` (logits at position $i$ predict token $i{+}1$) and shifts the mask identically to `loss_mask[:, 1:]`, i.e. drop index 0:
+
+    ```
+    predicts token:  1 2 3 4 5 6 7 8 9 10
+    shifted mask  :  0 0 1 1 0 0 0 0 1 1     ->  shifted sum = 4
+    ```
+
+    The count is preserved (still 4) because we dropped a masked (`0`) position at the front. The crucial correctness point: after the shift, the live positions are those whose *predicted* token (index $i{+}1$) is an action token — position 2 predicts token 3 (first action token), position 3 predicts token 4, position 8 predicts token 9, position 9 predicts token 10. If instead you had masked *before* shifting and then sliced the targets, you would leave a stray loss on the last pre-action token and drop the loss at the action-to-observation boundary — the exact off-by-one the admonition describes.
+
+    (c) Runnable unit test:
+
+    ```python
+    import torch
+
+    def make_test_traj() -> Trajectory:
+        t = Trajectory()
+        t.segments = [
+            Segment(Role.SYSTEM,      [10, 11, 12]),        # 3
+            Segment(Role.ASSISTANT,   [20, 21], [-0.1, -0.2]),  # 2 (action)
+            Segment(Role.OBSERVATION, [30, 31, 32, 33]),    # 4
+            Segment(Role.ASSISTANT,   [40, 41], [-0.3, -0.4]),  # 2 (action)
+        ]
+        return t
+
+    def test_loss_mask_shift():
+        traj = make_test_traj()
+        ids, mask = traj.flatten()
+
+        # (a) pre-shift: 11 tokens, exactly 4 action tokens
+        assert ids.shape[0] == 11
+        assert mask.tolist() == [0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1]
+        assert mask.sum().item() == 4.0
+
+        # (b) post-shift (as used inside masked_grpo_loss): drop index 0
+        shifted = mask[1:]                       # [B,L] -> here 1-D: [L-1]
+        assert shifted.tolist() == [0, 0, 1, 1, 0, 0, 0, 0, 1, 1]
+        assert shifted.sum().item() == 4.0
+
+        # count is preserved because the dropped position was masked (0)
+        assert mask.sum().item() == shifted.sum().item()
+        print("mask shift OK: 4 live action tokens before and after shift")
+
+    test_loss_mask_shift()
+    ```
+
+    Running it prints `mask shift OK: 4 live action tokens before and after shift`. Batching this trajectory just adds a leading dimension, turning `mask[1:]` into `loss_mask[:, 1:]` as written in `masked_grpo_loss`; the per-trajectory hand count of 4 is the ground truth you assert against.

@@ -451,3 +451,132 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
 - Noukhovitch et al., *Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models* — the staleness/importance-weight regime that bounds trajectory-replay reuse.
 - Schulman et al., *Proximal Policy Optimization Algorithms* — the clipped importance-sampling objective that makes shallow off-policy replay safe.
 - Dennis et al., *Emergent Complexity and Zero-shot Transfer via Unsupervised Environment Design* (PAIRED) — regret-based automatic curriculum, the theoretical cousin of difficulty-targeted selection.
+
+## Exercises
+
+**1.** *(Conceptual.)* Under GRPO with a binary verifiable reward, a group of $G$ completions for a single prompt comes back either all-correct ($\hat p = 1$) or all-wrong ($\hat p = 0$). Explain, from the advantage formula in this chapter, why *both* of these extremes contribute exactly zero to the policy gradient — even though one looks like "success" and the other like "failure." Why does this make pass rate, rather than absolute correctness, the quantity you must control?
+
+??? note "Solution"
+    GRPO centers each completion's reward by the group mean before forming the advantage:
+    $$
+    A_i = \frac{r_i - \bar r}{\operatorname{std}(r) + \varepsilon}, \qquad \bar r = \hat p.
+    $$
+    If every $r_i$ is identical (all $1$ when $\hat p = 1$, all $0$ when $\hat p = 0$), then $\bar r = r_i$ for every $i$, so the numerator $r_i - \bar r = 0$ for all $i$. Every advantage is zero, and the per-prompt gradient contribution $\sum_i A_i \nabla_\theta \log \pi_\theta$ is therefore exactly zero. The group is "dead" regardless of *which* extreme it sits at: the all-correct prompt is dead because the model already mastered it, the all-wrong prompt is dead because the model cannot get any purchase on it — but the mechanism is identical, namely zero reward variance inside the group.
+
+    The signal GRPO exploits is *relative* — the contrast between completions of the same prompt — not the absolute reward level. An all-correct group and an all-wrong group both have zero within-group contrast, hence zero gradient. This is why the master variable is the *pass rate* $p$: the usable signal scales as the Bernoulli variance $p(1-p)$, which vanishes at both $p=0$ and $p=1$ and peaks at $p=0.5$. You cannot make a prompt informative by making the model "more correct"; you make it informative by keeping its pass rate away from the two dead ends.
+
+**2.** *(Quantitative.)* The chapter states a prompt at $p = 0.5$ yields roughly $2.8\times$ the signal of a prompt at $p = 0.9$. Compute the exact ratio of gradient signal (proportional to $p(1-p)$) between a prompt at $p = 0.5$ and one at $p = 0.75$. If a fixed rollout budget must be split between the two difficulty levels to maximize total signal per rollout, which should get more of it, and by roughly what factor per prompt?
+
+??? note "Solution"
+    The per-prompt signal is proportional to the Bernoulli variance $p(1-p)$.
+
+    - At $p = 0.5$: $\;0.5 \times 0.5 = 0.25$.
+    - At $p = 0.75$: $\;0.75 \times 0.25 = 0.1875$.
+
+    Ratio:
+    $$
+    \frac{0.25}{0.1875} = \frac{4}{3} \approx 1.33.
+    $$
+    So a $p=0.5$ prompt delivers about $1.33\times$ the gradient signal per rollout of a $p=0.75$ prompt. Per prompt, the $p=0.5$ prompt is worth about a third more, so it should receive proportionally more of the budget. (Contrast this with the $p=0.9$ case: $0.9 \times 0.1 = 0.09$, and $0.25 / 0.09 \approx 2.78$ — matching the chapter's $\sim 2.8\times$. The signal cliff steepens fast as you leave the center of the band, which is exactly why targeting a band around $0.5$ pays off.)
+
+**3.** *(Quantitative.)* You want a training batch of $B_{\text{keep}} = 256$ informative (non-zero-variance) prompts with $G = 8$ samples each. Under the current policy your candidate pool is, in effect, two populations: half the prompts at $p = 0.5$ and half at $p = 0.9$. A group at pass rate $p$ survives the dynamic-sampling filter (has non-zero variance) with probability $1 - p^G - (1-p)^G$. Compute the survival fraction $\rho$ for uniform sampling from this pool, the number of groups you must generate to fill the batch, and the fraction of generated completions thrown away.
+
+??? note "Solution"
+    Per-population survival probability, $G = 8$:
+
+    - At $p = 0.5$: $\;1 - 0.5^8 - 0.5^8 = 1 - 2\cdot\frac{1}{256} = 1 - 0.0078 = 0.9922.$
+    - At $p = 0.9$: $\;0.9^8 = 0.4305$, and $0.1^8 \approx 10^{-8}$ (negligible), so survival $= 1 - 0.4305 - 0 \approx 0.5695.$
+
+    Uniform mix (half and half):
+    $$
+    \rho = 0.5\,(0.9922) + 0.5\,(0.5695) = 0.4961 + 0.2848 = 0.7809.
+    $$
+
+    Groups to generate to fill $B_{\text{keep}} = 256$:
+    $$
+    \frac{256}{0.7809} \approx 327.8 \;\Rightarrow\; 328 \text{ groups}.
+    $$
+
+    Completions generated: $328 \times 8 = 2624$; completions kept: $256 \times 8 = 2048$. Fraction thrown away:
+    $$
+    1 - \frac{2048}{2624} = 1 - 0.7809 = 0.219 \approx 22\%.
+    $$
+    So even with a fairly benign pool, uniform sampling wastes about a fifth of your generation on zero-variance groups — the "oversampling tax." Difficulty-targeted selection attacks this by raising $\rho$: if selection could feed only the $p=0.5$ population, $\rho \to 0.9922$ and the tax nearly vanishes.
+
+**4.** *(Quantitative.)* A task is tracked with the decayed Beta-Bernoulli posterior from the chapter's code: start at the prior $s = 1,\ f = 1$, use $G = 8$ and $\text{decay} = 0.9$, with update $s \leftarrow 0.9\,s + \text{successes}$, $f \leftarrow 0.9\,f + (G - \text{successes})$. The policy is improving, so the task returns $3$ successes in its first group and then $6$ successes in its second. Compute the posterior mean pass rate after each group, and explain in one line why the *decay* factor is what lets this estimate chase a non-stationary pass rate.
+
+??? note "Solution"
+    Posterior mean is $\dfrac{s}{s+f}$.
+
+    **After group 1** (3 successes, 5 failures):
+    $$
+    s = 0.9(1) + 3 = 3.9, \qquad f = 0.9(1) + 5 = 5.9.
+    $$
+    $$
+    \bar p_1 = \frac{3.9}{3.9 + 5.9} = \frac{3.9}{9.8} = 0.398.
+    $$
+
+    **After group 2** (6 successes, 2 failures):
+    $$
+    s = 0.9(3.9) + 6 = 3.51 + 6 = 9.51, \qquad f = 0.9(5.9) + 2 = 5.31 + 2 = 7.31.
+    $$
+    $$
+    \bar p_2 = \frac{9.51}{9.51 + 7.31} = \frac{9.51}{16.82} = 0.565.
+    $$
+
+    The estimate moved from $0.40$ up toward $0.57$ in a single step, following the policy as it mastered the task. The decay factor is what makes this possible: multiplying the old counts by $0.9$ before adding new evidence down-weights stale (old-policy) observations, so the posterior forgets the past at a controlled rate instead of averaging over the task's entire lifetime. Without decay, $s$ and $f$ accumulate forever and the mean becomes rigidly anchored to early, now-obsolete observations — the "stale difficulty label" pitfall the chapter warns about.
+
+**5.** *(Implementation.)* The chapter's `select_candidates` uses Thompson sampling and scores every task by closeness to a single point $p^\star$. Implement an *alternative* selector, `select_band_greedy`, that (a) uses the deterministic posterior mean (`posterior_mean()`) rather than a Thompson draw, (b) selects for a *band* $[p_{\text{lo}}, p_{\text{hi}}]$ — preferring the center of the band but ranking any in-band task above any out-of-band task — and returns the top `n_select`. Then write `expected_survival(tasks, G)` that estimates the dynamic-sampling survival fraction $\rho$ a candidate set would yield, using each task's posterior mean and the formula $1 - p^G - (1-p)^G$. Keep the chapter's `TaskState` interface.
+
+??? note "Solution"
+    ```python
+    import numpy as np
+
+    def select_band_greedy(tasks, n_select, p_lo=0.2, p_hi=0.8, target_p=0.5):
+        """Deterministic band selector. In-band tasks are scored by closeness to
+        the band center (target_p) and always outrank out-of-band tasks; out-of-band
+        tasks are ranked by distance to the nearest band edge so the batch degrades
+        gracefully when the band is under-populated."""
+        scored = []
+        for t in tasks:
+            p = t.posterior_mean()
+            if p_lo <= p <= p_hi:
+                # In band: 0 (best) at the edge-worst, more negative penalty as we
+                # move off-center. Offset by +1 so every in-band task beats any
+                # out-of-band task (whose score is <= 0 below).
+                score = 1.0 - abs(p - target_p)
+            else:
+                # Out of band: strictly negative, penalized by distance past the edge.
+                edge = p_lo if p < p_lo else p_hi
+                score = -abs(p - edge)
+            scored.append((score, t))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [t for _, t in scored[:n_select]]
+
+
+    def expected_survival(tasks, G=8):
+        """Estimated dynamic-sampling survival fraction rho for a candidate set:
+        the mean over tasks of P(group has non-zero variance) = 1 - p^G - (1-p)^G,
+        using each task's posterior-mean pass rate as the estimate of p."""
+        p = np.array([t.posterior_mean() for t in tasks])
+        surv = 1.0 - p**G - (1.0 - p)**G
+        return float(surv.mean())
+    ```
+
+    Usage mirrors the chapter's loop: swap `select_band_greedy` in for `select_candidates`, and call `expected_survival(selected, G)` as a health metric before generating. In-band tasks always sort above out-of-band ones because their scores lie in $[1 - 0.3,\, 1] = [0.7, 1]$ (the $|p - target_p|$ term never exceeds the half-band width $0.3$, so in-band scores stay above $0.7$), while every out-of-band score is $\le 0$. `expected_survival` gives you a cheap pre-generation estimate of $\rho$: if it is near $1$ your selector is feeding a clean in-band batch and the oversampling tax is small; if it is dropping over training, that is the saturation signal from the Interview Corner — the band is emptying and you need harder prompts.
+
+**6.** *(Conceptual + quantitative.)* The chapter says prompt-level replay is "free" while trajectory-level replay has a "half-life." Consider one stored token whose old policy assigned probability $\pi_{\text{old}} = 0.1$; after a few trainer steps the current policy has drifted to $\pi_\theta = 0.6$ on that token, and its advantage is positive ($A_t > 0$). Using the clipped objective with $\epsilon = 0.2$, compute the importance ratio and show that this token's contribution to the gradient is zeroed. Then explain why the prompt buffer never hits this problem.
+
+??? note "Solution"
+    The importance ratio is
+    $$
+    \rho_t = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\text{old}}(a_t \mid s_t)} = \frac{0.6}{0.1} = 6.0.
+    $$
+    The clipped objective is
+    $$
+    L = \min\!\big(\rho_t A_t,\; \operatorname{clip}(\rho_t, 1-\epsilon, 1+\epsilon)\,A_t\big),
+    \qquad \operatorname{clip}(6.0,\, 0.8,\, 1.2) = 1.2.
+    $$
+    With $A_t > 0$: the unclipped branch is $6.0\,A_t$ and the clipped branch is $1.2\,A_t$; since $A_t > 0$, $\min(6.0\,A_t,\, 1.2\,A_t) = 1.2\,A_t$. The **clipped** branch wins, and $1.2\,A_t$ is a constant in $\theta$ (the ratio has been clipped to a flat $1.2$), so $\nabla_\theta L = 0$ for this token. The trajectory has drifted far enough that clipping flattens its gradient to zero — it is now dead weight in the buffer. This is the half-life: once $\pi_\theta$ has moved a few steps away from $\pi_{\text{old}}$, the ratios leave the $[1-\epsilon, 1+\epsilon]$ window, clipping zeroes the contribution, and the stored completion is worthless. Hence you evict beyond a staleness bound $\tau_{\max}$ and monitor the clipped-token fraction as a buffer-health metric.
+
+    The **prompt** buffer never suffers this because it stores only *which task to attempt*, never the old completions. Every completion is freshly generated under the current policy $\pi_\theta$, so there is no $\pi_{\text{old}}$, no importance ratio, and no clipping — the samples are exactly on-policy by construction. That is why prompt-level replay is "free" (a persistence layer over difficulty-targeted selection) while trajectory replay is off-policy and bounded by a short half-life.

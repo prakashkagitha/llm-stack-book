@@ -539,3 +539,130 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
 - **Yu et al., "DAPO: An Open-Source LLM Reinforcement Learning System at Scale" (2025)** — clip-higher, dynamic sampling, token-level loss, and overlong handling.
 - **Ye et al., "Mastering Complex Control in MOBA Games with Deep Reinforcement Learning" (2020)** — the dual-clip PPO variant.
 - **The `verl`, `trl`, and `OpenRLHF` repositories** — read their advantage-computation and policy-loss functions side by side; the differences in masking, whitening, and aggregation are the real curriculum.
+
+## Exercises
+
+**1.** (Conceptual) A colleague computes GRPO advantages, then runs `advantages.mean()` and `advantages.std()` over the full padded `(B, T)` tensor to whiten them, ignoring the loss mask. Their batch happens to be 40% padding. Explain precisely what goes wrong: what happens to the estimated mean and std, and in which direction are the real tokens' advantages mis-scaled?
+
+??? note "Solution"
+
+    Padding positions carry advantage $0$. With 40% of the tensor being zeros:
+
+    - **Mean is pulled toward zero.** The true masked mean is $\mu_{\text{real}} = \frac{1}{N_{\text{real}}}\sum_{\text{real}} A_t$. The padded mean is $\mu_{\text{pad}} = \frac{N_{\text{real}}}{N_{\text{real}}+N_{\text{pad}}}\,\mu_{\text{real}} = 0.6\,\mu_{\text{real}}$. So the mean is shrunk by the fraction of real tokens.
+    - **Std/variance is shrunk.** The padded variance mixes in $0.4$ worth of points sitting at value $0$ (near or below the real mean), which reduces the spread. Concretely the padded second moment about the padded mean is smaller than the real variance, so $\sigma_{\text{pad}} < \sigma_{\text{real}}$.
+
+    After whitening, each real token gets $\hat A_t = (A_t - \mu_{\text{pad}})/(\sigma_{\text{pad}}+\varepsilon)$. Because $\sigma_{\text{pad}}$ is too small, the real advantages are **divided by too small a number and therefore scaled UP** (inflated) relative to correct whitening, and they are shifted by the wrong (too-small) mean. Worse, the scale factor depends on *how much padding happened to land in the batch* — so the effective learning rate silently varies with batch composition. This is exactly the pitfall the chapter warns about: always reduce with the loss mask (`masked_whiten`).
+
+**2.** (Quantitative) A prompt is sampled $G=4$ times with rewards $R = [1, 1, 1, 0]$ (three correct, one wrong). Compute the GRPO advantages (a) with standard std-normalization ($\varepsilon = 0$, using the population std with divisor $G$) and (b) Dr. GRPO style (mean subtraction only). Then a second, harder prompt gives $R = [1, 0, 1, 0]$ (a 50/50 split). Compare the magnitude of the advantage assigned to a *correct* sample across the two prompts under standard GRPO, and state which prompt's gradients get up-weighted *relative to mean-only (Dr. GRPO) normalization*.
+
+??? note "Solution"
+
+    **Prompt A, $R=[1,1,1,0]$.** Mean $= 3/4 = 0.75$. Mean-subtracted advantages: $[0.25, 0.25, 0.25, -0.75]$ (this is the Dr. GRPO answer, part b).
+
+    Population variance $= \frac{1}{4}\big(3(0.25)^2 + (-0.75)^2\big) = \frac{1}{4}(3\cdot0.0625 + 0.5625) = \frac{1}{4}(0.1875+0.5625)=\frac{0.75}{4}=0.1875$. Std $= \sqrt{0.1875} \approx 0.4330$.
+
+    Standard GRPO advantages: divide by $0.4330$:
+    $$[0.25/0.4330,\ \dots,\ -0.75/0.4330] \approx [0.577,\ 0.577,\ 0.577,\ -1.732].$$
+    A correct sample gets advantage $\approx +0.577$.
+
+    **Prompt B, $R=[1,0,1,0]$.** Mean $= 0.5$. Mean-subtracted: $[0.5, -0.5, 0.5, -0.5]$.
+
+    Population variance $= \frac{1}{4}\big(4\cdot(0.5)^2\big)=\frac{1}{4}(1.0)=0.25$. Std $=0.5$.
+
+    Standard GRPO advantages: $[0.5/0.5,\dots] = [1.0, -1.0, 1.0, -1.0]$. A correct sample gets advantage $\approx +1.0$.
+
+    **Comparison.** A correct sample gets $+0.577$ in prompt A (the easier 3/4 group) but $+1.0$ in prompt B (the 50/50 group). Taken at face value this looks like the harder prompt's correct samples get the bigger signal — but that is mostly the *mean-subtraction* talking (prompt B's raw mean-subtracted signal is $0.5$ vs prompt A's $0.25$), **not** the std bias. To isolate the std effect, look at the multiplicative factor $1/\sigma$ that the divisor applies: prompt A is scaled by $1/0.433 \approx 2.31$, prompt B by only $1/0.5 = 2.0$. The **lower-variance (easier) prompt A is amplified by the larger factor** — exactly the chapter's claim that dividing by std up-weights low-variance groups.
+
+    Equivalently, compare the *ratio* of the two correct-sample advantages before and after the divisor. Under mean-only (Dr. GRPO): $0.25/0.5 = 0.50$. Under standard GRPO: $0.577/1.0 = 0.577$. Std-normalization has shifted weight **toward prompt A** relative to what mean-only gives. Dr. GRPO drops the divisor precisely so that a group's reward variance (a proxy for difficulty) cannot re-weight its gradients this way — the natural difficulty signal ($0.25$ for the easy prompt vs $0.5$ for the hard one) is left intact.
+
+**3.** (Quantitative) You have a single sampled token where the reference assigns it higher probability than the policy: $\log\pi_\theta(a) = -3.0$ and $\log\pi_{\text{ref}}(a) = -2.0$. Compute the three KL estimators $k_1$, $k_2$, $k_3$ for this token. Which one(s) are negative, and what does that say about using $k_1$ as a per-token penalty?
+
+??? note "Solution"
+
+    Recall $r = \log\frac{\pi_{\text{ref}}}{\pi_\theta} = \log\pi_{\text{ref}} - \log\pi_\theta = -2.0 - (-3.0) = +1.0$.
+
+    - $k_1 = -r = -1.0$.
+    - $k_2 = \tfrac12 r^2 = \tfrac12 (1.0)^2 = 0.5$.
+    - $k_3 = e^r - 1 - r = e^{1.0} - 1 - 1.0 = 2.71828 - 2.0 = 0.71828$.
+
+    So $k_1 = -1.0$ is **negative**, while $k_2 = 0.5$ and $k_3 \approx 0.718$ are both non-negative (as they must be: $k_2 = \tfrac12 r^2 \ge 0$ and $e^r - 1 - r \ge 0$ for all $r$).
+
+    A negative $k_1$ occurs exactly when the policy assigns *lower* probability than the reference to the sampled token ($\pi_\theta < \pi_{\text{ref}}$, i.e. $r>0$). If you use $k_1$ directly as a per-token KL penalty subtracted from the reward, that token would get a *negative penalty* — i.e. a small *bonus* — for being off-reference, which is a nonsensical, high-variance signal even though $\mathbb{E}[k_1] = D_{\mathrm{KL}} \ge 0$ over many samples. This is why $k_3$ (unbiased AND always $\ge 0$) is the modern default: it never hands out a spurious per-token bonus.
+
+**4.** (Conceptual) The chapter says KL-in-reward only needs the *value* of the KL, whereas KL-in-loss needs a *differentiable* KL estimate. Explain why, in terms of where each KL term sits in the computation graph and what gets backpropagated. What would break if you used a `.detach()`-ed (non-differentiable) $k_3$ in the KL-in-loss formulation?
+
+??? note "Solution"
+
+    **KL-in-reward.** The KL is subtracted from the scalar reward *before* advantages are computed: $\tilde r_t = r\cdot\mathbb{1}[t{=}T] - \beta\,k_{\text{KL}}(s_t)$. Advantages are then computed from $\tilde r_t$ and enter the loss only *multiplied against* $\log\pi_\theta$ (the policy-gradient term). The KL contributes to the loss purely as a numeric constant folded into $\hat A_t$; the gradient w.r.t. $\theta$ flows through the $\log\pi_\theta(a_t)$ factor, **not** through the KL value. So the KL only needs to be a number — it is treated as part of the (constant, detached) return/advantage. This is why in the classic formulation the KL is computed under `no_grad` and just added to the reward.
+
+    **KL-in-loss.** The KL is an explicit additive term: $\mathcal{L} = \mathcal{L}^{\text{clip}} + \beta\,\mathbb{E}[k_{\text{KL}}]$. Here we *want* $\nabla_\theta$ of the KL term itself to push the policy back toward the reference. That requires $k_3 = e^{\text{logr}} - \text{logr} - 1$ with $\text{logr} = \log\pi_{\text{ref}} - \log\pi_\theta$ to remain connected to $\theta$ through $\log\pi_\theta$.
+
+    **If you `.detach()` $k_3$ here:** the KL term becomes a constant w.r.t. $\theta$, so $\nabla_\theta(\beta\,k_3) = 0$. The regularizer would contribute nothing to the gradient — the policy would receive *no* pull back toward the reference from the KL term, and $\beta$ would effectively be zero for optimization purposes (it would still change the reported loss value, misleadingly). The policy would be free to drift exactly as if there were no KL penalty.
+
+**5.** (Implementation) Extend the chapter's `masked_whiten` into `masked_whiten_global` that computes the mean and variance across **all data-parallel ranks** (global whitening) instead of per-GPU, using `torch.distributed` all-reduces. Assume a process group is initialized. Keep the fp32-reduction and masking discipline. Explain in one line why this matters.
+
+??? note "Solution"
+
+    Global whitening needs the *global* sums $\sum m_t$, $\sum m_t A_t$, and $\sum m_t A_t^2$, each all-reduced with `SUM`, then combined into mean and variance. Do the reductions in fp32.
+
+    ```python
+    import torch
+    import torch.distributed as dist
+
+    def masked_whiten_global(advantages, mask, shift_mean=True, eps=1e-8):
+        """Zero-mean, unit-variance advantages over non-pad tokens, with mean/var
+        computed GLOBALLY across all data-parallel ranks. Reductions in fp32."""
+        adv32 = advantages.float()
+        m = mask.float()
+        # Local partial sums for count, sum, and sum-of-squares.
+        local = torch.stack([
+            m.sum(),                       # n
+            (adv32 * m).sum(),             # sum A
+            (adv32 * adv32 * m).sum(),     # sum A^2
+        ])
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(local, op=dist.ReduceOp.SUM)
+        n, s1, s2 = local[0], local[1], local[2]
+        n = n.clamp_min(1.0)
+        mean = s1 / n
+        var = s2 / n - mean * mean          # E[A^2] - E[A]^2, over real tokens
+        var = var.clamp_min(0.0)            # guard tiny negative from fp error
+        whitened = (adv32 - mean) * torch.rsqrt(var + eps)
+        if not shift_mean:
+            whitened = whitened + mean
+        return (whitened * m).to(advantages.dtype)
+    ```
+
+    **Why it matters (one line):** per-GPU whitening computes mean/std over each rank's small local batch, giving noisy, rank-dependent statistics; global whitening makes the normalization independent of how the batch was sharded, so the effective objective does not change with data-parallel degree.
+
+**6.** (Implementation, hard) Implement `dual_clip_higher_loss(ratio, adv, mask, eps_low, eps_high, c)` that combines **clip-higher** (asymmetric $\varepsilon_{\text{low}} \ne \varepsilon_{\text{high}}$) with the **dual-clip** floor $c\hat A_t$ for negative-advantage tokens. Then verify it on the chapter's worked-example numbers: (i) a good token $\hat A = +2.0$, $\rho = 1.5$, $\varepsilon_{\text{low}}=0.2$, $\varepsilon_{\text{high}}=0.28$; (ii) a bad token $\hat A = -1.0$, $\rho = 4.0$, $c = 3$ (with symmetric $\varepsilon = 0.2$ for the clip on this token). Report the per-token surrogate value for each.
+
+??? note "Solution"
+
+    ```python
+    import torch
+
+    def dual_clip_higher_loss(ratio, adv, mask, eps_low=0.2, eps_high=0.28, c=3.0):
+        """Clip-higher PPO surrogate with a dual-clip floor for adv < 0.
+        Returns (scalar_loss, per_token_surrogate)."""
+        clipped = torch.clamp(ratio, 1 - eps_low, 1 + eps_high) * adv
+        standard = torch.min(ratio * adv, clipped)         # clip-higher surrogate
+        # For negative advantages, floor the (negative) surrogate at c*adv:
+        neg = torch.max(standard, c * adv)                 # only binds when adv < 0
+        surrogate = torch.where(adv < 0, neg, standard)
+        loss = -(surrogate * mask).sum() / mask.sum().clamp_min(1.0)
+        return loss, surrogate
+    ```
+
+    **Verification.**
+
+    (i) Good token, $\hat A = +2.0$, $\rho = 1.5$, $\varepsilon_{\text{low}}=0.2$, $\varepsilon_{\text{high}}=0.28$:
+    - $\rho\hat A = 1.5\times 2.0 = 3.0$.
+    - $\operatorname{clip}(1.5,\,0.8,\,1.28) = 1.28 \Rightarrow$ clipped $= 1.28\times 2.0 = 2.56$.
+    - `standard` $= \min(3.0, 2.56) = 2.56$. Since $\hat A \ge 0$, the dual-clip branch is not taken. **Surrogate $= 2.56$** (loss contribution $-2.56$), matching the chapter's worked example. Gradient through $\rho$ is zero (clipped branch selected).
+
+    (ii) Bad token, $\hat A = -1.0$, $\rho = 4.0$, $\varepsilon = 0.2$, $c = 3$:
+    - $\rho\hat A = 4.0\times(-1.0) = -4.0$.
+    - $\operatorname{clip}(4.0,\,0.8,\,1.2) = 1.2 \Rightarrow$ clipped $= 1.2\times(-1.0) = -1.2$.
+    - `standard` $= \min(-4.0, -1.2) = -4.0$.
+    - Since $\hat A < 0$: `neg` $= \max(-4.0,\ c\hat A) = \max(-4.0,\ 3\times(-1.0)) = \max(-4.0, -3.0) = -3.0$. **Surrogate $= -3.0$**, exactly the dual-clip floor from the chapter — the surrogate is capped at $-3.0$ instead of $-4.0$, shrinking the gradient magnitude by 25% and preventing one drifted token from dominating the update.
