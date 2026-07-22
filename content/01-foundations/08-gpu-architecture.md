@@ -523,3 +523,141 @@ print("LayerNorm:", ln)   # -> memory-bound: the reason norms get fused into mat
 - **Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022)** and **Dao, *FlashAttention-2* (2023)** — The canonical case studies in trading FLOPs for HBM traffic by keeping the working set in SMEM/registers; the practical payoff of everything in this chapter.
 - **Horace He, *Making Deep Learning Go Brrrr From First Principles* (2022)** — A widely-cited engineer's walkthrough of compute-bound vs memory-bound vs overhead-bound regimes in PyTorch, with the same intensity-first mindset.
 - **NVIDIA *CUTLASS* and OpenAI *Triton* repositories** — Production and pedagogical implementations of tiled, Tensor-Core GEMM and fused kernels; the best way to see the SMEM-tiling and warp-level mechanics described here turned into real code (see [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)).
+
+---
+
+## Exercises
+
+**1.** A kernel contains the branch `if (x[i] > 0) { y[i] = expensive_A(x[i]); } else { y[i] = expensive_B(x[i]); }`, where `expensive_A` and `expensive_B` each take about the same time $t$ and neither is trivial. For a warp in which 16 lanes take the `if` side and 16 take the `else` side, how long does the warp take relative to the best case where all 32 lanes take the same side? Explain the mechanism, and describe one way to restructure the data so the warp stops paying this cost.
+
+??? note "Solution"
+    Recall that the 32 lanes of a warp share one instruction fetch/decode unit and one program counter and execute **in lockstep** (SIMT). When lanes disagree on a data-dependent branch, the warp cannot run the two sides simultaneously — it **serializes** them: it executes the `if` path with the 16 `else`-lanes masked off (idle), then executes the `else` path with the 16 `if`-lanes masked off. This is **warp divergence**.
+
+    So the divergent warp takes $t_A + t_B \approx 2t$: the full cost of both paths, back to back. The convergent best case (all 32 lanes on one side) takes only $t$, with all lanes doing useful work. The divergent warp is therefore about **2x slower**, and during each path only 16 of 32 lanes are active, so hardware utilization on each path is 50%. A branch that splits a warp $k$ ways in general costs the sum of all taken paths' times.
+
+    Restructuring: **sort or partition the data so that lanes within a warp mostly agree.** If you reorder `x` so that all positive values are contiguous, then most warps become homogeneous (all-`if` or all-`else`) and run each at full speed $t$ with no masking. This is the same idea as "make branchy work coherent" — group like with like so the branch is decided the same way for all 32 lanes of a warp. Only warps straddling the boundary between the positive and negative regions still diverge, and there are very few of them.
+
+**2.** Consider an SM with these limits: 65,536 32-bit registers, 100 KB (take as 100,000 bytes) of shared memory, a cap of 2,048 resident threads, and a cap of 32 resident blocks. You launch a kernel with **128 threads per block**, using **40 registers per thread** and **8 KB (8,192 bytes) of shared memory per block**. How many blocks fit on the SM, and what is the resulting occupancy?
+
+??? note "Solution"
+    Occupancy is set by whichever per-SM resource runs out first; compute the block count each limit allows and take the minimum.
+
+    - **Registers.** Each block needs $128 \times 40 = 5{,}120$ registers. The file holds $65{,}536$, so $\lfloor 65536 / 5120 \rfloor = \lfloor 12.8 \rfloor = 12$ blocks.
+    - **Shared memory.** $\lfloor 100{,}000 / 8{,}192 \rfloor = \lfloor 12.2 \rfloor = 12$ blocks.
+    - **Thread cap.** $\lfloor 2048 / 128 \rfloor = 16$ blocks.
+    - **Block cap.** 32 blocks.
+
+    The minimum is $\min(12, 12, 16, 32) = 12$ blocks (registers and shared memory tie as the binding constraints). That is $12 \times 128 = 1{,}536$ resident threads $= 1536 / 32 = 48$ warps.
+
+    The maximum warps per SM is $2048 / 32 = 64$. So
+
+    $$
+    \text{occupancy} = \frac{48}{64} = 0.75 = \textbf{75\%}.
+    $$
+
+    You can confirm this with the chapter's `max_blocks_per_sm` helper: `max_blocks_per_sm(128, 40, 8*1024, smem_per_sm=100000, max_threads=2048)` returns `(12, 48, 0.75)`.
+
+**3.** A dense **34B**-parameter model is served on a single H100 (peak $\approx 990$ TFLOP/s BF16 dense, HBM bandwidth $\beta \approx 3.35$ TB/s), using **FP8** weights (1 byte per parameter). For single-request (batch-1) autoregressive decode: (a) how many bytes must be read from HBM to generate one token, and what is the bandwidth-floor per-token latency? (b) What is the arithmetic intensity, and is decode compute- or memory-bound? (c) The H100 ridge point in FP8 is about $1979 / 3.35 \approx 590$ FLOP/byte. Roughly what minimum batch size would push batch-scaled decode past that ridge?
+
+??? note "Solution"
+    **(a) Bytes and latency.** Generating one token in batch-1 decode reads essentially every weight from HBM once. At 1 byte/param (FP8):
+
+    $$
+    \text{bytes} \approx 34\times10^9 \times 1 = 3.4\times10^{10}\ \text{bytes}.
+    $$
+
+    The bandwidth floor on per-token latency is bytes divided by bandwidth:
+
+    $$
+    t \ge \frac{3.4\times10^{10}}{3.35\times10^{12}} \approx 1.01\times10^{-2}\ \text{s} \approx \textbf{10.1 ms}.
+    $$
+
+    This floor is set purely by HBM bandwidth; making the Tensor Cores faster does not help.
+
+    **(b) Intensity.** The matrix-vector products do about $2\times\text{params}$ FLOPs per token: $2 \times 34\times10^9 = 6.8\times10^{10}$ FLOPs. So
+
+    $$
+    I = \frac{6.8\times10^{10}}{3.4\times10^{10}} = 2\ \frac{\text{FLOP}}{\text{byte}}.
+    $$
+
+    (In general, with $b$ bytes per param, $I = 2\text{params} / (b\cdot\text{params}) = 2/b$; here $b=1$ so $I=2$.) That is roughly 300x below the FP8 ridge of ~590, so batch-1 decode is profoundly **memory-bound** — the Tensor Cores are almost entirely idle.
+
+    **(c) Minimum batch to cross the ridge.** In decode, the weight bytes read are **constant** in batch size (you read each weight once and reuse it for all requests in the batch), while useful FLOPs scale linearly with batch $B$. So intensity scales as $I(B) = 2B$ (FP8: $2/b \cdot B$ with $b=1$). Setting $I(B) > 590$:
+
+    $$
+    2B > 590 \ \Rightarrow\ B > 295 \ \Rightarrow\ B_{\min} = \textbf{296}.
+    $$
+
+    So you need roughly a batch of ~300 concurrent tokens before FP8 decode becomes compute-bound and the Tensor Cores light up. (Whether that batch fits is a separate question, bounded by HBM capacity for the KV cache.)
+
+**4.** Using the chapter's A100 numbers ($\pi \approx 312$ TFLOP/s BF16, $\beta \approx 2.0$ TB/s, ridge $\approx 156$ FLOP/byte), consider a 7B model in BF16. (a) At batch 1, the arithmetic intensity of decode is $I = 1$ FLOP/byte. What is the smallest integer batch size at which decode becomes compute-bound? (b) At that batch size, is per-token latency still floored by the same 7 ms bandwidth number as batch 1? Explain what has (and has not) changed.
+
+??? note "Solution"
+    **(a) Crossover batch.** For BF16 (2 bytes/param), batch-1 intensity is $I = 2\text{params}/(2\text{params}) = 1$ FLOP/byte. Because weight bytes are read once and reused across the batch, intensity scales linearly with batch size: $I(B) = B$. Decode becomes compute-bound when $I(B) > I_\text{ridge} = 156$:
+
+    $$
+    B > 156 \ \Rightarrow\ B_{\min} = \textbf{157}.
+    $$
+
+    So batch 157 is the first integer batch where the 7B model's decode crosses the A100 ridge (at exactly $B=156$ it sits on the ridge; $B=157$ is the first strictly compute-bound point).
+
+    **(b) What changed.** At batch 1 the per-*token* latency is floored by weight traffic: $1.4\times10^{10}\ \text{bytes} / 2.0\times10^{12}\ \text{byte/s} \approx 7$ ms to produce **one** token. At batch $\approx157$ you read the same $1.4\times10^{10}$ bytes of weights **once per step**, but that single weight-load now produces **157 tokens** (one per request). So:
+
+    - The **per-step** weight traffic and the ~7 ms bandwidth cost of streaming the weights are essentially unchanged.
+    - But the ~7 ms is now amortized over 157 tokens, so **per-token throughput** rises by ~157x, and beyond the ridge the step time starts being set by the Tensor Cores (compute) rather than by HBM.
+
+    In short: batching does not make any single token cheaper to *produce in isolation* — it makes each expensive weight-load pay for many tokens at once, which is exactly why continuous batching converts idle-Tensor-Core, bandwidth-bound decode into efficient, compute-bound work.
+
+**5.** Implement a small helper, in the style of the chapter's roofline code, that answers the two questions of batched decode at once: `decode_analysis(params, bytes_per_param, batch, peak_flops, peak_bw)` should return the arithmetic intensity, whether decode is compute- or memory-bound, and the **per-step** time under the roofline (the max of the bandwidth time and the compute time). Then add `min_batch_for_compute_bound(bytes_per_param, peak_flops, peak_bw)` returning the smallest integer batch that crosses the ridge. Run both for a 7B BF16 model on the A100 numbers from Exercise 4 and confirm the crossover matches your hand calculation.
+
+??? note "Solution"
+    The key facts to encode: in decode the weight bytes are read **once per step** regardless of batch (`bytes = params * bytes_per_param`), while FLOPs scale with batch (`flops = 2 * params * batch`). Intensity is `flops / bytes`, which reduces to `(2/bytes_per_param) * batch`. The per-step time under the roofline is the larger of the time to stream the bytes and the time to do the FLOPs.
+
+    ```python
+    import math
+
+    def decode_analysis(params, bytes_per_param, batch, peak_flops, peak_bw):
+        bytes_moved = params * bytes_per_param        # weights read once per step
+        flops       = 2 * params * batch              # ~2 FLOPs/param/token
+        intensity   = flops / bytes_moved
+        ridge       = peak_flops / peak_bw
+        bw_time      = bytes_moved / peak_bw           # seconds to stream weights
+        compute_time = flops / peak_flops              # seconds to do the math
+        step_time    = max(bw_time, compute_time)      # roofline: the binding one
+        return dict(
+            intensity=round(intensity, 2),
+            ridge=round(ridge, 1),
+            bound=("compute" if intensity > ridge else "memory"),
+            step_ms=round(step_time * 1e3, 3),
+            per_token_ms=round(step_time * 1e3 / batch, 4),
+        )
+
+    def min_batch_for_compute_bound(bytes_per_param, peak_flops, peak_bw):
+        ridge = peak_flops / peak_bw
+        # intensity(B) = (2 / bytes_per_param) * B ; want intensity > ridge
+        b = ridge * bytes_per_param / 2.0
+        return math.floor(b) + 1                       # first strictly-above integer
+
+    # 7B BF16 on A100 numbers from Exercise 4.
+    PARAMS   = 7e9
+    BPP      = 2                 # BF16
+    PEAK_FLOPS = 312e12          # 312 TFLOP/s
+    PEAK_BW    = 2.0e12          # 2.0 TB/s
+
+    bmin = min_batch_for_compute_bound(BPP, PEAK_FLOPS, PEAK_BW)
+    print("min batch for compute-bound:", bmin)        # -> 157
+
+    for B in (1, bmin - 1, bmin):
+        print(B, decode_analysis(PARAMS, BPP, B, PEAK_FLOPS, PEAK_BW))
+    ```
+
+    Expected output (matching Exercise 4):
+
+    ```text
+    min batch for compute-bound: 157
+    1   {'intensity': 1.0,   'ridge': 156.0, 'bound': 'memory',  'step_ms': 7.0,    'per_token_ms': 7.0}
+    156 {'intensity': 156.0, 'ridge': 156.0, 'bound': 'memory',  'step_ms': 7.0,    'per_token_ms': 0.0449}
+    157 {'intensity': 157.0, 'ridge': 156.0, 'bound': 'compute', 'step_ms': 7.045,  'per_token_ms': 0.0449}
+    ```
+
+    Reading the output: at batch 1 the step is memory-bound and takes ~7 ms for a single token (`step_ms == per_token_ms`). At batch 156 the intensity has climbed to exactly the ridge; the step still costs ~7 ms of bandwidth time but now yields 156 tokens, so per-token time has collapsed by ~156x. At batch 157 the compute time finally exceeds the bandwidth time, `bound` flips to `compute`, and from here on the Tensor Cores — not HBM — set the step time. The crossover at **157** matches the hand calculation from Exercise 4.

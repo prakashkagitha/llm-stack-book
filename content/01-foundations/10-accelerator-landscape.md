@@ -407,3 +407,138 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
 - AWS, *AWS Neuron SDK* documentation and the *Neuron Kernel Interface (NKI)* guide — Trainium/Inferentia programming.
 - Intel/Habana, *Gaudi / SynapseAI* documentation — the MME + TPC + RoCE design.
 - Kwon et al., *Efficient Memory Management for Large Language Model Serving with PagedAttention* (vLLM) — the serving engine whose multi-backend support makes cross-vendor inference practical.
+
+## Exercises
+
+**1.** (Conceptual) The chapter says a systolic array is "spectacularly efficient *for dense matrix multiply*" yet "everything else ... must be handled by a smaller companion vector unit." Using the description of the systolic array's dataflow, explain *why* the array is so efficient for a large dense matmul specifically — name the two kinds of on-chip traffic it avoids — and then explain why a workload of many tiny, dynamically-shaped, branchy matmuls fails to realize that efficiency.
+
+??? note "Solution"
+    The efficiency comes from how the array handles the *partial sums* and the *control*. In a $128 \times 128$ MAC grid, weights are pre-loaded into the cells; activations flow in from the left one column per clock and partial sums flow down cell-to-cell. Once the pipeline fills, the array retires a full $128 \times 128$ tile of MACs *every clock cycle*. Two kinds of traffic that a general SIMT core pays are avoided:
+
+    - **Register-file / SRAM traffic for the intermediate partial sums.** The partials never leave the array — they march from one cell to its neighbor — so they are never written back to a register file or shared-memory scratchpad.
+    - **Instruction-fetch / control overhead.** Each cell does the same fused multiply-add every cycle with no per-operation instruction fetch, so almost all the silicon is MAC units and almost none is control logic or caches. That is why FLOPs per watt and per transistor beat a general SIMT core.
+
+    Both savings are *amortized over the fill/drain of a large tile*. For a big dense matmul the array stays full for many cycles, so the one-time cost of filling the pipeline is negligible against thousands of full-throughput cycles. For **many tiny, dynamically-shaped, branchy** matmuls the array **drains and refills** constantly: each tiny op barely fills the pipeline before it ends, so you pay fill/drain overhead repeatedly and rarely reach the steady-state one-tile-per-cycle regime. Branching and dynamic shapes also defeat the ahead-of-time compiler that must know static shapes to schedule the dataflow. This is exactly the case the chapter's aside flags: "Tiny, dynamically-shaped, branchy workloads ... are where the systolic model struggles."
+
+**2.** (Conceptual) You `hipify` a CUDA warp-reduction kernel that ends with the loop `for (int offset = 16; offset > 0; offset >>= 1) v += __shfl_down_sync(mask, v, offset);` and run it on an MI300X. The build succeeds and the kernel runs, but the reduction result is wrong. Explain the bug, why `hipify` did not catch it, and the correct fix.
+
+??? note "Solution"
+    The loop assumes a warp of **32 lanes**: starting `offset` at 16 (half of 32) and halving down to 1 reduces exactly 32 lanes. On a CDNA GPU (MI300X) the lockstep group is a **wavefront of 64 lanes**, not 32. Starting at `offset = 16` only combines lanes within each 32-lane half of the 64-wide wavefront; the upper and lower halves are never summed together, so the reduction **silently drops half the lanes** and produces a wrong (roughly half) result.
+
+    `hipify` did not catch it because `hipify` only **renames API calls** (`cuda*` -> `hip*`); it does not rewrite kernel *logic* or the hard-coded constant `32`/`16`. As the chapter's warning states, "`hipify` will not fix the *logic*; it only renames API calls."
+
+    The fix is to derive the starting offset from the actual wavefront width instead of hard-coding it. On AMD `warpSize` is a runtime value, so start the reduction at `warpSize/2`:
+
+    ```cpp
+    for (int offset = warpSize / 2; offset > 0; offset >>= 1)
+        v += __shfl_down_sync(mask, v, offset);   // 32 on AMD -> reduces all 64 lanes
+    ```
+
+    More generally, re-derive any shared-memory tile sizes and lane masks from `warpSize` rather than baking in 32.
+
+**3.** (Quantitative) A model has $L = 96$ layers, uses multi-head attention (MHA, so $H_{kv}$ = number of query heads) with 96 heads of head dimension $d_h = 128$, and you serve the KV cache in bf16 (2 bytes). (a) Compute the per-token KV-cache size in bytes. (b) At a 32,768-token context and batch 16, how many GB of KV cache is that? (c) The same model architecture is then redesigned to use GQA with only $H_{kv} = 8$ KV heads (everything else unchanged). Recompute (a) and (b), and state the reduction factor. Use $1\ \text{GB} = 10^9$ bytes, consistent with the chapter's code.
+
+??? note "Solution"
+    Use the chapter's formula $M_{\text{KV/token}} = 2 \times L \times H_{kv} \times d_h \times b$ (the leading 2 is for the K *and* V tensors; $b = 2$ bytes for bf16).
+
+    (a) MHA, $H_{kv} = 96$:
+
+    $$
+    M_{\text{KV/token}} = 2 \times 96 \times 96 \times 128 \times 2 = 4{,}718{,}592\ \text{bytes} \approx 4.72\ \text{MB/token}.
+    $$
+
+    (b) Context 32,768, batch 16:
+
+    $$
+    4{,}718{,}592 \times 32768 \times 16 = 2.474 \times 10^{12}\ \text{bytes} \approx 2474\ \text{GB} \approx 2.47\ \text{TB}.
+    $$
+
+    (This is enormous — no single accelerator in the chapter's table holds it; it forces many devices or a shorter context/batch.)
+
+    (c) GQA, $H_{kv} = 8$:
+
+    $$
+    M_{\text{KV/token}} = 2 \times 96 \times 8 \times 128 \times 2 = 393{,}216\ \text{bytes} \approx 0.39\ \text{MB/token}.
+    $$
+
+    $$
+    393{,}216 \times 32768 \times 16 = 2.061 \times 10^{11}\ \text{bytes} \approx 206\ \text{GB}.
+    $$
+
+    Reduction factor $= 96 / 8 = 12\times$ (KV cache scales linearly in $H_{kv}$). GQA cuts the per-token KV from 4.72 MB to 0.39 MB and the total from ~2474 GB to ~206 GB — the same 12x — which is exactly why frontier serving models use GQA: it is what makes the KV cache fit in HBM.
+
+**4.** (Quantitative) Using the chapter's illustrative specs — H100 at 1979 FP8 TFLOP/s over 3.35 TB/s HBM, and MI300X at 2615 FP8 TFLOP/s over 5.3 TB/s HBM — compute each chip's roofline ridge point $I^{*}$ in FLOP/byte (treat the FP8 TFLOPS as the peak compute number). A decode step for one token in an FP8-weight linear layer of a 70B model does roughly $2 \times 70\times10^{9} = 1.4\times10^{11}$ FLOPs while streaming $70\times10^{9}$ bytes of weights, giving an arithmetic intensity of $\approx 2$ FLOP/byte. Confirm decode is memory-bound on both chips, and explain in one sentence why the MI300X's *higher* ridge point does not make it worse for decode.
+
+??? note "Solution"
+    Ridge point $I^{*} = \dfrac{\text{peak compute (FLOP/s)}}{\text{peak bandwidth (byte/s)}}$. Convert TFLOP/s to FLOP/s ($\times 10^{12}$) and TB/s to byte/s ($\times 10^{12}$), so the $10^{12}$ factors cancel and $I^{*} = \text{TFLOPS} / \text{TB/s}$:
+
+    - **H100:** $I^{*} = 1979 / 3.35 \approx 591$ FLOP/byte.
+    - **MI300X:** $I^{*} = 2615 / 5.3 \approx 493$ FLOP/byte.
+
+    (Sanity check: the chapter's bf16 H100 ridge of ~295 uses ~990 bf16 TFLOP/s; FP8 roughly doubles the compute number, so ~591 for FP8 is consistent.)
+
+    Decode arithmetic intensity $\approx 2$ FLOP/byte is *vastly* below both ridge points ($2 \ll 493 < 591$), so decode is firmly **memory-bound on both chips** — it cannot come anywhere near peak FLOPS and its speed is set by HBM bandwidth.
+
+    The MI300X's higher ridge point does not hurt decode because a higher $I^{*}$ just means the chip needs more arithmetic intensity to *become* compute-bound; for a bandwidth-bound op the only thing that matters is the denominator — HBM bandwidth — and the MI300X's 5.3 TB/s vs the H100's 3.35 TB/s means it streams weights (and thus generates tokens) faster.
+
+**5.** (Implementation) The chapter's `pick()` function only *prints* a score and never returns a winner, and its `score = per_device_figure * n_dev` rewards using *more* devices — which is backwards for **decode**, where splitting a model across devices adds the per-layer all-reduce the chapter tells you to avoid. Rewrite the picker so it *returns* the winning `Chip` and its device count, using a **target-aware** rule: for **decode**, pick the chip that fits on the **fewest devices** (minimizing cross-device collectives), breaking ties by higher aggregate HBM bandwidth; for **prefill/training**, pick the chip with the highest **aggregate FP8 TFLOPS** across the minimum devices that fit (more devices are welcome when you are compute-bound). Raise if `need_total` is non-positive. Keep the `Chip` dataclass and style, and confirm that decode returns the MI300X and prefill returns the H100 for the chapter's 70B footprint.
+
+??? note "Solution"
+    The subtlety is that `score = per_device * n_dev` is **aggregate** bandwidth, and aggregate bandwidth *grows with device count* — so for the 70B decode footprint (~156 GB) it would actually rank Gaudi3 (2 devices $\times$ 3.7 = **7.4** TB/s aggregate) *above* the single MI300X (1 device $\times$ 5.3 = **5.3** TB/s). But that number silently ignores the per-layer all-reduce every 2-device config pays over its interconnect — exactly the cost the chapter says to avoid. The chapter's decode doctrine is therefore not "maximize aggregate bandwidth" but "**fit on the fewest devices**, then look at bandwidth." So we sort by device count first for decode, and only fall back to aggregate bandwidth to break ties. (For **prefill/training** you *are* compute-bound and happy to scale out, so there the right key is genuinely aggregate FP8 TFLOPS.)
+
+    ```python
+    from dataclasses import dataclass
+    from math import ceil
+
+    @dataclass
+    class Chip:
+        name: str
+        hbm_gb: float
+        hbm_tbs: float
+        fp8_tflops: float
+        link_gbs: float
+
+    CHIPS = [
+        Chip("H100-SXM",   80,  3.35,  1979,  450),
+        Chip("MI300X",    192,  5.3,   2615,  448),
+        Chip("TPU v5p",    95,  2.76,   918,  600),
+        Chip("Gaudi3",    128,  3.7,   1835,  300),
+    ]
+
+    def kv_bytes_per_token(L, H_kv, d_h, bytes_per_elt=2):
+        return 2 * L * H_kv * d_h * bytes_per_elt
+
+    def pick(workload, params_b, dtype_bytes, L, H_kv, d_h,
+             ctx_len, batch, target="decode"):
+        need_weights = params_b * 1e9 * dtype_bytes
+        kv_per_tok   = kv_bytes_per_token(L, H_kv, d_h)
+        need_kv      = kv_per_tok * ctx_len * batch
+        need_total   = (need_weights + need_kv) / 1e9      # GB
+        if need_total <= 0:
+            raise ValueError("footprint must be positive")
+        print(f"[{workload}] need ~{need_total:.0f} GB "
+              f"(weights {need_weights/1e9:.0f} + KV {need_kv/1e9:.0f})")
+
+        best, best_key, best_ndev = None, None, 0
+        for c in CHIPS:
+            n_dev   = ceil(need_total / c.hbm_gb)          # fewest devices that fit
+            per_dev = c.hbm_tbs if target == "decode" else c.fp8_tflops
+            agg     = per_dev * n_dev                       # aggregate over the fit
+            unit    = "TB/s" if target == "decode" else "TFLOPS"
+            print(f"  {c.name:10s}: fits on {n_dev} dev, agg={agg:.0f} {unit}")
+            # Tuples compare left-to-right; SMALLER is better.
+            # decode  -> (fewest devices, then most aggregate BW)
+            # prefill -> (most aggregate TFLOPS); more devices welcome
+            key = (n_dev, -agg) if target == "decode" else (-agg,)
+            if best_key is None or key < best_key:
+                best, best_key, best_ndev = c, key, n_dev
+
+        print(f"  -> winner: {best.name} on {best_ndev} device(s)")
+        return best, best_ndev
+
+    # Llama-70B-ish decode, as in the chapter.
+    winner, ndev = pick("serve-70B-decode", 70, 1, 80, 8, 128,
+                        ctx_len=8192, batch=32)
+    ```
+
+    On the chapter's 70B footprint (~156 GB), the **MI300X is the only chip that fits on 1 device** (192 GB); every other chip needs 2. For `target="decode"` the fewest-devices key makes the single MI300X win outright — no per-layer collective — which is precisely the chapter's worked-example conclusion. Note the behavioral change from the original: the function now *returns a decision* (`best`, `best_ndev`) instead of only printing, so it can drive downstream provisioning. Flip to `target="prefill"` and the key switches to aggregate FP8 TFLOPS: now the **H100** wins (2 devices $\times$ 1979 = 3958 TFLOPS aggregate, beating the single MI300X's 2615), because prefill/training is compute-bound and rewards scaling out — exactly the compute-vs-bandwidth flip the chapter's doctrine predicts.

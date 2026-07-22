@@ -674,3 +674,131 @@ In a large pretraining run, reach for this at STEP 3 ("isolate the step") of the
 - Pytorch contributor docs, **"PyTorch Dispatcher internals"** (E. Yang, PyTorch blog, 2021) — deep dive into the dispatcher architecture.
 - Frostig et al., **"Decomposing reverse-mode automatic differentiation"** (2021) — the JAX / functorch perspective on composable transforms.
 - PyTorch GitHub, `torch/csrc/autograd/` — the C++ engine source; reading `engine.cpp` and `function.h` is the fastest way to understand execution ordering and thread pools.
+
+---
+
+## Exercises
+
+**1.** In the leaf-tensor example, `y = (x * w).sum()` prints `y.is_leaf == False` and `y.grad_fn` is a `SumBackward0`, while `x.is_leaf == True`. Explain in your own words what makes a tensor a *leaf* versus a *non-leaf*, and predict what `y.grad` would be after `y.backward()`. Then describe the one-line change that would make PyTorch populate `y.grad`.
+
+??? note "Solution"
+    A tensor is a **leaf** if it was created directly by user code rather than as the output of a tracked operation. `x` and `w` were built with `torch.tensor(..., requires_grad=True)`, so they are leaves; `y` is the result of a multiply-then-sum, so it is a non-leaf and carries a `grad_fn` (`SumBackward0`) pointing at the `Function` that produced it.
+
+    After `y.backward()`, `y.grad` is `None`. PyTorch only populates `.grad` for leaf tensors with `requires_grad=True`; intermediate (non-leaf) gradients are computed transiently during the backward traversal and then discarded to save memory. (Here `y` is also the scalar we called `backward()` on, so its "gradient" would just be the seed `1.0`, but it is still not retained.)
+
+    To keep it, call `retain_grad()` on the non-leaf **before** the backward pass:
+
+    ```python
+    y = (x * w).sum()
+    y.retain_grad()      # ask autograd to keep this non-leaf's .grad
+    y.backward()
+    print(y.grad)        # tensor(1.)  -- now populated
+    ```
+
+**2.** (Quantitative — VJP by hand.) Using the network and numbers from the "Tracing autograd" worked example ($x=[1,0]^\top$, $W_1=\begin{bmatrix}2&1\\-1&3\end{bmatrix}$, $w_2=[0.5,0.5]^\top$, $L=\tfrac12 z_2^2$), suppose you change the input to $x=[1,1]^\top$ and leave $W_1, w_2$ unchanged. Redo the forward and backward passes by hand and report $z_1$, $h$, $z_2$, $L$, $\bar{w}_2$, and $\bar{W}_1$. Which ReLU gates are open now?
+
+??? note "Solution"
+    **Forward.** With $x=[1,1]^\top$:
+
+    $$
+    z_1 = \begin{bmatrix}2\cdot1+1\cdot1\\ -1\cdot1+3\cdot1\end{bmatrix} = \begin{bmatrix}3\\ 2\end{bmatrix}
+    $$
+
+    Both entries are positive, so **both ReLU gates are open**:
+
+    $$
+    h = \text{ReLU}(z_1) = \begin{bmatrix}3\\ 2\end{bmatrix}, \qquad
+    z_2 = 0.5\cdot3 + 0.5\cdot2 = 2.5, \qquad
+    L = \tfrac12 (2.5)^2 = 3.125
+    $$
+
+    **Backward.** Seed $\bar{z}_2 = dL/dz_2 = z_2 = 2.5$.
+
+    $$
+    \bar{w}_2 = \bar{z}_2\, h = 2.5\cdot[3,2]^\top = [7.5,\ 5.0]^\top
+    $$
+
+    $$
+    \bar{h} = \bar{z}_2\, w_2 = 2.5\cdot[0.5,0.5]^\top = [1.25,\ 1.25]^\top
+    $$
+
+    ReLU mask is $[1,1]$ (both open), so $\bar{z}_1 = \bar{h}\odot\mathbb{1}[z_1>0] = [1.25,\ 1.25]^\top$. Then
+
+    $$
+    \bar{W}_1 = \bar{z}_1 x^\top = \begin{bmatrix}1.25\\ 1.25\end{bmatrix}\begin{bmatrix}1 & 1\end{bmatrix} = \begin{bmatrix}1.25 & 1.25\\ 1.25 & 1.25\end{bmatrix}
+    $$
+
+    Because both gates are now open, gradient flows to every entry of $W_1$, unlike the original case where the second neuron's closed gate zeroed out its row.
+
+**3.** (Conceptual.) In the `MyOp`/custom-`Function` section, `StableSigmoid.forward` calls `ctx.save_for_backward(y)` on the **output** `y`, not the input `x`, and the comment says this "saves memory." Explain why saving the output is sufficient here, and give one example of an activation whose backward *cannot* be written from the output alone.
+
+??? note "Solution"
+    The backward of sigmoid needs its local derivative $d\sigma/dx = \sigma(x)(1-\sigma(x))$. Since $\sigma(x)$ *is* the forward output $y$, that derivative is $y(1-y)$ — it can be computed entirely from `y` without ever referencing `x`. So stashing `y` is enough, and we avoid keeping a second tensor of the same size around; for large activation maps this halves the memory that op contributes to the graph. The VJP is then the element-wise `grad_output * y * (1 - y)`.
+
+    An activation whose backward needs the **input** is ReLU: $d\,\text{ReLU}/dx = \mathbb{1}[x>0]$. From the output alone you cannot recover the mask for the boundary — an output of $0$ is ambiguous (it could come from any $x\le 0$), and more generally the gate depends on the sign of the *input*, not the value of the output. (Tanh, by contrast, is like sigmoid: $d\tanh/dx = 1 - \tanh^2(x) = 1 - y^2$, computable from the output.)
+
+**4.** (Conceptual — broadcasting backward.) In the broadcasting example, `a` has shape `(3, 1)`, `b` has shape `(3, 4)`, `c = a + b`, and `a.grad` comes out as `[[4.], [4.], [4.]]` after `c.sum().backward()`. Explain where the `4` comes from, and predict `a.grad` if instead `a` had shape `(1, 4)` (with `b` still `(3, 4)`).
+
+??? note "Solution"
+    When `a` (shape `(3,1)`) is added to `b` (shape `(3,4)`), autograd broadcasts `a`'s singleton column into 4 logical copies (implemented with stride 0, no data copied). During backward, each of the 4 columns of `c` receives an upstream gradient of $1$ from `c.sum()`. Because those 4 columns all trace back to the *same* stored element of `a`, the backward of a broadcast must **sum** the gradient over the broadcast dimension to match `a`'s original shape. Summing four $1$s per row gives $4$, so `a.grad == [[4.], [4.], [4.]]`.
+
+    If instead `a` has shape `(1, 4)`, the broadcast now stretches the singleton **row** into 3 rows. Each column-position element of `a` is shared across the 3 rows of `c`, so the backward sums over the row dimension: $3$ per entry. Thus
+
+    ```python
+    a.grad  # tensor([[3., 3., 3., 3.]])  -- shape (1, 4), summed over the 3 rows
+    ```
+
+**5.** (Implementation.) Implement a custom `autograd.Function` called `ClampSTE` that clamps its input to the range $[lo, hi]$ in the forward pass but uses a straight-through estimator in the backward pass — i.e. the gradient passes through unchanged (as if the clamp were the identity) regardless of whether an element was clipped. Follow the chapter's `Function` conventions (static methods, `ctx`, `.apply`), remember that `lo`/`hi` are non-tensor scalars, and demonstrate on `x = [-2.0, 0.5, 3.0]` with `lo=0.0, hi=1.0` that the forward clamps but every element's `.grad` is `1`.
+
+??? note "Solution"
+    `lo` and `hi` are Python scalars, so they must be stashed as attributes on `ctx` (not via `save_for_backward`, which is tensor-only). The backward is a pure pass-through of `grad_output`; the two scalar inputs are non-differentiable, so we return `None` for them.
+
+    ```python
+    import torch
+    from torch.autograd import Function
+
+
+    class ClampSTE(Function):
+        """
+        Forward:  y = clamp(x, lo, hi)      (saturates outside [lo, hi])
+        Backward: dy/dx = 1 everywhere      (straight-through estimator)
+        """
+
+        @staticmethod
+        def forward(ctx, x: torch.Tensor, lo: float, hi: float) -> torch.Tensor:
+            # scalars -> stash as attributes, not save_for_backward
+            ctx.lo = lo
+            ctx.hi = hi
+            return x.clamp(lo, hi)
+
+        @staticmethod
+        def backward(ctx, grad_output: torch.Tensor):
+            # pass gradient straight through; lo, hi are non-differentiable -> None
+            return grad_output, None, None
+
+
+    clamp_ste = ClampSTE.apply
+
+    x = torch.tensor([-2.0, 0.5, 3.0], requires_grad=True)
+    y = clamp_ste(x, 0.0, 1.0)
+    print(y)            # tensor([0.0000, 0.5000, 1.0000])  -- clamped
+    y.sum().backward()
+    print(x.grad)       # tensor([1., 1., 1.])  -- STE: identity gradient
+    ```
+
+    Note the number of returned gradients (three: one per forward input) must match the forward signature. Contrast with `torch.clamp`, whose *true* backward zeroes the gradient of clipped elements (returning `[0., 1., 0.]` here); the STE deliberately ignores the saturation, which is exactly what makes it useful for quantization-aware training.
+
+**6.** (Debugging — anomaly detection.) A colleague reports that their forward pass is finite but `x.grad` comes out `NaN`, using code of the form `y = (x * x.sqrt()).sum(); y.backward()` with `x` containing a zero. Explain, using the chapter's account of `detect_anomaly`, (a) why the forward is finite but the backward is NaN, (b) why anomaly detection is what surfaces the *location*, and (c) a concrete one-line fix.
+
+??? note "Solution"
+    **(a) Why the backward is NaN.** The forward is well-defined at $x=0$: $\sqrt{0}=0$ and $0\cdot0=0$, so `y` is finite. But the derivative of $\sqrt{x}$ is $0.5/\sqrt{x}$, which is $+\infty$ at $x=0$. The product rule for $f(x)=x\sqrt{x}$ gives $f'(x)=\sqrt{x} + x\cdot\frac{0.5}{\sqrt{x}}$; at $x=0$ the second term is $0\cdot\infty$, which floating-point evaluates as `0 * inf = NaN`. So the backward produces `NaN` even though the forward was finite — the classic "value defined, derivative not" trap.
+
+    **(b) Why anomaly detection surfaces the location.** By default the NaN appears silently in `x.grad`, far from its cause. `with torch.autograd.detect_anomaly():` records the *forward*-pass Python stack trace for each `Function` node and NaN-checks every op's output during backward. When `SqrtBackward0` returns NaN, it raises a `RuntimeError` whose traceback points at the exact forward line (`y = (x * x.sqrt()).sum()`) that created the offending op. (Note it flags NaN specifically, not Inf — a bare `x.sqrt()` giving an inf grad would not trip it; the `0 * inf = NaN` product is what raises.)
+
+    **(c) A one-line fix.** Add an epsilon/clamp to the input of the unstable op so its derivative stays finite:
+
+    ```python
+    y = (x * x.clamp_min(1e-12).sqrt()).sum()
+    ```
+
+    After this, re-running under `detect_anomaly()` no longer raises. Remember anomaly detection is debug-only (it can slow training 10x or more), so wrap only the single reproducing step and turn it off afterward.

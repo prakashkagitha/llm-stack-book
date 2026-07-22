@@ -645,3 +645,168 @@ Understanding this table is what separates an engineer who can debug a distribut
 - **Rajbhandari et al. (2020):** "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models" (DeepSpeed) — explains how reduce-scatter + all-gather enables full optimizer/gradient/parameter sharding.
 - **Jiang et al. (2022):** "Megascale: Scaling Large Language Model Training to More Than 10,000 GPUs" — describes hierarchical collectives, network topology design, and reliability engineering at cluster scale.
 - **Shoeybi et al. (2019):** "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism" — the canonical reference for tensor-parallel all-reduce patterns within a transformer layer.
+
+## Exercises
+
+**1. (Conceptual) Why one process per GPU?**
+The chapter states that GPU distributed training "almost universally uses the one-process-per-GPU model rather than threading across GPUs." Give the three reasons the chapter offers, and explain which of them would *not* be fixed simply by removing Python's GIL.
+
+??? note "Solution"
+    The chapter gives three reasons:
+
+    1. **The GIL serializes CPU work.** Python's Global Interpreter Lock prevents true CPU-thread-level parallelism, so CPU-side preprocessing and coordination would be serialized across threads.
+    2. **CUDA thread-safety.** GPU driver libraries (CUDA) are not always thread-safe when the same process owns multiple GPU contexts.
+    3. **Fault containment.** Process isolation means a crash on GPU 3 does not corrupt the state of GPU 0.
+
+    Only reason (1) is directly a GIL problem. Removing the GIL would let CPU-side preprocessing threads run in parallel, but it would *not* fix reasons (2) and (3): CUDA context thread-safety is a property of the driver libraries, not of the interpreter, and process-level fault isolation is inherently unavailable to threads that share one address space (a segfault or corrupted allocator in one thread takes down every GPU's state in that process). So even in a GIL-free Python, the one-process-per-GPU model would still be preferred for isolation and driver-safety reasons.
+
+**2. (Conceptual) The forbidden conditional collective.**
+Consider this snippet, intended to log the global gradient norm only from rank 0:
+
+    ```python
+    if rank == 0:
+        dist.all_reduce(grad_norm, op=dist.ReduceOp.SUM)
+        log(grad_norm)
+    ```
+
+    On a 4-GPU job, describe exactly what happens at runtime and why. Then rewrite the snippet so it is correct.
+
+??? note "Solution"
+    **What happens:** every collective is a synchronization barrier — *all* participating ranks must call it before *any* rank can proceed. Here only rank 0 calls `all_reduce`; ranks 1, 2, and 3 never reach the collective. Rank 0 blocks inside `all_reduce` waiting for contributions from the other three ranks, which never arrive, so rank 0 hangs forever. The other ranks race ahead to whatever code follows the `if` block. The job deadlocks (typically until a NCCL watchdog timeout kills it).
+
+    **Correct version** — every rank calls the collective unconditionally, and only the *post-processing* is branched on rank:
+
+    ```python
+    dist.all_reduce(grad_norm, op=dist.ReduceOp.SUM)  # all ranks participate
+    if rank == 0:
+        log(grad_norm)                                 # branch AFTER the collective
+    ```
+
+**3. (Quantitative) Ring all-reduce with the alpha-beta model.**
+You all-reduce a gradient buffer of $M = 512$ MB across $n = 16$ GPUs on a fabric with latency $\alpha = 5\ \mu\text{s}$ and per-direction bandwidth $\beta = 50$ GB/s. Using the chapter's ring all-reduce cost model, compute (a) the latency term, (b) the bandwidth term, and (c) the total time. (d) Which term dominates, and what practical technique from the chapter attacks the *other* term? Use $1\text{ GB} = 10^9$ bytes.
+
+??? note "Solution"
+    The chapter's ring all-reduce cost model is
+    $$T_{\text{ring-AR}}(M) = 2(n-1)\alpha + \frac{2(n-1)}{n}\cdot\frac{M}{\beta}.$$
+
+    With $n = 16$, so $2(n-1) = 30$ and $\frac{2(n-1)}{n} = \frac{30}{16} = 1.875$.
+
+    **(a) Latency term:**
+    $$2(n-1)\alpha = 30 \times 5\ \mu\text{s} = 150\ \mu\text{s} = 0.15\ \text{ms}.$$
+
+    **(b) Bandwidth term:** with $M = 512\text{ MB} = 0.512\text{ GB}$ and $\beta = 50\text{ GB/s}$,
+    $$\frac{2(n-1)}{n}\cdot\frac{M}{\beta} = 1.875 \times \frac{0.512}{50}\ \text{s} = 1.875 \times 0.01024\ \text{s} = 0.0192\ \text{s} = 19.2\ \text{ms}.$$
+
+    **(c) Total:**
+    $$T \approx 0.15\ \text{ms} + 19.2\ \text{ms} = 19.35\ \text{ms}.$$
+
+    **(d)** The **bandwidth term dominates** (19.2 ms vs 0.15 ms), which is expected for a large 512 MB message — large messages are bandwidth-bound. The technique that attacks the *other* term (latency) is **gradient bucketing**: combining many small gradient tensors into large buffers before communicating amortizes the per-call $2(n-1)\alpha$ startup cost over more bytes. (Here it would barely matter, but for many tiny gradients the latency term is exactly what bucketing removes.)
+
+**4. (Quantitative) Reduce-scatter output values.**
+Reproduce the chapter's reduce-scatter example by hand for $n = 4$. Each rank $r$ builds `input = torch.arange(4) + r`, i.e. rank $r$ holds the vector $[r, r{+}1, r{+}2, r{+}3]$. The collective sums element $i$ across all ranks and delivers element $i$ to rank $i$. Derive the closed form for the value rank $i$ receives, then list the four outputs.
+
+??? note "Solution"
+    Rank $r$'s element $i$ has value $(i + r)$. Summing element $i$ across all $n$ ranks:
+    $$\sum_{r=0}^{n-1}(i + r) = n\,i + \sum_{r=0}^{n-1} r = n\,i + \frac{n(n-1)}{2}.$$
+
+    Rank $i$ receives element $i$, so rank $i$'s output is $n\,i + \frac{n(n-1)}{2}$. For $n = 4$ the constant is $\frac{4\cdot3}{2} = 6$, giving output $= 4i + 6$:
+
+    - Rank 0: $4(0) + 6 = 6.0$
+    - Rank 1: $4(1) + 6 = 10.0$
+    - Rank 2: $4(2) + 6 = 14.0$
+    - Rank 3: $4(3) + 6 = 18.0$
+
+    These match the chapter's stated results (`rank 0 -> 6.0, rank 1 -> 10.0, rank 2 -> 14.0, rank 3 -> 18.0`). The differing per-rank outputs illustrate the *scatter*: each rank keeps only its own reduced slice, so the total output volume per rank is $M/n$, not $M$.
+
+**5. (Implementation) All-reduce built from reduce-scatter + all-gather.**
+The chapter's key identity is **All-Reduce = Reduce-Scatter followed by All-Gather**. Implement a function `manual_all_reduce_sum(x)` that reproduces `dist.all_reduce(x, op=SUM)` using *only* `dist.reduce_scatter` and `dist.all_gather` (no `dist.all_reduce`). Assume `x` is a 1-D tensor whose length is divisible by `world_size`. Add an assertion that verifies your result against the real `all_reduce`.
+
+??? note "Solution"
+    Split `x` into `world_size` equal chunks. Reduce-scatter sums the chunks across ranks and gives rank $i$ the fully-summed chunk $i$ (output size $M/n$). All-gather then concatenates every rank's reduced chunk back into the full summed vector on every rank (output size $M$). The concatenation reconstructs exactly what `all_reduce(SUM)` produces.
+
+    ```python
+    import torch
+    import torch.distributed as dist
+
+    def manual_all_reduce_sum(x: torch.Tensor) -> torch.Tensor:
+        """All-Reduce(SUM) via Reduce-Scatter + All-Gather.
+        x: 1-D tensor with len(x) % world_size == 0. Returns the summed tensor."""
+        world_size = dist.get_world_size()
+        n = x.numel()
+        assert n % world_size == 0, "length must be divisible by world_size"
+        chunk = n // world_size
+
+        # --- Phase 1: Reduce-Scatter ---
+        # Split x into world_size chunks; rank i receives the SUM of chunk i.
+        input_chunks = list(x.split(chunk))
+        reduced_chunk = torch.zeros(chunk, device=x.device, dtype=x.dtype)
+        dist.reduce_scatter(reduced_chunk, input_chunks, op=dist.ReduceOp.SUM)
+
+        # --- Phase 2: All-Gather ---
+        # Every rank collects all reduced chunks and concatenates them.
+        gathered = [torch.zeros(chunk, device=x.device, dtype=x.dtype)
+                    for _ in range(world_size)]
+        dist.all_gather(gathered, reduced_chunk)
+        return torch.cat(gathered)
+
+    # ---- Verification (run under torchrun --nproc_per_node=N) ----
+    def check():
+        rank = dist.get_rank()
+        device = torch.device(f"cuda:{rank}")
+        x = torch.arange(8, dtype=torch.float32, device=device) + rank
+
+        mine = manual_all_reduce_sum(x.clone())
+
+        reference = x.clone()
+        dist.all_reduce(reference, op=dist.ReduceOp.SUM)
+
+        assert torch.allclose(mine, reference), (rank, mine, reference)
+        if rank == 0:
+            print("OK: manual all-reduce matches dist.all_reduce")
+    ```
+
+    Why it works: with $n$ ranks each holding $M$ bytes, reduce-scatter moves $\frac{n-1}{n}M$ bytes/rank and all-gather another $\frac{n-1}{n}M$, summing to $2\frac{n-1}{n}M$ — identical to the cost of a monolithic ring all-reduce. This is precisely the decomposition ZeRO exploits to overlap communication with computation.
+
+**6. (Implementation / Conceptual) Hierarchical all-reduce over sub-groups.**
+Using `dist.new_group`, sketch a two-level all-reduce for 8 GPUs on 2 nodes (ranks 0-3 on node A, 4-7 on node B): first reduce *within* each node over fast NVLink, then reduce *across* nodes over slow InfiniBand, then broadcast back. Explain why this moves less data over the slow inter-node link than a flat 8-way ring all-reduce would.
+
+??? note "Solution"
+    Build one intra-node group per node and one inter-node group made of the node "leaders" (one rank per node). Reduce within each node so every leader holds the node-local sum; all-reduce across the leaders; then broadcast the global sum back down inside each node.
+
+    ```python
+    import torch
+    import torch.distributed as dist
+
+    def hierarchical_all_reduce_sum(x, gpus_per_node=4):
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        node_id = rank // gpus_per_node
+        n_nodes = world_size // gpus_per_node
+
+        # Intra-node groups: [0,1,2,3] and [4,5,6,7]
+        intra_group = None
+        for nid in range(n_nodes):
+            ranks = list(range(nid * gpus_per_node, (nid + 1) * gpus_per_node))
+            g = dist.new_group(ranks=ranks)
+            if rank in ranks:
+                intra_group = g
+
+        # Inter-node "leaders" group: one rank per node, e.g. [0, 4]
+        leader_ranks = list(range(0, world_size, gpus_per_node))
+        leader_group = dist.new_group(ranks=leader_ranks)  # every rank must call
+        is_leader = (rank % gpus_per_node == 0)
+
+        # 1. Reduce within node onto the local leader (dst is a GLOBAL rank).
+        local_leader = node_id * gpus_per_node
+        dist.reduce(x, dst=local_leader, op=dist.ReduceOp.SUM, group=intra_group)
+
+        # 2. Leaders all-reduce across nodes over InfiniBand.
+        if is_leader:
+            dist.all_reduce(x, op=dist.ReduceOp.SUM, group=leader_group)
+
+        # 3. Broadcast the global sum back down within each node.
+        dist.broadcast(x, src=local_leader, group=intra_group)
+        return x
+    ```
+
+    **Why less inter-node traffic:** in a flat 8-way ring all-reduce, the ring is threaded through *both* nodes, so chunks repeatedly cross the InfiniBand link; each of the 8 ranks pushes roughly $2\frac{n-1}{n}M \approx 2M$ bytes through the fabric, and a large share of that traverses the slow hop. In the hierarchical scheme only the *leaders* (one per node) exchange data over InfiniBand, and they exchange a single already-reduced buffer of size $M$ — so the slow link carries $O(M)$ per node instead of $O(M)$ per GPU. Because the chapter notes intra-node NVLink bandwidth is ~10-50x higher than inter-node IB, pushing the heavy per-GPU traffic onto NVLink and sending only one reduced buffer per node over IB is the whole point of hierarchical collectives. (One correctness note: every rank, leader or not, must execute the `dist.new_group(ranks=leader_ranks)` call, because `new_group` runs a barrier across all ranks — guarding it with `if is_leader` would deadlock.)

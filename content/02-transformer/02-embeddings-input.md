@@ -515,3 +515,109 @@ This perspective has practical implications:
 - **Touvron et al.** — *Llama 2: Open Foundation and Fine-Tuned Chat Models* (2023). Shows the minimal embedding design (no positional addition; RoPE in attention) used by the modern Llama family.
 - **Elhage et al.** — *A Mathematical Framework for Transformer Circuits* (Anthropic, 2021). Introduces the residual stream framing and analyzes how embedding and unembedding matrices interact.
 - **nanoGPT** — Andrej Karpathy's minimal GPT implementation on GitHub. The `model.py` file is an excellent reference for weight tying, embedding initialization, and the full input-to-logit pipeline in under 300 lines of PyTorch.
+
+---
+
+## Exercises
+
+**1.** *(Conceptual.)* The chapter says the embedding operation $\mathbf{e}_i = \mathbf{W}_E \mathbf{o}_i$ is "mathematically equivalent" to a matrix multiply but is "implemented as an index select, not an actual matmul." If the two produce the same output, why does the distinction matter? State the asymptotic cost of each and explain the physical reason one is preferred on a GPU.
+
+??? note "Solution"
+    Both compute the same vector — column $i$ (or row $i$ in PyTorch's `[V, d]` convention) of the embedding table — so the *output* is identical. The distinction is about *cost*, not correctness.
+
+    - A real GEMM multiplies the full one-hot matrix $\mathbf{O} \in \{0,1\}^{T \times V}$ by $\mathbf{W}_E^\top \in \mathbb{R}^{V \times d}$. This is $O(TVd)$ multiply-adds, and almost all of that arithmetic multiplies by the zeros in the one-hot rows — pure waste.
+    - An index select just copies the $T$ needed rows out of the table: $O(Td)$ work, with no multiplication at all.
+
+    The ratio of wasted-to-useful work is $V$, which is $10^4$–$10^5$ for real vocabularies. Physically, the GPU only has to move $T \times d$ floats out of HBM instead of performing $T \times V \times d$ fused multiply-adds, so the lookup is bound by a tiny memory copy rather than a huge compute kernel. That is why `nn.Embedding` (and `embedding.weight[ids]`) uses `index_select` and the chapter stresses the $O(Td)$ vs $O(TVd)$ gap.
+
+**2.** *(Quantitative.)* Consider GPT-2 small with $V = 50{,}257$ and $d = 768$, using weight tying. (a) How many parameters live in the tied embedding/unembedding table? (b) In bytes, how much memory does that table occupy in float32 vs bfloat16? (c) The chapter states GPT-2 small has roughly 124 M parameters total; what fraction of the model is the embedding table? (d) If weights were *not* tied, how many extra parameters would the separate unembedding add?
+
+??? note "Solution"
+    (a) The table has $V \times d = 50{,}257 \times 768 = 38{,}597{,}376 \approx 38.6$ M parameters. With tying this single table serves both input and output.
+
+    (b) float32 is 4 bytes/param: $38{,}597{,}376 \times 4 = 154{,}389{,}504$ bytes $\approx 154$ MB. bfloat16 is 2 bytes/param: $\approx 77$ MB. (These match the numbers printed in the chapter's code.)
+
+    (c) $38.6\text{ M} / 124\text{ M} \approx 0.31$, i.e. about **31%** of the model is the embedding table. This is why weight tying — which the chapter notes saves ~30% of GPT-2 small's parameters — is so impactful for small models.
+
+    (d) An untied unembedding is another $[V, d]$ matrix, so it adds another $38.6$ M parameters, taking the vocabulary-dependent parameter count from ~38.6 M to ~77.2 M.
+
+**3.** *(Quantitative / conceptual.)* Take the gradient-sparsity code in the chapter: a single sentence of 7 distinct token IDs is embedded, and `loss = x.sum()` is backpropagated into an `nn.Embedding(50257, 768)`. (a) Exactly how many of the 50,257 rows of `embed.weight.grad` are nonzero, and why? (b) With `loss = x.sum()`, what is the numerical value of every nonzero gradient entry? (c) Now suppose the sentence were `[464, 464, 3797]` (the token 464 repeated). How many rows are nonzero, and what is the gradient value in row 464?
+
+??? note "Solution"
+    (a) Exactly **7** rows are nonzero — one per *unique* token ID that appeared (`464, 3797, 3332, 319, 262, 2603, 13`). The forward pass is an index select, so only the rows that were looked up participate in the computation; every other row is disconnected from the loss and gets exactly zero gradient.
+
+    (b) `x.sum()` sums all $1 \times 7 \times 768$ entries of the output. Each embedded token's vector is copied directly from its table row, so $\partial(\sum x)/\partial W_E[t, j] = 1$ for every column $j$ of a row $t$ that was used. Hence every nonzero entry equals exactly **1.0**.
+
+    (c) There are only **2** unique tokens (`464` and `3797`), so 2 rows are nonzero. Token 464 was looked up **twice**, and gradients from both occurrences accumulate into the same row. Each occurrence contributes 1.0 per column, so row 464 has the value **2.0** in every column; row 3797 has 1.0. This accumulation for repeated tokens is exactly the "hot row" effect the chapter mentions.
+
+**4.** *(Implementation.)* The chapter's `InputPipeline` adds token and learned positional embeddings. Modify it into a `TiedInputPipeline` that (i) uses learned positional embeddings as before, and (ii) exposes a `logits(hidden)` method whose output projection is *weight-tied* to the token embedding table (reuse `token_embed.weight`, no separate `nn.Linear`, no bias). Then write an assertion that verifies the output projection truly shares storage with the token embedding.
+
+??? note "Solution"
+    Following the chapter's `TiedTransformerHead` (which uses `F.linear(hidden, self.embed.weight)`) and the `InputPipeline` structure:
+
+    ```python
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    class TiedInputPipeline(nn.Module):
+        def __init__(self, vocab_size: int, d_model: int,
+                     max_seq_len: int, dropout: float = 0.1):
+            super().__init__()
+            self.d_model = d_model
+            self.token_embed = nn.Embedding(vocab_size, d_model)
+            self.pos_embed   = nn.Embedding(max_seq_len, d_model)
+            self.drop        = nn.Dropout(dropout)
+            nn.init.normal_(self.token_embed.weight, std=0.02)
+            nn.init.normal_(self.pos_embed.weight,   std=0.02)
+
+        def forward(self, ids: torch.LongTensor) -> torch.Tensor:
+            B, T = ids.shape
+            pos = torch.arange(T, device=ids.device)          # [T]
+            x = self.token_embed(ids) + self.pos_embed(pos)    # [B, T, d]
+            return self.drop(x)
+
+        def logits(self, hidden: torch.Tensor) -> torch.Tensor:
+            # Weight-tied output projection: reuse the token table, no bias.
+            return F.linear(hidden, self.token_embed.weight)   # [B, T, V]
+
+    # --- verification ---
+    model = TiedInputPipeline(vocab_size=32_000, d_model=256, max_seq_len=512)
+    ids = torch.randint(0, 32_000, (2, 16))
+    h = model(ids)                          # [2, 16, 256]
+    lg = model.logits(h)                    # [2, 16, 32000]
+    assert lg.shape == (2, 16, 32_000)
+
+    # The output projection allocates NO separate [V, d] tensor: the only
+    # parameters are the two embedding tables. If a second V*d matrix had
+    # sneaked in (e.g. an untied nn.Linear head) this count would be larger.
+    n_params = sum(p.numel() for p in model.parameters())
+    assert n_params == 32_000 * 256 + 512 * 256   # token table + pos table only
+
+    # And logits() reads exactly the token-embedding storage: its gradient
+    # lands on token_embed.weight, confirming the weights are shared.
+    lg.sum().backward()
+    assert model.token_embed.weight.grad is not None
+    ```
+
+    The key point is that `logits()` never allocates a second $[V, d]$ tensor — it calls `F.linear` on `self.token_embed.weight` directly, exactly as the chapter recommends to avoid the "copying instead of sharing" pitfall. During backward, this weight receives the sparse gradient from `forward` plus the dense gradient from `logits`.
+
+**5.** *(Quantitative.)* The chapter's worked example prices the logit projection for Llama 3 8B ($V = 128{,}000$, $d = 4{,}096$). (a) Compute the multiply-add count for the logit projection of a *single* token, in GFLOP-equivalent multiply-adds. (b) For $T = 2048$ tokens, how many total, and why is this "comparable to multiple attention layers"? (c) During single-token autoregressive decode, the projection reads the full 524 M-parameter table from HBM. At 900 GB/s (A100) in bfloat16, estimate the time, and explain why decode is memory-bound here rather than compute-bound.
+
+??? note "Solution"
+    (a) The projection is $\mathbf{h} \cdot \mathbf{W}_U^\top$ with $\mathbf{h} \in \mathbb{R}^{4096}$ and $\mathbf{W}_U \in \mathbb{R}^{128000 \times 4096}$. That is one multiply-add per weight: $4{,}096 \times 128{,}000 = 524{,}288{,}000 \approx 0.5$ G multiply-adds per token.
+
+    (b) For $T = 2048$: $0.5 \times 2048 \approx 1{,}024$ GFLOPs (multiply-adds) for the logit projection alone. It is "comparable to multiple attention layers" because a single dense $[T, d] \times [d, V]$ matmul with $V \gg d$ moves as much arithmetic as several of the model's internal $[T, d] \times [d, d]$ projections — the vocabulary dimension $V = 128{,}000$ is ~31x larger than $d = 4{,}096$, so one unembed matmul rivals a stack of $d \times d$ ops.
+
+    (c) In bfloat16 the table is $524 \times 10^6 \times 2 = 1{,}048 \times 10^6$ bytes $\approx 1.05$ GB. Reading it at 900 GB/s takes $1.05\text{ GB} / 900\text{ GB/s} \approx 1.16$ ms. During decode we compute logits for just one token: the arithmetic is only ~0.5 GFLOP (microseconds of compute on an A100's tens of TFLOP/s), but we must still stream all 524 M weights from HBM. The bottleneck is therefore moving ~1 GB of parameters, not the multiply-adds — the operation is memory-bandwidth-bound. This is exactly why the chapter notes some inference systems use lower precision or approximate logit computation.
+
+**6.** *(Conceptual, harder.)* Under weight tying and the residual-stream view $\mathbf{h}_T = \mathbf{e} + \sum_{\ell} \Delta_\ell$, argue why two tokens whose *input* embeddings are nearly parallel (high cosine similarity) will tend to receive similar *output* logits, and describe one situation where this coupling helps and one where it hurts. Tie your answer to the gradient asymmetry the chapter describes.
+
+??? note "Solution"
+    With tying, the logit for token $k$ is $\text{logit}_k = \mathbf{h}_T \cdot \mathbf{W}_E[k]$ — an inner product of the final residual state with token $k$'s *embedding* row (the same vector used at the input). If tokens $a$ and $b$ have nearly parallel embedding rows ($\mathbf{W}_E[a] \approx \mathbf{W}_E[b]$), then for any hidden state $\mathbf{h}_T$ the two inner products are close, so $\text{logit}_a \approx \text{logit}_b$. The output head literally "votes" for a token using that token's embedding direction, so geometric closeness at the input forces closeness at the output.
+
+    **Where it helps:** for semantically interchangeable tokens (e.g., near-synonyms, or a word and its rare casing variant), coupling acts as a regularizer — the model predicts them with similar probability without needing to learn two independent output directions, which improves perplexity at fixed parameters, especially for small models (as the chapter and Press & Wolf note).
+
+    **Where it hurts:** if two tokens *should* be sharply distinguished as predictions but happen to sit close in embedding space, their logits interfere and the model cannot cleanly separate them — the chapter's warning that "tokens close in embedding space will interfere with each other's logit scores."
+
+    Gradient asymmetry connects here: a token's embedding row is pulled by a *dense* gradient from the unembed path (all $T$ hidden states, dominated by frequent tokens) and only a *sparse* gradient from the input lookup (present only when that token appears). So frequent tokens' embedding directions are shaped mostly by their role as prediction targets, while rare tokens get almost all their signal from the sparse input path — meaning the "voting direction" for rare tokens is under-trained, amplifying harmful interference precisely for the tokens that can least afford it.

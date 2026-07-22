@@ -767,3 +767,148 @@ print(per_digit("6789"))        # ['6', '7', '8', '9']  -- same scheme every tim
 - Kudo & Richardson, *SentencePiece: A Simple and Language Independent Subword Tokenizer* (2018) — the library and the `▁` space convention.
 - Radford et al., *Language Models are Unsupervised Multitask Learners* (GPT-2, 2019) — byte-level BPE and the bytes-to-unicode trick.
 - OpenAI's **`tiktoken`** repository and Andrej Karpathy's **`minbpe`** repository — clear, fast reference implementations to read and run.
+
+## Exercises
+
+**1.** Byte-level BPE is advertised as having *provably no* `<unk>`. Explain precisely *why* this holds, and give the worst-case number of tokens a single, never-before-seen character can cost. Contrast this with a character-level BPE tokenizer whose base alphabet was fixed from its training corpus.
+
+??? note "Solution"
+    Byte-level BPE initializes its base vocabulary from the **256 possible byte values**, not from characters seen in training. Every string in any language encodes to UTF-8, and every UTF-8 byte is by definition one of those 256 values — so each of the 256 base tokens is guaranteed to exist, and any byte sequence is representable. There is no way to encounter an "unseen" atomic symbol, because the atomic symbols are all 256 bytes and they are all in the vocabulary from the start.
+
+    Worst case for a single novel character: it simply falls back to its individual UTF-8 bytes, each of which is a guaranteed single-byte token. UTF-8 encodes a code point in **1 to 4 bytes**, so a never-before-seen character (e.g. a new emoji, which is often 4 bytes) costs **at most 4 tokens** — never an `<unk>`, and never lost information.
+
+    A character-level BPE tokenizer whose base alphabet was frozen from its training corpus has no such guarantee: a Unicode character it never saw (a rare CJK glyph, a new emoji, a math symbol) has *no* base token at all, so it collapses to `<unk>` and the information is destroyed. That is exactly the failure byte-level BPE was designed to remove.
+
+**2.** Train BPE *by hand* (character level, with the `</w>` end-of-word marker) on this corpus:
+
+    cat x5,  car x3,  bat x2
+
+Find the first **two** merges (with their frequency-weighted counts), then use the resulting ordered merge list to tokenize the word `cart`. Apply merges using the chapter's rank-priority rule.
+
+??? note "Solution"
+    Represent each word as characters plus `</w>`, weighted by frequency:
+
+    - `cat` x5 -> `c a t </w>`
+    - `car` x3 -> `c a r </w>`
+    - `bat` x2 -> `b a t </w>`
+
+    **First merge.** Count adjacent pairs:
+
+    - `(c,a)`: cat(5) + car(3) = **8**  <- winner
+    - `(a,t)`: cat(5) + bat(2) = 7
+    - `(t,</w>)`: cat(5) + bat(2) = 7
+    - `(a,r)`: car(3) = 3
+    - `(r,</w>)`: car(3) = 3
+    - `(b,a)`: bat(2) = 2
+
+    Merge `(c,a)` -> `ca`. Words become `ca t </w>`(5), `ca r </w>`(3), `b a t </w>`(2).
+
+    **Second merge.** Recount:
+
+    - `(t,</w>)`: cat(5) + bat(2) = **7**  <- winner
+    - `(ca,t)`: 5
+    - `(ca,r)`: 3
+    - `(r,</w>)`: 3
+    - `(b,a)`: 2
+    - `(a,t)`: 2
+
+    Merge `(t,</w>)` -> `t</w>`. Ordered merge list so far: `[(c,a), (t,</w>)]`, so rank 0 = `(c,a)`, rank 1 = `(t,</w>)`.
+
+    **Tokenize `cart`.** Start: `c a r t </w>`.
+
+    - Lowest-rank applicable pair present is `(c,a)` (rank 0) -> `ca r t </w>`.
+    - Next, `(t,</w>)` (rank 1) is present -> `ca r t</w>`.
+    - No learned pair remains. Result: `['ca', 'r', 't</w>']` — three tokens, reusing `ca` and `t</w>` even though `cart` never appeared in training.
+
+**3.** Take $d_\text{model} = 2048$. Compare vocabulary sizes $V_1 = 50{,}000$ and $V_2 = 100{,}000$.
+
+    (a) How many parameters does each embedding table hold, and how many are *added* by going from $V_1$ to $V_2$ (embedding table only)?
+    (b) A 1{,}000{,}000-byte English document compresses at 4.0 bytes/token under the small tokenizer and 4.5 bytes/token under the large one. How many tokens each, and what is the percentage reduction? Relate the result to the vocabulary-size tradeoff.
+
+??? note "Solution"
+    **(a)** An embedding table is $V \times d_\text{model}$ parameters.
+
+    - $V_1$: $50{,}000 \times 2048 = 1.024 \times 10^{8} = 102.4$M params.
+    - $V_2$: $100{,}000 \times 2048 = 2.048 \times 10^{8} = 204.8$M params.
+    - Added: $204.8\text{M} - 102.4\text{M} = 102.4$M params. (If the output/unembedding projection is *untied*, it is a second $V \times d_\text{model}$ matrix, so the true added cost is another 102.4M on top, ~204.8M total.)
+
+    **(b)** Tokens = bytes / (bytes per token):
+
+    - Small: $1{,}000{,}000 / 4.0 = 250{,}000$ tokens.
+    - Large: $1{,}000{,}000 / 4.5 \approx 222{,}222$ tokens.
+    - Reduction: $(250{,}000 - 222{,}222)/250{,}000 = 27{,}778/250{,}000 \approx 11.1\%$.
+
+    So the larger vocabulary costs ~102M extra embedding parameters (a few percent of a 7B-class model) but buys ~11% fewer tokens per document — which compounds into ~11% cheaper inference, ~11% more content per context window, and ~11% fewer steps to pretrain over the same text. Because those savings multiply across trillions of training tokens and billions of inference calls, the sequence-length win typically dwarfs the fixed parameter cost — the exact reasoning behind the industry trend toward larger vocabularies.
+
+**4.** The chapter's `GPT2_SPLIT` regex lets a run of digits merge freely (` ?\p{N}+`), whereas `cl100k_base` caps every digit chunk at three (`\p{N}{1,3}`). Modify the pre-tokenizer to the `cl100k`-style digit rule and write a function `digit_chunks(text)` that returns the pre-tokenizer chunks. Verify that `12345` splits into `['123', '45']` and `1234567` into `['123', '456', '7']`.
+
+??? note "Solution"
+    Only the digit alternation changes; everything else is identical to the chapter's pattern. Note that `\p{N}{1,3}` has *no* optional leading space, matching `cl100k_base`.
+
+    ```python
+    import regex as re
+
+    CL100K_DIGIT_SPLIT = re.compile(
+        r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    )
+
+    def digit_chunks(text):
+        return CL100K_DIGIT_SPLIT.findall(text)
+
+    assert digit_chunks("12345") == ["123", "45"]
+    assert digit_chunks("1234567") == ["123", "456", "7"]
+    print(digit_chunks("12345"))     # ['123', '45']
+    print(digit_chunks("1234567"))   # ['123', '456', '7']
+    ```
+
+    Because `\p{N}{1,3}` is greedy and matches at most three digits at a time, a digit run is chopped left-to-right into groups of three with the remainder trailing: `12345` -> `123`,`45`; `1234567` -> `123`,`456`,`7`. This split happens in the pre-tokenizer, *before* any BPE merge runs, which is why GPT-4 groups numbers in chunks of at most three and thereby keeps place value consistent within each chunk.
+
+**5.** BPE merges the pair with the largest raw count $\operatorname{count}(ab)$. WordPiece instead merges the pair maximizing $\operatorname{score}(a,b) = \dfrac{\operatorname{count}(ab)}{\operatorname{count}(a)\,\operatorname{count}(b)}$. Implement `best_wordpiece_pair(word_freqs)` (reusing the chapter's `word_freqs` representation and `get_pair_counts`) that returns the highest-scoring adjacent pair, and demonstrate on a corpus where it picks a *different* pair than BPE would.
+
+??? note "Solution"
+    We need frequency-weighted symbol counts (the denominator) as well as the pair counts (the numerator). A symbol's total count is its number of occurrences across all words, weighted by word frequency.
+
+    ```python
+    from collections import Counter
+
+    def get_symbol_counts(word_freqs):
+        """Frequency-weighted count of each individual symbol."""
+        counts = Counter()
+        for symbols, freq in word_freqs.items():
+            for s in symbols:
+                counts[s] += freq
+        return counts
+
+    def best_wordpiece_pair(word_freqs):
+        """Return the adjacent pair maximizing count(ab)/(count(a)*count(b))."""
+        pair_counts = get_pair_counts(word_freqs)      # from the chapter
+        sym = get_symbol_counts(word_freqs)
+        best, best_score = None, float("-inf")
+        for (a, b), c_ab in pair_counts.items():
+            score = c_ab / (sym[a] * sym[b])
+            # deterministic tie-break on the pair itself, matching the chapter
+            if (score, (a, b)) > (best_score, best if best else ("", "")):
+                best, best_score = (a, b), score
+        return best, best_score
+    ```
+
+    Demonstration. Take a corpus where one pair is very frequent but built from two individually ubiquitous symbols, while a rarer pair is built from symbols that occur *only* together:
+
+    ```python
+    # 'th' is frequent but t and h are everywhere; 'qz' is rarer but q,z occur
+    # only as the pair qz.
+    word_freqs = {
+        ("t", "h", "e"): 10,   # t,h,e all common
+        ("t", "h", "a", "t"): 8,
+        ("h", "i", "t"): 5,
+        ("q", "z"): 3,         # q and z appear ONLY here
+    }
+
+    # BPE would pick the raw-count winner:
+    bpe_pick = max(get_pair_counts(word_freqs),
+                   key=lambda p: get_pair_counts(word_freqs)[p])
+    print("BPE picks:", bpe_pick)                 # ('t', 'h')  count 18
+    print("WordPiece picks:", best_wordpiece_pair(word_freqs))
+    ```
+
+    Working the numbers: `(t,h)` has $\operatorname{count}=18$, but $\operatorname{count}(t)=10+8+8+5=31$ and $\operatorname{count}(h)=10+8+5=23$, giving score $18/(31\cdot23)\approx 0.0253$. The pair `(q,z)` has $\operatorname{count}=3$ with $\operatorname{count}(q)=3$, $\operatorname{count}(z)=3$, giving score $3/(3\cdot3)\approx 0.333$. So **BPE merges `(t,h)`** (highest raw count) while **WordPiece merges `(q,z)`** (highest likelihood-gain score). This is exactly the chapter's point: the denominator makes WordPiece *down-weight pairs whose halves are already common on their own* and prefer pieces that are individually rare but co-occur.
