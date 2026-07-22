@@ -280,9 +280,9 @@ def gguf_size_gb(params_billions: float, bits_per_weight: float = 4.5) -> float:
     return size_bytes / (1024**3)
 
 # Llama-3-70B at Q4_K_M:
-print(f"70B Q4_K_M: {gguf_size_gb(70, 4.5):.1f} GB")   # ~38 GB
-print(f"70B Q5_K_M: {gguf_size_gb(70, 5.5):.1f} GB")   # ~46 GB
-print(f"13B Q4_K_M: {gguf_size_gb(13, 4.5):.1f} GB")   # ~7 GB
+print(f"70B Q4_K_M: {gguf_size_gb(70, 4.5):.1f} GB")   # ~41 GB
+print(f"70B Q5_K_M: {gguf_size_gb(70, 5.5):.1f} GB")   # ~49 GB
+print(f"13B Q4_K_M: {gguf_size_gb(13, 4.5):.1f} GB")   # ~7.7 GB
 ```
 
 ### Ollama: A Developer-Friendly Frontend
@@ -307,7 +307,7 @@ Ollama automatically detects available hardware (CUDA, Metal, CPU) and offloads 
 
 ### Performance Profile
 
-On Apple M3 Max with 128 GB of unified memory, a Llama-3-70B Q4_K_M model (≈38 GB) fits entirely in unified memory and typically achieves 20–30 tokens/second — genuinely useful for local development. On a consumer NVIDIA 4090 (24 GB), the 13B Q4_K_M fits fully in VRAM and achieves 80–100 tokens/second. For anything requiring production throughput (hundreds of tokens/second, many concurrent users), llama.cpp is not the right tool.
+On Apple M3 Max with 128 GB of unified memory, a Llama-3-70B Q4_K_M model (≈41 GB) fits entirely in unified memory and typically achieves 20–30 tokens/second — genuinely useful for local development. On a consumer NVIDIA 4090 (24 GB), the 13B Q4_K_M fits fully in VRAM and achieves 80–100 tokens/second. For anything requiring production throughput (hundreds of tokens/second, many concurrent users), llama.cpp is not the right tool.
 
 ---
 
