@@ -665,3 +665,182 @@ print(f"ROC-AUC: {roc_auc_score(y_true, y_score):.4f}")
 - Guo et al., "On Calibration of Modern Neural Networks," *ICML* 2017 — temperature scaling and ECE.
 - Keskar et al., "On Large-Batch Training for Deep Learning: Generalization Gap and Sharp Minima," *ICLR* 2017 — why batch size affects generalization.
 - Wolpert, "The Lack of A Priori Distinctions Between Learning Algorithms," *Neural Computation* 1996 — No Free Lunch theorems.
+
+---
+
+## Exercises
+
+**1.** You train two models on the same task and observe the following:
+
+- Model A: training loss $= 0.62$, validation loss $= 0.65$.
+- Model B: training loss $= 0.02$, validation loss $= 0.71$.
+
+For each model, decide whether it is primarily *underfitting* or *overfitting*, name the dominant error term (bias vs. variance) using the decomposition in this chapter, and give one concrete fix from the chapter's regularization toolkit that is appropriate for **each** case.
+
+??? note "Solution"
+    **Model A — underfitting (high bias).** Training and validation loss are both high and close together (a small generalization gap of $0.03$). The model is too simple to capture the signal, so the average prediction is systematically far from the truth. In the decomposition $\mathbb{E}[(y-\hat f(x))^2] = \text{Bias}^2 + \text{Variance} + \sigma^2$, the dominant term is $\text{Bias}^2$. Appropriate fixes *reduce* regularization / *increase* capacity: add layers or hidden units, add features, decrease dropout / weight decay, or train longer.
+
+    **Model B — overfitting (high variance).** Training loss is near zero but validation loss is high, giving a large generalization gap of $0.69$. The model has memorized training-set idiosyncrasies, so it changes dramatically with the specific training draw — the dominant term is $\text{Variance}$. Appropriate fixes *add* regularization or reduce capacity: increase dropout or L2 weight decay, apply early stopping at the validation minimum, add more/augmented data, or shrink the network.
+
+    Note the two fixes point in opposite directions — the same lever (regularization strength) is turned down for A and up for B, which is exactly the bias-variance tradeoff in action.
+
+**2.** A disease-screening classifier is evaluated on 1000 patients, of whom 200 truly have the disease (positive class). The model produces this confusion matrix:
+
+- $TP = 150$, $FN = 50$, $FP = 100$, $TN = 700$.
+
+Compute (by hand) precision, recall, $F_1$, and accuracy. Then compute $F_2$ (i.e. $\beta = 2$). Which of $F_1$ or $F_2$ is the more appropriate headline metric here, and why?
+
+??? note "Solution"
+    Precision and recall:
+
+    $$\text{Precision} = \frac{TP}{TP+FP} = \frac{150}{150+100} = \frac{150}{250} = 0.60$$
+
+    $$\text{Recall} = \frac{TP}{TP+FN} = \frac{150}{150+50} = \frac{150}{200} = 0.75$$
+
+    $F_1$ (harmonic mean):
+
+    $$F_1 = \frac{2 \cdot 0.60 \cdot 0.75}{0.60 + 0.75} = \frac{0.90}{1.35} = 0.6667$$
+
+    Accuracy:
+
+    $$\text{Accuracy} = \frac{TP+TN}{N} = \frac{150+700}{1000} = 0.85$$
+
+    $F_2$ using $F_\beta = (1+\beta^2)\dfrac{P \cdot R}{\beta^2 P + R}$ with $\beta^2 = 4$:
+
+    $$F_2 = 5 \cdot \frac{0.60 \cdot 0.75}{4 \cdot 0.60 + 0.75} = 5 \cdot \frac{0.45}{2.40 + 0.75} = \frac{2.25}{3.15} = 0.7143$$
+
+    **Which metric.** For disease screening, a false negative (missing a sick patient) is far costlier than a false positive (a healthy patient sent for a confirmatory test). The chapter notes $\beta > 1$ weights recall higher, which is what we want, so $F_2 = 0.7143$ is the more appropriate headline metric than $F_1 = 0.6667$. Accuracy ($0.85$) is misleading here because the negatives dominate ($800/1000$), inflating the number regardless of how well we catch the disease.
+
+**3.** L2 regularization implements weight decay through the factor $(1 - \eta\lambda)$ applied to each weight every step. Suppose $\eta = 0.02$ and $\lambda = 0.5$.
+
+(a) What is the per-step multiplicative shrink factor?
+(b) Consider a single weight $w = 4.0$ that sits in a flat region of the loss, so its data-gradient $\nabla_\theta \mathcal{L}_{\text{data}} \approx 0$. What value does $w$ decay to after 100 steps?
+(c) Explain in one sentence why this is called "decay" and what prior this corresponds to under the Bayesian view.
+
+??? note "Solution"
+    (a) From the update $\theta \leftarrow (1-\eta\lambda)\theta - \eta\nabla_\theta\mathcal{L}_{\text{data}}$, the shrink factor is
+
+    $$1 - \eta\lambda = 1 - (0.02)(0.5) = 1 - 0.01 = 0.99.$$
+
+    (b) With zero data-gradient, each step just multiplies by $0.99$, so after 100 steps:
+
+    $$w_{100} = 4.0 \times (0.99)^{100}.$$
+
+    Numerically, $(0.99)^{100} = \exp(100 \ln 0.99) = \exp(100 \times (-0.01005)) = \exp(-1.005) \approx 0.3660$. Therefore
+
+    $$w_{100} \approx 4.0 \times 0.3660 = 1.464.$$
+
+    (c) It is called "decay" because, absent an opposing data-gradient, every parameter is repeatedly multiplied by a factor slightly less than 1 and shrinks geometrically toward zero. Under the Bayesian view (from the chapter), this corresponds to a zero-mean Gaussian prior $\theta \sim \mathcal{N}(0, \lambda^{-1}I)$, so MAP estimation pulls weights toward the origin.
+
+**4.** You bin a calibrated-classifier's validation predictions into 3 confidence bins ($N = 100$ examples total) and record:
+
+| Bin | $\lvert B_m\rvert$ | $\text{conf}(B_m)$ | $\text{acc}(B_m)$ |
+|---|---|---|---|
+| 1 | 40 | 0.75 | 0.70 |
+| 2 | 35 | 0.88 | 0.80 |
+| 3 | 25 | 0.95 | 0.72 |
+
+Compute the Expected Calibration Error (ECE). Is this model over- or under-confident overall, and which bin contributes the most to the ECE?
+
+??? note "Solution"
+    Using $\text{ECE} = \sum_{m} \frac{|B_m|}{N}\,\lvert\text{acc}(B_m) - \text{conf}(B_m)\rvert$ with $N = 100$:
+
+    - Bin 1: $\frac{40}{100}\lvert 0.70 - 0.75\rvert = 0.40 \times 0.05 = 0.0200$
+    - Bin 2: $\frac{35}{100}\lvert 0.80 - 0.88\rvert = 0.35 \times 0.08 = 0.0280$
+    - Bin 3: $\frac{25}{100}\lvert 0.72 - 0.95\rvert = 0.25 \times 0.23 = 0.0575$
+
+    $$\text{ECE} = 0.0200 + 0.0280 + 0.0575 = 0.1055.$$
+
+    In every bin $\text{conf} > \text{acc}$, so the model is **over-confident** overall (its stated probability consistently exceeds the empirical positive frequency), matching the chapter's note that neural nets tend to be overconfident. **Bin 3** contributes the most ($0.0575$), because it has both the largest confidence-accuracy gap ($0.23$) and a substantial share of the data. Temperature scaling ($T > 1$) would smooth the logits and reduce this gap.
+
+**5.** Implement the Expected Calibration Error as a standalone function `expected_calibration_error(y_true, y_score, n_bins=10)` using only NumPy, following the binning formula from this chapter. Then verify it reproduces the hand-computed answer from Exercise 4 using equal-width bins.
+
+??? note "Solution"
+    ```python
+    import numpy as np
+
+    def expected_calibration_error(y_true, y_score, n_bins=10):
+        """ECE via equal-width binning of predicted probabilities.
+
+        y_true : array of {0,1} labels
+        y_score: array of predicted P(y=1) in [0,1]
+        """
+        y_true  = np.asarray(y_true,  dtype=float)
+        y_score = np.asarray(y_score, dtype=float)
+        N = len(y_score)
+        edges = np.linspace(0.0, 1.0, n_bins + 1)
+
+        ece = 0.0
+        for m in range(n_bins):
+            lo, hi = edges[m], edges[m + 1]
+            # include the right edge only in the final bin
+            if m == n_bins - 1:
+                mask = (y_score >= lo) & (y_score <= hi)
+            else:
+                mask = (y_score >= lo) & (y_score < hi)
+            n_m = mask.sum()
+            if n_m == 0:
+                continue
+            acc  = y_true[mask].mean()    # fraction of positives in bin
+            conf = y_score[mask].mean()   # mean predicted probability
+            ece += (n_m / N) * abs(acc - conf)
+        return ece
+    ```
+
+    Verification against Exercise 4. We reconstruct a dataset with the stated per-bin confidences and accuracies. Using `n_bins=4` gives edges $[0,0.25,0.5,0.75,1.0]$, but all three confidences ($0.75, 0.88, 0.95$) fall into the single last bin $[0.75, 1.0]$ and would not be separated. We instead use a fine binning so each distinct confidence lands in its own bin, and confirm the arithmetic:
+
+    ```python
+    # Bin 1: 40 examples, conf 0.75, acc 0.70  -> 28 positives
+    # Bin 2: 35 examples, conf 0.88, acc 0.80  -> 28 positives
+    # Bin 3: 25 examples, conf 0.95, acc 0.72  -> 18 positives
+    y_true, y_score = [], []
+    for count, conf, acc in [(40, 0.75, 0.70), (35, 0.88, 0.80), (25, 0.95, 0.72)]:
+        n_pos = round(count * acc)
+        y_true  += [1] * n_pos + [0] * (count - n_pos)
+        y_score += [conf] * count           # all scores in a bin share its conf
+
+    # Three distinct score values -> put each in its own bin via fine binning
+    ece = expected_calibration_error(y_true, y_score, n_bins=100)
+    print(f"ECE = {ece:.4f}")   # ECE = 0.1055
+    ```
+
+    Because the three confidences ($0.75, 0.88, 0.95$) are distinct, a fine binning isolates each into its own bin, and the function returns $0.1055$ — matching the hand computation in Exercise 4.
+
+**6.** The chapter fixes miscalibration with *temperature scaling*: divide the logits by a learned scalar $T$ before the sigmoid/softmax. Implement `fit_temperature(logits, labels)` that finds the $T > 0$ minimizing validation cross-entropy for a binary classifier, then show how to apply it at inference. Explain why $T$ must be fit on the validation set rather than the training set.
+
+??? note "Solution"
+    We optimize a single scalar by minimizing `BCEWithLogitsLoss(logits / T, labels)`. To keep $T > 0$ we parameterize $T = \exp(\text{log\_}T)$ and optimize the unconstrained `log_T`. LBFGS is standard for this tiny 1-parameter problem.
+
+    ```python
+    import torch
+    import torch.nn as nn
+
+    def fit_temperature(logits, labels, max_iter=50):
+        """Learn a scalar temperature T>0 that calibrates binary logits.
+        logits, labels: 1-D arrays over the VALIDATION set. Returns float T.
+        """
+        logits = torch.as_tensor(logits, dtype=torch.float32)
+        labels = torch.as_tensor(labels, dtype=torch.float32)
+
+        log_T = torch.zeros(1, requires_grad=True)   # T = exp(log_T) = 1.0 init
+        optimizer = torch.optim.LBFGS([log_T], lr=0.1, max_iter=max_iter)
+        bce = nn.BCEWithLogitsLoss()
+
+        def closure():
+            optimizer.zero_grad()
+            T = torch.exp(log_T)
+            loss = bce(logits / T, labels)       # divide logits by T
+            loss.backward()
+            return loss
+
+        optimizer.step(closure)
+        return torch.exp(log_T).item()
+
+    # --- Usage: fit on validation logits, then apply at inference ---
+    # T = fit_temperature(val_logits, val_labels)
+    # calibrated_prob = torch.sigmoid(torch.as_tensor(test_logits) / T)
+    ```
+
+    At inference we never change the argmax/decision because dividing by a positive scalar is monotonic — it only rescales confidences: $T > 1$ smooths an overconfident model's probabilities toward $0.5$, while $T < 1$ sharpens them.
+
+    **Why validation, not training.** Temperature scaling is a post-hoc calibration step, and the network is typically overconfident precisely *because* it drove training cross-entropy toward zero. Fitting $T$ on the training set would see near-perfect (memorized) predictions and conclude little rescaling is needed ($T \approx 1$), so it would fail to correct the overconfidence that only shows up on held-out data. Fitting on a separate validation split — data not used to update the weights — gives an honest estimate of the confidence-accuracy gap, exactly as the chapter warns for all preprocessing and calibration statistics.

@@ -704,3 +704,154 @@ The full probabilistic picture of why the loss landscape is navigable — the st
 - Nesterov, Yurii. "A Method of Solving a Convex Programming Problem with Convergence Rate $O(1/k^2)$." Soviet Mathematics Doklady, 1983. The original Nesterov acceleration paper.
 - Polyak, Boris T. "Some Methods of Speeding Up the Convergence of Iteration Methods." USSR Computational Mathematics and Mathematical Physics, 1964. Origin of heavy-ball momentum.
 - Boyd, Stephen and Vandenberghe, Lieven. *Convex Optimization*. Cambridge University Press, 2004. The definitive reference on convexity, duality, and gradient methods. Available free online.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter states that moving in the direction $-\nabla_\theta f$ decreases $f$ most rapidly. Using the directional-derivative identity $D_\mathbf{u} f = \nabla f \cdot \mathbf{u} = \|\nabla f\| \cos\phi$ (with $\mathbf{u}$ a *unit* vector and $\phi$ the angle between $\mathbf{u}$ and $\nabla f$), prove that among all unit directions, $\mathbf{u} = -\nabla f / \|\nabla f\|$ gives the most negative directional derivative. What is the value of $D_\mathbf{u} f$ in that direction, and what does it equal when $\nabla f = 0$?
+
+??? note "Solution"
+    We want to minimize $D_\mathbf{u} f = \|\nabla f\| \cos\phi$ over all unit vectors $\mathbf{u}$. Since $\|\nabla f\| \geq 0$ is fixed at a given point, the only free quantity is $\cos\phi$, which ranges over $[-1, 1]$. The expression is minimized when $\cos\phi = -1$, i.e. $\phi = \pi$, which means $\mathbf{u}$ points exactly *opposite* to $\nabla f$:
+
+    $$
+    \mathbf{u}^\star = -\frac{\nabla f}{\|\nabla f\|}.
+    $$
+
+    Substituting $\cos\phi = -1$:
+
+    $$
+    D_{\mathbf{u}^\star} f = \|\nabla f\| \cdot (-1) = -\|\nabla f\|.
+    $$
+
+    So the steepest *descent* direction has directional derivative $-\|\nabla f\|$ (and, symmetrically, the steepest *ascent* direction $\mathbf{u} = +\nabla f/\|\nabla f\|$ gives $+\|\nabla f\|$). This is exactly why gradient descent steps along $-\nabla f$.
+
+    When $\nabla f = 0$ we are at a critical point: $D_\mathbf{u} f = 0$ for *every* direction $\mathbf{u}$, so first-order information cannot distinguish a minimum, a maximum, or a saddle. That distinction requires the Hessian's eigenvalues, as discussed in the section on second-order curvature.
+
+**2.** (Quantitative) Consider the anisotropic quadratic from the chapter, $\mathcal{L}(\theta_1, \theta_2) = \theta_1^2 + 10\theta_2^2$, optimized with vanilla gradient descent $\theta_{t+1} = \theta_t - \eta \nabla\mathcal{L}$.
+
+  (a) Derive the per-coordinate update maps and find the *largest* learning rate $\eta$ for which GD converges. Relate your answer to the smoothness constant $L$ and the threshold $\eta < 2/L$ from the chapter.
+
+  (b) With $\eta = 0.05$ and starting point $\theta_0 = (2,\ 0.5)$, compute $\theta_1$ (one step) and the loss before and after the step by hand.
+
+??? note "Solution"
+    The gradient is $\nabla\mathcal{L} = (2\theta_1,\ 20\theta_2)$, so the Hessian is $H = \mathrm{diag}(2, 20)$, giving $L = \lambda_{\max}(H) = 20$.
+
+    **(a)** The update decouples per coordinate:
+
+    $$
+    \theta_1^{(t+1)} = \theta_1^{(t)} - \eta\,(2\theta_1^{(t)}) = (1 - 2\eta)\,\theta_1^{(t)}, \qquad
+    \theta_2^{(t+1)} = (1 - 20\eta)\,\theta_2^{(t)}.
+    $$
+
+    Each is a geometric iteration $\theta \mapsto r\theta$ that converges to $0$ iff $|r| < 1$. The binding constraint is the high-curvature coordinate $\theta_2$: we need $|1 - 20\eta| < 1$, i.e. $0 < \eta < 0.1$. The largest stable learning rate is therefore
+
+    $$
+    \eta_{\max} = \frac{2}{L} = \frac{2}{20} = 0.1,
+    $$
+
+    matching the chapter's threshold $\eta < 2/L$ (at exactly $\eta = 0.1$ the $\theta_2$ iterate flips sign each step without shrinking; above it, it diverges).
+
+    **(b)** At $\theta_0 = (2,\ 0.5)$: $\nabla\mathcal{L}(\theta_0) = (2\cdot 2,\ 20\cdot 0.5) = (4,\ 10)$. One step with $\eta = 0.05$:
+
+    $$
+    \theta_1 = (2 - 0.05\cdot 4,\ \ 0.5 - 0.05\cdot 10) = (1.8,\ 0.0).
+    $$
+
+    Losses: $\mathcal{L}(\theta_0) = 2^2 + 10\cdot 0.5^2 = 4 + 2.5 = 6.5$, and $\mathcal{L}(\theta_1) = 1.8^2 + 10\cdot 0^2 = 3.24$. Note $\eta = 0.05 = 1/L$ makes $(1 - 20\eta) = 0$, so the high-curvature coordinate is driven to zero in a single step — exactly the behavior seen in the chapter's worked example starting from $(4,1)$.
+
+**3.** (Quantitative) Adam's bias-correction terms $\hat m_t, \hat v_t$ are described as "crucial in early training." Take the very first Adam step ($t=1$) with the chapter's defaults $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-8}$, $\eta = 0.01$, and moments initialized at $m_0 = v_0 = 0$. For a gradient $g_1 = (0.1,\ -0.2)$, compute $m_1$, $v_1$, $\hat m_1$, $\hat v_1$, and the resulting parameter update $\Delta\theta = \theta_1 - \theta_0$. What would the update have been *without* bias correction (using $m_1, v_1$ directly), and what general property of the corrected first step does this reveal?
+
+??? note "Solution"
+    Biased first moments (with $m_0 = v_0 = 0$):
+
+    $$
+    m_1 = \beta_1 m_0 + (1-\beta_1)g_1 = 0.1 \cdot (0.1,\ -0.2) = (0.01,\ -0.02),
+    $$
+    $$
+    v_1 = \beta_2 v_0 + (1-\beta_2)g_1^2 = 0.001 \cdot (0.01,\ 0.04) = (1{\times}10^{-5},\ 4{\times}10^{-5}).
+    $$
+
+    Bias correction divides by $(1-\beta_1^1) = 0.1$ and $(1-\beta_2^1) = 0.001$:
+
+    $$
+    \hat m_1 = \frac{m_1}{0.1} = (0.1,\ -0.2) = g_1, \qquad
+    \hat v_1 = \frac{v_1}{0.001} = (0.01,\ 0.04) = g_1^2.
+    $$
+
+    So at $t=1$ the correction exactly undoes the initialization bias: $\hat m_1 = g_1$ and $\hat v_1 = g_1^2$. The update is
+
+    $$
+    \Delta\theta = -\frac{\eta\,\hat m_1}{\sqrt{\hat v_1} + \epsilon}
+    = -0.01 \cdot \frac{(0.1,\ -0.2)}{(\,0.1,\ 0.2\,) + 10^{-8}}
+    \approx -0.01\cdot(1,\ -1) = (-0.01,\ +0.01).
+    $$
+
+    Each coordinate moves by $\approx \eta = 0.01$ in magnitude — the *sign* of the gradient times the learning rate, independent of the gradient's magnitude. That is the signature Adam behavior at warm-up.
+
+    **Without** bias correction we would instead compute $-\eta\, m_1/(\sqrt{v_1}+\epsilon) = -0.01\cdot(0.01,\,-0.02)/((\,0.00316,\,0.00632\,)+10^{-8}) \approx -0.01\cdot(3.16,\,-3.16) \approx (-0.032,\,+0.032)$. The raw $m_1$ is $10\times$ too small and $\sqrt{v_1}$ is $\approx 31.6\times$ too small, and because the second-moment underestimate lives under a square root it dominates: the uncorrected step is roughly $3\times$ *too large*. Bias correction prevents these wildly mis-scaled steps when the moving averages have not yet warmed up.
+
+**4.** (Conceptual/quantitative) The chapter claims that with momentum, "the effective learning rate in a consistent direction is $\eta/(1-\beta)$ — with $\beta = 0.9$, it is $10\eta$." Derive this. Assume the gradient is a constant vector $g$ (a perfectly consistent direction) and use the heavy-ball recursion $v_{t+1} = \beta v_t - \eta g$, $\theta_{t+1} = \theta_t + v_{t+1}$, with $v_0 = 0$. Find the steady-state velocity $v_\infty$ and interpret it as an effective step size. Evaluate for $\beta = 0.9$ and for $\beta = 0.99$.
+
+??? note "Solution"
+    With constant $g$, the velocity recursion is a scalar-affine map applied per coordinate. Its fixed point $v_\infty$ satisfies
+
+    $$
+    v_\infty = \beta v_\infty - \eta g \ \Longrightarrow\ v_\infty(1 - \beta) = -\eta g \ \Longrightarrow\ v_\infty = -\frac{\eta}{1-\beta}\,g.
+    $$
+
+    Since $|\beta| < 1$, the map is a contraction and the velocity does converge to $v_\infty$ (explicitly, unrolling from $v_0 = 0$ gives $v_t = -\eta g\,(1 + \beta + \cdots + \beta^{t-1}) = -\eta g\,\frac{1-\beta^t}{1-\beta} \to -\frac{\eta}{1-\beta}g$). Once at steady state, each parameter update is $\theta_{t+1} - \theta_t = v_\infty = -\frac{\eta}{1-\beta}\,g$, which is exactly a plain gradient-descent step with an *effective* learning rate
+
+    $$
+    \eta_{\text{eff}} = \frac{\eta}{1-\beta}.
+    $$
+
+    For $\beta = 0.9$: $\eta_{\text{eff}} = \eta/(1-0.9) = 10\eta$. For $\beta = 0.99$: $\eta_{\text{eff}} = \eta/(1-0.99) = 100\eta$. This is why momentum accelerates progress along consistent directions (velocity accumulates) while gradients that flip sign in oscillating directions largely cancel in the running sum — and it is also why raising $\beta$ toward 1 can destabilize training unless $\eta$ is reduced to compensate.
+
+**5.** (Conceptual) The chapter lists permutation symmetry as one structural cause of non-convexity. Consider a single hidden layer with $k$ units. (a) How many parameter vectors are functionally identical to a given one by permuting hidden units alone? Evaluate for $k = 4$ and $k = 512$. (b) Use the *definition* of a convex function to argue that a loss with two distinct, isolated global minimizers separated by a higher-loss barrier cannot be convex.
+
+??? note "Solution"
+    **(a)** Any reordering of the $k$ hidden units — carried consistently through the incoming and outgoing weights of that layer — computes the exact same function, so there are $k!$ equivalent parameter settings. For $k = 4$: $4! = 24$. For $k = 512$: $512!$, an astronomically large number (far larger than the number of atoms in the observable universe). Each corresponds to an equivalent global optimum, so the loss surface has an enormous number of equivalent valleys rather than a single basin.
+
+    **(b)** Let $x \neq y$ be two distinct global minimizers with equal minimal value $\mathcal{L}(x) = \mathcal{L}(y) = m$, and suppose the segment between them rises above $m$: there is some $\lambda \in (0,1)$ with $\mathcal{L}(\lambda x + (1-\lambda)y) > m$ (the "barrier"). Convexity requires
+
+    $$
+    \mathcal{L}(\lambda x + (1-\lambda)y) \leq \lambda \mathcal{L}(x) + (1-\lambda)\mathcal{L}(y) = \lambda m + (1-\lambda)m = m.
+    $$
+
+    But we assumed the left side is $> m$, a direct contradiction. Hence such a loss cannot be convex. (Equivalently: the set of minimizers of a convex function is itself convex, so it cannot consist of two isolated points with a gap between them.) Permutation symmetry guarantees exactly this configuration of many separated equivalent minima, which is why network losses are non-convex by construction.
+
+**6.** (Implementation) The chapter's runnable code implements GD, SGD, momentum, and Adam but not Nesterov Accelerated Gradient (NAG), even though NAG achieves the optimal $O(1/t^2)$ convex rate discussed in the text. Implement `run_nesterov` in the same style as `run_momentum`, using the chapter's NAG update $v_{t+1} = \beta v_t - \eta\nabla\mathcal{L}(\theta_t + \beta v_t)$, $\theta_{t+1} = \theta_t + v_{t+1}$. Then explain, in one or two sentences, the single line that differs from heavy-ball momentum and why it matters.
+
+??? note "Solution"
+    The only structural change from `run_momentum` is *where* the gradient is evaluated: at the look-ahead point $\theta + \beta v$ rather than at $\theta$.
+
+    ```python
+    def run_nesterov(
+        theta0: np.ndarray,
+        grad_fn: Callable,
+        lr: float = 0.005,
+        beta: float = 0.9,
+        n_steps: int = 500,
+    ) -> List[np.ndarray]:
+        """SGD with Nesterov accelerated gradient (NAG).
+
+        Differs from heavy-ball momentum only in evaluating the gradient at the
+        look-ahead position theta + beta*velocity, giving a corrective
+        anticipation and the optimal O(1/t^2) convex convergence rate.
+        """
+        theta = theta0.copy()
+        velocity = np.zeros_like(theta)
+        trajectory = [theta.copy()]
+        for _ in range(n_steps):
+            lookahead = theta + beta * velocity      # peek ahead along momentum
+            g = grad_fn(lookahead)                   # <-- the one changed line
+            velocity = beta * velocity - lr * g      # accumulate direction
+            theta = theta + velocity
+            trajectory.append(theta.copy())
+        return trajectory
+    ```
+
+    You can drop it straight into the chapter's script, e.g. add `"Nesterov": run_nesterov(theta0, rosenbrock_grad, lr=0.001, beta=0.9, n_steps=2000)` to the `runs` dict.
+
+    **The one changed line:** heavy-ball momentum computes `g = grad_fn(theta)`, whereas NAG computes `g = grad_fn(theta + beta * velocity)`. Because the parameters are about to move by (approximately) $\beta v$ regardless, evaluating the gradient *after* that anticipated move lets NAG "correct" an overshoot before committing to it — this look-ahead is what upgrades the convex convergence rate from $O(1/t)$ to the optimal $O(1/t^2)$.

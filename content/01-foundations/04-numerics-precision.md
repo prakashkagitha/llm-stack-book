@@ -698,3 +698,129 @@ print(f"Gradient norm after clipping:  {norm_after:.4f}  (target: ≤ 1.0)")
 - **NVIDIA Transformer Engine documentation.** Covers the FP8 training workflow with per-tensor scaling for H100 and later GPUs.
 - **Dao et al. "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness." NeurIPS, 2022.** Applies stable logsumexp to fused attention in a single GPU kernel pass.
 - **Higham, Nicholas J. "Accuracy and Stability of Numerical Algorithms." SIAM, 2002.** The graduate-level reference for backward error analysis, condition numbers, and algorithm stability.
+
+---
+
+## Exercises
+
+**1.** bf16 and fp16 are both 16-bit formats, yet bf16 became the LLM training standard while fp16 did not. Explain, in terms of the exponent/mantissa split, (a) why bf16 has the *same* dynamic range as fp32, (b) why fp16 has a hard overflow wall at ~65504, and (c) why bf16 makes loss scaling unnecessary but pays for it somewhere else.
+
+??? note "Solution"
+    **(a) Same range as fp32.** Dynamic range is set entirely by the *exponent* field. bf16 uses 1 sign + 8 exponent + 7 mantissa bits, and its 8-bit exponent is identical to fp32's 8-bit exponent (same width, same bias). Since the largest and smallest representable magnitudes are governed by the exponent, bf16's max (~$3.4 \times 10^{38}$) and min normal (~$1.2 \times 10^{-38}$) match fp32. Concretely, bf16 is literally the top 16 bits of an fp32 word: you obtain it by truncating the low 16 mantissa bits, with no change to sign or exponent.
+
+    **(b) fp16's overflow wall.** fp16 spends its bits as 1 sign + 5 exponent + 10 mantissa. Only 5 exponent bits means a far smaller range: the largest representable value is ~65504. Any computed value above that rounds to `+inf`. Gradient norms, attention scores, or optimizer states that transiently exceed 65504 therefore produce `inf`, which contaminates the rest of the forward/backward pass (often turning into NaN via `inf/inf` or `inf-inf`).
+
+    **(c) The trade.** Because bf16 shares fp32's range, values that fit in fp32 fit in bf16, so there is no overflow to defend against and **loss scaling becomes unnecessary**. The cost is paid in the *mantissa*: bf16 has only 7 mantissa bits versus fp16's 10, so its relative precision is coarser ($\varepsilon_{\text{mach}} \approx 7.8 \times 10^{-3}$ vs. fp16's $\approx 9.8 \times 10^{-4}$, roughly 10x worse). This is acceptable in practice because the gradient noise from SGD/Adam at LLM scale dominates the extra rounding error.
+
+**2.** bf16 has 7 mantissa bits. Working by hand:
+
+   (a) What is its machine epsilon $\varepsilon_{\text{mach}}$?
+   (b) What is 1 ULP (the spacing between adjacent representable values) at magnitude $256$?
+   (c) What is the largest integer $N$ such that *every* integer in $[0, N]$ is exactly representable in bf16? What does $N+1$ round to?
+
+??? note "Solution"
+    **(a)** Machine epsilon is $2^{-p}$ where $p$ is the number of mantissa bits. For bf16, $p = 7$:
+    $$\varepsilon_{\text{mach}} = 2^{-7} = \frac{1}{128} = 0.0078125 \approx 7.8 \times 10^{-3}.$$
+    This matches the chapter's table.
+
+    **(b)** A normal number of magnitude $x$ is written $1.m \times 2^{E}$. The value $256 = 1.0 \times 2^{8}$, so its exponent is $E = 8$. The spacing between adjacent representable values at that exponent is one step in the last mantissa bit:
+    $$1\ \text{ULP} = 2^{E} \times 2^{-7} = 2^{8-7} = 2^{1} = 2.$$
+    So near 256, representable bf16 values are spaced 2 apart (256, 258, 260, ...); 257 is not representable.
+
+    **(c)** The significand carries the implicit leading 1 plus 7 stored mantissa bits = 8 significant bits, so it can hold any integer with at most 8 bits: $0$ through $2^{8} = 256$. Thus $N = 256$. (256 itself is $1.0 \times 2^{8}$, exactly representable.) The next integer, $257$, would need a 9-bit significand; since the ULP at that magnitude is 2 (from part b), 257 rounds to the nearest representable value, **256** (round-to-nearest-even, since 256 and 258 are equidistant and 256 has an even last bit).
+
+**3.** You are given logits $z = [10, 11, 12]$ (in fp32, so no overflow). Using the max-subtraction identity from the chapter, compute by hand: (a) the shifted exponentials, (b) the softmax probabilities, and (c) $\operatorname{logsumexp}(z)$. Use $e^{-1} \approx 0.3679$, $e^{-2} \approx 0.1353$, $\ln(1.5032) \approx 0.4076$.
+
+??? note "Solution"
+    **(a) Shifted exponentials.** Subtract $m = \max_i z_i = 12$:
+    $$z - m = [10-12,\ 11-12,\ 12-12] = [-2,\ -1,\ 0].$$
+    $$e^{-2} \approx 0.1353,\quad e^{-1} \approx 0.3679,\quad e^{0} = 1.0.$$
+    Sum $S = 0.1353 + 0.3679 + 1.0 = 1.5032$. Note all exponentials lie in $(0, 1]$, so there is no overflow.
+
+    **(b) Softmax.** Divide each shifted exponential by $S$:
+    $$\text{softmax}(z) = \left[\frac{0.1353}{1.5032},\ \frac{0.3679}{1.5032},\ \frac{1.0}{1.5032}\right] \approx [0.0900,\ 0.2447,\ 0.6652].$$
+    (These sum to 1.0, as required, and are identical to what the naive formula would give in exact arithmetic — the $e^{-m}$ factor cancels.)
+
+    **(c) logsumexp.** Using $\operatorname{logsumexp}(z) = m + \log \sum_j e^{z_j - m}$:
+    $$\operatorname{logsumexp}(z) = 12 + \ln(1.5032) \approx 12 + 0.4076 = 12.4076.$$
+
+**4.** The chapter's stable softmax works by never exponentiating a positive argument. Quantify *why* this is essential.
+
+   (a) Above what input value $x$ does $e^{x}$ overflow fp16 (max ~$6.55 \times 10^{4}$)? Above what value does it overflow fp32 (max ~$3.40 \times 10^{38}$)?
+   (b) Attention scores are $q_i \cdot k_j / \sqrt{d_k}$. If a buggy implementation *forgets* the $1/\sqrt{d_k}$ factor with $d_k = 128$, and in the worst case where the per-dimension products do not cancel the raw dot product reaches ~$O(d_k) = 128$, explain which formats' softmax would break and how max-subtraction rescues all of them.
+
+   Use $\ln(6.55 \times 10^{4}) \approx 11.09$ and $\ln(3.40 \times 10^{38}) \approx 88.7$.
+
+??? note "Solution"
+    **(a) Overflow thresholds.** $e^{x}$ exceeds a format's max value $V_{\max}$ once $x > \ln V_{\max}$:
+    - fp16: $x > \ln(6.55 \times 10^{4}) \approx 11.09$. So $e^{x}$ overflows fp16 for inputs above ~11.
+    - fp32: $x > \ln(3.40 \times 10^{38}) \approx 88.7$. So $e^{x}$ overflows fp32 for inputs above ~88.7.
+
+    bf16 shares fp32's exponent, so its threshold is essentially the same ~88.7. The lesson: fp16 saturates at an alarmingly *small* argument (~11), which is easy to hit with unnormalized logits.
+
+    **(b) The attention case.** With unscaled scores of order ~128, the naive softmax must compute $e^{128}$.
+    - In **fp16**, $128 \gg 11.09$, so $e^{128} = \text{inf}$; the softmax collapses to `inf/inf = NaN`.
+    - In **fp32 and bf16**, $128 > 88.7$, so $e^{128}$ *also* overflows to `inf`, again giving NaN. Even the wide-range formats break here.
+
+    **Max-subtraction rescue.** Subtracting $m = \max_j z_j$ before exponentiating makes every argument $z_j - m \le 0$, so every exponential lies in $(0, 1]$ — impossible to overflow in *any* format. A very negative $z_j - m$ underflows gracefully to 0, which is the mathematically correct contribution. The result is unchanged because the common $e^{-m}$ factor cancels between numerator and denominator. (Properly including the $1/\sqrt{d_k}$ scaling brings raw scores back to $O(1)$, which is the first-line fix; max-subtraction is the guarantee that keeps softmax safe even when scores are large.)
+
+**5.** The chapter's `stable_logsumexp` needs the whole logit vector in memory at once (it calls `z.max()` then `torch.exp(z - m).sum()`). FlashAttention instead processes logits in *chunks*, keeping only a small running state. Implement `streaming_logsumexp(chunks)` that consumes an iterable of 1-D tensors one chunk at a time and returns $\log \sum_j e^{z_j}$ over the concatenation, **without** ever concatenating them. Maintain a running max $m$ and running accumulator $l = \sum e^{z - m}$, rescaling $l$ whenever the max grows. Verify it against `torch.logsumexp` on a case where a late chunk contains the global maximum.
+
+??? note "Solution"
+    The key is the online-softmax rescaling rule. If the running state is $(m, l)$ with $l = \sum e^{z - m}$ over everything seen so far, and a new chunk has local max $m_c$, define the updated max $m' = \max(m, m_c)$. Both the old accumulator and the new chunk must be re-expressed relative to $m'$:
+    $$l' = l \cdot e^{m - m'} + \sum_{z \in \text{chunk}} e^{z - m'}.$$
+    At the end, $\operatorname{logsumexp} = m + \log l$. This is exactly the bookkeeping FlashAttention runs across key blocks.
+
+    ```python
+    import torch
+
+
+    def streaming_logsumexp(chunks) -> torch.Tensor:
+        """
+        One-pass logsumexp over an iterable of 1-D tensors (chunks),
+        never materializing the concatenation.
+
+        Running state (m, l) satisfies  logsumexp(seen so far) = m + log(l),
+        where m is the running max and l = sum(exp(z - m)). When a chunk
+        pushes the max higher, l is rescaled by exp(m - m_new) before the
+        new chunk's contribution is added -- the online-softmax update that
+        FlashAttention applies across key blocks.
+        """
+        m = torch.tensor(float('-inf'))   # running max
+        l = torch.tensor(0.0)             # running sum of exp(z - m)
+
+        for chunk in chunks:
+            m_chunk = chunk.max()
+            m_new = torch.maximum(m, m_chunk)
+            # exp(-inf - m_new) = 0 on the first iteration, so l stays 0 there
+            l = l * torch.exp(m - m_new) + torch.exp(chunk - m_new).sum()
+            m = m_new
+
+        return m + torch.log(l)
+
+
+    if __name__ == "__main__":
+        # Global maximum (50.0) lives in the LAST chunk -> exercises rescaling
+        chunks = [
+            torch.tensor([1.0, 2.0, 3.0]),
+            torch.tensor([-5.0, 0.5]),
+            torch.tensor([50.0, 49.0]),
+        ]
+
+        streamed = streaming_logsumexp(chunks)
+        reference = torch.logsumexp(torch.cat(chunks), dim=-1)
+
+        print(f"streaming_logsumexp: {streamed:.6f}")
+        print(f"torch reference:     {reference:.6f}")
+        print(f"match: {torch.allclose(streamed, reference)}")
+    ```
+
+    Expected output:
+
+    ```text
+    streaming_logsumexp: 50.313263
+    torch reference:     50.313263
+    match: True
+    ```
+
+    Because every exponential argument is $z - m' \le 0$, no term ever overflows, exactly as in the single-pass stable version — the streaming form simply defers and repeatedly re-anchors the shift as new maxima arrive.

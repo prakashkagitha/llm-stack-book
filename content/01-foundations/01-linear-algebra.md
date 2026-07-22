@@ -766,3 +766,148 @@ x_cont = x_perm.contiguous()           # ensures efficient downstream matmul
 - **Aghajanyan, Zettlemoyer & Gupta, *Intrinsic Dimensionality Explains the Effectiveness of Language Model Fine-Tuning* (2021)** — Shows that fine-tuning effective dimensionality is far smaller than parameter count.
 - **NumPy `linalg` documentation** and **PyTorch `torch.linalg` documentation** — Comprehensive API references for the operations in this chapter; check for dispatch to LAPACK / cuBLAS under the hood.
 - **Matrix Cookbook (Petersen & Pedersen)** — A dense reference sheet of matrix calculus identities; useful as a lookup table for deriving gradients of custom operations.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) LoRA writes the weight update as $\Delta W = BA$ with $B \in \mathbb{R}^{d \times r}$ and $A \in \mathbb{R}^{r \times d}$. Explain why this construction forces $\text{rank}(\Delta W) \leq r$. Then answer: if you set $r = d$, does LoRA still save parameters compared to a full fine-tune? Use the parameter counts from the chapter to justify your answer.
+
+??? note "Solution"
+    From the rank rules in the chapter, $\text{rank}(BA) \leq \min(\text{rank}(B), \text{rank}(A))$. The matrix $B$ has only $r$ columns, so $\text{rank}(B) \leq r$; the matrix $A$ has only $r$ rows, so $\text{rank}(A) \leq r$. Therefore $\text{rank}(\Delta W) = \text{rank}(BA) \leq r$. The product $BA$ can never have more than $r$ independent directions no matter what values fill $B$ and $A$ -- the shared inner dimension $r$ is a hard bottleneck on the rank.
+
+    Parameter counts: a full fine-tune of $W \in \mathbb{R}^{d \times d}$ trains $d^2$ parameters. LoRA trains $B$ and $A$, i.e. $dr + rd = 2dr$ parameters. Setting $r = d$ gives $2d \cdot d = 2d^2$ trainable parameters -- *twice* as many as the full fine-tune, and the rank bound $\text{rank}(\Delta W) \leq d$ imposes no constraint at all. So LoRA only helps when $r \ll d$: the savings ratio is $2dr / d^2 = 2r/d$, which is below 1 precisely when $r < d/2$. The method is designed for the regime $r \in \{4, 8, 16\}$ with $d$ in the thousands.
+
+**2.** (Quantitative) A linear projection uses $W \in \mathbb{R}^{4096 \times 4096}$ applied to activations $X \in \mathbb{R}^{B \times S \times 4096}$ with $B = 2$, $S = 1024$. Using the chapter's rule that an $(m \times k)$ by $(k \times n)$ matmul costs $2mkn$ FLOPs:
+
+  (a) Compute the FLOPs for the full projection $XW$.
+
+  (b) Now add a LoRA adapter with rank $r = 8$, whose forward pass computes $B(A\mathbf{x})$ per token. Compute the *extra* FLOPs contributed by the adapter path across the whole batch, and express it as a fraction of the full projection cost.
+
+??? note "Solution"
+    **(a)** Treat the batch as $B \cdot S = 2 \cdot 1024 = 2048$ token vectors, each mapped by $W$ (a $4096 \times 4096$ operator). Per token that is a $(1 \times 4096)(4096 \times 4096)$ product costing $2 \cdot 4096 \cdot 4096 = 33{,}554{,}432$ FLOPs. Across all tokens:
+
+    $$
+    2 \cdot B \cdot S \cdot d^2 = 2 \cdot 2 \cdot 1024 \cdot 4096^2 = 68{,}719{,}476{,}736 \approx 68.7 \text{ GFLOPs}.
+    $$
+
+    **(b)** The adapter path per token is two small matmuls. First $A\mathbf{x}$: $A$ is $(r \times d)$, so $2 \cdot r \cdot d$ FLOPs. Then $B(\cdot)$: $B$ is $(d \times r)$ applied to an $r$-vector, another $2 \cdot d \cdot r$ FLOPs. Per token that is $4rd = 4 \cdot 8 \cdot 4096 = 131{,}072$ FLOPs. Across $B \cdot S = 2048$ tokens:
+
+    $$
+    4rd \cdot BS = 131{,}072 \cdot 2048 = 268{,}435{,}456 \approx 0.27 \text{ GFLOPs}.
+    $$
+
+    As a fraction of the full projection:
+
+    $$
+    \frac{4rd \cdot BS}{2d^2 \cdot BS} = \frac{2r}{d} = \frac{2 \cdot 8}{4096} = \frac{1}{256} \approx 0.39\%.
+    $$
+
+    The adapter adds under half a percent of compute on top of the frozen projection -- LoRA is cheap at inference in FLOPs, not just in trainable parameters.
+
+**3.** (Quantitative) A matrix $A \in \mathbb{R}^{m \times n}$ has singular values $\sigma = (10, 8, 6, 2, 1)$ and rank 5. Using the Eckart-Young theorem:
+
+  (a) Compute $\|A\|_F$.
+
+  (b) Compute the Frobenius-norm error $\|A - A_2\|_F$ of the best rank-2 approximation.
+
+  (c) Compute the *relative* error $\|A - A_2\|_F / \|A\|_F$, and compare it to the relative error of the best rank-3 approximation. What do the numbers say about the effective dimensionality of $A$?
+
+??? note "Solution"
+    Recall $\|A\|_F = \sqrt{\sum_i \sigma_i^2}$ and, by Eckart-Young, $\|A - A_k\|_F^2 = \sum_{i > k} \sigma_i^2$ (the dropped singular values).
+
+    **(a)** $\sum_i \sigma_i^2 = 100 + 64 + 36 + 4 + 1 = 205$, so $\|A\|_F = \sqrt{205} \approx 14.32$.
+
+    **(b)** Rank-2 keeps $\sigma_1, \sigma_2$ and drops $\sigma_3, \sigma_4, \sigma_5$:
+    $$
+    \|A - A_2\|_F^2 = 6^2 + 2^2 + 1^2 = 36 + 4 + 1 = 41, \qquad \|A - A_2\|_F = \sqrt{41} \approx 6.40.
+    $$
+
+    **(c)** Relative error at rank 2:
+    $$
+    \frac{\|A - A_2\|_F}{\|A\|_F} = \sqrt{\frac{41}{205}} = \sqrt{0.2} \approx 0.447 \; (44.7\%).
+    $$
+    Rank-3 drops only $\sigma_4, \sigma_5$: error$^2 = 4 + 1 = 5$, so relative error $= \sqrt{5/205} = \sqrt{0.0244} \approx 0.156 \; (15.6\%)$.
+
+    Interpretation: adding the third component slashes the relative error from 45% to 16% because $\sigma_3 = 6$ still carries real signal, whereas $\sigma_4 = 2$ and $\sigma_5 = 1$ are small. The energy is concentrated in the top three directions -- this matrix behaves as if its effective dimensionality is about 3, which is exactly the low-rank structure that makes truncated-SVD compression (and LoRA) work.
+
+**4.** (Quantitative / backprop) A linear layer computes $Y = XW$ with
+$$
+X = \begin{bmatrix} 1 & 2 & 3 \\ 4 & 5 & 6 \end{bmatrix} \in \mathbb{R}^{2 \times 3}, \qquad W = \begin{bmatrix} 1 & 0 \\ 0 & 1 \\ 1 & 1 \end{bmatrix} \in \mathbb{R}^{3 \times 2},
+$$
+and the scalar loss is $L = \sum_{ij} Y_{ij}$ (the sum of all output entries). Using the chapter's identities $\partial L / \partial W = X^\top G$ and $\partial L / \partial X = G W^\top$, compute both gradient matrices by hand. First state what the upstream gradient $G = \partial L / \partial Y$ is.
+
+??? note "Solution"
+    Because $L = \sum_{ij} Y_{ij}$, each output entry contributes 1 to the loss, so
+    $$
+    G = \frac{\partial L}{\partial Y} = \mathbf{1}_{2 \times 2} = \begin{bmatrix} 1 & 1 \\ 1 & 1 \end{bmatrix}.
+    $$
+
+    **Weight gradient** $\partial L / \partial W = X^\top G$. Here $X^\top \in \mathbb{R}^{3 \times 2}$ and $G \in \mathbb{R}^{2 \times 2}$; since every column of $G$ is all ones, each output column equals the column sums of $X$, namely $(1{+}4,\, 2{+}5,\, 3{+}6) = (5, 7, 9)$:
+    $$
+    \frac{\partial L}{\partial W} = X^\top G = \begin{bmatrix} 1 & 4 \\ 2 & 5 \\ 3 & 6 \end{bmatrix}\begin{bmatrix} 1 & 1 \\ 1 & 1 \end{bmatrix} = \begin{bmatrix} 5 & 5 \\ 7 & 7 \\ 9 & 9 \end{bmatrix}.
+    $$
+    This has the shape of $W$ ($3 \times 2$), as required.
+
+    **Input gradient** $\partial L / \partial X = G W^\top$. With $W^\top = \begin{bmatrix} 1 & 0 & 1 \\ 0 & 1 & 1 \end{bmatrix}$ and $G$ all ones, each row of the result is the column sums of $W^\top$, namely $(1{+}0,\, 0{+}1,\, 1{+}1) = (1, 1, 2)$:
+    $$
+    \frac{\partial L}{\partial X} = G W^\top = \begin{bmatrix} 1 & 1 \\ 1 & 1 \end{bmatrix}\begin{bmatrix} 1 & 0 & 1 \\ 0 & 1 & 1 \end{bmatrix} = \begin{bmatrix} 1 & 1 & 2 \\ 1 & 1 & 2 \end{bmatrix}.
+    $$
+    This has the shape of $X$ ($2 \times 3$). The shapes matching is the quick sanity check the chapter recommends: $X^\top G$ is $(3 \times 2)(2 \times 2) \to 3 \times 2$, and $G W^\top$ is $(2 \times 2)(2 \times 3) \to 2 \times 3$.
+
+**5.** (Implementation) Extend the chapter's `LoRALinear` class with two features used in real LoRA deployments. (a) A `merged_weight()` method that folds the adapter back into a single dense weight $W_0 + \text{scale}\cdot BA$ so inference has zero adapter overhead; verify that a forward pass through the merged weight matches the original two-path forward. (b) An `init_from_svd(W)` method (PiSSA-style, from the chapter's SVD-initialization note) that sets $A$ and $B$ from the top-$r$ SVD of a target matrix $W$, so that $\text{scale}\cdot BA$ equals the best rank-$r$ approximation $A_r$. Verify this against a direct truncated SVD.
+
+??? note "Solution"
+    Recall the chapter's forward pass: $y = x W_0^\top + \text{scale}\cdot (x A^\top) B^\top = x\,(W_0 + \text{scale}\cdot BA)^\top$, so the folded weight is $W_0 + \text{scale}\cdot BA$. For the SVD init, the chapter's note gives $A = \Sigma_r^{1/2} V_r^\top$ and $B = U_r \Sigma_r^{1/2}$, so $BA = U_r \Sigma_r V_r^\top = A_r$. To make $\text{scale}\cdot BA = A_r$ exactly (the forward multiplies the adapter by `scale`), we divide $B$ by `scale`.
+
+    ```python
+    import torch
+    import torch.nn as nn
+
+    class LoRALinearSVD(LoRALinear):
+        """LoRALinear plus weight-merging and SVD-based initialization."""
+
+        def merged_weight(self):
+            # forward:  y = x @ W0.T + scale * (x @ A.T) @ B.T
+            #             = x @ (W0 + scale * B @ A).T
+            return self.W0.data + self.scale * (self.B @ self.A)
+
+        @torch.no_grad()
+        def init_from_svd(self, W):
+            """Init A, B from the top-r SVD of W so scale * B @ A = A_r."""
+            U, S, Vh = torch.linalg.svd(W, full_matrices=False)
+            Ur  = U[:, :self.rank]          # (out, r)
+            Sr  = S[:self.rank]             # (r,)
+            Vhr = Vh[:self.rank, :]         # (r, in)
+            sqrt_S = torch.sqrt(Sr)
+            # B @ A = (Ur * sqrt_S) @ (sqrt_S[:,None] * Vhr) = Ur diag(Sr) Vhr = A_r
+            # divide B by scale so that scale * B @ A == A_r exactly
+            self.B.copy_((Ur * sqrt_S) / self.scale)   # (out, r)
+            self.A.copy_(sqrt_S[:, None] * Vhr)        # (r, in)
+
+
+    # ---- (a) merged weight matches the two-path forward ----
+    torch.manual_seed(0)
+    d, r = 64, 8
+    layer = LoRALinearSVD(d, d, rank=r, alpha=16)
+    # give B a nonzero value so the adapter path is actually exercised
+    nn.init.normal_(layer.B, std=0.02)
+
+    x = torch.randn(3, d)
+    y_fwd    = layer(x)                        # original two-path forward
+    y_merged = x @ layer.merged_weight().T     # single dense matmul
+    print("merged matches forward:",
+          torch.allclose(y_fwd, y_merged, atol=1e-5))   # True
+
+    # ---- (b) SVD init reproduces the best rank-r approximation ----
+    W_target = torch.randn(d, d)
+    layer.init_from_svd(W_target)
+
+    adapter = layer.scale * (layer.B @ layer.A)          # what the adapter encodes
+    U, S, Vh = torch.linalg.svd(W_target, full_matrices=False)
+    A_r = (U[:, :r] * S[:r]) @ Vh[:r, :]                 # direct rank-r truncation
+    print("adapter == rank-r SVD:",
+          torch.allclose(adapter, A_r, atol=1e-4))       # True
+    ```
+
+    Both checks print `True`. Part (a) confirms the algebraic identity $y = x(W_0 + \text{scale}\cdot BA)^\top$, meaning a trained adapter can be merged into the base weight for overhead-free deployment. Part (b) confirms that the factored initialization reproduces the Eckart-Young optimal rank-$r$ matrix, so training starts from the most informative low-rank subspace rather than from a random one.

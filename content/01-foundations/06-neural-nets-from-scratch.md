@@ -689,3 +689,177 @@ A second favorite: *why does backprop cost about the same as the forward pass ra
 - **Ioffe & Szegedy, *Batch Normalization* (2015)** — The original BatchNorm paper, including the forward transform and the backward derivation implemented above.
 - **Goodfellow, Bengio & Courville, *Deep Learning* (2016), Chapters 6 and 8** — The canonical textbook treatment of feed-forward networks, backprop, and optimization difficulties.
 - **Nielsen, *Neural Networks and Deep Learning* (online book)** — A gentle, code-first derivation of backprop that complements the matrix-form presentation here.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter insists the activation function $\phi$ is "non-negotiable." Suppose you build a 3-layer MLP but set every activation to the identity map, $\phi(z)=z$. Show algebraically that the whole network collapses to a single affine map, and explain in one sentence what this means for the function class the network can represent.
+
+??? note "Solution"
+
+    Write the three layers with identity activations:
+
+    $$
+    \mathbf{a}^{(1)} = W^{(1)}\mathbf{x} + \mathbf{b}^{(1)}, \quad
+    \mathbf{a}^{(2)} = W^{(2)}\mathbf{a}^{(1)} + \mathbf{b}^{(2)}, \quad
+    \mathbf{a}^{(3)} = W^{(3)}\mathbf{a}^{(2)} + \mathbf{b}^{(3)}.
+    $$
+
+    Substitute inward, from the last layer to the first:
+
+    $$
+    \mathbf{a}^{(3)} = W^{(3)}\!\left(W^{(2)}\!\left(W^{(1)}\mathbf{x}+\mathbf{b}^{(1)}\right)+\mathbf{b}^{(2)}\right)+\mathbf{b}^{(3)}.
+    $$
+
+    Distribute the matrix products:
+
+    $$
+    \mathbf{a}^{(3)} = \underbrace{W^{(3)}W^{(2)}W^{(1)}}_{\tilde W}\,\mathbf{x}
+    \;+\; \underbrace{W^{(3)}W^{(2)}\mathbf{b}^{(1)} + W^{(3)}\mathbf{b}^{(2)} + \mathbf{b}^{(3)}}_{\tilde{\mathbf b}}.
+    $$
+
+    This is exactly one affine map $\mathbf{a}^{(3)} = \tilde W \mathbf{x} + \tilde{\mathbf b}$ with a single effective weight matrix $\tilde W$ and bias $\tilde{\mathbf b}$. Because a product of linear maps is linear, the three layers buy no extra expressive power: the network can represent nothing beyond a single linear (affine) function, no matter how many such layers you stack. The nonlinearity is what lets depth express functions a single matrix cannot.
+
+**2.** (Quantitative) Trace the scalar autograd engine by hand. Let $x=2.0$, $w=3.0$, $b=1.0$, and $\text{target}=4.0$. Compute $z = x\cdot w + b$, $a = \mathrm{relu}(z)$, and $\text{loss} = (a-\text{target})^2$. Then work the backward pass by hand to find $\dfrac{\partial L}{\partial w}$, $\dfrac{\partial L}{\partial x}$, and $\dfrac{\partial L}{\partial b}$. (Note the sign of $w$ is flipped from the chapter's dead-ReLU example, so the gate is now open.)
+
+??? note "Solution"
+
+    Forward pass:
+
+    $$
+    z = x w + b = (2.0)(3.0) + 1.0 = 7.0, \qquad
+    a = \mathrm{relu}(7.0) = 7.0, \qquad
+    L = (a - 4.0)^2 = (3.0)^2 = 9.0.
+    $$
+
+    Backward pass, right to left, using the local VJP rules from the `Value` class. Seed $\bar L = \partial L/\partial L = 1$.
+
+    Through the square, $L = (a-t)^2$ with $t=4.0$:
+
+    $$
+    \bar a = \frac{\partial L}{\partial a} = 2(a - t)\cdot \bar L = 2(7.0 - 4.0) = 6.0.
+    $$
+
+    Through the ReLU, whose gate is open because $z = 7.0 > 0$ (derivative $=1$):
+
+    $$
+    \bar z = \bar a \cdot \mathbb{1}[z>0] = 6.0 \cdot 1 = 6.0.
+    $$
+
+    Through $z = xw + b$. The bias adds, so it passes the gradient through; the multiply sends the *other* operand times the upstream:
+
+    $$
+    \frac{\partial L}{\partial b} = \bar z \cdot 1 = 6.0,
+    $$
+    $$
+    \frac{\partial L}{\partial w} = \bar z \cdot x = 6.0 \cdot 2.0 = 12.0,
+    $$
+    $$
+    \frac{\partial L}{\partial x} = \bar z \cdot w = 6.0 \cdot 3.0 = 18.0.
+    $$
+
+    So $\partial L/\partial w = 12.0$, $\partial L/\partial x = 18.0$, $\partial L/\partial b = 6.0$ — all nonzero, because the ReLU gate is open. (Contrast the chapter's example with $w=-3.0$, where $z<0$ shut the gate and every gradient was zero.)
+
+**3.** (Quantitative) Use the variance-propagation rule to compare initializations for a ReLU layer. A hidden layer has $d_{\text{in}} = 512$ inputs and receives an input activation with per-component variance $\operatorname{Var}(x) = 1$. Recall that a ReLU layer preserves the forward standard deviation when weights are drawn with $\operatorname{Var}(W) = 2/d_{\text{in}}$. (a) What weight standard deviation does Kaiming init prescribe here? (b) If instead you (wrongly) used $\operatorname{Var}(W) = 1/d_{\text{in}}$ (Xavier-style, ignoring the ReLU factor of 2), by what factor does the activation *standard deviation* shrink per layer? (c) After 20 such layers, what is the activation std, starting from 1?
+
+??? note "Solution"
+
+    (a) Kaiming variance is $\operatorname{Var}(W) = 2/d_{\text{in}} = 2/512 = 1/256$. The standard deviation is
+
+    $$
+    \sqrt{2/512} = \sqrt{0.00390625} = 0.0625.
+    $$
+
+    (b) The pre-activation variance is $\operatorname{Var}(z) = d_{\text{in}}\cdot\operatorname{Var}(W)\cdot\operatorname{Var}(x)$, and the ReLU zeroes half its inputs in expectation, which halves the variance that survives to the next layer. So the per-layer variance multiplier is
+
+    $$
+    \tfrac{1}{2}\, d_{\text{in}}\,\operatorname{Var}(W)
+    = \tfrac{1}{2}\cdot 512 \cdot \frac{1}{512} = \tfrac{1}{2}.
+    $$
+
+    The standard deviation multiplier is the square root of that:
+
+    $$
+    \sqrt{\tfrac{1}{2}} \approx 0.7071.
+    $$
+
+    So each layer shrinks the activation std by a factor of about $0.7071$ (a $\sim 29\%$ reduction). This is exactly why Xavier's $1/d_{\text{in}}$ under-scales ReLU nets and Kaiming restores the missing factor of 2: with $\operatorname{Var}(W)=2/d_{\text{in}}$ the multiplier becomes $\tfrac12\cdot 512\cdot\tfrac{2}{512}=1$, and std is preserved.
+
+    (c) Starting from std $=1$, after 20 layers:
+
+    $$
+    (0.7071)^{20} = \left(\tfrac{1}{2}\right)^{10} = \frac{1}{1024} \approx 9.8\times 10^{-4}.
+    $$
+
+    The signal has collapsed by three orders of magnitude in only 20 layers — a concrete instance of the vanishing-signal (and, on the backward pass, vanishing-gradient) pathology the chapter warns about.
+
+**4.** (Implementation) The chapter's `MLP` uses plain ReLU, which can suffer dead units. Implement Leaky ReLU (with slope $\alpha$ for negative inputs) and its derivative in the chapter's NumPy style, matching the signatures of `relu` / `relu_grad`. Then state the one-line change needed inside `MLP.forward` and `MLP.loss_and_grads` to use them, and explain in one sentence why this keeps dead units alive.
+
+??? note "Solution"
+
+    Leaky ReLU is $\phi(z)=\max(\alpha z, z)$, i.e. $z$ for $z>0$ and $\alpha z$ for $z\le 0$; its derivative is $1$ where $z>0$ and $\alpha$ where $z\le 0$. In the chapter's vectorized style:
+
+    ```python
+    import numpy as np
+
+    def leaky_relu(z, alpha=0.01):
+        # z where z > 0, else alpha * z  (vectorized, no Python loop)
+        return np.where(z > 0.0, z, alpha * z)
+
+    def leaky_relu_grad(z, alpha=0.01):
+        # 1 where z > 0, else alpha
+        return np.where(z > 0.0, 1.0, alpha).astype(z.dtype)
+    ```
+
+    Usage inside the `MLP`: in `forward`, the hidden-layer branch changes from
+
+    ```python
+        if i < L - 1:
+            A = relu(Z)
+    ```
+
+    to `A = leaky_relu(Z)`; and in `loss_and_grads`, the gate line changes from
+
+    ```python
+        dZ = dA_prev * relu_grad(cache["Z"][i - 1])
+    ```
+
+    to `dZ = dA_prev * leaky_relu_grad(cache["Z"][i - 1])`. (The two must match: the forward activation and the derivative used to gate the backward gradient have to be the same function.)
+
+    Why it keeps units alive: for $z\le 0$ the derivative is $\alpha \neq 0$ rather than $0$, so a trickle of gradient always flows back into a negative-pre-activation neuron, letting it update and potentially climb back into the active region — whereas plain ReLU's zero derivative there freezes a dead unit forever.
+
+**5.** (Implementation + verification) A colleague hand-writes the backward pass for the output layer of the chapter's `MLP` but writes the fused softmax-cross-entropy seed as
+
+    ```python
+    dZ = P.copy()
+    dZ[np.arange(N), y] -= 1.0
+    # (forgot to divide by N)
+    ```
+
+    omitting the `dZ /= N`. Explain what this bug does to the gradients, and describe precisely what the `gradient_check` function from the chapter would report (a number, roughly) that reveals the bug. Then write the corrected two lines.
+
+??? note "Solution"
+
+    The chapter's loss is the *mean* cross-entropy over the batch, $L = \frac1N\sum_n L_n$. The correct fused seed is therefore $\bar Z = (P - Y)/N$; the $1/N$ comes from differentiating the mean. Omitting `dZ /= N` seeds $\bar Z = (P-Y)$ instead, so every downstream gradient — $\bar W = A^\top \bar Z$, $\bar{\mathbf b} = \mathbf 1^\top \bar Z$, and everything propagated to earlier layers — is too large by exactly a factor of $N$ (the batch size). Training would effectively use a learning rate $N$ times bigger than intended and likely diverge for any $N$ of realistic size.
+
+    `gradient_check` compares the analytic gradient against the central-difference numerical gradient of the *same* loss (the mean CE), computing the relative error
+
+    $$
+    \text{rel} = \frac{|\text{num} - \text{ana}|}{|\text{num}| + |\text{ana}| + 10^{-12}}.
+    $$
+
+    Here $\text{ana} = N\cdot\text{num}$, so
+
+    $$
+    \text{rel} = \frac{|N\cdot\text{num} - \text{num}|}{|N\cdot\text{num}| + |\text{num}|}
+    = \frac{N-1}{N+1}.
+    $$
+
+    For the chapter's demo batch $N = 512$ this is $511/513 \approx 0.996$ — a relative error near $1.0$, glaringly far from the $\sim 10^{-7}$ a correct backward pass produces. That huge relative error is exactly the signal that the analytic gradient is off by a constant factor. The fix restores the mean's $1/N$:
+
+    ```python
+    dZ = P.copy()
+    dZ[np.arange(N), y] -= 1.0
+    dZ /= N        # <- mean loss => gradients scaled by 1/N
+    ```

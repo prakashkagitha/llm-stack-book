@@ -694,3 +694,174 @@ This picture has three take-aways:
 - Müller, R., Kornblith, S., and Hinton, G. "When Does Label Smoothing Help?" *NeurIPS*, 2019. Empirical analysis of label smoothing's effects on calibration and distillation.
 - Radford, A. et al. "Language Models are Unsupervised Multitask Learners." OpenAI, 2019. (GPT-2 paper) — describes the sliding-window perplexity evaluation methodology.
 - lm-evaluation-harness (EleutherAI): open-source framework for evaluating language models, including perplexity across many benchmarks. Available at github.com/EleutherAI/lm-evaluation-harness.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter states that cross-entropy loss for a language model is *exactly* the negative log-likelihood, and that in language modeling the true distribution $p$ is one-hot. Explain in your own words why, under a one-hot target on the observed token $x^*$, the cross-entropy $H(p,q) = -\sum_x p(x)\log q(x)$ collapses to $-\log q(x^*)$, and what the decomposition $H(p,q)=H(p)+D_{\text{KL}}(p\|q)$ becomes in this one-hot case.
+
+??? note "Solution"
+
+    The one-hot distribution puts all mass on the observed token: $p(x^*) = 1$ and $p(x) = 0$ for every other $x$. In the sum $-\sum_x p(x)\log q(x)$, every term with $p(x) = 0$ contributes $0 \cdot \log q(x) = 0$ (using the convention $0\log 0 = 0$). Only the $x = x^*$ term survives, giving
+
+    $$
+    H(p_{\text{one-hot}}, q) = -p(x^*)\log q(x^*) = -\log q(x^*).
+    $$
+
+    For the decomposition, the entropy of a one-hot (degenerate) distribution is $H(p) = -1\cdot\log 1 - \sum_{x\neq x^*} 0\cdot\log 0 = 0$, since $\log 1 = 0$ and the other terms are zero by convention. Therefore
+
+    $$
+    H(p,q) = \underbrace{H(p)}_{=0} + D_{\text{KL}}(p\|q) = D_{\text{KL}}(p\|q).
+    $$
+
+    So with a one-hot target the cross-entropy equals the KL divergence exactly: $-\log q(x^*) = D_{\text{KL}}(p_{\text{one-hot}}\|q)$. Minimizing the cross-entropy loss is minimizing the KL from the (one-hot) data distribution to the model, with no constant offset to subtract.
+
+**2.** (Quantitative — entropy and perplexity) A toy language model, at a single prediction step, outputs the categorical distribution $q = [0.5,\ 0.25,\ 0.125,\ 0.125]$ over a 4-token vocabulary.
+
+  (a) Compute the entropy $H(q)$ in bits.
+  (b) If the true next token is token 1 (the one with probability $0.25$), what is the single-step cross-entropy loss $-\log q(x^*)$, in bits and in nats?
+  (c) What single-step perplexity does that loss correspond to?
+
+??? note "Solution"
+
+    (a) Using $H(q) = -\sum_k q_k \log_2 q_k$ with the same distribution as the chapter's worked example:
+
+    $$
+    H(q) = -0.5\log_2 0.5 - 0.25\log_2 0.25 - 0.125\log_2 0.125 - 0.125\log_2 0.125
+    $$
+    $$
+    = 0.5(1) + 0.25(2) + 0.125(3) + 0.125(3) = 0.5 + 0.5 + 0.375 + 0.375 = 1.75 \text{ bits}.
+    $$
+
+    (b) The true token is token 1 with $q(x^*) = 0.25$. In bits: $-\log_2 0.25 = 2$ bits. In nats: $-\ln 0.25 = \ln 4 \approx 1.386$ nats. (Check: $2 \text{ bits} / 1.4427 \approx 1.386$ nats, consistent with the $1\text{ nat} = 1.4427\text{ bits}$ conversion in the chapter.)
+
+    (c) Perplexity is the exponential of the cross-entropy, using a base matching the log unit. With nats: $\text{PPL} = \exp(1.386) = 4$. Equivalently with bits: $2^{2} = 4$. The perplexity of $4$ makes sense: the model assigned probability $1/4$ to the correct token, so it is "as confused as choosing uniformly among 4 options" at this step.
+
+**3.** (Quantitative — KL divergence and its asymmetry) Let $p = [0.5,\ 0.5]$ and $q = [0.9,\ 0.1]$ be two distributions over a binary outcome. Using natural logs (nats):
+
+  (a) Compute $D_{\text{KL}}(p\|q)$.
+  (b) Compute $D_{\text{KL}}(q\|p)$.
+  (c) Are they equal? Use the numbers to state concretely which direction penalizes putting mass where the other distribution has little.
+
+??? note "Solution"
+
+    (a) $D_{\text{KL}}(p\|q) = \sum_x p(x)\ln\frac{p(x)}{q(x)}$:
+
+    $$
+    = 0.5\ln\frac{0.5}{0.9} + 0.5\ln\frac{0.5}{0.1} = 0.5\ln(0.5556) + 0.5\ln(5).
+    $$
+
+    $\ln(0.5556) \approx -0.5878$ and $\ln(5) \approx 1.6094$, so
+
+    $$
+    D_{\text{KL}}(p\|q) \approx 0.5(-0.5878) + 0.5(1.6094) = -0.2939 + 0.8047 = 0.5108 \text{ nats}.
+    $$
+
+    (b) $D_{\text{KL}}(q\|p) = \sum_x q(x)\ln\frac{q(x)}{p(x)}$:
+
+    $$
+    = 0.9\ln\frac{0.9}{0.5} + 0.1\ln\frac{0.1}{0.5} = 0.9\ln(1.8) + 0.1\ln(0.2).
+    $$
+
+    $\ln(1.8) \approx 0.5878$ and $\ln(0.2) \approx -1.6094$, so
+
+    $$
+    D_{\text{KL}}(q\|p) \approx 0.9(0.5878) + 0.1(-1.6094) = 0.5290 - 0.1609 = 0.3681 \text{ nats}.
+    $$
+
+    (c) They are not equal ($0.5108 \neq 0.3681$), confirming KL is asymmetric. $D_{\text{KL}}(p\|q)$ is the larger of the two: the expectation is taken under $p$, which places $0.5$ mass on outcome 2 where $q$ has only $0.1$ — the large ratio $0.5/0.1 = 5$ is weighted by $p$'s substantial $0.5$, incurring a big penalty. In general the forward KL $D_{\text{KL}}(p\|q)$ heavily penalizes any outcome where $p$ has high mass but $q$ has low mass — this is exactly the "mode-covering" / inclusive behavior described in the chapter: to minimize it, $q$ must not starve any region that $p$ cares about.
+
+**4.** (Conceptual — perplexity and tokenization) Two language models are evaluated on the same held-out English text. Model A uses a word-level tokenizer; Model B uses a byte-level tokenizer. Model B reports a *lower* per-token perplexity than Model A. A colleague concludes Model B is the better language model. Explain, using the chapter's discussion of perplexity pitfalls, why this comparison is invalid, and describe what would make it a fair comparison.
+
+??? note "Solution"
+
+    Perplexity is a *per-token* quantity: $\text{PPL} = \exp\!\big(-\frac{1}{T}\sum_t \log p_\theta(x_t\mid x_{<t})\big)$, where $T$ is the number of tokens. The number of tokens $T$ depends entirely on the tokenizer. A byte-level tokenizer splits each word into many small units, so it makes many more, individually easier, predictions per word (e.g. predicting the next byte given previous bytes is often near-deterministic). A word-level tokenizer makes one harder decision per word. Because the averaging denominator and the difficulty of each decision both change with the tokenizer, the two perplexity numbers are on different scales and are not comparable — the chapter states directly: "Always compare perplexity numbers computed with the same tokenizer on the same test set."
+
+    A lower per-token perplexity for Model B therefore does not establish that it models English better; it may simply reflect that byte-level prediction is easier per step. To make the comparison fair you must put both models on a common denominator — for example, normalize the total negative log-likelihood by a tokenizer-independent unit such as *bits per character* or *bits per byte* (total NLL in bits divided by the number of characters/bytes in the raw text), which is invariant to how each model segments the text. Then both models are scored by how many bits they need to encode the same underlying string. (Even then, as the chapter notes, perplexity/bits-per-byte is not a direct proxy for downstream task quality.)
+
+**5.** (Implementation) The chapter's `perplexity.py` exposes `perplexity_from_log_probs` and `perplexity_from_logits`, but no function that computes perplexity directly from a probability distribution and target ids without going through logits. Write a function `perplexity_from_probs(probs, targets)` in the chapter's style: `probs` is a `(T, V)` tensor of already-normalized categorical distributions (each row sums to 1), `targets` is a `(T,)` long tensor of correct token ids. It should gather the probability of the correct token at each step, take the mean negative log, and exponentiate. Guard against $\log 0$ with a small clamp, consistent with the chapter's `clamp(min=1e-12)` idiom. Then show the call that reproduces the chapter's toy 5-token result (~5.17).
+
+??? note "Solution"
+
+    ```python
+    import math
+    import torch
+
+    def perplexity_from_probs(
+        probs: torch.Tensor,    # shape (T, V), each row sums to 1
+        targets: torch.Tensor,  # shape (T,), ground-truth token ids
+    ) -> float:
+        """
+        Compute perplexity directly from a categorical probability
+        distribution (already softmaxed) and target token ids.
+
+        Steps:
+          1. Gather p(x_t | x_{<t}) for the correct token at each step.
+          2. Take the natural log (clamped to avoid log(0)).
+          3. Average the negative log-probs and exponentiate.
+        """
+        if probs.dim() != 2:
+            raise ValueError("probs must be 2-D (T, V)")
+        # Gather the probability assigned to each correct token: (T,)
+        token_probs = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        # Clamp before log for numerical safety, matching the chapter's idiom.
+        token_log_probs = torch.log(token_probs.clamp(min=1e-12))
+        avg_nll = -token_log_probs.mean().item()
+        return math.exp(avg_nll)
+    ```
+
+    Reproducing the chapter's toy 5-token example (probabilities $[0.20, 0.05, 0.30, 0.60, 0.15]$ for the correct tokens). We build a `(5, V)` matrix where row $t$ places the given probability on the correct token; the exact placement of the remaining mass does not matter because only the correct-token column is gathered:
+
+    ```python
+    probs_correct = [0.20, 0.05, 0.30, 0.60, 0.15]
+    T, V = 5, 4
+    probs = torch.zeros(T, V)
+    targets = torch.tensor([0, 1, 2, 3, 0])  # any valid ids; one per row
+    for t, pc in enumerate(probs_correct):
+        probs[t, targets[t]] = pc
+        # distribute the rest arbitrarily over other columns (rows sum to 1)
+        rest = (1.0 - pc) / (V - 1)
+        for v in range(V):
+            if v != targets[t].item():
+                probs[t, v] = rest
+
+    print(perplexity_from_probs(probs, targets))  # -> ~5.173
+    ```
+
+    This matches `perplexity_from_log_probs([math.log(p) for p in probs_correct])` because both compute $\exp\!\big(-\frac{1}{5}\sum_t \log p_t\big)$ with $p_t$ the correct-token probabilities; the average NLL is $(1.609+2.996+1.204+0.511+1.897)/5 = 1.643$ nats and $\exp(1.643) \approx 5.17$.
+
+**6.** (Implementation + conceptual — label smoothing) The chapter gives the label-smoothed loss
+
+  $$
+  \mathcal{L}_{\text{LS}} = -(1-\varepsilon)\log q(k^*) - \frac{\varepsilon}{V}\sum_k \log q(k).
+  $$
+
+  (a) Write a small function `smoothed_target(k_star, V, eps)` returning the smoothed target distribution $p_{\text{smooth}}$ as a length-$V$ list, per the chapter's formula $p_{\text{smooth}}(k) = (1-\varepsilon)\mathbf{1}[k=k^*] + \varepsilon/V$.
+  (b) By hand, for $V = 4$, $k^* = 0$, $\varepsilon = 0.1$: write out $p_{\text{smooth}}$ and verify it sums to 1.
+  (c) Explain, using the chapter's "KL guard" reasoning, why $p_{\text{smooth}}(k) > 0$ for every $k$ matters for keeping $D_{\text{KL}}(p\|q)$ well-defined.
+
+??? note "Solution"
+
+    (a) Direct translation of the formula:
+
+    ```python
+    def smoothed_target(k_star: int, V: int, eps: float = 0.1):
+        """Smoothed target distribution per the chapter's label-smoothing formula."""
+        base = eps / V
+        p = [base] * V
+        p[k_star] += (1.0 - eps)   # add the (1-eps) mass onto the correct class
+        return p
+    ```
+
+    Each class gets a floor of $\varepsilon/V$; the correct class $k^*$ additionally receives $(1-\varepsilon)$, so $p_{\text{smooth}}(k^*) = (1-\varepsilon) + \varepsilon/V$, matching the chapter's $p_{\text{smooth}}(k) = (1-\varepsilon)\mathbf{1}[k=k^*] + \varepsilon/V$.
+
+    (b) With $V=4$, $k^*=0$, $\varepsilon=0.1$: the floor is $\varepsilon/V = 0.1/4 = 0.025$. So
+
+    $$
+    p_{\text{smooth}} = [\,(1-0.1) + 0.025,\ 0.025,\ 0.025,\ 0.025\,] = [0.925,\ 0.025,\ 0.025,\ 0.025].
+    $$
+
+    Sum: $0.925 + 0.025 + 0.025 + 0.025 = 1.000$. Valid distribution. (`smoothed_target(0, 4, 0.1)` returns exactly this list.)
+
+    (c) The chapter notes that $D_{\text{KL}}(p\|q) = \sum_x p(x)\log\frac{p(x)}{q(x)}$ is "infinite if $q(x)=0$ where $p(x)>0$", and that with a raw one-hot target the term $0\cdot\log(0/0)$ is undefined when both $p(x)=0$ and $q(x)=0$. Label smoothing sets $p_{\text{smooth}}(k) = \varepsilon/V > 0$ for *every* class, so there is never a class with $p(x)>0$ contributing an undefined or ill-behaved term against $q$: every $\log\frac{p(x)}{q(x)}$ is a ratio of two positive numbers. This keeps the divergence finite and well-defined, and it also floors the target away from the degenerate one-hot corner that pushes the correct-class logit toward $+\infty$ and produces overconfident, poorly calibrated models — the calibration benefit discussed in the chapter.
