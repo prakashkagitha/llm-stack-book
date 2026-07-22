@@ -131,9 +131,10 @@ def ndcg_at_k(relevances, k):
     ideal = dcg_at_k(sorted(relevances, reverse=True), k)
     return actual / ideal if ideal > 0 else 0.0
 
-# Predicted ranking put a "1" before a "3": NDCG penalizes that inversion.
-print(round(ndcg_at_k([3, 1, 2, 0], 4), 4))   # 1.0  (already ideal)
-print(round(ndcg_at_k([1, 3, 2, 0], 4), 4))   # ~0.79 (good item ranked 2nd)
+# First ranking is already sorted by relevance -- already ideal.
+# Second ranking put a "1" before a "3": NDCG penalizes that inversion.
+print(round(ndcg_at_k([3, 2, 1, 0], 4), 4))   # 1.0    (already ideal)
+print(round(ndcg_at_k([1, 3, 2, 0], 4), 4))   # 0.7364 (good item ranked 2nd)
 ```
 
 ### SLOs and the latency budget
