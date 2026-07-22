@@ -204,17 +204,20 @@ class Scheduler:
         raise ValueError(self.policy)
 
     # ---- preemption -------------------------------------------------------
-    def _preempt_one(self) -> bool:
+    def _preempt_one(self, exclude: Request | None = None) -> bool:
         """Evict the lowest-priority / newest running request back to WAITING.
-        Returns True if something was preempted (and its blocks freed)."""
-        if not self.running:
+        Returns True if something was preempted (and its blocks freed).
+        `exclude` is the request currently being resized by schedule() — it must
+        never be allowed to preempt itself (see note below)."""
+        candidates = [r for r in self.running if r is not exclude]
+        if not candidates:
             return False
         # victim selection: in FCFS we recompute (LIFO — preempt the most-recently
         # admitted, i.e. largest arrival). In priority, preempt the worst priority.
         if self.policy == "priority":
-            victim = max(self.running, key=lambda r: (r.priority, r.arrival))
+            victim = max(candidates, key=lambda r: (r.priority, r.arrival))
         else:
-            victim = max(self.running, key=lambda r: r.arrival)
+            victim = max(candidates, key=lambda r: r.arrival)
         self.running.remove(victim)
         self._free(victim)                  # recompute KV on resume (recomputation)
         victim.status = Status.WAITING
@@ -232,14 +235,28 @@ class Scheduler:
         #     Ensure each can hold one more token; if a request needs a NEW block
         #     and we are out of memory, preempt to make room (or it stalls).
         survivors = []
-        for req in self.running:
+        # Iterate a SNAPSHOT of self.running: preempting a victim mutates the live
+        # list, and looping over a list while removing from it silently skips
+        # entries. `req.status` (flipped to WAITING by a preemption) is what tells
+        # us a snapshot entry is no longer actually running.
+        for req in list(self.running):
+            if req.status is not Status.RUNNING:
+                continue                     # evicted earlier in this same pass,
+                                              # as another request's preemption victim
             want = req.blocks_needed(extra_tokens=1)
             while not self._alloc(req, want):
-                if not self._preempt_one():
+                # exclude=req: a request must never be allowed to pick ITSELF as its
+                # own preemption victim (it is still a member of self.running at this
+                # point). Without the exclusion, self-preemption pushes req onto
+                # self.waiting; when the retry then succeeds, req also lands in
+                # survivors — the same Request ends up in both collections, gets
+                # admitted a second time next iteration, and is double-counted.
+                if not self._preempt_one(exclude=req):
                     break                    # nothing left to evict; this req stalls
                 # after a preemption, free_blocks grew — retry the alloc
             else:
-                survivors.append(req)
+                req.status = Status.RUNNING  # (re)confirm: may have been WAITING
+                survivors.append(req)        # only if THIS req was preempted+retried
                 token_budget -= 1            # one decode token
                 continue
             # alloc still failed even after preemptions: drop req back to waiting
@@ -247,7 +264,10 @@ class Scheduler:
             req.status = Status.WAITING
             req.prefilled = False
             self.waiting.appendleft(req)
-        self.running = survivors
+        # A survivor added earlier in this loop can still be preempted LATER in the
+        # same loop (as someone else's victim) — filter by status, not just presence
+        # in `survivors`, so such requests correctly end up only in self.waiting.
+        self.running = [r for r in survivors if r.status is Status.RUNNING]
 
         # (2) Admit WAITING requests (prefill) while budget + memory + slot allow.
         for req in self._waiting_order():
