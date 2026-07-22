@@ -292,13 +292,13 @@ r2 = sys_prompt + list("help")
 r3 = sys_prompt + list("hi")
 
 print("req1 reused:", cache.insert(r1))   # 0  (cold cache)
-print("req2 reused:", cache.insert(r2))   # 5  ("SYS:h" shared) -> triggers a split
-print("req3 reused:", cache.insert(r3))   # 4  ("SYS:" shared)
-print("tokens cached:", cache.num_tokens) # far fewer than 5+4+3 prefilled tokens
+print("req2 reused:", cache.insert(r2))   # 7  ("SYS:hel" shared) -> triggers a split
+print("req3 reused:", cache.insert(r3))   # 5  ("SYS:h" shared)
+print("tokens cached:", cache.num_tokens) # far fewer than the 9+8+6 tokens across the three full prompts
 print("freed by evict(3):", cache.evict(3))
 ```
 
-Run it: request 1 is a cold miss; request 2 reuses the shared `"SYS:h"` prefix and forces a node split; request 3 reuses `"SYS:"`. The total cached-token count is well below the sum of the three prompt lengths, which is precisely the prefill compute you saved. This ~120-line toy is, structurally, what `radix_cache.py` does at scale — minus paging, GQA, page-size alignment, host offload, and CUDA.
+Run it: request 1 is a cold miss; request 2 reuses the shared `"SYS:hel"` prefix and forces a node split; request 3 reuses `"SYS:h"`. The total cached-token count is well below the sum of the three prompt lengths, which is precisely the prefill compute you saved. This ~120-line toy is, structurally, what `radix_cache.py` does at scale — minus paging, GQA, page-size alignment, host offload, and CUDA.
 
 !!! warning "Common pitfall: forgetting to lock before you compute"
 
