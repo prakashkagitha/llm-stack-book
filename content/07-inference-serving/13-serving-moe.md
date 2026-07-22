@@ -435,3 +435,171 @@ Every line of that loop is a decision this chapter argued for: local attention b
 - Rajbhandari et al., *DeepSpeed-MoE: Advancing Mixture-of-Experts Inference and Training to Power Next-Generation AI Scale*, ICML 2022 — early systematic treatment of MoE *inference* optimization and expert parallelism.
 - Aminabadi et al., *DeepSpeed-Inference* / Rajbhandari et al., *ZeRO-Infinity*, SC 2021 — the offload hierarchy (HBM/CPU/NVMe) underpinning expert and KV offloading.
 - vLLM (Kwon et al., 2023) and SGLang (Zheng et al., 2024) project documentation — open-source references for production EP serving, large-EP deployment, and DeepEP integration; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter insists that "a sparse token makes a dense batch." Explain, in your own words, why almost all experts must stay resident in HBM even though any single token touches only $k/E$ of them. Then explain why this is the *first inversion* relative to a dense model, and what it implies for whether expert *offloading* can ever deliver low-latency, high-concurrency serving.
+
+??? note "Solution"
+
+    Routing is per-token and data-dependent, so different tokens in the same decode batch select different experts. Even though one token loads only $k$ of the $E$ experts, the *union* of experts selected across a batch of $B$ tokens grows fast:
+
+    $$
+    \mathbb{E}[\text{distinct experts}] = E\left(1 - \left(1 - \tfrac{k}{E}\right)^{B}\right),
+    $$
+
+    which for a modest batch already approaches $E$ (the chapter's example: $B=64,k=8,E=256$ touches $\approx 222$ of $256$, i.e. ~87%). Because you cannot know *before* the router fires which experts the batch will need, and because some token in the batch is likely to pick almost any given expert, every expert must be resident and ready. So the *batch* is nearly dense in expert coverage even though each *token* is sparse.
+
+    The **first inversion**: in a dense model, parameters *loaded* per step $\approx$ parameters *resident* (you stream the whole weight matrix every step). In an MoE, a single token *loads* only $k/E$ of the expert weights, but the batch forces you to keep essentially *all* of them *resident*. Loaded $\ll$ resident.
+
+    Implication for offloading: offloading (keep hot params in HBM, stream cold experts from CPU/NVMe) relies on the per-step expert *set* being small. That holds only at small batch / low $k$ / low QPS. At the high concurrency that MoE needs to be efficient, a batch touches most experts every step, so you would be streaming nearly the whole expert set over PCIe (~64 GB/s) every step — hundreds of microseconds to milliseconds that cannot be hidden. Offloading therefore buys *capacity* for low-QPS or offline-batch workloads, not low latency at high concurrency; for interactive high-throughput serving you must keep experts in HBM.
+
+**2.** (Quantitative) Take DeepSeek-V3-like numbers: $E=256$ routed experts, top-$k=8$, $d_{\text{model}}=7168$, 58 MoE layers, and a low-latency decode batch of $B=32$ tokens.
+    (a) Estimate the number of *distinct* experts the batch touches, and express it as a fraction of $E$.
+    (b) Compute the dispatch bytes moved *per token per MoE layer* in BF16 and in FP8 (E4M3).
+    (c) Compute the total dispatch bytes moved *per decode step* (all 58 MoE layers) for the whole batch in FP8.
+
+??? note "Solution"
+
+    **(a)** Using $\mathbb{E}[\text{distinct}] = E\left(1-(1-k/E)^{B}\right)$ with $E=256,k=8,B=32$:
+
+    $$
+    1-\tfrac{k}{E} = 1-\tfrac{8}{256}=0.96875,\qquad 0.96875^{32}=e^{32\ln 0.96875}=e^{-1.016}\approx 0.362.
+    $$
+
+    $$
+    \mathbb{E}[\text{distinct}] = 256\,(1-0.362)=256\times0.638\approx 163\ \text{experts} \;=\; 63.8\%\ \text{of }E.
+    $$
+
+    Even a 32-token batch touches almost two-thirds of the experts.
+
+    **(b)** Dispatch moves $k\,d_{\text{model}}$ elements per token per layer (each token's hidden state is sent to each of its $k$ chosen experts).
+
+    - BF16 (2 bytes/element): $8\times7168\times2 = 114{,}688$ bytes $\approx 115$ KB/token/layer.
+    - FP8 E4M3 (1 byte/element): $8\times7168\times1 = 57{,}344$ bytes $\approx 57$ KB/token/layer — exactly half.
+
+    **(c)** FP8 dispatch, whole batch, all MoE layers:
+
+    $$
+    57{,}344\ \tfrac{\text{B}}{\text{tok·layer}} \times 32\ \text{tok} \times 58\ \text{layers} = 1.064\times10^{8}\ \text{B} \approx 106\ \text{MB per decode step (dispatch)}.
+    $$
+
+    Combine moves a similar volume back (in BF16, since gate-weighted sums are precision-sensitive, so ~2x this per step for combine). The point of the chapter: 106 MB over fast RDMA is *not* a bandwidth problem — the problem is that these bytes cross a **barrier** 58 times per step, and the step stalls until the slowest rank's bytes arrive. Latency, not volume, is the enemy.
+
+**3.** (Quantitative) A decode step routes tokens to $E=8$ experts laid out over $G=4$ GPUs (2 experts/GPU: experts 0–1 on rank 0, 2–3 on rank 1, 4–5 on rank 2, 6–7 on rank 3). The per-expert token counts this step are:
+
+    | expert | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+    |---|---|---|---|---|---|---|---|---|
+    | tokens | 30 | 10 | 12 | 8 | 5 | 5 | 5 | 5 |
+
+    (a) Compute the imbalance factor IF $=\max_g L_g \,/\, \tfrac{1}{G}\sum_g L_g$.
+    (b) What fraction of aggregate expert-compute capacity is wasted waiting on the barrier?
+    (c) The *same* IF of 2.0 would be far less damaging in prefill than in decode. Why?
+
+??? note "Solution"
+
+    **(a)** Per-rank loads $L_g$ (sum the two experts on each rank):
+
+    - rank 0: $30+10 = 40$
+    - rank 1: $12+8 = 20$
+    - rank 2: $5+5 = 10$
+    - rank 3: $5+5 = 10$
+
+    Total $=80$, mean $=80/4=20$, max $=40$.
+
+    $$
+    \text{IF} = \frac{40}{20} = 2.0.
+    $$
+
+    **(b)** The all-to-all completes only when the slowest rank (rank 0, load 40) finishes; the other ranks sit idle after finishing their smaller shares. Effective expert-compute time scales with the max, so the useful fraction is $\tfrac{\text{mean}}{\text{max}} = 20/40 = 0.5$. Wasted fraction $= 1 - 1/\text{IF} = 1 - 0.5 = \mathbf{50\%}$ of aggregate expert FLOPs are burned waiting.
+
+    **(c)** In **prefill** you process thousands of tokens per request in one step, so per-expert counts are large and skew averages out (the relative fluctuation shrinks with more tokens per expert), *and* the cost is amortized over one fat, compute-bound grouped GEMM. In **decode** you cross the all-to-all once per token per layer, the grouped GEMM is skinny and latency-bound, and every single step is a synchronization barrier — so a hot expert taxes *every* step's TPOT rather than being averaged away. Skew is a mild training/prefill annoyance but a tail-latency weapon at decode.
+
+**4.** (Conceptual) In dense tensor parallelism, adding more ranks to the TP group eventually *raises* per-token decode latency. In MoE decode, the chapter claims that adding more GPUs to the EP group can *lower* per-token latency. Explain both directions and why they point opposite ways.
+
+??? note "Solution"
+
+    **Dense TP.** Every rank participates in an all-reduce whose volume is fixed at $\sim 2\,d_{\text{model}}$ bytes per token per layer *regardless of the rank count*, and the collective's latency grows (more participants, more synchronization / more hops) as you add ranks. Meanwhile each rank's slice of the matmul shrinks, but past a point the per-token work is already tiny and latency-bound, so the growing all-reduce dominates. Net: beyond a sweet spot, more TP ranks = higher decode latency.
+
+    **MoE EP.** Spreading $E$ experts over more GPUs means each GPU holds *fewer* experts ($E/G$ shrinks). Two things improve: (1) the local grouped GEMM per rank gets smaller and faster, and (2) more aggregate HBM bandwidth is available to stream expert weights, since decode is bandwidth-bound on the expert weights. The countervailing cost is that the all-to-all now spans more GPUs — but that is a *latency* cost that DeepEP's low-latency hook-overlap kernels are specifically built to hide behind compute. When the all-to-all is well-overlapped (driven toward zero exposed latency), the win from fewer-experts-per-GPU + more bandwidth dominates, so *larger* EP *lowers* per-token decode latency.
+
+    Why opposite: in dense TP the collective volume is fixed and its latency is the growing term as you add ranks; in MoE EP the per-rank expert work is the term that shrinks as you add ranks, and the growing collective latency is (ideally) overlapped away rather than exposed. So dense TP has a small-degree sweet spot for decode, while MoE decode *wants* large EP.
+
+**5.** (Implementation) The chapter's `imbalance_factor` reports skew but offers no remedy. Implement the chapter's primary countermeasure — **redundant experts** — as a function `imbalance_factor_replicated(token_expert_ids, E, G, hot_experts, replicas)` that places `replicas` extra copies of each hot expert on other GPUs, splits that expert's load evenly across its copies, and greedily assigns every expert copy to the least-loaded rank. Show that replicating the hot experts drops IF on the chapter's skewed example.
+
+??? note "Solution"
+
+    A replicated expert's dispatch load is spread across its $1+\texttt{replicas}$ copies (the dispatcher load-balances tokens for that expert across replicas). We then pack all expert copies onto $G$ ranks; a greedy longest-processing-time-first (LPT) assignment — always drop the biggest remaining copy onto the currently least-loaded rank — flattens the histogram. (For simplicity we ignore the per-rank expert-slot capacity; in production you also respect $E/G$ slots plus the redundant slots.)
+
+    ```python
+    import numpy as np
+
+    def imbalance_factor_replicated(token_expert_ids, E, G, hot_experts, replicas):
+        """
+        Rank-level imbalance factor after placing `replicas` extra copies of each
+        expert in `hot_experts`. Each replicated expert's load is split evenly across
+        its (1 + replicas) copies; copies are greedily assigned to the least-loaded
+        rank (LPT). token_expert_ids: (T, k) selected expert ids for a decode batch.
+        """
+        counts = np.bincount(token_expert_ids.reshape(-1), minlength=E).astype(float)
+        hot = {int(e) for e in hot_experts}
+
+        # One entry per expert *copy*; a hot expert contributes several equal shares.
+        loads = []
+        for e in range(E):
+            n_copies = 1 + (replicas if e in hot else 0)
+            loads.extend([counts[e] / n_copies] * n_copies)
+
+        # Greedy LPT: biggest copy first onto the currently least-loaded rank.
+        rank_load = np.zeros(G)
+        for load in sorted(loads, reverse=True):
+            r = int(rank_load.argmin())
+            rank_load[r] += load
+        return rank_load.max() / rank_load.mean()
+
+    # --- reproduce the chapter's skewed batch and fix it ---
+    rng = np.random.default_rng(0)
+    E, G, T, k = 256, 32, 2048, 8
+    p = np.ones(E); p[:8] *= 4; p /= p.sum()          # experts 0..7 hot
+    skewed = rng.choice(E, size=(T, k), p=p)
+
+    from numpy import bincount
+    def imbalance_factor(ids, E, G):                  # chapter's baseline (fixed layout)
+        c = bincount(ids.reshape(-1), minlength=E)
+        return c.reshape(G, E // G).sum(1).max() / c.reshape(G, E // G).sum(1).mean()
+
+    print("baseline  IF:", round(imbalance_factor(skewed, E, G), 3))
+    print("greedy    IF:", round(imbalance_factor_replicated(skewed, E, G, [], 0), 3))
+    print("replicated IF:", round(imbalance_factor_replicated(skewed, E, G, range(8), 2), 3))
+    ```
+
+    On the skewed batch the fixed round-robin layout yields IF well above 1.5. Simply *greedily* packing experts (no replicas) already helps by moving hot experts onto separate ranks, and adding 2 replicas each to the top-8 hot experts pulls IF close to ~1.1 — the barrier no longer waits on a single overloaded GPU. The cost is memory: $8\times2$ extra expert copies resident. This is exactly DeepSeek's "redundant experts," and the eviction/placement policy is driven by the router's live load histogram.
+
+    (Small hand-check that the LPT logic is right: experts with counts `[40, 20, 10, 10]` on `G=2` greedily assign 40→rank0, 20→rank1, 10→rank1, 10→rank1 giving loads `[40, 40]`, IF `1.0` — versus a fixed `[40,20]/[10,10]` layout giving `[60, 20]`, IF `1.5`. Greedy packing alone recovers balance when experts happen to fit.)
+
+**6.** (Quantitative / economics) DeepSeek-V3 has 671B total parameters.
+    (a) In FP8 (1 byte/param), does the weight set fit on a single 8×H100-80GB node? On two nodes (16 GPUs)? Reserve 30 GB/GPU for KV + activations + overhead; how many H100s are the minimum for FP8 weights under that reserve?
+    (b) A naive single-node-style MoE deployment achieves dense-equivalent efficiency $\eta \approx 0.3$; a well-engineered large-EP deployment reaches $\eta \approx 0.85$. If the dense-active twin (a hypothetical dense 37B on the same GPUs) serves 2000 output tok/s, what does each MoE deployment serve, and what is the ratio of their cost-per-million-output-tokens?
+
+??? note "Solution"
+
+    **(a)** FP8 weights $= 671\text{ GB}$.
+
+    - One node $= 8\times80 = 640\text{ GB} < 671\text{ GB}$ — does **not** fit, even before leaving room for KV/activations.
+    - Two nodes $= 16\times80 = 1280\text{ GB}$; weights are $671/16 \approx 42\text{ GB/GPU}$, leaving $\approx 38\text{ GB/GPU}$ for KV + activations — fits comfortably.
+    - With a 30 GB/GPU reserve, each H100 offers $80-30 = 50\text{ GB}$ for weights. Minimum GPUs $= \lceil 671/50 \rceil = \lceil 13.42 \rceil = \mathbf{14}$ H100s. In practice you round to whole 8-GPU nodes, i.e. **2 nodes (16 GPUs)** — which matches the chapter's worked example.
+
+    **(b)** Dense-equivalent efficiency is $\eta = \dfrac{\text{achieved MoE tok/s}}{\text{dense-active-twin tok/s}}$, so achieved $= \eta \times 2000$:
+
+    - Naive: $0.3\times2000 = 600$ tok/s.
+    - Engineered: $0.85\times2000 = 1700$ tok/s.
+
+    Cost per output token is inversely proportional to throughput on the same hardware (same GPU-hours, more tokens = cheaper per token). So the cost ratio (naive : engineered) equals the *inverse* throughput ratio:
+
+    $$
+    \frac{\text{cost}_{\text{naive}}}{\text{cost}_{\text{eng}}} = \frac{1700}{600} \approx 2.83.
+    $$
+
+    The naive deployment costs roughly **2.8× more per million output tokens** than the well-engineered one for the *same model on the same GPUs*. That ~2–3× — recovered by attention-DP, redundant experts, DeepEP overlap, FP8 dispatch, and prefill/decode disaggregation — is, as the chapter puts it, "the entire ballgame," and it is the whole reason those techniques exist.

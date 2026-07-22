@@ -688,3 +688,116 @@ The wide-EP approach trades per-request latency for massive cluster-level throug
 - Rajbhandari et al., "ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning," SC 2021 — memory hierarchy for serving very large models with CPU/NVMe offload.
 - vLLM project (Kwon et al., 2023) and SGLang (Zheng et al., 2024) — open-source references for multi-GPU serving implementations; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
 - Huang et al., "GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism," NeurIPS 2019 — pipeline schedule analysis and bubble formulation.
+
+---
+
+## Exercises
+
+**1.** Tensor parallelism must be confined to a single NVLink island, but data-parallel replicas can be spread across nodes, racks, or even datacenters with no penalty. Explain the difference in terms of *what* each strategy communicates and *when*.
+
+??? note "Solution"
+
+    The difference is entirely about the communication that sits on the critical path of a decode step.
+
+    - **TP** requires two all-reduces *per transformer layer* per forward pass (one after attention, one after the MLP). An all-reduce is a blocking collective: the layer cannot proceed until every rank has contributed and received the summed partial. Its volume is roughly $2 \times d_{\text{model}}$ bytes per rank per layer and, crucially, **does not shrink with batch size** — you pay it on every single decode step. On NVLink (about 900 GB/s) the total per-step cost for Llama-3 70B is around 5.8 microseconds and is negligible; over InfiniBand HDR the same traffic costs on the order of 208 microseconds per step, large enough to eat a measurable fraction of a 33 ms token budget. Because the cost is fixed per step and blocking, it only stays cheap on the fast intra-node fabric — hence "TP within NVLink islands only."
+
+    - **DP** replicas are fully independent copies of the model. Different requests go to different replicas, and no tensor is ever exchanged *between* replicas during inference. There is no collective on the decode critical path at all, so the interconnect between replicas is irrelevant — they can be in different datacenters. DP buys linear throughput with zero communication cost; the flip side is that it does nothing for the latency of a single request (each replica is still a full model).
+
+**2.** Consider a dense transformer with $d_{\text{model}} = 5120$ and $L = 40$ layers served at TP with the standard $A = 2$ all-reduces per layer in BF16. (a) Compute the total TP all-reduce volume per decode step, per rank. (b) Estimate the wall-clock communication time if the TP group is on NVLink at 900 GB/s. (c) Estimate it if the group is forced across PCIe at 32 GB/s. (d) What does the comparison tell you about placement?
+
+??? note "Solution"
+
+    Use the chapter's formula $\text{total TP comm per step} = 2 \times d \times L \times A \times \text{dtype\_bytes}$.
+
+    **(a)** With $d = 5120$, $L = 40$, $A = 2$, dtype = 2 bytes:
+
+    $$2 \times 5120 \times 40 \times 2 \times 2 = 1{,}638{,}400 \text{ bytes} \approx 1.64 \text{ MB}$$
+
+    **(b)** On NVLink at 900 GB/s:
+
+    $$\frac{1.638 \times 10^6}{900 \times 10^9} \approx 1.8 \times 10^{-6}\ \text{s} = 1.8\ \text{microseconds}$$
+
+    **(c)** On PCIe at 32 GB/s:
+
+    $$\frac{1.638 \times 10^6}{32 \times 10^9} \approx 51 \times 10^{-6}\ \text{s} = 51\ \text{microseconds}$$
+
+    **(d)** The volume is identical; only the fabric changes, yet PCIe is about 28x slower per step. 1.8 microseconds is lost in kernel-launch noise, but 51 microseconds per step accumulates: at 30 tokens/s that is about 1.5 ms of pure communication per second of generation, and it grows with $L$ and TP degree. The lesson is that TP placement, not TP volume, is what makes or breaks decode latency — keep the TP group on NVLink.
+
+**3.** You serve Llama-3 70B with **TP = 8** on eight H100 80 GB GPUs. The model has 8 GQA KV heads, head dimension 128, 80 layers, BF16. Recall from the chapter that the total KV cache is $2 \times 8 \times 128 \times 80 \times 2 = 327{,}680$ bytes per token, and that under TP the KV cache is sharded across ranks by attention head. (a) What is the per-GPU KV footprint per token at TP = 8? (b) After weights, suppose 45 GB per GPU remains for KV cache. How many concurrent requests of 8192-token context does one GPU support? (c) Compare with the chapter's TP = 4 example that fit only about 17 such requests, and explain the difference.
+
+??? note "Solution"
+
+    **(a)** There are 8 KV heads and TP = 8, so each GPU owns exactly one KV head. The per-GPU per-token footprint is the total divided by 8:
+
+    $$\frac{327{,}680}{8} = 40{,}960 \text{ bytes/token} = 40 \text{ KB/token}$$
+
+    **(b)** Bytes per 8192-token request on one GPU:
+
+    $$40{,}960 \times 8192 = 335{,}544{,}320 \text{ bytes} \approx 0.335 \text{ GB}$$
+
+    Number of requests in 45 GB:
+
+    $$\frac{45 \times 10^9}{335{,}544{,}320} \approx 134 \text{ concurrent requests}$$
+
+    **(c)** The chapter's TP = 4 example fit about 17 requests because it charged the *full* 320 KB/token to each GPU (it did not shard the KV cache in that estimate). Here, sharding the 8 KV heads across 8 ranks cuts the per-GPU footprint by 8x, so the same 45 GB holds roughly 8x more context — about 134 instead of 17. This is exactly the cross-cutting point that TP shrinks the per-GPU KV footprint by the TP degree (when the KV-head count is at least the TP degree); with GQA, once TP exceeds the number of KV heads the heads must be duplicated and this scaling stops.
+
+**4.** A colleague proposes switching a latency-critical interactive-chat deployment from TP = 8 to PP = 8 (one pipeline stage per GPU) "to spread the model out the same way." Why will this fail to help — and likely hurt — the per-token decode latency (TPOT)? In your answer, contrast what happens during prefill versus decode.
+
+??? note "Solution"
+
+    Pipeline parallelism is **latency-neutral for decode** and is fundamentally a memory-capacity / throughput tool, not a latency tool.
+
+    - **Prefill**: a single batch flows through the stages sequentially. Each of the 8 stages processes $L/8$ layers, so the end-to-end latency is roughly the same as one GPU doing all $L$ layers (there is only one micro-batch, so no bubble), plus a small amount of inter-stage `send`/`recv`. PP neither helps nor meaningfully hurts TTFT here.
+
+    - **Decode**: each step generates one token and is inherently sequential across stages — stage $i$ cannot begin until stage $i-1$ has produced and shipped its hidden state. The total work per token is still all $L$ layers, now strung across 8 devices with $P-1 = 7$ inter-stage synchronizations added on top. So TPOT is at best unchanged and in practice slightly *worse* because of the added hop latency and the loss of overlap.
+
+    By contrast TP = 8 genuinely lowers TPOT: each GPU does $1/8$ of every layer's matmul and loads $1/8$ of the weights per step (decode is memory-bandwidth-bound, so less weight traffic means faster steps), with only cheap NVLink all-reduces added. For interactive chat, keep TP; reach for PP only when the model cannot otherwise fit in a node's NVLink island.
+
+**5.** Using the chapter's `ColParallelLinear` and `RowParallelLinear`, implement a `TensorParallelMLP` that performs the standard up-project / activation / down-project block with exactly **one** all-reduce. Explain why the activation between the two projections needs no communication, and how many all-reduces your block costs.
+
+??? note "Solution"
+
+    The MLP is column-parallel on the way up and row-parallel on the way down. The up-projection leaves the hidden dimension $d_{\text{ff}}$ *partitioned* across ranks; the elementwise activation acts independently on each entry, so a rank can apply it to its own slice with no knowledge of the others. Only the down-projection needs to sum partial contributions, and that single all-reduce lives inside `RowParallelLinear`. Total cost: **one all-reduce** for the whole MLP.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    class TensorParallelMLP(torch.nn.Module):
+        """
+        Column-parallel up-projection -> elementwise activation -> row-parallel
+        down-projection. Exactly one all-reduce, contributed by RowParallelLinear.
+        """
+
+        def __init__(self, d_model: int, d_ff: int, rank: int, world_size: int):
+            super().__init__()
+            # Up: d_model -> d_ff, columns split across ranks (no comm here).
+            self.up = ColParallelLinear(d_model, d_ff, rank, world_size)
+            # Down: d_ff -> d_model, rows split across ranks (all-reduce here).
+            self.down = RowParallelLinear(d_ff, d_model, rank, world_size)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # x: (batch, seq, d_model), replicated across ranks
+            h = self.up(x)          # (batch, seq, d_ff / world_size), partitioned
+            h = F.gelu(h)           # elementwise: correct on the local partition
+            y = self.down(h)        # (batch, seq, d_model), all-reduced -> replicated
+            return y
+    ```
+
+    Because the activation is elementwise, `gelu(h)` on the partitioned tensor is bit-identical to slicing the full activation — no cross-rank exchange is required between the two linears. The output of `down` is already all-reduced, so it is replicated and ready to feed the next layer's (replicated) input, matching the col-then-row invariant used throughout the chapter. This is exactly why the attention and MLP blocks each cost only one all-reduce, giving the stated $A = 2$ per transformer layer.
+
+**6.** You deploy an MoE model with $E = 128$ experts and top-$k = 4$ routing under wide expert parallelism. (a) Derive, from the expected number of tokens each expert sees, the minimum decode batch size $B$ so that on average every expert receives at least one token per step. (b) What batch does the chapter's practical rule of thumb recommend, and why is it larger than the average-case minimum? (c) What goes wrong if you run this deployment at $B = 1$?
+
+??? note "Solution"
+
+    **(a)** Each of $B$ tokens activates $k$ experts, so the total expert activations per step is $kB$, spread over $E$ experts. The expected activations per expert is
+
+    $$\mathbb{E}[\text{tokens per expert}] = \frac{kB}{E}.$$
+
+    Requiring this to be at least 1:
+
+    $$\frac{kB}{E} \ge 1 \;\Rightarrow\; B \ge \frac{E}{k} = \frac{128}{4} = 32.$$
+
+    **(b)** The chapter recommends $B \ge 4E/k = 4 \times 32 = 128$. The average-case bound of 32 only guarantees *one token per expert on average*; because routing is random, at $B = 32$ many experts will still receive zero tokens on a given step (and others several). Over-provisioning by roughly 4x makes it statistically likely that *every* expert is fed each step, so no GPU sits idle and the all-to-all payload stays balanced. This also amortizes the fixed all-to-all latency over more useful tokens.
+
+    **(c)** At $B = 1$ a single token selects only $k = 4$ experts, so at most 4 of the 128 expert slots do any work while the rest of the cluster is idle. You still pay two all-to-all collectives (dispatch and gather) to move that one token across nodes over InfiniBand, whose latency is 10-50x NVLink. The result is near-zero utilization and a decode step dominated by inter-node communication rather than compute — the "EP small-batch trap." Wide-EP only pays off with large batched decode.

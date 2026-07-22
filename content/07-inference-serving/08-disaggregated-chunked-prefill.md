@@ -610,3 +610,192 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
 - **Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention," SOSP 2023.** The vLLM paper; PagedAttention is the KV-cache memory management substrate on which chunked prefill and disaggregation are built.
 - **vLLM documentation: "Chunked Prefill" and "Disaggregated Prefill."** The vLLM project documentation covers both features with configuration examples and benchmark guidance.
 - **SGLang GitHub repository (lm-sys/sglang).** SGLang's scheduler source code is an excellent reference for how chunked prefill interacts with RadixAttention prefix caching in a production system.
+
+## Exercises
+
+**1.** *(Conceptual.)* A colleague proposes "fixing" prefill-decode interference by simply giving decode requests strict priority: always run every in-flight decode step first, and only run a prefill once no decode is pending. Explain why, in a naive continuous-batching engine, this does **not** solve the interference problem the chapter describes, and name the two mechanisms — one from the disaggregation section and one from the chunked-prefill section — that actually do.
+
+??? note "Solution"
+    Strict decode priority does not help because interference is caused by the prefill forward pass being **monolithic and non-preemptible within a single GPU iteration**, not by scheduling order. Once a long prompt (say 8,192 tokens) is admitted, its forward pass occupies the GPU for tens of milliseconds as one indivisible kernel sequence. Even with decode "priority," the very next decode step cannot begin until that entire prefill iteration returns, so every in-flight decode sequence still eats the full prefill duration as an ITL spike. Priority only reorders *which* work runs next; it cannot subdivide a prefill that has already started, and it cannot run decode concurrently with prefill on the same GPU pool.
+
+    The two mechanisms that genuinely remove the stall:
+
+    - **Disaggregation** (section "Disaggregated Prefill/Decode"): move prefill to a separate GPU pool so decode workers *never* execute a prefill kernel. Every iteration on a decode worker is a pure decode step, and ITL becomes predictable. The cost is transferring the KV cache between pools.
+    - **Chunked prefill** (section "Chunked Prefill"): make the prefill *divisible* by splitting the prompt into chunks of at most $C$ tokens and interleaving one chunk per iteration with the decode tokens. The per-iteration prefill cost is now bounded by the chunk compute time, not the whole prompt, so the ITL inflation is bounded rather than bursty.
+
+**2.** *(Quantitative — KV-cache transfer.)* You are sizing the interconnect for a disaggregated deployment of a model with $L = 40$ layers, GQA with $n_\text{kv} = 8$ KV heads, $d_\text{head} = 128$, serving prompts of $T_p = 2048$ tokens, KV stored in BF16 (2 bytes/element). Using the chapter's KV-size formula:
+
+- (a) Compute the KV-cache size in bytes for one request, and express it in MB.
+- (b) Compute the transfer time over NVLink4 ($\approx 900$ GB/s) and over InfiniBand HDR ($\approx 12.5$ GB/s).
+- (c) The prefill itself for this prompt takes roughly 120 ms. On which of the two interconnects does the KV transfer become a first-order term in end-to-end latency, and what does the chapter recommend doing about it?
+
+??? note "Solution"
+    (a) Using $\text{KV size} = L \times 2 \times T_p \times n_\text{kv} \times d_\text{head} \times 2\ \text{bytes}$:
+
+    $$
+    40 \times 2 \times 2048 \times 8 \times 128 \times 2 = 335{,}544{,}320\ \text{bytes}.
+    $$
+
+    Dividing by $1{,}048{,}576$ gives exactly $320$ MB (equivalently $\approx 0.3125$ GB). Note this is smaller than the chapter's 70B example (1 GB) because this model has fewer layers and a shorter prompt.
+
+    (b) Transfer time $=$ size $/$ bandwidth (bytes over bytes-per-second):
+
+    $$
+    t_\text{NVLink4} = \frac{335{,}544{,}320}{900 \times 10^9} \approx 3.73 \times 10^{-4}\ \text{s} = 0.37\ \text{ms},
+    $$
+
+    $$
+    t_\text{IB HDR} = \frac{335{,}544{,}320}{12.5 \times 10^9} \approx 2.68 \times 10^{-2}\ \text{s} = 26.8\ \text{ms}.
+    $$
+
+    (c) On NVLink4 the transfer (0.37 ms) is negligible next to the 120 ms prefill — well under 1% of end-to-end latency. On InfiniBand HDR the transfer (26.8 ms) is about 22% of the prefill time, a clear first-order term. The chapter's recommendations: keep prefill and decode workers on the same NVSwitch fabric so transfer stays under a few milliseconds; and if a slow interconnect is unavoidable, **pipeline the transfer with computation** (layer-wise KV streaming) so the transfer overlaps prefill's later layers instead of adding serially.
+
+**3.** *(Quantitative — choosing the chunk size.)* A 13B model on one A100 prefills an 8,192-token prompt as a single pass in about 800 ms (as in the chapter's worked example), and prefill time scales roughly linearly in the number of tokens processed. Each decode iteration adds about 15 ms of its own decode compute. Your SLO is P99 ITL $\le 100$ ms. For chunk sizes $C = 256$ and $C = 1024$, compute: (a) the number of chunks, (b) the per-chunk prefill time, (c) the resulting per-iteration ITL seen by in-flight decode sequences, and (d) which value(s) of $C$ satisfy the SLO. (e) Briefly, why not just pick the smallest $C$ possible?
+
+??? note "Solution"
+    Per-chunk prefill time $=$ (full-prompt prefill time) $\times$ (chunk tokens / total tokens) $= 800\ \text{ms} \times C / 8192$.
+
+    For $C = 256$:
+
+    - (a) $8192 / 256 = 32$ chunks.
+    - (b) per-chunk prefill $= 800 \times 256 / 8192 = 25$ ms.
+    - (c) ITL per iteration $\approx 25\ \text{ms (chunk)} + 15\ \text{ms (decode)} = 40$ ms.
+
+    For $C = 1024$:
+
+    - (a) $8192 / 1024 = 8$ chunks.
+    - (b) per-chunk prefill $= 800 \times 1024 / 8192 = 100$ ms.
+    - (c) ITL per iteration $\approx 100 + 15 = 115$ ms.
+
+    (d) $C = 256$ gives ITL $\approx 40$ ms $\le 100$ ms: **within SLO**. $C = 1024$ gives ITL $\approx 115$ ms $> 100$ ms: **violates SLO**. So only $C = 256$ (of the two) meets the target.
+
+    (e) You cannot pick $C$ arbitrarily small because, as the chapter's "Choosing the Chunk Size" section explains, tiny chunks (i) multiply per-iteration overhead — kernel launches, scheduling, KV bookkeeping — inflating total TTFT, and (ii) run attention on very short sequences where the kernel is less FLOP-efficient, leaving throughput on the table. The right choice is the largest $C$ that still keeps ITL within SLO (here, somewhere up to the point where chunk time $+ 15 \le 100$, i.e. chunk time $\le 85$ ms, so up to $C \approx 85/800 \times 8192 \approx 870$ tokens).
+
+**4.** *(Implementation — dynamic chunk sizing.)* The `ChunkedPrefillScheduler` in the chapter uses a fixed `self.chunk_size`. Modify it so the effective chunk size is recomputed every `schedule()` call from the current decode load, using the chapter's `adaptive_chunk_size` policy (large chunks when no decode is active, small chunks under decode pressure). Show the changed `schedule()` code, and explain what behavior a caller would observe as the decode pool fills up.
+
+??? note "Solution"
+    Compute the effective chunk size once at the top of `schedule()` from the live decode count, then use it everywhere the method previously read `self.chunk_size`. The scheduler already imports what it needs; we just call `adaptive_chunk_size` (from the chapter) with `decode_queue_depth = len(self.decoding)` and `prefill_queue_depth = len(self.waiting)`.
+
+    ```python
+    def schedule(self) -> dict:
+        """
+        Produce a batch descriptor for the next forward pass, using a
+        chunk size chosen dynamically from current decode load.
+        """
+        budget = self.max_batched_tokens
+        batch = {"decode": [], "prefill_chunks": []}
+
+        # --- Dynamic chunk size for THIS iteration ---
+        eff_chunk = adaptive_chunk_size(
+            decode_queue_depth=len(self.decoding),
+            prefill_queue_depth=len(self.waiting),
+            base_chunk_size=self.chunk_size,
+        )
+
+        # --- Step 1: decode sequences (highest priority) ---
+        for seq in self.decoding:
+            if not seq.finished and budget >= 1:
+                batch["decode"].append(seq.seq_id)
+                budget -= 1
+
+        # --- Step 2: continue partially prefilled sequences ---
+        next_prefilling = deque()
+        for seq in self.prefilling:
+            remaining = len(seq.prompt_ids) - seq.num_computed
+            chunk = min(remaining, eff_chunk, budget)   # was self.chunk_size
+            if chunk <= 0:
+                next_prefilling.append(seq)
+                continue
+            batch["prefill_chunks"].append({
+                "seq_id": seq.seq_id,
+                "token_ids": seq.prompt_ids[seq.num_computed: seq.num_computed + chunk],
+                "start_pos": seq.num_computed,
+            })
+            seq.num_computed += chunk
+            budget -= chunk
+            if seq.num_computed >= len(seq.prompt_ids):
+                self.decoding.append(seq)
+            else:
+                next_prefilling.append(seq)
+        self.prefilling = next_prefilling
+
+        # --- Step 3: admit new requests ---
+        while (
+            self.waiting
+            and budget >= eff_chunk                      # was self.chunk_size
+            and len(self.decoding) < self.max_decode_seqs
+        ):
+            seq = self.waiting.popleft()
+            chunk = min(len(seq.prompt_ids), eff_chunk, budget)  # was self.chunk_size
+            batch["prefill_chunks"].append({
+                "seq_id": seq.seq_id,
+                "token_ids": seq.prompt_ids[:chunk],
+                "start_pos": 0,
+            })
+            seq.num_computed = chunk
+            budget -= chunk
+            if seq.num_computed >= len(seq.prompt_ids):
+                self.decoding.append(seq)
+            else:
+                self.prefilling.append(seq)
+
+        return batch
+    ```
+
+    Observed behavior as the decode pool fills: when `len(self.decoding) == 0`, `adaptive_chunk_size` returns `max_chunk_size` (default 4096), so waiting prompts are drained in big chunks — minimizing TTFT while nobody's ITL is at risk. As decode sequences accumulate and cross `decode_pressure_threshold` (default 16), the policy clamps to `min_chunk_size` (128), so each iteration adds only a small prefill increment and the ITL of the many in-flight decode sequences stays bounded. In between, the chunk size interpolates down smoothly. One caveat to note: because the admission guard is now `budget >= eff_chunk`, a very large `eff_chunk` under an empty decode pool can admit fewer new sequences per round (each grabs a bigger bite of the token budget) — which is exactly the intended TTFT-favoring behavior.
+
+**5.** *(Implementation — GQA in chunked-prefill attention.)* The chapter's `chunked_prefill_attention` assumes `n_heads == n_kv_heads` and builds its causal mask with a Python `for` loop. Rewrite the function to (a) support GQA where `n_kv_heads < n_heads` by expanding the KV heads, and (b) replace the per-row loop with a vectorized mask. Keep the same signature and output shape `[C, n_heads, d_head]`.
+
+??? note "Solution"
+    For GQA, each group of `n_heads // n_kv_heads` query heads shares one KV head, so we `repeat_interleave` the K/V head dimension up to `n_heads` before the batched matmul. For the mask, query row $i$ sits at absolute position $T_\text{past}+i$ and may attend to any key position $j \le T_\text{past}+i$; this is a single broadcasted comparison, no loop.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def chunked_prefill_attention(
+        q_chunk: torch.Tensor,    # [C, n_heads, d_head]
+        k_full: torch.Tensor,     # [T_past + C, n_kv_heads, d_head]
+        v_full: torch.Tensor,     # [T_past + C, n_kv_heads, d_head]
+        T_past: int,
+        C: int,
+        scale: float,
+    ) -> torch.Tensor:
+        n_heads  = q_chunk.shape[1]
+        n_kv     = k_full.shape[1]
+        T_total  = T_past + C
+
+        # (a) GQA expansion: repeat each KV head to cover its query-head group.
+        assert n_heads % n_kv == 0, "n_heads must be a multiple of n_kv_heads"
+        group = n_heads // n_kv
+        if group > 1:
+            k_full = k_full.repeat_interleave(group, dim=1)  # [T_total, n_heads, d_head]
+            v_full = v_full.repeat_interleave(group, dim=1)
+
+        # (b) Vectorized causal mask: row i (abs pos T_past+i) sees key j <= T_past+i.
+        q_pos = torch.arange(C, device=q_chunk.device) + T_past          # [C]
+        k_pos = torch.arange(T_total, device=q_chunk.device)             # [T_total]
+        causal_mask = k_pos[None, :] <= q_pos[:, None]                   # [C, T_total] bool
+
+        # Scores and masked softmax.
+        q = q_chunk.transpose(0, 1)                    # [n_heads, C, d_head]
+        k = k_full.transpose(0, 1)                     # [n_heads, T_total, d_head]
+        scores = torch.bmm(q, k.transpose(1, 2)) * scale               # [n_heads, C, T_total]
+        scores = scores.masked_fill(~causal_mask.unsqueeze(0), float('-inf'))
+
+        attn = F.softmax(scores, dim=-1)               # [n_heads, C, T_total]
+        v = v_full.transpose(0, 1)                     # [n_heads, T_total, d_head]
+        out = torch.bmm(attn, v)                       # [n_heads, C, d_head]
+        return out.transpose(0, 1)                     # [C, n_heads, d_head]
+    ```
+
+    Notes: `repeat_interleave(group, dim=1)` matches the layout implied by the chapter (contiguous query-head groups per KV head). The mask reproduces the chapter's three rules exactly — chunk tokens attend to all cached previous-chunk tokens ($j \le T_\text{past}$), to earlier tokens in the same chunk ($T_\text{past} < j \le T_\text{past}+i$), and never to later same-chunk tokens ($j > T_\text{past}+i$, masked to $-\infty$). The vectorized comparison is $O(C \cdot T_\text{total})$ but done in one kernel rather than a Python loop, and it carries `device` correctly so it works on GPU.
+
+**6.** *(Conceptual — pool allocation and technique choice.)* Two teams share the same 16-GPU cluster and total GPU budget. Team A serves a document-summarization product: prompts average 16K tokens, outputs average 200 tokens. Team B serves a chatbot: prompts average 300 tokens, outputs average 600 tokens. (a) Using DistServe's framing, argue how the prefill:decode replica split $r_P : r_D$ should differ between the two workloads. (b) For each team, would you reach first for chunked prefill or full disaggregation, and why? (c) Which team benefits more from Splitwise-style heterogeneous hardware, and which single hardware property matters most for their bottleneck phase?
+
+??? note "Solution"
+    (a) DistServe allocates replicas to whichever phase the workload stresses, driven by the prompt-to-output ratio. Team A is *prefill-heavy*: 16K prompt tokens versus only 200 output tokens means the vast majority of compute is prefill, so $r_P$ should be large relative to $r_D$ (a prefill-weighted split). Team B is *decode-heavy*: short 300-token prompts and long 600-token outputs mean most work is in the token/decode phase, so $r_D$ should dominate. The chapter states this directly: long-prompt workloads (RAG, summarization) need more prefill capacity; short-prompt/long-output chatbot workloads need more decode capacity.
+
+    (b) Team A (16K-token prompts, strict-ish latency): reach for **full disaggregation**. The chapter's deployment guidance flags disaggregation precisely when prompts are consistently long (>8K) — the prefill is so large that even chunking it on a shared pool would repeatedly disturb decode, and a dedicated prefill pool at full compute efficiency plus KV transfer (kept on NVSwitch, sub-5 ms) is the better fit. Team B (short prompts, single-cluster, moderate lengths): reach for **chunked prefill**. Prompts are short enough that interference is mild and occasional; chunked prefill is low-risk, needs no second pool or network path, and keeps P99 ITL bounded with negligible TTFT cost. Building a disaggregated system here would add routing/rebalancing/fault-tolerance complexity for little gain.
+
+    (c) Team A benefits more from Splitwise heterogeneous hardware, because its bottleneck is the **compute-bound prefill phase**: it should route prefill to high-FLOP/s GPUs, where peak TFLOP/s is the property that matters. (Team B's decode-bound workload would instead want high HBM bandwidth, but its short prompts make the phase asymmetry — and thus the payoff from splitting hardware types — smaller than Team A's.) The general principle from the chapter: prefill's bottleneck is the compute roof, decode's is the memory-bandwidth wall, and matching each phase to hardware with the right roof height is a direct application of the roofline model.

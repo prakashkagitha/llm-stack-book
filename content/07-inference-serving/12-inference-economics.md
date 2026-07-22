@@ -651,3 +651,161 @@ Alert thresholds to set:
 - **Agrawal et al., "Sarathi-Serve: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills"**, OSDI 2024. Quantifies the prefill-decode interference problem and the benefit of chunked prefill for latency.
 - **vLLM project** (github.com/vllm-project/vllm): The reference open-source implementation; its metrics endpoint is the best way to observe the concepts in this chapter in a real system.
 - **LLM-Perf Leaderboard** (HuggingFace): Community benchmarks for tokens/s and cost across models, hardware, and quantization levels — useful for calibrating the numbers in this chapter against real measurements.
+
+## Exercises
+
+**1.** (Conceptual) On a single H100 serving a 70B BF16 model, the chapter shows the decode step time is a flat ~42 ms per step for any batch size from 1 up to $B^* \approx 295$. Explain *why* adding a 50th concurrent decoding sequence to a batch that already has 49 adds zero extra latency, yet adding a sequence to a batch that already has 295 adds proportional latency. In one sentence, what physical resource is the system waiting on in each regime?
+
+??? note "Solution"
+    Below $B^*$, decode is **bandwidth-bound**. Each decode step must stream the full set of model weights ($2P$ bytes for BF16) from HBM exactly once, and that streaming time is fixed regardless of how many sequences are in the batch:
+
+    $$
+    t_{\text{bandwidth}} = \frac{2P}{\text{BW}} = \frac{2 \times 70\times10^9}{3.35\times10^{12}} \approx 41.8 \text{ ms}
+    $$
+
+    The 49 sequences already in flight are all *waiting on the same weight read*. The MMA units are idle most of the step, so the 50th sequence's arithmetic ($2P$ extra FLOPs) is done "for free" in the shadow of the weight streaming — it produces one more output token at no added wall-clock cost. This is the source of the "pure win" from batching.
+
+    Above $B^*$, decode becomes **compute-bound**. The FLOP term $2PB / \text{FLOP/s}$ now exceeds the bandwidth floor, so each additional sequence adds $2P / \text{FLOP/s}$ seconds of genuine MMA work that no longer hides behind the weight read.
+
+    - Regime 1 (below $B^*$): the system is waiting on **HBM bandwidth** (weights streaming from memory).
+    - Regime 2 (above $B^*$): the system is waiting on **compute** (the tensor-core MMA units).
+
+**2.** (Quantitative) You rent a single H100 for \$5.00/hour. At a healthy peak batch it sustains 2,000 output tokens/second. Compute the cost per 1M output tokens. Then a lull drops traffic so the effective batch falls and sustained throughput drops to 700 tokens/second (the GPU is now poorly utilized). Recompute the cost per 1M tokens and state the multiplier between the two.
+
+??? note "Solution"
+    Using the chapter's formula $\text{\$/1M} = (R \times 10^6) / (T_{\text{sustained}} \times 3600)$.
+
+    Busy (2,000 tok/s):
+
+    $$
+    \frac{5 \times 10^6}{2000 \times 3600} = \frac{5{,}000{,}000}{7{,}200{,}000} \approx \$0.69 \text{ per 1M output tokens}
+    $$
+
+    Lull (700 tok/s):
+
+    $$
+    \frac{5 \times 10^6}{700 \times 3600} = \frac{5{,}000{,}000}{2{,}520{,}000} \approx \$1.98 \text{ per 1M output tokens}
+    $$
+
+    Multiplier: $1.98 / 0.69 \approx 2.9\times$. The GPU rental rate ($R$) never changed — only utilization did. Since decode is bandwidth-bound below $B^*$, the poorly-batched GPU burns nearly the same wall-clock time per step while emitting fewer tokens, so cost per token climbs almost in inverse proportion to throughput. This is the same lesson as the chapter's worked example: low utilization is the enemy of cost efficiency.
+
+**3.** (Quantitative) A reasoning model emits an average of 1,500 internal chain-of-thought tokens before a 300-token final answer. A direct-answer model produces only the 300-token answer. Output tokens are billed at \$4.00 per 1M. For a workload of 5,000 queries, compute the output-token cost of each model and the ratio between them. What is the effective output-to-answer token ratio for the reasoning model?
+
+??? note "Solution"
+    Reasoning model emits $1500 + 300 = 1800$ output tokens per query. Effective output-to-answer ratio is $1800 / 300 = 6:1$.
+
+    Reasoning cost over 5,000 queries:
+
+    $$
+    \frac{5000 \times 1800}{10^6} \times 4 = \frac{9{,}000{,}000}{10^6} \times 4 = 9 \times 4 = \$36.00
+    $$
+
+    Direct-answer cost:
+
+    $$
+    \frac{5000 \times 300}{10^6} \times 4 = 1.5 \times 4 = \$6.00
+    $$
+
+    Ratio: $36 / 6 = 6\times$. The reasoning trace is billed exactly like answer tokens (each thinking token still pays for its own full weight-loading pass through decode), so the 6:1 token ratio maps directly onto a 6:1 dollar ratio. This is the chain-of-thought tax from the chapter: the quality premium of test-time reasoning has a concrete, linear cost tag.
+
+**4.** (Quantitative) Using the chapter's Llama-3 70B KV-cache parameters ($n_{\text{kv}} = 8$ GQA heads, head dim $d = 128$, $L = 80$ layers, BF16 = 2 bytes), compute the KV-cache size for one sequence at $S = 8{,}192$ tokens. A TP=2 deployment leaves 40 GB of HBM per node for KV cache after weights. How many such sequences fit concurrently in BF16? How many if the KV cache is quantized to INT8?
+
+??? note "Solution"
+    The chapter's KV-cache formula (factor of 2 for both K and V, factor of 2 for BF16 bytes):
+
+    $$
+    \text{KV bytes} = 2 \times n_{\text{kv}} \times d \times L \times S \times 2
+    $$
+
+    $$
+    = 2 \times 8 \times 128 \times 80 \times 8192 \times 2 = 2{,}684{,}354{,}560 \text{ bytes} \approx 2.68 \text{ GB per sequence}
+    $$
+
+    Concurrent sequences in 40 GB, BF16:
+
+    $$
+    \left\lfloor \frac{40}{2.68} \right\rfloor = \lfloor 14.9 \rfloor = 14 \text{ sequences}
+    $$
+
+    With INT8 KV cache (1 byte instead of 2), each sequence needs $2.68 / 2 = 1.34$ GB:
+
+    $$
+    \left\lfloor \frac{40}{1.34} \right\rfloor = \lfloor 29.8 \rfloor = 29 \text{ sequences}
+    $$
+
+    INT8 KV-cache quantization roughly doubles concurrent long-context capacity (14 to 29), exactly the effect described in the chapter's KV-cache quantization section. Note that even 14 concurrent sequences is far below the $B^* \approx 295$ decode breakeven — at long context, **KV-cache capacity, not the arithmetic-intensity knee, is the binding constraint on batch size.**
+
+**5.** (Quantitative) Your API sees peak traffic of 30 requests/second, each generating an average of 500 output tokens. You serve a 13B model at TP=1 on A100 80GB GPUs that sustain 6,000 decode tokens/second each. Targeting 70% utilization for headroom, how many GPUs do you need? At \$3.50/GPU-hour, what does the peak cluster cost per hour?
+
+??? note "Solution"
+    Using the capacity-planning formula $N_{\text{GPUs}} = \lceil (\lambda \cdot \bar{o}) / (T_{\text{decode}} \cdot U_{\text{target}}) \rceil$:
+
+    $$
+    N_{\text{GPUs}} = \left\lceil \frac{30 \times 500}{6000 \times 0.70} \right\rceil = \left\lceil \frac{15{,}000}{4{,}200} \right\rceil = \lceil 3.57 \rceil = 4 \text{ GPUs}
+    $$
+
+    The required token rate is $30 \times 500 = 15{,}000$ tokens/s. Each GPU contributes an *effective* $6000 \times 0.70 = 4{,}200$ usable tokens/s after reserving headroom, so 4 GPUs (16,800 usable tokens/s after ceiling) covers it with margin.
+
+    Peak cost:
+
+    $$
+    4 \times \$3.50 = \$14.00 \text{ per hour} \;(= \$336/\text{day at sustained peak}).
+    $$
+
+    Off-peak the same formula with a lower $\lambda$ lets you scale down; at 10% load ($\lambda = 3$) you would need only $\lceil 1500 / 4200 \rceil = 1$ GPU, roughly a 75% cost reduction versus peak.
+
+**6.** (Implementation) Extend the chapter's `decode_step_time_ms` model to answer the economic question directly: write a function `dollars_per_1m_tokens(...)` that returns the cost per 1M output tokens for a given batch size, GPU rental rate, and weight precision. It should reuse `decode_step_time_ms` (converting one decode step into a sustained tokens/second rate) and the chapter's `$/1M` formula. Then use it to compare BF16 (`bytes_per_param=2`) against INT8 (`bytes_per_param=1`) for a 70B model on a single H100 at \$5.00/hour with batch size 64, and confirm the speedup matches the bandwidth-ratio prediction.
+
+??? note "Solution"
+    One decode step produces exactly one new token per sequence, so a batch of $B$ produces $B$ tokens in `step_time` seconds; sustained throughput is $B / t_{\text{step}}$. Feed that into the chapter's cost formula.
+
+    ```python
+    # Reuses decode_step_time_ms, H100_FLOPS, H100_BW, N_PARAMS from the chapter.
+
+    def sustained_tokens_per_sec(
+        n_params: float,
+        batch_size: int,
+        flops_per_sec: float,
+        bandwidth_bytes_per_sec: float,
+        bytes_per_param: int = 2,
+    ) -> float:
+        """One token per sequence per decode step -> batch_size tokens per step."""
+        step_s = decode_step_time_ms(
+            n_params, batch_size, flops_per_sec,
+            bandwidth_bytes_per_sec, bytes_per_param,
+        ) / 1000.0
+        return batch_size / step_s
+
+
+    def dollars_per_1m_tokens(
+        n_params: float,
+        batch_size: int,
+        flops_per_sec: float,
+        bandwidth_bytes_per_sec: float,
+        gpu_cost_per_hour: float,
+        bytes_per_param: int = 2,
+    ) -> float:
+        """$/1M output tokens = (R * 1e6) / (T_sustained * 3600)."""
+        tps = sustained_tokens_per_sec(
+            n_params, batch_size, flops_per_sec,
+            bandwidth_bytes_per_sec, bytes_per_param,
+        )
+        return (gpu_cost_per_hour * 1e6) / (tps * 3600.0)
+
+
+    COST_PER_HR = 5.00
+    BATCH = 64
+
+    for label, bpp in [("BF16", 2), ("INT8", 1)]:
+        tps = sustained_tokens_per_sec(N_PARAMS, BATCH, H100_FLOPS, H100_BW, bpp)
+        cost = dollars_per_1m_tokens(N_PARAMS, BATCH, H100_FLOPS, H100_BW,
+                                     COST_PER_HR, bpp)
+        print(f"{label}: {tps:7.0f} tok/s  ->  ${cost:.3f} / 1M output tokens")
+    ```
+
+    Working the arithmetic by hand for batch 64 (both precisions are bandwidth-bound, since the compute term $2PB/\text{FLOP/s} = 2 \times 70\text{e}9 \times 64 / 989\text{e}12 \approx 9.1$ ms is below both bandwidth floors):
+
+    - **BF16**: $t_{\text{step}} = 2 \times 70\text{e}9 \times 2 / 3.35\text{e}12 \approx 41.8$ ms. $\;T = 64 / 0.0418 \approx 1{,}531$ tok/s. $\;\$/1M = 5\text{e}6 / (1531 \times 3600) \approx \$0.91$.
+    - **INT8**: bytes read halve, so $t_{\text{step}} \approx 20.9$ ms. $\;T = 64 / 0.0209 \approx 3{,}063$ tok/s. $\;\$/1M = 5\text{e}6 / (3063 \times 3600) \approx \$0.45$.
+
+    The INT8 throughput is $3063 / 1531 = 2.0\times$ the BF16 throughput and the cost per token is halved — exactly the $\text{bits}_{\text{original}} / \text{bits}_{\text{quantized}} = 16/8 = 2.0\times$ bandwidth speedup the chapter predicts, because in the bandwidth-bound regime halving the bytes-per-weight halves the per-step weight-streaming time.

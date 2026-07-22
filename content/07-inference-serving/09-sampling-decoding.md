@@ -803,3 +803,165 @@ if __name__ == "__main__":
 - Kirchenbauer et al., "A Watermark for Large Language Models" (ICML 2023) — logit-based watermarking via vocabulary partitioning.
 - Hinton et al., "Distilling the Knowledge in a Neural Network" (NeurIPS 2015 Workshop) — foundational work on temperature-scaled soft targets.
 - HuggingFace `transformers` — `src/transformers/generation/logits_process.py` is the canonical reference implementation of every processor discussed here.
+
+## Exercises
+
+**1.** Greedy decoding picks $\arg\max_t P(t \mid t_{<i})$ at every step. Explain, with a small two-step example, why this does *not* in general return the globally most probable sequence (the MAP sequence). Construct a toy case with a vocabulary of two tokens $\{A, B\}$ and two decoding steps where greedy chooses a first token that leads to a lower-probability full sequence than a different first token would.
+
+??? note "Solution"
+    Greedy is *locally* optimal: at each step it commits to the highest-probability next token without accounting for how that choice constrains future steps. The sequence probability factorises as $P(t_1 t_2) = P(t_1)\,P(t_2 \mid t_1)$, so the best first token in isolation can sit atop a poor continuation.
+
+    Concrete two-step example. Suppose the first-step distribution is
+
+    $$P(A) = 0.6, \qquad P(B) = 0.4.$$
+
+    Greedy commits to $A$. Now suppose the second-step conditionals are
+
+    $$P(\cdot \mid A): \; P(A) = 0.55,\; P(B) = 0.45, \qquad P(\cdot \mid B): \; P(A) = 0.95,\; P(B) = 0.05.$$
+
+    Greedy continues with the argmax after $A$, giving the sequence $AA$ with probability
+
+    $$P(AA) = 0.6 \times 0.55 = 0.33.$$
+
+    But the globally most probable sequence is $BA$:
+
+    $$P(BA) = 0.4 \times 0.95 = 0.38 > 0.33.$$
+
+    Greedy never even considers $BA$ because it discarded $B$ at step 1. Finding $BA$ requires lookahead — exactly what beam search (approximately) and exhaustive MAP search (exactly) provide. This is why greedy can produce sequences that are individually locally optimal yet globally suboptimal, and it is the same mechanism behind the "The cat sat on the mat mat mat" degeneration described earlier in the chapter.
+
+**2.** A model emits three top logits $z = [4.0,\, 2.0,\, 1.0]$ for tokens $A, B, C$ (all other tokens are negligible). Using $e^4 \approx 54.60$, $e^2 \approx 7.389$, $e^1 \approx 2.718$, $e^8 \approx 2980.96$:
+
+   (a) Compute $P(A), P(B), P(C)$ at temperature $T = 1$.
+   (b) Compute them at $T = 0.5$.
+   (c) Give the ratio $P(A)/P(B)$ at both temperatures using the closed form, and state in one sentence what this shows about temperature.
+
+??? note "Solution"
+    **(a) $T = 1$.** Softmax over the raw logits:
+
+    $$Z = e^4 + e^2 + e^1 = 54.60 + 7.389 + 2.718 = 64.71.$$
+
+    $$P(A) = \frac{54.60}{64.71} \approx 0.844, \quad P(B) = \frac{7.389}{64.71} \approx 0.114, \quad P(C) = \frac{2.718}{64.71} \approx 0.042.$$
+
+    **(b) $T = 0.5$.** Dividing logits by $T$ gives scaled logits $[8,\, 4,\, 2]$:
+
+    $$Z' = e^8 + e^4 + e^2 = 2980.96 + 54.60 + 7.389 = 3042.9.$$
+
+    $$P(A) = \frac{2980.96}{3042.9} \approx 0.980, \quad P(B) = \frac{54.60}{3042.9} \approx 0.0179, \quad P(C) = \frac{7.389}{3042.9} \approx 0.0024.$$
+
+    **(c) Ratio.** For a softmax the pairwise odds have a clean closed form independent of the other tokens:
+
+    $$\frac{P(A)}{P(B)} = \exp\!\left(\frac{z_A - z_B}{T}\right) = \exp\!\left(\frac{2.0}{T}\right).$$
+
+    At $T = 1$: $\exp(2) \approx 7.39$. At $T = 0.5$: $\exp(4) \approx 54.6$.
+
+    Lowering the temperature from $1$ to $0.5$ makes $A$ go from $\approx 7.4\times$ to $\approx 55\times$ more likely than $B$ — halving $T$ *squares* the odds ratio, which is why small temperature changes sharpen the distribution so dramatically.
+
+**3.** After softmax, a step produces the sorted probability distribution
+
+   $$\mathbf{p} = [0.50,\, 0.20,\, 0.15,\, 0.10,\, 0.05].$$
+
+   (a) Using the chapter's top-p rule (keep the token that crosses the threshold; formally, remove token $i$ iff $\big(\sum_{j\le i} p_j\big) - p_i > p$), which tokens survive top-p with $p = 0.9$?
+   (b) Which tokens survive min-p with $p_{\min} = 0.30$ (keep $t$ iff $P(t) \geq p_{\min}\cdot \max_{t'}P(t')$)?
+   (c) The two filters keep different sets here. Explain what property of min-p causes the difference.
+
+??? note "Solution"
+    **(a) Top-p, $p = 0.9$.** Build the cumulative sums and test the chapter's condition $\text{cumsum} - p_i > 0.9$ (remove) token by token:
+
+    | token | $p_i$ | cumsum | cumsum $- p_i$ | $> 0.9$? |
+    |-------|-------|--------|----------------|----------|
+    | 1 | 0.50 | 0.50 | 0.00 | no → keep |
+    | 2 | 0.20 | 0.70 | 0.50 | no → keep |
+    | 3 | 0.15 | 0.85 | 0.70 | no → keep |
+    | 4 | 0.10 | 0.95 | 0.85 | no → keep |
+    | 5 | 0.05 | 1.00 | 0.95 | yes → remove |
+
+    Top-p keeps the first **four** tokens $\{0.50, 0.20, 0.15, 0.10\}$ (total mass $0.95$). The shift-by-one rule keeps token 4, the one that pushes the cumulative mass across $0.9$.
+
+    **(b) Min-p, $p_{\min} = 0.30$.** The threshold is relative to the peak:
+
+    $$\tau = p_{\min}\cdot \max_t P(t) = 0.30 \times 0.50 = 0.15.$$
+
+    Keep every token with $P(t) \geq 0.15$: that is $\{0.50, 0.20, 0.15\}$ — the fourth token ($0.10 < 0.15$) and fifth ($0.05$) are dropped. Min-p keeps **three** tokens.
+
+    **(c) Why they differ.** Top-p is an *absolute-mass* criterion: it keeps adding tokens until a fixed cumulative probability budget ($0.9$) is spent, so it happily includes low-probability tokens as long as the running total has not yet reached $p$. Min-p is a *peak-relative* criterion: a token survives only if its probability is within a fixed fraction of the single most likely token, independent of how many tokens came before it. Here the $0.10$ token contributes to filling top-p's mass budget but falls below min-p's $0.15$ floor, so top-p keeps it and min-p rejects it. This is exactly why min-p behaves more stably at high temperature: when the peak shrinks, the floor shrinks with it proportionally, rather than sweeping in an ever-longer tail to reach a fixed mass.
+
+**4.** The chapter's `RepetitionPenaltyProcessor` penalises *every* token that has ever appeared in the context. In a long chat, this can wrongly suppress common function words that legitimately recur (e.g. "the", "of"). Implement a `WindowedRepetitionPenaltyProcessor` that applies the CTRL-style multiplicative penalty only to tokens appearing in the **last `window` tokens** of the context, keeping the chapter's sign convention ($z > 0 \Rightarrow z/\theta$, $z < 0 \Rightarrow z\cdot\theta$).
+
+??? note "Solution"
+    Restrict the tracked set to the trailing window; everything else mirrors the chapter's processor. The only change is which tokens land in `self.seen`.
+
+    ```python
+    import torch
+
+    class WindowedRepetitionPenaltyProcessor:
+        """
+        CTRL-style multiplicative repetition penalty restricted to a
+        sliding window of the most recent `window` context tokens.
+        theta > 1 discourages recent repeats; theta = 1 is a no-op.
+        """
+        def __init__(self, penalty: float, input_ids: torch.Tensor, window: int = 64):
+            assert penalty >= 1.0
+            self.penalty = penalty
+            self.window = window
+            # Only the last `window` tokens are eligible for penalisation.
+            recent = input_ids.flatten().tolist()[-window:]
+            self.seen = set(recent)
+
+        def __call__(self, logits: torch.Tensor) -> torch.Tensor:
+            logits = logits.clone()
+            for token_id in self.seen:
+                if logits[token_id] > 0:
+                    logits[token_id] /= self.penalty
+                else:
+                    logits[token_id] *= self.penalty
+            return logits
+    ```
+
+    Notes consistent with the chapter's style:
+
+    - The sign convention matters. Dividing a positive logit by $\theta > 1$ shrinks it toward zero; multiplying a negative logit by $\theta$ makes it *more* negative. Both moves push the token's post-softmax probability down without hard-masking it to $-\infty$, unlike top-k/top-p.
+    - Like the chapter's version this snapshots `seen` at construction. In a real decode loop you would rebuild the window each step (or maintain a deque of the last `window` generated ids) so that newly emitted tokens enter the window and old ones age out.
+    - Setting `window` to the full context length recovers the chapter's original global-penalty behaviour, so this is a strict generalisation. Following the chapter's pipeline ordering, this processor is applied *before* temperature scaling.
+
+**5.** Implement contrastive decoding (Li et al., 2023) as a logit processor. Given raw **expert** logits (the LLM) and raw **amateur** logits (a weaker model) at the same step, return a score vector suitable for sampling that implements
+
+   $$\text{CD}(t) = \log P_{\text{expert}}(t) - \log P_{\text{amateur}}(t),$$
+
+   restricted to *plausible* tokens only — those whose expert probability is at least $\alpha$ times the expert's max probability (reuse the min-p style threshold from the chapter). Implausible tokens must be masked to $-\infty$ so they cannot be sampled.
+
+??? note "Solution"
+    Convert both logit vectors to log-probabilities, subtract, and mask out tokens the expert deems implausible using the same peak-relative threshold as min-p. Returning the masked CD scores as a logit vector lets the rest of the pipeline (softmax + `torch.multinomial`) sample from it unchanged.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    class ContrastiveDecodingProcessor:
+        """
+        Contrastive decoding: score = log P_expert - log P_amateur,
+        restricted to the expert's plausible set (min-p style threshold).
+
+        Construct with the amateur's raw logits for THIS step, then call
+        with the expert's raw logits. Returns a score vector to sample from.
+        """
+        def __init__(self, amateur_logits: torch.Tensor, alpha: float = 0.1):
+            assert 0.0 < alpha < 1.0
+            self.amateur_log_probs = F.log_softmax(amateur_logits.float(), dim=-1)
+            self.alpha = alpha
+
+        def __call__(self, expert_logits: torch.Tensor) -> torch.Tensor:
+            expert_log_probs = F.log_softmax(expert_logits.float(), dim=-1)
+
+            # Plausibility constraint (adaptive, peak-relative like min-p):
+            # keep only tokens with P_expert(t) >= alpha * max_t P_expert(t).
+            expert_probs = expert_log_probs.exp()
+            threshold = self.alpha * expert_probs.max()
+            implausible = expert_probs < threshold
+
+            # Contrastive score, then mask the implausible tail to -inf.
+            cd = expert_log_probs - self.amateur_log_probs
+            cd = cd.masked_fill(implausible, float('-inf'))
+            return cd
+    ```
+
+    Why the plausibility constraint is essential: the raw subtraction $\log P_{\text{expert}} - \log P_{\text{amateur}}$ can assign a *high* score to a token the expert considers absurd, simply because the amateur considers it even more absurd (a large negative minus a larger negative is positive). Without the mask, contrastive decoding would happily sample fluent nonsense from the far tail. Restricting to tokens the expert itself finds plausible ($P_{\text{expert}}(t) \geq \alpha\,\max_{t'} P_{\text{expert}}(t')$) confines the contrast to the region the expert already endorses, so the subtraction only *reorders* credible candidates — amplifying the ones where the expert most outperforms the amateur (the tokens carrying the expert's extra knowledge). This mirrors the chapter's DoLa score, which performs the same log-prob subtraction but sources the "amateur" from a premature layer of the same model instead of a separate weaker model. To sample, feed the returned vector into the usual `F.softmax(...)` + `torch.multinomial(...)` step; a temperature processor can still be composed on top.
