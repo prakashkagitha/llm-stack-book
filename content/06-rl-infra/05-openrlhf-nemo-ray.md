@@ -176,9 +176,15 @@ class VLLMRolloutActor:
     def __init__(self, vllm_engine):
         self.engine = vllm_engine
 
-    def load_weights(self, state_dict_ref):
-        """Receive new policy weights and reload into vLLM."""
-        state_dict = ray.get(state_dict_ref)
+    def load_weights(self, state_dict):
+        """Receive new policy weights and reload into vLLM.
+
+        Note: `state_dict` arrives already materialized. Ray auto-dereferences
+        top-level ObjectRef arguments passed to a `.remote()` call before the
+        method body runs, so no additional `ray.get()` is needed (or valid)
+        here — calling `ray.get()` on an already-resolved dict raises a
+        ValueError.
+        """
         # vLLM exposes model.llm_engine.model_executor.driver_worker.model_runner.model
         model = self.engine.llm_engine.model_executor.driver_worker \
                            .model_runner.model
@@ -783,7 +789,8 @@ OpenRLHF supports this via the `--async_rollout` flag, which launches rollout as
 import ray
 from queue import Queue
 
-def async_ppo_loop(policy_actor, vllm_actor, reward_actor, prompts):
+def async_ppo_loop(policy_actor, vllm_actor, reward_actor, prompts,
+                    batch_size, num_steps, sync_every=1):
     rollout_queue = Queue(maxsize=2)  # prefetch up to 2 batches
 
     # Kick off first rollout
