@@ -213,6 +213,8 @@ This creates a cross-document attention problem: the model computes attention be
 
 The principled fix is a **document attention mask**: each token attends only to tokens that belong to the same document (and obeys causal ordering within that document). This is equivalent to block-diagonal causal masking over the packed sequence.
 
+{{fig:longctx-doc-packing-mask}}
+
 ```python
 import torch
 

@@ -118,6 +118,8 @@ $$
 
 The headline observation: **for typical $d$ and moderate $s$, the $d^2$ terms dominate.** With $d = 4096$ and $s = 2048$, $24 d^2 \approx 4.0\times 10^8$ while $4 s d \approx 3.4\times 10^7$ — the dense projections and FFN are ~12× the attention-score FLOPs. The quadratic attention score only *dominates the FLOP budget* once $s$ becomes comparable to $6d$. But — and this is the subtlety that motivates FlashAttention — even when attention is a minority of FLOPs, it can dominate *runtime*, because its score matrix is enormous and memory-bound. FLOPs and time are not the same thing; that gap is exactly what the roofline exists to expose.
 
+{{fig:transformer-flop-anatomy}}
+
 ### The famous $6N$ rule for training
 
 Summing layers and adding the embedding/unembedding, the forward pass of a model with $N$ non-embedding parameters costs about $2N$ FLOPs per token (every parameter participates in one MAC = 2 FLOPs). The backward pass costs about twice the forward — you compute gradients with respect to both inputs and weights — giving roughly $4N$. Hence the rule every LLM engineer memorizes:

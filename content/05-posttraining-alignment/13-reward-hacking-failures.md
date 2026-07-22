@@ -301,6 +301,8 @@ $$
 u(x, y) = \operatorname{Var}_{k}\bigl[r_{\theta_k}(x, y)\bigr]
 $$
 
+{{fig:rewardhack-ensemble-uncertainty}}
+
 Penalize or clip rewards in high-uncertainty regions. This catches some forms of extremal hacking: if a response scores high on RM 1 but low on RMs 2–4, the ensemble score is lower and the variance penalty fires. Coste et al. (2023) showed this reduces hacking significantly in controlled settings.
 
 ```python

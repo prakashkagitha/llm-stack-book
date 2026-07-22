@@ -358,6 +358,8 @@ def apply_smoothing(weight, ln_weight, s):
 
 **LLM.int8()** (Dettmers et al., 2022) takes the bluntest possible approach and it works: **decompose the matmul.** Detect the outlier feature dimensions at runtime (channels whose magnitude exceeds a threshold, e.g. 6.0). Run the ~99.9% of "normal" dimensions through a fast **INT8 matmul**, and run the handful of outlier columns through a small **FP16 matmul**. Sum the two. Mathematically, splitting the input feature set into outlier indices $O$ and the rest $R$:
 
+{{fig:llm-int8-decomposition}}
+
 $$
 X W = X_{:,R}\,W_{R,:} + X_{:,O}\,W_{O,:},
 $$

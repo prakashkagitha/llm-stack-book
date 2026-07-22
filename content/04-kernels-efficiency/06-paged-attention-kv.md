@@ -71,6 +71,8 @@ beta = kv_cache_bytes(40, 40, 128, 1)
 print(f"{beta/2**20:.3f} MiB/token")  # ~0.781 MiB/token
 ```
 
+{{fig:paged-kv-cache-vs-weights-growth}}
+
 ## The Fragmentation Problem
 
 The naive serving system allocates one **contiguous** chunk of GPU memory per request, sized for the maximum sequence length the request could reach. This is how early systems (and a straightforward HuggingFace `generate` loop) work. It is also catastrophically wasteful, in three distinct ways. The vLLM authors named them precisely.

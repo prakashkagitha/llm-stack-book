@@ -197,6 +197,8 @@ total: 9,842,113,207 tokens, 19.68 GB on disk (uint16)
 
 The `val_*.bin` shard is a small, held-out slice used only for the perplexity computation in Stage 8 — it never appears in a training batch. Production pipelines hold out entire documents or domains chosen deliberately (not a stream prefix, which can correlate with crawl order); see [Pretraining Data](../03-pretraining/01-pretraining-data.html) for the real-world version of this split.
 
+{{fig:pretrain-shard-contract-window}}
+
 ## Stage 3: The Model — One `GPTConfig`, Four Sizes
 
 The model is not reprinted here. The runnable one is the compact, weight-tied `GPT` class embedded inside chapter 3.5's `train.py` (constructor `GPT(vocab, d, h, n_layers, ctx)`) — the same GPT-2-style architecture built module-by-module in [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html): token embedding, learned positional embedding, a stack of pre-norm causal-attention + MLP blocks, a final LayerNorm, and a weight-tied `lm_head`. (2.7 also develops a modern variant — RoPE, RMSNorm, SwiGLU, GQA — which drops into the same training script unchanged, as noted below.) We do not reprint the modules; we only fix the numbers.

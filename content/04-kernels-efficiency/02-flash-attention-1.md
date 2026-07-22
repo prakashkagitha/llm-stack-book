@@ -51,6 +51,8 @@ The naive kernel makes the worst possible use of this hierarchy. Look at the HBM
 
 Every $N \times N$ matrix is born in HBM, dies in HBM, and is dragged across the bus in between. The total HBM traffic scales as $\Theta(N^2)$ — quadratic in sequence length, the same order as the FLOPs, but the *bytes* are moving over a channel that is an order of magnitude slower than the one the *FLOPs* run on. Plug that into the roofline picture from [The Roofline Model](../04-kernels-efficiency/01-roofline-performance.html): the **arithmetic intensity** (FLOPs per byte of HBM traffic) is low and roughly constant in $N$, which puts attention firmly on the **memory-bound** (bandwidth-limited) side of the roofline. The hardware's tensor cores sit mostly idle, starved, waiting for HBM.
 
+{{fig:naive-vs-flash-hbm}}
+
 There is a second, even harsher cost: **memory capacity.** The $S$ and $P$ matrices are $O(N^2)$ in size. At $N = 8192$ and fp16, a single $N \times N$ matrix is $8192^2 \times 2 \approx 134$ MB — per head, per layer. With dozens of heads and dozens of layers, and a backward pass that wants to keep $P$ around for the gradient, you blow through HBM capacity long before you run out of compute. This is the wall that capped context lengths for years.
 
 !!! example "The N² wall, in real numbers"

@@ -65,6 +65,8 @@ for name, module in model.named_modules():
         break
 ```
 
+{{fig:quant-llm-int8-outlier-decomposition}}
+
 ### INT8 Weight + Activation (SmoothQuant / TensorRT-LLM)
 
 For weight+activation INT8, the serving stack typically uses per-token dynamic quantization of activations: at each layer, collect the max absolute value of the current token's activation vector, compute a scale, quantize to INT8, run the INT8 GEMM on Tensor Cores, and dequantize the output. This is done via CUTLASS or TensorRT-LLM's `int8_sq` plugin.

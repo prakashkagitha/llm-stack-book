@@ -1,0 +1,87 @@
+<figure class="viz" id="fig-transformer-flop-anatomy">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 360" role="img" aria-label="Two stacked bars comparing per-token per-layer forward FLOPs: at moderate context the FFN (16 d squared) and QKVO projections (8 d squared) dominate over a thin attention-score sliver (4 s d); at long context, with s comparable to 6d, the attention-score segment swells to match the combined d-squared terms. A callout notes that FLOPs are not runtime, since the score matrix is memory-bound and can dominate time even as a FLOP minority.">
+<style>
+  #fig-transformer-flop-anatomy text{ fill:var(--ink-soft); }
+  #fig-transformer-flop-anatomy .h1{ font:700 13px var(--sans,sans-serif); }
+  #fig-transformer-flop-anatomy .h2{ font:600 11.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-transformer-flop-anatomy .seg{ font:700 11.5px var(--sans,sans-serif); fill:var(--surface); }
+  #fig-transformer-flop-anatomy .seg-out{ font:700 10.5px var(--sans,sans-serif); }
+  #fig-transformer-flop-anatomy .small{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-transformer-flop-anatomy .mono{ font:600 10.5px var(--mono,monospace); }
+  #fig-transformer-flop-anatomy .badge{ fill:var(--warn,#e0a106); fill-opacity:0.13; stroke:var(--warn,#e0a106); stroke-width:1.3; }
+  #fig-transformer-flop-anatomy .badge-lead{ font:700 12px var(--sans,sans-serif); fill:var(--ink-soft); }
+  #fig-transformer-flop-anatomy .badge-txt{ font:500 10px var(--sans,sans-serif); fill:var(--ink-soft); }
+  #fig-transformer-flop-anatomy .legend-sw{ stroke:var(--border-2); stroke-width:1; }
+  #fig-transformer-flop-anatomy .ffn{ fill:var(--accent); fill-opacity:0.65; }
+  #fig-transformer-flop-anatomy .qkvo{ fill:var(--accent2,#3b82f6); fill-opacity:0.55; }
+  #fig-transformer-flop-anatomy .scores{ fill:var(--warn,#e0a106); fill-opacity:0.75; }
+  #fig-transformer-flop-anatomy .bar-stroke{ stroke:var(--border-2); stroke-width:1; }
+  #fig-transformer-flop-anatomy .brace{ fill:none; stroke:var(--v-stroke); stroke-width:1.1; opacity:0.7; }
+</style>
+
+<text x="20" y="20" class="h1">Per-token, per-layer forward FLOPs: 24 d^2 + 4 s d</text>
+
+
+<g data-anim="1">
+  <rect x="20" y="28" width="13" height="13" class="ffn legend-sw"/>
+  <text x="38" y="38.5" class="small">FFN (16 d^2)</text>
+  <rect x="150" y="28" width="13" height="13" class="qkvo legend-sw"/>
+  <text x="168" y="38.5" class="small">QKVO projections (8 d^2)</text>
+  <rect x="360" y="28" width="13" height="13" class="scores legend-sw"/>
+  <text x="378" y="38.5" class="small">attention scores (4 s d)</text>
+</g>
+
+
+<g data-anim="2">
+  <text x="20" y="68" class="h2">Moderate context (s small relative to d)</text>
+
+  <rect x="20" y="76" width="180" height="40" class="ffn bar-stroke"/>
+  <text x="110" y="100" text-anchor="middle" class="seg">16 d^2</text>
+
+  <rect x="200" y="76" width="90" height="40" class="qkvo bar-stroke"/>
+  <text x="245" y="100" text-anchor="middle" class="seg" font-size="10">8 d^2</text>
+
+  <rect x="290" y="76" width="23" height="40" class="scores bar-stroke"/>
+  <line x1="301" y1="76" x2="330" y2="52" stroke="var(--v-stroke)" stroke-width="1" opacity="0.7"/>
+  <text x="333" y="50" class="seg-out">4 s d</text>
+
+  <text x="20" y="134" class="small">~12x more projection+FFN FLOPs than attention scores here</text>
+  <text x="20" y="146" class="small">(e.g. d=4096, s=2048: 24 d^2 ~= 4.0e8 vs 4 s d ~= 3.4e7).</text>
+</g>
+
+
+<g data-anim="3">
+  <text x="20" y="180" class="h2">Long context (s comparable to 6d)</text>
+
+  <rect x="20" y="188" width="180" height="40" class="ffn bar-stroke"/>
+  <text x="110" y="212" text-anchor="middle" class="seg">16 d^2</text>
+
+  <rect x="200" y="188" width="90" height="40" class="qkvo bar-stroke"/>
+  <text x="245" y="212" text-anchor="middle" class="seg" font-size="10">8 d^2</text>
+
+  <rect x="290" y="188" width="270" height="40" class="scores bar-stroke"/>
+  <text x="425" y="208" text-anchor="middle" class="seg">4 s d</text>
+  <text x="425" y="221" text-anchor="middle" class="seg" font-size="8.5">(s ~= 6d)</text>
+
+  <line x1="290" y1="182" x2="290" y2="234" stroke="var(--v-stroke)" stroke-width="1" stroke-dasharray="3 2" opacity="0.6"/>
+
+  <path d="M20 236 L20 241 L290 241 L290 236" class="brace"/>
+  <text x="155" y="253" text-anchor="middle" class="mono" font-size="9">24 d^2</text>
+  <path d="M290 236 L290 241 L560 241 L560 236" class="brace"/>
+  <text x="425" y="253" text-anchor="middle" class="mono" font-size="9">4 s d  (= 24 d^2 at s=6d)</text>
+
+  <text x="20" y="271" class="small">Scores overtake the d^2 terms near s ~= 6d, since 4 s d = 24 d^2 exactly when s = 6d.</text>
+</g>
+
+
+<g data-anim="4">
+  <rect x="20" y="284" width="740" height="60" rx="8" class="badge"/>
+  <text x="36" y="302" class="badge-lead">FLOPs are NOT runtime:</text>
+  <text x="36" y="317" class="badge-txt">attention scores can dominate TIME even as a FLOP minority, because the score</text>
+  <text x="36" y="331" class="badge-txt">matrix is memory-bound (-&gt; this is exactly what motivates FlashAttention).</text>
+</g>
+
+</svg>
+<figcaption><b>At moderate context, the d^2 terms — FFN's 16 d^2 and QKVO's 8 d^2 — dwarf the attention-score sliver (4 s d), by roughly 12x at d=4096, s=2048.</b> Only once s grows to be comparable with 6d does the quadratic score term catch up in FLOP share (4 s d = 24 d^2 exactly at s=6d) — but FLOPs are not runtime: the score matrix's memory-bound footprint lets attention dominate wall-clock time even while it is a FLOP minority, which is exactly what motivates FlashAttention.</figcaption>
+</figure>

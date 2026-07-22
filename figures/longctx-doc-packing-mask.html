@@ -1,0 +1,468 @@
+<figure class="viz" id="fig-longctx-doc-packing-mask">
+<svg viewBox="0 0 700 702" role="img" aria-label="Three-part infographic: a packed sequence of three documents (4, 3, 3 tokens); a naive causal attention mask that wrongly lets later documents attend back into earlier ones (contamination); and a block-diagonal causal mask that confines each document to itself, which FlashAttention varlen computes via cu_seqlens without ever materialising the full matrix. A loss-mask row below marks each document's first token as excluded from the loss.">
+<defs>
+  <marker id="ldm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted-fill"/>
+  </marker>
+  <pattern id="ldm-pat-block" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" class="pat-block-bg"/>
+    <line x1="0" y1="0" x2="0" y2="6" class="pat-block-line"/>
+  </pattern>
+  <pattern id="ldm-pat-contam" width="6" height="6" patternUnits="userSpaceOnUse">
+    <rect width="6" height="6" class="pat-contam-bg"/>
+    <line x1="0" y1="0" x2="6" y2="6" class="pat-contam-line"/>
+    <line x1="6" y1="0" x2="0" y2="6" class="pat-contam-line"/>
+  </pattern>
+</defs>
+
+<style>
+  #fig-longctx-doc-packing-mask text { fill: var(--ink-soft,#333); font: 400 11px var(--sans,sans-serif); }
+  #fig-longctx-doc-packing-mask .title { font: 700 15.5px var(--sans,sans-serif); fill: var(--ink,#1a1a1a); }
+  #fig-longctx-doc-packing-mask .subtitle { font: 400 11.5px var(--sans,sans-serif); fill: var(--muted,#666); }
+  #fig-longctx-doc-packing-mask .sect-lbl { font: 700 12px var(--sans,sans-serif); }
+  #fig-longctx-doc-packing-mask .grid-title { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-longctx-doc-packing-mask .grid-title.wrong { fill: var(--accent,#c15b39); }
+  #fig-longctx-doc-packing-mask .grid-title.right { fill: var(--good,#2f9e6e); }
+  #fig-longctx-doc-packing-mask .axis-lbl { font: 400 8.5px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-longctx-doc-packing-mask .axis-hdr { font: 700 9px var(--sans,sans-serif); fill: var(--muted,#777); }
+  #fig-longctx-doc-packing-mask .cell-main { font: 700 11px var(--sans,sans-serif); }
+  #fig-longctx-doc-packing-mask .cell-idx { font: 400 8px var(--mono,monospace); fill: var(--muted,#888); }
+  #fig-longctx-doc-packing-mask .doc-lbl { font: 700 11px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-longctx-doc-packing-mask .cu-lbl { font: 400 10.5px var(--mono,monospace); fill: var(--muted,#666); }
+  #fig-longctx-doc-packing-mask .callout { font: 400 10.3px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-longctx-doc-packing-mask .callout.warn-txt { fill: var(--accent,#c15b39); font-weight: 600; }
+  #fig-longctx-doc-packing-mask .callout.muted { fill: var(--muted,#666); }
+  #fig-longctx-doc-packing-mask .legend-lbl { font: 400 9.5px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-longctx-doc-packing-mask .note-txt { font: 400 11.3px var(--sans,sans-serif); fill: var(--ink-soft,#333); }
+  #fig-longctx-doc-packing-mask .mask-num { font: 700 12px var(--mono,monospace); }
+
+  #fig-longctx-doc-packing-mask .cell-allow { fill: var(--good,#2f9e6e); fill-opacity: 0.30; stroke: var(--good,#2f9e6e); stroke-width: 0.9; }
+  #fig-longctx-doc-packing-mask .cell-block { fill: url(#ldm-pat-block); stroke: var(--border-2,#cbd2da); stroke-width: 0.7; }
+  #fig-longctx-doc-packing-mask .cell-contam { fill: url(#ldm-pat-contam); stroke: var(--accent,#c15b39); stroke-width: 0.9; }
+  #fig-longctx-doc-packing-mask .pat-block-bg { fill: var(--surface-3,#eceff3); }
+  #fig-longctx-doc-packing-mask .pat-block-line { stroke: var(--border-2,#cbd2da); stroke-width: 1.4; }
+  #fig-longctx-doc-packing-mask .pat-contam-bg { fill: var(--accent,#c15b39); fill-opacity: 0.16; }
+  #fig-longctx-doc-packing-mask .pat-contam-line { stroke: var(--accent,#c15b39); stroke-width: 0.8; }
+
+  #fig-longctx-doc-packing-mask .docsep { stroke: var(--ink-soft,#333); stroke-width: 1.4; opacity: 0.55; }
+  #fig-longctx-doc-packing-mask .grid-border { fill: none; stroke: var(--ink-soft,#333); stroke-width: 1.5; }
+  #fig-longctx-doc-packing-mask .v-muted-fill { fill: var(--muted,#888); }
+
+  #fig-longctx-doc-packing-mask .seq-cell { fill: var(--surface-3,#f0f2f5); stroke: var(--border-2,#c8cdd4); stroke-width: 1; }
+  #fig-longctx-doc-packing-mask .seq-cell.docB { fill: var(--surface,#fff); }
+  #fig-longctx-doc-packing-mask .seq-cell.docC { fill: var(--surface-3,#f0f2f5); }
+  #fig-longctx-doc-packing-mask .seq-sep { stroke: var(--ink-soft,#333); stroke-width: 1.6; opacity: 0.6; }
+
+  #fig-longctx-doc-packing-mask .lm-zero { fill: var(--surface-3,#eceff3); stroke: var(--border-2,#c8cdd4); stroke-width: 1; }
+  #fig-longctx-doc-packing-mask .lm-zero text { fill: var(--muted,#888); }
+  #fig-longctx-doc-packing-mask .lm-one { fill: var(--accent2,#3b82f6); fill-opacity: 0.16; stroke: var(--accent2,#3b82f6); stroke-width: 1.1; }
+  #fig-longctx-doc-packing-mask .lm-one text { fill: var(--accent2,#2563eb); }
+
+  #fig-longctx-doc-packing-mask .note-box { fill: var(--surface-3,#f0f2f5); stroke: var(--border-2,#c8cdd4); stroke-width: 1; }
+
+  #fig-longctx-doc-packing-mask [data-anim] { animation: ldm-fade 0.5s ease both; }
+  #fig-longctx-doc-packing-mask [data-anim="2"] { animation-delay: 0.15s; }
+  #fig-longctx-doc-packing-mask [data-anim="3"] { animation-delay: 0.30s; }
+  #fig-longctx-doc-packing-mask [data-anim="4"] { animation-delay: 0.45s; }
+  #fig-longctx-doc-packing-mask [data-anim="5"] { animation-delay: 0.60s; }
+  @keyframes ldm-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-longctx-doc-packing-mask [data-anim] { animation: none; }
+  }
+</style>
+
+
+<g data-anim="1">
+<text x="20" y="24" class="title">Document packing: why the attention mask must be block-diagonal</text>
+<text x="20" y="41" class="subtitle">3 packed documents -&gt; 10 tokens; each query must see only its own document</text>
+
+<rect x="20" y="48" width="10" height="10" class="cell-allow"/>
+<text x="34" y="57" class="legend-lbl">attend (causal, same doc)</text>
+<rect x="230" y="48" width="10" height="10" class="cell-block"/>
+<text x="244" y="57" class="legend-lbl">blocked (future or cross-doc)</text>
+<rect x="460" y="48" width="10" height="10" class="cell-contam"/>
+<text x="474" y="57" class="legend-lbl">contamination (WRONG only)</text>
+</g>
+
+
+<g data-anim="2" transform="translate(0,12)">
+<text x="20" y="66" class="sect-lbl">Packed sequence (3 documents, 10 tokens)</text>
+
+<text x="100" y="80" text-anchor="middle" class="doc-lbl">Doc A</text>
+<text x="240" y="80" text-anchor="middle" class="doc-lbl">Doc B</text>
+<text x="360" y="80" text-anchor="middle" class="doc-lbl">Doc C</text>
+
+
+<rect x="20"  y="88" width="40" height="34" class="seq-cell"/>
+<rect x="60"  y="88" width="40" height="34" class="seq-cell"/>
+<rect x="100" y="88" width="40" height="34" class="seq-cell"/>
+<rect x="140" y="88" width="40" height="34" class="seq-cell"/>
+<rect x="180" y="88" width="40" height="34" class="seq-cell docB"/>
+<rect x="220" y="88" width="40" height="34" class="seq-cell docB"/>
+<rect x="260" y="88" width="40" height="34" class="seq-cell docB"/>
+<rect x="300" y="88" width="40" height="34" class="seq-cell docC"/>
+<rect x="340" y="88" width="40" height="34" class="seq-cell docC"/>
+<rect x="380" y="88" width="40" height="34" class="seq-cell docC"/>
+
+<text x="40"  y="105" text-anchor="middle" class="cell-main">A0</text>
+<text x="80"  y="105" text-anchor="middle" class="cell-main">A1</text>
+<text x="120" y="105" text-anchor="middle" class="cell-main">A2</text>
+<text x="160" y="105" text-anchor="middle" class="cell-main">A3</text>
+<text x="200" y="105" text-anchor="middle" class="cell-main">B0</text>
+<text x="240" y="105" text-anchor="middle" class="cell-main">B1</text>
+<text x="280" y="105" text-anchor="middle" class="cell-main">B2</text>
+<text x="320" y="105" text-anchor="middle" class="cell-main">C0</text>
+<text x="360" y="105" text-anchor="middle" class="cell-main">C1</text>
+<text x="400" y="105" text-anchor="middle" class="cell-main">C2</text>
+
+<text x="40"  y="117" text-anchor="middle" class="cell-idx">idx 0</text>
+<text x="80"  y="117" text-anchor="middle" class="cell-idx">idx 1</text>
+<text x="120" y="117" text-anchor="middle" class="cell-idx">idx 2</text>
+<text x="160" y="117" text-anchor="middle" class="cell-idx">idx 3</text>
+<text x="200" y="117" text-anchor="middle" class="cell-idx">idx 4</text>
+<text x="240" y="117" text-anchor="middle" class="cell-idx">idx 5</text>
+<text x="280" y="117" text-anchor="middle" class="cell-idx">idx 6</text>
+<text x="320" y="117" text-anchor="middle" class="cell-idx">idx 7</text>
+<text x="360" y="117" text-anchor="middle" class="cell-idx">idx 8</text>
+<text x="400" y="117" text-anchor="middle" class="cell-idx">idx 9</text>
+
+<line x1="180" y1="88" x2="180" y2="122" class="seq-sep"/>
+<line x1="300" y1="88" x2="300" y2="122" class="seq-sep"/>
+
+
+<line x1="20"  y1="126" x2="20"  y2="132" class="seq-sep"/>
+<line x1="180" y1="126" x2="180" y2="132" class="seq-sep"/>
+<line x1="300" y1="126" x2="300" y2="132" class="seq-sep"/>
+<line x1="420" y1="126" x2="420" y2="132" class="seq-sep"/>
+<text x="20"  y="144" text-anchor="middle" class="cu-lbl">0</text>
+<text x="180" y="144" text-anchor="middle" class="cu-lbl">4</text>
+<text x="300" y="144" text-anchor="middle" class="cu-lbl">7</text>
+<text x="420" y="144" text-anchor="middle" class="cu-lbl">10</text>
+<text x="220" y="160" text-anchor="middle" class="cu-lbl">cu_seqlens = [0, 4, 7, 10]</text>
+</g>
+
+
+<g data-anim="3" transform="translate(0,12)">
+<text x="350" y="182" text-anchor="middle" class="sect-lbl">Attention mask (10x10): rows = query token, columns = key token; lower-left triangle = causal (col &lt;= row)</text>
+
+<text x="202" y="194" text-anchor="middle" class="grid-title wrong">Naive causal mask (WRONG)</text>
+<text x="524" y="194" text-anchor="middle" class="grid-title right">Block-diagonal causal mask (RIGHT)</text>
+
+
+<text x="94.0" y="204" text-anchor="middle" class="axis-lbl">0</text>
+<text x="118.0" y="204" text-anchor="middle" class="axis-lbl">1</text>
+<text x="142.0" y="204" text-anchor="middle" class="axis-lbl">2</text>
+<text x="166.0" y="204" text-anchor="middle" class="axis-lbl">3</text>
+<text x="190.0" y="204" text-anchor="middle" class="axis-lbl">4</text>
+<text x="214.0" y="204" text-anchor="middle" class="axis-lbl">5</text>
+<text x="238.0" y="204" text-anchor="middle" class="axis-lbl">6</text>
+<text x="262.0" y="204" text-anchor="middle" class="axis-lbl">7</text>
+<text x="286.0" y="204" text-anchor="middle" class="axis-lbl">8</text>
+<text x="310.0" y="204" text-anchor="middle" class="axis-lbl">9</text>
+
+
+<text x="416.0" y="204" text-anchor="middle" class="axis-lbl">0</text>
+<text x="440.0" y="204" text-anchor="middle" class="axis-lbl">1</text>
+<text x="464.0" y="204" text-anchor="middle" class="axis-lbl">2</text>
+<text x="488.0" y="204" text-anchor="middle" class="axis-lbl">3</text>
+<text x="512.0" y="204" text-anchor="middle" class="axis-lbl">4</text>
+<text x="536.0" y="204" text-anchor="middle" class="axis-lbl">5</text>
+<text x="560.0" y="204" text-anchor="middle" class="axis-lbl">6</text>
+<text x="584.0" y="204" text-anchor="middle" class="axis-lbl">7</text>
+<text x="608.0" y="204" text-anchor="middle" class="axis-lbl">8</text>
+<text x="632.0" y="204" text-anchor="middle" class="axis-lbl">9</text>
+
+
+<text x="68" y="223.0" text-anchor="middle" class="axis-lbl">0</text>
+<text x="68" y="247.0" text-anchor="middle" class="axis-lbl">1</text>
+<text x="68" y="271.0" text-anchor="middle" class="axis-lbl">2</text>
+<text x="68" y="295.0" text-anchor="middle" class="axis-lbl">3</text>
+<text x="68" y="319.0" text-anchor="middle" class="axis-lbl">4</text>
+<text x="68" y="343.0" text-anchor="middle" class="axis-lbl">5</text>
+<text x="68" y="367.0" text-anchor="middle" class="axis-lbl">6</text>
+<text x="68" y="391.0" text-anchor="middle" class="axis-lbl">7</text>
+<text x="68" y="415.0" text-anchor="middle" class="axis-lbl">8</text>
+<text x="68" y="439.0" text-anchor="middle" class="axis-lbl">9</text>
+
+
+<text x="390" y="223.0" text-anchor="middle" class="axis-lbl">0</text>
+<text x="390" y="247.0" text-anchor="middle" class="axis-lbl">1</text>
+<text x="390" y="271.0" text-anchor="middle" class="axis-lbl">2</text>
+<text x="390" y="295.0" text-anchor="middle" class="axis-lbl">3</text>
+<text x="390" y="319.0" text-anchor="middle" class="axis-lbl">4</text>
+<text x="390" y="343.0" text-anchor="middle" class="axis-lbl">5</text>
+<text x="390" y="367.0" text-anchor="middle" class="axis-lbl">6</text>
+<text x="390" y="391.0" text-anchor="middle" class="axis-lbl">7</text>
+<text x="390" y="415.0" text-anchor="middle" class="axis-lbl">8</text>
+<text x="390" y="439.0" text-anchor="middle" class="axis-lbl">9</text>
+
+
+<g>
+      <rect x="82" y="208" width="24" height="24" class="cell-allow"/>
+      <rect x="106" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="130" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="154" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="178" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="202" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="226" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="250" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="232" width="24" height="24" class="cell-allow"/>
+      <rect x="106" y="232" width="24" height="24" class="cell-allow"/>
+      <rect x="130" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="154" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="178" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="202" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="226" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="250" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="256" width="24" height="24" class="cell-allow"/>
+      <rect x="106" y="256" width="24" height="24" class="cell-allow"/>
+      <rect x="130" y="256" width="24" height="24" class="cell-allow"/>
+      <rect x="154" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="178" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="202" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="226" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="250" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="106" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="130" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="154" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="178" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="202" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="226" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="250" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="304" width="24" height="24" class="cell-contam"/>
+      <rect x="106" y="304" width="24" height="24" class="cell-contam"/>
+      <rect x="130" y="304" width="24" height="24" class="cell-contam"/>
+      <rect x="154" y="304" width="24" height="24" class="cell-contam"/>
+      <rect x="178" y="304" width="24" height="24" class="cell-allow"/>
+      <rect x="202" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="226" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="250" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="328" width="24" height="24" class="cell-contam"/>
+      <rect x="106" y="328" width="24" height="24" class="cell-contam"/>
+      <rect x="130" y="328" width="24" height="24" class="cell-contam"/>
+      <rect x="154" y="328" width="24" height="24" class="cell-contam"/>
+      <rect x="178" y="328" width="24" height="24" class="cell-allow"/>
+      <rect x="202" y="328" width="24" height="24" class="cell-allow"/>
+      <rect x="226" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="250" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="352" width="24" height="24" class="cell-contam"/>
+      <rect x="106" y="352" width="24" height="24" class="cell-contam"/>
+      <rect x="130" y="352" width="24" height="24" class="cell-contam"/>
+      <rect x="154" y="352" width="24" height="24" class="cell-contam"/>
+      <rect x="178" y="352" width="24" height="24" class="cell-allow"/>
+      <rect x="202" y="352" width="24" height="24" class="cell-allow"/>
+      <rect x="226" y="352" width="24" height="24" class="cell-allow"/>
+      <rect x="250" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="274" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="106" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="130" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="154" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="178" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="202" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="226" y="376" width="24" height="24" class="cell-contam"/>
+      <rect x="250" y="376" width="24" height="24" class="cell-allow"/>
+      <rect x="274" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="298" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="106" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="130" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="154" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="178" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="202" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="226" y="400" width="24" height="24" class="cell-contam"/>
+      <rect x="250" y="400" width="24" height="24" class="cell-allow"/>
+      <rect x="274" y="400" width="24" height="24" class="cell-allow"/>
+      <rect x="298" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="82" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="106" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="130" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="154" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="178" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="202" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="226" y="424" width="24" height="24" class="cell-contam"/>
+      <rect x="250" y="424" width="24" height="24" class="cell-allow"/>
+      <rect x="274" y="424" width="24" height="24" class="cell-allow"/>
+      <rect x="298" y="424" width="24" height="24" class="cell-allow"/>
+  <line x1="178" y1="208" x2="178" y2="448" class="docsep"/>
+  <line x1="82" y1="304" x2="322" y2="304" class="docsep"/>
+  <line x1="250" y1="208" x2="250" y2="448" class="docsep"/>
+  <line x1="82" y1="376" x2="322" y2="376" class="docsep"/>
+  <rect x="82" y="208" width="240" height="240" class="grid-border"/>
+</g>
+
+
+<g>
+      <rect x="404" y="208" width="24" height="24" class="cell-allow"/>
+      <rect x="428" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="208" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="232" width="24" height="24" class="cell-allow"/>
+      <rect x="428" y="232" width="24" height="24" class="cell-allow"/>
+      <rect x="452" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="232" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="256" width="24" height="24" class="cell-allow"/>
+      <rect x="428" y="256" width="24" height="24" class="cell-allow"/>
+      <rect x="452" y="256" width="24" height="24" class="cell-allow"/>
+      <rect x="476" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="256" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="428" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="452" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="476" y="280" width="24" height="24" class="cell-allow"/>
+      <rect x="500" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="280" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="428" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="304" width="24" height="24" class="cell-allow"/>
+      <rect x="524" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="304" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="428" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="328" width="24" height="24" class="cell-allow"/>
+      <rect x="524" y="328" width="24" height="24" class="cell-allow"/>
+      <rect x="548" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="328" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="428" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="352" width="24" height="24" class="cell-allow"/>
+      <rect x="524" y="352" width="24" height="24" class="cell-allow"/>
+      <rect x="548" y="352" width="24" height="24" class="cell-allow"/>
+      <rect x="572" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="596" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="352" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="428" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="376" width="24" height="24" class="cell-allow"/>
+      <rect x="596" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="620" y="376" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="428" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="400" width="24" height="24" class="cell-allow"/>
+      <rect x="596" y="400" width="24" height="24" class="cell-allow"/>
+      <rect x="620" y="400" width="24" height="24" class="cell-block"/>
+      <rect x="404" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="428" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="452" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="476" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="500" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="524" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="548" y="424" width="24" height="24" class="cell-block"/>
+      <rect x="572" y="424" width="24" height="24" class="cell-allow"/>
+      <rect x="596" y="424" width="24" height="24" class="cell-allow"/>
+      <rect x="620" y="424" width="24" height="24" class="cell-allow"/>
+  <line x1="500" y1="208" x2="500" y2="448" class="docsep"/>
+  <line x1="404" y1="304" x2="644" y2="304" class="docsep"/>
+  <line x1="572" y1="208" x2="572" y2="448" class="docsep"/>
+  <line x1="404" y1="376" x2="644" y2="376" class="docsep"/>
+  <rect x="404" y="208" width="240" height="240" class="grid-border"/>
+</g>
+</g>
+
+
+<g data-anim="4" transform="translate(0,12)">
+<text x="82" y="464" class="callout warn-txt">cross-document attention -&gt; unrelated tokens,</text>
+<text x="82" y="478" class="callout warn-txt">contamination (dominates the window at long context)</text>
+
+<line x1="118" y1="514" x2="163" y2="322" class="docsep" marker-end="url(#ldm-arrow)" opacity="0.8"/>
+<text x="82" y="528" class="callout">first token of Doc B attends</text>
+<text x="82" y="541" class="callout">to end of Doc A</text>
+
+<text x="524" y="464" text-anchor="middle" class="callout muted">each token attends only within its own document,</text>
+<text x="524" y="478" text-anchor="middle" class="callout muted">still causal</text>
+</g>
+
+
+<g data-anim="5" transform="translate(0,12)">
+<rect x="20" y="554" width="660" height="40" rx="6" class="note-box"/>
+<text x="350" y="571" text-anchor="middle" class="note-txt">FlashAttention varlen (cu_seqlens) computes exactly the RIGHT mask without ever</text>
+<text x="350" y="587" text-anchor="middle" class="note-txt">materialising a T x T tensor -- O(1) mask storage</text>
+</g>
+
+
+<g data-anim="5" transform="translate(0,12)">
+<text x="20" y="616" class="sect-lbl">Loss mask (aligned to packed sequence above)</text>
+
+<rect x="20"  y="624" width="40" height="26" class="lm-zero"/>
+<text x="40"  y="642" text-anchor="middle" class="mask-num">0</text>
+<rect x="60"  y="624" width="40" height="26" class="lm-one"/>
+<text x="80"  y="642" text-anchor="middle" class="mask-num">1</text>
+<rect x="100" y="624" width="40" height="26" class="lm-one"/>
+<text x="120" y="642" text-anchor="middle" class="mask-num">1</text>
+<rect x="140" y="624" width="40" height="26" class="lm-one"/>
+<text x="160" y="642" text-anchor="middle" class="mask-num">1</text>
+<rect x="180" y="624" width="40" height="26" class="lm-zero"/>
+<text x="200" y="642" text-anchor="middle" class="mask-num">0</text>
+<rect x="220" y="624" width="40" height="26" class="lm-one"/>
+<text x="240" y="642" text-anchor="middle" class="mask-num">1</text>
+<rect x="260" y="624" width="40" height="26" class="lm-one"/>
+<text x="280" y="642" text-anchor="middle" class="mask-num">1</text>
+<rect x="300" y="624" width="40" height="26" class="lm-zero"/>
+<text x="320" y="642" text-anchor="middle" class="mask-num">0</text>
+<rect x="340" y="624" width="40" height="26" class="lm-one"/>
+<text x="360" y="642" text-anchor="middle" class="mask-num">1</text>
+<rect x="380" y="624" width="40" height="26" class="lm-one"/>
+<text x="400" y="642" text-anchor="middle" class="mask-num">1</text>
+
+<text x="20" y="668" class="callout">loss mask: do not predict a document's first token from the previous document</text>
+</g>
+
+</svg>
+<figcaption><b>Packing three documents into one training window requires a mask that stops attention at document boundaries.</b> The naive causal mask (left grid) lets every later document's queries attend back into earlier, unrelated documents — at long context this cross-document "contamination" can dominate the attention window. The block-diagonal causal mask (right grid) confines each token to its own document while staying causal; FlashAttention's varlen API produces this exactly, from the four numbers in <code>cu_seqlens</code>, without ever storing a full T&amp;times;T mask. The loss mask independently zeroes out each document's first token, since it has no valid previous-token context to predict from.</figcaption>
+</figure>

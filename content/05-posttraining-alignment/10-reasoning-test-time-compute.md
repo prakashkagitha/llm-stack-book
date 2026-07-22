@@ -504,6 +504,8 @@ The key findings:
 
 4. **Difficulty modulates the return.** Easy problems saturate quickly; hard problems continue to benefit from more compute. This motivates *adaptive* test-time compute: route easy queries to cheap paths, hard ones to expensive tree search.
 
+{{fig:test-time-scaling-curves}}
+
 !!! example "Worked example: test-time compute budget"
     Suppose we have a 7B-parameter model that generates reasoning tokens at 5,000 tokens/second on a single A100 (batch=1). A typical math solution is 200 tokens, so one sample costs $200 / 5000 = 40\text{ ms}$.
 

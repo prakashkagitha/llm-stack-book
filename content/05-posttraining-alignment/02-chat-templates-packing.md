@@ -41,6 +41,8 @@ The special tokens `<|im_start|>` and `<|im_end|>` are added to the base vocabul
 
 During generation, the server appends `<|im_start|>assistant\n` after the last user turn and lets the model decode until it emits `<|im_end|>`.
 
+{{fig:chattmpl-template-anatomy}}
+
 ### Llama 2 & Llama 3 Templates
 
 Meta's Llama 2 used a different convention:

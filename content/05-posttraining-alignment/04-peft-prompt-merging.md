@@ -519,6 +519,8 @@ $$
 \theta_\text{merge} = \theta_\text{pre-trained} + \lambda \cdot \tau_\text{merge}.
 $$
 
+{{fig:ties-merge-pipeline}}
+
 ```python
 import torch
 

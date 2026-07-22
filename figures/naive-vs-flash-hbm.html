@@ -1,0 +1,139 @@
+<figure class="viz" id="fig-naive-vs-flash-hbm">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 460" role="img" aria-label="Naive attention drags the two N by N score and probability matrices across the slow HBM bus, a round trip each, for total traffic on the order of N squared, while FlashAttention keeps the small score tile inside on-chip SRAM and only streams Q, K, V in and O, L out, for far less HBM traffic and O(N) peak memory.">
+  <defs>
+    <marker id="nvf-arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--warn,#e0a106)"/>
+    </marker>
+    <marker id="nvf-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+    </marker>
+    <marker id="nvf-arrow-muted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-naive-vs-flash-hbm text{ fill: var(--ink-soft); }
+    #fig-naive-vs-flash-hbm .hd{ font:700 14px var(--sans,sans-serif); }
+    #fig-naive-vs-flash-hbm .step{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-naive-vs-flash-hbm .bus{ font:600 12px var(--sans,sans-serif); }
+    #fig-naive-vs-flash-hbm .blobL{ font:700 15px var(--mono,monospace); }
+    #fig-naive-vs-flash-hbm .blobS{ font:500 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-naive-vs-flash-hbm .rw{ font:500 10px var(--mono,monospace); fill: var(--muted); }
+    #fig-naive-vs-flash-hbm .tot{ font:700 13px var(--sans,sans-serif); }
+    #fig-naive-vs-flash-hbm .sub{ font:500 10.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-naive-vs-flash-hbm .tiny{ font:500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+    #fig-naive-vs-flash-hbm .tlbl{ font:700 11px var(--mono,monospace); }
+    #fig-naive-vs-flash-hbm .tag{ font:700 13px var(--mono,monospace); }
+    #fig-naive-vs-flash-hbm .punch{ font:700 13px var(--sans,sans-serif); }
+  </style>
+
+  <g data-anim="1">
+    <text x="20" y="20" class="hd">Naive attention</text>
+    <text x="416" y="20" class="hd">FlashAttention</text>
+
+    <rect x="16" y="28" width="768" height="32" rx="6" fill="var(--warn,#e0a106)" opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.5"/>
+    <text x="400" y="48" class="bus" text-anchor="middle">HBM bus &#8212; slow, off-chip (~2&#8211;3.5 TB/s)</text>
+
+    <line x1="400" y1="60" x2="400" y2="392" class="v-grid" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.7"/>
+  </g>
+
+  <g data-anim="2">
+    
+    <text x="79" y="100" class="step" text-anchor="middle">1&#8201; S = QK^T</text>
+    <text x="204" y="100" class="step" text-anchor="middle">2&#8201; P = softmax(S)</text>
+    <text x="329" y="100" class="step" text-anchor="middle">3&#8201; O = P V</text>
+
+    
+    <line x1="79" y1="64" x2="79" y2="88" class="viz-draw" style="--len:24" stroke="var(--warn,#e0a106)" stroke-width="2" marker-start="url(#nvf-arrow-warn)"/>
+    <line x1="79" y1="106" x2="79" y2="130" class="viz-draw" style="--len:24" stroke="var(--warn,#e0a106)" stroke-width="2" marker-end="url(#nvf-arrow-warn)"/>
+    <line x1="204" y1="64" x2="204" y2="88" class="viz-draw" style="--len:24" stroke="var(--warn,#e0a106)" stroke-width="2" marker-start="url(#nvf-arrow-warn)"/>
+    <line x1="204" y1="106" x2="204" y2="130" class="viz-draw" style="--len:24" stroke="var(--warn,#e0a106)" stroke-width="2" marker-end="url(#nvf-arrow-warn)"/>
+    <line x1="329" y1="64" x2="329" y2="88" class="viz-draw" style="--len:24" stroke="var(--warn,#e0a106)" stroke-width="2" marker-start="url(#nvf-arrow-warn)"/>
+    <line x1="329" y1="106" x2="329" y2="130" class="viz-draw" style="--len:24" stroke="var(--warn,#e0a106)" stroke-width="2" marker-end="url(#nvf-arrow-warn)"/>
+
+    
+    <rect x="46" y="130" width="66" height="58" rx="6" fill="var(--warn,#e0a106)" opacity="0.16" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="79" y="156" class="blobL" text-anchor="middle" fill="var(--warn,#e0a106)">S</text>
+    <text x="79" y="174" class="blobS" text-anchor="middle">N x N</text>
+
+    <rect x="171" y="130" width="66" height="58" rx="6" fill="var(--warn,#e0a106)" opacity="0.16" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="204" y="156" class="blobL" text-anchor="middle" fill="var(--warn,#e0a106)">P</text>
+    <text x="204" y="174" class="blobS" text-anchor="middle">N x N</text>
+
+    <rect x="303" y="130" width="52" height="58" rx="6" fill="var(--warn,#e0a106)" opacity="0.16" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="329" y="156" class="blobL" text-anchor="middle" fill="var(--warn,#e0a106)">O</text>
+    <text x="329" y="174" class="blobS" text-anchor="middle">N x d</text>
+
+    
+    <path d="M137 152 L148 159 L137 166 Z" class="v-muted" fill="currentColor" opacity="0.8"/>
+    <path d="M262 152 L273 159 L262 166 Z" class="v-muted" fill="currentColor" opacity="0.8"/>
+
+    
+    <text x="79" y="204" class="rw" text-anchor="middle">read Q, read K</text>
+    <text x="79" y="218" class="rw" text-anchor="middle">write S</text>
+    <text x="204" y="204" class="rw" text-anchor="middle">read S</text>
+    <text x="204" y="218" class="rw" text-anchor="middle">write P</text>
+    <text x="329" y="204" class="rw" text-anchor="middle">read P, V</text>
+    <text x="329" y="218" class="rw" text-anchor="middle">write O</text>
+
+    
+    <text x="204" y="250" class="tot" text-anchor="middle" fill="var(--warn,#e0a106)">Total HBM traffic: ~ N^2</text>
+    <text x="204" y="270" class="sub" text-anchor="middle">arithmetic intensity low -&gt; memory-bound:</text>
+    <text x="204" y="284" class="sub" text-anchor="middle">tensor cores idle, waiting on HBM</text>
+
+    
+    <line x1="150" y1="306" x2="150" y2="356" class="v-stroke" stroke-width="1.2"/>
+    <line x1="150" y1="356" x2="256" y2="356" class="v-stroke" stroke-width="1.2"/>
+    <line x1="150" y1="356" x2="206" y2="322" class="viz-draw" style="--len:45" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+    <line x1="206" y1="322" x2="252" y2="322" class="v-grid" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <circle cx="178" cy="339" r="4" fill="var(--warn,#e0a106)"/>
+    <text x="204" y="372" class="tiny" text-anchor="middle">memory-bound point (I &lt;&lt; I*)</text>
+  </g>
+
+  <g data-anim="3">
+    
+    <line x1="520" y1="60" x2="520" y2="90" class="v-muted" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#nvf-arrow-muted)"/>
+    <line x1="556" y1="60" x2="556" y2="90" class="v-muted" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#nvf-arrow-muted)"/>
+    <line x1="592" y1="60" x2="592" y2="90" class="v-muted" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#nvf-arrow-muted)"/>
+    <rect x="509" y="90" width="22" height="22" rx="3" class="v-fill" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="520" y="106" text-anchor="middle" class="tlbl">Q</text>
+    <rect x="545" y="90" width="22" height="22" rx="3" class="v-fill" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="556" y="106" text-anchor="middle" class="tlbl">K</text>
+    <rect x="581" y="90" width="22" height="22" rx="3" class="v-fill" stroke="var(--muted)" stroke-width="1.3"/>
+    <text x="592" y="106" text-anchor="middle" class="tlbl">V</text>
+
+    
+    <line x1="744" y1="118" x2="744" y2="60" class="viz-draw" style="--len:58" stroke="var(--accent)" stroke-width="2" marker-end="url(#nvf-arrow-accent)"/>
+    <text x="734" y="100" text-anchor="end" class="rw" fill="var(--accent)">O, L -&gt;</text>
+
+    
+    <rect x="440" y="118" width="320" height="132" rx="8" fill="var(--accent)" opacity="0.05" stroke="var(--accent)" stroke-width="1.8"/>
+    <text x="452" y="136" fill="var(--accent)" style="font:700 11.5px var(--sans,sans-serif);">SRAM (on-chip, fast)</text>
+
+    
+    <rect x="470" y="158" width="130" height="56" rx="5" fill="var(--accent)" opacity="0.22" stroke="var(--accent)" stroke-width="1.8" class="viz-pulse"/>
+    <text x="535" y="182" text-anchor="middle" fill="var(--accent)" style="font:700 13px var(--mono,monospace);">Br x Bc</text>
+    <text x="535" y="198" text-anchor="middle" fill="var(--accent)" style="font:500 10px var(--sans,sans-serif); opacity:0.85;">score tile</text>
+
+    
+    <path d="M618 180 v-4 a4 4 0 0 1 8 0 v4" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+    <rect x="615" y="180" width="14" height="10" rx="1.5" fill="var(--accent)" opacity="0.9"/>
+    <text x="636" y="181" text-anchor="start" class="tiny" fill="var(--accent)">never crosses</text>
+    <text x="636" y="195" text-anchor="start" class="tiny" fill="var(--accent)">the bus</text>
+
+    
+    <text x="598" y="272" class="tot" text-anchor="middle" fill="var(--accent)">HBM traffic: ~ N^2 d^2/M &lt;&lt; ~N^2</text>
+    <text x="598" y="290" class="sub" text-anchor="middle">peak memory O(N), not O(N^2)</text>
+    <text x="598" y="306" class="sub" text-anchor="middle">-&gt; compute-bound: tensor cores stay fed</text>
+    <text x="598" y="324" class="tiny" text-anchor="middle" font-style="italic">(Br x Bc tile reused N/Br times, never grows)</text>
+  </g>
+
+  <g data-anim="4">
+    <line x1="16" y1="400" x2="784" y2="400" class="v-grid" stroke-width="1" opacity="0.6"/>
+    <rect x="190" y="408" width="420" height="36" rx="8" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="400" y="431" text-anchor="middle" class="punch">same FLOPs, same answer, ~M/d^2 fewer bytes</text>
+  </g>
+</svg>
+<figcaption><b>Naive attention pays for two round trips of an N x N matrix across the slow HBM bus; FlashAttention never lets that matrix exist.</b> The naive kernel writes S, reads it back for softmax, writes P, and reads it back again — Θ(N²) bytes crossing a bus an order of magnitude slower than the tensor cores, which sit idle waiting. FlashAttention streams Q, K, V in small tiles, keeps the B<sub>r</sub>&amp;times;B<sub>c</sub> score tile entirely inside on-chip SRAM, and writes out only O and the length-N logsumexp L — cutting HBM traffic to Θ(N²d²/M) and peak extra memory from O(N²) to O(N).</figcaption>
+</figure>

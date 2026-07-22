@@ -1,0 +1,78 @@
+<figure class="viz" id="fig-paged-kv-cache-vs-weights-growth">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 520" role="img" aria-label="Schematic chart: HBM used versus tokens in flight. A flat band of fixed weights sits at the bottom; a KV cache wedge grows linearly above it, first overtaking the weights band in size, then meeting the GPU HBM capacity ceiling, which sets the max tokens that fit. A shallower-slope line, representing a smaller per-token KV footprint from GQA/MQA or fp8, reaches the ceiling farther right, fitting more tokens.">
+
+<defs>
+  <marker id="pkvw-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" class="v-muted" fill="currentColor"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-paged-kv-cache-vs-weights-growth text { fill: var(--ink-soft); font-family: var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .ttl   { font: 700 15px var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .ax    { font: 600 12px var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .sub   { font: 500 10px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-paged-kv-cache-vs-weights-growth .band  { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .lbl   { font: 700 11.5px var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .call  { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .tick  { font: 600 10px var(--mono,monospace); }
+  #fig-paged-kv-cache-vs-weights-growth .cap   { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-paged-kv-cache-vs-weights-growth .take  { font: 600 12px var(--sans,sans-serif); }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-paged-kv-cache-vs-weights-growth [data-anim] { opacity: 1 !important; animation: none !important; }
+  }
+</style>
+
+<text x="390" y="24" text-anchor="middle" class="ttl">Weights are flat; the KV cache is not</text>
+
+<g data-anim="1">
+  <line x1="70" y1="430" x2="70" y2="60"  class="v-stroke" stroke-width="1.6" marker-end="url(#pkvw-arrow)"/>
+  <line x1="70" y1="430" x2="700" y2="430" class="v-stroke" stroke-width="1.6" marker-end="url(#pkvw-arrow)"/>
+  <text x="385" y="472" text-anchor="middle" class="ax">tokens in flight (context length x concurrency) -&gt;</text>
+  <text x="385" y="488" text-anchor="middle" class="sub">schematic axes &#8212; no numeric scale implied</text>
+  <text x="30" y="245" text-anchor="middle" class="ax" transform="rotate(-90 30 245)">HBM used -&gt;</text>
+</g>
+
+<g data-anim="2">
+  <rect x="70" y="390" width="630" height="40" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d1d5db)" stroke-width="1.4"/>
+  <text x="255" y="414" text-anchor="middle" class="band">weights (fixed)</text>
+</g>
+
+<g data-anim="3">
+  <polygon points="70,390 520,100 520,390" fill="var(--accent)" fill-opacity="0.14"/>
+  <line x1="70" y1="390" x2="520" y2="100" class="viz-draw" style="--len:540" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>
+  <text x="330" y="222" text-anchor="middle" class="lbl" fill="var(--accent)" transform="rotate(-33 330 222)">KV cache = beta x total tokens</text>
+
+  <circle cx="132" cy="350" r="4.5" fill="var(--accent)"/>
+  <line x1="140" y1="343" x2="180" y2="290" stroke="var(--accent)" stroke-width="1.2" opacity="0.7"/>
+  <text x="184" y="272" text-anchor="start" class="call" fill="var(--accent)">KV cache overtakes</text>
+  <text x="184" y="286" text-anchor="start" class="call" fill="var(--accent)">the weights</text>
+</g>
+
+<g data-anim="4">
+  <line x1="70" y1="100" x2="700" y2="100" stroke="var(--warn,#e0a106)" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="698" y="92" text-anchor="end" class="cap" fill="var(--warn,#e0a106)">GPU HBM capacity</text>
+
+  <circle cx="520" cy="100" r="5" fill="var(--warn,#e0a106)"/>
+  <line x1="520" y1="100" x2="507" y2="88" stroke="var(--warn,#e0a106)" stroke-width="1.2" opacity="0.8"/>
+  <text x="503" y="72" text-anchor="end" class="call" fill="var(--warn,#e0a106)">OOM / max concurrency =</text>
+  <text x="503" y="86" text-anchor="end" class="call" fill="var(--warn,#e0a106)">the throughput ceiling</text>
+
+  <line x1="520" y1="100" x2="520" y2="430" class="v-grid" stroke-width="1.4" stroke-dasharray="3 4" opacity="0.7"/>
+  <text x="520" y="444" text-anchor="middle" class="tick">max tokens that fit</text>
+</g>
+
+<g data-anim="5">
+  <line x1="70" y1="390" x2="660" y2="100" stroke="var(--accent2,#3b82f6)" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.75"/>
+  <text x="450" y="197" text-anchor="start" class="sub" fill="var(--accent2,#3b82f6)" transform="rotate(-27 450 197)">smaller beta (GQA/MQA, fp8) -&gt;</text>
+  <text x="448" y="212" text-anchor="start" class="sub" fill="var(--accent2,#3b82f6)" transform="rotate(-27 448 212)">shallower slope -&gt; more tokens fit</text>
+
+  <circle cx="660" cy="100" r="4.5" fill="var(--accent2,#3b82f6)"/>
+  <line x1="660" y1="100" x2="660" y2="430" class="v-grid" stroke-width="1.2" stroke-dasharray="3 4" opacity="0.6" stroke="var(--accent2,#3b82f6)"/>
+  <text x="660" y="444" text-anchor="middle" class="tick" fill="var(--accent2,#3b82f6)">more tokens fit</text>
+</g>
+
+</svg>
+<figcaption><b>Weights are paid once; KV is paid per token.</b> The KV cache grows linearly with tokens in flight and stacks on top of the fixed weights, first exceeding the weights themselves in size and then hitting the GPU's HBM ceiling &#8212; that ceiling, not spare FLOPs, is what caps concurrency. Shrinking the per-token cost beta (GQA/MQA, fp8 KV) flattens the slope and pushes the ceiling out to more tokens in flight.</figcaption>
+</figure>

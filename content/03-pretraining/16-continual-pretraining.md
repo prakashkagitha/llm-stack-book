@@ -175,6 +175,8 @@ def token_balanced_stream(new_iter, replay_iter, replay_ratio, len_fn=len):
 !!! tip "Practitioner tip: measure forgetting on a frozen held-out base set"
     Before you start CPT, carve out a held-out evaluation set from the *base* distribution (general-knowledge MMLU-style tasks, a perplexity set on web text) and a held-out *new*-domain set. Log both every N steps. A healthy CPT run shows new-domain loss dropping steadily while base loss rises only slightly and then plateaus. If base loss climbs monotonically, raise the replay ratio or lower the re-warm peak. This two-curve plot is your single best diagnostic.
 
+{{fig:cpt-replay-two-curve-diagnostic}}
+
 ## Domain, Language & Streaming Adaptation
 
 The re-warm + replay recipe is the *engine*. The *application* — which domain, how big the shift, how the data arrives — sets the dials. Below are the canonical regimes.
