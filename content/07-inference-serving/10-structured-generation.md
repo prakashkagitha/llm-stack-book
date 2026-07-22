@@ -807,3 +807,133 @@ For a working engineer deploying constrained generation today, the decision tree
 - **llama.cpp GGUF grammar specification (GitHub: ggerganov/llama.cpp, `grammars/` directory)** — practical EBNF grammar format used by the llama.cpp ecosystem; good reference for JSON/SQL grammar construction.
 - **Guidance (GitHub: guidance-ai/guidance)** — an alternative structured generation approach using a domain-specific templating language; predates Outlines and useful for understanding the design space.
 - **Koo et al., "Automata-based Constraints for Language Model Decoding" (2024)** — a theoretical treatment of the expressiveness and complexity of automaton-based constraints for LLM decoding.
+
+## Exercises
+
+**1.** A regex constraint like an ISO date `[12][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])` can be enforced with a plain finite-state machine, but arbitrarily-nested JSON such as `{"a": {"b": {"c": {}}}}` cannot. Explain *why* an FSM is insufficient for JSON, what formal machine is required instead, and identify the single JSON character whose validity is the classic example of a *context-dependent* token in the chapter's terminology.
+
+??? note "Solution"
+    An FSM is a 5-tuple $M = (Q, \Sigma, \delta, q_0, F)$ whose only memory is its *current state*, drawn from the finite set $Q$. To validate nesting, the automaton must remember *how many* opening braces are still unmatched — and JSON permits arbitrary nesting depth, so the number of distinct "depths to remember" is unbounded. No finite $Q$ can encode an unbounded counter, so JSON is not a regular language; it is a **context-free language (CFL)**.
+
+    The machine that recognizes CFLs is a **pushdown automaton (PDA)**: an FSM augmented with a **stack**. Each `{` pushes an `OBJECT` marker; each `}` pops one. The stack depth is the nesting depth, so the PDA can match braces to any depth.
+
+    The classic context-dependent token is the closing brace `}` (equivalently `]`). Its validity cannot be decided from the shallow grammatical position alone — it is legal only when there is a matching `{` on the stack. That is exactly why XGrammar cannot fold `}` into its precomputed context-*independent* rule mask and must evaluate it against the live stack state each step.
+
+**2.** Use the chapter's worked example: a `[0-9]{4}` constraint, vocabulary size $V = 32{,}000$, with exactly 10 single-digit tokens valid in the start state $q_0$.
+
+   (a) What fraction of the vocabulary is *masked out* (set to $-\infty$) at $q_0$? 
+
+   (b) A production system instead pre-compiles the full `state x token_id` boolean matrix once at load time. For an FSM with 50 states and a larger vocabulary $V = 128{,}000$, how many bits and how many kilobytes does this matrix occupy (1 KB = 1024 bytes)?
+
+??? note "Solution"
+    **(a)** At $q_0$, 10 of 32,000 tokens are allowed, so the masked-out fraction is
+    $$
+    \frac{32{,}000 - 10}{32{,}000} = \frac{31{,}990}{32{,}000} = 0.9996875 \approx 99.97\%.
+    $$
+    Only about 0.03% of the vocabulary survives the mask, which matches the chapter's "masking ratio ~99.97%".
+
+    **(b)** The matrix stores one bit per (state, token) pair:
+    $$
+    50 \times 128{,}000 = 6{,}400{,}000 \text{ bits}.
+    $$
+    Converting to bytes: $6{,}400{,}000 / 8 = 800{,}000$ bytes. In KiB:
+    $$
+    \frac{800{,}000}{1024} \approx 781.25 \text{ KB} \approx 0.8 \text{ MB},
+    $$
+    confirming the chapter's "about 800 KB — completely negligible." Per-step cost then drops to an $O(1)$ row lookup instead of an $O(V \cdot L_{\max})$ simulation.
+
+**3.** Constrained decoding overlaps mask computation with the model forward pass, giving a wall-clock cost of $T_{\text{constrained}} \approx \max(T_{\text{model\_fwd}}, T_{\text{mask\_compute}})$ instead of the naive sum. Consider two deployments:
+
+   - **Large model:** $T_{\text{model\_fwd}} = 40$ ms, $T_{\text{mask\_compute}} = 0.5$ ms.
+   - **Small model:** $T_{\text{model\_fwd}} = 2$ ms, $T_{\text{mask\_compute}} = 0.5$ ms.
+
+   For each, compute the per-step overhead (as a percentage of $T_{\text{model\_fwd}}$) under (i) the naive serialized model and (ii) the ideal overlapped model. What does the contrast say about *when* constrained decoding is effectively free?
+
+??? note "Solution"
+    Overhead is the extra wall-clock time relative to the unconstrained forward pass $T_{\text{model\_fwd}}$.
+
+    *Naive (serialized):* extra time is exactly $T_{\text{mask\_compute}}$, so overhead $= T_{\text{mask\_compute}} / T_{\text{model\_fwd}}$.
+
+    - Large model: $0.5 / 40 = 0.0125 = 1.25\%$.
+    - Small model: $0.5 / 2 = 0.25 = 25\%$.
+
+    *Ideal overlapped:* wall-clock is $\max(T_{\text{model\_fwd}}, T_{\text{mask\_compute}})$.
+
+    - Large model: $\max(40, 0.5) = 40$ ms, equal to the forward pass, so overhead $= (40 - 40)/40 = 0\%$.
+    - Small model: $\max(2, 0.5) = 2$ ms, so overhead $= (2 - 2)/2 = 0\%$.
+
+    In the *ideal* overlap the mask is fully hidden behind the GPU forward pass in both cases (because $T_{\text{mask\_compute}} < T_{\text{model\_fwd}}$ for both). The interesting contrast is the naive baseline: for the large model the mask is already a rounding error (1.25%), so even without overlap constrained decoding is nearly free; for the small model it is a hefty 25%, which is precisely why overlap (and why XGrammar's "near-zero overhead for model sizes >= 7B" claim) matters most for smaller/faster models where masking is a non-trivial fraction of a fast forward pass. If a tokenizer were so slow that $T_{\text{mask\_compute}} > T_{\text{model\_fwd}}$, masking would become the bottleneck and overhead would no longer be hideable.
+
+**4.** The chapter warns that you must apply the grammar mask *before* top-p, not after. Implement a function `masked_top_p(logits, mask, p)` that (a) applies the grammar mask, then (b) applies nucleus (top-p) filtering to the surviving tokens, always keeping at least one token. Then, using the concrete distribution below, show numerically why the *reverse* order (top-p first) fails. Suppose $V = 5$ with raw softmax probabilities $[0.50, 0.30, 0.12, 0.05, 0.03]$, `mask = [0, 0, 0, 1, 1]` (only the last two tokens are grammatically valid), and $p = 0.9$.
+
+??? note "Solution"
+    Correct implementation — grammar mask first, then top-p on what remains:
+
+    ```python
+    import torch
+
+    def masked_top_p(logits: torch.Tensor,
+                     mask: torch.Tensor,      # bool, True = grammar-allowed
+                     p: float = 0.9) -> torch.Tensor:
+        """Apply the hard grammar mask FIRST, then nucleus (top-p) filtering.
+        Returns logits with disallowed / out-of-nucleus tokens set to -inf.
+        Always keeps at least one token."""
+        out = logits.clone()
+        out[~mask] = float('-inf')                 # (a) hard grammar constraint
+
+        probs = torch.softmax(out, dim=-1)         # renormalize over valid tokens
+        sorted_probs, sorted_idx = torch.sort(probs, descending=True)
+        cumsum = torch.cumsum(sorted_probs, dim=-1)
+
+        # Drop tokens once cumulative mass exceeds p, but never drop the top-1.
+        drop = cumsum - sorted_probs > p           # mass BEFORE this token > p
+        drop[0] = False                            # always keep the most likely
+        remove_idx = sorted_idx[drop]
+        out[remove_idx] = float('-inf')
+        return out
+    ```
+
+    **Reverse order (top-p first) on the given numbers.** The full distribution is
+    $[0.50, 0.30, 0.12, 0.05, 0.03]$. Applying top-p with $p = 0.9$ first: sort (already sorted) and accumulate — $0.50, 0.80, 0.92, \dots$. The nucleus is the smallest prefix whose cumulative mass reaches $0.9$, i.e. tokens $\{0, 1, 2\}$ (cumsum $0.92 \ge 0.9$); tokens 3 and 4 are discarded. Now apply the grammar mask `[0,0,0,1,1]`: tokens 0, 1, 2 are forbidden, and tokens 3, 4 were already thrown away by top-p. **Every remaining logit is $-\infty$.** `softmax` of an all-$-\infty$ vector sums to zero and yields `NaN` — the "empty mask (infeasible constraint)" failure the chapter describes, here triggered *artificially* by ordering.
+
+    **Correct order** avoids this. Grammar mask first leaves only tokens 3 and 4 with raw mass $0.05$ and $0.03$; renormalizing over just those two gives $[0.05/0.08, 0.03/0.08] = [0.625, 0.375]$. Nucleus with $p=0.9$: cumsum $0.625, 1.0$; token 3 alone is $0.625 < 0.9$ so we keep token 4 too, ending with a valid two-token distribution $[0.625, 0.375]$. We sample a grammatically valid token every time. The lesson: the valid tokens collectively held only $0.08$ of the *original* mass — far under $p$ — so filtering by top-p before the hard constraint can annihilate the entire feasible set.
+
+**5.** The "Tool name as a vocabulary restriction" note says constraining the function name is a *choice among a finite set of strings*. Implement `choice_mask(options, prefix, vocab, vocab_size, device)` that returns a boolean mask over the vocabulary allowing exactly those tokens `t` for which `prefix + vocab[t]` is a valid prefix of at least one string in `options` (so generation can still complete some option). Your simulation must be correct for *multi-character* tokens (the chapter's most common bug). Then trace it for `options = ["get_weather", "get_time"]`, `prefix = "get_"`, and a toy vocab containing the tokens `"w"`, `"weather"`, `"time"`, `"day"`.
+
+??? note "Solution"
+    A token is allowed iff appending its full decoded string to the prefix still keeps us on track for *some* option — i.e. the concatenation is a prefix of that option (or equals it). Because tokens are multi-character, we compare the *entire* candidate string, never just the first character (the buggy `startswith(expected_prefix)` shortcut from the chapter). Standard string prefixing does the character-by-character simulation implicitly and correctly.
+
+    ```python
+    import torch
+    from typing import Dict, List
+
+    def choice_mask(
+        options: List[str],
+        prefix: str,                 # text already emitted under the constraint
+        vocab: Dict[int, str],       # token_id -> decoded string
+        vocab_size: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Boolean mask: token t is allowed iff (prefix + vocab[t]) is a
+        prefix of at least one option. Correct for multi-char tokens."""
+        mask = torch.zeros(vocab_size, dtype=torch.bool, device=device)
+        for token_id, token_str in vocab.items():
+            candidate = prefix + token_str            # whole multi-char token
+            # valid if candidate is a prefix of some option, OR (once we've
+            # matched a full option) it would overshoot -> only allow up to the
+            # option length.
+            if any(opt.startswith(candidate) for opt in options):
+                mask[token_id] = True
+        return mask
+    ```
+
+    Note that `opt.startswith(candidate)` walks every character of `candidate` (which includes every character of the multi-character `token_str`), so a token only survives if *all* of its characters keep us inside a live option — exactly the `is_token_valid_CORRECT` behavior, not the `startswith(expected_prefix)` bug.
+
+    **Trace** with `prefix = "get_"`, `options = ["get_weather", "get_time"]`:
+
+    - `"w"`: candidate `"get_w"`. `"get_weather".startswith("get_w")` is `True`. -> **allowed**.
+    - `"weather"`: candidate `"get_weather"`. Equals `"get_weather"`, and `startswith` on an equal string is `True`. -> **allowed** (completes the first option).
+    - `"time"`: candidate `"get_time"`. `"get_time".startswith("get_time")` is `True`. -> **allowed** (completes the second option).
+    - `"day"`: candidate `"get_day"`. Neither option starts with `"get_day"`. -> **forbidden**.
+
+    So the mask allows `{"w", "weather", "time"}` and forbids `"day"`. Both single-character (`"w"`) and multi-character (`"weather"`, `"time"`) completions are handled correctly, and the hallucinated `"day"` is masked — guaranteeing the emitted function name is one of the two registered tools.
