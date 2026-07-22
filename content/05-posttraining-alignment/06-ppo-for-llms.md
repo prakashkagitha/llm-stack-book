@@ -379,7 +379,13 @@ def make_token_rewards(policy_logprobs, ref_logprobs, rm_scores, mask, kl_beta=0
     token_rewards = -kl_beta * kl * mask                 # KL on every response token
 
     # Index of the last response token per row, and drop the RM score there.
-    last_idx = (mask.sum(dim=1) - 1).long().clamp(min=0) # (B,)
+    # Found positionally (not via mask.sum()-1): after the next-token shift,
+    # `mask` still carries the prompt's leading zeros, so "count of response
+    # tokens minus one" is NOT the same column as "the last column where
+    # mask==1" unless the prompt has length 1. Locating the rightmost 1
+    # directly keeps this correct for any prompt length.
+    positions = torch.arange(mask.size(1), device=mask.device).unsqueeze(0).expand_as(mask)
+    last_idx = (positions * mask).amax(dim=1).long()      # (B,)
     rows = torch.arange(token_rewards.size(0), device=mask.device)
     token_rewards[rows, last_idx] += rm_scores           # terminal RM reward
     return token_rewards

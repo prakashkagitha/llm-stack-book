@@ -395,9 +395,9 @@ def generator_worker(engine, prompt_stream):
     while True:
         # 1) refresh local weights if the trainer pushed a newer version
         with shared_weights["lock"]:
+            local_v = weight_version["v"]
             if shared_weights["sd"] is not None:
                 sync_weights_to_engine(engine, shared_weights["sd"])
-                local_v = weight_version["v"]
         # 2) generate a group, tag it with the weight version that produced it
         prompts = next(prompt_stream)
         for r in rollout(prompts):           # uses the engine (continuous-batched)
