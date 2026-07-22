@@ -703,3 +703,164 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
     - A/B test prompt and model changes with session-level hash routing for multi-turn consistency; pre-calculate required sample sizes before launch.
     - The LLMOps lifecycle is a closed loop: Ship → Observe → Evaluate → Improve → Retrain. Production logs feed the data flywheel that makes the next version better.
     - Prefer burn-rate alerts over fixed thresholds to reduce alarm fatigue while maintaining sensitivity to genuine degradation.
+
+## Exercises
+
+**1.** *(Conceptual — the three pillars.)* A teammate proposes cutting costs by dropping verbatim prompt/response **logs** and keeping only **metrics** (token counts, latency, error rate) and **traces** (per-stage spans with semantic attributes). Give two concrete failure modes from this chapter that this setup would fail to catch, and explain why. Separately, the chapter says to put *semantic attributes* on spans but to keep raw prompt strings out of span attributes — give the two reasons it cites.
+
+??? note "Solution"
+    Two failure modes that metrics + traces alone miss:
+
+    - **Silent hallucination / off-topic drift.** The introduction stresses that a model can "answer every request with HTTP 200 while silently hallucinating." Metrics would show a healthy `status="ok"` counter, low error rate, and normal token counts; traces would show every span completing successfully. Nothing numeric reveals that the *content* is wrong. Only the verbatim response log — the pillar that answers "what exactly did the model say?" — surfaces it, typically via the async LLM-as-judge pipeline that reads `assistant_reply`.
+    - **Prompt-template regressions / prompt-injection.** Because logs carry the `prompt_version` and the actual `user_message`/`assistant_reply`, they are what lets you do regression analysis after a template change or spot an injection attack in the wild. A latency histogram or a span duration cannot show that a new template started leaking the system prompt.
+
+    In short, the chapter's framing is that all three pillars are necessary and none is sufficient; the log pillar is the only one that captures behavior "expressed in natural language that no metric can fully capture."
+
+    Why keep raw prompt strings *off* span attributes: (1) **size limits** — span attributes are meant for stable, low-cardinality values and large strings blow past backend limits; (2) **PII risk** — traces fan out to observability backends that may not be reviewed for sensitive data. The chapter's guidance is to log prompts separately in an access-controlled sink and link them to the span by trace ID.
+
+**2.** *(Quantitative — cost math.)* Your service averages **1,200 prompt tokens** and **400 completion tokens** per request on `gpt-4o-mini` (USD 0.15 per 1M prompt tokens, USD 0.60 per 1M completion tokens). (a) Compute the cost per request. (b) At a steady **5 requests/second**, compute the projected daily cost. (c) A context-management change trims the average prompt to **700 tokens** with completions unchanged. What is the new daily cost, and what percentage reduction is that?
+
+??? note "Solution"
+    (a) Cost per request, using $c = \frac{p}{10^6}\times 0.15 + \frac{k}{10^6}\times 0.60$ with $p=1200$, $k=400$:
+
+    $$
+    c = \frac{1200}{10^6}\times 0.15 + \frac{400}{10^6}\times 0.60 = 0.00018 + 0.00024 = \$0.00042
+    $$
+
+    (b) Requests per day $= 5 \times 3600 \times 24 = 432{,}000$. Daily cost:
+
+    $$
+    0.00042 \times 432{,}000 = \$181.44 \text{ per day}
+    $$
+
+    (c) New per-request cost with $p=700$:
+
+    $$
+    c' = \frac{700}{10^6}\times 0.15 + \frac{400}{10^6}\times 0.60 = 0.000105 + 0.00024 = \$0.000345
+    $$
+
+    New daily cost $= 0.000345 \times 432{,}000 = \$149.04$. Reduction:
+
+    $$
+    \frac{181.44 - 149.04}{181.44} = \frac{32.40}{181.44} \approx 0.1786 = 17.9\%
+    $$
+
+    The prompt is the only thing that changed, and prompt tokens are the cheaper direction here, so a 42% cut in prompt tokens buys only about an 18% cost cut — exactly the kind of per-template insight the chapter says token distributions make visible.
+
+**3.** *(Quantitative — PSI drift.)* You bin prompt-length into three buckets. The 7-day **baseline** proportions are $Q = [0.40,\ 0.35,\ 0.25]$ and the current 24-hour window gives $P = [0.25,\ 0.35,\ 0.40]$. Using the chapter's definition $\text{PSI} = \sum_i (P_i - Q_i)\ln\frac{P_i}{Q_i}$, compute the PSI and classify the shift using the chapter's thresholds.
+
+??? note "Solution"
+    Term by term (natural logs):
+
+    - Bin 1: $(0.25 - 0.40)\ln\frac{0.25}{0.40} = (-0.15)\ln(0.625) = (-0.15)(-0.4700) = 0.07050$
+    - Bin 2: $(0.35 - 0.35)\ln\frac{0.35}{0.35} = 0 \times \ln(1) = 0$
+    - Bin 3: $(0.40 - 0.25)\ln\frac{0.40}{0.25} = (0.15)\ln(1.6) = (0.15)(0.4700) = 0.07050$
+
+    $$
+    \text{PSI} = 0.07050 + 0 + 0.07050 = 0.1410
+    $$
+
+    Against the chapter's convention (PSI < 0.1 stable, 0.1–0.25 moderate, > 0.25 significant), $0.141$ falls in the **moderate shift** band. Note the symmetric mass swap from bin 1 to bin 3 produces two equal positive contributions — PSI is a sum of non-negative terms, so opposite-direction movements do not cancel.
+
+**4.** *(Quantitative — A/B sample size.)* You want to detect a $\delta = 0.04$ (4-percentage-point) improvement in the per-session composite quality score, which has standard deviation $\sigma = 0.20$. Using the chapter's formula at 80% power ($z_\beta = 0.84$) and $\alpha = 0.05$ two-sided ($z_{\alpha/2} = 1.96$), compute the required sessions **per variant**. If you run 1,000 sessions/day total and put 10% of traffic in the treatment arm, how many days until you can decide?
+
+??? note "Solution"
+    Sample size per variant, using $n \approx \dfrac{2\sigma^2 (z_{\alpha/2}+z_\beta)^2}{\delta^2}$:
+
+    $$
+    n \approx \frac{2 \times (0.20)^2 \times (1.96 + 0.84)^2}{(0.04)^2}
+      = \frac{2 \times 0.04 \times (2.80)^2}{0.0016}
+      = \frac{2 \times 0.04 \times 7.84}{0.0016}
+    $$
+
+    $$
+    = \frac{0.6272}{0.0016} = 392 \text{ sessions per variant}
+    $$
+
+    The treatment arm receives 10% of 1,000 sessions/day $= 100$ sessions/day. Time to reach 392:
+
+    $$
+    \frac{392}{100} = 3.92 \Rightarrow \approx 4 \text{ days}
+    $$
+
+    (The control arm at 80% traffic reaches 392 far sooner, so the treatment arm is the binding constraint.) Smaller effect sizes scale as $1/\delta^2$: halving the target effect to $\delta = 0.02$ would quadruple $n$ to about 1,568 per variant, roughly 16 days in the treatment arm — which is why the chapter insists on pre-calculating sample size before launch.
+
+**5.** *(Implementation — output-quality drift detector.)* The chapter gives an *upper* CUSUM, $S_n = \max(0,\ S_{n-1} + (x_n - \mu_0 - k))$, which accumulates *upward* deviations. Output-quality drift is a sustained *drop*, so implement a **lower** CUSUM detector class that fires when the composite score falls. It should take $\mu_0$ (in-control mean), $k$ (allowance), and $h$ (decision threshold), accept one score at a time via `update(x)`, and return `True` on the update that first crosses $h$. Then trace it by hand on $\mu_0 = 0.80$, $k = 0.02$, $h = 0.10$ with the stream $[0.80,\ 0.78,\ 0.75,\ 0.74,\ 0.73]$.
+
+??? note "Solution"
+    To detect a downward shift, flip the sign of the deviation: accumulate $(\mu_0 - k - x_n)$, which grows when $x_n$ sits below $\mu_0 - k$.
+
+    ```python
+    # quality_cusum.py  --  lower CUSUM change-point detector for eval scores
+    class QualityCUSUM:
+        """Detect a sustained DROP in the rolling composite quality score.
+
+        mu0 : in-control (baseline) mean score
+        k   : allowance, typically half the smallest shift you want to detect
+        h   : decision threshold (set via ARL analysis)
+        """
+        def __init__(self, mu0: float, k: float, h: float):
+            self.mu0 = mu0
+            self.k = k
+            self.h = h
+            self.s = 0.0
+            self.alerted = False
+
+        def update(self, x: float) -> bool:
+            # Lower CUSUM: accumulate how far below (mu0 - k) each score falls.
+            self.s = max(0.0, self.s + (self.mu0 - self.k - x))
+            fired = self.s > self.h and not self.alerted
+            if fired:
+                self.alerted = True   # latch so we alert once per excursion
+            return fired
+
+        def reset(self):
+            self.s = 0.0
+            self.alerted = False
+    ```
+
+    Hand trace with $\mu_0 = 0.80$, $k = 0.02$, so each step adds $(0.78 - x_n)$, clamped at 0:
+
+    | $n$ | $x_n$ | $0.78 - x_n$ | $S_n = \max(0, S_{n-1} + \cdot)$ | $S_n > h$? |
+    |---|---|---|---|---|
+    | 1 | 0.80 | $-0.02$ | $\max(0,\ 0 - 0.02) = 0$ | no |
+    | 2 | 0.78 | $0.00$ | $\max(0,\ 0 + 0.00) = 0$ | no |
+    | 3 | 0.75 | $+0.03$ | $\max(0,\ 0 + 0.03) = 0.03$ | no |
+    | 4 | 0.74 | $+0.04$ | $\max(0,\ 0.03 + 0.04) = 0.07$ | no |
+    | 5 | 0.73 | $+0.05$ | $\max(0,\ 0.07 + 0.05) = 0.12$ | **yes** |
+
+    The detector fires on the 5th score, when $S_5 = 0.12 > h = 0.10$. A single low reading (e.g. one noisy $0.75$) never crosses $h$ on its own; the alert requires a *sustained* run below $\mu_0 - k$, which is exactly the noise-vs-signal separation the chapter wants from a change-point algorithm rather than a fixed threshold.
+
+**6.** *(Implementation — burn-rate quality alert.)* Implement the practitioner tip's **burn-rate** alert to replace a fixed "score < 0.7" rule. Given an error budget that allows a fraction `budget` (e.g. 0.01 = 1%) of responses to be low-quality, and the counts from a rolling window, compute the burn rate and alert when it exceeds a multiplier (e.g. 2x). Then apply it to a 1-hour window with 5,000 responses of which 130 were flagged low-quality, at `budget = 0.01`, `multiplier = 2.0`.
+
+??? note "Solution"
+    The burn rate is the *observed* bad fraction divided by the *budgeted* bad fraction; a burn rate of 1 means you are consuming budget exactly as fast as allowed, and >1 means faster.
+
+    ```python
+    # burn_rate_alert.py  --  SRE-style quality burn-rate alert
+    def quality_burn_rate(low_quality: int, total: int, budget: float) -> float:
+        """Return the burn rate: observed bad fraction / budgeted bad fraction.
+
+        low_quality : count of low-quality responses in the window
+        total       : total responses in the window
+        budget      : allowed fraction of low-quality responses (e.g. 0.01)
+        """
+        if total == 0:
+            return 0.0
+        observed_fraction = low_quality / total
+        return observed_fraction / budget
+
+    def should_alert(low_quality: int, total: int,
+                     budget: float = 0.01, multiplier: float = 2.0) -> bool:
+        """Fire when the window is burning budget faster than `multiplier`x."""
+        return quality_burn_rate(low_quality, total, budget) > multiplier
+    ```
+
+    Applying it to the window:
+
+    $$
+    \text{observed fraction} = \frac{130}{5000} = 0.026, \qquad
+    \text{burn rate} = \frac{0.026}{0.01} = 2.6
+    $$
+
+    Since $2.6 > 2.0$, `should_alert(...)` returns `True` — the service is burning its quality budget at 2.6x the sustainable rate. The advantage over a fixed threshold (which the chapter warns causes alarm fatigue): the same absolute count of bad responses raises no alarm when traffic is high and the fraction stays under budget, but triggers quickly when the *rate* of budget consumption spikes, catching genuine degradations faster while suppressing noise-driven false positives.

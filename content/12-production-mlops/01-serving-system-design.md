@@ -480,3 +480,133 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
 - Sheng et al., *S-LoRA: Serving Thousands of Concurrent LoRA Adapters* — multi-adapter batching for multi-model serving.
 - Mitzenmacher, *The Power of Two Choices in Randomized Load Balancing* — the load-balancing result behind power-of-*d*-choices routing.
 - Kleinrock, *Queueing Systems, Volume 1: Theory* — Little's Law and the $1/(1-\rho)$ behavior, the foundation of capacity planning.
+
+## Exercises
+
+**1.** The chapter insists that "a single latency SLO is meaningless" for LLM serving and that you need *two* numbers. Name the two user-perceived latency quantities, say which layer/phase dominates each, and explain why an SLO written only as "p99 end-to-end latency $\le$ 10 s" could be satisfied by a system that users nonetheless experience as broken.
+
+??? note "Solution"
+    The two quantities are **TTFT** (time to first token) and **TPOT / ITL** (time per output token, i.e. inter-token latency).
+
+    - **TTFT** is enqueue $\to$ first output token. It is dominated by *queue wait plus prefill* — how long the request sits behind other work plus the cost of processing its prompt.
+    - **TPOT** is the mean gap between successive output tokens once streaming has started. It is dominated by the *decode step time*, which grows with batch size.
+
+    A pure end-to-end SLO hides both. From the chapter's identity
+    $$
+    \text{E2E} \approx \text{TTFT} + \text{TPOT}\times(N_{out}-1),
+    $$
+    a request with $N_{out}=500$ could meet "E2E $\le$ 10 s" with a TTFT of 5 s (the screen sits blank for five seconds — feels frozen) and a fast 10 ms/token stream, *or* with a snappy 200 ms TTFT followed by a slower 19.6 ms/token stream — either way the single number cannot distinguish "slow to start" from "slow to stream," and the two feel completely different to a user. Worse, a long output can mask a terrible TTFT because the large $N_{out}$ term dominates the sum. You therefore need both a TTFT percentile (responsiveness) and a TPOT percentile (streaming smoothness), which is exactly why real SLOs read like "p99 TTFT $\le$ 1 s **and** p90 TPOT $\le$ 50 ms."
+
+**2.** Using the M/M/1 approximation from the chapter, $W = (1/\mu)\,/\,(1-\rho)$, take a replica whose mean service time is $1/\mu = 80$ ms. Compute the mean time in system $W$ at utilizations $\rho = 0.70$, $0.90$, and $0.95$. By what factor does $W$ grow going from $\rho=0.70$ to $\rho=0.95$? Use the result to justify the chapter's rule of provisioning to 60-75% utilization rather than 95%.
+
+??? note "Solution"
+    Plug into $W = (1/\mu)/(1-\rho)$ with $1/\mu = 0.080$ s.
+
+    - $\rho = 0.70$: $W = 0.080 / (1-0.70) = 0.080/0.30 = 0.267$ s $\approx 267$ ms.
+    - $\rho = 0.90$: $W = 0.080 / 0.10 = 0.800$ s $= 800$ ms.
+    - $\rho = 0.95$: $W = 0.080 / 0.05 = 1.600$ s $= 1600$ ms.
+
+    Growth factor from $\rho=0.70$ to $\rho=0.95$:
+    $$
+    \frac{1.600}{0.267} = \frac{1-0.30}{1-0.05}\cdot\frac{1}{1} = \frac{0.30}{0.05} = 6\times.
+    $$
+    A 25-point rise in utilization multiplies latency by **6x**, driven entirely by the $1/(1-\rho)$ queueing term (from $1/0.30=3.33$ to $1/0.05=20$). The mean already blows up; the tail percentiles (p99) blow up faster still. This is the "queueing cliff": at 95% the system is technically keeping up on average yet sitting at 1.6 s mean wait. Provisioning to 60-75% keeps $1/(1-\rho)$ in the $2.5$-$4$ range, so the headroom is not waste — it is the budget that holds p99 inside the SLO.
+
+**3.** Size the KV cache for a hypothetical model on one 80 GB GPU. The model has $L = 48$ layers, $H_{kv} = 8$ KV heads (GQA), head dimension $d_h = 128$, served in bf16 (2 bytes/element). Weights occupy 30 GB and you reserve 4 GB for activations and allocator overhead. For an average context of 4,096 tokens per request, how many concurrent requests fit? Then state what changes if you switch the KV cache to fp8.
+
+??? note "Solution"
+    KV bytes per token (both K and V):
+    $$
+    2 \cdot L \cdot H_{kv} \cdot d_h \cdot \text{bytes\_per\_elem} = 2 \cdot 48 \cdot 8 \cdot 128 \cdot 2 = 196{,}608\ \text{bytes/token} \approx 0.1875\ \text{MB/token}.
+    $$
+    Per request at 4,096 tokens:
+    $$
+    196{,}608 \times 4096 = 805{,}306{,}368\ \text{bytes} \approx 0.75\ \text{GB}.
+    $$
+    Free HBM for KV:
+    $$
+    (80 - 30 - 4)\ \text{GB} = 46\ \text{GB} = 46\times10^{9}\ \text{bytes}.
+    $$
+    Concurrent requests:
+    $$
+    N_{\text{concurrent}} = \left\lfloor \frac{46\times10^{9}}{805{,}306{,}368} \right\rfloor = \lfloor 57.1 \rfloor = \textbf{57}.
+    $$
+    (Check: $57 \times 805{,}306{,}368 = 4.590\times10^{10} < 4.6\times10^{10}$; $58$ would need $4.671\times10^{10}$, which overflows.)
+
+    Switching the KV cache to **fp8** halves `bytes_per_elem` from 2 to 1, so bytes/token halves and per-request footprint drops to $\approx 0.375$ GB. Concurrency roughly **doubles to $\lfloor 46\times10^9 / 402{,}653{,}184\rfloor = 114$** — the weights term is untouched, only the KV term shrank. This is why KV quantization and a low $H_{kv}$ (GQA/MQA) are such direct levers on how many sequences a replica can hold.
+
+**4.** Combine the chapter's two independent sizing constraints. A streaming chat model sees peak $\lambda = 40$ requests/sec, and the average request lives in the system for $W = 20$ s (long generations). Each replica prefills at a service rate of $\mu = 12.5$ requests/sec and, from Exercise 3, holds $N_{\text{concurrent}} = 57$ sequences in KV. Compute (a) the throughput-bound replica count at target utilization $\rho = 0.70$, and (b) the memory/concurrency-bound replica count via Little's Law. Which constraint binds, and what does that tell you about the workload's regime?
+
+??? note "Solution"
+    **(a) Throughput-bound.** Size so peak load sits at $\rho = 0.70$:
+    $$
+    c_{\text{tput}} \ge \frac{\lambda}{0.70\,\mu} = \frac{40}{0.70 \times 12.5} = \frac{40}{8.75} = 4.57 \Rightarrow 5\ \text{replicas}.
+    $$
+
+    **(b) Memory-bound.** Little's Law gives the mean number of requests in flight:
+    $$
+    L = \lambda \cdot W = 40 \times 20 = 800\ \text{concurrent requests}.
+    $$
+    Each replica holds 57, so
+    $$
+    c_{\text{mem}} = \left\lceil \frac{800}{57} \right\rceil = \lceil 14.0 \rceil = 15\ \text{replicas}.
+    $$
+
+    **Binding constraint:** take the **max**, so the fleet needs $\max(5, 15) = \textbf{15 replicas}$, and it is **memory-bound**. The tell is that concurrency ($L = 800$) is enormous relative to prefill throughput demand because each request lingers for 20 s holding a KV slot. This is the "many concurrent long-context chats" regime the chapter names: KV capacity, not prefill compute, limits you. Ordering only the 5 replicas that throughput sizing suggests would OOM the moment real concurrency arrived.
+
+**5.** *(Implementation.)* The chapter gives `max_concurrent_requests(...)` for memory sizing but leaves the "take the max of the two constraints" step (from the aside and from Exercise 4) as prose. Implement a function `fleet_size(...)` that computes both replica counts and returns the binding one plus a label of the regime. Reuse `max_concurrent_requests` from the chapter, and drive the throughput side from $\lambda$, per-replica $\mu$, and a target utilization; drive the memory side from Little's Law ($L = \lambda W$). Show it on the Exercise 4 numbers.
+
+??? note "Solution"
+    ```python
+    import math
+
+    def kv_bytes_per_token(num_layers, num_kv_heads, head_dim, bytes_per_elem=2):
+        return 2 * num_layers * num_kv_heads * head_dim * bytes_per_elem
+
+    def max_concurrent_requests(hbm_gb, weight_gb, reserve_gb,
+                                num_layers, num_kv_heads, head_dim,
+                                avg_ctx_tokens, bytes_per_elem=2):
+        free_bytes = (hbm_gb - weight_gb - reserve_gb) * 1e9
+        per_tok = kv_bytes_per_token(num_layers, num_kv_heads, head_dim, bytes_per_elem)
+        per_request = per_tok * avg_ctx_tokens
+        return int(free_bytes // per_request)
+
+    def fleet_size(arrival_rate,          # lambda, requests/sec (peak)
+                   mean_time_in_system,   # W, seconds (enqueue -> last token)
+                   service_rate,          # mu, requests/sec one replica sustains
+                   target_utilization,    # rho ceiling, e.g. 0.70
+                   n_concurrent_per_replica):
+        """
+        Take the MAX of the two independent sizing constraints:
+          - throughput:  size so peak load sits at target utilization
+          - memory:      Little's Law concurrency / per-replica KV capacity
+        Returns (replicas, binding_regime).
+        """
+        # Throughput-bound: c >= lambda / (rho * mu)
+        c_tput = math.ceil(arrival_rate / (target_utilization * service_rate))
+
+        # Memory-bound: L = lambda * W concurrent seqs, each replica holds N.
+        concurrency = arrival_rate * mean_time_in_system      # Little's Law
+        c_mem = math.ceil(concurrency / n_concurrent_per_replica)
+
+        if c_mem >= c_tput:
+            return c_mem, "memory-bound"
+        return c_tput, "throughput-bound"
+
+    # --- Exercise 4 numbers -------------------------------------------------
+    N = max_concurrent_requests(
+        hbm_gb=80, weight_gb=30, reserve_gb=4,
+        num_layers=48, num_kv_heads=8, head_dim=128,
+        avg_ctx_tokens=4096, bytes_per_elem=2,
+    )
+    print(N)  # -> 57 concurrent sequences per replica
+
+    replicas, regime = fleet_size(
+        arrival_rate=40, mean_time_in_system=20,
+        service_rate=12.5, target_utilization=0.70,
+        n_concurrent_per_replica=N,
+    )
+    print(replicas, regime)   # -> 15 memory-bound
+    ```
+
+    The function reproduces Exercise 4: throughput sizing wants $\lceil 40/(0.70\times12.5)\rceil = 5$, memory sizing wants $\lceil (40\times20)/57 \rceil = 15$, and `fleet_size` returns `(15, "memory-bound")`. Swapping the KV cache to fp8 (pass `bytes_per_elem=1`) would raise `N` to 114, halving the memory count to $\lceil 800/114\rceil = 8$, at which point the throughput constraint ($5$) is closer to binding — the same code now reports the fleet has moved toward the compute-bound regime.

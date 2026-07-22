@@ -801,3 +801,136 @@ The data flywheel for reasoning models is: hard evals reveal failure modes → n
 - **Jain et al., "LiveCodeBench: Holistic and Contamination Free Evaluation of Large Language Models for Code", 2024** — living benchmark with temporal contamination control.
 - **Lightman et al., "Let's Verify Step by Step", 2023** — process reward models for evaluating and training mathematical reasoning chains.
 - **OpenAI, "Learning to Reason with LLMs" (o1 technical report), 2024** — frontier reasoning evaluation methodology and compute-scaling eval curves.
+
+## Exercises
+
+**1.** *(Conceptual.)* Two code models are each evaluated by generating a single sample per problem. Model A is correct 30% of the time and Model B 80% of the time on their respective intrinsic pass rates. Explain why a single-sample evaluation "conflates the model's intrinsic ability and sampling luck," and describe one deployment scenario where **Pass@1** is the metric you actually care about and one where **Pass@k** with $k > 1$ is more appropriate.
+
+??? note "Solution"
+    A single generation is a Bernoulli draw from the model's per-problem success distribution. Observing "correct" or "incorrect" on one draw does not tell you the underlying probability: a 30%-capable model will sometimes get a problem right on the first try, and an 80%-capable model will sometimes get it wrong. With one sample per problem you cannot separate *the model produced a correct program because it reliably can* from *it got lucky this once* (or unlucky). The observed pass/fail is the intrinsic pass rate corrupted by the noise of a single Bernoulli trial; only by drawing many samples ($n$ large) and computing $c/n$ do you drive the sampling variance down and recover the intrinsic ability.
+
+    - **Pass@1 matters** for single-shot user interactions: a developer types a prompt into an autocomplete or chat tool and uses the *first* answer. There is no retry-and-check loop, so the probability the first sample is correct is exactly what the user experiences.
+    - **Pass@k ($k>1$) matters** in a production coding agent that generates several candidate patches and filters them through a test suite / verifier, keeping any one that passes. There the relevant quantity is "did *at least one* of $k$ samples pass," which is precisely what Pass@k estimates.
+
+**2.** *(Quantitative.)* You generate $n = 10$ samples for a problem and exactly $c = 3$ pass all tests. Using the chapter's unbiased estimator, compute **Pass@2** by hand. Then compute the naive estimator $1-(1-c/n)^k$ for the same $k=2$ and state which is larger. ($\binom{7}{2}=21$, $\binom{10}{2}=45$.)
+
+??? note "Solution"
+    Unbiased estimator:
+    $$
+    \widehat{\text{Pass@}2} = 1 - \frac{\binom{n-c}{2}}{\binom{n}{2}} = 1 - \frac{\binom{7}{2}}{\binom{10}{2}} = 1 - \frac{21}{45} = 1 - 0.4\overline{6} = 0.5\overline{3} \approx 0.533.
+    $$
+    The ratio $21/45$ is the probability that a random draw of $2$ of the $10$ samples contains *zero* passing samples (both drawn from the $7$ failing ones); subtracting from one gives the probability at least one passes.
+
+    Naive estimator:
+    $$
+    1 - \left(1 - \tfrac{3}{10}\right)^2 = 1 - (0.7)^2 = 1 - 0.49 = 0.51.
+    $$
+
+    The unbiased estimator ($0.533$) is **larger** than the naive one ($0.51$) here. The naive form treats $c/n$ as if it were the true pass probability and samples *with* replacement; the unbiased form draws *without* replacement from the finite pool of $n$ generated samples, which is the correct model of the experiment actually run.
+
+**3.** *(Quantitative.)* Using the compute-scaling table in the chapter (MATH L5: Pass@k $= 0.31, 0.52, 0.68, 0.79$ at $k = 1, 4, 16, 64$; cost/problem $= \$0.002, \$0.008, \$0.032, \$0.128$), compute the **cost per solved problem** at $k=1$ and $k=16$, and state the multiplicative factor between them. What does this say about the "sweet spot" argument for $k \approx 4\text{--}8$?
+
+??? note "Solution"
+    Cost per solved problem $=$ (cost/problem) $/$ (Pass@k), i.e. dollars spent divided by the expected fraction of problems that come out solved.
+
+    - $k=1$: $\dfrac{0.002}{0.31} \approx \$0.00645$ per solved problem.
+    - $k=16$: $\dfrac{0.032}{0.68} \approx \$0.0471$ per solved problem.
+
+    Ratio: $0.0471 / 0.00645 \approx 7.3\times$. So even though Pass@k rises from $0.31$ to $0.68$ (roughly $2.2\times$ more problems solved), you pay about $7.3\times$ more *per solved problem*, because tokens (and cost) grow $16\times$ while accuracy grows sublinearly. This is the diminishing-returns shape the chapter describes: each extra unit of test-time compute buys less additional accuracy. It supports treating $k\approx 4\text{–}8$ as a practical operating point for hard reasoning tasks: you capture most of the accuracy gain (Pass@4 $=0.52$ is already well above Pass@1) before the cost-per-solved-problem curve steepens sharply.
+
+**4.** *(Conceptual.)* A model scores 90% final-answer accuracy on a set of math problems, but when you run a **process reward model (PRM)** over its correct-answer traces, many are scored poorly at intermediate steps. Explain, using the chapter's PRM-vs-ORM distinction, (a) how a trace can reach the right final answer through low-quality steps, and (b) why an **outcome reward model (ORM)** alone cannot surface this, and (c) why it is a red flag for reasoning *training*, not just reporting.
+
+??? note "Solution"
+    (a) The chapter notes a model can get the right answer "via a flawed reasoning chain (lucky coincidence, sycophancy in the trace, or incorrect steps that happen to cancel)." Concretely, two arithmetic errors of opposite sign can cancel, or the model can guess a plausible final value and back-fill unjustified steps. The final answer is correct but the intermediate reasoning is not sound.
+
+    (b) An ORM scores *only the final answer*. By construction it assigns the same reward to a reliably-derived correct answer and a luckily-correct one, so it is blind to the quality of the chain. A PRM scores each step against human step-correctness annotations and therefore *can* separate "correct answer, correct steps" from "correct answer, broken steps."
+
+    (c) It is a red flag because in RLVR-style training the reward signal shapes behavior. If the model is rewarded purely on outcome, it is being reinforced for producing right *answers* by whatever route, including flawed-but-cancelling reasoning that will not generalize to problems where the errors do not happen to cancel. The chapter's guidance is to run *both* a final-answer check and a PRM on a sample of traces to get the most complete picture of reasoning quality and to catch a model that "consistently produce[s] correct answers via flawed steps."
+
+**5.** *(Implementation.)* The "Practitioner tip" argues you should always stratify eval results by difficulty tier rather than reporting a single mean. Building directly on the chapter's `pass_at_k` and `aggregate_pass_at_k`, implement `stratified_pass_at_k(results, k)` where each entry in `results` is `{'n': int, 'c': int, 'tier': str}`, returning a dict mapping each tier to its aggregated Pass@k. Demonstrate that a model can tie on overall mean yet differ sharply across tiers.
+
+??? note "Solution"
+    ```python
+    from collections import defaultdict
+
+
+    def stratified_pass_at_k(results: list[dict], k: int) -> dict[str, float]:
+        """
+        Aggregate Pass@k separately within each difficulty tier.
+
+        Each entry: {'n': int, 'c': int, 'tier': str}
+        Returns: {tier -> aggregated Pass@k}, plus an 'overall' key.
+        """
+        buckets: dict[str, list[dict]] = defaultdict(list)
+        for r in results:
+            buckets[r['tier']].append(r)
+
+        report = {
+            tier: aggregate_pass_at_k(items, k)
+            for tier, items in buckets.items()
+        }
+        # Reuse the chapter's aggregator across all problems for the mean.
+        report['overall'] = aggregate_pass_at_k(results, k)
+        return report
+
+
+    # Two models with (nearly) equal overall Pass@1 but different shapes.
+    model_flat = [
+        {'n': 10, 'c': 7, 'tier': 'easy'},
+        {'n': 10, 'c': 7, 'tier': 'medium'},
+        {'n': 10, 'c': 7, 'tier': 'hard'},
+    ]
+    model_skewed = [
+        {'n': 10, 'c': 10, 'tier': 'easy'},
+        {'n': 10, 'c': 10, 'tier': 'medium'},
+        {'n': 10, 'c': 1,  'tier': 'hard'},
+    ]
+
+    for name, res in [('flat', model_flat), ('skewed', model_skewed)]:
+        print(name, {t: round(v, 3)
+                     for t, v in stratified_pass_at_k(res, 1).items()})
+    ```
+
+    At $k=1$ the unbiased estimator coincides with $c/n$ (shown in the chapter's worked example), so:
+
+    ```text
+    flat   {'easy': 0.7, 'medium': 0.7, 'hard': 0.7, 'overall': 0.7}
+    skewed {'easy': 1.0, 'medium': 1.0, 'hard': 0.1, 'overall': 0.7}
+    ```
+
+    Both models report an overall Pass@1 of $0.70$, but they are completely different systems: the skewed model has saturated easy and medium problems and essentially fails the hard tail, while the flat model is uniformly mediocre. Only the stratified view — exactly what the tip prescribes — reveals whether training is making progress on the hard tail, which the single mean hides.
+
+**6.** *(Implementation, hardest.)* The agentic harness leaves `"mean_steps": None` and scores trajectories with a binary `success_fn`, which the "Partial Credit" section calls "too coarse." (a) Implement a `progress_rate(subtask_results)` function computing the chapter's progress-rate metric (fraction of ordered subtasks completed before the first failure). (b) Explain why this metric must be driven by ground-truth subtask *oracles* rather than by asking the model whether each subtask is done, referencing the relevant form of eval reward hacking.
+
+??? note "Solution"
+    (a) Progress rate walks the ordered subtask checkpoints and counts how many succeeded before the first failure, divided by the total. A task that clears 18 of 20 subtasks before failing scores $0.9$, far above one that fails at subtask 2 ($0.05$), whereas a binary `success_fn` scores both $0$.
+
+    ```python
+    def progress_rate(subtask_results: list[bool]) -> float:
+        """
+        Fraction of ordered subtasks completed before the first failure.
+
+        subtask_results[i] is True iff subtask i was verified complete by a
+        ground-truth oracle. Order matters: progress stops at the first False.
+        """
+        if not subtask_results:
+            return 0.0
+        completed = 0
+        for ok in subtask_results:
+            if not ok:
+                break
+            completed += 1
+        return completed / len(subtask_results)
+
+
+    # A 20-step task that fails at step 19 (index 18):
+    results = [True] * 18 + [False, False]
+    print(f"{progress_rate(results):.2f}")   # 0.90
+
+    # Same binary outcome (failed), but collapsed early:
+    print(f"{progress_rate([True, False] + [False] * 18):.2f}")  # 0.05
+    ```
+
+    To wire this into the harness you would decompose each `AgentTask` into an ordered list of checkable subtask predicates over the environment state, evaluate each against the trajectory's states, and pass the resulting booleans to `progress_rate` — the same place the harness currently computes `traj.completed = task.success_fn(...)`.
+
+    (b) Each entry of `subtask_results` must come from a ground-truth oracle — database state, file contents, or test-suite results — never from the agent's own claim that a step is done. This is the chapter's **self-report inflation** hacking mode: "a model might output 'Task completed successfully' without actually completing the task, if the success detector is a language model rather than an oracle." If progress were scored from the model's self-report, an agent could inflate its progress rate simply by asserting completion, and — worse — if such a metric were ever fed back as a training reward, the model would be directly reinforced to emit success claims rather than to do the work. The mitigation is the chapter's rule: always use ground-truth environment oracles for success and partial-credit checks.

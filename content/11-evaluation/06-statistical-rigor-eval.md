@@ -825,3 +825,146 @@ Bring it together with the skill this chapter exists to instill. When you look a
 - Polo et al., *tinyBenchmarks: Evaluating LLMs with Fewer Examples*, and Vivek et al., *Anchor Points* — IRT-style efficient LLM evaluation.
 - Miller, E., *Adding Error Bars to Evals* — a practitioner-facing call to report confidence intervals on LLM benchmarks.
 - Chiang et al., *Chatbot Arena* — the human-preference leaderboard whose Bradley–Terry ratings and confidence intervals popularized statistical rigor in LLM ranking.
+
+## Exercises
+
+**1.** (CI width) You run a bespoke eval on $n = 250$ items and a model scores near $p \approx 0.5$. Using the chapter's normal-approximation rule, (a) what is the 95% margin of error, and how wide is the band? (b) A competitor reports a score 2 points higher on the same-sized eval -- is that gap resolvable? (c) How many items would you need so the margin shrinks to $\pm 2$ points?
+
+??? note "Solution"
+    Near $p = 0.5$ the variance is maximal, so the half-width is
+    $$
+    m = 1.96\sqrt{\frac{0.5 \times 0.5}{n}} = \frac{0.98}{\sqrt{n}}.
+    $$
+
+    (a) At $n = 250$: $\sqrt{250} = 15.81$, so $m = 0.98 / 15.81 = 0.062$, i.e. $\pm 6.2$ points. The 95% band is about $12.4$ points wide. (This matches the chapter's rule of thumb $m \approx 1/\sqrt{n} = 1/15.81 = 0.063$.)
+
+    (b) No. A 2-point gap sits deep inside a $\pm 6.2$-point margin; either model's point estimate lands well within the other's interval, so the difference is indistinguishable from sampling noise on a 250-item eval.
+
+    (c) Set $0.98/\sqrt{n} = 0.02$, so $\sqrt{n} = 49$ and $n = 2401$ items. Because the margin scales as $1/\sqrt{n}$, going from a $\pm 6.2$-point margin to a $\pm 2$-point margin (roughly a $3\times$ tightening) costs roughly a $9\times$ larger test set.
+
+**2.** (Why Wald fails) A model scores 49/50, so $\hat p = 0.98$. (a) Compute the naive Wald 95% interval and identify what is wrong with it. (b) Explain in one or two sentences *why* the Wald interval misbehaves here and why the Wilson interval (which the chapter reports as roughly $[0.894, 0.997]$) does not.
+
+??? note "Solution"
+    (a) The Wald interval is $\hat p \pm 1.96\sqrt{\hat p(1-\hat p)/n}$:
+    $$
+    \text{SE} = \sqrt{\frac{0.98 \times 0.02}{50}} = \sqrt{\frac{0.0196}{50}} = \sqrt{0.000392} = 0.0198,
+    $$
+    so the interval is $0.98 \pm 1.96 \times 0.0198 = 0.98 \pm 0.0388 = [0.941,\ 1.019]$. The upper limit $1.019$ is above 1.0, which is impossible for a probability -- the interval is nonsense.
+
+    (b) The Wald interval assumes the sampling distribution of $\hat p$ is symmetric and normal, and it plugs the point estimate into the SE. Near the boundary $p \to 1$ the true sampling distribution is strongly skewed (it cannot exceed 1), and the plug-in SE $\sqrt{\hat p (1 - \hat p)/n}$ shrinks toward 0 as $\hat p \to 1$, so a symmetric normal band is the wrong shape and understates uncertainty on the low side while spilling past 1 on the high side. The Wilson interval is derived by inverting the score test -- it centers the interval away from $\hat p$ toward $0.5$ and its algebra keeps both limits inside $[0, 1]$ by construction, so it stays well-behaved at the extremes.
+
+**3.** (McNemar by hand) Two models are scored pass/fail on the same 500 items. Cross-tabulating: 400 both right, 38 both wrong, $b = 40$ items where only A was right, and $c = 22$ where only B was right. (a) Which items does McNemar's test use, and why are the rest discarded? (b) Compute the continuity-corrected McNemar chi-square statistic and its two-sided p-value. (c) State the verdict at $\alpha = 0.05$.
+
+??? note "Solution"
+    (a) McNemar uses only the $b + c = 62$ *discordant* items -- those where exactly one model was right. The $400 + 38 = 438$ concordant items (both right or both wrong) carry no information about *which* model is better: under the null "equally good," they are equally likely regardless of which model is superior, so they only add noise. Discarding them is precisely why pairing cancels item-difficulty variance.
+
+    (b) With $b = 40$, $c = 22$, $n_{\text{disc}} = 62 \ge 25$, the chi-square approximation is appropriate:
+    $$
+    \chi^2 = \frac{(|b - c| - 1)^2}{b + c} = \frac{(|40 - 22| - 1)^2}{62} = \frac{17^2}{62} = \frac{289}{62} = 4.66.
+    $$
+    For $\chi^2_1$, the p-value equals $2\,\Phi(-\sqrt{4.66}) = 2\,\Phi(-2.159) = 2 \times 0.0154 = 0.031$.
+
+    (c) Since $p = 0.031 < 0.05$, the difference is statistically significant: model A is credibly better on this eval. (Had $b + c$ been below 25, you would use the exact two-sided binomial test on $b \sim \text{Binomial}(b + c, 0.5)$ rather than the chi-square approximation.)
+
+**4.** (IRT item information) A calibrated item bank is being used to evaluate a model whose current ability estimate is $\hat\theta = 0$. Consider three items with $(a, b)$ parameters: item X $(a = 2,\ b = 0)$, item Y $(a = 1,\ b = 0)$, item Z $(a = 2,\ b = 2)$. (a) Compute the Fisher information each contributes at $\hat\theta = 0$. (b) Which item should the adaptive-testing loop ask next, and what two properties made it win? Confirm your ranking with a one-line call to the chapter's `item_information`.
+
+??? note "Solution"
+    The 2PL pass probability is $P = \sigma(a(\theta - b))$ and the information is $I = a^2 P(1 - P)$.
+
+    Item X: $P = \sigma(2(0 - 0)) = \sigma(0) = 0.5$, so $I_X = 2^2 \times 0.5 \times 0.5 = 4 \times 0.25 = 1.00$.
+
+    Item Y: $P = \sigma(1 \times 0) = 0.5$, so $I_Y = 1^2 \times 0.25 = 0.25$.
+
+    Item Z: $P = \sigma(2(0 - 2)) = \sigma(-4) = 0.018$, so $I_Z = 2^2 \times 0.018 \times 0.982 = 4 \times 0.0177 = 0.071$.
+
+    (b) Ask item X. It wins on both levers of Fisher information: (1) its difficulty matches the model's ability ($b = \hat\theta$, so $P = 0.5$, which maximizes $P(1-P)$), and (2) it has high discrimination ($a = 2$). Item Y sits at the same difficulty but has half the discrimination ($a^2$ enters quadratically, so it carries a quarter of the information). Item Z is highly discriminating but far too easy for this model ($b = 2 \gg \hat\theta$); the model almost always passes it, so it reveals almost nothing about $\hat\theta$.
+
+    ```python
+    import numpy as np
+    def item_information(theta, a, b):
+        p = 1.0 / (1.0 + np.exp(-a * (theta - b)))
+        return a ** 2 * p * (1 - p)
+
+    for name, (a, b) in {"X": (2, 0), "Y": (1, 0), "Z": (2, 2)}.items():
+        print(name, round(item_information(0.0, a, b), 3))
+    # X 1.0   Y 0.25   Z 0.071
+    ```
+
+**5.** (Power / sizing a test set) You want to detect a 2-point accuracy gap (say 76% vs 74%) at $\alpha = 0.05$, power 0.80, using an *unpaired* two-proportion design. (a) Compute the required $n$ per arm from the chapter's closed form. (b) Given the answer, what would you do differently in practice, and roughly how much would it help?
+
+??? note "Solution"
+    (a) The unpaired formula is
+    $$
+    n_{\text{per arm}} \approx \frac{(z_{1-\alpha/2} + z_{1-\beta})^2 \cdot 2\,\bar p (1 - \bar p)}{\Delta^2},
+    $$
+    with $z_{1-\alpha/2} = 1.96$, $z_{1-\beta} = 0.84$, $\bar p = 0.75$, and $\Delta = 0.02$. Then $(1.96 + 0.84)^2 = 2.8^2 = 7.84$ and $2 \times 0.75 \times 0.25 = 0.375$, so
+    $$
+    n \approx \frac{7.84 \times 0.375}{0.02^2} = \frac{2.94}{0.0004} = 7350 \text{ items per arm}.
+    $$
+    So about 7,350 items on each model -- roughly 15,000 evaluations total -- just to resolve a 2-point gap.
+
+    (b) Pair the design: run both models on the *same* items and test the per-item difference with McNemar. Because competent models agree on most easy/hard items, the discordant sample is far richer per item and the paired variance is much smaller -- the chapter notes pairing is worth a $4$--$10\times$ larger unpaired test set, dropping the requirement from thousands to a few hundred or low thousands of items for the same effect. Alternatively, if a 2-point gap genuinely is your minimum-detectable-effect and pairing is unavailable, accept that no 500-item benchmark can adjudicate it and report the MDE honestly rather than a bare point difference.
+
+**6.** (Implement a cluster bootstrap) The chapter warns that resampling individual items underestimates variance when items are grouped (e.g. multiple questions per document), and prescribes a **cluster (block) bootstrap** that resamples whole groups. Implement `cluster_bootstrap_ci(scores, groups, statistic, ...)` in the style of the chapter's `bootstrap_ci`, and write a short demo showing that when items within a group are correlated, the cluster CI is wider than the naive item-level CI.
+
+??? note "Solution"
+    Resample *group labels* with replacement (not individual items), then concatenate the item indices belonging to the drawn groups and recompute the statistic on that flattened sample. Pre-bucketing each group's member indices keeps the inner loop fast.
+
+    ```python
+    import numpy as np
+
+
+    def cluster_bootstrap_ci(scores, groups, statistic=np.mean,
+                             n_boot=10_000, alpha=0.05, seed=0):
+        """Cluster (block) bootstrap CI: resample whole GROUPS with replacement.
+
+        scores : 1-D array of per-item results.
+        groups : same-length array of group ids (items sharing an id are a block).
+        Returns (point_estimate, lo, hi).
+        """
+        rng = np.random.default_rng(seed)
+        scores = np.asarray(scores, dtype=float)
+        groups = np.asarray(groups)
+        unique = np.unique(groups)
+        members = [np.where(groups == g)[0] for g in unique]  # indices per group
+        n_groups = len(unique)
+        point = statistic(scores)
+        boot = np.empty(n_boot)
+        for b in range(n_boot):
+            pick = rng.integers(0, n_groups, size=n_groups)     # resample groups
+            idx = np.concatenate([members[g] for g in pick])    # keep blocks intact
+            boot[b] = statistic(scores[idx])
+        lo, hi = np.percentile(boot, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+        return point, lo, hi
+
+
+    def item_bootstrap_ci(scores, statistic=np.mean, n_boot=10_000,
+                          alpha=0.05, seed=0):
+        """Naive item-level bootstrap for comparison."""
+        rng = np.random.default_rng(seed)
+        scores = np.asarray(scores, dtype=float)
+        n = len(scores)
+        idx = rng.integers(0, n, size=(n_boot, n))
+        boot = scores[idx].mean(axis=1)
+        lo, hi = np.percentile(boot, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+        return statistic(scores), lo, hi
+
+
+    if __name__ == "__main__":
+        # 50 documents x 10 questions each. A per-document latent effect makes
+        # questions within a document highly correlated (they pass/fail together).
+        rng = np.random.default_rng(0)
+        n_docs, per_doc = 50, 10
+        doc_effect = rng.normal(0, 1.5, n_docs)          # strong shared component
+        scores, groups = [], []
+        for d in range(n_docs):
+            p_doc = 1 / (1 + np.exp(-(0.3 + doc_effect[d])))
+            scores.extend((rng.random(per_doc) < p_doc).astype(float))
+            groups.extend([d] * per_doc)
+        scores = np.array(scores)
+
+        print("item   CI:", item_bootstrap_ci(scores))
+        print("cluster CI:", cluster_bootstrap_ci(scores, groups))
+    ```
+
+    The item-level CI treats all 500 questions as independent and comes out narrow. The cluster CI resamples the 50 documents, correctly recognizing that the effective sample size is closer to 50 blocks than 500 questions, and is markedly wider -- roughly twice the half-width here (and wider still as the within-group correlation grows). Reporting the item-level interval would falsely claim precision the data does not support; the cluster bootstrap is the honest interval whenever items share a group structure.
