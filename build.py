@@ -12,7 +12,7 @@ KaTeX math, callouts, copy buttons, and inline animated SVG figures included via
 
 Usage:  python3 build.py
 """
-import json, os, re, html, shutil, subprocess, datetime
+import json, os, re, html, shutil, subprocess, datetime, glob
 from html.parser import HTMLParser
 
 import markdown
@@ -531,6 +531,7 @@ def write_index(coll, total_words, nch):
         # main book: link to interview companion + first chapter
         first = coll.flat_chapters[0]["url"] if coll.flat_chapters else "#"
         cta = (f'<p class="hero-cta"><a class="btn-primary" href="{first}">Start reading →</a>'
+               f'<a class="btn-ghost" href="tools/index.html">Tools &amp; calculators</a>'
                f'<a class="btn-ghost" href="interview/index.html">Interview companion</a></p>')
 
     canonical = SITE_BASE + (f'{coll.out_subdir}/' if coll.out_subdir else "")
@@ -561,6 +562,51 @@ def write_index(coll, total_words, nch):
     os.makedirs(out_root, exist_ok=True)
     with open(os.path.join(out_root, "index.html"), "w") as f:
         f.write(html_out)
+
+
+def write_tools_hub(book):
+    """Collect every tools/*.html into one /tools hub page (the tools also live inline in
+    their chapters). Title comes from the tool's .vt-title; the 'used in' link is the chapter
+    whose markdown references {{tool:NAME}}."""
+    tool_files = sorted(glob.glob(os.path.join(_TOOLS_DIR, "*.html")))
+    if not tool_files:
+        return 0
+    # map tool name -> (chapter url, chapter title)
+    marker_re = re.compile(r"\{\{tool:([a-z0-9\-]+)\}\}")
+    used_in = {}
+    for c in book.flat_chapters:
+        if os.path.exists(c["md_path"]):
+            for name in marker_re.findall(open(c["md_path"]).read()):
+                used_in[name] = (c["url"], c["title"])
+    blocks = []
+    for tf in tool_files:
+        name = os.path.basename(tf)[:-5]
+        src = open(tf).read()
+        m = re.search(r'class="vt-title">([^<]+)<', src)
+        title = m.group(1) if m else name
+        link = ""
+        if name in used_in:
+            url, ctitle = used_in[name]
+            link = f'<a class="tool-chapter-link" href="../{url}">↳ in “{html.escape(ctitle)}”</a>'
+        blocks.append(f'<section class="tool-hub-item"><div class="tool-hub-head">'
+                      f'<h2 id="{name}">{html.escape(title)}</h2>{link}</div>\n{src}\n</section>')
+    body = ('<div class="chapter-eyebrow">Interactive tools</div>'
+            '<h1>Tools &amp; calculators</h1>'
+            '<p class="tool-hub-intro">Live calculators and visualizers from across the book — '
+            'FLOP/memory/cost budgets, the Chinchilla-optimal split, KV-cache sizing, and more. '
+            'Each also appears inline in the chapter that teaches it.</p>\n' + "\n".join(blocks))
+    page = PAGE_TMPL.format(
+        title="Tools &amp; calculators", brand=html.escape(book.m["title"]),
+        brand_sub=html.escape(book.m.get("subtitle", "")), desc="Interactive LLM calculators and visualizers.",
+        base="../", home="../index.html", search_name="search-index.json",
+        canonical=SITE_BASE + "tools/", og_image=OG_IMAGE, repo_url=REPO_URL,
+        sidebar=render_sidebar(book, "index.html"),
+        breadcrumb="", chapter_meta="", body=body, page_nav="",
+        toc_side="",
+    )
+    os.makedirs(os.path.join(SITE, "tools"), exist_ok=True)
+    open(os.path.join(SITE, "tools", "index.html"), "w").write(page)
+    return len(tool_files)
 
 
 def write_sitemap(entries):
@@ -618,8 +664,14 @@ def main():
         print(f"Built '{coll.m['title']}' -> {coll.out_root()}")
         print(f"  chapters: {wr} written, {ph} placeholders | ~{tw//300:,} pages ({tw:,} words)")
 
+    nt = write_tools_hub(book)
+    if nt:
+        print(f"  tools hub: {nt} interactive tools -> site/tools/")
+
     # sitemap.xml + robots.txt (git_last_date is cached from the render pass, so this is cheap)
     entries = [("", BUILD_DATE)]
+    if nt:
+        entries.append(("tools/", BUILD_DATE))
     entries += [(c["url"], git_last_date(c["md_path"])) for c in book.flat_chapters]
     entries.append(("interview/", BUILD_DATE))
     entries += [("interview/" + c["url"], git_last_date(c["md_path"])) for c in interview.flat_chapters]
