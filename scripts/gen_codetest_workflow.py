@@ -27,8 +27,14 @@ RULES = """HARD RULES (these make the test HONEST — violating them defeats the
   content/<chapter>.md (and mirror the fix in the test) and record it as a real bug found.
 - If a block is a DELIBERATELY-BROKEN demo (the chapter says "this crashes / this is the bug"),
   wrap ONLY that block in a narrow assert-it-raises check — do not "fix" it.
-- SKIP (don't test) blocks that truly need a GPU, a network/model download, or that are
-  non-standalone fragments — leave an explicit `# SKIP(<reason>): ...` comment naming which block.
+- NETWORK/API CALLS ARE FORBIDDEN in the test (CI has no network/keys — a real call hangs or 401/403).
+  For a block that calls an external API or network (OpenAI/Anthropic/Cohere/HF hub/requests/httpx/
+  boto3/socket/model or dataset download): EITHER (a) MOCK the boundary with `unittest.mock` so the
+  block's OWN logic still executes offline against a canned response (preferred when the block's point
+  IS the surrounding logic, e.g. retry/parse/prompt-assembly), OR (b) `# SKIP(network): ...` it.
+  NEVER leave a real network/API call in the test.
+- SKIP (don't test) blocks that truly need a GPU, or that are non-standalone fragments —
+  leave an explicit `# SKIP(<reason>): ...` comment naming which block.
 - Minimal honest glue is allowed: small fixtures/toy tensors, tiny shapes, fixed seeds, and
   CPU dtype (float32) substitutions where a block only differs by device. Keep runtime under
   ~60s and memory small.
@@ -90,6 +96,9 @@ Read the test AND the chapter. Then:
    try/except swallowing errors, NO trivial stub bypassing the demonstrated logic, NO removed asserts.
    Each "tested" block is actually executed (functions called, classes used), not just imported.
 3. Check SKIPS are legitimate (genuinely GPU/network/fragment, each with a `# SKIP(...)` reason).
+3.5. Check HERMETICITY: no real network/API call remains — any OpenAI/Anthropic/HF/requests/httpx
+   call must be MOCKED (unittest.mock) or SKIPped. A test that imports `openai` and calls it for real
+   is a FAIL; fix it by mocking the client boundary or skipping the block.
 4. Check any book fixes (edits to content/{cid}.md) are correct and improve the book.
 If anything is wrong, FIX it (edit the test or the chapter) and re-run. Set passed only when the test
 runs green AND is faithful AND skips are legit. Report blocks_tested, blocks_skipped, real_bugs_fixed,
@@ -101,7 +110,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--name", required=True)
     ap.add_argument("--ids")
-    ap.add_argument("--limit", type=int, default=8)
+    ap.add_argument("--limit", type=int, default=5)   # smaller batches -> lower peak concurrency -> fewer 429/529
     ap.add_argument("--exclude-file")
     a = ap.parse_args()
 

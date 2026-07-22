@@ -19,7 +19,10 @@ GPU = re.compile(r"\bcuda\b|\.to\(\s*['\"]?cuda|device_map|nccl|torch\.distribut
                  r"\bdist\.|triton|flash_attn|FlashAttention|\.cuda\(\)|bitsandbytes|"
                  r"tensor_parallel|init_process_group|FSDP|DDP\(", re.I)
 NET = re.compile(r"from_pretrained|load_dataset|AutoModel|AutoTokenizer|requests\.|urllib|"
-                 r"wget|hf_hub|huggingface_hub|snapshot_download|openai\.|anthropic\.", re.I)
+                 r"wget|hf_hub|huggingface_hub|snapshot_download|InferenceClient|"
+                 r"\bopenai\b|\banthropic\b|\bcohere\b|litellm|google\.generativeai|\bgenai\b|"
+                 r"chat\.completions|messages\.create|embeddings\.create|responses\.create|"
+                 r"\bhttpx\b|\bboto3\b|socket\.|\.download\(", re.I)
 # python that clearly isn't a standalone program
 FRAG_SIG = re.compile(r"^\s*(\.\.\.|#\s*\.\.\.|@|def\s|class\s|else:|elif|except|return\b|yield\b)")
 
