@@ -690,6 +690,8 @@ $$
 
 The product is super-linear in the number of rounds because $\Delta Q_k$ is driven by $\log$ data growth, but user growth is multiplicative. A new entrant starting at round 10 with the same initial model but no training data faces a gap that is essentially impossible to close through model architecture improvements alone.
 
+{{fig:compounding-flywheel-moat}}
+
 This analysis also explains why *data quality* matters more than *data volume* past a certain scale. Once you have covered the main distribution, the marginal value of a new random example is small; the marginal value of a hard example from the tail of the distribution remains high throughout.
 
 ## Putting It All Together: A Self-Improving Product

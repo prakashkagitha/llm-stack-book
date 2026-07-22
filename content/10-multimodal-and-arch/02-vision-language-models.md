@@ -338,6 +338,8 @@ The recipe:
 
 4. **Positional cues.** The model needs to know which tile came from which spatial position. Strategies include: (a) adding tile-position embeddings, (b) inserting special `<row_start>` / `<col_end>` tokens, (c) encoding row/column as text like `"row 0, col 2:"`.
 
+{{fig:vlm-anyres-tiling}}
+
 ```python
 from PIL import Image
 import torch

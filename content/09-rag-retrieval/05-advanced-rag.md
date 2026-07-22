@@ -816,6 +816,8 @@ $$
 
 where $\alpha$ is the teleport probability (typically 0.15) and seed nodes are the entities that match the query. PPR propagates importance from the seed nodes through the graph's edges, meaning passages connected to multiple relevant entities get boosted even if they don't match the query directly. This handles the "integration across entities" problem that flat vector search misses.
 
+{{fig:advrag-hipporag-ppr-propagation}}
+
 ```python
 """
 hippoppr.py — Personalized PageRank over an entity graph for HippoRAG-style retrieval.

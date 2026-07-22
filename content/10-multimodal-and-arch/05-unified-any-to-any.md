@@ -493,6 +493,8 @@ As models incorporate more modalities, the effective context length needed to re
 
 Autoregressive generation is sequentially slow for images — generating 1024 tokens at decode latency of 20 ms/token costs about 20 seconds for one image. Diffusion and flow-matching run $N$ denoising steps but each step processes the entire image in parallel, typically completing in under 1 second on a single GPU. Transfusion's hybrid is a bet that the quality advantage of diffusion justifies the architectural complexity. The community has not converged on a winner; masked autoregressive models (MaskGIT, MAR) occupy an interesting middle ground.
 
+{{fig:ar-vs-diffusion-image-generation}}
+
 ### Tokeniser Quality Bottleneck
 
 The quality ceiling for discrete-token models is set by the tokeniser's reconstruction fidelity. A VQ-GAN that cannot perfectly reconstruct fine texture will produce blurry images no matter how good the transformer is. Improving tokenisers (higher codebook utilisation, residual quantisation layers, adversarial fine-tuning) is a first-order lever. The community's shift toward continuous representations (as in Transfusion) is partly motivated by this ceiling.

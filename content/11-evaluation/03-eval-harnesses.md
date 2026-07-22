@@ -747,6 +747,8 @@ if __name__ == "__main__":
 
 The most dangerous failure mode in log-likelihood scoring is a misaligned context/continuation split — exactly the BOS double-count fixed above. It does not crash. It silently returns identical or zero per-choice log-likelihoods, argmax always picks choice 0, and accuracy collapses to the chance floor (~25% for 4 choices) while everything looks like a normal run. Never trust a harness you have not smoke-tested. Two invariants catch this class of bug directly: (a) within one question, the four raw log-likelihoods must be **distinct and strictly negative** — if they are all equal, or any of them is exactly 0.0, the split is broken; (b) because " A".." D" are each a single token for common tokenizers (gpt2, Llama-3, Mistral), `acc` must equal `acc_norm` **exactly**. There is also a token-boundary hazard worth naming: computing `ctx_len` from a separately-encoded context string is only safe because the continuation begins with a leading space, so it cannot merge with the last context token during re-tokenization — the `len(cont_ids) >= 1` assertion added to `score_choices` is the guardrail against that boundary shifting silently.
 
+{{fig:evalharness-continuation-split-bos-bug}}
+
 ```python
 """smoke_test.py — end-to-end check for minimal_harness.py"""
 import json

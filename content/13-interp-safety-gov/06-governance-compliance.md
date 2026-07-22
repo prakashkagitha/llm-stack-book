@@ -578,6 +578,8 @@ def notify_authority(
 
     Many teams conflate their general security-incident response process with AI-Act incident reporting. The key difference: AI-Act incidents are triggered by *harm or potential harm to people*, not by service outages or security breaches per se. A DDOS attack on your inference API is a security incident; a model that caused a user to self-harm following biased mental-health advice is an AI Act serious incident. Build separate triage paths.
 
+{{fig:gov-incident-severity-ladder}}
+
 ---
 
 ## Transparency and Eval Reporting

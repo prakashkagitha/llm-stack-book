@@ -24,6 +24,8 @@ $$
 
 That is small. But at 50,000 calls per day the monthly bill is around USD 9,600 — and that is a single, modest product. Production applications routinely run at 10× to 100× that volume, and frontier models are significantly pricier. The levers are: (a) call fewer tokens, (b) reuse previously computed results, (c) route to a cheaper model when you can, (d) spread load to reduce idle GPU time.
 
+{{fig:cost-request-anatomy-levers}}
+
 ---
 
 ## Exact Caching

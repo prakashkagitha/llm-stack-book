@@ -1167,6 +1167,8 @@ Each implementation is designed to be *swapped in or out* independently. You can
 
 ### Dependency Graph Summary
 
+{{fig:fsindex-learning-arc-tiers}}
+
 | Implementation | Depends On | Enables |
 |---|---|---|
 | Scalar Autograd | Pure Python | All training loops |

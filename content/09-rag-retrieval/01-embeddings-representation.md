@@ -12,6 +12,8 @@ The classical information retrieval (IR) approach is **sparse retrieval**: repre
 
 The two paradigms are not mutually exclusive. Hybrid search — combining BM25 scores with dense scores via reciprocal rank fusion or learned weighting — consistently outperforms either alone. That is covered in [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html).
 
+{{fig:emb-dense-vs-sparse-vocab-mismatch}}
+
 ### The Bi-Encoder Architecture
 
 Dense embedding models overwhelmingly use the **bi-encoder** design:

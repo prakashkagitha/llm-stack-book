@@ -1,0 +1,91 @@
+<figure class="viz" id="fig-cost-request-anatomy-levers">
+<svg viewBox="0 0 820 470" role="img" aria-label="Anatomy of one LLM request's cost, drawn as areas: a wide-but-short input-token block and a narrow-but-tall output-token block whose area rivals the input despite fewer tokens, because output tokens are priced several times higher. Beside it, four cost-control levers point at the bill: call fewer tokens, reuse computed results via caching, route to a cheaper model, and fill idle GPU time via batching and spot fleets.">
+<defs>
+  <marker id="cral-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+
+<style>
+  #fig-cost-request-anatomy-levers text { fill: var(--ink-soft,#45413a); }
+  #fig-cost-request-anatomy-levers .hdr { font: 700 12px var(--sans,sans-serif); letter-spacing: 0.03em; fill: var(--muted,#6d675d); }
+  #fig-cost-request-anatomy-levers .formula { font: 600 15px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+  #fig-cost-request-anatomy-levers .sub { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-request-anatomy-levers .blk-lbl { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-cost-request-anatomy-levers .blk-sub { font: 400 10.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-request-anatomy-levers .cost-val { font: 700 11px var(--mono,monospace); }
+  #fig-cost-request-anatomy-levers .total { font: 600 11.5px var(--sans,sans-serif); }
+  #fig-cost-request-anatomy-levers .note { font: 400 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-cost-request-anatomy-levers .lev1 { font: 600 12px var(--sans,sans-serif); }
+  #fig-cost-request-anatomy-levers .lev2 { font: 400 9.5px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-cost-request-anatomy-levers .bill-lbl { font: 700 11px var(--sans,sans-serif); letter-spacing: 0.03em; }
+  #fig-cost-request-anatomy-levers .dollar { font: 700 32px var(--sans,sans-serif); }
+</style>
+
+
+<line x1="470" y1="16" x2="470" y2="454" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3"/>
+
+
+<text x="245" y="22" text-anchor="middle" class="hdr">WHERE THE MONEY GOES IN ONE REQUEST</text>
+<text x="245" y="42" text-anchor="middle" class="formula">cost = C_in x n_p  +  C_out x n_g</text>
+<text x="245" y="58" text-anchor="middle" class="sub">(area of each block below is proportional to its cost contribution)</text>
+
+
+<text x="180" y="172" text-anchor="middle" class="blk-lbl">input / prompt tokens</text>
+<text x="180" y="186" text-anchor="middle" class="blk-sub">(n_p ~ 628) x 1x unit price</text>
+<rect x="70" y="296" width="220" height="24" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+
+
+<text x="382" y="172" text-anchor="middle" class="blk-lbl">output / generated tokens</text>
+<text x="382" y="186" text-anchor="middle" class="blk-sub">(n_g ~ 300) x ~5x unit price</text>
+<rect x="330" y="200" width="105" height="120" class="v-fill" stroke="var(--accent-2,#b04e2d)" stroke-width="1.6"/>
+
+
+<line x1="60" y1="320" x2="450" y2="320" class="v-grid" stroke="currentColor" stroke-width="1"/>
+
+
+<text x="180" y="337" text-anchor="middle" class="cost-val" fill="var(--accent,#c15b39)">~$0.0019</text>
+<text x="382" y="337" text-anchor="middle" class="cost-val" fill="var(--accent-2,#b04e2d)">~$0.0045</text>
+
+<text x="252" y="357" text-anchor="middle" class="total">total ~ $0.0064 per request (illustrative)</text>
+
+<text x="252" y="378" text-anchor="middle" class="note">output tokens are 3-5x pricier - decode is sequential</text>
+<text x="252" y="393" text-anchor="middle" class="note">and memory-bandwidth-bound, so it dominates despite fewer tokens</text>
+
+
+<text x="645" y="22" text-anchor="middle" class="hdr">FOUR LEVERS ON THE BILL</text>
+
+
+<rect x="490" y="65" width="210" height="78" rx="8" class="v-fill v-stroke" stroke-width="1.2"/>
+<text x="500" y="98" class="lev1">(a) call fewer tokens</text>
+<text x="500" y="116" class="lev2">shorter prompts, less generation</text>
+
+
+<rect x="490" y="161" width="210" height="78" rx="8" class="v-fill v-stroke" stroke-width="1.2"/>
+<text x="500" y="194" class="lev1">(b) reuse computed results</text>
+<text x="500" y="212" class="lev2">-&gt; exact / semantic / prefix caching</text>
+
+
+<rect x="490" y="257" width="210" height="78" rx="8" class="v-fill v-stroke" stroke-width="1.2"/>
+<text x="500" y="290" class="lev1">(c) route to a cheaper model</text>
+<text x="500" y="308" class="lev2">-&gt; cascades / speculative / quantised</text>
+
+
+<rect x="490" y="353" width="210" height="78" rx="8" class="v-fill v-stroke" stroke-width="1.2"/>
+<text x="500" y="386" class="lev1">(d) fill idle GPU time</text>
+<text x="500" y="404" class="lev2">-&gt; batching / spot fleets</text>
+
+
+<line x1="700" y1="104" x2="746" y2="185" stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#cral-arr)"/>
+<line x1="700" y1="200" x2="746" y2="215" stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#cral-arr)"/>
+<line x1="700" y1="296" x2="746" y2="281" stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#cral-arr)"/>
+<line x1="700" y1="392" x2="746" y2="311" stroke="var(--ink-soft,#45413a)" stroke-width="1.4" marker-end="url(#cral-arr)"/>
+
+
+<text x="780" y="146" text-anchor="middle" class="bill-lbl">THE BILL</text>
+<rect x="750" y="158" width="60" height="180" rx="10" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+<text x="780" y="260" text-anchor="middle" class="dollar" fill="var(--accent,#c15b39)">$</text>
+
+</svg>
+<figcaption><b>Where the money goes in one request, and the four levers that pull it down.</b> Output tokens are priced roughly 5x higher than input tokens because decoding is sequential and memory-bandwidth-bound, so the output block's area rivals the input block's despite carrying fewer than half the tokens. The rest of this chapter is organized around the four levers on the right: use fewer tokens, reuse prior computation (caching), route to a cheaper model (cascades, speculative routing, quantised fallbacks), or fill idle GPU time (batching, spot fleets).</figcaption>
+</figure>

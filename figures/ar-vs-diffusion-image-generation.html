@@ -1,0 +1,289 @@
+<figure class="viz" id="fig-ar-vs-diffusion-image-generation">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<svg viewBox="0 0 760 580" role="img" aria-label="Two ways to generate the same abstract image tile with a transformer, run on the same clock: autoregressive decoding fills 16 image-token slots strictly left to right, one per forward pass, with a KV cache that grows every step and the image filling in region by region as tokens land; diffusion or flow matching instead runs 4 global denoising passes over the whole image at once, sharpening every patch in parallel each step, and finishes long before the autoregressive track is done.">
+<defs>
+  <marker id="advd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+  <style>
+    #fig-ar-vs-diffusion-image-generation text{ fill:var(--ink-soft); }
+    #fig-ar-vs-diffusion-image-generation .advd-ttl{ font:700 14px var(--sans,sans-serif); }
+    #fig-ar-vs-diffusion-image-generation .advd-lbl{ font:700 12px var(--sans,sans-serif); }
+    #fig-ar-vs-diffusion-image-generation .advd-sub{ font:400 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-ar-vs-diffusion-image-generation .advd-num{ font:700 11px var(--mono,monospace); fill:var(--ink); }
+    #fig-ar-vs-diffusion-image-generation .advd-cap{ font:400 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-ar-vs-diffusion-image-generation .advd-tval{ font:400 8.5px var(--mono,monospace); fill:var(--muted); }
+    #fig-ar-vs-diffusion-image-generation .advd-cnt{ font:700 11px var(--mono,monospace); }
+    #fig-ar-vs-diffusion-image-generation .advd-end{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-ar-vs-diffusion-image-generation .advd-legend{ font:400 9.5px var(--sans,sans-serif); fill:var(--ink-soft); }
+    #fig-ar-vs-diffusion-image-generation .advd-arr{ stroke:var(--ink-soft); stroke-width:1.3; marker-end:url(#advd-arrow); fill:none; }
+
+    /* Cover-then-fade reveal: the correct final state is always fully drawn underneath;
+       these overlays hide it briefly then disappear, giving the illusion of step-by-step
+       progress. Every overlay starts at opacity="0" as a plain SVG attribute, so a static
+       renderer with no animation support (or reduced motion) simply never shows it and the
+       figure reads correctly as a finished, static frame. */
+    @keyframes advd-fade{ 0%,85%{ opacity:1; } 100%{ opacity:0; } }
+
+    #fig-ar-vs-diffusion-image-generation .advd-s1{ animation: advd-fade 0.29s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s2{ animation: advd-fade 0.48s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s3{ animation: advd-fade 0.67s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s4{ animation: advd-fade 0.86s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s5{ animation: advd-fade 1.05s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s6{ animation: advd-fade 1.24s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s7{ animation: advd-fade 1.43s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s8{ animation: advd-fade 1.62s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s9{ animation: advd-fade 1.81s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s10{ animation: advd-fade 2.00s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s11{ animation: advd-fade 2.19s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s12{ animation: advd-fade 2.38s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s13{ animation: advd-fade 2.57s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s14{ animation: advd-fade 2.76s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s15{ animation: advd-fade 2.95s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-s16{ animation: advd-fade 3.14s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-p1{ animation: advd-fade 0.37s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-p2{ animation: advd-fade 0.64s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-p3{ animation: advd-fade 0.91s linear forwards; }
+    #fig-ar-vs-diffusion-image-generation .advd-p4{ animation: advd-fade 1.18s linear forwards; }
+
+    @media (prefers-reduced-motion: reduce){
+      #fig-ar-vs-diffusion-image-generation [class*="advd-s"],
+      #fig-ar-vs-diffusion-image-generation [class*="advd-p"]{ animation:none !important; opacity:0 !important; }
+    }
+  </style>
+</defs>
+
+<text x="380" y="22" text-anchor="middle" class="advd-ttl">Two ways to generate the same image tile -- run on the same clock</text>
+
+
+<text x="20" y="42" class="advd-lbl">Autoregressive (discrete tokens) -- decode one slot per forward pass</text>
+
+<g><rect x="20" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="33" y="70" text-anchor="middle" class="advd-num">1</text></g>
+<rect x="20" y="52" width="26" height="28" rx="4" class="v-fill advd-s1" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="49" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="62" y="70" text-anchor="middle" class="advd-num">2</text></g>
+<rect x="49" y="52" width="26" height="28" rx="4" class="v-fill advd-s2" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="78" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="91" y="70" text-anchor="middle" class="advd-num">3</text></g>
+<rect x="78" y="52" width="26" height="28" rx="4" class="v-fill advd-s3" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="107" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="120" y="70" text-anchor="middle" class="advd-num">4</text></g>
+<rect x="107" y="52" width="26" height="28" rx="4" class="v-fill advd-s4" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="136" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="149" y="70" text-anchor="middle" class="advd-num">5</text></g>
+<rect x="136" y="52" width="26" height="28" rx="4" class="v-fill advd-s5" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="165" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="178" y="70" text-anchor="middle" class="advd-num">6</text></g>
+<rect x="165" y="52" width="26" height="28" rx="4" class="v-fill advd-s6" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="194" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="207" y="70" text-anchor="middle" class="advd-num">7</text></g>
+<rect x="194" y="52" width="26" height="28" rx="4" class="v-fill advd-s7" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="223" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="236" y="70" text-anchor="middle" class="advd-num">8</text></g>
+<rect x="223" y="52" width="26" height="28" rx="4" class="v-fill advd-s8" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="252" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="265" y="70" text-anchor="middle" class="advd-num">9</text></g>
+<rect x="252" y="52" width="26" height="28" rx="4" class="v-fill advd-s9" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="281" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="294" y="70" text-anchor="middle" class="advd-num">10</text></g>
+<rect x="281" y="52" width="26" height="28" rx="4" class="v-fill advd-s10" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="310" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="323" y="70" text-anchor="middle" class="advd-num">11</text></g>
+<rect x="310" y="52" width="26" height="28" rx="4" class="v-fill advd-s11" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="339" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="352" y="70" text-anchor="middle" class="advd-num">12</text></g>
+<rect x="339" y="52" width="26" height="28" rx="4" class="v-fill advd-s12" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="368" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="381" y="70" text-anchor="middle" class="advd-num">13</text></g>
+<rect x="368" y="52" width="26" height="28" rx="4" class="v-fill advd-s13" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="397" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="410" y="70" text-anchor="middle" class="advd-num">14</text></g>
+<rect x="397" y="52" width="26" height="28" rx="4" class="v-fill advd-s14" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="426" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="439" y="70" text-anchor="middle" class="advd-num">15</text></g>
+<rect x="426" y="52" width="26" height="28" rx="4" class="v-fill advd-s15" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<g><rect x="455" y="52" width="26" height="28" rx="4" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.5"/><text x="468" y="70" text-anchor="middle" class="advd-num">16</text></g>
+<rect x="455" y="52" width="26" height="28" rx="4" class="v-fill advd-s16" opacity="0" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+
+<text x="491" y="70" class="advd-sub" style="font-weight:700">...</text>
+<rect x="505" y="52" width="34" height="28" rx="4" class="v-fill" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="522" y="70" text-anchor="middle" class="advd-tval">1024</text>
+
+<text x="20" y="98" class="advd-cnt">token 16 / 1024 decoded so far</text>
+
+<text x="20" y="112" class="advd-sub">KV cache (append-only):</text>
+<rect x="20" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="20" y="118" width="29" height="10" class="v-fill advd-s1" opacity="0"/>
+<rect x="49" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="49" y="118" width="29" height="10" class="v-fill advd-s2" opacity="0"/>
+<rect x="78" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="78" y="118" width="29" height="10" class="v-fill advd-s3" opacity="0"/>
+<rect x="107" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="107" y="118" width="29" height="10" class="v-fill advd-s4" opacity="0"/>
+<rect x="136" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="136" y="118" width="29" height="10" class="v-fill advd-s5" opacity="0"/>
+<rect x="165" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="165" y="118" width="29" height="10" class="v-fill advd-s6" opacity="0"/>
+<rect x="194" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="194" y="118" width="29" height="10" class="v-fill advd-s7" opacity="0"/>
+<rect x="223" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="223" y="118" width="29" height="10" class="v-fill advd-s8" opacity="0"/>
+<rect x="252" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="252" y="118" width="29" height="10" class="v-fill advd-s9" opacity="0"/>
+<rect x="281" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="281" y="118" width="29" height="10" class="v-fill advd-s10" opacity="0"/>
+<rect x="310" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="310" y="118" width="29" height="10" class="v-fill advd-s11" opacity="0"/>
+<rect x="339" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="339" y="118" width="29" height="10" class="v-fill advd-s12" opacity="0"/>
+<rect x="368" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="368" y="118" width="29" height="10" class="v-fill advd-s13" opacity="0"/>
+<rect x="397" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="397" y="118" width="29" height="10" class="v-fill advd-s14" opacity="0"/>
+<rect x="426" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="426" y="118" width="29" height="10" class="v-fill advd-s15" opacity="0"/>
+<rect x="455" y="118" width="29" height="10" fill="var(--good,#2f9e6e)" opacity="0.55"/>
+<rect x="455" y="118" width="29" height="10" class="v-fill advd-s16" opacity="0"/>
+<text x="20" y="140" class="advd-sub">KV cache keeps growing by one slot every step, all the way to 1024.</text>
+
+<text x="20" y="156" class="advd-cap">sequential: N tokens, one per step -- slow, latency scales with token count</text>
+
+
+<rect x="560" y="42" width="160" height="160" rx="8" class="v-fill" stroke="var(--ink-soft)" stroke-width="1.5"/>
+<circle cx="640" cy="122" r="42" fill="var(--good,#2f9e6e)"/>
+<line x1="600" y1="42" x2="600" y2="202" stroke="var(--border-2)" stroke-width="0.6"/>
+<line x1="560" y1="82" x2="720" y2="82" stroke="var(--border-2)" stroke-width="0.6"/>
+<line x1="640" y1="42" x2="640" y2="202" stroke="var(--border-2)" stroke-width="0.6"/>
+<line x1="560" y1="122" x2="720" y2="122" stroke="var(--border-2)" stroke-width="0.6"/>
+<line x1="680" y1="42" x2="680" y2="202" stroke="var(--border-2)" stroke-width="0.6"/>
+<line x1="560" y1="162" x2="720" y2="162" stroke="var(--border-2)" stroke-width="0.6"/>
+<rect x="560" y="42" width="40" height="40" class="v-fill advd-s1" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="600" y="42" width="40" height="40" class="v-fill advd-s2" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="640" y="42" width="40" height="40" class="v-fill advd-s3" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="680" y="42" width="40" height="40" class="v-fill advd-s4" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="560" y="82" width="40" height="40" class="v-fill advd-s5" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="600" y="82" width="40" height="40" class="v-fill advd-s6" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="640" y="82" width="40" height="40" class="v-fill advd-s7" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="680" y="82" width="40" height="40" class="v-fill advd-s8" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="560" y="122" width="40" height="40" class="v-fill advd-s9" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="600" y="122" width="40" height="40" class="v-fill advd-s10" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="640" y="122" width="40" height="40" class="v-fill advd-s11" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="680" y="122" width="40" height="40" class="v-fill advd-s12" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="560" y="162" width="40" height="40" class="v-fill advd-s13" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="600" y="162" width="40" height="40" class="v-fill advd-s14" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="640" y="162" width="40" height="40" class="v-fill advd-s15" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+<rect x="680" y="162" width="40" height="40" class="v-fill advd-s16" opacity="0" stroke="var(--muted)" stroke-width="0.8" stroke-dasharray="2 2"/>
+
+<text x="640" y="224" text-anchor="middle" class="advd-end" fill="var(--accent,#c15b39)">AR: many sequential steps</text>
+
+<line x1="10" y1="238" x2="750" y2="238" stroke="var(--border-2)" stroke-width="1" stroke-dasharray="2 4"/>
+
+
+<text x="20" y="254" class="advd-lbl">Diffusion / flow-matching (continuous patches) -- one global pass per step</text>
+
+<circle cx="45" cy="278" r="11" fill="var(--accent2,#3b82f6)"/><text x="45" y="282" text-anchor="middle" class="advd-num" fill="#fff">1</text>
+<circle cx="45" cy="278" r="11" class="v-fill advd-p1" opacity="0" stroke="var(--border-2)"/>
+<text x="45" y="306" text-anchor="middle" class="advd-tval">t=1.0</text>
+<line x1="56" y1="278" x2="112" y2="278" class="advd-arr"/>
+<circle cx="123" cy="278" r="11" fill="var(--accent2,#3b82f6)"/><text x="123" y="282" text-anchor="middle" class="advd-num" fill="#fff">2</text>
+<circle cx="123" cy="278" r="11" class="v-fill advd-p2" opacity="0" stroke="var(--border-2)"/>
+<text x="123" y="306" text-anchor="middle" class="advd-tval">t=0.66</text>
+<line x1="134" y1="278" x2="190" y2="278" class="advd-arr"/>
+<circle cx="201" cy="278" r="11" fill="var(--accent2,#3b82f6)"/><text x="201" y="282" text-anchor="middle" class="advd-num" fill="#fff">3</text>
+<circle cx="201" cy="278" r="11" class="v-fill advd-p3" opacity="0" stroke="var(--border-2)"/>
+<text x="201" y="306" text-anchor="middle" class="advd-tval">t=0.33</text>
+<line x1="212" y1="278" x2="268" y2="278" class="advd-arr"/>
+<circle cx="279" cy="278" r="11" fill="var(--accent2,#3b82f6)"/><text x="279" y="282" text-anchor="middle" class="advd-num" fill="#fff">4</text>
+<circle cx="279" cy="278" r="11" class="v-fill advd-p4" opacity="0" stroke="var(--border-2)"/>
+<text x="279" y="306" text-anchor="middle" class="advd-tval">t=0</text>
+
+<text x="20" y="326" class="advd-cnt">step 4 / 4 -- denoising complete</text>
+
+<text x="20" y="346" class="advd-cap">parallel: whole image per step, few steps --</text>
+<text x="20" y="360" class="advd-cap">fast, latency set by step count not resolution</text>
+
+
+<rect x="560" y="254" width="160" height="160" rx="8" class="v-fill" stroke="var(--ink-soft)" stroke-width="1.5"/>
+<circle cx="640" cy="334" r="42" fill="var(--good,#2f9e6e)"/>
+<g class="advd-p1" opacity="0">
+  <rect x="559" y="253" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="589" y="263" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="619" y="251" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="649" y="268" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="679" y="258" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="569" y="293" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="604" y="303" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="639" y="298" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="674" y="293" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="564" y="333" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="599" y="343" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="634" y="338" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="669" y="343" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="579" y="373" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="619" y="378" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="659" y="373" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+  <rect x="689" y="313" width="22" height="22" rx="2" fill="var(--muted)" fill-opacity="0.85"/>
+</g>
+<g class="advd-p2" opacity="0">
+  <rect x="562" y="256" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="592" y="266" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="622" y="254" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="652" y="270" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="682" y="260" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="572" y="296" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="606" y="306" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="642" y="300" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="676" y="296" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="566" y="336" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="602" y="346" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="636" y="340" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="672" y="346" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="582" y="376" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="622" y="380" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="662" y="376" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+  <rect x="692" y="316" width="17" height="17" rx="2" fill="var(--muted)" fill-opacity="0.65"/>
+</g>
+<g class="advd-p3" opacity="0">
+  <rect x="564" y="258" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="594" y="268" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="624" y="256" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="654" y="273" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="684" y="263" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="574" y="298" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="609" y="308" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="644" y="303" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="679" y="298" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="569" y="338" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="604" y="348" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="639" y="343" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="674" y="348" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="584" y="378" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="624" y="383" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="664" y="378" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+  <rect x="694" y="318" width="12" height="12" rx="2" fill="var(--muted)" fill-opacity="0.5"/>
+</g>
+<g class="advd-p4" opacity="0">
+  <rect x="566" y="260" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="596" y="270" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="626" y="258" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="656" y="276" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="686" y="266" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="576" y="300" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="612" y="310" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="646" y="306" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="682" y="300" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="572" y="340" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="606" y="350" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="642" y="346" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="676" y="350" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="586" y="380" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="626" y="386" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="666" y="380" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+  <rect x="696" y="320" width="7" height="7" rx="2" fill="var(--muted)" fill-opacity="0.35"/>
+</g>
+
+<text x="640" y="436" text-anchor="middle" class="advd-end" fill="var(--accent2,#3b82f6)">diffusion: few parallel steps</text>
+
+
+<rect x="14" y="454" width="732" height="56" rx="10" class="v-fill" stroke="var(--border-2)" stroke-width="1.2"/>
+<text x="380" y="476" text-anchor="middle" class="advd-lbl" style="font-size:12px">Quality vs speed -- the community has not converged.</text>
+<text x="380" y="494" text-anchor="middle" class="advd-cap">Same target image, two decoding loops: token-by-token next-token prediction vs a few global denoising passes.</text>
+
+
+<rect x="20" y="522" width="14" height="14" rx="3" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+<text x="40" y="533" class="advd-legend">AR slot / KV segment (resolved)</text>
+<rect x="380" y="522" width="14" height="14" rx="3" class="v-fill" stroke="var(--muted)" stroke-width="1.1" stroke-dasharray="3 3"/>
+<text x="400" y="533" class="advd-legend">unresolved (not yet decoded / noisy)</text>
+<circle cx="27" cy="551" r="7" fill="var(--accent2,#3b82f6)"/>
+<text x="40" y="555" class="advd-legend">diffusion global step (denoising pass)</text>
+<rect x="380" y="544" width="14" height="14" rx="3" fill="var(--good,#2f9e6e)"/>
+<text x="400" y="555" class="advd-legend">target image content (same across both)</text>
+</svg>
+<figcaption><b>Autoregressive decoding fills image tokens strictly one at a time; diffusion refines the whole image together over a handful of steps.</b> On the same clock, the autoregressive track needs one dependent forward pass per token -- 1024 of them for a 1024-token image, each extending a growing KV cache -- while diffusion or flow-matching needs only a few global denoising passes, each touching every patch in parallel. Latency scales with token count for the autoregressive path but with step count for diffusion, which is why diffusion typically finishes in under a second while autoregressive decoding can take tens of seconds; the community has not converged on which tradeoff wins, and masked/hybrid models occupy the middle ground.</figcaption>
+</figure>

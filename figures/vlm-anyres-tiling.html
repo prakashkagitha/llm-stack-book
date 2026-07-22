@@ -1,0 +1,149 @@
+<figure class="viz" id="fig-vlm-anyres-tiling">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 330" role="img" aria-label="The AnyRes tiling pipeline: an arbitrary-resolution image is cut into 336x336 tiles plus a down-sampled global thumbnail, each tile is encoded independently and in parallel by the same shared frozen ViT into 576 patch tokens, the per-tile token blocks are concatenated into one sequence with a positional cue -- tile-position embeddings, row_start/col_end tokens, or a row/col text prefix -- marking each tile's location and the thumbnail block marked distinctly, and the whole sequence is projected into the LLM's input, so K tiles produce K times 576 visual tokens.">
+  <defs>
+    <marker id="vat-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#6d675d)"/>
+    </marker>
+    <marker id="vat-arr-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-vlm-anyres-tiling .ttl    { font:700 14.5px var(--sans,sans-serif); }
+    #fig-vlm-anyres-tiling .hdrn   { font:700 9.5px var(--sans,sans-serif); fill:var(--accent,#c15b39); }
+    #fig-vlm-anyres-tiling .hdrt   { font:700 9.5px var(--sans,sans-serif); fill:var(--ink-soft,#45413a); }
+    #fig-vlm-anyres-tiling .ann    { font:400 8.3px var(--mono,monospace); fill:var(--muted,#6d675d); }
+    #fig-vlm-anyres-tiling .clbl   { font:700 9px var(--sans,sans-serif); fill:var(--ink-soft,#45413a); }
+    #fig-vlm-anyres-tiling .clbl-a { font:700 9px var(--sans,sans-serif); fill:var(--accent,#c15b39); }
+    #fig-vlm-anyres-tiling .ctxt   { font:400 8px var(--sans,sans-serif); fill:var(--muted,#6d675d); }
+    #fig-vlm-anyres-tiling .blkt   { font:700 8.6px var(--mono,monospace); fill:var(--ink-soft,#45413a); }
+    #fig-vlm-anyres-tiling .blks   { font:400 7.4px var(--mono,monospace); fill:var(--muted,#6d675d); }
+    #fig-vlm-anyres-tiling .tagt   { font:600 7.6px var(--sans,sans-serif); fill:var(--ink-soft,#45413a); }
+    #fig-vlm-anyres-tiling .tagl   { font:600 7.9px var(--sans,sans-serif); fill:var(--ink-soft,#45413a); }
+    #fig-vlm-anyres-tiling .boxlbl { font:700 8.8px var(--sans,sans-serif); fill:var(--ink-soft,#45413a); }
+    #fig-vlm-anyres-tiling .foot   { font:400 9.7px var(--sans,sans-serif); fill:var(--muted,#6d675d); }
+    #fig-vlm-anyres-tiling .thumb  { fill:var(--accent,#c15b39); fill-opacity:0.14; stroke:var(--accent,#c15b39); stroke-width:1.2; stroke-dasharray:3 2; }
+    #fig-vlm-anyres-tiling .tagpill{ fill:var(--surface-3,#ece7da); stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #fig-vlm-anyres-tiling .chip   { fill:var(--surface-3,#ece7da); stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+  </style>
+
+  <text x="410" y="24" text-anchor="middle" class="ttl">AnyRes tiling: read high-res images without one giant grid</text>
+
+
+  <g data-anim="1">
+    <text x="14" y="42"><tspan class="hdrn">STAGE 1</tspan><tspan class="hdrt"> -- Tile</tspan></text>
+
+    <rect x="14" y="58" width="110" height="134" rx="4" class="v-fill v-stroke" stroke-width="1.3"/>
+    <line x1="69" y1="58" x2="69" y2="192" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2.5"/>
+    <line x1="14" y1="125" x2="124" y2="125" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 2.5"/>
+    <line x1="124" y1="88" x2="132" y2="88" stroke="var(--muted,#6d675d)" stroke-width="0.75"/>
+    <text x="134" y="91" class="ann">336x336</text>
+    <text x="69" y="204" text-anchor="middle" class="ann">2x2 tiles, 336x336 each</text>
+
+    <rect x="14" y="218" width="50" height="38" rx="4" class="thumb"/>
+    <text x="72" y="228" class="clbl-a">global thumbnail</text>
+    <text x="72" y="239" class="ctxt">down-sampled whole image</text>
+    <rect x="14" y="260" width="82" height="16" rx="8" class="tagpill"/>
+    <text x="55" y="271" text-anchor="middle" class="tagl">context view</text>
+  </g>
+
+
+  <g data-anim="2">
+    <line x1="124" y1="125" x2="184" y2="125" stroke="var(--muted,#6d675d)" stroke-width="1.3" marker-end="url(#vat-arr)"/>
+
+    <text x="184" y="42"><tspan class="hdrn">STAGE 2</tspan><tspan class="hdrt"> -- Encode in parallel</tspan></text>
+
+    <rect x="195" y="70" width="115" height="110" rx="8" class="v-fill v-stroke" stroke-width="1.4"/>
+
+    <path d="M186 125 L215 93" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M186 125 L215 109" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M186 125 L215 125" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M186 125 L215 141" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M186 125 L215 157" stroke="var(--accent,#c15b39)" stroke-width="1" fill="none" stroke-dasharray="3 2"/>
+
+    <line x1="215" y1="93"  x2="290" y2="93"  stroke="var(--muted,#6d675d)" stroke-width="0.9"/>
+    <line x1="215" y1="109" x2="290" y2="109" stroke="var(--muted,#6d675d)" stroke-width="0.9"/>
+    <line x1="215" y1="125" x2="290" y2="125" stroke="var(--muted,#6d675d)" stroke-width="0.9"/>
+    <line x1="215" y1="141" x2="290" y2="141" stroke="var(--muted,#6d675d)" stroke-width="0.9"/>
+    <line x1="215" y1="157" x2="290" y2="157" stroke="var(--accent,#c15b39)" stroke-width="1" stroke-dasharray="3 2"/>
+
+    <path d="M290 93 L310 125"  stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M290 109 L310 125" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M290 125 L310 125" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M290 141 L310 125" stroke="var(--muted,#6d675d)" stroke-width="0.9" fill="none"/>
+    <path d="M290 157 L310 125" stroke="var(--accent,#c15b39)" stroke-width="1" fill="none" stroke-dasharray="3 2"/>
+
+    <text x="252" y="196" text-anchor="middle" class="clbl">ViT (shared, frozen)</text>
+    <text x="252" y="209" text-anchor="middle" class="ctxt">same weights for every tile + thumbnail</text>
+  </g>
+
+
+  <g data-anim="3">
+    <line x1="310" y1="125" x2="370" y2="125" stroke="var(--muted,#6d675d)" stroke-width="1.3" marker-end="url(#vat-arr)"/>
+
+    <text x="368" y="42"><tspan class="hdrn">STAGE 3</tspan><tspan class="hdrt"> -- Concatenate + tag position</tspan></text>
+
+    <rect x="372" y="105" width="48" height="40" rx="3" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="396" y="121" text-anchor="middle" class="blkt">t1</text>
+    <text x="396" y="133" text-anchor="middle" class="blks">576 tok</text>
+    <rect x="420" y="119" width="10" height="12" transform="rotate(45 425 125)" class="v-fill v-stroke" stroke-width="0.9"/>
+
+    <rect x="430" y="105" width="48" height="40" rx="3" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="454" y="121" text-anchor="middle" class="blkt">t2</text>
+    <text x="454" y="133" text-anchor="middle" class="blks">576 tok</text>
+    <rect x="478" y="119" width="10" height="12" transform="rotate(45 483 125)" class="v-fill v-stroke" stroke-width="0.9"/>
+
+    <rect x="488" y="105" width="48" height="40" rx="3" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="512" y="121" text-anchor="middle" class="blkt">t3</text>
+    <text x="512" y="133" text-anchor="middle" class="blks">576 tok</text>
+    <rect x="536" y="119" width="10" height="12" transform="rotate(45 541 125)" class="v-fill v-stroke" stroke-width="0.9"/>
+
+    <rect x="546" y="105" width="48" height="40" rx="3" class="v-fill v-stroke" stroke-width="1.1"/>
+    <text x="570" y="121" text-anchor="middle" class="blkt">t4</text>
+    <text x="570" y="133" text-anchor="middle" class="blks">576 tok</text>
+    <rect x="594" y="119" width="10" height="12" transform="rotate(45 599 125)" class="v-fill v-stroke" stroke-width="0.9"/>
+
+    <rect x="604" y="105" width="48" height="40" rx="3" class="thumb"/>
+    <text x="628" y="121" text-anchor="middle" class="blkt">thumb</text>
+    <text x="628" y="133" text-anchor="middle" class="blks">576 tok</text>
+
+    <text x="512" y="160" text-anchor="middle" class="ann">concatenated: 5 x 576 = 2880 tokens</text>
+    <text x="512" y="178" text-anchor="middle" class="ctxt">how the model tags each tile's position (pick one strategy):</text>
+
+    <rect x="372" y="186" width="88" height="32" rx="5" class="chip"/>
+    <text x="416" y="199" text-anchor="middle" class="tagt">(a) tile-position</text>
+    <text x="416" y="210" text-anchor="middle" class="tagt">embeddings</text>
+
+    <rect x="468" y="186" width="96" height="32" rx="5" class="chip"/>
+    <text x="516" y="199" text-anchor="middle" class="tagt">(b) &lt;row_start&gt;/</text>
+    <text x="516" y="210" text-anchor="middle" class="tagt">&lt;col_end&gt; tokens</text>
+
+    <rect x="572" y="186" width="80" height="32" rx="5" class="chip"/>
+    <text x="612" y="199" text-anchor="middle" class="tagt">(c) text cue</text>
+    <text x="612" y="210" text-anchor="middle" class="tagt">"row 0, col 2:"</text>
+  </g>
+
+
+  <g data-anim="4">
+    <path d="M652 125 L692 105" stroke="var(--muted,#6d675d)" stroke-width="1.3" fill="none" marker-end="url(#vat-arr)"/>
+
+    <text x="692" y="42"><tspan class="hdrn">STAGE 4</tspan><tspan class="hdrt"> -- Project</tspan></text>
+
+    <rect x="696" y="88" width="104" height="34" rx="6" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="748" y="102" text-anchor="middle" class="boxlbl">Projector</text>
+    <text x="748" y="114" text-anchor="middle" class="ctxt">(MLP)</text>
+
+    <line x1="748" y1="122" x2="748" y2="138" stroke="var(--muted,#6d675d)" stroke-width="1.1" marker-end="url(#vat-arr)"/>
+
+    <rect x="696" y="140" width="104" height="44" rx="6" class="v-fill v-stroke" stroke-width="1.3"/>
+    <text x="748" y="158" text-anchor="middle" class="boxlbl">LLM input</text>
+    <text x="748" y="171" text-anchor="middle" class="ctxt">sequence</text>
+  </g>
+
+  <line x1="14" y1="296" x2="806" y2="296" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>
+  <text x="410" y="313" text-anchor="middle" class="foot">K tiles =&gt; K x 576 tokens: fidelity scales with tile count (this is what the token-explosion figure is counting)</text>
+
+</svg>
+<figcaption><b>AnyRes tiling turns an arbitrary-resolution image into a sequence of fixed-size tile encodings.</b> The image is cut into fixed 336x336 tiles plus a down-sampled global thumbnail for context; the same frozen ViT encodes every tile and the thumbnail independently and in parallel into 576 patch tokens each; the per-tile blocks are concatenated with a positional cue (learned tile-position embeddings, special row/column tokens, or a text prefix) marking where each tile sits and the thumbnail block marked distinctly; the full sequence is then projected into the LLM's input. More tiles buy more fidelity but multiply the visual token count directly.</figcaption>
+</figure>

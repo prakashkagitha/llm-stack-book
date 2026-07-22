@@ -1,0 +1,143 @@
+<figure class="viz" id="fig-evalharness-continuation-split-bos-bug">
+<button class="viz-replay" type="button">&#8635; replay</button>
+<style>
+  #fig-evalharness-continuation-split-bos-bug text { fill: var(--ink-soft, #45413a); }
+  #fig-evalharness-continuation-split-bos-bug .frame    { font: 600 12px var(--sans,sans-serif); font-style: italic; fill: var(--muted,#6d675d); }
+  #fig-evalharness-continuation-split-bos-bug .rowhead  { font: 700 14px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-evalharness-continuation-split-bos-bug .rowhead-warn { font: 700 14px var(--sans,sans-serif); fill: var(--v-warn,#e0a106); }
+  #fig-evalharness-continuation-split-bos-bug .note     { font: 500 10.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-evalharness-continuation-split-bos-bug .note-warn{ font: 600 10.5px var(--sans,sans-serif); fill: var(--v-warn,#e0a106); }
+  #fig-evalharness-continuation-split-bos-bug .celltxt  { font: 600 11px var(--mono,monospace); fill: var(--ink-soft,#45413a); }
+  #fig-evalharness-continuation-split-bos-bug .celltxt-on { font: 700 11px var(--mono,monospace); fill: var(--surface,#fff); }
+  #fig-evalharness-continuation-split-bos-bug .chip     { font: 600 10.5px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-evalharness-continuation-split-bos-bug .arrowtxt { font: 700 12px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-evalharness-continuation-split-bos-bug .band     { font: 600 12px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-evalharness-continuation-split-bos-bug .bandbold { font: 700 12px var(--sans,sans-serif); fill: var(--v-warn,#e0a106); }
+  #fig-evalharness-continuation-split-bos-bug .chaintitle { font: 700 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+</style>
+<svg viewBox="0 0 800 480" role="img" aria-label="Two token strips compared: a correct context/continuation split scores only the final answer token, while a bugged split shifts the boundary one token right so the continuation is empty, every choice scores 0.0, and accuracy silently pins at chance.">
+
+  <text x="400" y="18" text-anchor="middle" class="frame">Get the context/continuation boundary right, or scoring breaks silently -- no crash, no traceback.</text>
+
+  <g data-anim="1">
+  <text x="20" y="48" class="rowhead">Correct</text>
+
+  <polygon points="550,50 544,42 556,42" fill="var(--v-accent,#c15b39)"/>
+  <text x="550" y="32" text-anchor="middle" class="note">logits at ctx_len-1 predict this token</text>
+  <line x1="550" y1="50" x2="550" y2="112" stroke="var(--v-accent,#c15b39)" stroke-width="2.5"/>
+
+  <g>
+    <rect x="130" y="58" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="165" y="87" text-anchor="middle" class="celltxt">BOS</text>
+  </g>
+  <g>
+    <rect x="200" y="58" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="235" y="87" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="270" y="58" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="305" y="87" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="340" y="58" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="375" y="87" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="410" y="58" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="445" y="87" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="480" y="58" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="515" y="87" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="550" y="58" width="70" height="50" fill="var(--v-accent,#c15b39)"/>
+    <text x="585" y="87" text-anchor="middle" class="celltxt-on">' A'</text>
+  </g>
+
+  <line x1="585" y1="108" x2="585" y2="120" stroke="var(--v-accent,#c15b39)" stroke-width="1.3"/>
+  <text x="585" y="134" text-anchor="middle" class="note">score = sum of log p</text>
+  <text x="585" y="148" text-anchor="middle" class="note">over continuation tokens only</text>
+  </g>
+
+  <g data-anim="2">
+  <text x="20" y="182" class="rowhead-warn">Bugged: BOS counted twice</text>
+  <text x="20" y="196" class="note">dashed line marks the correct boundary, from the row above</text>
+
+  <text x="620" y="184" text-anchor="middle" class="note-warn">ctx_len off by +1 -- BOS double-counted</text>
+  <polygon points="620,202 614,194 626,194" fill="var(--v-warn,#e0a106)"/>
+  <line x1="620" y1="196" x2="620" y2="264" stroke="var(--v-warn,#e0a106)" stroke-width="2.5"/>
+
+  <line x1="550" y1="206" x2="550" y2="256" stroke="var(--v-muted,#6d675d)" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+  <g>
+    <rect x="130" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="165" y="235" text-anchor="middle" class="celltxt">BOS</text>
+  </g>
+  <g>
+    <rect x="200" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="235" y="235" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="270" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="305" y="235" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="340" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="375" y="235" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="410" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="445" y="235" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="480" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="515" y="235" text-anchor="middle" class="celltxt">ctx</text>
+  </g>
+  <g>
+    <rect x="550" y="206" width="70" height="50" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+    <text x="585" y="235" text-anchor="middle" class="celltxt">' A'</text>
+  </g>
+
+  <rect x="620" y="206" width="70" height="50" fill="var(--v-warn,#e0a106)" fill-opacity="0.14" stroke="var(--v-warn,#e0a106)" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="655" y="235" text-anchor="middle" class="note-warn">empty</text>
+
+  <line x1="655" y1="256" x2="655" y2="268" stroke="var(--v-warn,#e0a106)" stroke-width="1.3"/>
+  <text x="655" y="282" text-anchor="middle" class="note">continuation region has zero tokens</text>
+  </g>
+
+  <g data-anim="3">
+  <text x="400" y="303" text-anchor="middle" class="chaintitle">THE SILENT FAILURE CASCADE</text>
+
+  <rect x="60" y="310" width="168" height="28" rx="6" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+  <text x="144" y="328" text-anchor="middle" class="chip">empty continuation</text>
+  <text x="243" y="328" text-anchor="middle" class="arrowtxt">-&gt;</text>
+
+  <rect x="258" y="310" width="204" height="28" rx="6" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+  <text x="360" y="328" text-anchor="middle" class="chip">sum over nothing = 0.0</text>
+  <text x="477" y="328" text-anchor="middle" class="arrowtxt">-&gt;</text>
+
+  <rect x="492" y="310" width="162" height="28" rx="6" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+  <text x="573" y="328" text-anchor="middle" class="chip">every choice ties</text>
+
+  <path d="M 654 324 L 690 324 L 690 358 L 240 358 L 240 372" fill="none" stroke="var(--v-muted,#6d675d)" stroke-width="1.3"/>
+  <polygon points="240,378 235,369 245,369" fill="var(--v-muted,#6d675d)"/>
+
+  <rect x="120" y="378" width="240" height="28" rx="6" fill="var(--v-fill,#ece7da)" stroke="var(--v-grid,#d8d1c0)"/>
+  <text x="240" y="396" text-anchor="middle" class="chip">argmax always picks choice 0</text>
+  <text x="373" y="396" text-anchor="middle" class="arrowtxt">-&gt;</text>
+
+  <rect x="388" y="378" width="270" height="28" rx="6" fill="var(--v-accent,#c15b39)" fill-opacity="0.16" stroke="var(--v-accent,#c15b39)" stroke-width="1.3"/>
+  <text x="523" y="396" text-anchor="middle" class="chip">accuracy pinned at ~chance (1/4)</text>
+  </g>
+
+  <g data-anim="4">
+  <rect x="60" y="418" width="680" height="34" rx="8" fill="var(--v-warn,#e0a106)" fill-opacity="0.13" stroke="var(--v-warn,#e0a106)" stroke-width="1.2"/>
+  <line x1="84" y1="424" x2="84" y2="446" stroke="var(--v-warn,#e0a106)" stroke-width="2"/>
+  <polygon points="84,426 112,433.5 84,441" fill="var(--v-warn,#e0a106)"/>
+  <text x="410" y="440" text-anchor="middle" class="band">Warning -- it does not crash: looks like a completely normal run.</text>
+  </g>
+
+</svg>
+<figcaption><b>Log-likelihood is summed only over the continuation tokens, so a one-token boundary shift breaks scoring without an error.</b> When a separately-encoded context already includes BOS and the code adds its own "+1 for BOS" on top, <code>ctx_len</code> overshoots by one token, the continuation slice is empty for every choice, and every log-likelihood collapses to 0.0 -- so argmax always returns choice 0 and accuracy pins at the chance floor while the run looks completely normal. Two invariants catch it immediately: the four raw log-likelihoods must be distinct and strictly negative, and because " A".." D" are single tokens, <code>acc</code> must equal <code>acc_norm</code> exactly.</figcaption>
+</figure>

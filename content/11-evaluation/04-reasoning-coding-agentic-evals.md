@@ -326,6 +326,8 @@ for a, b in pairs:
 
 A model can get the right answer via a flawed reasoning chain (lucky coincidence, "sycophancy" in the trace, or incorrect steps that happen to cancel). Conversely, a model can write a perfect chain but make an arithmetic error at the last step. Evaluating only the final answer misses both cases.
 
+{{fig:rcae-prm-vs-orm-trace-scoring}}
+
 **Process reward models (PRMs)** assign a score to each step in a chain-of-thought solution, trained on human annotations of step correctness. PRMs can be used at eval time to:
 
 1. **Rank samples**: among $n$ rollouts with the correct final answer, prefer those where all intermediate steps are also scored highly.

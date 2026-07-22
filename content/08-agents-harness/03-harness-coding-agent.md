@@ -52,6 +52,8 @@ The tool set is where a coding agent's capability literally lives — a model wi
 | `bash` | Run a shell command, capture stdout/stderr/exit code | The universal escape hatch: build, test, grep, git — anything the shell can do |
 | `search` (grep/glob) | Find files or content by pattern | Lets the agent navigate a 10,000-file repo without reading everything into context |
 
+{{fig:edit-tool-unique-match-contract}}
+
 The design insight behind the `edit_file` tool deserves emphasis because beginners get it wrong. The naive design is "write the new full contents of `foo.py`." This is catastrophic: the model must reproduce hundreds of unchanged lines perfectly, it burns output tokens, and a single dropped line silently corrupts the file. The robust design — used by Claude Code and Aider's "diff" mode alike — is a **constrained edit**: supply an `old_string` that must appear *exactly once* in the file and a `new_string` to replace it. The harness verifies uniqueness and existence before touching the file. If `old_string` is absent or ambiguous, the edit *fails loudly* and the model gets an error it can correct. This converts a class of silent corruptions into recoverable, observable failures — a recurring theme in good harness design.
 
 Here is that edit tool, implemented for real:

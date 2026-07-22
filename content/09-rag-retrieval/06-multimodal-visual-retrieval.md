@@ -202,6 +202,8 @@ def colpali_loss(Qb, Db, q_mask, d_mask):
 
 The brute-force MaxSim above is fine for a few thousand pages but collapses at corpus scale. The whole field of efficient multi-vector retrieval is about avoiding the full $O(\text{pages} \times \text{patches} \times \text{q-tokens})$ scan. There are two dominant approaches.
 
+{{fig:multivector-storage-funnel}}
+
 ### PLAID: ColBERT's Native Engine
 
 PLAID (Santhanam et al., *PLAID: An Efficient Engine for Late Interaction Retrieval*, 2022) is the production indexing system designed for ColBERT, and it carries over to ColPali. Its pipeline:

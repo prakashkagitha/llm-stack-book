@@ -348,6 +348,8 @@ $$
 \mathcal{L} = \underbrace{\lVert x - \hat{x}\rVert_2^2}_{\text{reconstruction}} \;+\; \lambda \underbrace{\lVert f \rVert_1}_{\text{sparsity}}.
 $$
 
+{{fig:mechinterp-sae-decompose-superposition}}
+
 The $\ell_1$ penalty forces the code $f$ to be sparse — only a few of the thousands of features fire per token. The columns of $W_\text{dec}$ are the **feature directions** in residual-stream space; the rows of $W_\text{enc}$ detect them. The bet, vindicated by Anthropic's "Towards Monosemanticity" (Bricken et al., 2023) and "Scaling Monosemanticity" (Templeton et al., 2024) and by Cunningham et al. (2023), is that the learned features are dramatically **more monosemantic** than neurons: individual features correspond to crisp concepts — "the Golden Gate Bridge," "DNA sequences," "code that is buggy," "deception," "sycophancy" — and they activate exactly where you'd expect.
 
 The $\ell_1$ penalty has a known flaw: it penalizes feature *magnitude*, shrinking activations and biasing reconstruction. Two important fixes: **gated SAEs** (Rajamanoharan et al., 2024) split the "which features fire" decision from "how much," and **TopK / JumpReLU SAEs** enforce sparsity directly — TopK keeps the $k$ largest activations per token (no magnitude penalty at all), giving a cleaner reconstruction–sparsity frontier. **Transcoders** generalize the idea: instead of reconstructing one layer's activations, a transcoder learns a sparse, interpretable *replacement for the MLP* — it reads the MLP's input and predicts its output through a sparse feature bottleneck, making the MLP's computation itself legible and enabling cross-layer circuit analysis in feature space ("sparse feature circuits," Marks et al., 2024).

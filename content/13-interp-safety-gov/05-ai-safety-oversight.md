@@ -417,6 +417,8 @@ Two structural points make these frameworks more than PR. First, the **weight-se
 
     To keep a genuine margin, set the tripwire at $70 - 12 - 10 = 48$. A checkpoint scoring **52** has *not* crossed the dangerous-uplift line under naive elicitation, but it is *above your tripwire of 48*, so it triggers the ASL-3 safeguard requirements **now** — before the next checkpoint can quietly cross the real 70 boundary. The buffer trades some false alarms (cheap: you build safeguards a bit early) against the catastrophic error of shipping over the real threshold undetected (expensive and irreversible). This is the same conservative-floor logic as the capability-eval warning above, applied at the policy layer.
 
+{{fig:safety-buffer-tripwire}}
+
 The connection back to evaluation is direct: a frontier-safety framework is only as good as the evals that implement its tripwires. If the dangerous-capability evals are gameable, under-elicited, or statistically underpowered, the whole gate is theater. That is why this chapter sits next to [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming-safety-eval.html) and [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) — the safety case is built out of those eval primitives, and a model is declared "safe to deploy" exactly when (a) its capabilities fall below the next tripwire under strong elicitation, *or* (b) the mitigations required at its level are demonstrably in place.
 
 ---

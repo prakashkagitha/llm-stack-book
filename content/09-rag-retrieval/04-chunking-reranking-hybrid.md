@@ -693,6 +693,8 @@ HyDE (Gao et al., 2022) takes a different approach: instead of embedding the (sh
 
 The intuition: a hypothetical answer document and a real answer document inhabit closer regions of embedding space than the query and the answer document do, because they share vocabulary, entity mentions, and syntactic structure.
 
+{{fig:chunkrerank-hyde-embedding-space}}
+
 ```python
 # hyde.py — Hypothetical Document Embeddings for improved dense retrieval
 from __future__ import annotations

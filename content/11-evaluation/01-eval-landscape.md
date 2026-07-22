@@ -276,6 +276,8 @@ Contamination is not binary. There is a spectrum:
 !!! warning "Common pitfall"
     Reporting a "decontaminated" score using only 13-gram overlap misses format priming and topic exposure. A more honest evaluation removes any training document whose topic domain significantly overlaps the test question domain — or uses held-out benchmark versions (e.g., AIME 2025 evaluated right after release).
 
+{{fig:contamination-severity-gradient}}
+
 ---
 
 ## Benchmark Saturation
