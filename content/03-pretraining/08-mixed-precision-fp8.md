@@ -384,3 +384,182 @@ grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ b
 - DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024) — fine-grained (tile/block) FP8 scaling at 671B scale, with the components kept in higher precision.
 - PyTorch AMP documentation (`torch.autocast`, `torch.amp.GradScaler`) — the canonical reference for the loop in this chapter.
 - Wang et al., *Training Deep Neural Networks with 8-bit Floating Point Numbers* (2018) — early FP8 training with chunk-based accumulation and stochastic rounding.
+
+## Exercises
+
+**1.** Your colleague claims that switching from bf16 to fp16 is "strictly more precise, so it should always train at least as well." Explain, using the exponent/mantissa split from this chapter, why this is wrong for training. In particular, state which *specific* failure mode bf16 avoids by construction and which extra machinery fp16 needs to (partially) work around it.
+
+??? note "Solution"
+
+    fp16 does have more *mantissa* (10 bits vs bf16's 7), so nearby numbers are spaced more finely. But precision is not the binding constraint in training — *range* is, and range is set by the exponent width. fp16 has only 5 exponent bits, giving a max finite value of 65504 and a smallest normal of ~6e-5; bf16 has the same 8 exponent bits as fp32, so its range is ~1.2e-38 to ~3.4e38.
+
+    Two failures follow from fp16's narrow range:
+
+    - **Overflow:** an attention logit, a large matmul output, or a loss spike can exceed 65504, producing `inf` that becomes `NaN` in the backward pass.
+    - **Gradient underflow:** transformer gradients routinely live below ~6e-5, so in fp16 they round to zero and are lost.
+
+    bf16 avoids *both* by construction because its exponent matches fp32: gradients essentially never underflow and activations essentially never overflow where fp32 wouldn't. That is exactly why **bf16 needs no loss scaling**, whereas fp16 needs a (dynamic) `GradScaler` to lift gradients out of the underflow zone plus inf-checking to skip corrupted steps. The "more precision" intuition is a trap: for training, *range beats precision*, and the coarser 7-bit bf16 mantissa is rounding noise the optimizer absorbs.
+
+**2.** In the AMP loop you run an fp16 step with loss scale $S = 2^{16}$ and clip gradients to `max_norm = 1.0`. You forget to call `scaler.unscale_(optimizer)` before `clip_grad_norm_`. Suppose the *true* gradient norm this step is $0.8$. What norm does `clip_grad_norm_` actually see, what scale factor does it apply to the gradients, and why does this destroy the update? What is the one-line fix?
+
+??? note "Solution"
+
+    `clip_grad_norm_` operates on whatever is currently in `.grad`. Without the unscale, those are the *scaled* gradients, still multiplied by $S = 2^{16} = 65536$. So the norm it measures is:
+
+    $$
+    \|S \cdot g\| = S \cdot \|g\| = 65536 \times 0.8 = 52428.8
+    $$
+
+    Since $52428.8 \gg 1.0$, clipping rescales every gradient by
+
+    $$
+    \frac{\text{max\_norm}}{\text{measured norm}} = \frac{1.0}{52428.8} \approx 1.9 \times 10^{-5}.
+    $$
+
+    After the subsequent unscale-and-step the effective gradient is multiplied by roughly $1.9\times10^{-5}$ instead of being left essentially untouched (the true norm $0.8 < 1.0$ should not have been clipped at all). The update is crushed to noise — this is the "grad norm ~65000 every step" symptom from the debugging table.
+
+    The fix is to unscale **before** clipping so the norm is compared on true gradient magnitudes:
+
+    ```python
+    scaler.unscale_(optimizer)                       # divide grads by S first
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    ```
+
+**3.** Take a single fp16 weight $w = 2.0$ and an update $\eta g = 5 \times 10^{-4}$, so we want $w \leftarrow 1.9995$. (a) What is the fp16 ulp near $2.0$, and does the update "stick" if the weight is stored in fp16? (b) If instead the authoritative copy is an fp32 master, how many identical steps must accumulate before the *cast fp16* weight first ticks down by one representable step?
+
+??? note "Solution"
+
+    **(a)** fp16 has a 10-bit mantissa. For a value in the binade $[2, 4)$ the exponent is $1$, so the spacing between representable numbers is
+
+    $$
+    \text{ulp} = 2^{\,1 - 10} = 2^{-9} = \frac{1}{512} \approx 1.953 \times 10^{-3}.
+    $$
+
+    Round-to-nearest loses any change smaller than half an ulp:
+
+    $$
+    \tfrac{1}{2}\,\text{ulp} = 2^{-10} \approx 9.766 \times 10^{-4}.
+    $$
+
+    Our update $\eta g = 5\times10^{-4} < 9.766\times10^{-4}$, so $2.0 - 0.0005 = 1.9995$ rounds back to exactly $2.0$. **The update is silently lost** — this is the swamping / stagnation problem.
+
+    **(b)** With an fp32 master weight, $2.0$ is representable to ~1e-7, so each $5\times10^{-4}$ update sticks and they accumulate in fp32. The re-cast fp16 weight only changes once the accumulated drop crosses half an ulp below $2.0$:
+
+    $$
+    n \cdot 5\times10^{-4} \ge 9.766\times10^{-4} \;\Rightarrow\; n \ge 1.95 \;\Rightarrow\; n = 2.
+    $$
+
+    So after **2 steps** the fp16 weight first ticks down. This is precisely why fp32 master weights rescue late-training progress that pure-fp16 storage would throw away.
+
+**4.** You want to train a 13B-parameter model with the canonical recipe: bf16 weights + fp32 master + AdamW (fp32 first and second moments). (a) Compute the bytes per parameter and the total memory for weights + master + optimizer state. (b) Add bf16 gradients. (c) Given 80 GB H100s, how many GPUs' worth of memory is this (ignoring activations), and what does that tell you about single-GPU training?
+
+??? note "Solution"
+
+    **(a)** Per parameter, following the chapter's accounting:
+
+    - bf16 weight: 2 bytes
+    - fp32 master weight: 4 bytes
+    - fp32 Adam first moment $m$: 4 bytes
+    - fp32 Adam second moment $v$: 4 bytes
+
+    Total $= 14$ bytes/param. For $13\times10^{9}$ params:
+
+    $$
+    13\times10^{9} \times 14 = 1.82\times10^{11}\ \text{bytes} \approx 182\ \text{GB}.
+    $$
+
+    **(b)** Gradients in bf16 add 2 bytes/param:
+
+    $$
+    13\times10^{9} \times 2 = 2.6\times10^{10}\ \text{bytes} = 26\ \text{GB},
+    $$
+
+    for a running total of $182 + 26 = 208$ GB.
+
+    **(c)** At 80 GB/GPU:
+
+    $$
+    \frac{208\ \text{GB}}{80\ \text{GB}} = 2.6,
+    $$
+
+    so you need at least **3 H100s** just to hold weights + master + optimizer state + gradients — *before* activations. A 13B model therefore cannot train on a single 80 GB GPU with this recipe, which is exactly why you shard these fp32 states across devices with ZeRO/FSDP.
+
+**5.** Implement stochastic rounding matching the chapter's definition
+
+$$
+\operatorname{SR}(x) = \begin{cases} \lceil x \rceil & \text{prob. } (x - \lfloor x \rfloor) \\ \lfloor x \rfloor & \text{prob. } (\lceil x \rceil - x) \end{cases}, \qquad \mathbb{E}[\operatorname{SR}(x)] = x,
+$$
+
+as a function over a rounding grid (take the grid to be the integers for simplicity). Then demonstrate the point of the chapter's stagnation discussion: repeatedly adding a sub-ulp increment of $0.1$ to an accumulator that can only store grid values goes to $0$ under round-to-nearest, but tracks the true sum under stochastic rounding.
+
+??? note "Solution"
+
+    ```python
+    import torch
+
+    def stochastic_round(x: torch.Tensor) -> torch.Tensor:
+        """Round to the nearest integer grid point with probability
+        proportional to distance -> unbiased in expectation."""
+        lower = torch.floor(x)
+        frac = x - lower                       # in [0, 1)
+        round_up = (torch.rand_like(x) < frac) # True with prob = frac
+        return lower + round_up.to(x.dtype)
+
+    # --- demonstrate the stagnation fix ------------------------------------
+    torch.manual_seed(0)
+    steps, inc = 100, 0.1
+
+    # Round-to-nearest: 0 + 0.1 rounds to 0 every time -> never moves.
+    acc_rtn = 0.0
+    for _ in range(steps):
+        acc_rtn = round(acc_rtn + inc)         # ties/sub-half -> 0
+    print("round-to-nearest:", acc_rtn)        # 0
+
+    # Stochastic rounding: each step lands on 0 or 1, but E[step] = 0.1,
+    # so the accumulator tracks the true sum (100 * 0.1 = 10) on average.
+    acc_sr = torch.zeros(())
+    for _ in range(steps):
+        acc_sr = stochastic_round(acc_sr + inc)
+    print("stochastic rounding:", acc_sr.item())   # ~10 (varies by seed)
+    ```
+
+    Because $\mathbb{E}[\operatorname{SR}(a + 0.1)] = a + 0.1$, the sub-ulp increments survive *in expectation* even though each individual rounded step is $0$ or $1$. Round-to-nearest is biased toward zero for sub-half-ulp updates and loses every one of them. This is exactly why stochastic rounding lets some bf16-only optimizers skip the fp32 master copy and still make late-training progress.
+
+**6.** Implement a single FP8 (E4M3) linear-layer forward with per-tensor scaling, following the chapter's "cast both operands, matmul in FP8 with fp32 accumulate, de-scale the output" recipe. Cast $X$ and $W$ with their own scales $s_X, s_W$ chosen from each tensor's amax, run the GEMM, and de-scale the fp32 output by $1/(s_X s_W)$. Then explain why a single large outlier in $X$ hurts, and which chapter technique fixes it.
+
+??? note "Solution"
+
+    ```python
+    import torch
+
+    FP8_E4M3_MAX = 448.0
+
+    def to_fp8_e4m3(x: torch.Tensor, margin: float = 1.0):
+        """Per-tensor scale: map amax(x) to the top of the E4M3 range."""
+        amax = x.abs().amax().clamp_min(1e-12)
+        scale = (FP8_E4M3_MAX / amax) * margin      # alpha = margin <= 1
+        x_fp8 = (x * scale).to(torch.float8_e4m3fn) # native FP8 dtype
+        return x_fp8, scale
+
+    def fp8_linear(x: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        """x: [B, in], w: [out, in] (nn.Linear layout). Returns [B, out]."""
+        x_fp8, s_x = to_fp8_e4m3(x)
+        w_fp8, s_w = to_fp8_e4m3(w)
+        # On real Hopper/Blackwell tensor cores the GEMM takes FP8 inputs and
+        # accumulates partial sums in fp32; .float() emulates that accumulator.
+        out_scaled = x_fp8.float() @ w_fp8.float().t()   # == (s_x*s_w) * (X @ W^T)
+        return out_scaled / (s_x * s_w)                  # de-scale back to true units
+
+    # sanity check against a bf16/fp32 reference
+    torch.manual_seed(0)
+    X = torch.randn(8, 4096)
+    W = torch.randn(4096, 4096)
+    ref = X @ W.t()
+    approx = fp8_linear(X, W)
+    rel_err = (approx - ref).norm() / ref.norm()
+    print("relative error:", rel_err.item())   # small: dominated by 3-bit mantissa
+    ```
+
+    The key correctness points: each operand gets its *own* scale from its own amax, the multiply/accumulate happens with the scaled values (the fp32 accumulator is what makes the long reduction survivable), and the final de-scale divides by the product $s_X s_W$ because both operands were pre-multiplied.
+
+    **Outlier problem.** The scale is set by $\operatorname{amax}(X)$. A single large outlier value inflates the amax, forcing a *small* $s_X = \text{fp8\_max} / \operatorname{amax}$. That small scale maps all the *ordinary* values into the bottom few E4M3 codes, where the 3-bit mantissa (~12.5% spacing) quantizes them coarsely — the signal in the normal values is crushed. The chapter's fix is **finer-grained (blockwise) scaling**: give each block its own amax and scale (DeepSeek-V3 uses 1x128 tiles for activations and 128x128 blocks for weights), so an outlier in one block no longer poisons the quantization of every other block.

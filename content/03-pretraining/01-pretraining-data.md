@@ -792,3 +792,152 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
 - **Together AI** — *RedPajama*, 2023. Open replication of the LLaMA data recipe, including v2 with attached quality signals.
 - **BigCode Project** — *The Stack*, 2022. Permissively licensed code corpus across 86 programming languages.
 - **Common Crawl** — `commoncrawl.org`. Primary source of web data for nearly all open LLM corpora.
+
+---
+
+## Exercises
+
+**1.** The chapter argues that the highest-quality pipelines (RefinedWeb, FineWeb, Dolma) *re-extract* text from raw WARC HTML with `trafilatura` instead of training on Common Crawl's ready-made WET files, even though reading WET is "nearly free." State the concrete quality problem with WET text, explain why it costs so much more compute to avoid it, and describe the empirical evidence the chapter cites for the trade-off being worth it.
+
+??? note "Solution"
+
+    **The problem with WET.** WET text is produced by Common Crawl's *own* basic built-in extractor (historically Apache Tika / jsoup via `ia-web-commons`), which dumps nearly all *visible* text on the page. On a typical news article that means the article body **plus** the navigation menu, the "related stories" rail, the footer, and the cookie banner all end up in the WET record. That boilerplate is repetitive, low-information, and often near-duplicated across every page of a site, so it both dilutes the training signal and inflates the work the deduplication stage must later do.
+
+    **Why re-extraction is expensive.** Reading WET is cheap because the text is already extracted — you just decompress and stream it. Re-extraction instead reads the raw **WARC**, which contains the full HTTP responses (headers + HTML). For *every* page you must decode the HTML with the correct charset and run a main-content extractor (`trafilatura`/`resiliparse`) that parses the DOM and heuristically strips nav/sidebars/footers. Parsing full HTML per page is far more work than reading pre-extracted text — the chapter quotes roughly 50-200 pages/sec/core for `warcio` + `trafilatura` on a laptop, and notes that a monthly snapshot is ~90 TB of WARC (~2.4B pages) versus ~9 TB of WET, forcing a switch to C-backed `fastwarc` + `resiliparse` and a cluster at scale.
+
+    **The evidence.** FineWeb's ablations found that training on text re-extracted from WARC with `trafilatura` measurably *beat* training on the WET text for the same pages. That is precisely why FineWeb (and RefinedWeb before it) never trains on WET at all — the downstream quality gain justifies the extra parsing compute.
+
+**2.** You are planning a pretraining run of $N = 3 \times 10^{12}$ tokens with the mixture below. Using the chapter's epoch formula, (a) compute the epoch count for each domain, (b) identify which domains exceed the ~4-epoch repetition ceiling, and (c) find the largest weight you could assign to Wikipedia — keeping $N$ fixed — so that Wikipedia stays at or below 4 epochs.
+
+| Domain | Weight $w_i$ | Corpus size $|D_i|$ |
+|--------|-------------|---------------------|
+| Web | 0.70 | 8T tokens |
+| Code | 0.12 | 300B tokens |
+| Books | 0.06 | 100B tokens |
+| arXiv | 0.04 | 50B tokens |
+| Wikipedia | 0.05 | 5B tokens |
+| Other | 0.03 | 40B tokens |
+
+??? note "Solution"
+
+    The weights sum to $0.70 + 0.12 + 0.06 + 0.04 + 0.05 + 0.03 = 1.00$, as required.
+
+    **(a)** Using $\text{epochs}_i = \dfrac{N \cdot w_i}{|D_i|}$ with $N = 3 \times 10^{12}$:
+
+    - Web: $\dfrac{3\times10^{12}\cdot 0.70}{8\times10^{12}} = \dfrac{2.1\times10^{12}}{8\times10^{12}} \approx 0.26$
+    - Code: $\dfrac{3\times10^{12}\cdot 0.12}{3\times10^{11}} = \dfrac{3.6\times10^{11}}{3\times10^{11}} = 1.20$
+    - Books: $\dfrac{3\times10^{12}\cdot 0.06}{1\times10^{11}} = \dfrac{1.8\times10^{11}}{1\times10^{11}} = 1.80$
+    - arXiv: $\dfrac{3\times10^{12}\cdot 0.04}{5\times10^{10}} = \dfrac{1.2\times10^{11}}{5\times10^{10}} = 2.40$
+    - Wikipedia: $\dfrac{3\times10^{12}\cdot 0.05}{5\times10^{9}} = \dfrac{1.5\times10^{11}}{5\times10^{9}} = 30.0$
+    - Other: $\dfrac{3\times10^{12}\cdot 0.03}{4\times10^{10}} = \dfrac{9\times10^{10}}{4\times10^{10}} = 2.25$
+
+    **(b)** Only **Wikipedia (30 epochs)** exceeds the ~4-epoch ceiling — and it does so by a wide margin. Everything else sits comfortably under 4 (Web is even under 1 epoch). At 30 passes, the model will heavily memorize Wikipedia text rather than generalize from it (Muennighoff et al., 2023).
+
+    **(c)** We need $\text{epochs}_{\text{wiki}} = \dfrac{N \cdot w}{|D|} \le 4$. Solving for $w$:
+
+    $$
+    w \le \frac{4 \cdot |D|}{N} = \frac{4 \cdot 5\times10^{9}}{3\times10^{12}} = \frac{2\times10^{10}}{3\times10^{12}} \approx 0.0067.
+    $$
+
+    So the Wikipedia weight would have to drop from 0.05 to about **0.0067** (a ~7.5x cut) to respect the ceiling at this token budget. In practice teams instead accept some Wikipedia repetition *or* source more high-quality reference text — the tension between "up-weight the best per-token source" and "don't repeat it into memorization" is exactly what the epoch count surfaces.
+
+**3.** Consider the document below (three identical lines), passed to `passes_quality_filter` from the pipeline with the default `min_chars=200`:
+
+    Sale sale sale sale sale sale sale sale sale sale.
+    Sale sale sale sale sale sale sale sale sale sale.
+    Sale sale sale sale sale sale sale sale sale sale.
+
+Walk through the four checks in order and determine whether the document is kept or dropped, and on which check. Pay attention to how `text.lower().split()` tokenizes the words.
+
+??? note "Solution"
+
+    The text is three lines, each `"Sale sale sale sale sale sale sale sale sale sale."` (10 words then a period), joined by newlines. Lowercased, each line is `"sale sale sale sale sale sale sale sale sale sale."`.
+
+    - **Check (1) minimum length.** Each line is 50 characters; with two joining newlines the document is $3\times50 + 2 = 152$ characters. Wait — recount: `"sale "` x 9 = 45 chars, plus `"sale."` = 5 chars gives 50 chars per line, x3 = 150, plus 2 newlines = **152 chars**. That is **below** `min_chars=200`, so the function returns `False` immediately at check (1). The document is **dropped**.
+
+    It is instructive to see that it would *also* fail check (3) if it were longer. `text.lower().split()` splits on whitespace (including the newlines), so each line yields nine tokens `"sale"` plus one token `"sale."` (the period is attached — split does not strip punctuation). Across three lines that is $27$ tokens of `"sale"` and $3$ tokens of `"sale."`, i.e. 30 words total. The most common word is `"sale"` with frequency $27/30 = 0.90$, far above the $0.20$ repetition threshold. The subtlety worth internalizing: `"sale"` and `"sale."` are counted as *different* words by this naive tokenizer, which is why the dominant-word fraction is 0.90 rather than 1.0 — a reminder that heuristic filters are sensitive to exactly how tokens are defined.
+
+**4.** The Gopher heuristics include a **mean-word-length** filter: real prose has an average word length in a narrow band, whereas gibberish, base64 blobs, or long-URL spam fall outside it. Extend `passes_quality_filter` with a fifth check that rejects any document whose mean word length (over `text.split()`) is below 3 or above 10 characters. Keep the function's existing style and short-circuit behavior. Then give one example each of a document rejected by the *low* bound and one by the *high* bound.
+
+??? note "Solution"
+
+    Insert a new check after the existing check (4), reusing the word split so it stays cheap:
+
+    ```python
+    def passes_quality_filter(text: str, min_chars: int = 200) -> bool:
+        # ... checks (1)-(4) unchanged ...
+
+        # (5) Mean word length (Gopher signal).
+        # Real prose averages ~4-6 chars/word; gibberish, base64, and
+        # long-URL spam fall outside the [3, 10] band.
+        words = text.split()
+        if not words:
+            return False
+        mean_word_len = sum(len(w) for w in words) / len(words)
+        if mean_word_len < 3 or mean_word_len > 10:
+            return False
+
+        return True
+    ```
+
+    (Note: check (3) already computed a lowercased `words`; here we re-split on the original `text` so the fifth check is self-contained and could be lifted out independently. Either is fine as long as the split is consistent.)
+
+    **Low-bound rejection.** A document of very short tokens, e.g. `"a a a a b b c a b a ..."` or a chat log like `"hi ok no yes ok hi no"`, averages ~1-2 chars/word, well under 3, so it is dropped.
+
+    **High-bound rejection.** A document dominated by long unbroken strings — e.g. a page of base64 (`"aGVsbG8gd29ybGQ... dGhpc2lzYXZlcnlsb25n..."`) or a list of long URLs (`"https://example.com/very/long/path/... https://..."`) — averages well over 10 chars/word and is dropped. Both are exactly the machine-generated, low-value content the Gopher filters are designed to remove.
+
+**5.** The chapter samples training batches from a mixture with domain weights $w = (w_1, \ldots, w_k)$, $\sum_i w_i = 1$. Implement a generator `sample_mixture(domain_iters, weights, n_docs, seed=0)` that draws `n_docs` documents, at each step picking a domain in proportion to its weight and yielding the next document from that domain's iterator. When a domain's iterator is exhausted, drop it and renormalize over the survivors. Then explain how this sampler makes the per-domain epoch counts from the chapter's formula emerge in expectation.
+
+??? note "Solution"
+
+    ```python
+    import random
+
+    def sample_mixture(domain_iters, weights, n_docs, seed=0):
+        """
+        Draw n_docs documents from a dict of per-domain iterators, choosing a
+        domain each step in proportion to its weight. Exhausted domains are
+        dropped and the remaining weights are renormalized automatically
+        (random.choices normalizes whatever weights it is given).
+
+        Yields (domain_name, document) pairs.
+        """
+        rng = random.Random(seed)
+        # Copy so we can mark exhausted domains as None without mutating caller.
+        iters = dict(domain_iters)
+        names = list(iters)
+
+        for _ in range(n_docs):
+            live = [n for n in names if iters[n] is not None]
+            if not live:
+                return                      # every domain exhausted
+            w = [weights[n] for n in live]  # renormalized inside choices()
+            name = rng.choices(live, weights=w, k=1)[0]
+            try:
+                yield name, next(iters[name])
+            except StopIteration:
+                iters[name] = None          # drop and retry on next iteration
+    ```
+
+    A quick check that the empirical draw proportions track the weights:
+
+    ```python
+    from collections import Counter
+    from itertools import count
+
+    # Infinite per-domain streams so nothing exhausts during the test.
+    iters = {"web": count(0), "code": count(0), "wiki": count(0)}
+    weights = {"web": 0.7, "code": 0.2, "wiki": 0.1}
+
+    counts = Counter(name for name, _ in sample_mixture(iters, weights, 100_000))
+    print({k: round(v / 100_000, 3) for k, v in counts.items()})
+    # -> approximately {'web': 0.700, 'code': 0.200, 'wiki': 0.100}
+    ```
+
+    **Why the epoch counts emerge.** Over a long run of draws, the fraction of *documents* taken from domain $i$ converges to $w_i$ (a straightforward law-of-large-numbers consequence of sampling domain $i$ with probability $w_i$ each step). If documents carry roughly comparable token counts, then after emitting a total of $N$ tokens, domain $i$ has contributed about $N \cdot w_i$ tokens — exactly the quantity in the chapter's epoch formula. Dividing by the domain's corpus size gives
+
+    $$
+    \text{epochs}_i = \frac{N \cdot w_i}{|D_i|},
+    $$
+
+    so a small, heavily-weighted domain (Wikipedia) is revisited many times while a huge, lightly-weighted domain (web) is seen for well under one epoch. The renormalization-on-exhaustion behavior is the practical mechanism behind repetition: once a small domain's iterator runs out within an epoch, continuing to sample it (in real pipelines, by cycling the iterator) is what pushes its epoch count above 1.

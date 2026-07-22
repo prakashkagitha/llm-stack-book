@@ -574,3 +574,109 @@ Notice the frequency column. TP and EP pay *per layer*, so they demand the faste
 - Lepikhin, Lee, Xu, et al., *GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding* (2020) — expert parallelism and all-to-all dispatch/combine.
 - Rajbhandari, Rasley, Ruwase, He, *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020) — the DP-side counterpart to this chapter.
 - The **Megatron-LM** and **DeepSpeed** open-source repositories — the reference implementations of every schedule discussed here.
+
+## Exercises
+
+**1.** In the Megatron MLP block $Y = \text{GeLU}(XA)B$, the up-projection $A$ is column-parallel and the down-projection $B$ is row-parallel. Explain *why the order matters*: what goes wrong if you instead make $A$ row-parallel and $B$ column-parallel? In particular, what extra collective would the GeLU force, and why?
+
+??? note "Solution"
+    The whole point of the column-then-row pairing is that the *intermediate* $4h$ activation stays sharded across the nonlinearity with **no collective in between**. With column-parallel $A$, each rank computes a distinct slice of the $4h$ columns: $H_i = X A_i \in \mathbb{R}^{s \times 4h/t}$. GeLU is elementwise, so $\text{GeLU}(H_i)$ is exactly the correct slice of $\text{GeLU}(H)$ — no communication is needed, and the sharded result is precisely the feature-sharded input that row-parallel $B$ wants. One all-reduce at the end of $B$ finishes the block.
+
+    Now reverse it. Make $A$ **row-parallel**: to produce $H = XA$ you must all-reduce the partial sums, giving every rank the *full* $s \times 4h$ intermediate. That is one extra all-reduce you did not have before — and it forces you to materialize the full (un-sharded) $4h$ tensor, losing the activation-memory saving. The reason you cannot skip that reduce is that GeLU is **nonlinear**: $\text{GeLU}(\sum_i X_i A_i) \neq \sum_i \text{GeLU}(X_i A_i)$, so you may not apply the nonlinearity to the partial sums and reduce afterward — you must reduce *first*, then apply GeLU. Making $B$ column-parallel then leaves the output feature-sharded, requiring yet another gather/all-reduce before the residual add. Net effect: two collectives instead of one, and no memory win. The column-then-row order is the unique choice that both keeps the nonlinearity correct and pays exactly one all-reduce per region.
+
+**2.** A pipeline has $p = 16$ stages. (a) Using GPipe/1F1B, how many microbatches $m$ do you need to keep the bubble fraction at or below 10%? (b) If you switch to interleaved 1F1B with $v = 4$ virtual stages per device and keep that same $m$, what is the new bubble fraction? (c) The chapter says 1F1B and GPipe have the *same* bubble but 1F1B is preferred — what exactly does 1F1B buy you, and how does the peak activation memory scale with $m$ in each?
+
+??? note "Solution"
+    (a) The bubble fraction is $\frac{p-1}{m+p-1} = \frac{15}{m+15}$. Require $\frac{15}{m+15} \le 0.10$:
+
+    $$
+    15 \le 0.10\,(m+15) \implies 150 \le m + 15 \implies m \ge 135 .
+    $$
+
+    So $m = 135$ microbatches (round up), giving exactly $\frac{15}{150} = 0.10 = 10\%$.
+
+    (b) Interleaving divides the bubble by $v$:
+
+    $$
+    \frac{1}{v}\cdot\frac{p-1}{m+p-1} = \frac{1}{4}\cdot\frac{15}{135+15} = \frac{1}{4}\cdot 0.10 = 0.025 = 2.5\% .
+    $$
+
+    (c) The bubble formula is identical for GPipe and 1F1B, so 1F1B buys **no bubble reduction** — it buys **bounded activation memory**. GPipe runs all $m$ forwards before any backward, so every stage must stash the activations of all $m$ in-flight microbatches: peak activation memory scales as $O(m)$. 1F1B interleaves one forward with one backward in steady state, so a stage only holds activations for the microbatches currently in flight through it — at most $\sim p$ (independent of $m$). This is what lets you crank $m$ up to 135 (small bubble) without the activation memory blowing up.
+
+**3.** Consider the chapter's 70B model ($L=80$, $h=8192$, $a=64$) but now on a cluster of **256** H100s (80 GB), arranged as 32 nodes x 8 GPUs. Static training state is $\approx 16 \times 70\text{B} = 1120$ GB. (a) With TP=8 and PP=4, how much static state sits on each GPU, and how many transformer layers does each pipeline stage own? (b) How many data-parallel replicas $d$ does this leave, and what is the DP group size? (c) With $m = 32$ microbatches, what is the plain-1F1B bubble fraction?
+
+??? note "Solution"
+    (a) TP and PP shard the static state multiplicatively across $t \cdot p = 8 \cdot 4 = 32$ GPUs per replica:
+
+    $$
+    \frac{1120\text{ GB}}{8 \cdot 4} = \frac{1120}{32} = 35\text{ GB per GPU}.
+    $$
+
+    That fits comfortably in 80 GB, leaving room for activations and buffers. Each pipeline stage owns $L/p = 80/4 = 20$ transformer layers. (In practice the first and last stages would be given a few fewer layers to offset the embedding and LM-head+loss cost — see the load-balancing warning — but nominally 20 each.)
+
+    (b) One replica uses $t \cdot p = 32$ GPUs. The cluster has 256, so
+
+    $$
+    d = \frac{256}{t \cdot p} = \frac{256}{32} = 8
+    $$
+
+    data-parallel replicas; the DP group size is therefore 8 (one rank per replica, communicating gradients once per step, tolerant of the slower inter-node fabric).
+
+    (c) With $p = 4$ and $m = 32$:
+
+    $$
+    \frac{p-1}{m+p-1} = \frac{3}{32+3} = \frac{3}{35} \approx 0.086 = 8.6\% .
+    $$
+
+**4.** Estimate the tensor-parallel communication volume for one transformer *layer* forward pass. Use $s = 8192$, $h = 8192$, activations in bf16 (2 bytes), and TP degree $t = 8$ with ring all-reduce. (a) How many bytes does each GPU send+receive per all-reduce, using the chapter's $2\cdot\frac{t-1}{t}\cdot(s\,h\cdot 2)$ estimate? (b) A layer forward does two all-reduces; what is the per-GPU per-layer forward volume? (c) Why does this quantity, multiplied out over 80 layers, force the TP group onto NVLink rather than InfiniBand?
+
+??? note "Solution"
+    (a) The activation tensor per all-reduce has $s \cdot h = 8192 \cdot 8192 = 67{,}108{,}864$ elements, i.e. $\approx 6.71 \times 10^7$. In bf16 that is $s\,h \cdot 2 = 1.342 \times 10^8$ bytes $\approx 128$ MiB. The ring-all-reduce per-GPU send+receive volume is
+
+    $$
+    2\cdot\frac{t-1}{t}\cdot(s\,h\cdot 2) = 2\cdot\frac{7}{8}\cdot 1.342\times 10^8 \approx 2.35 \times 10^8 \text{ bytes} \approx 224\text{ MiB}.
+    $$
+
+    (b) Two all-reduces in the forward pass (after attention output-proj and after the MLP down-proj):
+
+    $$
+    2 \times 2.35\times 10^8 \approx 4.70 \times 10^8 \text{ bytes} \approx 448\text{ MiB per GPU per layer (forward)}.
+    $$
+
+    (c) Over $L = 80$ layers the forward pass alone moves $\approx 80 \times 448\text{ MiB} \approx 35$ GiB per GPU, and the backward pass roughly doubles it (two more all-reduces per layer). This traffic sits *on the critical path* — the GPUs stall on each all-reduce before proceeding. On NVLink/NVSwitch ($\sim$hundreds of GB/s, up to $\sim$900 GB/s aggregate) it is absorbed; on InfiniBand (10-25x slower) the per-layer all-reduces serialize behind the slow link and collapse throughput. That is exactly why the rule is to keep the TP group inside one NVLink domain, $t \le 8$.
+
+**5.** The chapter's `VocabParallelEmbedding` masks out-of-range token ids, zeros the corresponding output rows, and then does an `all_reduce(SUM)`. (a) Explain precisely why a **SUM** all-reduce yields the correct embedding, and why exactly one rank contributes a nonzero row per token. (b) Implement a `gather_output` option for `ColumnParallelLinear` (from the chapter's code) that, when `True`, returns the *full* unsharded output by all-gathering the feature-sharded slices along the last dimension. Give runnable code consistent with the chapter's style.
+
+??? note "Solution"
+    (a) The global vocabulary is partitioned into disjoint, contiguous ranges: rank $r$ owns ids $[r V_{\text{loc}}, (r+1)V_{\text{loc}})$. For any token id, **exactly one** rank has it in range; every other rank masks it and writes a zero row for that token. So across the $t$ ranks the set of contributions for a given token is: one correct embedding row (from the owner) plus $t-1$ zero rows. Summing them element-wise (all-reduce SUM) therefore reproduces the true embedding row, and — because the non-owners contribute exactly zero — the sum is not corrupted. A different reduction (e.g. MAX or MEAN) would be wrong: MEAN would divide the true row by $t$, and MAX would fail for any negative embedding component. SUM is the reduction that composes disjoint one-hot ownership into the right answer, and it also makes the backward clean: gradient flows as identity into only the owner's local rows.
+
+    (b) Add an all-gather along the feature (last) dimension. The column-parallel output on each rank is `[*, out_f/t]`; concatenating the $t$ shards in rank order reconstructs the full `[*, out_f]`:
+
+    ```python
+    class ColumnParallelLinear(nn.Module):
+        """Y = X A, A split along output columns across `tp` ranks.
+        If gather_output=True, all-gather the shards to return the full [*, out_f]."""
+        def __init__(self, in_f, out_f, tp, rank, tp_group, bias=True,
+                     gather_output=False):
+            super().__init__()
+            assert out_f % tp == 0
+            self.tp = tp
+            self.tp_group = tp_group
+            self.gather_output = gather_output
+            self.out_local = out_f // tp
+            self.weight = nn.Parameter(torch.empty(self.out_local, in_f))
+            self.bias = nn.Parameter(torch.zeros(self.out_local)) if bias else None
+            nn.init.normal_(self.weight, std=0.02)
+
+        def forward(self, x):
+            x = copy_to_region(x)                              # f: correct bwd all-reduce
+            y = torch.nn.functional.linear(x, self.weight, self.bias)  # [*, out_f/tp]
+            if not self.gather_output:
+                return y                                       # sharded (feeds a RowParallel)
+            # all-gather the per-rank feature shards, then concat along last dim
+            shards = [torch.empty_like(y) for _ in range(self.tp)]
+            dist.all_gather(shards, y.contiguous(), group=self.tp_group)
+            return torch.cat(shards, dim=-1)                   # [*, out_f], full output
+    ```
+
+    Notes consistent with the chapter: (i) `gather_output=False` is the default and is what you use when the layer feeds a `RowParallelLinear` (the puzzle-piece pairing that avoids a gather); you only set `gather_output=True` when the *full* output is genuinely needed on every rank (e.g. a non-parallel head). (ii) The all-gather concatenates in **rank order**, matching how the columns of $A$ were split as $[A_1, \dots, A_t]$. (iii) For a correct backward, the gather should be paired with a scatter/split in the backward pass (a `_GatherFromTPRegion` autograd Function mirroring the chapter's `_ReduceFromTPRegion`); the forward-only sketch above shows the layout logic. (iv) An LM head that feeds `vocab_parallel_cross_entropy` should keep `gather_output=False` — the entire point of the parallel cross-entropy is never to materialize the full `[N, V]` logits.

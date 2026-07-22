@@ -980,3 +980,106 @@ For the largest models, data parallelism alone is insufficient and is combined w
 - **Zhao et al. (2023):** "PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel" — the FSDP design paper covering FlatParameter sharding, prefetching, hybrid sharding, and mixed precision.
 - **PyTorch documentation:** `torch.distributed.fsdp` and the FSDP2 / `DTensor` / `DeviceMesh` tutorials — the authoritative, version-current reference for the APIs used in this chapter.
 - **DeepSpeed documentation and repository** (github.com/microsoft/DeepSpeed) — the production reference implementation of ZeRO stages 1–3, offload, and their configuration.
+
+## Exercises
+
+**1.** (Conceptual) The chapter insists on two invariants for correct data parallelism: identical initialization and identical gradients after sync. For each of the following bugs, say whether training crashes, diverges silently, or is unaffected, and explain why using the gradient-averaging math of the chapter: (a) you build the model with a *different* random seed on each rank but correctly all-reduce every gradient; (b) all ranks start identical, but you add a new bias parameter whose gradient is accidentally left out of every bucket and never all-reduced; (c) you all-reduce with a *sum* instead of a *mean* (i.e. you forget the divide-by-$N$), but do so consistently on every rank.
+
+??? note "Solution"
+    (a) **Silent divergence.** Averaging gradients across ranks does nothing to reconcile *parameters* that started different. The update rule is $\theta_i \leftarrow \theta_i - \eta \bar g$ with the *same* $\bar g$ on every rank, but $\theta_i$ differ at step 0, so they stay different forever. Nothing crashes and the loss may even fall on each rank, but the "replicas" are really $N$ different models. This is exactly why the chapter broadcasts params (and buffers) from rank 0 at init.
+
+    (b) **Silent divergence for that one parameter.** Its hook never contributes to an all-reduce, so each rank updates the bias using only its *local* gradient $g_i$, not the averaged $\bar g = \frac{1}{N}\sum_i g_i$. Every other parameter stays in lockstep, but the bias drifts independently per rank. No crash (unlike the *unused*-parameter case, which hangs at `wait()`); the model is subtly wrong. This is Invariant 2.
+
+    (c) **Unaffected in correctness, but effectively rescales the learning rate.** From the decomposition $\nabla_\theta\mathcal L = \frac{1}{N}\sum_i g_i$, summing yields $\sum_i g_i = N\bar g$, i.e. exactly $N\times$ the true gradient. Since every rank applies the *same* $N\bar g$, all replicas stay bit-identical (both invariants hold), so there is no divergence. The step is just $N$ times larger than intended, equivalent to training with learning rate $N\eta$ — which may blow up or slow convergence, but is a hyperparameter issue, not a correctness bug.
+
+**2.** (Quantitative) You have a model with $\Psi = 4 \times 10^9$ parameters trained with mixed-precision AdamW on $N = 16$ GPUs, each with 24 GB of usable memory. Using the chapter's per-parameter memory model, compute the per-GPU *model-state* memory (ignore activations) for DDP, ZeRO-1, ZeRO-2, and ZeRO-3/FSDP, and state which strategies fit in 24 GB.
+
+??? note "Solution"
+    The chapter's model state is $16\Psi$ bytes: $2\Psi$ bf16 params $+\,2\Psi$ bf16 grads $+\,4\Psi$ fp32 master $+\,4\Psi$ Adam $m$ $+\,4\Psi$ Adam $v$, of which $12\Psi$ is shardable optimizer state. With $\Psi = 4\times10^9$, one "$\Psi$ worth" of bytes is $4\times10^9$ B $= 4$ GB. So:
+
+    - **DDP** (replicate all $16\Psi$): $16 \times 4 = 64$ GB per GPU. **Does not fit.**
+    - **ZeRO-1** ($4\Psi + 12\Psi/N$): $4\times4 + \frac{12\times4}{16} = 16 + 3 = 19$ GB. **Fits.**
+    - **ZeRO-2** ($2\Psi + 14\Psi/N$): $2\times4 + \frac{14\times4}{16} = 8 + 3.5 = 11.5$ GB. **Fits.**
+    - **ZeRO-3 / FSDP** ($16\Psi/N$): $\frac{16\times4}{16} = 4$ GB. **Fits with lots of headroom.**
+
+    DDP is impossible; every ZeRO stage fits, and the sequence $64 \to 19 \to 11.5 \to 4$ GB is the memory-for-communication ladder. By the "least sharding that fits" principle you would pick **ZeRO-1** (fits at 19 GB, same communication as DDP) unless you needed the freed memory for large activations, in which case ZeRO-2 or ZeRO-3 buys headroom at higher communication cost.
+
+**3.** (Quantitative + conceptual) A backward pass takes 240 ms and produces gradients that fill exactly 4 buckets at evenly spaced times (bucket 1's grads finish at 60 ms into the backward, bucket 2 at 120 ms, bucket 3 at 180 ms, bucket 4 at 240 ms). Each bucket's all-reduce takes 30 ms on a communication stream that overlaps compute. (a) What is the total step time (backward + exposed communication) for the naive "all-reduce after backward finishes" approach? (b) What is it with DDP's overlapped bucketing, assuming perfect overlap? (c) Why does DDP fill buckets in reverse order of the forward pass?
+
+??? note "Solution"
+    (a) **Naive, no overlap:** the entire backward runs, *then* all four all-reduces run serially: $240 + 4\times30 = 240 + 120 = 360$ ms. Communication is fully exposed.
+
+    (b) **Overlapped bucketing:** as each bucket fills, its 30 ms all-reduce is launched asynchronously and runs on the network while the backward keeps computing later buckets. Bucket 1 finishes at 60 ms and its all-reduce (60–90 ms) hides under the compute of buckets 2–4. Likewise buckets 2 and 3 (finishing at 120 and 180 ms) have plenty of remaining backward compute to hide behind. Only **bucket 4** finishes at 240 ms with *no remaining backward compute* to overlap, so its 30 ms all-reduce is exposed. Total $= 240 + 30 = 270$ ms. The overlap saved $360 - 270 = 90$ ms (3 of the 4 all-reduces became free). This matches the chapter's claim that ideally only the last bucket's all-reduce is exposed.
+
+    (c) Backpropagation produces gradients from the *last* layer to the *first*, so the last-forward / first-backward parameters are ready earliest. Assigning them to the first bucket means that bucket fills and can start communicating soonest, giving its all-reduce the maximum amount of remaining backward compute to hide behind. A forward-order assignment would leave the earliest-communicable bucket waiting on the *last* gradients to be produced, stalling overlap.
+
+**4.** (Implementation) The chapter's `TinyDDP` all-reduces on *every* backward, which is wrong under gradient accumulation. Add a `require_sync` flag (the toy equivalent of DDP's `no_sync()`), and write a training loop that accumulates over `GRAD_ACCUM` micro-batches but communicates only once per optimizer step. Explain why guarding the *whole* hook body (not just the all-reduce) is necessary.
+
+??? note "Solution"
+    Add a `self.require_sync = True` flag in `__init__`, and early-return from the hook when it is off so gradients merely accumulate in `.grad`:
+
+    ```python
+    class TinyDDP(nn.Module):
+        def __init__(self, module, bucket_cap_mb=25.0):
+            super().__init__()
+            # ... unchanged setup (broadcast, bucketing, hooks) ...
+            self.require_sync = True          # NEW: gate the hooks
+
+        def _make_hook(self, param):
+            def hook(p):
+                if not self.require_sync:     # accumulate locally, skip all-reduce
+                    return                    # (and DON'T touch _ready_counts)
+                bidx = self._param_to_bucket[p]
+                self._ready_counts[bidx] += 1
+                if self._ready_counts[bidx] == len(self._buckets[bidx]):
+                    self._all_reduce_bucket(bidx)
+            return hook
+        # _all_reduce_bucket / finish_gradient_synchronization unchanged
+    ```
+
+    Training loop with `GRAD_ACCUM` micro-batches per optimizer step:
+
+    ```python
+    GRAD_ACCUM = 4
+    for step in range(10):
+        opt.zero_grad(set_to_none=True)               # clear once per opt step
+        for micro in range(GRAD_ACCUM):
+            last = (micro == GRAD_ACCUM - 1)
+            ddp.require_sync = last                   # sync ONLY on the last micro-batch
+            x = torch.randn(32, 1024, device=device)  # a fresh micro-batch
+            loss = ddp(x).pow(2).mean() / GRAD_ACCUM  # scale so the sum is the mean
+            loss.backward()                           # grads accumulate into .grad
+        ddp.finish_gradient_synchronization()         # wait + average + reset counters
+        opt.step()
+    ```
+
+    On micro-batches $0\ldots k-2$, `require_sync` is `False`, so `.grad` accumulates across them without any all-reduce. On the final micro-batch it is `True`, so every bucket's hook fires once its grads are ready and the *accumulated* gradient is all-reduced. Dividing each loss by `GRAD_ACCUM` makes the accumulated sum equal the mean over all `GRAD_ACCUM * N` examples, and the all-reduce mean over ranks then yields the correct global-batch gradient. Communication drops by a factor of `GRAD_ACCUM`.
+
+    **Why guard the whole body:** if you only skipped the `dist.all_reduce` call but still incremented `_ready_counts`, then a bucket would reach its `len(...)` threshold on micro-batch 0 and, over the skipped micro-batches, its counter would keep climbing past that threshold. On the final micro-batch the `== len(...)` test would never be true again, so the bucket would *never* fire its all-reduce and `finish_gradient_synchronization()` would have nothing to wait on — that gradient escapes sync entirely. Early-returning before touching `_ready_counts` keeps every counter at zero during the skipped micro-batches, so each bucket fires exactly once, cleanly, on the last one.
+
+**5.** (Quantitative, hard) A 7B-parameter model is trained with FSDP `FULL_SHARD` across $N = 32$ GPUs spanning 4 nodes. The inter-node link is the bottleneck at an effective $\beta_{\text{inter}} \approx 25$ GB/s; intra-node NVLink runs at $\beta_{\text{intra}} \approx 300$ GB/s. Parameters are bf16. Using the chapter's cost model (FSDP moves roughly $3\Psi$ worth of bf16 traffic per step; each "$\Psi$ worth" is $\Psi \times 2$ bytes), estimate the per-step communication time for `FULL_SHARD` and for `HYBRID_SHARD`, and explain the difference. Assume the model fits within one node's aggregate memory.
+
+??? note "Solution"
+    One "$\Psi$ worth" of bf16 traffic is $\Psi \times 2 = 7\times10^9 \times 2 = 14\times10^9$ B $= 14$ GB.
+
+    **`FULL_SHARD` (ZeRO-3):** parameters are sharded across *all 32* GPUs, so the just-in-time all-gathers (forward + backward) and the gradient reduce-scatter all cross the slow inter-node link. Total traffic $\approx 3 \times 14 = 42$ GB on the $\beta_{\text{inter}} = 25$ GB/s link:
+
+    $$
+    T_{\text{FULL}} \approx \frac{3 \times 14 \text{ GB}}{25 \text{ GB/s}} = \frac{42}{25} \approx 1.68 \text{ s/step}
+    $$
+
+    The extra all-gather that distinguishes ZeRO-3 from ZeRO-1/2 is fully exposed on the slow link — this is the $\sim1.5\times$ communication penalty of stage 3 landing on the worst possible network.
+
+    **`HYBRID_SHARD`:** shard *within* each node and *replicate across* nodes. The two bandwidth-heavy parameter all-gathers ($\approx 2 \times 14 = 28$ GB) now stay on fast intra-node NVLink:
+
+    $$
+    T_{\text{intra}} \approx \frac{2 \times 14 \text{ GB}}{300 \text{ GB/s}} \approx 0.093 \text{ s},
+    $$
+
+    nearly negligible. The only inter-node traffic is a once-per-step gradient all-reduce across the node-replicas, $\approx 2\Psi$ worth $= 28$ GB over the slow link:
+
+    $$
+    T_{\text{inter}} \approx \frac{2 \times 14 \text{ GB}}{25 \text{ GB/s}} = \frac{28}{25} \approx 1.12 \text{ s/step}.
+    $$
+
+    So `HYBRID_SHARD` cuts the exposed slow-link time from $\approx 1.68$ s to $\approx 1.12$ s (plus a near-free $0.09$ s on NVLink), because it keeps the expensive all-gathers on the fast intra-node fabric and only pays the slow link for a single gradient reduction. This is exactly why hybrid sharding is the default for multi-node FSDP whenever the model fits in one node's aggregate memory — the tradeoff is that each node now stores a full model-state shard, so it only works when that fits.

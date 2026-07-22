@@ -763,3 +763,195 @@ For inference serving after training, the parallelism story shifts toward pure T
     - Always profile before tuning. Nsight Systems traces quickly reveal whether the bottleneck is NCCL communication, pipeline bubbles, or kernel-launch overhead.
     - The 3D + ZeRO pattern (Megatron-Core for TP/PP + DeepSpeed for ZeRO optimizer) is the dominant approach for frontier pretraining runs; pure FSDP2 is the PyTorch-native alternative for runs that do not require TP.
     - Expert parallelism (EP) adds a fourth dimension for MoE models, communicating token activations (not parameters) via all-to-all across EP ranks.
+
+## Exercises
+
+**1.** The chapter's rule of thumb is to **place TP within a node and use PP to span nodes**. Explain the hardware reason for each half of this rule. What specifically goes wrong if you set TP=16 on a cluster of 8-GPU nodes connected by InfiniBand?
+
+??? note "Solution"
+
+    The rule follows from *where each collective sits relative to the critical path* and *how much bandwidth it needs*.
+
+    - **TP within a node.** A tensor-parallel column/row GEMM pair requires an `all-reduce` (or, with sequence parallelism, an `all-gather` + `reduce-scatter`) that must complete *before the next GEMM can start*. It sits directly on the forward/backward critical path, so its latency is not hideable and its bandwidth demand is high (activations, every layer, every micro-batch). Intra-node NVLink offers ~900 GB/s, roughly an order of magnitude more than inter-node InfiniBand (400 Gb/s ~= 50 GB/s per the chapter's cluster). Keeping TP on NVLink keeps this critical-path collective fast.
+
+    - **PP spans nodes.** Pipeline parallelism only sends *point-to-point* activation tensors between adjacent stages (one micro-batch's activations at a stage boundary). These sends are latency-tolerant — they can be overlapped with compute of other micro-batches in the 1F1B schedule — and they are far less frequent than TP collectives. So PP tolerates the slower inter-node InfiniBand link.
+
+    - **TP=16 on 8-GPU nodes.** A TP group of 16 must include GPUs on two different nodes, so the TP all-reduce now crosses InfiniBand instead of staying on NVLink. Because that all-reduce is on the critical path and runs every layer, the ~10x slower inter-node link stalls every GEMM. The chapter notes this can cost 20-40% of throughput. The fix is to keep TP <= GPUs-per-node (here TP=8) and push the extra parallelism into PP or DP.
+
+**2.** A model has $P = 13 \times 10^9$ parameters and is trained with Adam in mixed precision (bf16 params + bf16 grads + fp32 master + fp32 Adam moments), i.e. the 16-bytes-per-parameter accounting from Step 1. Using the ZeRO-3 formula $\text{Memory per GPU} = 16P/\text{DP}$ (model state only, ignoring activations), what is the minimum DP degree needed to fit the model state within 40 GB per GPU? What is the per-GPU model state at that DP degree?
+
+??? note "Solution"
+
+    Total model state is
+
+    $$
+    16P = 16 \times 13 \times 10^9 = 208 \times 10^9 \text{ bytes} = 208 \text{ GB}.
+    $$
+
+    We need $16P/\text{DP} \le 40$ GB:
+
+    $$
+    \text{DP} \ge \frac{208}{40} = 5.2.
+    $$
+
+    DP must be an integer (and in practice a power of two for clean group layout), so the minimum integer is $\text{DP} = 6$, and the smallest power-of-two that works is $\text{DP} = 8$.
+
+    - At $\text{DP} = 6$: $208 / 6 \approx 34.7$ GB per GPU.
+    - At $\text{DP} = 8$: $208 / 8 = 26$ GB per GPU.
+
+    Either fits the 40 GB budget; DP=6 is the strict minimum, DP=8 is the practical choice. (This is model state only — real deployments still need headroom for activations and buffers.)
+
+**3.** You launch a run with pipeline degree $PP = 8$ and $m = 24$ micro-batches per optimizer step, using the plain 1F1B schedule. (a) Compute the bubble fraction. (b) Your target is a bubble under 5%. Using the chapter's rule $m \ge 19(PP-1)$, how many micro-batches would the plain schedule need? (c) Instead you enable an interleaved (virtual pipeline) schedule with $v = 4$ chunks per stage, keeping $m = 24$. Estimate the new bubble fraction.
+
+??? note "Solution"
+
+    (a) Plain 1F1B bubble fraction:
+
+    $$
+    \frac{PP - 1}{PP - 1 + m} = \frac{8 - 1}{8 - 1 + 24} = \frac{7}{31} \approx 0.226 = 22.6\%.
+    $$
+
+    (b) The rule $m \ge 19(PP - 1)$ gives
+
+    $$
+    m \ge 19 \times 7 = 133 \text{ micro-batches},
+    $$
+
+    which is a very large batch requirement — this is exactly why interleaving is attractive at high PP.
+
+    (c) Interleaved schedule with $v = 4$:
+
+    $$
+    \frac{1}{v} \cdot \frac{PP - 1}{PP - 1 + m} = \frac{1}{4} \times \frac{7}{31} = \frac{7}{124} \approx 0.056 = 5.6\%.
+    $$
+
+    So with only $m = 24$ micro-batches, virtual PP with $v = 4$ brings the bubble from ~22.6% down to ~5.6% — close to the 5% target — at the cost of ~4x more inter-stage pipeline messages per micro-batch.
+
+**4.** A 30B dense model is trained on 256 H100 GPUs. The observed throughput is 900 tokens/second/GPU. Using the simplified $6P$ rule and the chapter's dense bf16 H100 peak of $9.89 \times 10^{14}$ FLOP/s per GPU, compute the MFU. Is this in the healthy range the chapter cites? Then, if the run uses **full** activation recomputation, estimate the corresponding HFU.
+
+??? note "Solution"
+
+    **MFU.** FLOPs per token (simplified rule):
+
+    $$
+    6P = 6 \times 30 \times 10^9 = 1.8 \times 10^{11} \text{ FLOP/token}.
+    $$
+
+    Achieved FLOP/s per GPU:
+
+    $$
+    1.8 \times 10^{11} \times 900 = 1.62 \times 10^{14} \text{ FLOP/s}.
+    $$
+
+    MFU is achieved over peak (per-GPU peak works because both numerator and denominator scale by the same GPU count):
+
+    $$
+    \text{MFU} = \frac{1.62 \times 10^{14}}{9.89 \times 10^{14}} \approx 0.164 = 16.4\%.
+    $$
+
+    This is **below** the healthy 35-55% range and even below the 25% "likely misconfiguration" threshold the chapter flags — a signal to profile for TP crossing node boundaries, too-small micro-batches, excessive bubble, or checkpointing overhead.
+
+    **HFU with full recompute.** Full recomputation issues an extra forward pass, so the FLOPs actually issued to the GPU are $8P$ instead of $6P$ per token — a factor of $8/6 = 4/3$ more work:
+
+    $$
+    \text{HFU} = \text{MFU} \times \frac{\text{total FLOPs issued}}{\text{model FLOPs}} = 0.164 \times \frac{4}{3} \approx 0.219 = 21.9\%.
+    $$
+
+    HFU >= MFU always, as expected. The gap here reflects the wasted arithmetic of recomputation; even so, both numbers are low, confirming a configuration problem rather than a recompute-accounting artifact.
+
+**5.** Extend the chapter's `compute_mfu` function into a `compute_hfu` helper that accepts a `recompute_mode` argument (`"none"`, `"selective"`, or `"full"`) and returns the HFU. Use the chapter's overhead figures: `"none"` adds 0%, `"selective"` adds ~10% (a representative value from the chapter's 5-15% range), and `"full"` multiplies model FLOPs by $4/3$ (the $8P$ vs $6P$ ratio). Keep the style consistent with the chapter's code.
+
+??? note "Solution"
+
+    We reuse `compute_mfu` to get the model-FLOP MFU, then scale by the ratio of issued FLOPs to model FLOPs implied by the recompute mode.
+
+    ```python
+    def compute_hfu(
+        model_params: int,
+        tokens_per_second: float,
+        peak_flops_per_sec: float,
+        recompute_mode: str = "none",   # "none" | "selective" | "full"
+        n_layers: int = None,
+        d_model: int = None,
+        seq_len: int = None,
+    ) -> float:
+        """
+        Compute Hardware FLOP Utilization.
+
+        HFU = MFU * (total FLOPs issued / model FLOPs), where the multiplier
+        depends on how much activation recomputation is enabled:
+          - "none":      +0%   -> factor 1.00 (HFU == MFU)
+          - "selective": ~+10% -> factor 1.10 (recompute attention softmax/dropout)
+          - "full":      +33%  -> factor 4/3  (an extra full forward pass, 8P vs 6P)
+        """
+        mfu = compute_mfu(
+            model_params=model_params,
+            tokens_per_second=tokens_per_second,
+            peak_flops_per_sec=peak_flops_per_sec,
+            n_layers=n_layers,
+            d_model=d_model,
+            seq_len=seq_len,
+        )
+
+        recompute_factor = {
+            "none": 1.0,
+            "selective": 1.10,
+            "full": 4.0 / 3.0,
+        }
+        if recompute_mode not in recompute_factor:
+            raise ValueError(f"unknown recompute_mode: {recompute_mode!r}")
+
+        return mfu * recompute_factor[recompute_mode]
+
+
+    # Example: 30B model, 256 H100s, 900 tok/s/gpu, full recompute
+    H100_BF16_TFLOPS = 9.89e14
+    hfu = compute_hfu(
+        model_params=30e9,
+        tokens_per_second=900,          # per-GPU rate vs per-GPU peak
+        peak_flops_per_sec=H100_BF16_TFLOPS,
+        recompute_mode="full",
+    )
+    print(f"HFU: {hfu:.1%}")  # ~21.8% (Exercise 4's 21.9% rounds MFU to 0.164 first)
+    ```
+
+    The helper is intentionally a thin wrapper: MFU already captures the *useful* model arithmetic, and HFU only differs by the fixed recompute overhead of the chosen mode. Note that MFU is invariant to the recompute mode (the model does the same useful work either way); only HFU rises because more FLOPs are physically issued.
+
+**6.** In `initialize_model_parallel` (the `parallel_state` code), consider a world of 8 GPUs configured with `tensor_model_parallel_size=2` and `pipeline_model_parallel_size=2`. (a) Work out `dp_size`. (b) List the exact rank membership of every TP group, PP group, and DP group produced by the three loops. (c) A colleague proposes calling `get_data_parallel_group()` to target the collective for a tensor-parallel all-reduce inside a column-parallel GEMM. Explain why that is wrong and which accessor is correct.
+
+??? note "Solution"
+
+    (a) `dp_size = world_size // (TP * PP) = 8 // (2 * 2) = 2`.
+
+    (b) Trace each loop with `world_size = 8`, `TP = 2`, `PP = 2`, `dp_size = 2`.
+
+    **TP groups** — loop `i` in `range(PP * dp_size) = range(4)`, each group is `[i*TP, (i+1)*TP)`:
+
+    ```text
+    i=0 -> ranks [0, 1]
+    i=1 -> ranks [2, 3]
+    i=2 -> ranks [4, 5]
+    i=3 -> ranks [6, 7]
+    ```
+
+    **PP groups** — loop `i` in `range(TP * dp_size) = range(4)`, ranks `range(i, 8, TP)[:PP]` = stride 2, take 2:
+
+    ```text
+    i=0 -> range(0,8,2)[:2] = [0, 2]
+    i=1 -> range(1,8,2)[:2] = [1, 3]
+    i=2 -> range(2,8,2)[:2] = [2, 4]
+    i=3 -> range(3,8,2)[:2] = [3, 5]
+    ```
+
+    (Note: with this simplified stride-by-TP construction the PP groups are not disjoint — e.g. rank 2 appears in the `i=0` and `i=2` groups. The real Megatron code partitions more carefully; the chapter's version is labeled "simplified" and is meant to convey the striding idea, not exact production group assignment.)
+
+    **DP groups** — loop `i` in `range(TP * PP) = range(4)`, ranks `range(i, 8, TP*PP)` = stride 4:
+
+    ```text
+    i=0 -> [0, 4]
+    i=1 -> [1, 5]
+    i=2 -> [2, 6]
+    i=3 -> [3, 7]
+    ```
+
+    (c) A tensor-parallel column/row GEMM all-reduce must sum partial results across the GPUs that hold *shards of the same layer's weights* — that is, the members of a **TP group** (e.g. `[0, 1]`). The data-parallel group instead links GPUs that hold *complete, independent replicas* processing different data; reducing across it would incorrectly mix distinct micro-batch replicas and would not combine the weight shards at all. The correct accessor is `get_tensor_model_parallel_group()`, which every parallelism-aware layer calls precisely so this routing never leaks into user code.

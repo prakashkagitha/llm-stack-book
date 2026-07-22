@@ -757,3 +757,140 @@ Training stability issues and how loss diagnostics help debug them are covered i
 - **Hoffmann et al., "Training Compute-Optimal Large Language Models" (Chinchilla), NeurIPS 2022.** Uses the cross-entropy loss as the primary dependent variable to derive scaling laws; directly connected to [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html).
 - **Karpathy, "nanoGPT" (GitHub, 2022–present).** A ~300-line clean implementation of the full pretraining loop including the loss computation; the best codebase to read alongside this chapter.
 - **Shannon, "A Mathematical Theory of Communication," Bell System Technical Journal, 1948.** The original derivation of entropy as a lower bound on compression, foundational to understanding what cross-entropy loss measures.
+
+---
+
+## Exercises
+
+**1.** Perplexity intuition. A randomly-initialized model over a vocabulary of size $V = 32000$ has just been created; no training has happened. Assuming the softmax outputs are approximately uniform over the vocabulary at initialization, what per-token NLL loss (in nats) and what perplexity do you expect on the first batch? Then explain in one sentence why the chapter's from-scratch verification snippet actually prints $\approx 11.05$ rather than exactly $\log V$.
+
+??? note "Solution"
+    A uniform distribution over $V$ tokens assigns probability $1/V$ to the true token, so the per-token NLL is
+    $$
+    \mathcal{L}_{\text{NLL}} = -\log\frac{1}{V} = \log V = \log 32000 \approx 10.37 \text{ nats/token}.
+    $$
+    The corresponding perplexity is
+    $$
+    \text{PPL} = \exp(\mathcal{L}_{\text{NLL}}) = \exp(\log V) = V = 32000,
+    $$
+    which is exactly the "effective branching factor" interpretation from the chapter: an untrained model is as uncertain as a uniform choice among all 32000 tokens.
+
+    The chapter's snippet prints $\approx 11.05$, not $10.37$, because its logits are drawn from `torch.randn` rather than being exactly zero. The softmax of non-zero i.i.d. Gaussian logits is *not* uniform; the logit variance adds an extra positive term on top of $\log V$ (as the chapter notes, "near $\log V$ plus a logit-variance term"). Only in the idealized zero-logit case does the loss equal $\log V$ exactly.
+
+**2.** Label shifting and tensor shapes. In the chapter's `compute_lm_loss`, the input is `tokens` of shape `(B, T+1)`. Explain precisely why the model is fed `tokens[:, :-1]` and supervised with `tokens[:, 1:]`, and state how many gradient-carrying predictions a single unpadded sequence of length $T+1 = 2048$ produces. What goes wrong if you instead (incorrectly) align the logits with `tokens[:, :-1]` as targets?
+
+??? note "Solution"
+    A decoder-only model with a causal mask produces, at each input position $i$, a distribution over the *next* token. So the logit at position $i$ (computed from `tokens[:, :-1]`, i.e. from prefix $x_0 \ldots x_i$) must be scored against the ground-truth token at position $i+1$. Aligning `inputs = tokens[:, :-1]` with `targets = tokens[:, 1:]` implements exactly this one-step-ahead shift: position $i$'s logit is matched to $x_{i+1}$.
+
+    A sequence of $T+1 = 2048$ tokens becomes $T = 2047$ input positions after dropping the last token, each producing one supervised prediction — so **2047 gradient-carrying predictions**, matching the chapter's "2047 predictions per 2048-token sequence" claim about data efficiency.
+
+    If you instead used `tokens[:, :-1]` as the targets, every position would be trained to predict *its own input token*. Combined with the causal mask (position $i$ can already see $x_i$, including itself), this is a trivial identity task: the model can copy the input token to the output and drive the loss to zero without learning any language structure. Training would collapse to a useless copy function.
+
+**3.** Bits-per-byte comparison. Two models are evaluated on the same English text.
+
+    - Model A: BPE tokenizer, NLL $= 3.10$ nats/token, average $4.2$ UTF-8 bytes/token.
+    - Model B: larger-vocab tokenizer, NLL $= 3.55$ nats/token, average $5.4$ UTF-8 bytes/token.
+
+Compute the bits-per-byte for each (use $\log_2 e \approx 1.4427$) and state which model is better in a tokenizer-agnostic sense. Then explain in one sentence why comparing their raw per-token NLL values directly would be misleading.
+
+??? note "Solution"
+    Using $\text{BPB} = \dfrac{\mathcal{L}_{\text{NLL}} \cdot \log_2 e}{\bar r}$:
+
+    Model A:
+    $$
+    \text{bits/token} = 3.10 \times 1.4427 \approx 4.472, \qquad
+    \text{BPB}_A = \frac{4.472}{4.2} \approx 1.065 \text{ bits/byte}.
+    $$
+
+    Model B:
+    $$
+    \text{bits/token} = 3.55 \times 1.4427 \approx 5.122, \qquad
+    \text{BPB}_B = \frac{5.122}{5.4} \approx 0.949 \text{ bits/byte}.
+    $$
+
+    Model B has the **lower** BPB ($0.949 < 1.065$), so it is the better model in a tokenizer-agnostic sense, even though its raw per-token NLL ($3.55$) is *higher* than Model A's ($3.10$).
+
+    Comparing raw per-token NLL is misleading because each token covers a different amount of raw text: Model B's tokens are longer ($5.4$ vs $4.2$ bytes), so each of its predictions is "harder" (covers more content) and a higher per-token loss can still mean fewer bits spent per byte of actual text. BPB removes this tokenizer dependence by normalizing to a common unit (the byte).
+
+**4.** Z-loss arithmetic and purpose. Consider a single token whose pre-softmax logits, before any normalization, all share a common additive offset $c$ — i.e. the logits are $z_v = a_v + c$ for some fixed base pattern $a_v$. (a) Show that the cross-entropy loss for the true token is invariant to $c$. (b) Show that the z-loss term $\alpha \log^2\!\big(\sum_v e^{z_v}\big)$ is *not* invariant to $c$, and compute the z-loss for $\alpha = 10^{-4}$ when $\log\sum_v e^{z_v} = 30$. (c) In one sentence, explain why penalizing this quantity improves numerical stability.
+
+??? note "Solution"
+    (a) The softmax probability of the true token $x_t$ is
+    $$
+    \hat p(x_t) = \frac{e^{z_{x_t}}}{\sum_v e^{z_v}} = \frac{e^{a_{x_t}+c}}{\sum_v e^{a_v+c}} = \frac{e^{c}e^{a_{x_t}}}{e^{c}\sum_v e^{a_v}} = \frac{e^{a_{x_t}}}{\sum_v e^{a_v}}.
+    $$
+    The common factor $e^{c}$ cancels, so $\hat p(x_t)$ — and hence the cross-entropy $-\log\hat p(x_t)$ — does not depend on $c$. (This is the familiar shift-invariance of softmax.)
+
+    (b) The log-partition is
+    $$
+    \log\sum_v e^{z_v} = \log\Big(e^{c}\sum_v e^{a_v}\Big) = c + \log\sum_v e^{a_v},
+    $$
+    which grows linearly with $c$, so its square (and the z-loss) is *not* invariant. For $\log\sum_v e^{z_v} = 30$:
+    $$
+    \mathcal{L}_{\text{z}} = \alpha \cdot (30)^2 = 10^{-4} \times 900 = 0.09.
+    $$
+
+    (c) Because cross-entropy alone cannot "see" the common offset $c$, logits are free to drift to very large magnitudes during training; z-loss adds a gradient that pulls the log-partition (and thus the raw logit scale) back toward $0$, preventing the softmax exponentials from overflowing in low-precision arithmetic and reducing loss spikes.
+
+**5.** Implement per-document (sequence-normalized) loss and compare to token-normalized loss. The chapter contrasts token-normalized and sequence-normalized loss and warns that sequence-normalization "implicitly weights short sequences more heavily." Implement a function `sequence_normalized_loss(logits, tokens, mask)` that computes the loss by first averaging over the active positions *within each sequence*, then averaging those per-sequence means across the batch. Then, using the chapter's masking conventions, construct a 2-sequence batch where one sequence has far fewer active tokens than the other and demonstrate numerically that the sequence-normalized value differs from the standard token-normalized `compute_lm_loss_masked`.
+
+??? note "Solution"
+    The key difference: `F.cross_entropy(..., reduction='mean')` divides the summed loss by the *total* active-token count across the whole batch (token-normalized). Sequence-normalization instead computes a per-sequence mean first, then a plain mean over sequences — giving every sequence equal weight regardless of how many active tokens it has.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def sequence_normalized_loss(
+        logits: torch.Tensor,   # (B, T, V)
+        tokens: torch.Tensor,   # (B, T+1)
+        mask:   torch.Tensor,   # (B, T) — 1 = active, 0 = ignore
+    ) -> torch.Tensor:
+        targets = tokens[:, 1:].clone()          # (B, T)
+        B, T, V = logits.shape
+
+        # Per-position NLL with no reduction, so we can control the averaging.
+        per_pos = F.cross_entropy(
+            logits.reshape(B * T, V),
+            targets.reshape(B * T),
+            reduction='none',                    # (B*T,)
+        ).reshape(B, T)                          # (B, T)
+
+        m = mask.to(per_pos.dtype)               # (B, T)
+        # Sum active loss per sequence, divide by active count per sequence.
+        seq_active = m.sum(dim=1).clamp_min(1.0)         # (B,)
+        seq_mean   = (per_pos * m).sum(dim=1) / seq_active   # (B,)
+        # Then average the per-sequence means with equal weight.
+        return seq_mean.mean()
+
+    def compute_lm_loss_masked(logits, tokens, mask):
+        targets = tokens[:, 1:].clone()
+        targets[mask == 0] = -100
+        B, T, V = logits.shape
+        return F.cross_entropy(
+            logits.reshape(B * T, V),
+            targets.reshape(B * T),
+            ignore_index=-100,
+            reduction='mean',                    # token-normalized
+        )
+
+    # ---- Demonstration -----------------------------------------------------
+    torch.manual_seed(0)
+    B, T, V = 2, 8, 32000
+    logits = torch.randn(B, T, V)
+    tokens = torch.randint(0, V, (B, T + 1))
+
+    mask = torch.ones(B, T, dtype=torch.long)
+    mask[0, 2:] = 0   # sequence 0: only 2 active tokens (a short doc)
+    mask[1, :]  = 1   # sequence 1: all 8 active tokens (a long doc)
+
+    tok_norm = compute_lm_loss_masked(logits, tokens, mask)
+    seq_norm = sequence_normalized_loss(logits, tokens, mask)
+
+    print(f"token-normalized:    {tok_norm.item():.4f}")
+    print(f"sequence-normalized: {seq_norm.item():.4f}")
+    # The two values differ: the short 2-token sequence gets weight 1/2 under
+    # sequence-normalization but only 2/10 of the tokens under token-normalization.
+    ```
+
+    Why they differ: with $2$ active tokens in sequence 0 and $8$ in sequence 1, token-normalization sums all $10$ per-token losses and divides by $10$ — sequence 1 contributes $8/10$ of the weight. Sequence-normalization gives each sequence's *mean* equal weight ($1/2$ each), so sequence 0's two tokens now carry $1/2$ of the total influence instead of $2/10$. Unless the two per-sequence means happen to coincide, the printed numbers differ, concretely demonstrating the chapter's warning that sequence-normalization over-weights short sequences. (If you set the masks so both sequences have the same active count, the two values become equal.)
