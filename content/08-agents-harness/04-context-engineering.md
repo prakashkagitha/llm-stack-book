@@ -343,7 +343,10 @@ def compact(call_model, turns: list[str], max_tokens: int = 1200) -> str:
     prompt = COMPACTION_PROMPT.format(max_tokens=max_tokens, history=history)
     summary = call_model(prompt)
     # Hard-trim as a safety net in case the model over-runs.
-    toks = _enc.encode(summary)[: max_tokens] if 'tiktoken' in dir() else None
+    try:
+        toks = _enc.encode(summary)[:max_tokens]
+    except NameError:
+        toks = None  # tiktoken unavailable; `_enc` was never defined
     return _enc.decode(toks) if toks is not None else summary
 
 def maybe_compact(hist_seg: "Segment", call_model, keep_recent: int = 6):

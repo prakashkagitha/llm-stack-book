@@ -320,6 +320,9 @@ def pass_at_k(n: int, c: int, k: int) -> float:
         return 0.0
     if c == n:
         return 1.0
+    if n - c < k:
+        # Fewer "wrong" samples than k means every k-subset includes a correct one.
+        return 1.0
     # 1 - P(all k selected are wrong) = 1 - C(n-c, k) / C(n, k)
     # Compute in log space for numerical stability with large n
     log_num = sum(math.log(n - c - i) for i in range(k))

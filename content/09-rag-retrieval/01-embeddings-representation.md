@@ -149,7 +149,7 @@ def infonce_loss(
 # ---- Quick sanity check ----
 if __name__ == "__main__":
     torch.manual_seed(42)
-    B, D = 4, 64
+    B, D = 4, 768
 
     # Random normalized embeddings
     q = F.normalize(torch.randn(B, D), dim=-1)
