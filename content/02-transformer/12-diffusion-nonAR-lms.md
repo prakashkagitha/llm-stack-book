@@ -119,6 +119,8 @@ def masked_diffusion_sample(
     vocab_size: int,
     temperature: float = 0.0,   # 0.0 = greedy/argmax per position
     prompt: torch.Tensor = None,   # optional LongTensor of clamped prefix tokens
+    clamp_mask: torch.Tensor = None,    # optional (L,) bool mask of arbitrary clamped positions
+    clamp_values: torch.Tensor = None,  # (L,) values at those positions; used with clamp_mask
     device: str = "cpu",
 ):
     """
@@ -133,9 +135,15 @@ def masked_diffusion_sample(
     # 1. Start fully masked.
     x = torch.full((L,), MASK_ID, dtype=torch.long, device=device)
 
-    # 2. Clamp the prompt (these positions are never masked and never predicted).
+    # 2. Clamp fixed context (these positions are never masked and never predicted).
+    #    `clamp_mask`/`clamp_values` clamp an ARBITRARY subset of positions (e.g. a
+    #    prefix AND a suffix for infilling); `prompt` is the common special case of
+    #    clamping only a contiguous prefix.
     is_prompt = torch.zeros(L, dtype=torch.bool, device=device)
-    if prompt is not None:
+    if clamp_mask is not None:
+        is_prompt = clamp_mask.to(device)
+        x[is_prompt] = clamp_values.to(device)[is_prompt]
+    elif prompt is not None:
         x[: prompt.numel()] = prompt.to(device)
         is_prompt[: prompt.numel()] = True
 
@@ -328,13 +336,13 @@ def infill_example(denoiser, prefix_ids, suffix_ids, hole_len, vocab_size):
     x[len(prefix_ids) + hole_len :] = torch.tensor(suffix_ids)
     is_clamped[len(prefix_ids) + hole_len :] = True
 
-    # Reuse the diffusion loop, but treat ALL clamped positions like a "prompt"
-    # so they are never masked and never overwritten. The hole is denoised
-    # conditioned on BOTH sides simultaneously.
+    # Reuse the diffusion loop, but treat ALL clamped positions (prefix AND
+    # suffix) like a "prompt" so they are never masked and never overwritten.
+    # The hole is denoised conditioned on BOTH sides simultaneously.
     return masked_diffusion_sample(
         denoiser, L=L, num_steps=hole_len, vocab_size=vocab_size,
-        prompt=None,
-    ), is_clamped  # (in practice, pass is_clamped into the sampler as is_prompt)
+        clamp_mask=is_clamped, clamp_values=x,
+    ), is_clamped
 ```
 
 This is the capability that AR models have to *bolt on* and diffusion models get *for free*, and it is the strongest argument that non-AR LMs are a genuinely different tool rather than a faster clone.

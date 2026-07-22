@@ -316,13 +316,13 @@ The function encodes the doctrine: for **decode** serving, rank by *aggregate HB
     Take a 70B-parameter model served in **FP8** (1 byte/param), so weights are $70 \times 10^{9} \times 1 = 70\ \text{GB}$. It uses GQA with $L=80$ layers, $H_{kv}=8$ KV heads, $d_h=128$, and we serve it in **bf16 KV** (2 bytes). Per-token KV cache:
 
     $$
-    M_{\text{KV/token}} = 2 \times 80 \times 8 \times 128 \times 2 = 327{,}680\ \text{bytes} \approx 0.31\ \text{MB}
+    M_{\text{KV/token}} = 2 \times 80 \times 8 \times 128 \times 2 = 327{,}680\ \text{bytes} \approx 0.33\ \text{MB}
     $$
 
-    At 8,192-token context and batch 32 that is $0.31\ \text{MB} \times 8192 \times 32 \approx 82\ \text{GB}$ of KV cache. Total live footprint $\approx 70 + 82 = 152\ \text{GB}$.
+    At 8,192-token context and batch 32 that is $0.33\ \text{MB} \times 8192 \times 32 \approx 86\ \text{GB}$ of KV cache. Total live footprint $\approx 70 + 86 = 156\ \text{GB}$.
 
-    - On **80 GB H100s** this needs $\lceil 152/80 \rceil = 2$ GPUs minimum just to fit — and in practice more, since you want headroom and the tensor-parallel split fragments memory. Decode now pays an NVLink all-reduce per layer.
-    - On a **192 GB MI300X**, the whole 152 GB fits on **one** device. No tensor-parallel collective in the decode path at all. Because decode is **bandwidth-bound**, that single MI300X streaming weights at $\sim 5.3\ \text{TB/s}$ from one HBM stack — with zero inter-GPU communication — is a genuinely strong serving configuration despite the MI300X's raw FLOPS being a serving afterthought.
+    - On **80 GB H100s** this needs $\lceil 156/80 \rceil = 2$ GPUs minimum just to fit — and in practice more, since you want headroom and the tensor-parallel split fragments memory. Decode now pays an NVLink all-reduce per layer.
+    - On a **192 GB MI300X**, the whole 156 GB fits on **one** device. No tensor-parallel collective in the decode path at all. Because decode is **bandwidth-bound**, that single MI300X streaming weights at $\sim 5.3\ \text{TB/s}$ from one HBM stack — with zero inter-GPU communication — is a genuinely strong serving configuration despite the MI300X's raw FLOPS being a serving afterthought.
 
     The lesson is the chapter's thesis in miniature: **for decode serving you often pick the chip by HBM capacity and bandwidth, not by peak TFLOPS.** Flip the workload to *training* the same model and the calculus inverts — now it is dense, compute-bound GEMMs over a huge cluster, you care about aggregate FP8/bf16 TFLOPS and the all-reduce efficiency of the interconnect, and the TPU pod's torus + XLA collectives or a large NVLink/Infinity-Fabric domain become the deciding factors.
 
