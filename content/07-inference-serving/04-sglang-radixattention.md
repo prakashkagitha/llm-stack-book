@@ -586,3 +586,136 @@ You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the ru
 - Willard & Louf, *Efficient Guided Generation for Large Language Models* (the `outlines` FSM approach) and the **xgrammar** project — grammar/FSM constrained decoding integrated by SGLang.
 - The **sglang** GitHub repository (`sgl-project/sglang`) — read `python/sglang/srt/mem_cache/radix_cache.py`, `srt/managers/scheduler.py`, and `lang/api.py` for the production implementations behind this chapter.
 - Related chapters: [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html), [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html), [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html), and [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html).
+
+## Exercises
+
+**1.** The chapter states that eviction is restricted to *evictable leaves*, never interior nodes. Explain concretely what would break if the LRU evictor were allowed to reclaim an interior node's KV slots while that node still has children. Then explain what the `lock_ref` reference count protects against, and why a simple global mutex over the whole tree would be a poor substitute.
+
+??? note "Solution"
+    **Why leaves only.** A path from the root spells a token sequence, and each node owns the KV slots for the tokens on its *incoming* edge. A child node's KV is only meaningful as a *continuation* of its parent's prefix. If the evictor freed an interior node's slots while children survived, those children would reference a prefix whose KV no longer exists in the pool: a later `match_prefix` that descends into a surviving child would concatenate KV-slot indices that have been freed and possibly reallocated to unrelated tokens. The reused KV would be garbage, so decode would attend over the wrong keys/values and produce silently corrupt output (or index out of bounds). Evicting only leaves peels the tree from its tips inward, so you always remove the *coldest suffixes* first and never orphan a prefix that something still depends on. When a leaf is removed and its parent becomes a childless, unlocked node, the parent itself becomes a new evictable leaf on the next pass -- which is exactly the `heapq.heappush(leaves, node.parent)` line in the chapter's `evict`.
+
+    **What `lock_ref` protects.** `lock_ref > 0` means at least one *in-flight* request is actively reading that node's KV during its prefill or decode kernel. Eviction skips such nodes (`if node.lock_ref > 0: continue`). Without this, a second request under memory pressure could free KV slots that a running CUDA kernel is mid-read on, producing a data race: silent garbage or an out-of-bounds access. This is the "lock before you compute" pitfall in the chapter -- you must `lock_path(+1)` along a request's path *before* launching its forward pass and `lock_path(-1)` only after it finishes.
+
+    **Why not a global mutex.** A single mutex over the whole tree would serialize access: only one request could touch the cache at a time, destroying the concurrency the whole engine is built to exploit. Reference counting is *per node*, so thousands of requests can safely share one hot system-prompt node simultaneously -- each just increments the count. The count encodes exactly the invariant we need ("is anyone reading this?") at fine granularity, whereas a mutex encodes a coarser, throughput-killing "is anyone touching the tree?".
+
+**2.** Using the chapter's KV-cache formula, compute the KV-cache cost **per token** for an 8B-class model with GQA: 32 layers, 8 KV heads, head dimension 128, stored in bf16 (2 bytes). Then compute the total KV memory for a shared **1,500-token** system prompt (the scenario from the Interview Corner). Report in KiB/token and MiB.
+
+??? note "Solution"
+    The per-token formula is $2 \times n_{\text{layers}} \times n_{\text{kv heads}} \times d_{\text{head}} \times \text{bytes}$. The leading $2$ is for storing both K and V.
+
+    $$
+    \text{bytes/token} = 2 \times 32 \times 8 \times 128 \times 2 = 131{,}072 \text{ bytes} = \frac{131{,}072}{1024} = 128\ \text{KiB/token}.
+    $$
+
+    For the 1,500-token shared prefix:
+
+    $$
+    1500 \times 128\ \text{KiB} = 192{,}000\ \text{KiB} = \frac{192{,}000}{1024}\ \text{MiB} = 187.5\ \text{MiB}.
+    $$
+
+    So the entire hot system prompt for this model occupies about $187.5$ MiB of KV -- stored **once** by RadixAttention and shared across every request, instead of being re-prefilled per request. (Note this is $\approx 2.5\times$ cheaper per token than the 70B GQA model in the chapter's worked example at $320$ KiB/token, driven mostly by the $80/32$ layer ratio.)
+
+**3.** A routing service sends 500 requests. Every request shares an identical **1,000-token** instruction prefix, then appends a unique **100-token** query. The model is dense with $P = 8 \times 10^9$ parameters; use the chapter's estimate of $\approx 2P$ FLOPs per prefilled token. Compute the total prefill FLOPs (a) without RadixAttention and (b) with RadixAttention, and give the prefill speedup factor.
+
+??? note "Solution"
+    Per-token prefill cost: $2P = 2 \times 8\times10^{9} = 1.6\times 10^{10}$ FLOPs/token.
+
+    **(a) Without RadixAttention.** Every request re-prefills the full $1000 + 100 = 1100$ tokens:
+    $$
+    500 \times 1100 \times 1.6\times10^{10} = 5.5\times10^{5} \times 1.6\times10^{10} = 8.8\times 10^{15}\ \text{FLOPs}.
+    $$
+
+    **(b) With RadixAttention.** The 1,000-token prefix is prefilled once; each request prefills only its unique 100-token suffix:
+    $$
+    \underbrace{1000 \times 1.6\times10^{10}}_{\text{prefix, once}} + \underbrace{500 \times 100 \times 1.6\times10^{10}}_{\text{suffixes}} = 1.6\times10^{13} + 8.0\times10^{14} = 8.16\times 10^{14}\ \text{FLOPs}.
+    $$
+
+    **Speedup:**
+    $$
+    \frac{8.8\times10^{15}}{8.16\times10^{14}} \approx 10.8\times.
+    $$
+
+    RadixAttention cuts prefill compute by roughly $10.8\times$ here. The ceiling is set by the sharing ratio: the shared prefix is $1000/1100 \approx 91\%$ of each request's prompt, so almost all of it collapses to a one-time cost, and the residual work is dominated by the $500$ unique suffixes.
+
+**4.** RadixAttention matches and splits at **page granularity** (`page_size`), not per token. Two prompts are byte-identical for their first **10 tokens** and diverge at token 11. With `page_size = 1`, how many tokens of KV can the second request reuse? With `page_size = 4`? Explain the trade-off the chapter attributes to larger pages.
+
+??? note "Solution"
+    Sharing requires agreement on *whole pages*, because `child_key(page_size)` keys the tree on complete pages.
+
+    **`page_size = 1`.** Each page is one token, so sharing is exact. The prompts agree on tokens 1--10, so the second request reuses **10 tokens** of KV and prefills only from token 11 onward.
+
+    **`page_size = 4`.** Pages cover tokens {1--4}, {5--8}, {9--12}, .... Page 1 (tokens 1--4) and page 2 (tokens 5--8) are fully identical, so both are shared. Page 3 covers tokens 9--12: the prompts agree on tokens 9 and 10 but diverge at token 11, so this page is **not** fully identical and cannot be shared. The second request therefore reuses only the first two full pages = **8 tokens**, and must re-prefill from token 9 -- losing the 2 tokens of genuinely-identical KV (tokens 9 and 10) that fell inside the diverging page.
+
+    **Trade-off.** Larger pages give up a little reuse (up to `page_size - 1` tokens at every divergence point) in exchange for cheaper, block-aligned bookkeeping: fewer nodes, coarser hashing/keying, and allocation in the same block unit as PagedAttention. When prefixes diverge only occasionally and are long, the lost reuse is negligible and the reduced overhead wins; with many short, mid-page divergences, a smaller page preserves more sharing.
+
+**5.** Extend the chapter's from-scratch `RadixCache` to support an **LFU (least-frequently-used)** eviction policy alongside the existing LRU. Increment a per-node `hit_count` whenever a node's KV is reused by `match_prefix`, and add an `evict_lfu(n)` method that frees the least-frequently-reused evictable leaves first. Give runnable code consistent with the chapter's toy, and a short demo showing that a frequently-hit prefix survives eviction.
+
+??? note "Solution"
+    We add a `hit_count` field, bump it in `match_prefix` on every reuse, and provide an `evict_lfu` that heapifies leaves by `hit_count` instead of `last_access`. The chapter already mentions SGLang supports alternative strategies (`EvictionStrategy`, LFU/priority-aware); this is the toy version.
+
+    ```python
+    import heapq
+
+    # --- 1. Node gains a hit_count (LRU still available via last_access) ---------
+    # In Node.__init__ add:   self.hit_count = 0
+
+    # --- 2. Count reuse inside match_prefix -------------------------------------
+    # Every time we reuse a child's KV (full edge OR the split-off shared part),
+    # bump that node's hit_count. Concretely, in the chapter's match_prefix, after
+    # each `matched_value += child.value` line, add `child.hit_count += 1`.
+
+    # --- 3. New eviction method, keyed on frequency not recency -----------------
+    def evict_lfu(self, n):
+        # Least-frequently-used first: a min-heap on (hit_count, tie-breaker id).
+        leaves = [c for c in self._leaves() if c.lock_ref == 0]
+        heap = [(c.hit_count, id(c), c) for c in leaves]
+        heapq.heapify(heap)
+        freed = 0
+        while freed < n and heap:
+            _, _, node = heapq.heappop(heap)
+            freed += len(node.value)
+            self.num_tokens -= len(node.value)
+            del node.parent.children[node.key[0]]
+            parent = node.parent
+            if parent is not self.root and not parent.children and parent.lock_ref == 0:
+                heapq.heappush(heap, (parent.hit_count, id(parent), parent))
+        return freed
+
+    # Bind it onto the class defined in the chapter:
+    RadixCache.evict_lfu = evict_lfu
+    ```
+
+    Here `id(c)` is a stable tie-breaker so the heap never has to compare two `Node` objects directly (the chapter's `Node.__lt__` compares `last_access`, which is the wrong key for LFU). The `parent`-repromotion logic is identical to the LRU `evict`: when a leaf's removal makes its parent a childless, unlocked leaf, the parent becomes a new eviction candidate at *its* frequency.
+
+    **Demo.** Reuse a hot prefix many times, touch a cold one once, then evict and confirm the hot prefix stays. (Assumes `hit_count` bumping is wired into `match_prefix` as described in step 2.)
+
+    ```python
+    cache = RadixCache()
+    hot  = list("SYS:")          # popular shared system prompt
+    cache.insert(hot + list("alpha"))
+    cache.insert(hot + list("beta"))     # reuses "SYS:" -> hits climb on that path
+    cache.insert(hot + list("gamma"))    # reuses "SYS:" again
+    cache.insert(list("COLD:one"))       # a lonely, never-reused branch
+
+    # Drive up hits on the hot prefix with more matches:
+    for _ in range(5):
+        cache.match_prefix(hot + list("alpha"))
+
+    before = cache.num_tokens
+    cache.evict_lfu(4)                    # free ~4 tokens, least-frequent first
+    # The "COLD:one" leaf (hit_count 0) is reclaimed before the hot "SYS:" path.
+    node, reused, matched = cache.match_prefix(hot + list("alpha"))
+    print("hot prefix still reusable:", matched >= len(hot))   # True
+    print("tokens freed:", before - cache.num_tokens)
+    ```
+
+    The cold, never-reused leaf has `hit_count = 0` and sits at the bottom of the min-heap, so `evict_lfu` reclaims it first while the frequently-matched `"SYS:"` prefix (high `hit_count`) survives -- which is precisely the behavior you want when a small set of prompts dominates traffic. (LRU would make the same call here only if the cold branch were also the *oldest*; LFU protects a hot-but-briefly-idle prefix that LRU might wrongly evict.)
+
+**6.** The `fork` primitive and issuing three independent HTTP requests can both end up sharing a prefix via RadixAttention. The chapter argues `fork` still gives a stronger guarantee. Explain the difference between "probably cached" and "guaranteed shared and co-scheduled," and separately explain why the **zero-overhead (overlap) scheduler** is what lets that shared, batched work actually keep the GPU busy. Give a case where three independent requests would *miss* the shared prefix that `fork` would have kept.
+
+??? note "Solution"
+    **`fork` vs. three independent requests.** RadixAttention is a runtime property: any request whose prompt starts with a cached sequence reuses it *if that KV is still in GPU memory*. With three independent HTTP requests, the sharing is opportunistic -- request 2 hits request 1's prefix only if request 1 has already been prefilled and its node hasn't been evicted. `fork(3)`, by contrast, is analyzed *statically, before execution*: SGLang traces the program (`lang/tracer.py` -> `lang/ir.py`) and knows the three branches descend from one parent state. So it computes the shared prefix's KV **once**, points all three branches at the same radix node, and **co-schedules** them into the same batch. It converts prefix sharing from a lucky cache hit into a planned execution: guaranteed reuse plus guaranteed batched parallelism.
+
+    **Why the overlap scheduler matters.** Having a shared batch is worthless if the CPU can't feed the GPU fast enough. Each decode step the CPU must pick the batch, update the radix tree, build sampling metadata, and prepare input tensors; if that scheduling runs *serially* before each GPU forward pass, the GPU idles during it (the chapter's 8 ms forward + 4 ms scheduling = 33% idle example). The zero-overhead / overlap scheduler prepares step $t+1$'s batch on the CPU *while* the GPU runs step $t$'s forward pass, so kernels launch back-to-back with no bubble. Combined with CUDA graphs, the steady-state decode loop becomes near-pure GPU work -- so the co-scheduled forked branches actually translate into throughput instead of being throttled by Python bookkeeping.
+
+    **A miss case.** Suppose request 1 finishes, its path unlocks (`lock_ref` drops to 0), and before requests 2 and 3 arrive the system is under memory pressure. The LRU evictor reclaims request 1's now-cold suffix and even its prefix leaf, freeing those KV slots. When requests 2 and 3 arrive moments later they `match_prefix` and find nothing cached -- they re-prefill the whole shared prefix from scratch, paying full prefill cost. `fork` avoids this entirely: the parent node is created and **locked** for the lifetime of the branches, so it cannot be evicted between branches, and the prefix is computed exactly once regardless of memory pressure or arrival timing. Independent requests can also miss if they arrive interleaved with enough unrelated traffic to evict the prefix, or if they hit different server replicas without cache-aware routing.

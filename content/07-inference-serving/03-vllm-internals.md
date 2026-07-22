@@ -515,3 +515,131 @@ vLLM is not the only serving engine — [SGLang: RadixAttention & Structured Pro
 - Chen, Borgeaud, Irving, Lespiau, Sifre, Jumper — *Accelerating Large Language Model Decoding with Speculative Sampling*; and Leviathan, Kalman, Matias — *Fast Inference from Transformers via Speculative Decoding*.
 - Chen, Ye, Zheng, et al. — *Punica: Multi-Tenant LoRA Serving*, and *S-LoRA: Serving Thousands of Concurrent LoRA Adapters*. The basis of vLLM's multi-LoRA kernels.
 - The **vLLM** project repository and documentation (vllm-project/vllm), including the V1 architecture design notes.
+
+## Exercises
+
+**1.** *(Conceptual.)* A colleague argues that PagedAttention "just moves the fragmentation around" and cannot really help, because you still have to store the same number of KV tokens. Explain precisely why paging reduces wasted KV memory, and name the *one* remaining source of internal waste and its worst-case size per sequence.
+
+??? note "Solution"
+    The colleague conflates *tokens actually stored* with *memory reserved*. Paging does not reduce the bytes needed for real KV; it eliminates the memory that is **reserved-but-empty** and the **unusable gaps** between contiguous buffers.
+
+    - **Internal fragmentation** in pre-paging engines came from pre-allocating a contiguous buffer sized to `max_seq_len` for each request. A request that generates 50 tokens but reserved 2048 slots wasted 97% of its reservation for its entire lifetime. Paging allocates blocks *lazily, one at a time* as decode crosses block boundaries (`append_slot`), so a sequence only holds blocks for tokens it has actually produced. Reservation-dominated waste disappears.
+    - **External fragmentation** came from contiguous buffers of differing sizes leaving unusable gaps, like a poorly managed heap. Because all paged blocks are the same fixed size, any free block fits any request, so there are no unusable gaps at all. Allocation is `O(1)` off a free list.
+
+    The **one remaining source** of internal waste is the **last, partially-filled block** of each sequence. Only that block can be under-utilized, by at most `block_size - 1` token-slots. With `block_size = 16` the worst case is **15 token-slots per sequence**, independent of `max_seq_len` — versus the thousands of wasted slots in the old design.
+
+**2.** *(Quantitative — block budget.)* You serve a model with $L = 40$ layers, $H_{kv} = 8$ KV heads (GQA), head dimension $d_h = 128$, in bf16 ($b = 2$ bytes), with `block_size = 16`. After loading weights and reserving activations, the profiling pass leaves **48 GB** for the KV pool. Compute (a) the bytes per token of KV, (b) the bytes per block, (c) the total number of physical blocks, and (d) the total token-slots. Use $1\text{ GB} = 1024^3$ bytes.
+
+??? note "Solution"
+    (a) **Bytes per token** (K and V, all layers):
+    $$
+    2 \times L \times H_{kv} \times d_h \times b = 2 \times 40 \times 8 \times 128 \times 2 = 163{,}840 \text{ bytes} = 160 \text{ KB/token}.
+    $$
+
+    (b) **Bytes per block** = bytes/token $\times$ `block_size`:
+    $$
+    163{,}840 \times 16 = 2{,}621{,}440 \text{ bytes} = 2.5 \text{ MB/block}.
+    $$
+
+    (c) **Number of blocks** = KV pool bytes $/$ bytes-per-block. The pool is $48 \times 1024^3 = 51{,}539{,}607{,}552$ bytes:
+    $$
+    \left\lfloor \frac{51{,}539{,}607{,}552}{2{,}621{,}440} \right\rfloor = \lfloor 19{,}660.8 \rfloor = 19{,}660 \text{ blocks}.
+    $$
+
+    (d) **Token-slots** = blocks $\times$ `block_size`:
+    $$
+    19{,}660 \times 16 = 314{,}560 \text{ token-slots}.
+    $$
+
+    This is the hard ceiling on how many KV tokens can exist across all running requests at once. (Sanity check via bytes/token: $51{,}539{,}607{,}552 / 163{,}840 \approx 314{,}572$ tokens; the two differ only by the block-rounding loss of one partial block, i.e. 12 slots.)
+
+**3.** *(Quantitative — concurrency and preemption.)* Continuing from Exercise 2 (314,560 token-slots), suppose the average request holds 4,000 tokens of context (prompt + generated) in steady state.
+
+  (a) How many concurrent requests fit?
+  (b) A pre-paging engine reserves `max_seq_len = 16384` per request. How many fit for it, and what is the concurrency ratio?
+  (c) You set `max_num_seqs = 120`. Argue whether this risks a preemption storm, and what metric you would watch.
+
+??? note "Solution"
+    (a) $314{,}560 / 4{,}000 \approx 78$ concurrent requests (78 requests $\times$ 4,000 = 312,000 token-slots, just under the ceiling).
+
+    (b) The pre-paging engine reserves 16,384 slots per request regardless of actual length: $314{,}560 / 16{,}384 \approx 19$ requests. Concurrency ratio $\approx 78 / 19 \approx 4.1\times$ — paging fits roughly $4\times$ more requests purely by eliminating the reservation waste.
+
+    (c) At `max_num_seqs = 120`, steady-state demand would be $120 \times 4{,}000 = 480{,}000$ token-slots, but the pool holds only 314,560. That is a **1.5$\times$ oversubscription**, so the scheduler cannot keep all 120 sequences resident: it will admit requests, partly decode them, then run out of blocks (`can_append` fails), preempt victims, recompute or swap them, and thrash. Throughput collapses and p99 latency explodes. The safe ceiling here is about 78 sequences at this context length; `max_num_seqs` should be set at or below that (or `max_model_len` lowered). **Watch the `num_preemptions` counter** — if it is nonzero in steady state you are oversubscribed. KV-cache utilization pinned near 100% with a growing waiting queue is the corroborating signal.
+
+**4.** *(Implementation — fix a subtle allocator bug.)* A teammate writes the per-step slot allocator below, intending to grow a sequence's block table by one block whenever decode needs it. It over-allocates. Identify the bug, state the consequence in concrete numbers for `block_size = 16`, and give a corrected `append_slot` consistent with the chapter's `BlockManager`.
+
+```python
+def append_slot(self, block_table, cur_len):
+    # `cur_len` = number of tokens already stored; new token lands at index cur_len.
+    blk = self.free_blocks.pop()
+    self.ref_count[blk] = 1
+    block_table.append(blk)
+    return blk
+```
+
+??? note "Solution"
+    **The bug:** the function pops a fresh block on *every* decode step, unconditionally. But a new physical block is only needed when the token about to be written starts a fresh block — i.e. when the previous tokens exactly filled the last block, `cur_len % block_size == 0`. On all other steps the last block still has a free slot and no allocation should happen.
+
+    **Consequence:** with `block_size = 16`, a correct allocator pops one block every 16 decode steps; this buggy one pops one *per step* — a **16$\times$ over-allocation** of KV blocks. The free list drains 16$\times$ too fast, so the pool is exhausted almost immediately, triggering spurious preemptions/OOM and collapsing concurrency. (In general the over-allocation factor is `block_size`.)
+
+    **Fix** (guard on the block boundary, returning `None` when the last block still has room, mirroring the chapter's `BlockManager.append_slot`):
+
+    ```python
+    def append_slot(self, block_table, cur_len):
+        """Grow the block table by one block ONLY when the incoming token
+        starts a fresh block; otherwise the last block still has a slot."""
+        if cur_len % self.block_size != 0:
+            return None                          # room in the last block
+        blk = self.free_blocks.pop()             # boundary: need a new block
+        self.ref_count[blk] = 1
+        block_table.append(blk)
+        return blk
+    ```
+
+    Note the matching admission guard `can_append` must also only require a free block on a boundary step (`len(free_blocks) >= (1 if cur_len % block_size == 0 else 0)`), so the scheduler does not needlessly preempt on non-boundary steps.
+
+**5.** *(Implementation — prefix-cache hashing.)* Using the chapter's rolling `block_hash` / `hash_prompt_blocks`, implement `prefix_cache_lookup(prompt_ids, block_size, cache, lora_id=None)` that returns `(num_reused_blocks, first_miss_token_index)`: it walks the prompt's full blocks in order, counts how many *leading* blocks are already present in `cache` (a dict `block_hash -> physical_block_id`), and stops at the first miss. Then explain, using the numbers in the chapter, why a 4000-token cached system prompt plus 50 new tokens prefills only ~50 tokens.
+
+??? note "Solution"
+    The lookup must stop at the **first miss** — prefix reuse is contiguous from the front, because each block's hash folds in the hash of all preceding blocks, so a miss at block $i$ guarantees every later block hashes differently too.
+
+    ```python
+    def block_hash(prev_hash, token_ids_in_block, extra=None):
+        return hash((prev_hash, tuple(token_ids_in_block), extra))
+
+    def prefix_cache_lookup(prompt_ids, block_size, cache, lora_id=None):
+        """Return (num_reused_blocks, first_miss_token_index).
+        Only FULL blocks are hashable/cacheable; a trailing partial block
+        is never a cache hit."""
+        num_reused, h = 0, None
+        n_full = len(prompt_ids) // block_size
+        for i in range(n_full):
+            block = prompt_ids[i * block_size:(i + 1) * block_size]
+            h = block_hash(h, block, extra=lora_id)   # rolling: folds in prefix
+            if h in cache:
+                num_reused += 1                        # leading hit: reuse block
+            else:
+                break                                  # first miss: stop matching
+        return num_reused, num_reused * block_size
+    ```
+
+    On a hit the caller points the new request's block table at `cache[h]` and bumps that block's refcount (no compute, no new memory); from `first_miss_token_index` onward it allocates fresh blocks and prefills only the uncached tokens.
+
+    **Why ~50 tokens of prefill:** a 4000-token system prompt occupies $4000 / 16 = 250$ full blocks. If an identical prompt (same tokens, same `lora_id`) was computed by an earlier request, all 250 blocks hash identically and are found in the cache, so `first_miss_token_index = 4000`. The only tokens left to prefill are the 50 new ones. That is ~50 tokens computed instead of 4050 — roughly an $80\times$ reduction in prefill work and a large drop in time-to-first-token. (Correctness caveat from the chapter: the hash folds in `lora_id` and a tenant `cache_salt`; a different adapter or tenant yields different hashes and correctly *misses*, so one request's KV can never be served to another.)
+
+**6.** *(Quantitative — speculative decoding.)* A drafter proposes $k = 4$ tokens per step with per-token acceptance rate $\alpha = 0.8$. The chapter gives the expected number of tokens emitted per target forward pass as $\frac{1 - \alpha^{k+1}}{1 - \alpha}$.
+
+  (a) Compute the expected tokens per target step, and the speedup over plain decoding (1 token/step) *ignoring* draft cost.
+  (b) The drafter costs 20% of a target forward pass per step. If a spec step costs $1 + 0.20 = 1.2$ target-passes of time, what is the *net* speedup? 
+  (c) Give one qualitative reason a low-$\alpha$ (e.g. creative, high-entropy) workload can make speculation a *net loss*.
+
+??? note "Solution"
+    (a) Expected tokens per target step:
+    $$
+    \frac{1 - \alpha^{k+1}}{1 - \alpha} = \frac{1 - 0.8^{5}}{1 - 0.8} = \frac{1 - 0.32768}{0.2} = \frac{0.67232}{0.2} = 3.36 \text{ tokens}.
+    $$
+    Ignoring draft cost, one target forward pass now yields 3.36 tokens instead of 1, a **3.36$\times$** speedup.
+
+    (b) Each spec step costs $1.2$ target-passes of time but yields $3.36$ tokens, so tokens per unit target-pass time $= 3.36 / 1.2 = 2.8$. Net speedup $\approx$ **2.8$\times$** over plain decoding.
+
+    (c) With low $\alpha$, most drafted tokens are rejected: the sum $\frac{1-\alpha^{k+1}}{1-\alpha}$ collapses toward 1 (e.g. at $\alpha = 0.2$, $k = 4$ it is $\approx 1.25$ tokens/step), so you gain almost nothing per target pass — yet you still pay the drafter's cost every step (the $+0.20$). When the acceptance-driven gain falls below the draft overhead, tokens per unit time drop *below* 1, i.e. spec decoding is slower than plain decoding. High-entropy/creative text is exactly where the small drafter disagrees most with the target, so $\alpha$ is low and speculation can be a net loss; predictable text (code, structured output) has high $\alpha$ and benefits most.

@@ -484,3 +484,180 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
 - Agrawal et al., *SARATHI* / *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve* — chunked prefill and stall-free batching.
 - Anyscale, *How Continuous Batching Enables 23× Throughput in LLM Inference* — a widely cited engineering write-up of the mechanism and its measured impact.
 - The vLLM and Hugging Face Text Generation Inference (TGI) repositories — read the `Scheduler` / batching code directly; it mirrors the toy in this chapter.
+
+## Exercises
+
+**1.** A colleague argues that switching from static batching to *dynamic* batching (wait a 20 ms window, gather arrivals, dispatch as one batch) already captures the benefit of continuous batching, so there is no need to rewrite the server loop. Which of the three "leaks" from the chapter does dynamic batching fix, which does it leave in place, and *why* is the distinction fundamental to autoregressive generation rather than an implementation detail?
+
+??? note "Solution"
+    Dynamic batching changes only *when a batch forms*, not the fact that batch membership is **frozen for the whole generation**. Map it onto the three leaks:
+
+    - **Leak 3 (prefill padding waste):** unchanged in the naive version — you still pad prompts to the longest in the batch. Dynamic batching does nothing about this by itself.
+    - **Leak 2 (head-of-line blocking at admission):** partially mitigated but not removed. By waiting a short window you bound *queueing* delay to the window, but once a batch is dispatched, a request arriving one millisecond later still waits for the *entire* batch to drain before it is admitted. TTFT is still bounded below by the remaining decode length of the running batch.
+    - **Leak 1 (tail idling):** completely unchanged. Short requests finish early but their slots stay locked until the longest request in the batch completes.
+
+    The distinction is fundamental because generation is **iterative and variable-length**: each request runs a *different number of forward passes*. Request-level batching (static or dynamic) makes a scheduling decision **once per request**; the running set is fixed at dispatch. Continuous batching makes the decision **once per iteration**, re-deriving the running set every forward pass so it can retire finished requests and backfill new ones. For a fixed-shape model (one forward pass per request) there is nothing to re-derive, so dynamic batching is optimal there — which is exactly why it is the standard tool for classifiers and embedding models and the wrong tool for LLM decoding.
+
+**2.** Use the chapter's decode-step model $\tau_{\text{dec}}(B) = \tau_0 + \beta B$ with $\tau_0 = 20$ ms and $\beta = 0.2$ ms per request. (a) Compute token throughput (tokens/sec) at $B = 8$, $B = 32$, and $B = 64$. (b) What is the compute-roofline throughput $1/\beta$, and what fraction of it does $B = 64$ achieve? (c) Solve for the batch size $B$ needed to reach 50% of the roofline. If this device's KV-cache budget caps the running batch at $B_{\max} = 64$, what does your answer tell you?
+
+??? note "Solution"
+    Throughput is $\text{tokens/sec} = B / \tau_{\text{dec}}(B)$ with $\tau_{\text{dec}}$ in ms, so tokens/sec $= 1000 \cdot B / (20 + 0.2B)$.
+
+    **(a)**
+
+    $$
+    B=8:\ \frac{8}{20 + 1.6} = \frac{8}{21.6}\ \text{tok/ms} = 0.370\ \text{tok/ms} \approx 370\ \text{tok/s}
+    $$
+    $$
+    B=32:\ \frac{32}{20 + 6.4} = \frac{32}{26.4} = 1.212\ \text{tok/ms} \approx 1212\ \text{tok/s}
+    $$
+    $$
+    B=64:\ \frac{64}{20 + 12.8} = \frac{64}{32.8} = 1.951\ \text{tok/ms} \approx 1951\ \text{tok/s}
+    $$
+
+    **(b)** The roofline is $1/\beta = 1/0.2 = 5$ tok/ms $= 5000$ tok/s. At $B=64$ you achieve $1951/5000 \approx 39\%$ of the roofline.
+
+    **(c)** Set $B/(20 + 0.2B) = 2.5$ tok/ms (which is $2500$ tok/s, half of $5000$):
+
+    $$
+    B = 2.5\,(20 + 0.2B) = 50 + 0.5B \ \Rightarrow\ 0.5B = 50 \ \Rightarrow\ B = 100.
+    $$
+
+    You would need $B = 100$ concurrent requests to hit 50% of the roofline, but the KV-cache budget caps you at $B_{\max} = 64$. So on this device you **cannot** reach half the roofline: memory, not compute, is the binding constraint. This is the chapter's central point — the scheduler's job is to keep $B$ pinned as close to the memory-limited maximum as possible, not to chase the compute roofline, which the KV budget puts out of reach.
+
+**3.** The toy uses `BLOCK_SIZE = 16` and `TOTAL_BLOCKS = 400`. (a) A request has `prompt_len = 600`. How many KV blocks does its prompt occupy, and how many such requests can run concurrently on KV memory alone? (b) A request with `prompt_len = 40` has just been prefilled. After how many generated tokens does it need to allocate its *next* block? (c) Suppose 64 requests are all at `cur_len = 100`. How many blocks does that need, and what does comparing it to `TOTAL_BLOCKS` and `MAX_NUM_SEQS = 64` tell you about which limit binds?
+
+??? note "Solution"
+    `blocks_needed` is ceil division: $\lceil \text{cur\_len} / 16 \rceil$.
+
+    **(a)** $\lceil 600/16 \rceil = \lceil 37.5 \rceil = 38$ blocks per prompt. Concurrent requests on KV alone: $\lfloor 400 / 38 \rfloor = 10$ (using $380$ blocks, $20$ free — not enough for an 11th).
+
+    **(b)** With `prompt_len = 40`, initial blocks $= \lceil 40/16 \rceil = 3$, which hold up to $48$ tokens. The request grows by one token per decode step. It stays within 3 blocks while `cur_len` $\le 48$, i.e. through `generated = 8` (len $48$). The **9th** generated token makes `cur_len = 49`, so $\lceil 49/16 \rceil = 4$ blocks — a new block is allocated when `generated` goes from 8 to 9.
+
+    **(c)** Each request at `cur_len = 100` needs $\lceil 100/16 \rceil = 7$ blocks. For 64 requests: $64 \times 7 = 448$ blocks $> 400$. So you cannot actually hold 64 such requests — $\lfloor 400/7 \rfloor = 57$ is the real ceiling. Even though `MAX_NUM_SEQS = 64` would permit 64 concurrent sequences, **KV-cache memory binds first** (57 < 64). This is exactly why the chapter says "the KV cache, not raw FLOPs, is almost always the limiting resource," and why the scheduler must track free blocks and preempt rather than trusting the sequence-count cap alone.
+
+**4.** Read the preempt-then-retry loop in `schedule()` step (1). `_preempt_one` is called with `exclude=req`. Explain precisely what goes wrong if you drop the `exclude` argument (letting a request be its own preemption victim), and trace the resulting inconsistency through to a concrete symptom in the metrics.
+
+??? note "Solution"
+    In step (1) the code walks a snapshot of `self.running` and, for each `req`, tries to `_alloc` one more block; if memory is full it calls `_preempt_one` to evict a victim and retries. At that moment `req` is *still a member of `self.running`*, so if `exclude` is not passed, `_preempt_one`'s candidate list includes `req` itself.
+
+    Without the exclusion, `req` can be chosen as its own victim. `_preempt_one` would then:
+
+    1. `self.running.remove(req)` and `self._free(req)` — freeing its blocks;
+    2. set `req.status = Status.WAITING`, `req.prefilled = False`;
+    3. `self.waiting.appendleft(req)`.
+
+    Control returns to the `while not self._alloc(req, want)` retry. Because blocks were just freed (its own blocks!), the alloc now **succeeds**. The `else` branch of the loop runs `req.status = Status.RUNNING` and `survivors.append(req)`.
+
+    Now the same `Request` object is in **two places at once**: it sits in `self.waiting` (pushed there by the self-preemption) *and* in `survivors`, which becomes `self.running` after the loop. Next iteration the scheduler sees it in the waiting queue and admits it again — the request is **double-counted**: it can occupy two logical slots, get two decode tokens per iteration in `step()` (inflating `req.generated` and the reported `batch` size), and its blocks accounting drifts because it was freed and re-allocated inconsistently. The concrete symptom is an inflated `mean running batch size` / `tokens/iter` in the metrics (and possibly a request that "finishes" faster than its `output_len` should allow, or `free_blocks` bookkeeping going wrong). Passing `exclude=req` forbids self-preemption: a request under pressure must evict *someone else* or stall via the `break`, never split itself across the running and waiting pools.
+
+**5.** The chapter says `MAX_BATCHED_TOKENS` is "exactly the knob that would enforce chunking," and sketches the change: track `prefilled_tokens` per request instead of the `prefilled` boolean so a prompt whose `remaining_prompt > token_budget` runs a *chunk* this iteration and finishes prefilling over several iterations. Implement it. Decode tokens of running requests must be admitted first (so their inter-token latency stays smooth), then prefill chunks backfill the remaining budget.
+
+??? note "Solution"
+    The change has three parts: (i) replace the `prefilled` boolean with an integer `prefilled_tokens` and derive `prefilled` from it; (ii) in step (1), only *fully* prefilled requests emit a decode token, and partially-prefilled running requests are carried over untouched; (iii) in step (2), give budget to partially-prefilled running requests *and* waiting requests, advancing each by a chunk bounded by the remaining token budget.
+
+    First, the `Request` changes:
+
+    ```python
+    @dataclass
+    class Request:
+        # ... rid, arrival, prompt_len, output_len, priority, status ...
+        prefilled_tokens: int = 0     # prompt tokens materialized in KV so far
+        generated: int = 0
+        blocks: int = 0
+        first_token_iter: int | None = None
+        finish_iter: int | None = None
+
+        @property
+        def prefilled(self) -> bool:
+            return self.prefilled_tokens >= self.prompt_len
+
+        @property
+        def cur_len(self) -> int:
+            # only materialized tokens occupy the KV cache
+            return self.prefilled_tokens + self.generated
+
+        def blocks_needed(self, extra_tokens: int = 0) -> int:
+            total = self.cur_len + extra_tokens
+            return (total + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        @property
+        def done(self) -> bool:
+            return self.prefilled and self.generated >= self.output_len
+    ```
+
+    In `_preempt_one`, dropping the victim's KV means it must re-prefill from scratch, so reset the counter instead of the boolean:
+
+    ```python
+        victim.prefilled_tokens = 0     # dropped its KV -> must re-prefill from 0
+    ```
+
+    Now `schedule()`. Step (1) skips the decode-block reservation for requests still prefilling (they carry over unchanged; they will consume budget in step (2)):
+
+    ```python
+    def schedule(self) -> list[Request]:
+        token_budget = MAX_BATCHED_TOKENS
+
+        # (1) DECODES FIRST: fully-prefilled running requests grow by one token.
+        survivors = []
+        for req in list(self.running):
+            if req.status is not Status.RUNNING:
+                continue
+            if not req.prefilled:
+                survivors.append(req)      # still prefilling -> handled in step (2)
+                continue
+            want = req.blocks_needed(extra_tokens=1)
+            while not self._alloc(req, want):
+                if not self._preempt_one(exclude=req):
+                    break
+            else:
+                req.status = Status.RUNNING
+                survivors.append(req)
+                token_budget -= 1
+                continue
+            self._free(req)
+            req.status = Status.WAITING
+            req.prefilled_tokens = 0
+            self.waiting.appendleft(req)
+        self.running = [r for r in survivors if r.status is Status.RUNNING]
+
+        # (2) PREFILL CHUNKS backfill the remaining budget. Advance partially-
+        #     prefilled running requests first, then admit new WAITING ones.
+        partial = [r for r in self.running if not r.prefilled]
+        for req in partial + self._waiting_order():
+            is_new = req.status is Status.WAITING
+            if is_new and len(self.running) >= MAX_NUM_SEQS:
+                break
+            remaining_prompt = req.prompt_len - req.prefilled_tokens
+            chunk = min(remaining_prompt, token_budget)
+            if chunk <= 0:
+                break                      # no budget (or nothing left to prefill)
+            # blocks to hold prefilled_tokens + chunk (generated == 0 during prefill)
+            want = req.blocks_needed(extra_tokens=chunk)
+            if not self._alloc(req, want):
+                continue                   # not enough KV to grow this one; try next
+            if is_new:
+                req.status = Status.RUNNING
+                self.waiting.remove(req)
+                self.running.append(req)
+            req.prefilled_tokens += chunk
+            token_budget -= chunk
+
+        return self.running
+    ```
+
+    `step()` needs one guard: only emit a token for requests that have finished prefilling this iteration (a request still mid-prefill produces no output token yet):
+
+    ```python
+    def step(self):
+        batch = self.schedule()
+        for req in batch:
+            if not req.prefilled:
+                continue                   # still prefilling; no token this iter
+            if req.first_token_iter is None:
+                req.first_token_iter = self.iter
+            req.generated += 1
+        # ... retirement + logging unchanged ...
+    ```
+
+    Key properties this gives you, straight from the chapter: (1) a 4000-token prompt no longer blows the budget in one iteration — with `MAX_BATCHED_TOKENS = 512` it is spread over $\lceil 4000/512 \rceil = 8$ iterations; (2) because step (1) subtracts decode tokens from `token_budget` *before* step (2) hands out prefill chunks, ongoing decodes always get their slice first and their inter-token latency stays smooth, with prefill chunks merely backfilling whatever budget is left. That "decodes first, then prefill chunks" ordering is precisely what keeps ITL smooth while the big prefill still completes in a few steps.

@@ -583,3 +583,134 @@ A second, system-level caveat the formula hides: **batch size.** All these speed
 - Fu et al., *Break the Sequential Dependency of LLM Inference Using Lookahead Decoding* (2024) — Jacobi-iteration drafting without a draft model.
 - Stern, Shazeer & Uszkoreit, *Blockwise Parallel Decoding for Deep Autoregressive Models* (2018) — an early precursor to multi-token prediction and verification.
 - The **vLLM** and **TensorRT-LLM** repositories — production implementations of draft-model, Medusa, and EAGLE speculation; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html).
+
+## Exercises
+
+**1.** (Conceptual) The chapter claims verifying $\gamma+1$ candidate tokens in one target forward pass costs "about the same" wall-clock time as generating a single token. Explain *why* this is true during decode, and identify the one operating regime in which it stops being true — and therefore where speculative decoding stops helping.
+
+??? note "Solution"
+    During decode, the target model's forward pass is **memory-bandwidth bound**: the dominant cost is streaming all of the model's weights from HBM to the compute units, not the arithmetic. To score one position you must load every weight once; to score $\gamma+1$ positions *in the same pass* you load those same weights exactly once and do $\gamma+1$ times as much (still tiny) arithmetic on them. Because the weight movement — not the FLOPs — sets the wall-clock time, the two cost roughly the same. This is precisely the property that lets a cheap drafter's guesses be verified "for free."
+
+    The regime where it breaks is **large batch size**. Once many requests are decoded together, weight loading is amortized across the whole batch and the GPU crosses over to being **compute-bound** (see the roofline discussion). Now the extra $\gamma$ verification tokens per request compete for real FLOPs, and the "free" verification is no longer free — the speedup collapses and speculation can even slow generation down. This is why production engines gate speculation on batch size and disable it under heavy load.
+
+**2.** (Quantitative) Take a 4-token vocabulary $\{A,B,C,D\}$ with target and draft distributions
+
+$$p = (0.3,\ 0.3,\ 0.2,\ 0.2), \qquad q = (0.5,\ 0.3,\ 0.1,\ 0.1).$$
+
+(a) The drafter proposes token $A$. With what probability is it accepted? (b) If a rejection occurs, write the residual distribution $p_{\text{res}}$ the replacement is sampled from. (c) Compute the expected per-position acceptance probability $\alpha$ and the total-variation distance $\mathrm{TV}(p,q)$, and verify $\alpha = 1 - \mathrm{TV}(p,q)$.
+
+??? note "Solution"
+    (a) The accept probability for a drafted token $x$ is $\min\!\big(1, p(x)/q(x)\big)$. For $x=A$:
+    $$\min\!\left(1, \frac{0.3}{0.5}\right) = \min(1, 0.6) = 0.6.$$
+
+    (b) The residual is $p_{\text{res}}(x) \propto (p(x)-q(x))_+$. Positive parts:
+    $$(p-q)_+ = (\,0,\ 0,\ 0.1,\ 0.1\,), \qquad \textstyle\sum (p-q)_+ = 0.2.$$
+    Normalizing gives
+    $$p_{\text{res}} = (0,\ 0,\ 0.5,\ 0.5).$$
+    So on rejection the replacement is $C$ or $D$, each with probability $1/2$ — exactly the tokens the drafter under-covered. (Sanity check: the overall reject probability is $\sum_x (q-p)_+ = (0.5-0.3) = 0.2$, matching the residual normalizer $\beta$, as the proof requires.)
+
+    (c) Acceptance:
+    $$\alpha = \sum_x \min(p(x),q(x)) = 0.3 + 0.3 + 0.1 + 0.1 = 0.8.$$
+    Total variation:
+    $$\mathrm{TV}(p,q) = \tfrac12 \sum_x |p(x)-q(x)| = \tfrac12(0.2 + 0 + 0.1 + 0.1) = \tfrac12(0.4) = 0.2.$$
+    Indeed $\alpha = 0.8 = 1 - 0.2 = 1 - \mathrm{TV}(p,q)$. The drafter accepts 80% of the time here precisely because it is close to the target in TV distance.
+
+**3.** (Quantitative) A 70B target is paired with a drafter whose per-token cost is $c = 0.05$ of one target pass, achieving acceptance $\alpha = 0.7$. (a) Using the chapter's formulas, compute the expected tokens emitted per step and the speedup at draft length $\gamma = 4$. (b) Recompute the speedup at $\gamma = 6$ and at $\gamma = 8$. What do the three numbers demonstrate about the choice of $\gamma$?
+
+??? note "Solution"
+    Use $\mathbb{E}[\text{tokens/step}] = \dfrac{1-\alpha^{\gamma+1}}{1-\alpha}$ and $\text{speedup} = \dfrac{1-\alpha^{\gamma+1}}{(1-\alpha)(1+\gamma c)}$, with $\alpha=0.7$ (so $1-\alpha = 0.3$) and $c=0.05$.
+
+    (a) $\gamma=4$: $\alpha^{5} = 0.7^5 = 0.16807$.
+    $$\mathbb{E}[\text{tokens}] = \frac{1-0.16807}{0.3} = \frac{0.83193}{0.3} = 2.773.$$
+    Cost per step $= 1 + 4(0.05) = 1.2$. Speedup $= 2.773 / 1.2 = \mathbf{2.31\times}$.
+
+    (b) $\gamma=6$: $0.7^7 = 0.0823543$, numerator $(1-0.0823543)/0.3 = 3.059$; cost $= 1 + 6(0.05) = 1.3$; speedup $= 3.059/1.3 = \mathbf{2.35\times}$.
+
+    $\gamma=8$: $0.7^9 = 0.040354$, numerator $(1-0.040354)/0.3 = 3.199$; cost $= 1 + 8(0.05) = 1.4$; speedup $= 3.199/1.4 = \mathbf{2.28\times}$.
+
+    The three points ($2.31 \to 2.35 \to 2.28$) show the speedup **rises then falls** as $\gamma$ grows: there is an interior **optimal $\gamma^\*$** (near $5$–$6$ here). Beyond it, the geometric tail $\alpha^{\gamma+1}$ is already tiny so the numerator barely grows, while every extra draft token adds a guaranteed $c$ to the denominator — you are paying the drafter to propose tokens that will almost certainly be rejected. The optimum shifts with $\alpha$ and $c$ and is workload-dependent.
+
+**4.** (Implementation) Prompt-lookup / n-gram drafting proposes tokens by copying from earlier in the sequence instead of running a neural drafter — near-free, and excellent for copy-heavy workloads. Write a function `ngram_draft(prefix_ids, gamma, vocab_size)` that returns a list of proposed token ids *and* a per-position draft distribution `q` (one-hot on each proposed token) so the proposals plug directly into the existing accept/reject loop of `speculative_step`. Use the last token as the lookup key: find its most recent earlier occurrence and copy the $\gamma$ tokens that followed it. If no match exists, fall back to proposing the last token repeated.
+
+??? note "Solution"
+    The drafter is a deterministic proposal, so each position's $q$ is a one-hot vector on the proposed token. Feeding a one-hot $q$ into the exact rule makes the accept probability $\min(1, p(x)/1) = p(x)$ and the residual $(p-q)_+$ zero out the proposed token — a perfectly valid, lossless drafter that costs no forward passes at all.
+
+    ```python
+    import torch
+
+    def ngram_draft(prefix_ids, gamma, vocab_size):
+        """Prompt-lookup drafter.
+          prefix_ids: LongTensor [1, T]
+          Returns (draft_tokens, draft_probs) matching speculative_step's needs:
+            draft_tokens: list of gamma proposed token ids
+            draft_probs:  list of gamma [1, V] one-hot distributions (the q's)
+        """
+        seq = prefix_ids[0].tolist()
+        T = len(seq)
+        key = seq[-1]
+        # Most recent EARLIER occurrence of the key token (scan right to left).
+        match = -1
+        for j in range(T - 2, -1, -1):
+            if seq[j] == key:
+                match = j
+                break
+        proposed = []
+        for k in range(1, gamma + 1):
+            if match != -1 and match + k < T:
+                proposed.append(seq[match + k])   # copy the continuation
+            else:
+                proposed.append(key)              # fallback: repeat last token
+        # Build one-hot q for each proposed token.
+        draft_tokens, draft_probs = [], []
+        for tok_id in proposed:
+            q = torch.zeros(1, vocab_size, device=prefix_ids.device)
+            q[0, tok_id] = 1.0
+            draft_tokens.append(tok_id)
+            draft_probs.append(q)
+        return draft_tokens, draft_probs
+    ```
+
+    To use it inside a speculative step, replace the neural draft loop (step 1 of `speculative_step`) with a call to `ngram_draft`, append `draft_tokens` to `draft_ids`, and keep steps 2 and 3 unchanged — the target still verifies all $\gamma$ positions in one parallel pass, and the accept/reject loop reads each one-hot `q_i` exactly as before. On copied spans (e.g. the model quoting its context) the target's argmax usually equals the copied token, so acceptance approaches 1 at essentially zero drafting cost.
+
+**5.** (Implementation) Tree drafting verifies many candidate continuations in one pass; after the masked forward pass you must extract the **longest accepted root-to-leaf path**. For the greedy (temperature-0) case, write `verify_tree_greedy(parents, tokens, target_logits)` that walks the tree from the root and accepts a child node only if its drafted token equals the target's argmax prediction at the parent node. Return the accepted path (list of node indices) and the bonus token. Assume `target_logits[i]` is the target's distribution predicting the token that follows node $i$ (as produced by the single tree-attention forward pass), and `tokens[i]` is the drafted token sitting at node $i$ (with `tokens[0]` the committed root).
+
+??? note "Solution"
+    Greedy acceptance is the deterministic special case of the accept/reject rule: accept a drafted token iff it matches the target's argmax at that position ("accept the longest matching prefix"). In a tree, the target's prediction at a parent node determines which single child — if any — is accepted, so we walk down one edge at a time. Since an argmax is a single token, at most one child of a node can match, so the accepted path is unambiguous.
+
+    ```python
+    import torch
+
+    def verify_tree_greedy(parents, tokens, target_logits):
+        """
+        parents:       list, parents[i] = parent index of node i (root: -1),
+                       parent-before-child order (as in build_tree_attn).
+        tokens:        list, tokens[i] = drafted token id at node i (tokens[0]=root).
+        target_logits: [n, V] tensor; target_logits[i] predicts the token AFTER node i.
+        Returns (path, bonus): node indices root->leaf that were accepted,
+                and the bonus token id sampled (argmax'd) at the deepest accepted node.
+        """
+        n = len(parents)
+        children = {i: [] for i in range(n)}
+        for i, par in enumerate(parents):
+            if par != -1:
+                children[par].append(i)
+
+        path = [0]           # always start at the committed root
+        node = 0
+        while True:
+            pred = int(target_logits[node].argmax().item())  # target's next-token argmax
+            nxt = None
+            for c in children[node]:
+                if tokens[c] == pred:      # this child matches -> accept it
+                    nxt = c
+                    break
+            if nxt is None:                # no child matches -> stop the path
+                break
+            path.append(nxt)
+            node = nxt
+
+        bonus = int(target_logits[node].argmax().item())     # free token past the leaf
+        return path, bonus
+    ```
+
+    Walking the tree: at the root we accept whichever child equals `target_logits[0].argmax()`; from that child we repeat with its own children; the loop ends the first time no child matches the target's argmax (a rejection), or when we reach a leaf. The `bonus` is the argmax at the deepest accepted node — genuinely free, since that logit was already computed in the same forward pass. Because we only ever accept tokens equal to the target's own argmax, the emitted sequence is byte-identical to plain greedy decoding: tree drafting changes speed, never output. (For temperature > 0 you would swap the `== argmax` test for the stochastic $\min(1, p/q)$ accept and residual resampling at the rejection point.)

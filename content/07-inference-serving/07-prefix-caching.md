@@ -630,3 +630,118 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
 - vLLM blog: "Automatic Prefix Caching in vLLM." Official vLLM documentation and blog posts at the [vLLM GitHub repository](https://github.com/vllm-project/vllm) — release notes for v0.4 describe APC implementation details.
 - Dao, T. et al. "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness." *NeurIPS 2022*. — The kernel that makes prefix-aware attention fast enough to matter; see also [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html).
 - Gim, I. et al. "Prompt Cache: Modular Attention Reuse for Low-Latency Inference." *MLSys 2024*. — Formalises the idea of caching attention states for reusable prompt modules.
+
+---
+
+## Exercises
+
+**1.** *(Conceptual.)* The chapter states that KV tensors are "a pure function of the token IDs and model weights." Use that fact to answer two questions. (a) A well-meaning engineer prepends `f"Current time: {timestamp}\n"` to the front of a shared system prompt so the model "knows the current time." The `prefix_cache_hit_rate` metric collapses to near zero. Explain precisely why, referring to the chained block-hash construction of Section 7.7.2. (b) The engineer moves the timestamp to *after* the system prompt instead. Explain why this restores the hit rate for the system-prompt blocks, and state exactly which blocks now hit and which still miss.
+
+??? note "Solution"
+    **(a)** The block hash is chained: $h_0 = \text{Hash}(\text{token\_ids}[0{:}B])$ and $h_i = \text{Hash}(h_{i-1} \,\|\, \text{token\_ids}[i\cdot B:(i+1)\cdot B])$. The very first block now contains the timestamp tokens, which change on every request (a new minute, second, or millisecond produces different token IDs). Therefore $h_0$ is different for every request. Because every subsequent hash depends on $h_{i-1}$, a different $h_0$ poisons the entire chain: $h_1, h_2, \dots$ all differ too, even though the system-prompt tokens after the timestamp are byte-for-byte identical. Every block is a cache miss, so the hit rate collapses to zero.
+
+    **(b)** With the timestamp moved to the end, the leading blocks contain only the (stable) system-prompt token IDs. Their chained hashes $h_0, h_1, \dots$ are identical across requests, so all of the *complete* system-prompt blocks hit the cache. The blocks that still miss are: (i) any block that mixes the tail of the system prompt with the start of the varying timestamp/user content, and (ii) every block at or after the timestamp, since those token IDs vary per request. This is exactly the chapter's guidance in Section 7.7.8: put the stable content first and the dynamic content last.
+
+**2.** *(Quantitative.)* A serving engine uses `block_size = 16`. A system prompt tokenizes to **1,020 tokens**. (a) How many *complete*, cacheable blocks does the system prompt occupy, and how many tokens are stranded in an uncacheable partial block? (b) Using the chapter's `pad_to_block_boundary` helper, to what length is the prompt padded, how many pad tokens are added, and how many cacheable blocks result? (c) Briefly: what is the downside of padding, and why is it usually worth it here?
+
+??? note "Solution"
+    **(a)** Complete blocks $= \lfloor 1020 / 16 \rfloor = 63$ blocks, covering $63 \times 16 = 1008$ tokens. Remainder $= 1020 \bmod 16 = 12$ tokens. Those 12 tokens sit in a partial 64th block that is *not yet full*, so its hash is not stable and it cannot be cached. **12 tokens are stranded.**
+
+    **(b)** `remainder = 1020 % 16 = 12`, which is nonzero, so `padding = 16 - 12 = 4`. The prompt is padded to $1020 + 4 = 1024$ tokens. Now $1024 / 16 = 64$ complete blocks, **all cacheable** — the previously stranded 12 tokens plus 4 pad tokens now form a full, hashable 64th block.
+
+    **(c)** The downside is that the 4 pad tokens add a small amount of prefill compute and KV memory the first time the prefix is materialized (and slightly change the attention over the prompt if the pad token is not masked). But it is a one-time cost paid once and then reused on every hit; in exchange the trailing 12 real tokens of the system prompt become cacheable on every subsequent request, so for a high-traffic static prompt the padding pays for itself almost immediately.
+
+**3.** *(Quantitative.)* A model has **80 layers**, uses GQA with **8 KV heads**, head dimension **128**, and stores the KV cache in **bfloat16** (2 bytes). A shared prefix is **512 tokens** long. (a) Compute the bytes of KV per token per layer, then the total KV footprint of the cached prefix. (b) The endpoint receives **300 requests/second**, all sharing this prefix. Without prefix caching, how many tokens of prefix prefill are recomputed per second, and how many *bytes* of redundant KV are produced per second? (c) With caching, how many copies of the prefix KV are stored in GPU memory, regardless of concurrency?
+
+??? note "Solution"
+    **(a)** Following Section 7.7.7's formula, KV per token per layer stores both K and V:
+    $$
+    2 \times n_{\text{kv\_heads}} \times d_{\text{head}} \times 2\text{ bytes} = 2 \times 8 \times 128 \times 2 = 4096 \text{ bytes}.
+    $$
+    Total footprint for 512 tokens over 80 layers:
+    $$
+    512 \times 80 \times 4096 = 167{,}772{,}160 \text{ bytes} = 160 \text{ MB}.
+    $$
+
+    **(b)** Redundant prefill tokens per second $= 300 \times 512 = 153{,}600$ tokens/sec. Redundant KV bytes per second $= 300 \times 160\text{ MB} = 48{,}000\text{ MB} \approx 46.9 \text{ GB/sec}$ — all of it identical and wasted.
+
+    **(c)** Exactly **one** copy. The cached KV blocks are read-only and shared across all concurrent requests (Section 7.7.6); a reference count tracks the active readers, but only a single 160 MB physical copy is stored no matter how many requests are in flight.
+
+**4.** *(Quantitative.)* The chapter models uncached prefill attention cost as $\propto (P+S)^2/2$ and cached prefill cost as $\propto S\cdot P + S^2/2$ (the suffix attends to the cached prefix). Take $P = 1500$ (prefix) and $S = 100$ (suffix). (a) Compute the exact attention-op speedup ratio. (b) Compute the chapter's large-$P/S$ approximation $(P+S)/S$ and explain why it overestimates the true ratio here. (c) The chapter says real TTFT gains are typically 5-15x rather than the raw FLOP ratio. Give one reason from the chapter.
+
+??? note "Solution"
+    **(a)** Uncached cost $\propto (P+S)^2/2 = 1600^2/2 = 2{,}560{,}000/2 = 1{,}280{,}000$. Cached cost $\propto S\cdot P + S^2/2 = 1500\times100 + 100^2/2 = 150{,}000 + 5{,}000 = 155{,}000$. Exact ratio:
+    $$
+    \frac{1{,}280{,}000}{155{,}000} \approx 8.26\times.
+    $$
+
+    **(b)** The approximation gives $(P+S)/S = 1600/100 = 16\times$, roughly double the true value. It overestimates because it drops the $S\cdot P$ term in the denominator — but with $S=100$ that term ($150{,}000$) actually dominates the cached cost. The approximation is only tight when $S \ll P$ *and* $S\cdot P$ becomes negligible relative to $(P+S)^2/2$; here $S/P = 1/15$ is not small enough, so the suffix's attention over the long cached prefix is a substantial fraction of the remaining work.
+
+    **(c)** Prefill also involves weight-projection / weight-loading overhead that is incurred regardless of cache state (the chapter notes "weight-loading overhead that is shared regardless of cache state"). That fixed component is not eliminated by caching, so the observed TTFT speedup is smaller than the pure attention-FLOP ratio.
+
+**5.** *(Implementation.)* Section 7.7.4 shows vLLM-style APC using a flat `prefix_cache: dict[hash, block]` with a chained block hash. Implement a standalone function
+
+    longest_cached_prefix(token_ids, block_size, prefix_cache) -> int
+
+that returns the number of *leading tokens* already cached, by segmenting `token_ids` into `block_size` blocks, chaining hashes exactly as `_compute_block_hash` in the chapter does (seed `prev_hash = 0`), and stopping at the **first block miss** (a cache hit after a miss must not count — the prefix must be contiguous from position 0, per Section 7.7.2 step 3). Only complete blocks are eligible; a trailing partial block never counts. Include a short test.
+
+??? note "Solution"
+    The key subtleties: (i) reproduce the chapter's chained hash so lookups match how blocks were inserted; (ii) break on the first miss so the result is a contiguous prefix from position 0; (iii) skip the trailing partial block since only fully-written blocks are cacheable (Section 7.7.4).
+
+    ```python
+    import hashlib
+
+    def _compute_block_hash(prev_hash: int, token_ids: list[int]) -> int:
+        """Chain the previous block hash with current token IDs (as in the chapter)."""
+        data = prev_hash.to_bytes(8, "little") + bytes(token_ids)
+        return int.from_bytes(hashlib.sha256(data).digest()[:8], "little")
+
+    def longest_cached_prefix(
+        token_ids: list[int],
+        block_size: int,
+        prefix_cache: dict[int, int],
+    ) -> int:
+        """
+        Return the number of leading tokens whose (complete) blocks are all
+        present in prefix_cache, walking from position 0 and stopping at the
+        first miss. A trailing partial block is never counted.
+        """
+        num_full_blocks = len(token_ids) // block_size  # ignore partial tail
+        prev_hash = 0
+        cached_tokens = 0
+        for i in range(num_full_blocks):
+            block = token_ids[i * block_size:(i + 1) * block_size]
+            h = _compute_block_hash(prev_hash, block)
+            if h not in prefix_cache:
+                break                      # contiguity: stop at first miss
+            cached_tokens += block_size
+            prev_hash = h                  # advance the chain only on a hit
+        return cached_tokens
+
+    # --- test ---
+    if __name__ == "__main__":
+        B = 4
+        # Warm the cache with a 12-token prefix (3 full blocks).
+        warm = [10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33]
+        cache: dict[int, int] = {}
+        ph = 0
+        for i in range(len(warm) // B):
+            ph = _compute_block_hash(ph, warm[i * B:(i + 1) * B])
+            cache[ph] = i  # value = physical block id (arbitrary here)
+
+        # Request sharing the first 2 blocks (8 tokens), then diverging,
+        # plus a trailing partial block that must not count.
+        req = [10, 11, 12, 13, 20, 21, 22, 23, 99, 98, 97, 96, 5, 5]
+        assert longest_cached_prefix(req, B, cache) == 8
+
+        # A request whose block 0 differs gets zero, even if a later
+        # block would independently hash into the cache (non-contiguous).
+        req2 = [0, 0, 0, 0, 30, 31, 32, 33]
+        assert longest_cached_prefix(req2, B, cache) == 0
+
+        # Exact full-prefix hit.
+        assert longest_cached_prefix(warm, B, cache) == 12
+        print("all tests passed")
+    ```
+
+    Note in the second assertion that block `[30,31,32,33]` was inserted into the cache while warming — but only under the chained hash that assumes blocks `[10..]` and `[20..]` preceded it. In `req2` the chain seed differs, so that block's recomputed hash misses, and even if it hit, the `break` on block 0's miss guarantees the returned prefix stays contiguous from position 0.

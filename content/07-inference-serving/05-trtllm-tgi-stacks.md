@@ -585,3 +585,114 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
 - **MLC-LLM: Universal LLM Deployment** — Chen et al., MLC team, github.com/mlc-ai/mlc-llm. Describes the TVM-based compilation pipeline and cross-platform targets.
 - **LMDeploy repository** — Shanghai AI Laboratory, github.com/InternLM/lmdeploy. TurboMind engine design documentation and AWQ quantization integration.
 - **Aminabadi et al., "DeepSpeed-Inference: Enabling Efficient Inference of Transformer Models at Unprecedented Scale," SC 2022** — covers multi-GPU inference kernels and the design philosophy behind high-throughput serving at scale.
+
+---
+
+## Exercises
+
+**1.** A team builds a TensorRT-LLM engine for Llama-2-7B on an A100 with `--max_input_len 2048 --max_batch_size 32`. Two things then happen: (a) a product change starts sending prompts of up to 6000 tokens, and (b) the fleet is upgraded from A100 to H100 GPUs. Explain, using this chapter's description of what a TensorRT engine is, why *each* of these events forces a rebuild — and contrast this with how TGI would handle the same two events.
+
+??? note "Solution"
+    A TensorRT engine is an AOT-compiled, serialized computation graph: kernels are pre-selected and fused, and shape limits like `max_input_len` and `max_batch_size` are *compile-time constants* baked into the binary (see "Build and Run Pipeline" and "What You Give Up").
+
+    (a) **Longer prompts.** The engine literally has no execution path for sequences beyond `max_input_len = 2048`; the KV-cache block layout, attention plugin configuration, and profiled GEMM shapes were all specialized for the 2048 envelope. A 6000-token prompt cannot be served, so the engine must be rebuilt with a larger `--max_input_len` (and a correspondingly larger memory budget).
+
+    (b) **New GPU SKU.** The engine is *platform-specific*: the profiling pass selected the exact cuBLAS/cuBLASLt GEMM algorithms and fused-kernel variants that are fastest on the A100's compute capability and memory system. H100 has different tensor cores (e.g., FP8 support), different SM counts, and different optimal tile sizes, so the A100 engine is not valid — it must be rebuilt (and ideally re-profiled) for the H100 to get correct and fast execution.
+
+    **TGI contrast.** TGI has *no build step*: it loads the HuggingFace checkpoint at startup and dispatches PyTorch + custom CUDA kernels at runtime. Longer prompts are handled by raising the runtime flag `--max-input-tokens` (bounded only by KV-cache memory), and moving from A100 to H100 requires no rebuild at all — the same container runs on any CUDA GPU PyTorch supports. The price is that runtime kernel dispatch leaves some throughput on the table (the chapter cites ~85-95% of TRT-LLM's peak).
+
+**2.** Using the chapter's `gguf_size_gb` helper, estimate by hand the on-disk size of an 8B-parameter model quantized to Q4_K_M (4.5 bits/weight), assuming 5% of parameters (embeddings/norms) are kept in FP16. Show the arithmetic and give the answer in GB (with $1\ \text{GB} = 1024^3$ bytes).
+
+??? note "Solution"
+    Follow the function exactly. With $P = 8\times10^9$ params, `bits_per_weight = 4.5`, `emb_fraction = 0.05`:
+
+    Bytes per quantized weight: $4.5 / 8 = 0.5625$ bytes.
+
+    Quantized bulk (95% of params):
+    $$8\times10^9 \times 0.95 \times 0.5625 = 7.6\times10^9 \times 0.5625 = 4.275\times10^9\ \text{bytes}$$
+
+    FP16 embeddings/norms (5% of params, 2 bytes each):
+    $$8\times10^9 \times 0.05 \times 2.0 = 4\times10^8 \times 2.0 = 8.0\times10^8\ \text{bytes}$$
+
+    Total: $4.275\times10^9 + 0.8\times10^9 = 5.075\times10^9\ \text{bytes}$.
+
+    Convert to GiB: $5.075\times10^9 / 1024^3 = 5.075\times10^9 / 1.073742\times10^9 \approx 4.7\ \text{GB}$.
+
+    So an 8B Q4_K_M file is roughly **4.7 GB** — small enough to fit comfortably in a consumer 24 GB GPU's VRAM alongside a large KV cache.
+
+**3.** The chapter's roofline argument says decode is memory-bandwidth bound: each decode step reads the full weight matrix once per token. For an A100 with 2 TB/s of HBM bandwidth, compute the *batch-size-1* decode ceiling (tokens/sec) for an 8B model (a) in BF16 and (b) quantized to ~4.5 bits/weight. What does the ratio tell you about why weight quantization speeds up decode, and where does the ceiling *stop* improving as you raise the batch size?
+
+??? note "Solution"
+    Apply $\text{tokens\_per\_sec} \le \dfrac{\text{HBM bandwidth}}{\text{bytes read per token}}$, where at batch 1 the bytes read per token is essentially the model's stored size.
+
+    (a) **BF16:** weights are $8\times10^9 \times 2 = 16\times10^9$ bytes.
+    $$\frac{2\times10^{12}}{16\times10^9} = 125\ \text{tokens/sec}$$
+
+    (b) **~4.5 bits/weight:** bytes $\approx 8\times10^9 \times (4.5/8) = 4.5\times10^9$ bytes.
+    $$\frac{2\times10^{12}}{4.5\times10^9} \approx 444\ \text{tokens/sec}$$
+
+    **Ratio $\approx 3.55\times$.** Because decode at small batch is bandwidth-bound, cutting the bytes read per token by ~3.55x raises the ceiling by the same factor — quantization helps decode primarily by *shrinking the weight bytes that must be streamed from HBM every step*, not by adding compute. (Dequant work is cheap relative to the memory saving.)
+
+    **Where it stops improving:** batching amortizes the *weight* reads across many requests — the same weight fetch produces one token for each sequence in the batch, so tokens/sec grows with batch size. But this only holds while the kernel stays memory-bound. As batch size rises, arithmetic intensity increases until the GEMM crosses the roofline "ridge point" and becomes *compute*-bound; past that, adding requests no longer raises aggregate token throughput (and per-token latency starts climbing). KV-cache reads, which grow with context length and batch, also eventually compete for the same bandwidth.
+
+**4.** You serve Llama-3-8B (32 layers, GQA with 8 KV heads, head dimension 128) on a single A100-80 GB in BF16. Following the chapter's worked-example method, compute: (a) memory left for the KV cache after weights, (b) KV bytes per token across all layers, (c) the maximum number of concurrent 4096-token sequences you can hold, and (d) the new count if you enable INT8 KV-cache quantization. Use $1\ \text{GB}=10^9$, $1\ \text{KB}=10^3$ bytes, as the chapter does.
+
+??? note "Solution"
+    (a) **Weights (BF16):** $8\times10^9 \times 2 = 16\ \text{GB}$. Remaining on an 80 GB card: $80 - 16 = 64\ \text{GB}$.
+
+    (b) **KV per token per layer (BF16):** factor 2 for K and V, 8 KV heads, head dim 128, 2 bytes:
+    $$2 \times 8 \times 128 \times 2 = 4096\ \text{bytes} = 4\ \text{KB per token per layer}$$
+    Across 32 layers: $32 \times 4\ \text{KB} = 128\ \text{KB/token}$.
+
+    (c) **Max concurrent tokens:** $64\ \text{GB} / 128\ \text{KB} = 64\times10^9 / 128\times10^3 = 500{,}000\ \text{tokens}$.
+    At 4096 tokens each: $500{,}000 / 4096 \approx 122\ \text{sequences}$.
+
+    (d) **INT8 KV cache** halves per-token cost to $64\ \text{KB/token}$, so $64\times10^9 / 64\times10^3 = 1{,}000{,}000$ tokens $\Rightarrow \approx 244$ concurrent 4096-token sequences — roughly double, matching the chapter's claim that INT8 KV quantization roughly doubles concurrency.
+
+**5.** Turn the worked example into reusable code. Implement a function `max_concurrent_seqs(hbm_gb, param_billions, num_layers, kv_heads, head_dim, ctx_len, weight_bytes=2, kv_bytes=2)` that returns the number of concurrent sequences of length `ctx_len` that fit, in the chapter's decimal-GB convention. Then call it to recompute the Exercise 4 scenario for both BF16 KV and INT8 KV, and reconcile the result with Exercise 4's numbers.
+
+??? note "Solution"
+    ```python
+    def max_concurrent_seqs(
+        hbm_gb: float,
+        param_billions: float,
+        num_layers: int,
+        kv_heads: int,
+        head_dim: int,
+        ctx_len: int,
+        weight_bytes: int = 2,   # BF16 weights
+        kv_bytes: int = 2,       # 2 = BF16 KV, 1 = INT8 KV
+    ) -> int:
+        """Concurrent sequences that fit in HBM after loading weights.
+
+        Decimal HBM sizing (1 GB = 1e9 bytes); KV cache in exact bytes.
+        """
+        hbm = hbm_gb * 1e9
+        weights = param_billions * 1e9 * weight_bytes
+        kv_free = hbm - weights
+        if kv_free <= 0:
+            return 0
+        # 2x for K and V; per token, per layer, summed over layers.
+        kv_per_token = 2 * kv_heads * head_dim * kv_bytes * num_layers
+        max_tokens = kv_free / kv_per_token
+        return int(max_tokens // ctx_len)
+
+    # Llama-3-8B on one A100-80GB, 4096-token sequences
+    bf16 = max_concurrent_seqs(80, 8, 32, 8, 128, 4096, kv_bytes=2)
+    int8 = max_concurrent_seqs(80, 8, 32, 8, 128, 4096, kv_bytes=1)
+    print(f"BF16 KV: {bf16} sequences")   # BF16 KV: 119 sequences
+    print(f"INT8 KV: {int8} sequences")   # INT8 KV: 238 sequences
+    ```
+
+    The function uses the *exact* KV block size: 64 GB free / (131,072 bytes/token) $\approx 488{,}281$ tokens, and $488{,}281 // 4096 = 119$ for BF16; halving `kv_bytes` doubles the token budget to $\approx 976{,}562$, giving $238$. These land just below Exercise 4's 122/244 because that exercise followed the chapter's worked-example rounding of 4096 bytes to "4 KB" (i.e. 128,000 bytes/token), whereas the exact block is 128 KiB $= 131{,}072$ bytes — a ~2.4% difference. In production you would also multiply `kv_free` by `--kv_cache_free_gpu_mem_fraction` (default 0.9) to leave headroom for activations and fragmentation.
+
+**6.** TensorRT-LLM's executor exposes two scheduler policies: `guaranteed_no_evict` and `max_utilization`. Explain what each does when the KV cache fills up, and argue which one the Interview Corner's low-TTFT customer-support deployment should use — and why the *other* policy would hurt its latency SLO even though it can pack more requests.
+
+??? note "Solution"
+    When the paged KV cache runs out of free blocks, the two policies diverge (see "Paged KV Cache", "In-Flight Batching", and the worked memory-budget example):
+
+    - **`guaranteed_no_evict`:** once admitted, a request is guaranteed the KV blocks it needs to run to completion. When memory is exhausted, the scheduler simply *refuses to admit* new requests — they wait in the queue (or in Triton's front-end) until running sequences finish and free blocks. No running request is ever evicted, so no work is thrown away.
+
+    - **`max_utilization`:** the scheduler admits more requests than are guaranteed to fit, betting that some will finish before the cache is full. When it guesses wrong, it *evicts* the KV blocks of some in-flight sequences to make room; those evicted sequences must later be *recomputed* (their prefill/prior decode redone) when they resume. This maximizes GPU occupancy and total throughput but at the cost of occasional recompute stalls.
+
+    **Choice for the low-TTFT chatbot:** `guaranteed_no_evict`. The SLO is TTFT < 200 ms and ITL < 20 ms. Eviction-and-recompute (max_utilization) injects unpredictable latency spikes: an evicted sequence's next token is delayed by a full recomputation of its context, which can dwarf the 20 ms ITL budget and shows up as tail-latency violations. `guaranteed_no_evict` keeps every admitted request's inter-token latency smooth and bounded; excess load is absorbed as *queueing* in the Triton front-end (a controlled admission delay) rather than as jitter on already-running streams. `max_utilization` would raise average throughput and let you pack more of the ~122-275 concurrent sequences the memory budget allows, but for a latency-SLO-critical chat workload, predictable per-token latency matters more than squeezing out the last few percent of utilization.
