@@ -664,3 +664,177 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
     - LoRA/QLoRA freeze base weights structurally, preventing forgetting and reducing GPU memory from ~120 GB (full 7B) to ~12–15 GB — enabling SFT on a single consumer GPU.
     - Always evaluate SFT models on both a capability benchmark (MT-Bench) and a forgetting probe (MMLU delta from base) simultaneously.
     - At inference time, apply exactly the chat template used during training — template mismatch is the most common cause of degraded SFT model outputs in production.
+
+## Exercises
+
+**1.** *(Response-only masking.)* The SFT objective masks the instruction tokens and, in the chapter's training code, appends an EOS token to every response before computing the loss. (a) Give the two reasons the chapter offers for masking the instruction rather than training on the full concatenated sequence. (b) Suppose you removed the line `response_ids = response_ids + [self.tokenizer.eos_token_id]` so responses no longer end in EOS. What failure would you expect at inference time, and why?
+
+??? note "Solution"
+    **(a)** The chapter gives two reasons to prefer response-only supervision:
+
+    - *Signal concentration.* Instructions are often short while responses are longer. Masking the instruction gives the optimizer a gradient that specifically rewards reply quality instead of spending capacity re-encoding the input.
+    - *Prompt contamination.* If the model is penalized for "wrong" instruction tokens, it can learn to prefer particular prompt phrasings in ways that generalize poorly.
+
+    (In practice the gap is small for well-formatted data, but response masking is the standard convention.)
+
+    **(b)** The EOS token is what teaches the model to *stop*. Its label is one of the response tokens that incur loss, so training on it makes $p_\theta(\text{EOS} \mid \text{full response})$ large — the model learns that a completed answer is followed by end-of-sequence. If you never include EOS in the labels, the model is never supervised to emit it at the end of an answer. At inference the decoder has no learned signal to terminate, so generation runs on past the natural end of the reply — rambling, repeating, or drifting into a new turn until it hits the max-token cap. This is the runaway-generation failure.
+
+**2.** *(Learning-rate scaling.)* The chapter says SFT learning rates are "one to two orders of magnitude below pretraining rates." If a model was pretrained with a peak learning rate of $3 \times 10^{-4}$, what SFT peak-LR range does that rule imply? How does it compare to the concrete range the chapter recommends, and why is a low LR the first-line defense against catastrophic forgetting?
+
+??? note "Solution"
+    "One order of magnitude below" means dividing by 10; "two orders" means dividing by 100. Applied to $3 \times 10^{-4}$:
+
+    $$
+    \frac{3 \times 10^{-4}}{10} = 3 \times 10^{-5}, \qquad \frac{3 \times 10^{-4}}{100} = 3 \times 10^{-6}.
+    $$
+
+    So the rule implies a peak SFT LR roughly in $[3 \times 10^{-6},\ 3 \times 10^{-5}]$. This overlaps the chapter's concrete recommendation of $1 \times 10^{-5}$ to $5 \times 10^{-5}$ (the upper end sits just above the "one order down" figure, which is fine — these are heuristics).
+
+    A low LR is the first-line defense against catastrophic forgetting because pretraining leaves the weights in a configuration that is jointly good for many tasks, and SFT data is a narrow slice of that space. The size of each gradient step scales with the LR, so a small LR keeps updates small and prevents the optimizer from moving far enough to overwrite the pretraining solution in favor of the narrow SFT target.
+
+**3.** *(Effective batch size, tokens, and schedule.)* You run the chapter's `sft_train.py` on a dataset of 20,000 examples averaging 500 tokens each, with `--batch_size 4`, `--grad_accum_steps 8`, and `--num_epochs 3`. Compute: (a) the effective batch size in sequences and in tokens; (b) the total number of tokens processed over the whole run; (c) the number of optimizer steps; (d) the number of warmup steps under the code's 3% warmup heuristic.
+
+??? note "Solution"
+    **(a)** Effective batch size in sequences is `batch_size × grad_accum_steps`:
+
+    $$
+    4 \times 8 = 32 \text{ sequences.}
+    $$
+
+    In tokens, at 500 tokens/sequence: $32 \times 500 = 16{,}000$ tokens per optimizer step.
+
+    **(b)** Tokens in one epoch: $20{,}000 \times 500 = 10{,}000{,}000$. Over 3 epochs:
+
+    $$
+    3 \times 10{,}000{,}000 = 30{,}000{,}000 \text{ tokens.}
+    $$
+
+    **(c)** Optimizer steps = total tokens / tokens-per-step:
+
+    $$
+    \frac{30{,}000{,}000}{16{,}000} = 1{,}875 \text{ steps.}
+    $$
+
+    (Cross-check: steps per epoch $= 20{,}000 / 32 = 625$, and $625 \times 3 = 1{,}875$.)
+
+    **(d)** Warmup at 3% of total steps:
+
+    $$
+    0.03 \times 1{,}875 = 56.25 \approx 56 \text{ warmup steps}
+    $$
+
+    (the code takes `int(0.03 * total_steps)`, which truncates to 56). The LR climbs linearly for ~56 steps, then follows cosine decay for the remaining ~1,819.
+
+**4.** *(Memory budget.)* Using the chapter's per-parameter accounting (bf16 weights, fp32 gradients, and AdamW's two fp32 moments), estimate the memory for full fine-tuning a **13B**-parameter model, ignoring activations. Then estimate the frozen-base memory for QLoRA (4-bit NF4). What reduction factor does QLoRA give on the base-storage line alone, and roughly how many 80 GB A100s does the full run need?
+
+??? note "Solution"
+    Take $N = 13 \times 10^{9}$ parameters and use the chapter's byte counts.
+
+    **Full fine-tuning (weights + grads + optimizer):**
+
+    - Weights, bf16: $13\text{e}9 \times 2 = 26$ GB
+    - Gradients, fp32: $13\text{e}9 \times 4 = 52$ GB
+    - AdamW $m_1 + m_2$, fp32: $13\text{e}9 \times 2 \times 4 = 104$ GB
+
+    $$
+    26 + 52 + 104 = 182 \text{ GB (before activations).}
+    $$
+
+    Adding a realistic ~15–25 GB of activations pushes the run to roughly 200 GB, so it needs $\lceil 200 / 80 \rceil = 3$ — realistically **3–4 × 80 GB A100s** once you leave headroom.
+
+    **QLoRA frozen base (4-bit NF4 = 0.5 bytes/param):**
+
+    $$
+    13\text{e}9 \times 0.5 = 6.5 \text{ GB.}
+    $$
+
+    The LoRA adapters and their optimizer states add only ~1 GB (they touch a fraction of a percent of parameters), so the whole run fits comfortably on a single 24 GB GPU.
+
+    **Reduction factor on base storage alone:** comparing the 26 GB bf16 base to the 6.5 GB quantized base gives $26 / 6.5 = 4\times$. Comparing the *full* training footprint (182 GB) to the quantized base (6.5 GB) is about $28\times$ — which is why QLoRA moves a job that needed a multi-GPU node onto one consumer card.
+
+**5.** *(Implement length-normalized loss.)* The chapter's `compute_sft_loss` calls `F.cross_entropy(..., reduction="mean")`, which averages over every response token in the batch. The "length bias trap" warning notes this lets long responses dominate the loss. Rewrite the function so that each *sequence* contributes equally regardless of its response length: compute a per-token loss, average it *within* each example over that example's own response tokens, then average those per-sequence losses across the batch. Explain in one line how the gradient weighting differs from the original.
+
+??? note "Solution"
+    Use `reduction="none"` to get a per-token loss, reshape to `(B, L-1)`, build a mask from the non-ignored labels, and reduce in two stages:
+
+    ```python
+    def compute_sft_loss_length_normalized(
+        logits: torch.Tensor, labels: torch.Tensor
+    ) -> torch.Tensor:
+        """Per-sequence-mean SFT loss: each example weighted equally,
+        regardless of how many response tokens it has."""
+        shift_logits = logits[:, :-1, :].contiguous()   # (B, L-1, V)
+        shift_labels = labels[:, 1:].contiguous()        # (B, L-1)
+        B = shift_labels.size(0)
+
+        # Per-token loss, no reduction. Masked positions still produce a
+        # value here, so we zero them out with the mask below.
+        per_token = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+            ignore_index=IGNORE_INDEX,
+            reduction="none",
+        ).view(B, -1)                                    # (B, L-1)
+
+        mask = (shift_labels != IGNORE_INDEX).float()    # (B, L-1)
+        # Response-token count per example; clamp avoids divide-by-zero
+        # for a (degenerate) all-masked row.
+        seq_counts = mask.sum(dim=1).clamp(min=1.0)      # (B,)
+        seq_loss = (per_token * mask).sum(dim=1) / seq_counts  # (B,)
+        return seq_loss.mean()                           # scalar
+    ```
+
+    Note that `ignore_index` already forces the loss at masked positions to 0 in the `reduction="none"` output, but multiplying by `mask` before the per-sequence sum is what makes the denominator (`seq_counts`) match the numerator exactly.
+
+    **Gradient weighting difference:** the original token-mean divides by the *total* response-token count in the batch, so a 400-token answer contributes ~8x the gradient of a 50-token answer; the per-sequence version gives every example weight $1/B$, so short and long responses pull the update equally — which is what removes the length bias.
+
+**6.** *(Implement replay / data mixing.)* One mitigation for catastrophic forgetting is to blend a small fraction (the chapter suggests 5–10%) of general or pretraining-style data back into the SFT mix. Write a `Dataset` wrapper `ReplayMixedDataset(primary, replay, replay_frac)` that presents a shuffled blend in which the replay examples make up `replay_frac` of the total, drawing replay items with replacement if there are too few. It must be drop-in compatible with the chapter's `DataLoader`/`collate_fn`. What must be true about how the `replay` examples are formatted for the mix to be valid?
+
+??? note "Solution"
+    The wrapper builds an index of `(source, local_index)` pairs — all of the primary items plus enough replay items to hit the target fraction — then shuffles once. Each `__getitem__` delegates to the underlying dataset, so every returned item is the same `{"input_ids", "labels"}` dict the existing `collate_fn` expects.
+
+    Solving `n_replay / (n_primary + n_replay) = replay_frac` for the replay count gives $n_\text{replay} = \dfrac{\texttt{replay\_frac}}{1 - \texttt{replay\_frac}} \, n_\text{primary}$.
+
+    ```python
+    import random
+    from torch.utils.data import Dataset
+
+    class ReplayMixedDataset(Dataset):
+        """Blend a `replay_frac` fraction of general/pretraining-style
+        examples into the SFT set to mitigate catastrophic forgetting.
+        Both `primary` and `replay` must yield the same
+        {"input_ids", "labels"} dicts (e.g. InstructionDataset instances)."""
+
+        def __init__(self, primary, replay, replay_frac=0.1, seed=0):
+            assert 0.0 <= replay_frac < 1.0
+            self.primary, self.replay = primary, replay
+            n_primary = len(primary)
+            # n_replay / (n_primary + n_replay) == replay_frac
+            n_replay = int(round(n_primary * replay_frac / (1.0 - replay_frac)))
+
+            rng = random.Random(seed)
+            self.index = [("p", i) for i in range(n_primary)]
+            # Sample replay WITH replacement so a small replay pool still
+            # fills the quota; each SFT example still appears exactly once.
+            self.index += [("r", rng.randrange(len(replay)))
+                           for _ in range(n_replay)]
+            rng.shuffle(self.index)
+
+        def __len__(self):
+            return len(self.index)
+
+        def __getitem__(self, idx):
+            src, i = self.index[idx]
+            return self.primary[i] if src == "p" else self.replay[i]
+    ```
+
+    Usage keeps the rest of the chapter's loop unchanged:
+
+    ```python
+    sft = InstructionDataset("data/sft_data.jsonl", tokenizer)
+    replay = InstructionDataset("data/general_replay.jsonl", tokenizer)
+    dataset = ReplayMixedDataset(sft, replay, replay_frac=0.1)
+    # dataloader = DataLoader(dataset, ..., collate_fn=lambda b: collate_fn(b, pad_id))
+    ```
+
+    **Formatting requirement:** the replay items must be tokenized with the *same tokenizer, chat template, and loss-masking convention* as the primary data, so that mixed batches don't teach an inconsistent format (the chapter's "format consistency" and "chat template parity" points). If the replay source is raw pretraining text rather than instruction pairs, it should be tokenized so that *all* of its tokens are targets (no prompt to mask) — i.e. `labels == input_ids` for those examples — since there is no instruction/response boundary; it still returns the identical dict shape so `collate_fn` and `compute_sft_loss` handle it unchanged.

@@ -522,3 +522,148 @@ This connects directly to the data-formatting and templating choices in [Chat Te
 - Houlsby et al. — *Parameter-Efficient Transfer Learning for NLP* (2019). The original (serial) adapter modules LoRA improved upon.
 - Sheng et al. — *S-LoRA: Serving Thousands of Concurrent LoRA Adapters* (2023); Chen et al. — *Punica: Multi-Tenant LoRA Serving* (2024). The multi-adapter serving systems.
 - The HuggingFace **PEFT** library and **bitsandbytes** repository — the reference implementations of everything in this chapter.
+
+## Exercises
+
+**1.** In the from-scratch implementation, $A$ is initialized with Kaiming-uniform random values and $B$ is initialized to all zeros. Explain (a) why this makes the adapter a no-op at step 0, (b) what would happen if you initialized *both* $A$ and $B$ to zero, and (c) whether the reverse convention ($B$ random, $A$ zero) also yields a valid no-op at init and, if so, how its first-step gradient behavior differs. Use the chapter's gradient formulas.
+
+??? note "Solution"
+    Recall the LoRA path $h = W_0 x + s\,BAx$ with $s = \alpha/r$, and the gradients
+
+    $$
+    \frac{\partial \mathcal{L}}{\partial B} = s\, g\, (A x)^\top, \qquad
+    \frac{\partial \mathcal{L}}{\partial A} = s\, (B^\top g)\, x^\top,
+    $$
+
+    where $g = \partial\mathcal{L}/\partial h$ is the upstream gradient.
+
+    **(a) No-op at init.** With $B = 0$, the product $BA = 0\cdot A = 0$ regardless of $A$. So $\Delta W = s\,BA = 0$ and the forward pass equals $W_0 x$ exactly — the adapted model is identical to the pretrained model, and there is no initial loss spike from perturbing the weights.
+
+    **(b) Both zero.** $BA = 0$ still holds, so the forward pass is fine at step 0. But now *both* gradients vanish: with $A = 0$ we have $Ax = 0$, so $\partial\mathcal{L}/\partial B = s\,g\,(Ax)^\top = 0$; and with $B = 0$ we have $\partial\mathcal{L}/\partial A = s\,(B^\top g)\,x^\top = 0$. Neither matrix ever receives a gradient, so the adapter is frozen at zero forever and *nothing is learned*. This is why exactly one matrix — not both — is zeroed.
+
+    **(c) Reverse convention ($B$ random, $A = 0$).** This also gives $BA = 0$ at init, so it is a valid no-op. The difference is the first step: with $A = 0$, $Ax = 0$, so $\partial\mathcal{L}/\partial B = s\,g\,(Ax)^\top = 0$ — $B$ is stuck for the first update. Meanwhile $\partial\mathcal{L}/\partial A = s\,(B^\top g)\,x^\top \neq 0$ because $B$ is populated, so $A$ moves first, and only once $A$ is nonzero does $B$ start to move. The original ($A$ random, $B$ zero) convention gives the immediate gradient signal to $B$ instead; both work, and the $A$-random/$B$-zero choice is the standard one.
+
+**2.** Take a LLaMA-style 7B model with hidden size $d = 4096$, 32 layers, and MLP inner dimension $11008$. Apply LoRA at rank $r = 16$ to **all seven** linear layers per block: the four attention projections ($W_q, W_k, W_v, W_o$, each $4096 \times 4096$) and the three MLP projections (`gate` and `up`, each $4096 \to 11008$; `down`, $11008 \to 4096$). Compute the total number of trainable LoRA parameters and express it as a percentage of the $\sim 6.7$B base. Do the arithmetic by hand.
+
+??? note "Solution"
+    For a linear layer mapping $\text{in} \to \text{out}$, LoRA adds $A \in \mathbb{R}^{r \times \text{in}}$ and $B \in \mathbb{R}^{\text{out} \times r}$, for $r(\text{in} + \text{out})$ parameters.
+
+    **Attention projections** (each $4096 \to 4096$):
+
+    $$
+    r(\text{in}+\text{out}) = 16 \cdot (4096 + 4096) = 16 \cdot 8192 = 131{,}072 \text{ params each.}
+    $$
+
+    Four of them: $4 \times 131{,}072 = 524{,}288$ per layer.
+
+    **MLP projections.** `gate` and `up` are $4096 \to 11008$: $16 \cdot (4096 + 11008) = 16 \cdot 15104 = 241{,}664$ each. `down` is $11008 \to 4096$: $16 \cdot (11008 + 4096) = 16 \cdot 15104 = 241{,}664$ (same, by symmetry of in+out). Three of them: $3 \times 241{,}664 = 724{,}992$ per layer.
+
+    **Per layer total:** $524{,}288 + 724{,}992 = 1{,}249{,}280$.
+
+    **All 32 layers:** $32 \times 1{,}249{,}280 = 39{,}976{,}960 \approx 40.0\text{M}$ trainable params.
+
+    **As a fraction of the base:**
+
+    $$
+    \frac{39{,}976{,}960}{6.7\times 10^{9}} \approx 0.00597 \approx 0.60\%.
+    $$
+
+    So "LoRA everywhere" at $r=16$ trains about **40M params, roughly 0.6%** of the model — matching the `~40M ... trainable%: ~0.6` figure printed in the chapter's QLoRA code.
+
+**3.** The $\alpha/r$ scaling factor.
+
+   (a) You have a working config at $r = 8$, $\alpha = 16$. To add capacity you raise the rank to $r = 64$ but forget to touch $\alpha$. What is the effective scale $\alpha/r$ before and after, and what have you *inadvertently* done to the LoRA path — quantify it. What $\alpha$ restores the original scale?
+
+   (b) With **rsLoRA** ($1/\sqrt{r}$ scaling) versus standard LoRA ($1/r$ scaling), you sweep rank from $r = 16$ to $r = 256$ holding $\alpha$ fixed. By what factor does the effective scale shrink in each case? Why does this make rsLoRA the better choice at high rank?
+
+??? note "Solution"
+    **(a)** Effective scale is $\alpha/r$.
+
+    - Before: $16/8 = 2$.
+    - After ($r=64$, $\alpha$ still $16$): $16/64 = 0.25$.
+
+    The effective scale dropped from $2$ to $0.25$ — a factor of $8$ reduction. Since editing $\alpha$ with $r$ fixed is *exactly* like changing the LoRA path's learning rate (chapter's "Common pitfall"), you have implicitly cut the LoRA path's learning rate by $8\times$ while thinking you only added capacity. To restore scale $2$ at $r = 64$: solve $\alpha/64 = 2 \Rightarrow \alpha = 128$ (i.e. keep $\alpha = 2r$).
+
+    **(b)** Standard LoRA scale $\propto 1/r$: going $r=16 \to 256$ shrinks it by $16/256 = 1/16$ (a $16\times$ shrink). rsLoRA scale $\propto 1/\sqrt{r}$: $\sqrt{16} = 4$, $\sqrt{256} = 16$, so it shrinks by $4/16 = 1/4$ (a $4\times$ shrink).
+
+    Under $1/r$, the adapter's contribution (and, as Kalajdzievski shows, its gradient) collapses as rank grows, so the extra capacity you paid for at high rank stops helping and can even hurt. rsLoRA's gentler $1/\sqrt{r}$ decay keeps the adapter's magnitude and gradient roughly stable across ranks, so high-rank adapters ($r = 64, 128, 256$) actually deliver their capacity. Hence switch to rsLoRA when pushing rank; at small $r \le 16$ the difference is minor.
+
+**4.** A colleague fine-tunes a 7B model with QLoRA (NF4 4-bit frozen base, bf16 adapter) and concludes: "Great, now I have a 4-bit deployable model — I'll just merge the adapter and ship it." Explain what is wrong with this reasoning, what you actually get if you merge, and the two legitimate ways to obtain the outcome your colleague wants.
+
+??? note "Solution"
+    The error is conflating a 4-bit *storage* format used during *training* with a 4-bit *inference* model. In QLoRA the NF4 form is only how the frozen base is stored to save training memory; every matmul already dequantizes the relevant weights to bf16 on the fly (`compute_dtype`), and the adapter is bf16.
+
+    **What merging actually gives you.** To merge you must fold the bf16 adapter $\frac{\alpha}{r}BA$ into the base. That requires dequantizing $W_0$ from NF4 to bf16, adding the bf16 delta, and storing the result — which is a **full-size bf16 model** (~13.4 GB for 7B), not a 4-bit one. The 4-bit memory win existed only during training; merging discards it.
+
+    **Two legitimate paths to a small deployable model:**
+
+    1. **Keep the adapter unmerged** and serve it on top of the still-quantized 4-bit base (the multi-LoRA serving path). The base stays NF4; the tiny adapter is applied dynamically per request.
+    2. **Merge, then re-quantize the merged bf16 model afresh** with a post-training quantization method (GPTQ/AWQ). This gives a genuine 4-bit inference checkpoint, at the cost of a small additional quantization error introduced by the fresh PTQ pass.
+
+    So "I trained with QLoRA" does **not** imply "I have a 4-bit deployable model" — you must explicitly choose one of the two paths above.
+
+**5.** Modify the chapter's `LoRALinear` to support **rsLoRA**. Add a boolean flag `use_rslora`; when true, the scaling factor should be $\alpha/\sqrt{r}$ instead of $\alpha/r$. Make sure `merge()` and `unmerge()` remain correct (they read `self.scaling`, so this should require no change there). Give the modified `__init__` and confirm why the merge/unmerge methods still work unchanged.
+
+??? note "Solution"
+    Only the line that computes `self.scaling` changes; because `forward`, `merge`, and `unmerge` all reference `self.scaling` rather than recomputing $\alpha/r$, they inherit the new value automatically.
+
+    ```python
+    import math
+    import torch
+    import torch.nn as nn
+
+    class LoRALinear(nn.Module):
+        def __init__(self, base: nn.Linear, r: int = 16, alpha: int = 32,
+                     dropout: float = 0.0, use_rslora: bool = False):
+            super().__init__()
+            assert isinstance(base, nn.Linear)
+            self.in_features = base.in_features
+            self.out_features = base.out_features
+            self.r = r
+            # rsLoRA: divide by sqrt(r) instead of r so the adapter's magnitude
+            # and gradient stay stable as rank grows (Kalajdzievski, 2023).
+            self.scaling = alpha / (math.sqrt(r) if use_rslora else r)
+
+            self.base = base
+            for p in self.base.parameters():
+                p.requires_grad_(False)
+
+            self.lora_A = nn.Parameter(torch.empty(r, self.in_features))
+            self.lora_B = nn.Parameter(torch.zeros(self.out_features, r))
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+
+            self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+            self.merged = False
+    ```
+
+    `forward`, `merge`, and `unmerge` are unchanged from the chapter. They compute the delta as `self.scaling * (self.lora_B @ self.lora_A)`, so whatever value `self.scaling` holds — $\alpha/r$ or $\alpha/\sqrt{r}$ — is applied consistently in the forward path and in the folded weight. Merging stays output-preserving because the *same* `self.scaling` used in `forward` is the one added into `self.base.weight`, and `unmerge` subtracts exactly that same quantity. Since $B$ still starts at zero, the adapter remains a no-op at init for either scaling.
+
+**6.** Implement **LoRA+** on the from-scratch code: write a helper `lora_plus_param_groups(model, base_lr, lambda_ratio=16)` that builds AdamW parameter groups so the $B$ matrices train at `lambda_ratio * base_lr` while the $A$ matrices (and any other trainable params, e.g. trained norms) train at `base_lr`. Explain in one sentence why $B$ gets the larger rate.
+
+??? note "Solution"
+    LoRA+ is purely an optimizer-grouping change: split the trainable parameters into a "$B$" group and an "everything else" group, and give the $B$ group a learning rate scaled up by $\lambda$.
+
+    ```python
+    import torch
+
+    def lora_plus_param_groups(model, base_lr, lambda_ratio=16):
+        """Build AdamW param groups: lora_B at lambda*base_lr, the rest at base_lr."""
+        b_params, other_params = [], []
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue                      # skip frozen base weights
+            if "lora_B" in name:
+                b_params.append(p)            # the up-projection: larger LR
+            else:
+                other_params.append(p)        # lora_A + any trained norms/head
+        return [
+            {"params": other_params, "lr": base_lr},
+            {"params": b_params,     "lr": lambda_ratio * base_lr},
+        ]
+
+    # Usage:
+    groups = lora_plus_param_groups(model, base_lr=1e-4, lambda_ratio=16)
+    opt = torch.optim.AdamW(groups)           # B trains at 1.6e-3, A at 1e-4
+    ```
+
+    **Why $B$ gets the larger rate:** $A$ and $B$ play asymmetric roles — $B$ starts at zero and must grow from scratch while $A$ starts populated, so a larger learning rate on $B$ balances their effective updates and improves both convergence speed and final quality (Hayou et al., 2024), at no extra parameter cost. Note that we key on the substring `"lora_B"`, exactly the naming used by `mark_only_lora_trainable`, and we skip frozen params so the base weights never enter the optimizer.

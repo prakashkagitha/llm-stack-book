@@ -835,3 +835,170 @@ If your use case involves distribution shifts after merging, the evaluation fram
 - Yadav et al. **"TIES-Merging: Resolving Interference When Merging Models"**, NeurIPS 2023. TIES algorithm with comprehensive multi-task experiments.
 - Yu et al. **"Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch"**, 2023. Introduces DARE (Drop And REscale).
 - Goddard, Charles et al. **mergekit** (GitHub: arcee-ai/mergekit). The practical open-source library for all merging methods; supports YAML-based merge configs.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) Prompt tuning attaches $k$ learnable embedding vectors only at the input layer, while prefix tuning injects learned key–value pairs at *every* attention layer. The chapter reports that prompt tuning closes the gap with full fine-tuning only at very large model scales, whereas prefix tuning (and P-tuning v2) is effective even on smaller models. Explain the mechanistic reason for this difference, and state what P-tuning v2 confirmed about it.
+
+??? note "Solution"
+    A soft prompt inserted only at the input layer influences the model *once*: its signal enters the residual stream at layer 0 and must survive being repeatedly transformed and blended by every subsequent layer. As the chapter notes, by the time information propagates through the later layers, the "prompt signal" has been mixed into the residual stream in ways that need not remain task-specific. The only lever the optimizer controls is $k \times d$ numbers at the very bottom of the network, so the model has to be powerful enough to translate that thin, first-layer nudge into the correct behavior on its own. Very large models have enough representational capacity and in-context flexibility to do this, which is why prompt tuning's gap to full fine-tuning shrinks with scale.
+
+    Prefix tuning removes this bottleneck by giving *each* layer its own learned $P^K_\ell, P^V_\ell$ prefix. Every layer sees $k$ "virtual past tokens" whose key/value representations can be specialized for the task, so the task signal is re-injected at every depth rather than having to survive the whole stack. This per-layer steering is much richer, which is why it works even when the backbone is small.
+
+    P-tuning v2 confirmed exactly this: its first contribution was showing that a *deep* prefix across all layers (versus input-only injection) is what matters for complex NLU tasks such as NER and SRL, letting deep prefix tuning match full fine-tuning even for models in the hundreds-of-millions-of-parameters range — the regime where input-only prompt tuning struggles.
+
+**2.** (Quantitative) Consider a 7B-scale model with hidden size $d = 4096$, $L = 32$ layers, per-head key dimension $d_k = 128$, and FFN width $d_{ff} = 14336$.
+
+   (a) How many trainable parameters does prompt tuning use with $k = 100$ soft tokens?
+
+   (b) How many trainable parameters does IA3 use (the three scale vectors $l_k, l_v \in \mathbb{R}^{d_k}$ and $l_{ff} \in \mathbb{R}^{d_{ff}}$ per layer)?
+
+   (c) Which is smaller, and by roughly what factor? Express each as a fraction of the 7B base.
+
+??? note "Solution"
+    (a) Prompt tuning learns a single matrix $P \in \mathbb{R}^{k \times d}$:
+    $$
+    100 \times 4096 = 409{,}600 \text{ parameters.}
+    $$
+    As a fraction of $7 \times 10^9$: $409{,}600 / 7\text{e}9 \approx 5.9 \times 10^{-5} \approx 0.006\%$.
+
+    (b) IA3 has, per layer, $d_k + d_k + d_{ff}$ scale entries:
+    $$
+    L \times (d_k + d_k + d_{ff}) = 32 \times (128 + 128 + 14336) = 32 \times 14592 = 466{,}944 \text{ parameters.}
+    $$
+    As a fraction of $7 \times 10^9$: $466{,}944 / 7\text{e}9 \approx 6.7 \times 10^{-5} \approx 0.007\%$ — matching the chapter's IA3 count.
+
+    (c) They are remarkably close in absolute size ($\approx 4.1 \times 10^5$ vs $\approx 4.7 \times 10^5$). Prompt tuning is the smaller of the two, by a factor of only $466{,}944 / 409{,}600 \approx 1.14$ (prompt tuning has about 12% fewer parameters; equivalently IA3 has about 14% more). Both are on the order of a few hundred thousand parameters, roughly $0.006\%$–$0.007\%$ of the base — orders of magnitude below full fine-tuning.
+
+**3.** (Quantitative) Linear interpolation can shrink the norm of a merged tensor; SLERP is designed to avoid this. Take two weight vectors that are already unit-norm and *orthogonal*: $\hat{\theta}_A \cdot \hat{\theta}_B = 0$. Using $t = 0.5$:
+
+   (a) Compute the norm of the linear-interpolation merge $(1-t)\hat{\theta}_A + t\,\hat{\theta}_B$.
+
+   (b) Compute the SLERP coefficients and the norm of the SLERP merge, using the formula from the chapter.
+
+   (c) What does this illustrate about the two methods?
+
+??? note "Solution"
+    Because $\hat{\theta}_A$ and $\hat{\theta}_B$ are orthogonal unit vectors, for any linear combination $a\hat{\theta}_A + b\hat{\theta}_B$ the squared norm is $a^2 + b^2$ (the cross term $2ab\,(\hat{\theta}_A\cdot\hat{\theta}_B)$ vanishes).
+
+    (a) Linear interpolation with $t=0.5$: $a = b = 0.5$, so
+    $$
+    \| 0.5\,\hat{\theta}_A + 0.5\,\hat{\theta}_B \| = \sqrt{0.5^2 + 0.5^2} = \sqrt{0.5} \approx 0.707.
+    $$
+    The merged vector has collapsed to about 71% of the unit norm — the magnitude shrinkage the chapter warns about.
+
+    (b) The angle is $\Omega = \arccos(0) = \pi/2$, so $\sin\Omega = 1$. With $t = 0.5$ the SLERP coefficients are
+    $$
+    \frac{\sin((1-t)\Omega)}{\sin\Omega} = \frac{\sin(\pi/4)}{1} = \frac{\sqrt{2}}{2} \approx 0.707,
+    \qquad
+    \frac{\sin(t\Omega)}{\sin\Omega} = \frac{\sin(\pi/4)}{1} \approx 0.707.
+    $$
+    So the SLERP merge is $0.707\,\hat{\theta}_A + 0.707\,\hat{\theta}_B$, with norm
+    $$
+    \sqrt{0.707^2 + 0.707^2} = \sqrt{0.5 + 0.5} = 1.
+    $$
+
+    (c) Linear interpolation collapsed the norm to $0.707$, while SLERP kept it at exactly $1$. SLERP interpolates along the great circle (unit sphere), so it preserves magnitude throughout the interpolation, whereas naive averaging pulls the result toward the origin whenever the two vectors point in different directions.
+
+**4.** (Implementation) The chapter gives the DARE update rule
+    $$
+    \hat{\tau}[j] = \begin{cases} \dfrac{\tau[j]}{1-p} & \text{with probability } 1-p \\ 0 & \text{with probability } p \end{cases}
+    $$
+    but provides no code for it. Implement a function `dare_task_vector(tv, p)` that applies DARE to one task-vector state dict (drop each entry independently with probability $p$, rescale survivors by $1/(1-p)$), and a `dare_merge(base_sd, task_vectors, p, scale)` that DARE-processes every task vector and then adds them into the base — reusing the chapter's `task_arithmetic_merge` style. Keep the float32 discipline the chapter insists on.
+
+??? note "Solution"
+    ```python
+    import torch
+
+    def dare_task_vector(tv: dict, p: float) -> dict:
+        """
+        Apply DARE (Drop And REscale) to one task-vector state dict.
+        Each entry is kept with prob (1 - p) and rescaled by 1/(1 - p);
+        otherwise it is zeroed. Preserves expected magnitude:
+        E[hat_tau] = (1 - p) * (tau / (1 - p)) = tau.
+        """
+        assert 0.0 <= p < 1.0, "p must be in [0, 1)"
+        out = {}
+        for k, delta in tv.items():
+            d = delta.float()
+            # Bernoulli keep-mask: 1 with prob (1 - p)
+            keep = torch.bernoulli(torch.full_like(d, 1.0 - p))
+            out[k] = keep * d / (1.0 - p)
+        return out
+
+
+    def dare_merge(base_sd: dict, task_vectors: list[dict],
+                   p: float = 0.9, scale: float = 0.5) -> dict:
+        """
+        DARE-process each task vector, then add them into the base model.
+        Mirrors the chapter's task_arithmetic_merge, but with stochastic
+        drop-and-rescale trimming applied to every task vector first.
+        """
+        # float32 throughout (chapter's practitioner tip)
+        merged = {k: v.float().clone() for k, v in base_sd.items()}
+        for tv in task_vectors:
+            dared = dare_task_vector(tv, p)
+            for k in dared:
+                if k in merged:
+                    merged[k].add_(scale * dared[k])
+        return merged
+
+
+    # ---- Quick check: expected magnitude is preserved ----
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        tv = {"W": torch.randn(10000) * 0.3}
+        dared = dare_task_vector(tv, p=0.9)
+        # Mean of survivors*rescale should approx equal the original mean
+        print("orig mean :", tv["W"].mean().item())
+        print("DARE mean :", dared["W"].mean().item())
+        print("dropped frac:", (dared["W"] == 0).float().mean().item())  # ~0.9
+    ```
+
+    The keep-mask is drawn independently per entry from a Bernoulli$(1-p)$; survivors are divided by $1-p$ so the expectation of each entry is unchanged, exactly matching the rule in the chapter. `dare_merge` then behaves like `task_arithmetic_merge` on the DARE-processed vectors. To build **DARE-TIES**, you would feed these DARE-processed task vectors into the chapter's `ties_merge` (sign election + disjoint merge) instead of the plain additive merge here.
+
+**5.** (Hard, quantitative) Work a full TIES merge by hand on a single 4-element weight tensor. The base value is $\theta_\text{base} = [0,0,0,0]$ and the two task vectors are
+    $$
+    \tau_A = [\,0.6,\ -0.1,\ 0.4,\ -0.05\,], \qquad
+    \tau_B = [\,-0.5,\ 0.3,\ 0.02,\ -0.4\,].
+    $$
+    Use trimming that keeps the **top 50%** of each task vector by absolute magnitude (2 of 4 entries), then elect sign by the sum rule, do the disjoint (sign-agreeing) average, and apply final scale $\lambda = 0.5$. Give the final merged tensor.
+
+??? note "Solution"
+    **Step 1 — Trim (keep top 2 by $|\cdot|$ per vector).**
+
+    $\tau_A$ magnitudes: $0.6, 0.1, 0.4, 0.05$. Top two are indices 0 ($0.6$) and 2 ($0.4$):
+    $$
+    \hat{\tau}_A = [\,0.6,\ 0,\ 0.4,\ 0\,].
+    $$
+    $\tau_B$ magnitudes: $0.5, 0.3, 0.02, 0.4$. Top two are indices 0 ($0.5$) and 3 ($0.4$):
+    $$
+    \hat{\tau}_B = [\,-0.5,\ 0,\ 0,\ -0.4\,].
+    $$
+
+    **Step 2 — Elect sign** via $\gamma_j = \operatorname{sign}\!\big(\sum_i \hat{\tau}_i[j]\big)$:
+
+    - $j=0$: $0.6 + (-0.5) = 0.1 \Rightarrow \gamma_0 = +$
+    - $j=1$: $0 + 0 = 0 \Rightarrow$ tie; assign $\gamma_1 = +$ (chapter's convention)
+    - $j=2$: $0.4 + 0 = 0.4 \Rightarrow \gamma_2 = +$
+    - $j=3$: $0 + (-0.4) = -0.4 \Rightarrow \gamma_3 = -$
+
+    So $\gamma = [+,\ +,\ +,\ -]$.
+
+    **Step 3 — Disjoint merge** (average only entries whose sign agrees with $\gamma_j$):
+
+    - $j=0$ ($\gamma=+$): agreeing entries are $\hat{\tau}_A[0]=0.6$ (positive, agrees); $\hat{\tau}_B[0]=-0.5$ (negative, excluded). Average $= 0.6/1 = 0.6$.
+    - $j=1$ ($\gamma=+$): both entries are $0$; no nonzero agreeing entry, so the merged value is $0$ (denominator clamped to 1 gives $0/1 = 0$).
+    - $j=2$ ($\gamma=+$): $\hat{\tau}_A[2]=0.4$ agrees; $\hat{\tau}_B[2]=0$ excluded. Average $= 0.4/1 = 0.4$.
+    - $j=3$ ($\gamma=-$): $\hat{\tau}_B[3]=-0.4$ agrees; $\hat{\tau}_A[3]=0$ excluded. Average $= -0.4/1 = -0.4$.
+
+    So $\tau_\text{merge} = [\,0.6,\ 0,\ 0.4,\ -0.4\,]$.
+
+    **Final model** $\theta_\text{merge} = \theta_\text{base} + \lambda\,\tau_\text{merge}$ with $\lambda = 0.5$ and $\theta_\text{base}=0$:
+    $$
+    \theta_\text{merge} = 0.5 \times [\,0.6,\ 0,\ 0.4,\ -0.4\,] = [\,0.3,\ 0,\ 0.2,\ -0.2\,].
+    $$
+
+    Note how TIES resolved the conflict at index 0: both tasks wanted a large-magnitude update but with *opposite* signs ($+0.6$ vs $-0.5$). Naive averaging would have given $(0.6 - 0.5)/2 = 0.05$ — near-total cancellation. Sign election picked the majority-by-sum direction ($+$) and the disjoint average kept only the agreeing $0.6$, preventing the two tasks from destructively interfering.
