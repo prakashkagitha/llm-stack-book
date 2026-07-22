@@ -549,21 +549,39 @@ For deployments that need to be shared across multiple users or hosted on a remo
 
 ```python
 # csv_server_http.py — Same tools as before, exposed over HTTP.
-# pip install mcp[http] uvicorn fastapi
+# pip install mcp fastapi uvicorn
+
+import contextlib
 
 from fastapi import FastAPI
-from mcp.server.fastapi import create_mcp_router
+from starlette.routing import Mount
+
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 # Re-use the same `app` Server object from csv_server.py
 # (in practice, import it from the module)
 from csv_server import app as mcp_app
 
-web = FastAPI(title="CSV Analyst MCP")
+# StreamableHTTPSessionManager drives a low-level Server over the
+# Streamable HTTP transport: it multiplexes JSON-RPC requests and an
+# optional SSE upgrade onto a single ASGI endpoint.
+session_manager = StreamableHTTPSessionManager(app=mcp_app)
 
-# create_mcp_router mounts the MCP protocol handler at /mcp
-# It handles SSE for server-to-client streaming and POST for client messages.
-mcp_router = create_mcp_router(mcp_app)
-web.include_router(mcp_router, prefix="/mcp")
+
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # The session manager owns a task group that must stay alive for the
+    # whole lifetime of the ASGI app.
+    async with session_manager.run():
+        yield
+
+
+web = FastAPI(title="CSV Analyst MCP", lifespan=lifespan)
+
+# Mount the MCP endpoint at /mcp; handle_request is a raw ASGI callable
+# that speaks Streamable HTTP (POST for client -> server, optional SSE
+# upgrade for server -> client streaming).
+web.router.routes.append(Mount("/mcp", app=session_manager.handle_request))
 
 
 # Run with:  uvicorn csv_server_http:web --port 8080
