@@ -160,6 +160,7 @@ where $W_i^Q, W_i^K \in \mathbb{R}^{d_{\text{model}} \times d_k}$, $W_i^V \in \m
 **Grouped Query Attention (GQA).** Use $g$ KV heads shared across $h$ query heads where $g \ll h$. KV cache shrinks by factor $h/g$.
 
 ```python
+import math
 import torch
 import torch.nn.functional as F
 
@@ -504,7 +505,7 @@ def grpo_advantages(rewards: torch.Tensor) -> torch.Tensor:
 rewards = torch.tensor([1.0, 0.0, 1.0, 0.5, 0.0, 1.0, 0.5, 0.0])
 adv = grpo_advantages(rewards)
 print(adv.round(decimals=2))
-# tensor([ 1.03, -1.21,  1.03,  0.10, -1.21,  1.03,  0.10, -1.21])
+# tensor([ 1.15, -1.15,  1.15,  0.00, -1.15,  1.15,  0.00, -1.15])
 ```
 
 See [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html) and [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).

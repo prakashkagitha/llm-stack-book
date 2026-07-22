@@ -268,10 +268,10 @@ for r in [1, 4, 8, 16, 32]:
     Let $W \in \mathbb{R}^{256 \times 256}$ be a rank-8 matrix corrupted by Gaussian noise $\sigma = 0.1$. Running the code above yields singular values approximately:
 
     ```text
-    [12.8, 11.4, 10.9, 10.3, 9.7, 9.1, 8.8, 8.3, 0.1, 0.1, ...]
+    [306.8, 291.2, 268.7, 258.5, 246.6, 233.5, 209.2, 192.2, 3.1, 3.1, ...]
     ```
 
-    A rank-8 approximation achieves relative error of roughly 0.03 (3%), using only $8 \times (256 + 256) = 4{,}096$ parameters instead of $256^2 = 65{,}536$ — a 16× compression. A rank-16 approximation barely improves (the extra singular values are all noise), confirming that the information-carrying subspace truly has low dimension.
+    The first eight singular values are large (the rank-8 signal), then the spectrum falls off a cliff to a noise floor near 3.1 — the singular values of the $0.1 \times \text{randn}(256,256)$ perturbation, whose scale is roughly $0.1 \cdot 2\sqrt{256} \approx 3.2$. A rank-8 approximation achieves relative error of roughly 0.03 (3%), using only $8 \times (256 + 256) = 4{,}096$ parameters instead of $256^2 = 65{,}536$ — a 16× compression. A rank-16 approximation barely improves (the extra singular values are all noise), confirming that the information-carrying subspace truly has low dimension.
 
     In LoRA, we represent $\Delta W \approx AB$ where $A \in \mathbb{R}^{d \times r}$ and $B \in \mathbb{R}^{r \times d}$. If $\Delta W$ has a similar fast-decaying spectrum (which empirical studies confirm it does), rank $r \in \{4, 8, 16\}$ captures most fine-tuning signal with a fraction of the parameters.
 

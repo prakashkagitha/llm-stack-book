@@ -55,8 +55,8 @@ def fixed_chunk(
 
     Example:
         >>> chunks = list(fixed_chunk("word " * 1000, chunk_size=10, overlap=2))
-        >>> len(chunks)   # ceil((1000-2) / (10-2)) = 123 chunks
-        123
+        >>> len(chunks)   # ceil((1000-10) / (10-2)) + 1 = 125 chunks
+        125
     """
     if tokenizer is None:
         # Whitespace proxy: each "token" is a word
@@ -190,7 +190,7 @@ from __future__ import annotations
 import re
 
 
-HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
 
 def split_markdown(
@@ -215,14 +215,16 @@ def split_markdown(
     chunks: list[dict] = []
 
     # Find all heading positions
-    boundaries = [(m.start(), m.group().strip()) for m in HEADING_RE.finditer(text)]
-    boundaries.append((len(text), ""))  # sentinel
+    boundaries = [
+        (m.start(), m.group(1), m.group(2).strip()) for m in HEADING_RE.finditer(text)
+    ]
+    boundaries.append((len(text), "", ""))  # sentinel
 
     prev_end = 0
     current_heading = ""
     current_level = 0
 
-    for i, (pos, heading_text) in enumerate(boundaries):
+    for i, (pos, hashes, heading_text) in enumerate(boundaries):
         section = text[prev_end:pos].strip()
         if section:
             words = section.split()
@@ -245,7 +247,7 @@ def split_markdown(
                         })
 
         current_heading = heading_text
-        current_level = len(heading_text) - len(heading_text.lstrip("#"))
+        current_level = len(hashes)
         prev_end = pos
 
     return chunks
@@ -958,7 +960,7 @@ class RAGResult:
 def run_rag_pipeline(
     query: str,
     bm25_index,           # BM25Index from Section 3
-    dense_index,          # vector store with .search(embedding, top_k) -> list[Document]
+    dense_index,          # vector store with .search(embedding, top_k) -> list[tuple[int, float]]
     embed_fn: Callable,   # str -> np.ndarray
     llm_fn: Callable,     # str -> str (for HyDE / query expansion)
     reranker,             # CrossEncoder or None
@@ -980,8 +982,9 @@ def run_rag_pipeline(
     # ── Step 2: Hybrid retrieval ───────────────────────────────────────────────
     bm25_results = bm25_index.search(query, top_k=config.bm25_top_k)
     dense_results_raw = dense_index.search(query_embedding, top_k=config.dense_top_k)
-    # Normalize dense results to (idx, score) format
-    dense_results = [(i, float(s)) for i, s in enumerate(dense_results_raw)]
+    # Normalize dense results to (idx, score) format (indices must match the
+    # corpus indices used by bm25_index.docs, same contract as dense_search())
+    dense_results = [(int(idx), float(score)) for idx, score in dense_results_raw]
 
     fused = reciprocal_rank_fusion(
         [bm25_results, dense_results], k=config.rrf_k

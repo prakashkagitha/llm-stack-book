@@ -38,7 +38,12 @@ RULES = """HARD RULES (these make the test HONEST — violating them defeats the
 - Minimal honest glue is allowed: small fixtures/toy tensors, tiny shapes, fixed seeds, and
   CPU dtype (float32) substitutions where a block only differs by device. Keep runtime under
   ~60s and memory small.
-- Deps available: numpy, torch (CPU), math, standard library. Do NOT add heavy deps."""
+- ALLOWED IMPORTS (guaranteed in CI): numpy, torch (CPU), einops, scikit-learn (sklearn), and the
+  Python standard library. ANY OTHER third-party import (openai, anthropic, transformers,
+  sentence_transformers, qdrant_client, faiss, datasets, dspy, tiktoken, cohere, ...) MUST be wrapped
+  in `try: import X ... except Exception: X = None` at module scope so the test file still LOADS in CI
+  without that package — the block using it must then be defined-not-called or skipped. Never let an
+  un-guarded optional import sit at module scope; it will ImportError in CI and fail the whole file."""
 
 VERIFY_SCHEMA = {
     "type": "object", "additionalProperties": False,
