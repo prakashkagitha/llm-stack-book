@@ -554,7 +554,10 @@ def simulate_power(p_both, p_b, p_c, n, n_sims=4000, alpha=0.05, seed=0):
       both-right, A-right-only (p_b), B-right-only (p_c), both-wrong.
     """
     rng = np.random.default_rng(seed)
-    p_neither = 1 - p_both - p_b - p_c
+    p_neither = max(0.0, 1 - p_both - p_b - p_c)  # clamp: fp rounding can
+                                                   # make this a tiny negative
+                                                   # number when the inputs
+                                                   # sum to exactly 1.0
     probs = [p_both, p_b, p_c, p_neither]
     rejects = 0
     for _ in range(n_sims):
