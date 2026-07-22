@@ -200,6 +200,7 @@ and returns a float reward based on test outcomes.
 """
 
 import subprocess
+import sys
 import tempfile
 import os
 import json
@@ -234,37 +235,48 @@ def run_tests_in_subprocess(
         with open(code_path, "w") as f:
             f.write(code)
 
-        # Write test runner that imports solution.py
-        runner = textwrap.dedent(f"""
-            import sys, json, traceback
-            sys.path.insert(0, {repr(tmpdir)})
-            
-            results = {{"passed": 0, "total": 0, "error": ""}}
-            try:
-                from solution import *
-                {textwrap.indent(test_suite, "                ")}
-                # Each test function is test_<name>; discover and run
-                test_fns = [v for k, v in globals().items() if k.startswith("test_")]
-                results["total"] = len(test_fns)
-                for fn in test_fns:
-                    try:
-                        fn()
-                        results["passed"] += 1
-                    except Exception:
-                        pass
-            except Exception as e:
-                results["error"] = traceback.format_exc()
-                results["total"] = 1  # At least one test failed
-            
-            print(json.dumps(results))
-        """)
+        # Write test runner that imports solution.py.
+        # NOTE: build the template flush-left and indent the embedded
+        # test_suite block explicitly — mixing textwrap.dedent() with a
+        # multi-line f-string substitution is fragile: dedent() computes a
+        # single common leading-whitespace prefix over the *whole* string,
+        # but only the first line of an embedded multi-line value inherits
+        # the template's indentation (subsequent lines don't), so the
+        # inserted test functions end up misaligned relative to the
+        # surrounding `try:` block and raise IndentationError.
+        indented_tests = textwrap.indent(test_suite, "    ")
+        runner = f'''import sys, json, traceback
+sys.path.insert(0, {repr(tmpdir)})
+
+results = {{"passed": 0, "total": 0, "error": ""}}
+try:
+    from solution import *
+{indented_tests}
+    # Each test function is test_<name>; discover and run
+    test_fns = [v for k, v in globals().items() if k.startswith("test_")]
+    results["total"] = len(test_fns)
+    for fn in test_fns:
+        try:
+            fn()
+            results["passed"] += 1
+        except Exception:
+            pass
+except Exception as e:
+    results["error"] = traceback.format_exc()
+    results["total"] = 1  # At least one test failed
+
+print(json.dumps(results))
+'''
         runner_path = os.path.join(tmpdir, "runner.py")
         with open(runner_path, "w") as f:
             f.write(runner)
 
         try:
             proc = subprocess.run(
-                ["python", runner_path],
+                # Use sys.executable, not a bare "python": many Linux/CI
+                # images only have "python3" on PATH, so a hardcoded
+                # "python" raises FileNotFoundError there.
+                [sys.executable, runner_path],
                 capture_output=True, text=True,
                 timeout=timeout_seconds,
             )
@@ -348,6 +360,7 @@ container startup cost (~200ms) by reusing warm containers.
 
 import threading
 import queue
+import select
 import subprocess
 import json
 import time
@@ -445,8 +458,13 @@ class SandboxPool:
             task = json.dumps({"code": code, "tests": tests}) + "\n"
             worker.proc.stdin.write(task)
             worker.proc.stdin.flush()
-            # Read response with timeout
-            worker.proc.stdout._sock.settimeout(self.timeout)
+            # Read response with a timeout. A subprocess.Popen(text=True)
+            # pipe is a TextIOWrapper over a plain OS pipe, not a socket,
+            # so it has no `_sock` attribute to call settimeout() on —
+            # select() is the correct way to bound the wait on a pipe fd.
+            ready, _, _ = select.select([worker.proc.stdout], [], [], self.timeout)
+            if not ready:
+                raise TimeoutError(f"sandbox worker timed out after {self.timeout}s")
             line = worker.proc.stdout.readline()
             return json.loads(line)
         except Exception as e:
