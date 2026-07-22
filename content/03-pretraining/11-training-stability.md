@@ -840,3 +840,123 @@ MONITORING
 - **Anil et al., "PaLM 2 Technical Report" (Google, 2023)** — Documents the training stability experience for a series of large models including the use of bf16, careful init, and monitoring infrastructure.
 - **Molybog et al., "A Theory of Loss Landscape and Training Stability" (2023)** — Theoretical treatment connecting loss landscape curvature to spike behavior, providing analytical backing for the Adam amplification model described in this chapter.
 - **nanoGPT (Andrej Karpathy, GitHub)** — The canonical minimal GPT implementation. The `train.py` file is a useful starting point for understanding gradient clipping, skip-batch, and monitoring in a single-file, readable codebase.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter states that loss spikes under AdamW are *usually transient* — the model recovers on its own after tens to hundreds of steps — yet a small fraction become *absorbing* and effectively diverge. Using the update rule $\Delta\theta = -\alpha\,\hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$ and the roles of $\beta_1$ and $\beta_2$, explain (a) the self-healing mechanism that makes most spikes transient, and (b) what distinguishes a spike that heals from one that absorbs.
+
+??? note "Solution"
+    **(a) Why most spikes heal.** On the step a spike arrives, the second-moment estimate $\hat{v}_t$ still reflects the *historical* gradient scale, because it updates slowly ($\beta_2 = 0.999$, so $1-\beta_2 \approx 10^{-3}$). This stale, small denominator is exactly what amplifies the update — the effective per-parameter learning rate $\alpha/\sqrt{\hat{v}_t}$ is momentarily huge. But over the *next* few hundred steps the EMA absorbs the large gradient: $\hat{v}_t$ grows, $\sqrt{\hat{v}_t}$ grows, and the amplification factor shrinks back toward normal. So the very quantity that caused the spike is also self-limiting — Adam damps its own future updates once it has "seen" the large gradient. The first moment $\hat{m}_t$ ($\beta_1 = 0.9$) also decays the anomalous gradient's influence within roughly $1/(1-\beta_1) \approx 10$ steps. Together these give the observed transient behavior.
+
+    **(b) Transient vs. absorbing.** The healing above only concerns the *optimizer state* recovering its calibration; it says nothing about *where the weights landed*. The distinguishing factor is the **magnitude of the single large update relative to the local loss geometry**. If the one oversized step keeps the parameters within the same basin (a region of moderate curvature), the subsequent well-calibrated steps walk the loss back down and the spike is transient. If the oversized step throws the weights into a region of high curvature / a different, worse basin, the recovered optimizer now descends toward a higher-loss minimum — the spike is absorbing. This is why the chapter frames severity relative to the stale $\sqrt{\hat{v}}$: the larger the gradient/$\sqrt{\hat{v}}$ ratio on the spike step, the farther the model is flung, and the more likely it leaves the good basin. It is also why gradient clipping (which caps that single displacement) converts many would-be-absorbing spikes into survivable transient ones.
+
+**2.** (Quantitative) A parameter has historical gradient RMS $g_\text{rms} = 0.02$, so $\hat{v} \approx g_\text{rms}^2 = 4\times10^{-4}$ and $\sqrt{\hat{v}} \approx 0.02$ (take $\epsilon$ negligible). Training uses AdamW with $\alpha = 4\times10^{-4}$, $\beta_1 = 0.9$, and the fresh-moment model $\hat{m} \approx (1-\beta_1)\,g$ with the denominator held at its stale value $\sqrt{\hat{v}} = 0.02$ for the arriving step, so $|\Delta\theta| \approx \alpha\,(1-\beta_1)\,g/\sqrt{\hat{v}}$.
+
+   (a) Compute $|\Delta\theta|$ for a normal step with $g = 0.02$.
+   (b) A bad batch produces $g = 0.5$ on this parameter. Compute $|\Delta\theta|$ and the spike-to-normal ratio.
+   (c) Global gradient clipping is enabled at $\tau = 1.0$, and on the spike step the global gradient norm is $\|g\| = 5.0$. Recompute $|\Delta\theta|$ for the spike and the new ratio to a normal step. How much of the amplification did clipping remove?
+
+??? note "Solution"
+    **(a) Normal step**, $g = 0.02$:
+
+    $$
+    |\Delta\theta|_\text{normal} = \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\hat{v}}} = \frac{4\times10^{-4}\times 0.1 \times 0.02}{0.02} = 4\times10^{-4}\times 0.1 = 4\times10^{-5}.
+    $$
+
+    **(b) Spike step**, $g = 0.5$ (25x the historical RMS), same stale $\sqrt{\hat{v}} = 0.02$:
+
+    $$
+    |\Delta\theta|_\text{spike} = \frac{4\times10^{-4}\times 0.1 \times 0.5}{0.02} = \frac{2\times10^{-5}}{0.02} = 1\times10^{-3}.
+    $$
+
+    Ratio $= (1\times10^{-3})/(4\times10^{-5}) = 25$. The update is 25x a normal step — exactly the gradient ratio $0.5/0.02 = 25$, because the denominator has not yet absorbed the spike.
+
+    **(c) With clipping.** Clipping rescales every gradient by $\tau/\|g\| = 1.0/5.0 = 0.2$, so this parameter's gradient drops from $0.5$ to $0.5\times0.2 = 0.1$:
+
+    $$
+    |\Delta\theta|_\text{spike,clip} = \frac{4\times10^{-4}\times 0.1 \times 0.1}{0.02} = \frac{4\times10^{-6}}{0.02} = 2\times10^{-4}.
+    $$
+
+    New ratio $= (2\times10^{-4})/(4\times10^{-5}) = 5$. Clipping cut the amplification from **25x down to 5x** — a factor-of-5 reduction, i.e. it removed exactly the clip rescale factor $1/0.2 = 5$. The step is now only 5x normal instead of 25x, far more likely to keep the model in its basin.
+
+**3.** (Quantitative) A model uses head dimension $d_k = 64$, so the attention scale is $1/\sqrt{d_k} = 1/8 = 0.125$. Late in training, a repeated-boilerplate batch drives one head's query and key vectors to L2 norm $\|q\| = \|k\| = 250$.
+
+   (a) What is the maximum possible attention logit $q\cdot k / \sqrt{d_k}$ for this head? Is it within fp16 range (max $65\,504$)? Why is it still dangerous even if it does not overflow?
+   (b) The chapter's `QKNormAttention` applies RMSNorm to $Q$ and $K$ before the dot product. After RMSNorm (RMS $= 1$ per vector), what is the L2 norm of each normalized vector, and hence the new maximum logit? Confirm this matches the claimed $O(\sqrt{d_k})$ bound.
+
+??? note "Solution"
+    **(a)** The dot product is maximized when $q$ and $k$ are parallel, giving $q\cdot k = \|q\|\,\|k\| = 250 \times 250 = 62\,500$. Scaled:
+
+    $$
+    \text{logit}_\text{max} = \frac{62\,500}{\sqrt{64}} = \frac{62\,500}{8} = 7\,812.5.
+    $$
+
+    This is comfortably within the fp16 range ($< 65\,504$), so no overflow yet. It is still dangerous because $\exp(7812.5)$ overflows fp16 in the softmax: the exponential of a logit this large is `inf`, the distribution collapses to a one-hot delta on the max-logit token, and the normalizing sum underflows/overflows — producing `NaN` gradients in the backward pass. Softmax collapse and gradient `NaN` occur long before the *logit itself* reaches the fp16 ceiling.
+
+    **(b)** RMSNorm sets each vector's root-mean-square component to $1$, so $\sqrt{\tfrac{1}{d_k}\sum_i x_i^2} = 1 \Rightarrow \sum_i x_i^2 = d_k \Rightarrow \|x\|_2 = \sqrt{d_k} = \sqrt{64} = 8$ (before the learnable scale, which is $O(1)$). The maximum logit is now
+
+    $$
+    \text{logit}_\text{max} = \frac{\|Q\|\,\|K\|}{\sqrt{d_k}} = \frac{\sqrt{d_k}\cdot\sqrt{d_k}}{\sqrt{d_k}} = \sqrt{d_k} = 8.
+    $$
+
+    So the worst-case logit drops from $7\,812.5$ to $8$ — bounded by $\sqrt{d_k}$ regardless of the raw activation magnitudes, exactly the $O(\sqrt{d_k})$ guarantee the chapter claims. The exponential of $8$ is trivially representable, so no softmax collapse.
+
+**4.** (Conceptual) In "Story 2: The creeping LR spike," a run is stable for weeks, then loss jumps 0.4 nats and the gradient norm hits 20x *precisely at the step where warmup ends and the cosine peak LR is reached*. (a) Explain mechanistically why the end of warmup is the dangerous moment, in terms of the effective learning rate $\alpha_\text{peak}/\sqrt{\hat{v}}$. (b) Why does *lengthening* the warmup fix it, and why is a too-short warmup (e.g. 0.1% of steps) a classic cause?
+
+??? note "Solution"
+    **(a)** The effective per-parameter step size is $\alpha/\sqrt{\hat{v}}$, a product of the *scheduled* LR $\alpha$ and the *learned* denominator $\sqrt{\hat{v}}$. During warmup, $\alpha$ is small, so gradients are small, and Adam's second moment $\hat{v}$ is calibrated to that small-gradient regime. When warmup ends, $\alpha$ jumps to its peak value, but $\hat{v}$ is a slow EMA ($\beta_2 = 0.999$) that still reflects the smaller warmup-era gradients — it has not yet caught up to the larger gradients the peak LR induces. So $\alpha_\text{peak}/\sqrt{\hat{v}}$ is transiently too large: the numerator has stepped up but the denominator has not. Every batch (not just anomalous ones) now produces oversized updates, gradients blow up, and you get the spike and the 20x grad norm. Once $\hat{v}$ absorbs the larger gradient scale over the next few hundred steps, the effective LR settles and the loss partially recovers.
+
+    **(b)** Lengthening warmup ramps $\alpha$ up *slowly enough that $\hat{v}$ tracks it* — the second moment is continuously re-calibrated as the LR rises, so the numerator and denominator grow together and $\alpha/\sqrt{\hat{v}}$ never has a discontinuous jump. A too-short warmup (0.1% of steps) reaches the peak LR before the Adam moments have stabilized, so there is a sharp mismatch exactly at the peak — the same failure. The chapter's fix is warmup $\geq 1$–2% of total steps (or a sqrt-scaled warmup that grows $\alpha$ slower than Adam's moment term), which is also why the Pre-Run Hardening Checklist requires warmup $\geq 1\%$ of total steps.
+
+**5.** (Implementation) The chapter's `QKNormAttention` bounds logits to $O(\sqrt{d_k})$. A complementary technique referenced in the SOTA section (Rybakov et al.) is **softmax logit capping**: pass the pre-softmax logits through $c\cdot\tanh(\text{logit}/c)$, which smoothly saturates any logit to the range $(-c, c)$ while leaving small logits nearly unchanged. Implement a function `attn_logit_softcap(attn, cap)` and modify `QKNormAttention.forward` to apply the cap *before* the causal mask and softmax. Explain why the cap must be applied before, not after, masking.
+
+??? note "Solution"
+    The soft-cap is a monotonic, differentiable squashing that maps $\mathbb{R} \to (-c, c)$. For $|z| \ll c$, $\tanh(z/c) \approx z/c$ so $c\tanh(z/c)\approx z$ (identity on small logits); for $|z| \gg c$ it saturates to $\pm c$.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def attn_logit_softcap(attn: torch.Tensor, cap: float = 50.0) -> torch.Tensor:
+        """
+        Soft-cap pre-softmax attention logits into (-cap, cap).
+        attn: (B, H, T, T) raw logits (Q @ K^T * scale).
+        Leaves |logit| << cap almost unchanged; saturates large logits.
+        """
+        return cap * torch.tanh(attn / cap)
+    ```
+
+    Modified forward (only the attention-score block changes):
+
+    ```python
+    def forward(self, x: torch.Tensor, mask=None, logit_cap: float = 50.0):
+        B, T, D = x.shape
+
+        def split_heads(t):
+            return t.view(B, T, self.n_heads, self.d_k).transpose(1, 2)
+
+        Q = split_heads(self.W_q(x))
+        K = split_heads(self.W_k(x))
+        V = split_heads(self.W_v(x))
+
+        # QK-Norm: bounds logits to O(sqrt(d_k))
+        Q = self.q_norm(Q)
+        K = self.k_norm(K)
+
+        scale = self.d_k ** -0.5
+        attn = (Q @ K.transpose(-2, -1)) * scale        # (B, H, T, T)
+
+        # --- Soft-cap BEFORE masking and softmax ---
+        attn = attn_logit_softcap(attn, cap=logit_cap)
+
+        if mask is not None:
+            attn = attn.masked_fill(mask == 0, float('-inf'))
+        attn = F.softmax(attn, dim=-1)
+
+        out = (attn @ V).transpose(1, 2).contiguous().view(B, T, D)
+        return self.W_o(out)
+    ```
+
+    **Why cap before masking.** Masking fills disallowed positions with $-\infty$ (so they receive zero softmax weight). If the soft-cap were applied *after* masking, $c\tanh(-\infty/c) = -c$ — a finite, *large-magnitude* value — which would resurrect the masked positions: they would receive nonzero softmax probability $\propto e^{-c}$ and leak future information (breaking causality) or attend to padding. Applying the cap first squashes only the genuine finite logits, then the mask overwrites the forbidden entries with true $-\infty$, so `softmax` correctly assigns them exactly zero weight. The cap targets the numerical-overflow risk on real logits; the mask must remain hard.

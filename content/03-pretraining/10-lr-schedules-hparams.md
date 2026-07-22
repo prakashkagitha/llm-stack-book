@@ -856,3 +856,122 @@ Hyperparameter Launch Checklist
 - Hu, S. et al. "MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies." arXiv, 2024. (Popularizes the WSD schedule and demonstrates its practical advantages.)
 - Brown, T. et al. "Language Models are Few-Shot Learners." NeurIPS 2020. (GPT-3; documents the hyperparameter choices used for large-scale pretraining at the time.)
 - microsoft/mup GitHub repository. Reference implementation of maximal-update parameterization in PyTorch.
+
+## Exercises
+
+**1.** Adam carries first- and second-moment estimates $m_t$ and $v_t$ that are both initialized to zero. Using this fact, explain (a) why pretraining a billion-parameter model *without* warmup frequently diverges in the first thousand steps, and (b) why the "Common Pitfall" admonition insists you re-warm the learning rate after a checkpoint restart that *resets the optimizer state* — even though the same admonition says a clean continuation (which keeps optimizer state) needs no re-warm.
+
+??? note "Solution"
+    (a) At step 0 both $m_t$ and $v_t$ are zero. The second moment $v_t$ is the running estimate of gradient magnitude squared, and Adam's update divides by $\sqrt{v_t}+\epsilon$. In the first few hundred steps $v_t$ is still a noisy underestimate of the true gradient variance, so the *effective* per-parameter step size is erratic and, on average, too large. At the same time the weight matrices are freshly random: gradient norms are large and vary wildly across layers. Applying the full target learning rate on top of an uncalibrated $v_t$ produces updates big enough to push weights into regimes where softmax logits saturate, norms explode, or residual magnitudes collapse — none of which recover. So the run spikes or diverges. Warmup ramps the effective LR from near-zero to the target over $T_w$ steps, buying the optimizer time to calibrate $m_t, v_t$ and the network time to settle into a reasonable basin before full-magnitude updates arrive.
+
+    (b) The danger is specifically the *combination* of a cold optimizer state (zero $m_t, v_t$) with a full-magnitude learning rate — that is exactly the step-0 situation. A clean continuation reloads the saved $m_t, v_t$, so the moments are already calibrated and the schedule's LR at that step is appropriate; no re-warm is needed. But if you restart with a fresh optimizer (e.g., you had to re-init ZeRO-3 after an OOM), $m_t$ and $v_t$ are back to zero while the schedule places the LR at its full mid-run value. That reproduces the cold-start instability warmup was invented to prevent, so you must re-warm for a few hundred steps.
+
+**2.** Use the chapter's cosine-with-warmup schedule with $\eta_{\max} = 3\text{e-}4$, `num_warmup_steps` $=100$, `num_training_steps` $=1000$, and `min_lr_fraction` $=0.1$. Compute the learning rate at (a) step 50, (b) step 550, and (c) step 1000. Give each to three significant figures.
+
+??? note "Solution"
+    The `LambdaLR` multiplier is applied to the base LR $\eta_{\max}=3\text{e-}4$.
+
+    (a) **Step 50 (warmup, since $50 < 100$).** Multiplier $= t/T_w = 50/100 = 0.5$.
+    $\eta = 0.5 \times 3\text{e-}4 = 1.50\text{e-}4$.
+
+    (b) **Step 550 (cosine phase).** Progress $= (t - T_w)/(T - T_w) = (550-100)/(1000-100) = 450/900 = 0.5$.
+    Cosine term: $0.5\,(1 + \cos(\pi \cdot 0.5)) = 0.5\,(1 + 0) = 0.5$.
+    Multiplier $=$ `min_lr_fraction` $+ (1 - $ `min_lr_fraction`$) \times 0.5 = 0.1 + 0.9 \times 0.5 = 0.55$.
+    $\eta = 0.55 \times 3\text{e-}4 = 1.65\text{e-}4$.
+
+    (c) **Step 1000.** Progress $= (1000-100)/900 = 1.0$. Cosine term: $0.5\,(1 + \cos(\pi)) = 0.5\,(1 - 1) = 0$.
+    Multiplier $= 0.1 + 0.9 \times 0 = 0.1$.
+    $\eta = 0.1 \times 3\text{e-}4 = 3.00\text{e-}5$.
+
+    Note that step 1000 lands exactly on the floor `min_lr_fraction` $\times \eta_{\max}$, matching the smoke test's reported final LR of $3.00\text{e-}5$.
+
+**3.** Your reference run uses $\eta_{\max} = 3\text{e-}4$ at an effective batch of $0.5\text{M}$ tokens/step. You want to scale to $4\text{M}$ tokens/step. (a) Give the peak LR the linear scaling rule prescribes and the peak LR the square-root rule prescribes. (b) The chapter says the critical batch size $B^*$ for language cross-entropy is "on the order of a few million tokens." Given that, which of your two candidate LRs is the safer choice for the $4\text{M}$-token batch, and why? (c) If you hold the *total* token budget fixed while going from $0.5\text{M}$ to $4\text{M}$ tokens/step, by what factor does the number of optimizer steps change?
+
+??? note "Solution"
+    The scaling factor is $k = 4\text{M} / 0.5\text{M} = 8$.
+
+    (a) **Linear rule:** $\eta' = k \cdot \eta = 8 \times 3\text{e-}4 = 2.4\text{e-}3$.
+    **Square-root rule:** $\eta' = \sqrt{k}\cdot \eta = \sqrt{8}\times 3\text{e-}4 \approx 2.828 \times 3\text{e-}4 \approx 8.49\text{e-}4$.
+
+    (b) The target batch of $4\text{M}$ tokens is right around the stated critical batch size $B^*$ (a few million tokens). Near or beyond $B^*$ you are leaving the small-batch regime where linear scaling holds and entering the saturated regime where gradient variance no longer falls as $1/B$; linear scaling then over-scales the LR and risks instability. So the **square-root value, $\approx 8.49\text{e-}4$**, is the safer, more conservative choice — the chapter explicitly recommends sqrt scaling "if you're uncertain whether you've exceeded the critical batch size." (For reference, both candidates still sit within the published $1\text{e-}4$ to $3\text{e-}3$ peak-LR band for a 7B model, so neither is absurd — but sqrt is the prudent pick this close to $B^*$.)
+
+    (c) With the total token budget fixed, steps $=$ total tokens / tokens-per-step, so multiplying tokens/step by 8 divides the step count by **8** (e.g., 200K steps becomes 25K steps). If you keep a cosine schedule, `num_training_steps` must be updated to this new, smaller value so the decay still lands correctly at the end.
+
+**4.** The gradient-accumulation code divides the per-microbatch loss by `accumulation_steps` before calling `.backward()`. (a) Assume each of $k$ microbatches contains exactly $m$ tokens and its loss is the mean cross-entropy over those $m$ tokens. Show that summing the $k$ divided-and-backpropagated microbatch gradients equals the gradient of the mean loss over all $km$ tokens. (b) Now suppose the microbatches have *different* token counts $m_1, \dots, m_k$. Explain why dividing every microbatch loss by the same constant $k$ no longer reproduces the true full-batch mean gradient, and state the correct weighting.
+
+??? note "Solution"
+    Let $\ell_j(\theta)$ be the per-token cross-entropy on token $j$. Gradients are linear, so $\nabla$ of a sum is the sum of $\nabla$s.
+
+    (a) Microbatch $i$ has loss $L_i = \frac{1}{m}\sum_{j \in \text{mb}_i} \ell_j$. The code backpropagates $L_i / k$, and since `.backward()` *accumulates* into `.grad`, after all $k$ microbatches the stored gradient is
+    $$
+    \sum_{i=1}^{k} \nabla \frac{L_i}{k} = \frac{1}{k}\sum_{i=1}^{k} \nabla\!\left(\frac{1}{m}\sum_{j\in\text{mb}_i}\ell_j\right) = \frac{1}{km}\sum_{j=1}^{km}\nabla \ell_j = \nabla\!\left(\frac{1}{km}\sum_{j=1}^{km}\ell_j\right).
+    $$
+    The right-hand side is exactly the gradient of the mean loss over the full effective batch of $km$ tokens. So dividing by $k$ makes accumulation mathematically identical to one big averaged batch — this is the "mathematically equivalent... if loss is averaged (not summed)" point in the text.
+
+    (b) With unequal counts, microbatch $i$'s mean loss $L_i = \frac{1}{m_i}\sum_{j\in\text{mb}_i}\ell_j$ already normalizes by its *own* $m_i$. Dividing again by the constant $k$ gives accumulated gradient $\frac{1}{k}\sum_i \frac{1}{m_i}\sum_{j\in\text{mb}_i}\nabla\ell_j$, which weights each *token* by $\frac{1}{k\,m_i}$ — tokens in a small microbatch get more weight than tokens in a large one. The true full-batch mean weights every token equally by $\frac{1}{\sum_i m_i}$. To recover it you must weight each microbatch by its token share: scale microbatch $i$'s loss by $m_i / \sum_i m_i$ (equivalently, sum the *token-summed* losses and divide once by the total token count $\sum_i m_i$), not by a flat $1/k$.
+
+**5.** Implement a `get_linear_schedule_with_warmup` function in the same `LambdaLR` style as the chapter's `get_cosine_schedule_with_warmup`: linear ramp over `num_warmup_steps`, then a *linear* decay to a floor of `min_lr_fraction` at `num_training_steps`. Add a smoke test that checks the midpoint of the decay phase and the final value.
+
+??? note "Solution"
+    During warmup the multiplier is $t/T_w$, identical to the cosine version. During decay, `progress` runs $0 \to 1$ and the multiplier interpolates *linearly* from $1$ down to `min_lr_fraction`: multiplier $= 1 - (1 - f)\,\text{progress}$, where $f=$ `min_lr_fraction`.
+
+    ```python
+    import math
+    import torch
+    from torch.optim.lr_scheduler import LambdaLR
+
+
+    def get_linear_schedule_with_warmup(
+        optimizer: torch.optim.Optimizer,
+        num_warmup_steps: int,
+        num_training_steps: int,
+        min_lr_fraction: float = 0.1,
+    ) -> LambdaLR:
+        """Linear warmup, then linear decay from peak to min_lr_fraction * peak."""
+        def lr_lambda(current_step: int) -> float:
+            if current_step < num_warmup_steps:
+                return float(current_step) / float(max(1, num_warmup_steps))
+            progress = float(current_step - num_warmup_steps) / float(
+                max(1, num_training_steps - num_warmup_steps)
+            )
+            progress = min(progress, 1.0)  # clamp so we never go below the floor
+            # Linear interpolation from 1.0 down to min_lr_fraction.
+            return 1.0 - (1.0 - min_lr_fraction) * progress
+
+        return LambdaLR(optimizer, lr_lambda)
+
+
+    if __name__ == "__main__":
+        model = torch.nn.Linear(10, 10)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer, num_warmup_steps=100, num_training_steps=1000,
+            min_lr_fraction=0.1,
+        )
+
+        lrs = []
+        for _ in range(1000):
+            optimizer.step()
+            lrs.append(optimizer.param_groups[0]["lr"])
+            scheduler.step()
+
+        # Peak is 3e-4. Decay midpoint is step 550 (progress = 0.5):
+        # multiplier = 1 - 0.9 * 0.5 = 0.55  ->  1.65e-4.
+        assert abs(lrs[550] - 3e-4 * 0.55) < 1e-9, "decay midpoint wrong"
+        # Step 999 (progress = 899/900 ~ 0.999) is just above the 3e-5 floor.
+        assert lrs[-1] < 3e-4 * 0.101, "floor not reached"
+        print(f"Peak LR: {max(lrs):.2e}, Step 550 LR: {lrs[550]:.2e}, "
+              f"Final LR: {lrs[-1]:.2e}")
+        # Output: Peak LR: 3.00e-04, Step 550 LR: 1.65e-04, Final LR: 3.03e-05
+    ```
+
+    Contrast with cosine: at the decay midpoint both schedules happen to give the same $1.65\text{e-}4$ here (cosine's $0.5(1+\cos\tfrac{\pi}{2}) = 0.5$ coincides with linear's $0.5$), but away from the midpoint linear decays at a constant rate while cosine stays flatter near the peak and steeper only near the tail — which is precisely why the chapter says linear "decays too aggressively in the middle of the run."
+
+**6.** You tune hyperparameters on a muP proxy model of width $d_{\text{proxy}} = 256$ and find an optimal base LR of $1\text{e-}2$. (a) Using the chapter's `build_mup_optimizer` convention (`lr_scale = proxy_width / actual_width`), what effective LR does a hidden `MuPLinear` layer of width $2048$ receive when you scale up? (b) In *standard* parameterization the optimal LR for hidden matrices scales roughly as $1/d$. If you instead grid-searched at width 256 in SP and naively reused that LR at width $4096$, by what factor would you likely be *off*? (c) When you run the chapter's coordinate check, what qualitative signature in the "muP mean|act|" column versus the "SP mean|act|" column tells you the muP implementation is correct?
+
+??? note "Solution"
+    (a) `lr_scale` $= d_{\text{proxy}} / d_{\text{actual}} = 256 / 2048 = 1/8$. Effective LR $= 1\text{e-}2 \times 1/8 = 1.25\text{e-}3$. The base number you *swept* stays $1\text{e-}2$; muP folds the width dependence into the per-layer multiplier, so you never re-tune it.
+
+    (b) Going from width 256 to 4096 is a $16\times$ increase. Under SP the optimal hidden-matrix LR scales as $1/d$, so it should drop by about $16\times$. Reusing the width-256 value unchanged at width 4096 would leave you roughly **$16\times$ too high** — squarely the kind of blow-up that motivates muP. (That is exactly the width re-tuning muP eliminates: the whole point is that the *tuned* number is width-invariant.)
+
+    (c) Under correct muP the per-layer activation (or update) scale is **flat across width** — the "muP mean|act|" column stays roughly constant (within ~2x) across the 256 -> 2048 sweep. Under SP the same quantity **drifts monotonically** as width grows (in the chapter's example it shrinks ~15-20x, e.g. ~0.24 -> ~0.014). So the signature of a correct implementation is: muP column flat, SP column clearly not flat. If your muP column is *not* flat, the bug is almost always in the init std, the per-layer LR multiplier, or the attention/readout scaling.

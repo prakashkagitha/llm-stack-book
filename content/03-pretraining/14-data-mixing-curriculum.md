@@ -392,3 +392,149 @@ Get these right and you buy capability gains that would otherwise cost a substan
 - Bengio, Louradour, Collobert, Weston, *Curriculum Learning* (2009) — the original easy-to-hard framing.
 - Gao et al., *The Pile* — an early explicit, documented domain-weighted pretraining mixture.
 - The Llama, Gopher, and OLMo technical reports — real-world descriptions of mixture ablations, annealing, and data-schedule design at frontier scale.
+
+## Exercises
+
+**1.** A teammate has a small, high-value math set and wants to hit 3 effective epochs on it. They plan to upsample it 3x and then run deduplication on the *combined* corpus afterward "to clean things up." Explain why the ordering is backwards, and describe what can go wrong quantitatively if the set already contains 4x internal near-duplication of some passages. What is the correct order of operations?
+
+??? note "Solution"
+
+    Deduplication and upsampling both act on the *same axis* — how many times a token is effectively seen — but in opposite directions. Deduplication *reduces* effective epochs by removing near-duplicate content; upsampling deliberately *increases* them. The chapter's principle is: **deduplicate aggressively first, so that "one epoch" means one genuine pass over unique content; then upsample deliberately, with full visibility into the resulting epoch counts.** Deduplication makes the epoch math honest; upsampling then spends that honest budget.
+
+    Doing it backwards multiplies the duplication. If some passages already appear 4x within the raw set, a 3x upsample yields $3 \times 4 = 12$ effective views of those passages *before* any dedup runs. Twelve views is deep into the verbatim-memorization zone (a privacy and generalization problem), and it also means the intended "3 epochs" is a fiction: the model sees the boilerplate-heavy passages 12 times while genuinely unique math is seen only 3 times. Running dedup afterward on the combined, already-upsampled corpus is awkward and may not cleanly undo the damage (the LR-influential imprint may already be the plan).
+
+    Correct order: (1) deduplicate *within* the math domain so it contains only unique content and "one epoch = one pass over unique tokens"; (2) *then* choose the upsample factor (here 3x) with full knowledge that 3x now means genuinely 3 epochs.
+
+**2.** You have a 1.5 T-token training budget ($D = 1500$ B). Your cleaned, deduplicated pools and chosen mixture weights are:
+
+| domain | unique tokens $n_i$ | weight $w_i$ |
+|---|---|---|
+| web | 3000 B | 0.50 |
+| code | 200 B | 0.20 |
+| math | 25 B | 0.10 |
+| books | 100 B | 0.08 |
+| multi | 500 B | 0.12 |
+
+Compute the effective epochs $e_i$ for each domain. Which domain is at the edge of the repetition danger zone, and what would you do about it?
+
+??? note "Solution"
+
+    Use $e_i = w_i D / n_i$ with $D = 1500$ B:
+
+    - web: $0.50 \times 1500 / 3000 = 750/3000 = 0.25$ epochs
+    - code: $0.20 \times 1500 / 200 = 300/200 = 1.5$ epochs
+    - math: $0.10 \times 1500 / 25 = 150/25 = 6.0$ epochs
+    - books: $0.08 \times 1500 / 100 = 120/100 = 1.2$ epochs
+    - multi: $0.12 \times 1500 / 500 = 180/500 = 0.36$ epochs
+
+    (Weights sum to $1.0$, as required.) **Math, at 6.0 epochs, sits right at the top of the ~4-6 epoch danger zone** the chapter flags: past roughly 4 epochs returns to repeated data decay sharply, and by ~6 you risk memorization and reduced generalization. Options: (a) lower $w_{\text{math}}$ so math lands nearer 3-4 epochs; (b) enlarge the *unique* math pool with synthetic generation so 6.0 real epochs becomes fewer effective repeats of any one token; or (c) keep 6 epochs only if you have deliberately budgeted for it and are watching for memorization. Also remember to include any later annealing-phase math exposure in this count before deciding.
+
+**3.** Explain why DoReMi measures each domain by *excess* loss $\text{excess}_i(\theta) = \ell_i(\theta) - \ell_i(\theta_{\text{ref}})$ (clamped at zero) rather than raw loss $\ell_i(\theta)$. In the chapter's toy run, the `multi` domain has the highest reference loss of all domains yet is upweighted only ~1.9x, while `math` (also high-loss) is upweighted ~17x. Reconcile these two facts.
+
+??? note "Solution"
+
+    Some domains are *intrinsically harder* — they have higher irreducible entropy (loss floor). A naive Group-DRO adversary using **raw** loss would dump all weight onto the highest-floor domain forever (e.g., noisy multilingual text), even though extra weight there cannot lower that floor and so does not help. Excess loss instead asks the sharper question: *"On which domain is the proxy still far from what is achievable?"* A high-floor domain has high loss for *both* proxy and reference, so once the proxy catches up to the reference its excess is small and the adversary stops over-investing. A domain where the proxy lags the reference (lots of headroom) keeps a large excess and gets upweighted. Clamping at zero encodes "you cannot beat the reference for free."
+
+    Reconciling `multi` vs `math`: raw loss is not what earns weight — **closeable** (excess) loss is. `math` has a high floor but *large headroom* (big `scale`, and a substantial gap the proxy can still close relative to the reference), so its excess stays large and it is upweighted ~17x. `multi` has the highest floor *and* the slowest learning rate (small headroom relative to its difficulty): its raw loss is high but its *excess* — the gap the proxy can actually close — is modest, so it earns only a ~1.9x upweight. This separation of "hard" from "improvable" is the entire reason DoReMi uses excess loss instead of raw loss.
+
+**4.** You have a training budget of $D = 800$ B tokens and these deduplicated pools: web 2000 B, code 200 B, math 20 B, books 60 B. You decide on target epoch counts based on quality and repetition tolerance: web 0.2, code 2, math 5, books 3. Following the chapter's epoch-budget procedure, convert these into normalized mixture weights $w_i$, and report the *realized* epochs after normalization. Does any domain exceed the danger zone?
+
+??? note "Solution"
+
+    Step 1 - tokens allocated per domain, $\text{alloc}_i = e_i \times n_i$:
+
+    - web: $0.2 \times 2000 = 400$ B
+    - code: $2 \times 200 = 400$ B
+    - math: $5 \times 20 = 100$ B
+    - books: $3 \times 60 = 180$ B
+
+    Total $= 400 + 400 + 100 + 180 = 1080$ B, but the budget is only 800 B. Step 2 - normalize by $s = 800/1080 = 0.7407$. The mixture weights are $w_i = (\text{alloc}_i \times s)/800 = \text{alloc}_i / 1080$:
+
+    - web: $400/1080 = 0.370$
+    - code: $400/1080 = 0.370$
+    - math: $100/1080 = 0.093$
+    - books: $180/1080 = 0.167$
+
+    Sanity check: they sum to $1.0$. Step 3 - realized epochs are the targets scaled by $s = 0.7407$:
+
+    - web: $0.2 \times 0.7407 = 0.148$
+    - code: $2 \times 0.7407 = 1.48$
+    - math: $5 \times 0.7407 = 3.70$
+    - books: $3 \times 0.7407 = 2.22$
+
+    No domain exceeds the ~4-6 epoch danger zone: math lands at 3.70, comfortably under. Note math, at only 0.9% of unique tokens, receives 9.3% of training weight (a large upweight), while web, 88% of unique tokens, gets 37% - exactly the "trust and repetition tolerance turned into sampling probabilities" logic of the chapter's worked example.
+
+**5.** Work one step of DoReMi's exponentiated-gradient weight update by hand. There are $k = 3$ domains with current weights $w^{(t)} = (0.50, 0.30, 0.20)$. The clamped excess losses this step are $\lambda = (0.20, 0.00, 0.60)$. Use step size $\eta = 1.0$ and smoothing constant $c = 0.10$. Compute $w^{(t+1)}$ using the chapter's update rule, and state in one sentence what smoothing bought you here.
+
+??? note "Solution"
+
+    The update is $\tilde{w}_i = w_i \exp(\eta \lambda_i)$, then renormalize, then smooth: $w_i^{(t+1)} = (1-c)\,\tilde{w}_i/\sum_j \tilde{w}_j + c/k$.
+
+    Step 1 - multiplicative update ($\eta = 1$, so $\exp(\lambda_i)$):
+
+    - $\tilde{w}_1 = 0.50 \times e^{0.20} = 0.50 \times 1.2214 = 0.6107$
+    - $\tilde{w}_2 = 0.30 \times e^{0.00} = 0.30 \times 1.0000 = 0.3000$
+    - $\tilde{w}_3 = 0.20 \times e^{0.60} = 0.20 \times 1.8221 = 0.3644$
+
+    Sum $= 0.6107 + 0.3000 + 0.3644 = 1.2751$.
+
+    Step 2 - renormalize onto the simplex:
+
+    - $0.6107/1.2751 = 0.4789$
+    - $0.3000/1.2751 = 0.2353$
+    - $0.3644/1.2751 = 0.2858$
+
+    Step 3 - smooth with $(1-c) = 0.9$ and $c/k = 0.10/3 = 0.03333$:
+
+    - $w_1^{(t+1)} = 0.9 \times 0.4789 + 0.03333 = 0.4310 + 0.0333 = 0.4644$
+    - $w_2^{(t+1)} = 0.9 \times 0.2353 + 0.03333 = 0.2118 + 0.0333 = 0.2451$
+    - $w_3^{(t+1)} = 0.9 \times 0.2858 + 0.03333 = 0.2572 + 0.0333 = 0.2905$
+
+    Result $w^{(t+1)} = (0.464, 0.245, 0.291)$, which sums to $1.0$. Domain 3 (highest excess) gained the most weight, domain 2 (zero excess) lost weight. **Smoothing guaranteed every domain keeps a floor** of at least $c/k = 0.0333$, so no domain — including domain 2 with zero excess this step — can be starved to zero and stop being sampled.
+
+**6.** *Implementation.* The chapter's toy uses DoReMi-style *excess loss* (a level: "how far is this domain from achievable?"). The chapter contrasts this with **online bandit mixing**, which uses *loss velocity* (a derivative: "where am I improving fastest right now?") and needs no reference model. Modify the toy's proxy loop to implement velocity-based online mixing: replace the clamped excess signal with the per-step loss *decrease* per domain, and drop the reference model entirely. Then describe one qualitative way the resulting weights should differ from the excess-loss version.
+
+??? note "Solution"
+
+    We keep the same domain learning-curve model and the same multiplicative-weights (exp-gradient) update, but change the *reward signal* from excess loss to loss velocity, and remove the reference model. Velocity is the loss drop since the previous step, clamped at zero. Because per-step velocities are tiny, we scale the step size up (`ETA_V`) so the update is comparable in magnitude.
+
+    ```python
+    import numpy as np
+
+    # Reuse domain_loss, domains, pool, w_nat, k from the chapter's toy.
+    # No reference model is trained: online bandit mixing needs none.
+
+    STEPS        = 4000
+    BATCH_TOKENS = 10.0
+    ETA_V        = 200.0        # larger: per-step velocities are small
+    SMOOTH_C     = 0.05
+
+    w         = w_nat.copy()
+    seen      = np.zeros(k)
+    prev_loss = domain_loss(seen)   # loss before any tokens are seen
+    w_history = []
+
+    for t in range(STEPS):
+        # (a) Draw this step's batch by current weights and "train".
+        seen += w * BATCH_TOKENS
+
+        # (b) Loss VELOCITY: how much did each domain's loss fall this step?
+        cur_loss = domain_loss(seen)
+        velocity = np.maximum(prev_loss - cur_loss, 0.0)   # a derivative, not a level
+        prev_loss = cur_loss
+
+        # (c) Same multiplicative-weights update, now toward high-velocity domains.
+        w = w * np.exp(ETA_V * velocity)
+        w = w / w.sum()                                    # back onto the simplex
+        w = (1.0 - SMOOTH_C) * w + SMOOTH_C / k            # uniform smoothing (floor)
+
+        w_history.append(w.copy())
+
+    w_bar = np.mean(w_history, axis=0)
+    print("velocity-based AVERAGED weights:", np.round(w_bar, 3))
+    print("vs natural                     :", np.round(w_nat, 3))
+    ```
+
+    Key changes vs the excess-loss toy: (1) no reference model / no `ref_loss` is computed; (2) the signal is `prev_loss - cur_loss` (a *derivative*) instead of `proxy_loss - ref_loss` (a *level*); (3) the step size is enlarged because velocities are small.
+
+    Qualitative difference in behavior: velocity says "ride what's working," excess loss says "fix what's broken." Under a power-law learning curve, a domain's velocity is largest early (when tokens are cheapest to convert into loss reduction) and *decays toward zero as the domain plateaus* — even if that domain is still far above its achievable floor. So velocity-based mixing will **pull weight out of a domain once it plateaus, even when large closeable loss (excess) remains**, whereas DoReMi's excess-loss signal would keep investing there until the gap to the reference is closed. The chapter's warning applies: a domain can have high excess loss yet near-zero velocity (stuck), and the two methods disagree precisely in that case.

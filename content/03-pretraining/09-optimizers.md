@@ -442,3 +442,148 @@ A pragmatic decision procedure for a new pretraining run:
 - Jordan et al., *Muon* (2024) — orthogonalized momentum via Newton-Schulz; see also the nanoGPT speedrun writeups.
 - Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020) — the optimizer-state memory analysis and sharding.
 - Dettmers et al., *8-bit Optimizers via Block-wise Quantization* (2022) — quantized Adam states.
+
+## Exercises
+
+**1.** *(Weight decay.)* A colleague configures AdamW with a single parameter group and applies weight decay $\lambda = 0.1$ to *every* parameter in a transformer, including RMSNorm gains and biases. (a) Explain why L2 regularization (adding $\tfrac{\lambda}{2}\lVert\theta\rVert^2$ to the loss) and decoupled weight decay are *not* equivalent under Adam, even though they are identical under plain SGD. (b) Why is decaying the 1-D RMSNorm gains specifically harmful? What should the correct setup look like?
+
+??? note "Solution"
+    (a) L2 regularization adds $\lambda\theta$ to the *gradient* $g_t$. That term then flows through Adam's machinery: it is accumulated into $m_t$ and $v_t$ and finally divided by $\sqrt{\hat v_t}+\epsilon$. So the effective decay a coordinate receives is $\lambda\theta / \sqrt{\hat v_t}$ — parameters with a large running gradient magnitude (large $v_t$) get *less* decay, which is exactly backwards from the intent of shrinking all weights uniformly. AdamW instead applies the decay directly to the weights, decoupled from the adaptive denominator:
+
+    $$
+    \theta_t = (1-\eta\lambda)\,\theta_{t-1} - \eta\,\frac{\hat m_t}{\sqrt{\hat v_t}+\epsilon},
+    $$
+
+    a clean multiplicative shrink by the same factor $(1-\eta\lambda)$ for every weight, independent of its gradient. In plain SGD there is no $\sqrt{\hat v_t}$ denominator, so $\lambda\theta$-in-the-gradient and multiplicative shrink coincide; the divergence is created entirely by Adam's per-coordinate rescaling.
+
+    (b) An RMSNorm gain multiplies its activation channel; pulling it toward zero directly shrinks the signal passing through the normalization layer and destabilizes training (the layer's output scale collapses). More generally, 1-D parameters (norm gains, biases, and usually embeddings) are not the high-dimensional weight matrices that benefit from L2-style capacity control, so decaying them only hurts. The correct setup uses two parameter groups: one for the 2-D weight matrices with `weight_decay=0.1`, and one for all 1-D parameters (and typically embeddings) with `weight_decay=0.0`.
+
+**2.** *(Momentum, by hand.)* Consider heavy-ball momentum $v_t = \mu v_{t-1} + g_t$, $\theta_t = \theta_{t-1} - \eta v_t$, driven by a *constant* gradient $g$ starting from $v_0 = 0$. (a) Derive the terminal (steady-state) velocity and evaluate it for $\mu = 0.9$ and $\mu = 0.98$. (b) If you raise $\mu$ from $0.9$ to $0.98$ and want to keep the same steady-state step length $\eta v_\infty$, by what factor must you change $\eta$? (c) This is why momentum and learning rate are coupled. State the coupling in one sentence.
+
+??? note "Solution"
+    (a) Unrolling the recursion for constant $g$ gives $v_t = g\sum_{i=0}^{t-1}\mu^{i} = g\,\frac{1-\mu^t}{1-\mu}$. As $t\to\infty$, $\mu^t\to 0$, so the terminal velocity is
+
+    $$
+    v_\infty = \frac{g}{1-\mu}.
+    $$
+
+    For $\mu = 0.9$: $v_\infty = g/0.1 = 10g$. For $\mu = 0.98$: $v_\infty = g/0.02 = 50g$.
+
+    (b) The steady-state step length is $\eta v_\infty = \eta g/(1-\mu)$. Going from $\mu=0.9$ to $\mu=0.98$ multiplies $v_\infty$ by $50/10 = 5$. To hold $\eta v_\infty$ fixed you must divide $\eta$ by $5$ (i.e. $\eta \to \eta/5$).
+
+    (c) Increasing momentum lengthens the effective step along consistent directions by $1/(1-\mu)$, so you must lower the learning rate proportionally to avoid overshooting.
+
+**3.** *(Bias correction, by hand.)* The chapter notes that with $\beta_2 = 0.999$, the uncorrected second-moment estimate at $t=1$ is only $0.1\%$ of the true value, making the raw step about $\sqrt{1000}\approx 31\times$ too large. (a) Redo this for the LLM-standard $\beta_2 = 0.95$: compute the bias factor $(1-\beta_2^{\,t})$ at $t=1$ and $t=3$, and the resulting "too-large" factor $1/\sqrt{1-\beta_2^{\,t}}$ on the step. Comment on why $\beta_2=0.95$ needs far less protection than $\beta_2=0.999$. (b) Now show that *with full bias correction*, a constant gradient $g$ produces a bias-corrected Adam step of exactly $\eta\,\mathrm{sign}(g)$ at every $t$ (take $\epsilon\to 0$), independent of $\beta_1,\beta_2,t$. This is the scale-invariance property.
+
+??? note "Solution"
+    (a) The bias factor is $(1-\beta_2^{\,t})$ and the step inflation from an *uncorrected* $\sqrt{v_t}$ is $1/\sqrt{1-\beta_2^{\,t}}$.
+
+    - $t=1$: $1-0.95 = 0.05$, so the inflation is $1/\sqrt{0.05} = \sqrt{20} \approx 4.47\times$.
+    - $t=3$: $1-0.95^3 = 1 - 0.857375 = 0.142625$, so the inflation is $1/\sqrt{0.142625} \approx 2.65\times$.
+
+    With $\beta_2=0.95$ the second moment averages over only $\sim 1/(1-\beta_2)=20$ steps, so $v_t$ fills in quickly and the early bias is mild (a $\sim 4.5\times$ effect at $t=1$, gone within a handful of steps). With $\beta_2=0.999$ the window is $\sim 1000$ steps, so $v_1$ captures almost none of the true second moment and the uncorrected step is $\sim 31\times$ too large — a far larger correction, over many more steps.
+
+    (b) For a constant gradient $g$ with $m_0 = v_0 = 0$, the EMAs of a constant are $m_t = (1-\beta_1^{\,t})\,g$ and $v_t = (1-\beta_2^{\,t})\,g^2$ (same unrolling as part 2a with the $(1-\beta)$ weighting). Bias correction divides each by its own $(1-\beta^t)$:
+
+    $$
+    \hat m_t = \frac{(1-\beta_1^{\,t})g}{1-\beta_1^{\,t}} = g, \qquad
+    \hat v_t = \frac{(1-\beta_2^{\,t})g^2}{1-\beta_2^{\,t}} = g^2.
+    $$
+
+    The update is therefore
+
+    $$
+    \theta_t - \theta_{t-1} = -\eta\,\frac{\hat m_t}{\sqrt{\hat v_t}} = -\eta\,\frac{g}{\sqrt{g^2}} = -\eta\,\mathrm{sign}(g),
+    $$
+
+    a step of magnitude exactly $\eta$ regardless of $|g|$, $\beta_1$, $\beta_2$, or $t$. This is the near-unit, scale-invariant step that lets a single global $\eta$ serve parameters whose gradients span many orders of magnitude.
+
+**4.** *(Optimizer-memory accounting.)* Consider a $30\times 10^9$-parameter dense model trained in bf16 mixed precision with AdamW ($m$ and $v$ in fp32, plus an fp32 master copy of the weights). (a) Give the memory for weights, gradients, and each of the three optimizer tensors, and the total bytes/param. (b) How much memory is the *optimizer state alone*, and how many 80 GB H100s would that state occupy (unsharded)? (c) You switch the 2-D matrices to an optimizer that keeps a single momentum buffer instead of $m$ and $v$ (Lion or Muon). Assuming essentially all $30$B params are 2-D, how much optimizer-state memory do you save, and what is the new H100 count for the optimizer state?
+
+??? note "Solution"
+    (a) With $P = 30\text{e}9$:
+
+    - bf16 weights: $30\text{e}9 \times 2 = 60$ GB
+    - bf16 gradients: $60$ GB
+    - fp32 Adam $m$: $30\text{e}9 \times 4 = 120$ GB
+    - fp32 Adam $v$: $120$ GB
+    - fp32 master weights: $120$ GB
+
+    Total $= 60+60+120+120+120 = 480$ GB, i.e. $16$ bytes/param.
+
+    (b) Optimizer state $=$ $m + v + $ master $= 120+120+120 = 360$ GB (the $12$ bytes/param figure). At $80$ GB/GPU that is $360/80 = 4.5$, so it occupies $5$ H100s (you cannot use a fraction of a GPU).
+
+    (c) A single-buffer optimizer drops the $v$ tensor entirely, saving one fp32 copy $= 120$ GB. New optimizer state $=$ momentum $(120)$ + master $(120) = 240$ GB, a $120$ GB / one-third reduction. That is $240/80 = 3$ H100s — two fewer GPUs just for optimizer state. (This is on top of any ZeRO/FSDP sharding, which the two strategies compose with.)
+
+**5.** *(Implementation.)* The chapter gives Lion as a functional `lion_step`. Turn it into a proper `torch.optim.Optimizer` subclass, mirroring the from-scratch `AdamW` in the chapter: lazy per-parameter state initialization, one momentum buffer per parameter, decoupled weight decay, the $\beta_1$-interpolated *sign* update, and the $\beta_2$-updated momentum buffer. Keep it in-place and under `@torch.no_grad()`.
+
+??? note "Solution"
+    The key structural point is that Lion stores exactly *one* state tensor per parameter (`exp_avg`), applies decoupled decay as a multiplicative shrink, steps by `sign(beta1*m + (1-beta1)*g)`, and only *then* updates the stored buffer with `beta2` (using the raw gradient `g`, not the interpolated `c`).
+
+    ```python
+    import torch
+    from torch.optim import Optimizer
+
+    class Lion(Optimizer):
+        """From-scratch Lion (Chen et al., 2023). One state tensor per param."""
+        def __init__(self, params, lr=1e-4, betas=(0.9, 0.99), weight_decay=0.0):
+            # Lion's LR is typically ~3-10x smaller than AdamW's, decay larger.
+            defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+            super().__init__(params, defaults)
+
+        @torch.no_grad()
+        def step(self, closure=None):
+            loss = closure() if closure is not None else None
+            for group in self.param_groups:
+                lr, (b1, b2) = group["lr"], group["betas"]
+                wd = group["weight_decay"]
+                for p in group["params"]:
+                    if p.grad is None:
+                        continue
+                    g = p.grad
+                    state = self.state[p]
+                    if len(state) == 0:                       # lazy init
+                        state["exp_avg"] = torch.zeros_like(p)  # m (only buffer)
+                    m = state["exp_avg"]
+
+                    # --- Decoupled weight decay (multiplicative shrink) ---
+                    if wd != 0:
+                        p.mul_(1.0 - lr * wd)
+
+                    # --- Update direction: sign of the beta1 interpolation ---
+                    c = m.mul(b1).add(g, alpha=1.0 - b1)      # temp, not stored
+                    p.add_(c.sign(), alpha=-lr)               # theta -= lr*sign(c)
+
+                    # --- Momentum buffer uses beta2 and the raw grad g ---
+                    m.mul_(b2).add_(g, alpha=1.0 - b2)
+            return loss
+    ```
+
+    Notes matching the chapter: `c` is a temporary (built with the non-in-place `.mul`/`.add`) so the stored buffer `m` is *not* prematurely overwritten before the sign step; the buffer update uses `g`, not `c`; and every weight moves by exactly $\pm lr$ (plus decay), which is why the recommended `lr` is smaller and `weight_decay` larger than for AdamW.
+
+**6.** *(Shampoo memory and the Muon connection.)* Shampoo maintains $L\in\mathbb{R}^{n\times n}$ and $R\in\mathbb{R}^{m\times m}$ for a weight matrix $W\in\mathbb{R}^{n\times m}$; AdamW maintains $m,v\in\mathbb{R}^{n\times m}$. (a) Count the optimizer-state *numbers* for each on a square $4096\times4096$ matrix and on a rectangular $4096\times1024$ matrix. Is Shampoo always cheaper than Adam? What does this tell you about *why* people use Shampoo? (b) The chapter says orthogonalizing the momentum $M = U\Sigma V^\top$ to $UV^\top$ equals applying the preconditioner $(MM^\top)^{-1/2}M$. Verify this identity and explain in one line how it connects Muon to Shampoo's spectral idea.
+
+??? note "Solution"
+    (a) AdamW stores $m$ and $v$, i.e. $2nm$ numbers. Shampoo stores $L$ and $R$, i.e. $n^2 + m^2$ numbers.
+
+    - Square $4096\times4096$: Adam $= 2(4096)(4096) = 33.6$M. Shampoo $= 4096^2 + 4096^2 = 33.6$M. Equal.
+    - Rectangular $4096\times1024$: Adam $= 2(4096)(1024) = 8.39$M. Shampoo $= 4096^2 + 1024^2 = 16.78 + 1.05 = 17.8$M. Shampoo is *larger* ($\approx 2.1\times$).
+
+    So Shampoo is **not** a memory-saving optimizer — for square matrices its accumulators tie Adam's, and for tall/wide matrices they can cost more (the $n^2$ term blows up when one dimension is large). People use Shampoo for its **convergence** (fewer steps via genuine second-order/Kronecker-factored curvature), accepting the compute of periodic inverse-fourth-roots and no memory win — the opposite trade-off from Lion/Muon, which chase memory and speed.
+
+    (b) Let $M = U\Sigma V^\top$ be the SVD (with $\Sigma$ square and invertible on the relevant subspace, $U^\top U = V^\top V = I$). Then
+
+    $$
+    MM^\top = U\Sigma V^\top V \Sigma U^\top = U\Sigma^2 U^\top
+    \;\Rightarrow\;
+    (MM^\top)^{-1/2} = U\Sigma^{-1}U^\top.
+    $$
+
+    Therefore
+
+    $$
+    (MM^\top)^{-1/2}M = U\Sigma^{-1}U^\top \, U\Sigma V^\top
+    = U\Sigma^{-1}\Sigma V^\top = U V^\top,
+    $$
+
+    which is exactly Muon's orthogonalized update (all singular values set to $1$). The connection: this is a "whitening" of the update by an inverse-square-root of a second-moment-like matrix $MM^\top$ — the same spectral inverse-root preconditioning Shampoo applies via $L^{-1/4}GR^{-1/4}$, except Muon computes it cheaply with a matmul-only Newton-Schulz iteration on the momentum instead of accumulating and eigendecomposing $L,R$.

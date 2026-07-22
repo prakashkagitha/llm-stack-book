@@ -995,3 +995,122 @@ if __name__ == "__main__":
 - **DeepSpeed `checkpoint_engine`** — DeepSpeed's async checkpoint engine and its `AsyncTensorSwapper` are described in the DeepSpeed GitHub repository and blog posts.
 - **Lian et al. (2022)** — "GEMINI: Fast Failure Recovery in Distributed Training with In-Memory Checkpoints." *SOSP 2022*. A landmark systems paper on in-memory checkpointing with neighbor-replica redundancy.
 - **Eisenbud et al. (2022)** — "Pathways: Asynchronous Distributed Dataflow for ML." Describes Google's approach to fault tolerance in large-scale ML infrastructure.
+
+---
+
+## Exercises
+
+**1.** A colleague hands you a resume script that reloads only the model weights from a checkpoint (`model.load_state_dict(...)`) and rebuilds a fresh `AdamW` optimizer and cosine scheduler from scratch each time the job restarts. The job does not crash on resume, and the code "works." Explain what goes wrong, why it is hard to notice, and list the additional pieces of state the chapter says a complete checkpoint must contain.
+
+??? note "Solution"
+    Rebuilding a fresh optimizer discards Adam's first- and second-moment estimates $m_t$ and $v_t$. On resume, the optimizer must re-accumulate momentum from zero, so for hundreds of steps the effective update direction and magnitude are wrong — in practice loss jumps up and then slowly recovers, which looks like a partial learning-rate-warmup restart. Rebuilding the scheduler from scratch makes it worse: the scheduler's step counter resets to 0, so the learning rate re-enters its warmup ramp instead of continuing along the cosine decay it had reached.
+
+    It is hard to notice precisely because nothing crashes. The run resumes, produces plausible-looking output, and the loss is merely "higher than expected" for a while before converging back — there is no exception, no error, and after the fact the transient is easy to mistake for normal noise. This is the "optimizer state mismatch is silent" warning from the chapter.
+
+    A complete checkpoint must contain all four categories the chapter lists:
+
+    1. **Model parameters** — the weight tensors ($2P$ bytes in bf16).
+    2. **Optimizer state** — Adam's $m_t$ and $v_t$ (plus fp32 master state), the piece that was dropped here.
+    3. **RNG state** — the Python, NumPy, `torch` CPU, and per-device CUDA RNG states, saved per rank.
+    4. **Training metadata** — global step, LR-scheduler state, and the data-loader cursor (shard index and offset).
+
+    (If training in fp16 with dynamic loss scaling, the `GradScaler` state — scale factor and step counter — must also be saved; bf16 training needs no scaler.)
+
+**2.** You are checkpointing a 13B-parameter model trained in bf16 with the AdamW optimizer state kept in fp32. Using the byte accounting from Section 3.12.1, compute (a) the size of the model-weights portion, (b) the size of the optimizer-state portion, and (c) the total checkpoint size. Then explain in one sentence why the optimizer state, not the weights, dominates the I/O cost of every save.
+
+??? note "Solution"
+    Let $P = 13 \times 10^9$ parameters.
+
+    (a) Model weights in bf16 are $2P$ bytes:
+    $$
+    2 \times 13 \times 10^9 = 26 \times 10^9 \text{ bytes} = 26 \text{ GB}.
+    $$
+
+    (b) The chapter accounts Adam optimizer state at $16P$ bytes (fp32 master/moment state at $4 \times P \times 4$):
+    $$
+    16 \times 13 \times 10^9 = 208 \times 10^9 \text{ bytes} = 208 \text{ GB}.
+    $$
+
+    (c) Total (RNG and metadata are negligible, a few KB per rank):
+    $$
+    26 + 208 = 234 \text{ GB}.
+    $$
+
+    The optimizer state is $16P/2P = 8\times$ larger than the weights, so roughly $208/234 \approx 89\%$ of the bytes written every checkpoint are optimizer state. That is why a checkpoint that saves only weights ("sufficient for inference") is not just incorrect for resume but also misleadingly cheap: the expensive-to-write portion is exactly the part it omits.
+
+**3.** You are running on a cluster of $N = 512$ nodes, each with an hourly failure rate $\lambda = 10^{-3}$ failures per node per hour. (a) Compute the expected cluster-level mean time between failures. (b) A synchronous checkpoint save takes $T_{\text{save}} = 2$ minutes. Use the chapter's optimal-interval (Daly/Young) formula to find the checkpoint interval $T^*$ that minimises wasted compute. (c) Interpret the result relative to the MTBF.
+
+??? note "Solution"
+    (a) Cluster failure rate is $N\lambda = 512 \times 10^{-3} = 0.512$ failures/hour, so
+    $$
+    \mathbb{E}[\text{MTBF}_{\text{cluster}}] = \frac{1}{N\lambda} = \frac{1}{0.512} \approx 1.953 \text{ hours} \approx 117 \text{ minutes}.
+    $$
+
+    (b) With $T_{\text{save}} = 2$ min and $T_{\text{MTBF}} \approx 117$ min, Daly's formula gives
+    $$
+    T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}} = \sqrt{2 \times 2 \times 117} = \sqrt{468} \approx 21.6 \text{ minutes}.
+    $$
+
+    (c) The optimal interval ($\approx 22$ min) is far shorter than the MTBF ($\approx 117$ min) — you should checkpoint roughly every 22 minutes, about 5 times per expected failure. The formula's message is that checkpoint spacing scales with the *geometric mean* of save cost and failure time, so as the cluster grows (MTBF shrinks) or saves get cheaper (async), the optimal interval tightens.
+
+**4.** Continuing from Exercise 3's cluster but now with a harder failure regime, take $T_{\text{MTBF}} = 90$ minutes and a checkpoint interval of $T_{\text{ckpt}} = 30$ minutes of work. Using the chapter's waste-fraction approximation
+$$
+\text{waste} \approx \frac{T_{\text{ckpt}}/2 + T_{\text{save}}}{T_{\text{MTBF}}},
+$$
+compute the wasted-compute fraction (a) for synchronous checkpointing with $T_{\text{save}} = 8$ min, and (b) after switching to asynchronous checkpointing that reduces the hard blocking time to $T_{\text{save}} = 1$ min. (c) Which term dominates, and what does that tell you about where to spend engineering effort?
+
+??? note "Solution"
+    (a) Synchronous, $T_{\text{save}} = 8$ min:
+    $$
+    \text{waste} \approx \frac{30/2 + 8}{90} = \frac{15 + 8}{90} = \frac{23}{90} \approx 25.6\%.
+    $$
+
+    (b) Asynchronous, $T_{\text{save}} = 1$ min (only the GPU-to-CPU snapshot blocks; disk I/O overlaps training):
+    $$
+    \text{waste} \approx \frac{15 + 1}{90} = \frac{16}{90} \approx 17.8\%.
+    $$
+
+    (c) The dominant term is $T_{\text{ckpt}}/2 = 15$ min — the expected lost work since a failure lands, on average, halfway through the interval. Async checkpointing shrinks only the $T_{\text{save}}$ term ($8 \to 1$ min), buying about 8 percentage points. To attack the larger $T_{\text{ckpt}}/2$ term you must checkpoint *more frequently*, which is only affordable once $T_{\text{save}}$ is small — so async saves and shorter intervals are complementary: async makes the frequent-checkpoint regime that Daly's formula recommends practical.
+
+**5.** The chapter's `CheckpointManager.latest()` finds the newest directory that contains a `COMPLETE` sentinel, but it never checks *content* integrity — a checkpoint whose `COMPLETE` file was written yet whose shard bytes were later corrupted on disk would still be selected. Modify `latest()` so it (a) also runs the chapter's `verify_checksums()` on each candidate and (b) falls back to the next-most-recent good checkpoint when a candidate is incomplete or fails verification, returning `None` only if no valid checkpoint exists. Keep the chapter's style.
+
+??? note "Solution"
+    We reuse `verify_checksums(ckpt_dir) -> bool` from Section 3.12.8 (it returns `False` when the `checksums.json` file is missing or any file's SHA-256 does not match). We iterate candidates newest-first and return the first that is both `COMPLETE` and checksum-verified. (This assumes `write_checksums()` is called at save time, e.g. inside `save_checkpoint` before the `COMPLETE` sentinel is touched.)
+
+    ```python
+    def latest(self) -> Path | None:
+        """Most recent checkpoint that is COMPLETE *and* passes checksum
+        verification. Skips corrupt/incomplete ones and falls back to the
+        next-most-recent good checkpoint. Returns None if none are valid."""
+        candidates = sorted(self.root_dir.glob("step_*"))
+        for ckpt in reversed(candidates):  # newest first
+            if not (ckpt / "COMPLETE").exists():
+                continue  # partially written / crashed mid-save
+            if not verify_checksums(ckpt):
+                print(f"[ckpt] skipping corrupt checkpoint: {ckpt}")
+                continue  # bytes rotted after COMPLETE was written
+            return ckpt
+        return None
+    ```
+
+    Notes consistent with the chapter's design: the `COMPLETE` check comes first because it is a cheap `stat` and screens out mid-save crashes, while `verify_checksums()` reads every file and is only worth paying for on a candidate that already claims to be complete. Because the loop continues past a bad candidate rather than returning, a single corrupt checkpoint costs at most one interval of extra rolled-back work instead of failing the resume — which is why the `CheckpointManager` keeps `keep_last_k > 1` older checkpoints available as fallbacks.
+
+**6.** A run crashes on `world_size = 512` data-parallel ranks after consuming a global total of `global_token_offset = 8,388,608` tokens. It is restarted on `world_size = 256` ranks (nodes under repair) with `tokens_per_rank_per_step = seq_len * micro_batch_size = 2048 * 4 = 8192`. (a) Explain why you cannot simply restore each rank's *old* per-rank shard cursor. (b) Using the chapter's `compute_rank_start_offset`, compute the number of completed global steps and the starting offset for rank 0 and rank 255 in the new topology.
+
+??? note "Solution"
+    (a) Each rank's cursor records where *that* rank was reading in the *old* topology. When the number of data-parallel ranks changes, the dataset is partitioned differently: the tokens that used to belong to old-rank $r$ are now split across a different set of ranks, and there are only 256 ranks instead of 512. Restoring old per-rank cursors would make some data be skipped and other data be replayed. The chapter's fix is to track a single **global token offset** and recompute each new rank's starting position from it.
+
+    (b) Tokens consumed per global step in the new topology:
+    $$
+    \text{tokens\_per\_step} = 8192 \times 256 = 2{,}097{,}152.
+    $$
+    Completed global steps:
+    $$
+    \text{steps\_done} = \left\lfloor \frac{8{,}388{,}608}{2{,}097{,}152} \right\rfloor = \lfloor 4.0 \rfloor = 4.
+    $$
+    Then `compute_rank_start_offset` returns `steps_done * tokens_per_rank_per_step + rank * tokens_per_rank_per_step`:
+
+    - Rank 0: $4 \times 8192 + 0 \times 8192 = 32{,}768$.
+    - Rank 255: $4 \times 8192 + 255 \times 8192 = 32{,}768 + 2{,}088{,}960 = 2{,}121{,}728$.
+
+    So every rank resumes at the boundary of the 5th global step (steps 0-3 done), with rank $r$ offset a further $r \times 8192$ tokens into the stream — reconstructing a clean, non-overlapping partition of the data at the new world size purely from the global offset, without trusting any stale per-rank cursor.

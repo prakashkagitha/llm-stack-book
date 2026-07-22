@@ -74,7 +74,7 @@ $$
 b' = b \cdot \left(\frac{T_{\text{target}}}{T_{\text{train}}}\right)^{d/(d-2)}
 $$
 
-This increases the base (e.g. from 10 000 to ~500 000 for an 8x extension), making each $\theta_i$ smaller and thus each dimension rotate more slowly — effectively stretching the rope. High-frequency dimensions retain their resolution for local dependencies while low-frequency dimensions stretch to cover global distances. NTK-aware interpolation often works *without any fine-tuning*, giving it a zero-shot extension property.
+This increases the base (e.g. from 10 000 to ~83 000 for an 8x extension with $d = 128$), making each $\theta_i$ smaller and thus each dimension rotate more slowly — effectively stretching the rope. High-frequency dimensions retain their resolution for local dependencies while low-frequency dimensions stretch to cover global distances. NTK-aware interpolation often works *without any fine-tuning*, giving it a zero-shot extension property.
 
 ### YaRN
 
@@ -660,3 +660,111 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 - **Anthropic, "Claude's Long Context" (technical reports, 2024)** — high-level discussion of training recipes for very long contexts (100 K+).
 - **LongBench (Bai et al., 2023)** — a comprehensive long-context evaluation benchmark covering summarisation, QA, few-shot learning, and code; more demanding than needle-in-haystack alone.
 - **LLaMA-3 technical report (Meta, 2024)** — describes the multi-stage context extension recipe used in a public large model, including data mix and positional encoding choices.
+
+---
+
+## Exercises
+
+**1.** The chapter's table lists a 16 MB (fp16) score matrix *per head* at $T = 2{,}048$. Using the $\mathcal{O}(T^2)$ scaling of the attention score matrix, (a) compute the per-head score-matrix size at $T = 16{,}384$, (b) compute the total across a 32-head layer, and (c) state in one sentence why FlashAttention removes this memory cost even though the attention *FLOPs* remain $\mathcal{O}(T^2)$.
+
+??? note "Solution"
+    (a) The score matrix scales with $T^2$, so the ratio in memory is the square of the ratio in sequence length:
+    $$\left(\frac{16{,}384}{2{,}048}\right)^2 = 8^2 = 64.$$
+    Per-head size $= 16\ \text{MB} \times 64 = 1{,}024\ \text{MB} = 1\ \text{GB per head}$.
+
+    (b) A 32-head layer stores 32 independent score matrices:
+    $$1\ \text{GB} \times 32 = 32\ \text{GB}.$$
+
+    (c) FlashAttention never materialises the full $S \in \mathbb{R}^{T\times T}$ in HBM; it fuses the score computation, softmax, and value product tile-by-tile so only an $\mathcal{O}(\text{block size})$ slice of scores ever lives in SRAM, reducing the HBM footprint from $\mathcal{O}(T^2)$ to $\mathcal{O}(T)$ activations. The multiply-adds are still all performed (FLOPs unchanged); they are just computed in tiles rather than staged through a materialised matrix.
+
+**2.** Explain, grounded in the chapter, why (a) *learned* absolute positional embeddings and (b) *sinusoidal* embeddings both fail when a model trained to length $T_{\text{train}}$ is run at a position $T_{\text{train}} + k$. Then (c) explain why *standard RoPE* also degrades past $T_{\text{train}}$, even though RoPE produces a mathematically valid rotation at any position, and (d) identify which specific mechanism Position Interpolation exploits to fix this.
+
+??? note "Solution"
+    (a) A learned absolute embedding table only has trained weight vectors for positions $\{0, \ldots, T_{\text{train}}-1\}$. There is simply no parameter at position $T_{\text{train}}+k$ — the model has nothing to look up, so it cannot represent that position at all.
+
+    (b) A sinusoidal encoding *does* yield a well-defined vector at any position (the formula extends smoothly), so the failure is different: the attention heads were never trained to interpret the sinusoid values that occur beyond $T_{\text{train}}$. The mapping from those unseen positional patterns to useful attention behaviour was never learned, so scores degrade sharply.
+
+    (c) RoPE encodes position as a rotation angle $m\theta_i$. During training, $m$ never exceeds $T_{\text{train}}$, so each dimension's angle stays inside $[0, T_{\text{train}}\theta_i]$. For the high-frequency dimensions ($\theta_i \approx 1$), pushing $m > T_{\text{train}}$ drives the angle into phase territory the model never saw during training, producing pathological attention scores even though the rotation itself is perfectly well-defined.
+
+    (d) RoPE's dot product $q_m \cdot k_n$ depends only on the *relative* position $m-n$ (because $R_m^\top R_n = R_{m-n}$), and every angle is a linear function of position. Position Interpolation exploits this linearity: rescaling the input position $m \mapsto m' = m \cdot T_{\text{train}}/T_{\text{target}}$ maps the whole target window back into the trained angle range $[0, T_{\text{train}}\theta_i]$, so no dimension ever sees an out-of-distribution phase.
+
+**3.** A model has $d = 128$, RoPE base $b = 10{,}000$, and was trained at $T_{\text{train}} = 4{,}096$. You want to extend to $T_{\text{target}} = 32{,}768$ (an 8x extension).
+
+  (a) Under Position Interpolation, what effective position does the last token $m = 32{,}768$ map to, and what effective positions do the adjacent early tokens $m = 1$ and $m = 2$ map to? What practical problem does the latter reveal?
+
+  (b) Under NTK-aware interpolation, compute the rescaled base $b'$ using the chapter's formula $b' = b \cdot \left(T_{\text{target}}/T_{\text{train}}\right)^{d/(d-2)}$.
+
+  (c) In one sentence, contrast what PI and NTK-aware scaling each do to the *highest-frequency* dimension ($i = 0$).
+
+??? note "Solution"
+    (a) PI scales every position by $T_{\text{train}}/T_{\text{target}} = 4{,}096/32{,}768 = 1/8$:
+    $$m = 32{,}768 \;\mapsto\; m' = 32{,}768/8 = 4{,}096,$$
+    $$m = 1 \;\mapsto\; m' = 0.125, \qquad m = 2 \;\mapsto\; m' = 0.25.$$
+    The last token now sits exactly at the edge of the trained range (good), but two originally-adjacent tokens are now only $0.125$ apart in effective position. Because the rotation angle difference between them shrinks by $8\times$, the model can barely distinguish neighbouring tokens — local resolution is degraded.
+
+    (b) The scale factor is $s = T_{\text{target}}/T_{\text{train}} = 8$, and the exponent is $d/(d-2) = 128/126 = 1.01587$. So
+    $$b' = 10{,}000 \times 8^{1.01587}.$$
+    Compute the power: $\log_{10} 8 = 0.90309$, times $1.01587$ gives $0.91743$, so $8^{1.01587} = 10^{0.91743} \approx 8.267$. Therefore
+    $$b' \approx 10{,}000 \times 8.267 \approx 8.27 \times 10^{4} \;\;(\approx 82{,}700).$$
+    Raising the base makes every $\theta_i = b'^{-2i/d}$ smaller, so each dimension rotates more slowly and effectively "stretches" the rope to cover the longer window.
+
+    (c) For $i = 0$, $\theta_0 = b^{0} = 1$ under any base, so NTK-aware scaling leaves the highest-frequency dimension essentially unchanged (it keeps its short-range resolution), whereas PI compresses *every* dimension uniformly — including $i=0$ — dividing its effective angular spacing by 8 and blurring local structure.
+
+**4.** The chapter describes a per-token `loss_mask` that sets the first token of each packed document to 0 (so the loss never rewards predicting a document's opening token from the previous document's final token), but gives no code for it. Implement `build_packed_loss_mask(doc_lengths)` in the same style as `build_packed_attention_mask`, returning a 1-D float tensor of length `sum(doc_lengths)` where the first token of each document is `0.0` and all other tokens are `1.0`. Show the output for `doc_lengths = [4, 4]`.
+
+??? note "Solution"
+    ```python
+    import torch
+
+    def build_packed_loss_mask(
+        doc_lengths: list[int],
+        device: str = "cpu",
+    ) -> torch.Tensor:
+        """
+        Per-token loss weights for a packed multi-document sequence.
+        The first token of every document is masked out (0.0); every other
+        token contributes to the loss (1.0). Prevents rewarding the model for
+        'predicting' a new document's first token from the previous document.
+        """
+        seq_len = sum(doc_lengths)
+        mask = torch.ones(seq_len, dtype=torch.float, device=device)
+
+        offset = 0
+        for length in doc_lengths:
+            mask[offset] = 0.0     # first token of this document
+            offset += length
+
+        return mask  # (seq_len,)
+
+    # Example: two docs of length 4 packed into one context of length 8
+    print(build_packed_loss_mask([4, 4]))
+    # tensor([0., 1., 1., 1., 0., 1., 1., 1.])
+    ```
+
+    Positions 0 and 4 (the first token of each document) are zeroed; the remaining six positions carry loss as usual. In a training step this mask multiplies the per-token cross-entropy before averaging (or is passed as `ignore_index` equivalently), so masked positions contribute neither loss nor gradient.
+
+**5.** Ring attention shards a $T = 128{,}000$-token sequence across $N = 8$ GPUs ($d = 4096$, bf16), each holding $T/N$ tokens.
+
+  (a) Reproduce the chapter's per-round, per-GPU communication volume (each round sends one K chunk and one V chunk).
+
+  (b) With causal masking, the pseudocode skips any KV block that is entirely in the future of a rank's local queries (`fully_future`). Show that rank $r$ ends up actually *processing* exactly $r+1$ of the $N$ blocks, and use this to give the total number of blocks computed across the whole ring versus the naive $N^2$. Then write a one-line function `blocks_processed(rank)` and state the resulting load-imbalance ratio between the busiest and idlest rank.
+
+??? note "Solution"
+    (a) Each GPU holds $T/N = 128{,}000/8 = 16{,}000$ tokens. Per round it sends both a K chunk and a V chunk, each of size $16{,}000 \times 4096$ values at 2 bytes:
+    $$2 \times (T/N) \times d \times 2\ \text{bytes} = 2 \times 16{,}000 \times 4096 \times 2 = 262{,}144{,}000\ \text{bytes} \approx 256\ \text{MB per GPU per round},$$
+    matching the chapter's figure.
+
+    (b) Rank $r$'s queries occupy global positions $[\,r\,T_{\text{local}},\ (r+1)T_{\text{local}} - 1\,]$ where $T_{\text{local}} = T/N$. A KV block belonging to source rank $j$ occupies positions starting at $j\,T_{\text{local}}$. The block is `fully_future` (skipped) exactly when its start lies past the last local query:
+    $$j\,T_{\text{local}} > r\,T_{\text{local}} + T_{\text{local}} - 1 \iff j > r.$$
+    So the blocks that are *not* skipped are those with $j \in \{0, 1, \ldots, r\}$ — that is $r+1$ blocks. Rank 0 processes 1 block (only its own diagonal block), and rank $N-1 = 7$ processes all 8.
+
+    Total blocks computed across the ring:
+    $$\sum_{r=0}^{N-1} (r+1) = \frac{N(N+1)}{2} = \frac{8 \cdot 9}{2} = 36,$$
+    versus the naive all-pairs count of $N^2 = 64$ — causal skipping roughly halves the attention work.
+
+    ```python
+    def blocks_processed(rank: int) -> int:
+        return rank + 1
+    ```
+
+    Load-imbalance ratio between busiest (rank $N-1$, 8 blocks) and idlest (rank 0, 1 block) is $8:1$, i.e. a factor of $N$. This is exactly the imbalance that motivates zigzag / striped ring-attention layouts, which reassign blocks so each rank does about $(N+1)/2 = 4.5$ blocks on average.
