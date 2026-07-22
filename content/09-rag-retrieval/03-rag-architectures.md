@@ -748,3 +748,142 @@ A few operational concerns that come up in every production RAG deployment:
 - Shi et al., **"REPLUG: Retrieval-Augmented Black-Box Language Models"**, NAACL 2023 — treats the LLM as a black box and trains only the retriever via LM likelihood signals.
 - Zhang et al., **"RAFT: Adapting Language Model to Domain Specific RAG"**, 2024 — fine-tuning recipe for making models better at extracting answers from retrieved context while ignoring distractor documents.
 - LangChain and LlamaIndex open-source repos — the two most widely used RAG orchestration frameworks, with extensive examples of advanced retrieval patterns.
+
+## Exercises
+
+**1.** (Conceptual) A colleague deploys naive RAG and, to be safe, retrieves the top $k = 15$ chunks and concatenates all of them into the prompt. They observe that answer quality is *worse* than when they retrieved only $k = 3$. Drawing on the chapter's failure-mode taxonomy, give at least two distinct reasons why raising $k$ can hurt, and name one prompt-formatting mitigation from the chapter that partially addresses one of them.
+
+??? note "Solution"
+    Two distinct reasons from the chapter, drawn from the "Context Utilization Failures" and "Ranking and Diversity Failures" sections:
+
+    - **Lost-in-the-middle.** Liu et al. (2023) showed LLMs use information at the *beginning* and *end* of a long context far better than information in the middle. With 15 chunks, the truly relevant evidence may land in positions 6-10 and be effectively ignored, whereas with 3 chunks every passage sits near an edge.
+    - **Prompt over-crowding.** Fifteen chunks consume a large share of the context budget, leaving little room for reasoning (and, in a chat setting, competing with conversation history and tool outputs). More retrieved tokens is not the same as more useful signal.
+    - **Semantic redundancy / low precision.** Positions 4-15 are increasingly likely to be near-duplicate or only tangentially relevant chunks. Because context precision falls as $k$ grows (`ContextPrecision@k` has $k$ in the denominator), the prompt fills with noise that can distract the generator and even seed hallucination when passages are ambiguous.
+
+    Mitigation from the "Generator Configuration" section: **positional-bias mitigation** — put the most relevant chunk *first and last* (or shuffle chunk order across runs). This directly counters lost-in-the-middle by ensuring the strongest evidence occupies a high-recall position. (A retrieval-side fix the chapter also names is an MMR/diversity filter to remove redundant chunks before they reach the prompt — see Exercise 5.)
+
+**2.** (Quantitative) You are sizing a flat (exact) index. Your corpus has $N = 2{,}000{,}000$ chunk vectors produced by OpenAI `text-embedding-3-small` ($d = 1536$), stored as float32 in an `IndexFlatIP`.
+
+  (a) How much memory does the raw vector store require?
+  (b) You consider switching to MiniLM ($d = 384$). What is the new footprint, and by what factor does it shrink?
+  (c) The chapter quotes exact `IndexFlatIP` search over $10^6$ vectors at $d = 384$ as taking roughly 20-50 ms per query. If retrieval takes ~40 ms and LLM generation of the answer takes ~3 s, what fraction of end-to-end latency is retrieval, and what does this imply about where to optimize first?
+
+??? note "Solution"
+    (a) Using the chapter's formula $\text{Memory} = N \times d \times 4\,\text{bytes}$:
+
+    $$
+    2\times10^6 \times 1536 \times 4 = 1.2288\times10^{10}\ \text{bytes} \approx 12.29\ \text{GB}.
+    $$
+
+    (b) At $d = 384$:
+
+    $$
+    2\times10^6 \times 384 \times 4 = 3.072\times10^{9}\ \text{bytes} \approx 3.07\ \text{GB}.
+    $$
+
+    The shrink factor is exactly the dimensionality ratio $1536 / 384 = 4\times$ (12.29 GB down to 3.07 GB), since $N$ and the 4-byte width are unchanged.
+
+    (c) Retrieval fraction $= 40\ \text{ms} / (40\ \text{ms} + 3000\ \text{ms}) = 40/3040 \approx 0.013$, i.e. about **1.3%** of end-to-end latency. This confirms the chapter's point that retrieval latency is "typically negligible compared to LLM generation time." Optimizing the index further (e.g. squeezing 40 ms to 2 ms with HNSW) buys almost nothing end-to-end; the generation step dominates, so effort is better spent on generation cost/latency (smaller or faster model, shorter prompts) or on retrieval *quality* rather than retrieval *speed*.
+
+**3.** (Quantitative) You run hybrid search over four candidate chunks $\{A, B, C, D\}$ and fuse the two rankings with Reciprocal Rank Fusion using the chapter's smoothing constant $k = 60$, treating the top result as rank 1:
+
+  - BM25 ranking $R_1$: $A, B, C$
+  - Dense ranking $R_2$: $C, A, D$
+
+  Compute the RRF score of every chunk and give the final fused order. Which chunk wins, and what property of RRF makes it win even though it is never ranked first by either retriever?
+
+??? note "Solution"
+    RRF score $= \sum_R 1/(k + \text{rank}_R(d))$ with $k = 60$; a chunk absent from a ranking contributes nothing from that ranking.
+
+    - $A$: BM25 rank 1, Dense rank 2 $\Rightarrow \frac{1}{60+1} + \frac{1}{60+2} = \frac{1}{61} + \frac{1}{62} = 0.016393 + 0.016129 = 0.032522$
+    - $C$: BM25 rank 3, Dense rank 1 $\Rightarrow \frac{1}{60+3} + \frac{1}{60+1} = \frac{1}{63} + \frac{1}{61} = 0.015873 + 0.016393 = 0.032266$
+    - $B$: BM25 rank 2 only $\Rightarrow \frac{1}{60+2} = 0.016129$
+    - $D$: Dense rank 3 only $\Rightarrow \frac{1}{60+3} = 0.015873$
+
+    Fused order: $A\ (0.032522) > C\ (0.032266) > B\ (0.016129) > D\ (0.015873)$.
+
+    $A$ wins. Neither retriever ranks it first, but $A$ is the only chunk that appears *high in both* lists (rank 1 and rank 2). RRF rewards **consensus across retrievers**: two moderately-high placements sum to more than a single first place ($C$'s rank-1 in one list is dragged down by its rank-3 in the other). The large constant $k = 60$ flattens the gap between adjacent ranks, so agreement across lists matters more than winning any single list.
+
+**4.** (Quantitative) An LLM judge decomposes a generated answer into 5 atomic claims and finds 4 of them supported by the retrieved context. Separately, of the $k = 5$ retrieved chunks, only 2 are judged necessary to answer the question.
+
+  (a) Compute the RAGAS faithfulness score and state whether it clears the chapter's hallucination threshold.
+  (b) Compute `ContextPrecision@5`.
+  (c) The system has faithfulness $= 0.8$ but the *single* unsupported claim happens to be the exact fact the user asked about. Which additional RAGAS metric would flag this, and why can faithfulness alone miss it?
+
+??? note "Solution"
+    (a) $\text{Faithfulness} = \dfrac{|\text{supported claims}|}{|\text{claims}|} = \dfrac{4}{5} = 0.80$. The chapter states "a score below 0.8 is a strong signal of hallucination," so at exactly $0.80$ it sits right on the boundary — not below it, but with no margin; one more unsupported claim would drop it to $0.6$ and clearly flag hallucination.
+
+    (b) $\text{ContextPrecision@}5 = \dfrac{|\text{relevant chunks in top-}5|}{5} = \dfrac{2}{5} = 0.40$. Low precision: 3 of the 5 injected chunks are noise.
+
+    (c) **Answer relevance** would flag it. Faithfulness only asks whether each claim is *entailed by the context* — it says nothing about whether the answer actually addresses the *query*. Here 4 grounded-but-peripheral claims keep faithfulness high while the one claim that matters is wrong/unsupported, so the answer is faithful-ish yet off-target. Answer relevance is computed by having the judge generate hypothetical questions the answer appears to address and measuring their embedding similarity to the original query; an answer that dodges the real question yields low similarity. The two metrics are deliberately orthogonal, which is why RAGAS reports both.
+
+**5.** (Implementation) The chapter warns that ANN retrieval can return several near-duplicate chunks ("semantic redundancy"), and names **Maximal Marginal Relevance (MMR)** as the fix. Modify the minimal RAG implementation's `retrieve` function into a `retrieve_mmr` variant that over-fetches `fetch_k` candidates from FAISS and then greedily selects `k` of them by MMR, balancing query relevance against novelty. Use the MMR objective
+
+  $$
+  \text{MMR} = \lambda\,\cos(\mathbf{q}, \mathbf{d}) \;-\; (1-\lambda)\,\max_{s \in S}\cos(\mathbf{d}, \mathbf{s}),
+  $$
+
+  where $S$ is the set of already-selected chunks. Assume the same globally available `encoder`, `index`, `all_chunks`, and unit-normalized `chunk_embeddings` from the chapter's minimal implementation.
+
+??? note "Solution"
+    Because `chunk_embeddings` are unit-normalized, cosine similarity is just a dot product, so all similarities reduce to matrix/vector products. We fetch `fetch_k` candidates, then greedily add whichever remaining candidate maximizes the MMR objective.
+
+    ```python
+    import numpy as np
+    from typing import List, Tuple
+
+    def retrieve_mmr(
+        query: str,
+        k: int = 3,
+        fetch_k: int = 10,
+        lambda_mult: float = 0.7,   # 1.0 = pure relevance, 0.0 = pure diversity
+    ) -> List[Tuple[str, float]]:
+        """
+        Retrieve top-k chunks with Maximal Marginal Relevance re-ranking.
+        Over-fetches fetch_k candidates from FAISS, then greedily selects k
+        that trade off query relevance against novelty vs already-picked chunks.
+        """
+        # Encode query (unit-norm so dot product == cosine similarity)
+        q_vec = encoder.encode([query], normalize_embeddings=True).astype(np.float32)
+        q = q_vec[0]
+
+        # Over-fetch candidates from the exact index
+        _, indices = index.search(q_vec, fetch_k)
+        cand_idx = [int(i) for i in indices[0] if i >= 0]   # drop -1 padding
+        cand_vecs = chunk_embeddings[cand_idx]              # (n, d), unit-normed
+
+        # Cosine sim of each candidate to the query
+        query_sim = cand_vecs @ q                           # (n,)
+
+        selected_local: List[int] = []   # positions within cand_idx
+        results: List[Tuple[str, float]] = []
+        remaining = list(range(len(cand_idx)))
+
+        while remaining and len(selected_local) < k:
+            best_local, best_score = None, -np.inf
+            for j in remaining:
+                if selected_local:
+                    # max similarity to anything already chosen (redundancy penalty)
+                    diversity = max(
+                        float(cand_vecs[j] @ cand_vecs[s]) for s in selected_local
+                    )
+                else:
+                    diversity = 0.0
+                mmr = lambda_mult * float(query_sim[j]) - (1 - lambda_mult) * diversity
+                if mmr > best_score:
+                    best_score, best_local = mmr, j
+            selected_local.append(best_local)
+            remaining.remove(best_local)
+            # report the query-relevance score for consistency with retrieve()
+            results.append(
+                (all_chunks[cand_idx[best_local]], float(query_sim[best_local]))
+            )
+        return results
+    ```
+
+    Notes on the design:
+
+    - **Over-fetch then filter.** We ask FAISS for `fetch_k` (e.g. 10) candidates but return only `k` (e.g. 3); MMR needs a candidate pool larger than the final set to have anything to diversify over.
+    - **The first pick is pure relevance** (empty $S$ means the penalty term is $0$), so the single best chunk is always kept — exactly what you want.
+    - **`lambda_mult` controls the trade-off.** At $\lambda = 1.0$ this reduces to the chapter's original `retrieve` (top-$k$ by cosine); lowering it toward $0$ increasingly punishes chunks that duplicate an already-selected one, breaking up the five-near-duplicates failure mode. A value around $0.5$-$0.7$ is a common default.
+    - It is a drop-in replacement for `retrieve(query, k)` inside `rag_query`, since it returns the same `List[Tuple[str, float]]` shape that `build_context_block` expects.

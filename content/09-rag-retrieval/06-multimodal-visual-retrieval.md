@@ -475,3 +475,179 @@ This chapter closes Part IX. The retrieval mechanisms here — dual encoders, la
 - Beyer et al., *PaliGemma: A versatile 3B VLM for transfer*, 2024 — the backbone of the original ColPali.
 - Jayaram et al., *MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings*, 2024.
 - The `colpali-engine` and `ColBERT` open-source repositories for reference implementations.
+
+## Exercises
+
+**1.** (Conceptual) A colleague proposes speeding up ColPali by mean-pooling the *query's* per-token vectors into a single 128-dim vector before scoring, arguing "the pages are still multi-vector, so we keep the fine-grained matching." Explain (a) why single-vector CLIP/SigLIP already struggles on dense document pages, and (b) why your colleague's change silently throws away ColPali's advantage. What retrieval regime does the modified system collapse to?
+
+??? note "Solution"
+
+    **(a)** CLIP/SigLIP are *bi-encoders*: each page is compressed into one $d$-dimensional vector. A single page of a 10-K holds many distinct facts (a revenue figure, a hedging footnote, a segment table, a risk paragraph). One vector cannot simultaneously preserve all of them so that a *specific* keyword-like query ("depreciation schedule for fiscal 2022") can latch onto the small region that answers it. This is the information-bottleneck problem of single-vector retrieval, compounded on documents by the caption-vs-document-query domain mismatch (CLIP was trained on web captions, never on document queries).
+
+    **(b)** Late interaction's whole value is that *every* query token independently "goes shopping" across the page's patches via MaxSim:
+    $$
+    S(Q,D)=\sum_{i=1}^{n}\max_{j=1}^{m} q_i^\top d_j .
+    $$
+    If you mean-pool the query into a single vector $\bar q$, the score becomes $\max_j \bar q^\top d_j$ — a *single* averaged query intent matched to one best patch. A rare, discriminative query term (an exact table header, an equation symbol) is averaged into the mush of the other tokens and can no longer independently find its exact patch. You have reverted to a **single-vector-query / multi-vector-document bi-encoder-style match**: you keep the page's patch storage cost but lose the token-level query granularity that justified it. This is exactly the "forgetting the query side is also multi-vector" pitfall from the chapter.
+
+**2.** (Quantitative) A query has $n=3$ tokens and a page has $m=4$ patches. All vectors are L2-normalized, and the resulting query-token by patch dot-product matrix (rows = query tokens, columns = patches) is
+
+    q1: [0.2, 0.9, 0.1, 0.4]
+    q2: [0.7, 0.3, 0.5, 0.2]
+    q3: [0.1, 0.2, 0.8, 0.6]
+
+Compute the MaxSim score. Then compute the score you would get if you (wrongly) mean-pooled the three query rows into one row before taking a single max over patches, and comment on the difference.
+
+??? note "Solution"
+
+    **MaxSim** takes the max along each row (best patch per query token), then sums:
+
+    - $q_1$: $\max(0.2, 0.9, 0.1, 0.4) = 0.9$
+    - $q_2$: $\max(0.7, 0.3, 0.5, 0.2) = 0.7$
+    - $q_3$: $\max(0.1, 0.2, 0.8, 0.6) = 0.8$
+
+    $$
+    S = 0.9 + 0.7 + 0.8 = 2.4 .
+    $$
+
+    Note each query token matched a *different* patch (patch 2, patch 1, patch 3 respectively) — the page answers three different query terms in three different regions, which is exactly what late interaction rewards.
+
+    **Mean-pooled query.** Averaging the three rows column-wise:
+
+    $$
+    \bar q = \left[\tfrac{0.2+0.7+0.1}{3},\ \tfrac{0.9+0.3+0.2}{3},\ \tfrac{0.1+0.5+0.8}{3},\ \tfrac{0.4+0.2+0.6}{3}\right] = [0.333,\ 0.467,\ 0.467,\ 0.400].
+    $$
+
+    A single max over patches gives $\max(0.333, 0.467, 0.467, 0.400) = 0.467$. Even scaled up by $n=3$ for a fair comparison ($1.40$), this is far below $2.4$: no single patch is simultaneously the best for all three query terms, so pooling destroys the ability to credit evidence spread across the page. This is the numeric face of Exercise 1.
+
+**3.** (Quantitative) You index **50,000** pages with **ColQwen2**, which (dynamic resolution) produces on average **768 patch vectors per page**, each $d=128$, stored at fp16 (2 bytes/element). (a) What is the raw index size? (b) You apply token pooling to reduce each page to **128** representative patches. New size? (c) You then binary-quantize the pooled vectors to **1 bit/dimension**. Final size, and the overall reduction factor from (a)?
+
+??? note "Solution"
+
+    **(a) Raw.** Per page: $768 \times 128 \times 2 = 196{,}608$ bytes $= 192$ KiB.
+    Corpus: $50{,}000 \times 192\ \text{KiB} = 9{,}600{,}000\ \text{KiB} = 9375\ \text{MiB} \approx 9.2\ \text{GiB}$.
+    (For reference, a single-vector index at $d=128$ fp16 would be $50{,}000 \times 256\ \text{B} = 12.8$ MB — the multi-vector premium is the $768\times$.)
+
+    **(b) Token pooling to 128 patches.** Per page: $128 \times 128 \times 2 = 32{,}768$ bytes $= 32$ KiB.
+    Corpus: $50{,}000 \times 32\ \text{KiB} = 1{,}600{,}000\ \text{KiB} = 1562.5\ \text{MiB} \approx 1.53\ \text{GiB}$.
+    This is a $768/128 = 6\times$ reduction.
+
+    **(c) Binary quantization, 1 bit/dim.** Per page: $128\ \text{patches} \times 128\ \text{dims} \times 1\ \text{bit} = 16{,}384\ \text{bits} = 2048$ bytes $= 2$ KiB.
+    Corpus: $50{,}000 \times 2\ \text{KiB} = 100{,}000\ \text{KiB} = 97.66\ \text{MiB} \approx 98\ \text{MiB}$.
+
+    Overall reduction from (a): fp16 is 16 bits/dim vs 1 bit/dim ($16\times$) on top of the $6\times$ pooling, so $6 \times 16 = 96\times$. Check: $9375\ \text{MiB} / 97.66\ \text{MiB} \approx 96$. The 9.2 GiB index becomes ~98 MiB, easily RAM-resident.
+
+**4.** (Quantitative) On a ViDoRe-style task, your system retrieves 3 pages with binary relevances (in retrieved order) $[1, 0, 1]$. The corpus contains exactly **2** relevant pages for this query. Compute nDCG@3 using the chapter's definition. Show DCG and IDCG.
+
+??? note "Solution"
+
+    With binary relevance, $2^{\text{rel}}-1$ is $1$ for a relevant page and $0$ otherwise, and the rank discount is $\log_2(i+1)$.
+
+    **DCG@3** of $[1,0,1]$:
+    $$
+    \frac{1}{\log_2 2} + \frac{0}{\log_2 3} + \frac{1}{\log_2 4} = \frac{1}{1} + 0 + \frac{1}{2} = 1.5 .
+    $$
+
+    **IDCG@3.** The ideal ordering puts both relevant pages first: $[1, 1, 0]$.
+    $$
+    \frac{1}{\log_2 2} + \frac{1}{\log_2 3} + \frac{0}{\log_2 4} = 1 + \frac{1}{1.585} + 0 = 1 + 0.6309 = 1.6309 .
+    $$
+
+    **nDCG@3:**
+    $$
+    \frac{1.5}{1.6309} \approx 0.9197 .
+    $$
+
+    The score is below 1 because a relevant page sat at rank 3 instead of rank 2 — nDCG penalizes the relevant page pushed down by the irrelevant one at rank 2.
+
+**5.** (Implementation) The chapter notes binary quantization (1 bit/dim) is "often the single highest-leverage optimization." Implement it. Write `binarize(V)` that sign-quantizes and bit-packs a patch matrix, and `approx_maxsim(q_bits, d_bits, dim)` that computes an approximate MaxSim using XOR + popcount (Hamming distance) instead of float dot products. Verify on random unit vectors that the approximate ranking tracks the exact MaxSim.
+
+??? note "Solution"
+
+    For $\pm 1$ sign vectors $b_u, b_v \in \{-1,+1\}^d$, the dot product is $b_u^\top b_v = d - 2\,\mathrm{Hamming}(b_u, b_v)$: each dimension contributes $+1$ when the signs agree and $-1$ when they differ. So a monotone surrogate for cosine is $d - 2\cdot\text{Hamming}$, computed with bit ops on packed representations (1 bit/dim storage).
+
+    ```python
+    import numpy as np
+
+    def binarize(V):
+        """V: [m, d] float -> packed sign bits [m, ceil(d/8)] uint8 (1 = nonneg)."""
+        signs = (V >= 0).astype(np.uint8)      # 1 bit per dimension
+        return np.packbits(signs, axis=-1)
+
+    def approx_maxsim(q_bits, d_bits, dim):
+        """q_bits: [n, bytes], d_bits: [m, bytes]. Approx MaxSim via Hamming."""
+        xor = np.bitwise_xor(q_bits[:, None, :], d_bits[None, :, :])  # [n, m, bytes]
+        # Cast to signed: unpackbits.sum returns uint64, and dim - 2*ham goes
+        # negative when >half the bits differ, which would underflow uint64.
+        ham = np.unpackbits(xor, axis=-1).sum(-1).astype(np.int64)   # [n, m]
+        sim = dim - 2 * ham                     # [n, m] surrogate for cos * dim
+        return sim.max(axis=1).sum()            # MaxSim: best patch per q-token
+
+    def exact_maxsim(Q, D):
+        return float((Q @ D.T).max(axis=1).sum())
+
+    # --- sanity check: approximate ranking should track exact ranking ---
+    rng = np.random.default_rng(0)
+    dim = 128
+    def unit(m): 
+        X = rng.standard_normal((m, dim)); return X / np.linalg.norm(X, axis=1, keepdims=True)
+
+    Q = unit(8)                                  # 8 query tokens
+    pages = [unit(rng.integers(40, 80)) for _ in range(20)]
+
+    exact = np.array([exact_maxsim(Q, D) for D in pages])
+    qb = binarize(Q)
+    approx = np.array([approx_maxsim(qb, binarize(D), dim) for D in pages])
+
+    # Compare orderings (top pages should mostly agree).
+    print("exact top5 :", np.argsort(-exact)[:5])
+    print("approx top5:", np.argsort(-approx)[:5])
+    ```
+
+    The bit-packed index uses $1/16$ of the fp16 memory. Ranks are approximate, so in a real system this stage does **candidate generation** and exact fp16 MaxSim reranks the shortlist (the two-tier storage split from the chapter).
+
+**6.** (Implementation) Reproduce the chapter's HNSW-over-patches funnel *without* an ANN library, so the candidate-generation logic is explicit. Given a query's patch matrix and a dict of `page_id -> [m, d]` patch matrices, implement (1) candidate generation as the **union of pages owning each query token's top-$k$ nearest patches** across the whole corpus, then (2) exact-MaxSim reranking over only those candidate pages. Return the top-$n$ pages.
+
+??? note "Solution"
+
+    This mirrors `PatchHNSWIndex.search` from the chapter: flatten every patch, tag it with its page, take each query token's nearest patches, union the owning pages, and rerank that shortlist with exact MaxSim. The only difference is that we use an exact top-$k$ (via `argpartition`) in place of an approximate HNSW `knn_query` — the funnel structure is identical.
+
+    ```python
+    import numpy as np
+
+    def maxsim(Q, D):
+        return float((Q @ D.T).max(axis=1).sum())
+
+    def candidate_pages(q_patches, pages, k_per_token=5):
+        # Flatten all patches, remembering which page owns each.
+        mats, owner = [], []
+        for pid, D in pages.items():
+            mats.append(D)
+            owner.extend([pid] * D.shape[0])
+        A = np.vstack(mats).astype(np.float32)     # [total_patches, d]
+        owner = np.asarray(owner)
+        cands = set()
+        for q in q_patches:                        # one ANN probe per query token
+            sims = A @ q                           # [total_patches]
+            top = np.argpartition(-sims, k_per_token)[:k_per_token]
+            cands.update(owner[top].tolist())      # union of owning pages
+        return cands
+
+    def search(q_patches, pages, k_per_token=5, topn=3):
+        q_patches = q_patches.astype(np.float32)
+        cands = candidate_pages(q_patches, pages, k_per_token)      # stage 1: approx
+        scored = [(pid, maxsim(q_patches, pages[pid])) for pid in cands]  # stage 2: exact
+        scored.sort(key=lambda x: -x[1])
+        return scored[:topn]
+
+    # --- demo ---
+    rng = np.random.default_rng(1)
+    d = 128
+    def unit(m):
+        X = rng.standard_normal((m, d)); return (X / np.linalg.norm(X, axis=1, keepdims=True)).astype(np.float32)
+    pages = {f"p{i}": unit(int(rng.integers(60, 100))) for i in range(50)}
+    Q = unit(10)
+    print(search(Q, pages, k_per_token=5, topn=3))
+    ```
+
+    Candidate generation is approximate: a relevant page is missed only if *none* of its patches makes any query token's top-$k$. Recall stays high in practice because a truly relevant page usually has *several* strongly matching patches, so it enters the union through more than one query token. Raising `k_per_token` trades recall for cost — the same `ef`/`nprobe` knob discussed in the Interview Corner.

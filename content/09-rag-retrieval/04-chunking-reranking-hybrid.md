@@ -1167,3 +1167,124 @@ def compute_mrr(
 - Guu et al., "REALM: Retrieval-Augmented Language Model Pre-Training" (ICML 2020) — early end-to-end trainable RAG architecture that motivates the field.
 - Ma et al., "Query Rewriting in Retrieval-Augmented Large Language Models" (EMNLP 2023) — systematic study of query rewriting strategies including multi-query expansion.
 - Sentence Transformers library (`UKPLab/sentence-transformers`) — the go-to Python package for cross-encoder models and bi-encoder fine-tuning.
+
+---
+
+## Exercises
+
+**1.** A colleague argues that overlap between adjacent fixed-length chunks is wasteful — it duplicates tokens, inflates the index, and (with the whitespace tokenizer in `fixed_chunk`) makes the same words appear in two chunks. Give a concrete example of a retrieval failure that overlap prevents, and explain why the chapter recommends a *small* overlap (32–64 tokens) rather than either zero overlap or a very large one.
+
+??? note "Solution"
+    Consider a document where the sentence "Revenue rose because **it** increased by 12% in Q4" straddles a chunk boundary. With **zero overlap**, the split might put "Revenue rose because" at the end of chunk A and "it increased by 12% in Q4" at the start of chunk B. Now neither chunk is self-contained: chunk B contains the number 12% but its grammatical antecedent ("Revenue") lives only in chunk A. A query like "how much did revenue grow in Q4?" may retrieve chunk B on the strength of "12%" and "Q4", but the LLM sees a dangling "it" with no referent, exactly the context-loss failure the chapter warns about in Section 1.
+
+    A small overlap repeats the last 32–64 tokens of chunk A at the start of chunk B, so the antecedent "Revenue" is carried across the boundary and at least one chunk contains the complete thought.
+
+    Why not a *large* overlap? Overlap is pure redundancy. With `step = chunk_size - overlap`, as `overlap` approaches `chunk_size` the step shrinks toward zero and the number of chunks (and therefore index size, embedding cost, and duplicate hits in the candidate list) explodes. In the limit `overlap >= chunk_size` the code raises `ValueError` because `step <= 0`. A 32–64 token overlap on a 256–512 token chunk is roughly a 10–25% redundancy tax — enough to protect boundary sentences, cheap enough to ignore.
+
+**2.** Using the `fixed_chunk` function from Section 2.1 with the whitespace tokenizer, you chunk a document of exactly 200 tokens with `chunk_size = 50` and `overlap = 10`.
+
+   (a) How many chunks are produced?
+   (b) How long (in tokens) is the last chunk?
+   (c) How many *total* tokens are emitted across all chunks, and how many of those are redundant (duplicated) relative to the 200 original tokens?
+
+??? note "Solution"
+    The step is $\text{step} = \text{chunk\_size} - \text{overlap} = 50 - 10 = 40$. Trace the loop (`start` begins at 0, `end = min(start+50, 200)`):
+
+    | Chunk | start | end | length |
+    |-------|-------|-----|--------|
+    | 1 | 0 | 50 | 50 |
+    | 2 | 40 | 90 | 50 |
+    | 3 | 80 | 130 | 50 |
+    | 4 | 120 | 170 | 50 |
+    | 5 | 160 | 200 | 40 |
+
+    After chunk 5, `end == len(tokens)` so the loop breaks.
+
+    **(a)** 5 chunks. This matches the closed form $\lceil (N - \text{chunk\_size}) / \text{step} \rceil + 1 = \lceil (200-50)/40 \rceil + 1 = \lceil 3.75 \rceil + 1 = 4 + 1 = 5$.
+
+    **(b)** The last chunk covers tokens [160, 200), i.e. $200 - 160 = 40$ tokens.
+
+    **(c)** Total emitted $= 50 + 50 + 50 + 50 + 40 = 240$ tokens. The originals number 200, so $240 - 200 = 40$ tokens are redundant. Sanity check: there are 4 internal boundaries, each repeating `overlap = 10` tokens, and $4 \times 10 = 40$. The redundancy tax here is $40/200 = 20\%$.
+
+**3.** In the BM25 IDF formula from Section 3,
+   $$\text{IDF}(t) = \log\!\left(\frac{N - n(t) + 0.5}{n(t) + 0.5} + 1\right),$$
+   a corpus has $N = 1000$ documents. Compute the IDF of a rare term that appears in $n(t) = 1$ document and of a common term that appears in $n(t) = 500$ documents. What does the ratio tell you about why BM25 is the right tool for the "CVE-2023-44487 / product SKU" queries the chapter highlights?
+
+??? note "Solution"
+    **Rare term** ($n = 1$):
+    $$\text{IDF} = \log\!\left(\frac{1000 - 1 + 0.5}{1 + 0.5} + 1\right) = \log\!\left(\frac{999.5}{1.5} + 1\right) = \log(666.33 + 1) = \log(667.33) \approx 6.50.$$
+
+    **Common term** ($n = 500$):
+    $$\text{IDF} = \log\!\left(\frac{1000 - 500 + 0.5}{500 + 0.5} + 1\right) = \log\!\left(\frac{500.5}{500.5} + 1\right) = \log(1 + 1) = \log 2 \approx 0.69.$$
+
+    (Using natural log, as in the chapter's `math.log`.)
+
+    The rare term carries about $6.50 / 0.69 \approx 9.4\times$ the IDF weight of the common term. A term like `CVE-2023-44487` appears in essentially one document, so it lands at the high end of this IDF scale and dominates the BM25 score of exactly the document that contains it. This is precisely the exact-match signal a dense bi-encoder tends to smear away by generalization, which is why the chapter pairs BM25 with dense retrieval in a hybrid: BM25 supplies decisive weight to rare, discriminative tokens.
+
+**4.** You have 4 documents. BM25 ranks them $[A, B, C, D]$ and dense retrieval ranks them $[C, A, D, B]$. Using Reciprocal Rank Fusion with $k = 60$, compute the RRF score of each document and give the final fused ranking. Does any document win the fusion despite being ranked first by neither retriever?
+
+??? note "Solution"
+    RRF score is $\sum_r \frac{1}{k + \text{rank}_r(d)}$ with $k = 60$. The relevant reciprocals are $\frac{1}{61} = 0.016393$, $\frac{1}{62} = 0.016129$, $\frac{1}{63} = 0.015873$, $\frac{1}{64} = 0.015625$.
+
+    | Doc | BM25 rank | Dense rank | BM25 term | Dense term | RRF score |
+    |-----|-----------|-----------|-----------|------------|-----------|
+    | A | 1 | 2 | 1/61 | 1/62 | 0.032522 |
+    | C | 3 | 1 | 1/63 | 1/61 | 0.032266 |
+    | B | 2 | 4 | 1/62 | 1/64 | 0.031754 |
+    | D | 4 | 3 | 1/64 | 1/63 | 0.031498 |
+
+    Final fused ranking: $[A, C, B, D]$.
+
+    **No — in this example the fusion winner $A$ is exactly BM25's rank-1 document** (dense retrieval put $C$ first). The instructive point is subtler: $A$ wins the *fusion* even though dense retrieval ranked $C$ above it, because $A$ is consistently *near* the top of both lists (ranks 1 and 2), whereas $C$ paid for its dense rank-1 with a weaker BM25 rank of 3. The two documents that were ranked first by *neither* retriever, $B$ and $D$, finish last. This is the hallmark of RRF: it rewards agreement across rankers and, because it uses only rank ordinals, it needs no normalization between BM25's 0–20 scores and cosine's 0.5–1.0 range.
+
+**5.** The chapter says cross-encoders are "unsuitable for first-stage retrieval but ideal for reranking." Using the illustrative figure of ~60 ms to score 100 candidates on an A100 (Section 4), estimate the per-query cost of using the cross-encoder directly as a first-stage retriever over a 1,000,000-document corpus, and contrast it with reranking a 100-candidate shortlist. Explain in one or two sentences the architectural reason the bi-encoder does not pay this cost.
+
+??? note "Solution"
+    From the figure, 100 candidates cost ~60 ms, i.e. roughly $60/100 = 0.6$ ms per (query, document) forward pass.
+
+    **Cross-encoder as first-stage retriever** must score every document, because it produces no reusable document representation — each score needs a fresh joint forward pass over `[query; document]`. For $10^6$ documents:
+    $$10^6 \times 0.6\ \text{ms} = 6 \times 10^5\ \text{ms} = 600\ \text{seconds} \approx 10\ \text{minutes per query}.$$
+    That is completely infeasible for interactive retrieval.
+
+    **Cross-encoder as reranker** touches only the shortlist: $100 \times 0.6\ \text{ms} \approx 60$ ms per query — four orders of magnitude cheaper, and small enough to sit behind a fast first stage.
+
+    The architectural reason: a **bi-encoder** embeds the query and each document *independently*, so all $10^6$ document vectors are computed once at index time and stored. At query time only the single query embedding is computed, and matching is a cheap dot product (further accelerated by an ANN index) — an $O(1)$ model forward pass per query instead of $O(N)$. The cross-encoder's power (every query token attends to every document token) is exactly what forbids this precomputation, because the representation depends jointly on both inputs.
+
+**6.** *Implementation.* The domain table in Section 7.1 recommends giving BM25 "high weight" for precise entity lookups, but `reciprocal_rank_fusion` treats every ranker equally. Implement a `weighted_reciprocal_rank_fusion(rankings, weights, k=60)` that multiplies each ranker's contribution by a per-ranker weight, keeping the same return contract (a list of `(doc_idx, rrf_score)` sorted descending). Then, using the data from Exercise 4 with `weights = [2.0, 1.0]`, compute the new fused scores, describe how upweighting BM25 shifts them relative to the equal-weight result of Exercise 4, and determine the BM25 weight at which document $B$ (BM25 rank 2) would finally overtake $C$.
+
+??? note "Solution"
+    The change is a single multiplicative factor `w` applied to each `1/(k+rank)` term, mirroring the structure of the original function in Section 3.1:
+
+    ```python
+    from collections import defaultdict
+
+    def weighted_reciprocal_rank_fusion(
+        rankings: list[list[tuple[int, float]]],
+        weights: list[float],
+        k: int = 60,
+    ) -> list[tuple[int, float]]:
+        """
+        Weighted RRF: each ranker's 1/(k+rank) contribution is scaled by weights[i].
+        Setting all weights to 1.0 recovers the standard RRF of Section 3.1.
+        """
+        if len(weights) != len(rankings):
+            raise ValueError("Need exactly one weight per ranking")
+
+        rrf_scores: dict[int, float] = defaultdict(float)
+        for ranked_list, w in zip(rankings, weights):
+            for rank, (doc_idx, _score) in enumerate(ranked_list, start=1):
+                rrf_scores[doc_idx] += w / (k + rank)
+
+        return sorted(rrf_scores.items(), key=lambda x: -x[1])
+    ```
+
+    Applying it to Exercise 4's data — BM25 ranks $[A, B, C, D]$, dense ranks $[C, A, D, B]$ — encode each list as `(doc_idx, score)` pairs (scores are ignored, only order matters). With $k = 60$ and weights $[2.0, 1.0]$:
+
+    - $A$: $2.0 \cdot \frac{1}{61} + 1.0 \cdot \frac{1}{62} = 0.032787 + 0.016129 = 0.048916$
+    - $B$: $2.0 \cdot \frac{1}{62} + 1.0 \cdot \frac{1}{64} = 0.032258 + 0.015625 = 0.047883$
+    - $C$: $2.0 \cdot \frac{1}{63} + 1.0 \cdot \frac{1}{61} = 0.031746 + 0.016393 = 0.048139$
+    - $D$: $2.0 \cdot \frac{1}{64} + 1.0 \cdot \frac{1}{63} = 0.031250 + 0.015873 = 0.047123$
+
+    Fused ranking: $[A, C, B, D]$ — the *same order* as the equal-weight fusion of Exercise 4, but the margins have shifted decisively toward BM25's preferences. $A$'s lead over $C$ widens from $0.000256$ in Exercise 4 to $0.048916 - 0.048139 = 0.000777$ here (roughly triple), and $B$ (BM25 rank 2, now double-weighted) closes most of its gap to $C$: the $C - B$ margin shrinks from $0.000512$ in Exercise 4 to $0.048139 - 0.047883 = 0.000256$.
+
+    At weight $2.0$, $B$ does **not** yet overtake $C$ — the ordering is unchanged. To find the tipping point, require $w\cdot\frac{1}{62} + \frac{1}{64} > w\cdot\frac{1}{63} + \frac{1}{61}$, i.e. $w\left(\frac{1}{62}-\frac{1}{63}\right) > \frac{1}{61}-\frac{1}{64}$, which gives $w > \frac{3/3904}{1/3906} \approx 3.0$. Only once BM25 is trusted more than about $3\times$ the dense ranker does $B$ climb above $C$ — the intended effect for entity-lookup domains where the exact-match retriever should be trusted more. As a sanity check, calling the function with `weights = [1.0, 1.0]` reproduces the Exercise 4 scores exactly.

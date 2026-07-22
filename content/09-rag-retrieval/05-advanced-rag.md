@@ -979,3 +979,170 @@ For indexing, the Anthropic contextual retrieval finding is almost universally a
 - Anthropic, *Contextual Retrieval* (blog post), 2024.
 - Lewis et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*, NeurIPS 2020 — the original RAG paper.
 - Microsoft GraphRAG open-source repository: `microsoft/graphrag` on GitHub.
+
+## Exercises
+
+**1.** Consider the chapter's multi-hop question: *"Which portfolio company of the VC firm that led ACME's Series B later went public?"* Explain why a single top-$k$ semantic search over a flat chunk index structurally cannot answer this, no matter how large $k$ is. Then describe, in terms of the chapter's iterative decomposition template, the minimum sequence of retrievals that *can* answer it.
+
+??? note "Solution"
+    The question is a chain of three dependent hops: (a) find the VC firm that led ACME's Series B, (b) find that firm's portfolio companies, (c) find which of those went public. The retriever ranks chunks by semantic similarity to the *query text*. But the chunk that actually contains the answer — a filing about some portfolio company's IPO — shares essentially no vocabulary or embedding-space proximity with the phrase "VC firm that led ACME's Series B." As the chapter puts it: "the retriever cannot know which chunks are relevant until after it has already partially answered the question." Increasing $k$ does not help, because the relevant chunk is not merely ranked low — it is not semantically close to the *original* query at all; it is only close to a query you can't write until hop (a) and (b) are resolved.
+
+    The iterative template $q_0 \xrightarrow{\text{decompose}} q_1 \xrightarrow{\text{retrieve}} D_1 \xrightarrow{\text{reason}} q_2 \ldots$ resolves it in three retrievals:
+
+    - Hop 1 — query "who led ACME's Series B" → retrieves the VC firm name, e.g. "Foobar Ventures."
+    - Hop 2 — query "portfolio companies of Foobar Ventures" (only writable *after* hop 1) → retrieves the portfolio list.
+    - Hop 3 — for the portfolio companies, query "which went public / IPO" → retrieves the IPO filing.
+
+    Each query is constructed from the *evidence returned by the previous hop*, which is exactly what single-shot retrieval cannot do.
+
+**2.** Anthropic's contextual retrieval prepends an LLM-generated context sentence to each chunk before embedding. (a) Using the chapter's own example ("the plaintiff argued..."), explain *mechanically* why this changes the chunk's position in embedding space and improves retrieval. (b) The chapter says this technique is "acceptable for corpora that do not change frequently, expensive for streaming ingestion." Quantify the indexing cost driver and explain the streaming-ingestion problem.
+
+??? note "Solution"
+    (a) An embedding model maps text to a vector based on the tokens present. The bare chunk "the plaintiff argued..." contains no tokens indicating *which case, what year, or what legal issue*, so its embedding lands in a generic "legal argument" region, far from a query like "2019 constructive dismissal employment case." Prepending "This chunk is from a 2019 employment discrimination ruling in which the plaintiff argues constructive dismissal..." injects the tokens *2019, employment, discrimination, constructive dismissal* into the text that is embedded. Those tokens shift the resulting vector toward the region occupied by such queries — the chapter's `advrag-contextual-retrieval-embedding-shift` figure. The stored/returned text can still be the raw chunk; only the *embedded* text carries the prefix (see `embedded_text` vs. raw chunk in the code).
+
+    (b) The cost driver is **one additional LLM call per chunk at index time** (the `CONTEXT_PROMPT` call in `build_contextual_chunks`). For a static corpus of $N$ chunks this is a one-time cost of $N$ LLM calls, amortised over all future queries — cheap per query. For **streaming ingestion**, documents arrive continuously, so every new chunk incurs its LLM call *at ingest latency*, and the per-chunk LLM call sits on the write path adding both cost and latency to every insert. A corpus churning millions of chunks/day pays the full $N$-call cost repeatedly and continuously, which is why the technique is favored for slowly-changing corpora where the one-time index cost is dwarfed by query volume.
+
+**3.** The chapter states that for a prefill of $L$ tokens, attention costs $O(L^2 d_{\text{model}} / d_k)$ FLOPs, so "doubling the context quadruples the FLOPs." A team is deciding between sending a 12,000-token retrieved context and a 48,000-token long-context prompt to the same model. Ignoring all non-attention costs, by what factor does the attention computation grow, and what does this imply about the cost framing in the chapter's "long context vs. RAG" comparison?
+
+??? note "Solution"
+    Attention scales as $L^2$. The ratio of the two prefill lengths is
+
+    $$
+    \frac{L_{\text{long}}}{L_{\text{RAG}}} = \frac{48{,}000}{12{,}000} = 4.
+    $$
+
+    Since attention FLOPs scale with $L^2$, the attention cost grows by
+
+    $$
+    \left(\frac{48{,}000}{12{,}000}\right)^2 = 4^2 = 16\times.
+    $$
+
+    So the long-context prompt requires roughly **16 times** the attention computation of the RAG prompt, even though it carries only 4 times the tokens. This is *super-linear*: the chapter's per-token API pricing (which is linear in tokens) actually *understates* the compute burden of long context, because the quadratic attention term means the marginal token near the end of a long context is far more expensive to process than a token in a short context. It reinforces the chapter's conclusion that RAG's targeted, short contexts win decisively on cost whenever a small retrieved set suffices.
+
+**4.** Adapt the chapter's "Cost comparison" worked example to new numbers. A corpus has **500 documents of 4,000 tokens each**. The model charges **USD 3.00 per million input tokens**. Compute, for a single query: (a) the long-context cost (stuff everything in), (b) the RAG cost retrieving the **top 8 chunks of 250 tokens each**, and (c) the ratio between them. Then (d) at **2,000 queries/day**, give the daily cost of each approach.
+
+??? note "Solution"
+    (a) **Long context.** Total corpus tokens $= 500 \times 4{,}000 = 2{,}000{,}000$ tokens. Cost per query:
+
+    $$
+    2{,}000{,}000 \times \frac{3.00}{1{,}000{,}000} = \text{USD } 6.00 \text{ per query.}
+    $$
+
+    (b) **RAG.** Context sent $= 8 \times 250 = 2{,}000$ tokens (the query tokens and one cheap embedding call are negligible, per the chapter). Cost per query:
+
+    $$
+    2{,}000 \times \frac{3.00}{1{,}000{,}000} = \text{USD } 0.006 \text{ per query.}
+    $$
+
+    (c) **Ratio:**
+
+    $$
+    \frac{6.00}{0.006} = 1{,}000\times.
+    $$
+
+    RAG is 1,000x cheaper per query — the same order of magnitude the chapter found.
+
+    (d) **At 2,000 queries/day:**
+
+    - Long context: $6.00 \times 2{,}000 = \text{USD } 12{,}000\text{/day}$.
+    - RAG: $0.006 \times 2{,}000 = \text{USD } 12\text{/day}$.
+
+    Long context wins here *only* if the queries genuinely require holistic synthesis across all 500 documents (the case GraphRAG's global search handles more cheaply); otherwise RAG saves ~USD 11,988/day.
+
+**5.** The chapter warns about **lost-in-the-middle** and recommends "relevance-order placement: put the most relevant retrieved chunk first." A stronger mitigation, since LLMs attend well to *both* the beginning and end of the context, is to place the highest-scoring chunks at the two ends and bury the weakest in the middle. Implement a function `edge_weighted_order(chunks_with_scores)` that takes a list of `(chunk_text, score)` pairs and returns the list of chunk texts reordered so that the highest-scoring chunk is first, the second-highest is last, the third-highest is second, the fourth-highest second-to-last, and so on — draining from the outside in. Keep it consistent with the chapter's plain-Python style.
+
+??? note "Solution"
+    Sort by score descending, then deal the sorted chunks alternately to the front and back of the output, so rank 1 → position 0, rank 2 → last position, rank 3 → position 1, rank 4 → second-to-last, etc. The weakest chunks end up in the middle, where the model under-attends.
+
+    ```python
+    """
+    edge_placement.py — Mitigate lost-in-the-middle by placing the strongest
+    retrieved chunks at both ends of the context and the weakest in the middle.
+    """
+
+    from typing import List, Tuple
+
+
+    def edge_weighted_order(chunks_with_scores: List[Tuple[str, float]]) -> List[str]:
+        """
+        Reorder chunks so the highest-scoring go to the outer edges and the
+        lowest-scoring collapse into the middle.
+
+        rank 1 -> front, rank 2 -> back, rank 3 -> front, rank 4 -> back, ...
+        """
+        # 1. Sort by score, best first.
+        ranked = [text for text, _ in
+                  sorted(chunks_with_scores, key=lambda cs: cs[1], reverse=True)]
+
+        n = len(ranked)
+        result: List[str] = [None] * n
+        front, back = 0, n - 1
+
+        for i, text in enumerate(ranked):
+            if i % 2 == 0:          # ranks 1, 3, 5, ... -> front
+                result[front] = text
+                front += 1
+            else:                   # ranks 2, 4, 6, ... -> back
+                result[back] = text
+                back -= 1
+
+        return result
+
+
+    # ── quick check ───────────────────────────────────────────────────────────
+    if __name__ == "__main__":
+        example = [("A", 0.9), ("B", 0.8), ("C", 0.7), ("D", 0.6), ("E", 0.5)]
+        # sorted best->worst: A, B, C, D, E
+        # A->front, B->back, C->front, D->back, E->front
+        print(edge_weighted_order(example))
+        # -> ['A', 'C', 'E', 'D', 'B']
+    ```
+
+    The strongest chunk `A` sits first and the second-strongest `B` sits last — both in high-attention positions — while the weakest chunk `E` lands dead center, exactly where the chapter says the model under-attends. This matches the chapter's guidance to "put the most relevant material at the beginning or end."
+
+**6.** HippoRAG runs Personalized PageRank via the power iteration $r \leftarrow \alpha\, p + (1-\alpha)\, A^{\top} r$ from the chapter's `personalized_pagerank` code, where $A$ is the column-normalized transition matrix and $p$ is the seed personalization vector. Consider a tiny directed entity graph with edges $A \to B$, $B \to C$, $C \to A$ (a 3-node cycle). The query matches only entity $A$, so the seed set is $\{A\}$ and $p = [1, 0, 0]$ (order $A, B, C$). Using teleport probability $\alpha = 0.15$ and starting from $r_0 = p$, run **two** power iterations by hand. Which entity ends up with the highest PPR score, and what does that illustrate about the method?
+
+??? note "Solution"
+    **Set up the matrices.** With row = "from", column = "to", the adjacency matrix is
+
+    $$
+    A = \begin{bmatrix} 0 & 1 & 0 \\ 0 & 0 & 1 \\ 1 & 0 & 0 \end{bmatrix}
+    \quad (A\to B,\; B\to C,\; C\to A).
+    $$
+
+    Each column already sums to 1 (every node has out-degree 1), so column-normalization leaves $A$ unchanged. The iteration uses $A^{\top}$:
+
+    $$
+    A^{\top} = \begin{bmatrix} 0 & 0 & 1 \\ 1 & 0 & 0 \\ 0 & 1 & 0 \end{bmatrix}.
+    $$
+
+    Seed / personalization: $p = [1, 0, 0]$, and $r_0 = p = [1, 0, 0]$.
+
+    **Iteration 1.** First $A^{\top} r_0$:
+
+    $$
+    A^{\top}\,[1,0,0]^{\top} = [\,0,\;1,\;0\,]^{\top}.
+    $$
+
+    Then
+
+    $$
+    r_1 = 0.15\,[1,0,0] + 0.85\,[0,1,0] = [\,0.15,\;0.85,\;0\,].
+    $$
+
+    **Iteration 2.** First $A^{\top} r_1$:
+
+    $$
+    A^{\top}\,[0.15,\,0.85,\,0]^{\top} = [\,0,\;0.15,\;0.85\,]^{\top}
+    $$
+
+    (row $A$ picks component $C=0$; row $B$ picks component $A=0.15$; row $C$ picks component $B=0.85$). Then
+
+    $$
+    r_2 = 0.15\,[1,0,0] + 0.85\,[0,\,0.15,\,0.85]
+        = [\,0.15,\;0.1275,\;0.7225\,].
+    $$
+
+    **Result.** After two iterations the scores are $A = 0.15$, $B = 0.1275$, $C = 0.7225$, so **entity $C$ has the highest PPR score** — even though the query matched only $A$, and $C$ is two hops away ($A \to B \to C$).
+
+    **What it illustrates.** This is exactly the "transitive relevance" the chapter highlights: PPR propagates importance from the seed through the graph's edges, so an entity several hops from the query seed can accumulate high score without ever matching the query directly. Chunks attached to $C$ would be retrieved as relevant, giving multi-hop reasoning *without* the explicit LLM sub-query generation that IRCoT-style pipelines require.

@@ -734,3 +734,133 @@ if __name__ == "__main__":
 - Fang et al., "EVA: Exploring the Limits of Masked Visual Representation Learning at Scale" (2022) — EVA-CLIP.
 - Touvron et al., "Training data-efficient image transformers & distillation through attention" (DeiT, 2021) — training ViT with limited data via distillation.
 - timm library (Ross Wightman) — the de facto PyTorch hub for pretrained vision models; includes ViT, DeiT, DINOv2, EVA-CLIP, and many variants: `github.com/huggingface/pytorch-image-models`.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter states that ViT "treats image patches as tokens" and feeds them into an *unmodified* Transformer encoder. Yet a language model's self-attention over word tokens is usually **causal** (each token attends only to earlier tokens), while ViT's is not. Why does ViT use *bidirectional* (full, non-causal) attention over its patch tokens rather than a causal mask? What would break if you imposed a causal mask on the 196 patch tokens?
+
+??? note "Solution"
+    Causal masking exists in autoregressive language models because they *generate* text left-to-right: at training time, token $t$ must not see tokens $> t$, or the model could cheat by copying the answer it is being asked to predict. ViT is not a generative model — it is an **encoder** that produces a representation of a *complete, already-observed* image for a downstream task (classification, retrieval, dense features). There is no notion of "future" patches to hide: all 196 patches are available simultaneously, and each patch should be free to attend to every other patch.
+
+    Recall from "Why Convolutions Are Not Enough" that a core motivation for ViT was **global context** — letting the top-left of the image directly attend to the bottom-right in a single layer. A causal mask, imposed over the arbitrary raster (row-major) ordering used to flatten patches into a sequence, would forbid exactly that: a patch could only attend to patches earlier in the raster order. This would (a) destroy the permutation-agnostic global mixing that makes ViT work, and (b) inject a meaningless directional bias — the raster ordering is an implementation artifact, not a semantic sequence, so "patch 5 may not see patch 100" corresponds to no real spatial constraint. The CLS token, prepended at position 0, would under a causal mask be able to attend to *nothing* except itself, making it useless as a global summary. Bidirectional attention is therefore not just allowed but required.
+
+**2.** (Quantitative) You want to run the ViT from the chapter on high-resolution $512 \times 512$ images using patch size $P = 16$ (keeping everything else at the ViT-B/16 defaults: $D = 768$).
+
+- (a) How many patch tokens $N$ result? What is the full sequence length including the CLS token?
+- (b) Attention cost per layer scales as $O(N^2 D)$ (using the sequence length including CLS). By what factor does the per-layer attention compute grow relative to the standard $224 \times 224$ input?
+- (c) The learned `pos_embed` table was trained for the $224 \times 224$ model. What is its shape, what shape do you need at $512 \times 512$, and what does the chapter say you must do to bridge the gap?
+
+??? note "Solution"
+    **(a)** With $P = 16$: along each side there are $512 / 16 = 32$ patches, so
+    $$N = 32 \times 32 = 1024 \text{ patch tokens.}$$
+    Including the prepended CLS token, the sequence length is $N + 1 = \mathbf{1025}$ tokens.
+
+    **(b)** At $224 \times 224$ the sequence length is $196 + 1 = 197$. Attention compute $\propto (\text{seq len})^2$ (the $D$ factor is unchanged), so the growth factor is
+    $$\frac{1025^2}{197^2} = \frac{1{,}050{,}625}{38{,}809} \approx 27.1\times.$$
+    So the per-layer attention cost grows roughly **27-fold**. (If you approximate using patch counts only, $1024^2 / 196^2 = 1{,}048{,}576 / 38{,}416 \approx 27.3\times$ — essentially the same.) This quadratic blow-up is exactly why the chapter notes that FlashAttention becomes critical at high resolution.
+
+    **(c)** The `pos_embed` table has shape $(1, N+1, D) = (1, 197, 768)$ — one learned vector per position for 196 patches plus CLS. At $512 \times 512$ you need $(1, 1025, 768)$. The chapter's fix is **bicubic interpolation** of the positional-embedding grid: separate the CLS position, reshape the 196 patch embeddings into a $14 \times 14 \times D$ grid, bicubically resize it to $32 \times 32 \times D$, flatten back to 1024 vectors, and re-attach the CLS embedding — exactly the `interpolate_pos_embed` function in the chapter.
+
+**3.** (Quantitative) Verify the CLS-plus-embeddings parameter budget for a **ViT-L/14** image encoder, the standard CLIP backbone. Use $D = 1024$, patch size $P = 14$, $C = 3$, image size $224 \times 224$. Count only the *input-side* parameters: the patch-embedding matrix (with bias), the CLS token, and the positional-embedding table. Then state how many Transformer layers $L$ you would need for the blocks alone to reach roughly 300M parameters, using the chapter's per-block estimate of $12 D^2$.
+
+??? note "Solution"
+    First, the grid: $224 / 14 = 16$ patches per side, so $N = 16 \times 16 = 256$ patch tokens.
+
+    **Patch-embedding matrix** $\mathbf{E} \in \mathbb{R}^{D \times (P^2 C)}$ plus bias:
+    $$P^2 C = 14 \times 14 \times 3 = 588, \qquad 1024 \times 588 + 1024 = 602{,}112 + 1{,}024 = 603{,}136.$$
+
+    **CLS token**: $D = 1024$ parameters.
+
+    **Positional-embedding table** $(N+1) \times D = 257 \times 1024 = 263{,}168$ parameters.
+
+    Input-side total:
+    $$603{,}136 + 1{,}024 + 263{,}168 = \mathbf{867{,}328} \approx 0.87\text{M parameters.}$$
+
+    **Blocks needed.** Per the chapter, one Transformer block costs about $12 D^2$:
+    $$12 \times 1024^2 = 12 \times 1{,}048{,}576 = 12{,}582{,}912 \approx 12.58\text{M per block.}$$
+    To reach ~300M from the blocks alone:
+    $$L \approx \frac{300\text{M}}{12.58\text{M}} \approx 23.8 \Rightarrow L = 24 \text{ layers.}$$
+    This matches the real ViT-L configuration ($D = 1024$, depth $= 24$, ~307M parameters), and shows the input-side embeddings (~0.87M) are a tiny fraction (<0.3%) of the total — the parameters live overwhelmingly in the 24 Transformer blocks.
+
+**4.** (Quantitative) Consider a CLIP training batch of $N = 4$ image-text pairs. The image and text embeddings are already L2-normalized, and it happens that the similarity matrix of raw cosine similarities $\mathbf{i}_i \cdot \mathbf{t}_j$ is
+
+$$
+\begin{bmatrix}
+0.9 & 0.1 & 0.2 & 0.0 \\
+0.0 & 0.8 & 0.1 & 0.1 \\
+0.2 & 0.2 & 0.7 & 0.3 \\
+0.1 & 0.0 & 0.2 & 0.6
+\end{bmatrix}
+$$
+
+with the temperature $\tau = 10$ (so logits are $10\times$ the entries above). Compute the **image-to-text** InfoNCE loss term $-\frac{1}{N}\sum_k \log \frac{e^{S_{kk}}}{\sum_j e^{S_{kj}}}$ (the first of the two symmetric terms). Work row 1 in full and give the final averaged value.
+
+??? note "Solution"
+    After scaling by $\tau = 10$, row $k$ of the logit matrix is $10 \times$ the given entries; we need the softmax probability of the *diagonal* entry in each row, then $-\log$ of it, averaged.
+
+    **Row 1** logits: $[9, 1, 2, 0]$. Exponentials:
+    $$e^{9} = 8103.08,\quad e^{1} = 2.718,\quad e^{2} = 7.389,\quad e^{0} = 1.$$
+    Denominator $= 8103.08 + 2.718 + 7.389 + 1 = 8114.19$. Diagonal probability $= 8103.08 / 8114.19 = 0.99863$. Loss$_1 = -\log(0.99863) = 0.00137$.
+
+    **Row 2** logits: $[0, 8, 1, 1]$. $e^{0}=1,\ e^{8}=2980.96,\ e^{1}=2.718,\ e^{1}=2.718$. Denominator $= 2987.40$. Diagonal prob $= 2980.96/2987.40 = 0.99785$. Loss$_2 = -\log(0.99785) = 0.00216$.
+
+    **Row 3** logits: $[2, 2, 7, 3]$. $e^{2}=7.389,\ e^{2}=7.389,\ e^{7}=1096.63,\ e^{3}=20.086$. Denominator $= 1131.49$. Diagonal prob $= 1096.63/1131.49 = 0.96919$. Loss$_3 = -\log(0.96919) = 0.03129$.
+
+    **Row 4** logits: $[1, 0, 2, 6]$. $e^{1}=2.718,\ e^{0}=1,\ e^{2}=7.389,\ e^{6}=403.43$. Denominator $= 414.54$. Diagonal prob $= 403.43/414.54 = 0.97319$. Loss$_4 = -\log(0.97319) = 0.02717$.
+
+    Average:
+    $$\mathcal{L}_{\text{img}\to\text{txt}} = \tfrac{1}{4}(0.00137 + 0.00216 + 0.03129 + 0.02717) = \tfrac{1}{4}(0.06199) \approx \mathbf{0.0155}.$$
+    The loss is small because the diagonal (correct) pair dominates each row after the $\tau = 10$ scaling sharpens the softmax — this is what a well-trained CLIP model looks like on an easy batch. The full symmetric CLIP loss would average this with the analogous text-to-image term computed down the columns.
+
+**5.** (Implementation) The chapter's `VisionTransformer` classifies using only the CLS token (`cls_out = x[:, 0]`). The Key Takeaways note an alternative: **patch-average (mean) pooling** over the patch tokens, which several encoders (e.g., SigLIP) prefer. Write a subclass `MeanPoolViT` that reuses the parent's `patch_embed`, `pos_embed`, `blocks`, and `norm`, but (a) does **not** prepend a CLS token, and (b) produces the classification logits by mean-pooling the final patch tokens. Keep the chapter's Pre-LN style and shapes. Note one consequence for the `pos_embed` shape.
+
+??? note "Solution"
+    Without a CLS token the sequence length is exactly $N$ (not $N+1$), so `pos_embed` must have shape $(1, N, D)$ instead of $(1, N+1, D)$. We rebuild it in the subclass rather than reuse the parent's, and we skip the `cls_token` entirely. Everything else — patch embedding, blocks, final norm — is reused unchanged.
+
+    ```python
+    import torch
+    import torch.nn as nn
+
+    class MeanPoolViT(VisionTransformer):
+        """
+        ViT variant with NO CLS token: classification uses mean-pooled patch tokens.
+        Reuses PatchEmbed, the Transformer blocks, and the final LayerNorm from the
+        parent VisionTransformer.
+        """
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # The parent built pos_embed of shape (1, N+1, D) for [CLS | patches].
+            # We have no CLS token, so we need exactly N positions.
+            num_patches = self.patch_embed.num_patches
+            embed_dim = self.pos_embed.shape[-1]
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+            nn.init.trunc_normal_(self.pos_embed, std=0.02)
+            # cls_token inherited from the parent is simply left unused.
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # x: (B, 3, H, W) pre-normalized images -> (B, num_classes) logits
+            x = self.patch_embed(x)          # (B, N, D)  -- no CLS prepended
+            x = x + self.pos_embed           # (B, N, D)  add positional embeddings
+            x = self.pos_drop(x)
+
+            for block in self.blocks:        # Pre-LN Transformer blocks (reused)
+                x = block(x)                 # (B, N, D)
+
+            x = self.norm(x)                 # (B, N, D)
+
+            # Mean-pool over the patch (sequence) dimension for the global feature
+            pooled = x.mean(dim=1)           # (B, D)
+            return self.head(pooled)         # (B, num_classes)
+
+
+    if __name__ == "__main__":
+        model = MeanPoolViT()  # ViT-B/16 defaults, but CLS-free
+        imgs = torch.randn(2, 3, 224, 224)
+        logits = model(imgs)
+        print(logits.shape)              # torch.Size([2, 1000])
+        print(model.pos_embed.shape)     # torch.Size([1, 196, 768])  -- N, not N+1
+    ```
+
+    The output logits still have shape `(B, 1000)`, but the global representation now comes from averaging all 196 patch tokens rather than reading a single dedicated CLS position. A practical benefit: mean pooling is permutation-symmetric and forces every patch to contribute to the global feature, which the chapter's register-token discussion links to cleaner spatial behavior; the tradeoff is losing the dedicated learnable summary slot that CLS provides.

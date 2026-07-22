@@ -640,3 +640,110 @@ The remaining open questions the field is actively working on:
 - **Qwen-VL** — Bai et al., "Qwen-VL: A Versatile Vision-Language Model's Large Language Model," arXiv 2023.
 - **ShareGPT4V** — Zhang et al., "ShareGPT4V: Improving Large Multi-Modal Models with Better Captions," arXiv 2023.
 - **DocOwl** — Ye et al., "mPLUG-DocOwl: Modularized Multimodal Large Language Model for Document Understanding," arXiv 2023.
+
+## Exercises
+
+**1.** (Conceptual) In `MiniLLaVA.forward`, the visual token positions are given the label `-100` before the loss is computed. Explain in one or two sentences *why* this is necessary, and describe concretely what would go wrong during training if you forgot it and instead passed real vocabulary ids (or zeros) as labels for those positions.
+
+??? note "Solution"
+    The language-modeling loss is cross-entropy over the LLM vocabulary at each position. Visual tokens are continuous projected vectors that do **not** correspond to any vocabulary entry, so there is no meaningful "correct next token" to predict at a visual position. Setting the label to `-100` (PyTorch's `ignore_index`) means the loss is computed only over text positions, matching the chapter's objective
+
+    $$
+    \mathcal{L} = -\sum_{t \in \text{text positions}} \log p_\theta(x_t \mid \mathbf{H}_v, x_{<t}).
+    $$
+
+    If you instead supplied real ids (or zeros) as labels for the $N$ visual positions, the model would be trained to "predict the next visual token" from a text-classification head. That target is nonsensical: it injects spurious gradients that flow back through the projector (and the LLM), pulling the connector away from the alignment it is supposed to learn and corrupting training. Note the causal shift also means a bad label at the last visual position directly supervises the prediction of the first text token, so the damage is not confined to the visual block.
+
+**2.** (Quantitative) You feed a $1008 \times 672$ document image to a LLaVA-1.6-style AnyRes pipeline built on CLIP ViT-L/14 at $336 \times 336$, using the chapter's `tile_image` logic (non-overlapping $336$-px tiles plus one global thumbnail tile). (a) How many $336 \times 336$ tiles are produced, and how many total tiles including the thumbnail? (b) How many patch tokens does each tile yield? (c) What is the total visual-token count for the image?
+
+??? note "Solution"
+    (a) `tile_image` sets `n_cols = round(1008/336) = 3` and `n_rows = round(672/336) = 2`, giving $3 \times 2 = 6$ full-resolution tiles. Since $6 \le$ `max_tiles = 6`, no clipping happens. Adding the one thumbnail tile gives $6 + 1 = 7$ tiles total.
+
+    (b) Each $336 \times 336$ tile is split into $14 \times 14$ patches, so it has $(336/14)^2 = 24^2 = 576$ patch tokens.
+
+    (c) Total visual tokens:
+
+    $$
+    7 \text{ tiles} \times 576 \text{ tokens/tile} = 4032 \text{ visual tokens.}
+    $$
+
+**3.** (Quantitative) Take the $4032$ visual tokens from Exercise 2 and place them in the KV cache of LLaMA-2-7B ($32$ layers, $D_\text{llm} = 4096$) in bf16 ($2$ bytes/element), using the chapter's costing (store both K and V). (a) What is the KV-cache size, in bytes and in GB, for just this visual prefix at batch size 1? (b) If a $2 \times 2$ average-pool were applied to each tile's patches before projection, cutting tokens by $4\times$, how much KV memory would the prefix use instead?
+
+??? note "Solution"
+    Per token, per layer, we store K and V: $2 \times 4096 \times 2\,\text{bytes} = 16{,}384$ bytes. Across $32$ layers that is $16{,}384 \times 32 = 524{,}288$ bytes/token ($=0.5$ MB/token).
+
+    (a) For $4032$ tokens:
+
+    $$
+    4032 \times 524{,}288 = 2{,}113{,}929{,}216 \text{ bytes} = \frac{2{,}113{,}929{,}216}{1024^3} \approx 1.97 \text{ GB.}
+    $$
+
+    (b) A $2\times2$ average-pool reduces $4032$ tokens to $4032/4 = 1008$ tokens, so the KV cost falls by exactly $4\times$:
+
+    $$
+    1008 \times 524{,}288 = 528{,}482{,}304 \text{ bytes} \approx 0.49 \text{ GB.}
+    $$
+
+    Pooling turns a ~2 GB visual prefix into ~0.5 GB, at the cost of coarser spatial detail (a real concern for the OCR use-case this document image implies).
+
+**4.** (Conceptual) You must serve a 5-shot, image-interleaved prompt of the form `image1, caption1, ..., image5, caption5, image6, ?` where the model should describe `image6`. Compare the projector (LLaVA-style) and cross-attention (Flamingo-style) connectors for this task along two axes: (a) how each handles the *interleaving* of 6 images with text, and (b) roughly how much LLM context each image consumes. Using the chapter's numbers ($576$ tokens/image), quantify the projector's context cost for all 6 images.
+
+??? note "Solution"
+    (a) **Interleaving.** The Flamingo cross-attention design handles this natively: images are stored externally as vision features, and interleaved gated cross-attention layers let each text token attend to the most recently preceding image via an attention mask. So `image1, caption1, ..., image6, ?` is a single natural context. The projector instead splices each image's tokens into the sequence at its `<image>` placeholder; interleaving is possible but the images compete directly for sequence positions, and every image permanently occupies context.
+
+    (b) **Context cost.** With a projector, each image costs its full visual-token budget in the LLM stream; with cross-attention the LLM residual stream is unchanged and the image consumes *zero* context positions (it lives in the external KV of the cross-attn layers). For the projector at $576$ tokens/image:
+
+    $$
+    6 \text{ images} \times 576 = 3456 \text{ visual tokens},
+    $$
+
+    consumed *before* any of the caption text is counted. For dense many-image few-shot prompts, this is exactly the regime where Flamingo-style cross-attention was designed to win; the projector is favored when there are few images and training simplicity matters.
+
+**5.** (Implementation) Implement a `pool_2x2` connector step that average-pools the $2 \times 2$ neighborhoods of a tile's CLIP patch tokens *before* the projector, reducing visual tokens by $4\times$ (the "average pooling" technique from the token-compression section). It should take patch embeddings of shape `[B, 576, D_v]` (CLS already dropped, from a $24 \times 24$ patch grid) and return `[B, 144, D_v]`, correctly respecting the 2-D spatial layout of the patches. Then show where it slots into `MiniLLaVA.encode_image`.
+
+??? note "Solution"
+    The patch tokens are laid out row-major over a $24 \times 24$ grid, so token index $n = r \cdot 24 + c$. To pool $2\times2$ spatial neighborhoods we must first restore that 2-D grid, pool, then flatten back to a sequence.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def pool_2x2(patch_embeds: torch.Tensor, grid: int = 24) -> torch.Tensor:
+        """
+        Average-pool 2x2 neighborhoods of CLIP patch tokens to cut the
+        visual-token count by 4x before projection.
+
+        patch_embeds: [B, grid*grid, D_v]   (CLS already dropped)
+        returns:      [B, (grid//2)**2, D_v]
+        """
+        B, N, D = patch_embeds.shape
+        assert N == grid * grid, "patch count must equal grid*grid"
+        # [B, N, D] -> [B, D, N] -> [B, D, grid, grid]  (row-major grid)
+        x = patch_embeds.transpose(1, 2).reshape(B, D, grid, grid)
+        # Pool 2x2 spatial neighborhoods -> [B, D, grid/2, grid/2]
+        x = F.avg_pool2d(x, kernel_size=2, stride=2)
+        # Flatten back to a token sequence: [B, (grid/2)**2, D]
+        x = x.flatten(2).transpose(1, 2)
+        return x
+    ```
+
+    It slots into `encode_image` between dropping the CLS token and projecting:
+
+    ```python
+    def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():                    # vision encoder frozen
+            vision_out = self.vision_model(pixel_values=pixel_values)
+        patch_embeds = vision_out.last_hidden_state[:, 1:, :]  # [B, 576, D_v]
+        patch_embeds = pool_2x2(patch_embeds, grid=24)         # [B, 144, D_v]
+        visual_tokens = self.projector(patch_embeds)           # [B, 144, D_llm]
+        return visual_tokens
+    ```
+
+    Quick check:
+
+    ```python
+    x = torch.randn(2, 576, 1024)   # [B, N_patches, D_v]
+    print(pool_2x2(x).shape)        # torch.Size([2, 144, 1024])
+    ```
+
+    Pooling *before* the projector (rather than after) keeps the projector's input dimension at $D_v$ and cuts both the projector's per-image FLOPS and the downstream visual-token count by $4\times$, at the cost of halving spatial resolution to a $12 \times 12$ grid.
