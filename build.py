@@ -12,7 +12,7 @@ KaTeX math, callouts, copy buttons, and inline animated SVG figures included via
 
 Usage:  python3 build.py
 """
-import json, os, re, html, shutil
+import json, os, re, html, shutil, subprocess, datetime
 from html.parser import HTMLParser
 
 import markdown
@@ -23,6 +23,34 @@ CONTENT = os.path.join(ROOT, "content")
 SITE = os.path.join(ROOT, "site")
 ASSETS_SRC = os.path.join(ROOT, "assets")
 FIGURES = os.path.join(ROOT, "figures")
+
+# Public deployment base (GitHub Pages project site). Used for canonical URLs,
+# Open Graph/Twitter cards, and sitemap.xml — all of which need absolute URLs.
+SITE_BASE = "https://prakashkagitha.github.io/llm-stack-book/"
+OG_IMAGE = SITE_BASE + "assets/og-image.png"
+REPO_URL = "https://github.com/prakashkagitha/llm-stack-book"
+BUILD_DATE = datetime.date.today().isoformat()
+YEAR = datetime.date.today().year
+
+_GIT_DATE_CACHE = {}
+
+
+def git_last_date(path):
+    """Last git commit date (YYYY-MM-DD) for a file, for the per-chapter 'last updated'
+    stamp. Falls back to the build date (e.g. a shallow CI clone with no per-file history)."""
+    if path in _GIT_DATE_CACHE:
+        return _GIT_DATE_CACHE[path]
+    d = BUILD_DATE
+    try:
+        out = subprocess.run(["git", "log", "-1", "--format=%cs", "--", path],
+                             cwd=ROOT, capture_output=True, text=True, timeout=10)
+        s = out.stdout.strip()
+        if s:
+            d = s
+    except Exception:
+        pass
+    _GIT_DATE_CACHE[path] = d
+    return d
 
 MD_EXTENSIONS = [
     "extra", "sane_lists", "smarty", "admonition", "meta", "toc",
@@ -227,6 +255,17 @@ PAGE_TMPL = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} — {brand}</title>
 <meta name="description" content="{desc}">
+<link rel="canonical" href="{canonical}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="{brand}">
+<meta property="og:title" content="{title} — {brand}">
+<meta property="og:description" content="{desc}">
+<meta property="og:url" content="{canonical}">
+<meta property="og:image" content="{og_image}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title} — {brand}">
+<meta name="twitter:description" content="{desc}">
+<meta name="twitter:image" content="{og_image}">
 <script>(function(){{try{{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}}})();</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -256,12 +295,13 @@ PAGE_TMPL = """<!DOCTYPE html>
 <main class="main">
 <article class="content">
 {breadcrumb}
+{chapter_meta}
 {body}
 {page_nav}
 </article>
 <footer class="site-footer">
   <span>{brand} · {brand_sub}</span>
-  <span>Built from first principles. Improved continually.</span>
+  <span class="footer-links"><a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> · <a href="{repo_url}">Source &amp; errata</a></span>
 </footer>
 </main>
 {toc_side}
@@ -304,12 +344,19 @@ def build_collection(coll):
         body = coll.rewrite_links(body)
         toc_tokens = getattr(md, "toc_tokens", [])
         text = strip_html(body)
-        total_words += len(text.split())
+        words = len(text.split())
+        total_words += words
 
         base = coll.asset_base(c["url"])
         home = base + (f"{coll.out_subdir}/index.html" if coll.out_subdir else "index.html")
         num = "" if c["is_front"] else f'{c["part_no"]}.{c["chap_no"]} · '
         crumb = (f'<div class="chapter-eyebrow">{html.escape(c["part_title"])}</div>')
+        reading = max(1, round(words / 220))     # ~220 wpm technical reading
+        updated = git_last_date(c["md_path"])
+        chapter_meta = (f'<div class="chapter-meta"><span>{reading} min read</span>'
+                        f'<span class="cm-dot">·</span>'
+                        f'<span>Updated <time datetime="{updated}">{updated}</time></span></div>')
+        canonical = SITE_BASE + (f'{coll.out_subdir}/' if coll.out_subdir else "") + c["url"]
 
         prev_c = flat[idx - 1] if idx > 0 else None
         next_c = flat[idx + 1] if idx < len(flat) - 1 else None
@@ -330,8 +377,9 @@ def build_collection(coll):
             title=html.escape(c["title"]), brand=html.escape(brand),
             brand_sub=html.escape(brand_sub), desc=html.escape(c["scope"][:160]),
             base=base, home=home, search_name=coll.search_name,
+            canonical=html.escape(canonical), og_image=OG_IMAGE, repo_url=REPO_URL,
             sidebar=render_sidebar(coll, c["url"]),
-            breadcrumb=crumb, body=body, page_nav="\n".join(pn),
+            breadcrumb=crumb, chapter_meta=chapter_meta, body=body, page_nav="\n".join(pn),
             toc_side=render_toc_side(toc_tokens),
         )
         dest = os.path.join(out_root, c["url"])
@@ -359,6 +407,17 @@ INDEX_TMPL = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}: {subtitle}</title>
 <meta name="description" content="{tagline}">
+<link rel="canonical" href="{canonical}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{title}">
+<meta property="og:title" content="{title}: {subtitle}">
+<meta property="og:description" content="{tagline}">
+<meta property="og:url" content="{canonical}">
+<meta property="og:image" content="{og_image}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title}: {subtitle}">
+<meta name="twitter:description" content="{tagline}">
+<meta name="twitter:image" content="{og_image}">
 <script>(function(){{try{{var t=localStorage.getItem('llmbook-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}}})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -400,10 +459,11 @@ INDEX_TMPL = """<!DOCTYPE html>
 <div class="toc-grid">
 {cards}
 </div>
+{cite}
 </article>
 <footer class="site-footer">
   <span>{title} · {subtitle}</span>
-  <span>Built from first principles. Improved continually.</span>
+  <span class="footer-links"><a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a> · <a href="{repo_url}">Source &amp; errata</a></span>
 </footer>
 </main>
 </div>
@@ -444,6 +504,18 @@ def write_index(coll, total_words, nch):
         cta = (f'<p class="hero-cta"><a class="btn-primary" href="{first}">Start reading →</a>'
                f'<a class="btn-ghost" href="interview/index.html">Interview companion</a></p>')
 
+    canonical = SITE_BASE + (f'{coll.out_subdir}/' if coll.out_subdir else "")
+    cite = ""
+    if coll.out_subdir == "":                 # BibTeX cite block on the main book homepage
+        bib = ("@book{kagitha_llm_stack_" + str(YEAR) + ",\n"
+               "  title  = {The LLM Stack: From Silicon to Agents},\n"
+               "  author = {Kagitha, Prakash},\n"
+               "  year   = {" + str(YEAR) + "},\n"
+               "  url    = {" + SITE_BASE + "},\n"
+               "  note   = {Open web textbook, CC BY 4.0}\n}")
+        cite = ('<section class="cite-book"><h2>Cite this book</h2>'
+                '<pre class="cite-bibtex"><code>' + html.escape(bib) + '</code></pre></section>')
+
     html_out = INDEX_TMPL.format(
         title=html.escape(coll.m["title"]),
         subtitle=html.escape(coll.m.get("subtitle", "")),
@@ -452,6 +524,7 @@ def write_index(coll, total_words, nch):
         nparts=coll.n_parts, nchapters=nch,
         pages=f"{total_words // 300:,}", kwords=f"{total_words // 1000}",
         base=base, home=home, search_name=coll.search_name,
+        canonical=html.escape(canonical), og_image=OG_IMAGE, repo_url=REPO_URL, cite=cite,
         sidebar=render_sidebar(coll, "index.html"),
         cards="\n".join(cards), cta=cta,
     )
@@ -459,6 +532,21 @@ def write_index(coll, total_words, nch):
     os.makedirs(out_root, exist_ok=True)
     with open(os.path.join(out_root, "index.html"), "w") as f:
         f.write(html_out)
+
+
+def write_sitemap(entries):
+    """entries: list of (path_relative_to_SITE_BASE, lastmod_date). Emits sitemap.xml + robots.txt."""
+    items = []
+    for path, date in entries:
+        loc = html.escape(SITE_BASE + path)
+        items.append(f"  <url><loc>{loc}</loc><lastmod>{date}</lastmod></url>")
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+           + "\n".join(items) + "\n</urlset>\n")
+    with open(os.path.join(SITE, "sitemap.xml"), "w") as f:
+        f.write(xml)
+    with open(os.path.join(SITE, "robots.txt"), "w") as f:
+        f.write("User-agent: *\nAllow: /\n\nSitemap: " + SITE_BASE + "sitemap.xml\n")
 
 
 def _roman(n):
@@ -500,6 +588,14 @@ def main():
         totals[coll.m["title"]] = (tw, wr, ph, len(coll.flat_chapters))
         print(f"Built '{coll.m['title']}' -> {coll.out_root()}")
         print(f"  chapters: {wr} written, {ph} placeholders | ~{tw//300:,} pages ({tw:,} words)")
+
+    # sitemap.xml + robots.txt (git_last_date is cached from the render pass, so this is cheap)
+    entries = [("", BUILD_DATE)]
+    entries += [(c["url"], git_last_date(c["md_path"])) for c in book.flat_chapters]
+    entries.append(("interview/", BUILD_DATE))
+    entries += [("interview/" + c["url"], git_last_date(c["md_path"])) for c in interview.flat_chapters]
+    write_sitemap(entries)
+    print(f"  sitemap.xml: {len(entries)} URLs | robots.txt written")
 
     if _FIG_MISSING:
         print("  ⚠ missing figures: " + ", ".join(sorted(_FIG_MISSING)))

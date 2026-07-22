@@ -34,6 +34,21 @@ Pushing to `main` triggers [`.github/workflows/deploy.yml`](.github/workflows/de
 which installs the pinned dependencies, runs `build.py`, and publishes `site/` to
 GitHub Pages. No manual deploy step is needed — just edit, commit, and push.
 
-## License
+## Contributing
 
-© 2026 Prakash Kagitha. All rights reserved unless a license file is added.
+Corrections and improvements are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Report errors via the **Errata** issue template.
+
+## License & citation
+
+Licensed under [**CC BY 4.0**](LICENSE) — share and adapt freely, even commercially, with attribution.
+
+```bibtex
+@book{kagitha_llm_stack_2026,
+  title  = {The LLM Stack: From Silicon to Agents},
+  author = {Kagitha, Prakash},
+  year   = {2026},
+  url    = {https://prakashkagitha.github.io/llm-stack-book/},
+  note   = {Open web textbook, CC BY 4.0}
+}
+```
