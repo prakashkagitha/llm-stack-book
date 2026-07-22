@@ -648,3 +648,151 @@ Reproducibility is a live problem. The same model evaluated with different harne
 - Liang et al., *Holistic Evaluation of Language Models* (HELM), 2022.
 - Chiang et al., *Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference*, 2024.
 - EleutherAI, *lm-evaluation-harness* (GitHub repository).
+
+---
+
+## Exercises
+
+**1.** A 7B model is evaluated on GPQA (a four-choice benchmark) and scores **6 %**. A colleague concludes the model has "essentially no scientific reasoning ability." Explain why this conclusion is unjustified given only that number, what the *genuine* floor of the benchmark is, and what you would inspect before drawing any capability conclusion.
+
+??? note "Solution"
+    On a four-choice benchmark, a model that emits parseable but content-free answers scores at the random-chance rate of about $1/4 = 25\%$. A model almost never performs *worse* than random guessing on the underlying task, so a score of 6 % is far *below* the genuine floor and cannot reflect the model's scientific reasoning at all — a truly weak model bottoms out near 25 %, not near 0 %.
+
+    A score well under chance is a red flag that the **answer extractor**, not the model, is failing. The likely causes are that the model produces answers in a format the extraction regex misses, refuses, or rambles without committing to a letter — so unparsed generations default to "wrong."
+
+    Before concluding anything about capability, inspect:
+
+    - the **null / unparsed rate** (`null_rate` from `evaluate_mc_batch`) — a high value confirms extraction failure;
+    - a **sample of raw generations** to see what format the model actually uses;
+
+    then fix the extractor (or switch to log-likelihood scoring) and re-run. A true floor result clusters near 25 %.
+
+**2.** You evaluate two models on a **200-question** domain slice of a benchmark. Model A scores **60 %** and model B scores **68 %** on the *same* questions. Treating the two proportions as independent (as the chapter's worked example does), compute the standard error of each estimate, the standard error of the difference, and the 95 % confidence interval of the difference. Is the 8-point gap statistically significant?
+
+??? note "Solution"
+    Standard error of a proportion is $\text{SE}(p) = \sqrt{p(1-p)/n}$ with $n = 200$.
+
+    $$
+    \text{SE}_A = \sqrt{\frac{0.60 \times 0.40}{200}} = \sqrt{0.00120} \approx 0.0346
+    $$
+
+    $$
+    \text{SE}_B = \sqrt{\frac{0.68 \times 0.32}{200}} = \sqrt{0.001088} \approx 0.0330
+    $$
+
+    Standard error of the difference:
+
+    $$
+    \text{SE}_{A-B} = \sqrt{\text{SE}_A^2 + \text{SE}_B^2} = \sqrt{0.00120 + 0.001088} \approx \sqrt{0.002288} \approx 0.0478
+    $$
+
+    The 95 % CI of the difference is $\pm 1.96 \times 0.0478 \approx \pm 0.0938$, i.e. about $\pm 9.4$ percentage points.
+
+    The observed gap is $68\% - 60\% = 8$ points, which falls *inside* the $\pm 9.4$-point interval. So the difference is **not statistically significant** — on a 200-question slice you cannot distinguish these models from a single run. This matches the chapter's rule of thumb that on a ~500-question slice the CI is roughly $\pm 3.5$ points (differences below ~7 points are noise), and shrinking to 200 questions widens it further.
+
+**3.** A four-choice benchmark ($k = 4$) has 100 questions. A model produces a parseable answer to every question, getting **40 correct** and **60 wrong**. Compute its raw accuracy and its guessing-corrected score using the chapter's correction-for-guessing formula. Then verify that a pure random guesser (25 correct, 75 wrong) gets a corrected score of 0.
+
+??? note "Solution"
+    Raw accuracy is simply $40/100 = 0.40$, i.e. 40 %.
+
+    The correction-for-guessing formula is
+
+    $$
+    \text{score}_\text{corrected} = \text{correct} - \frac{\text{wrong}}{k-1}, \qquad k = 4.
+    $$
+
+    For this model: $40 - \dfrac{60}{3} = 40 - 20 = 20$ effective correct answers, or $20/100 = 0.20$ as a fraction.
+
+    For a pure random guesser on 100 four-choice questions, the expected split is 25 correct / 75 wrong:
+
+    $$
+    25 - \frac{75}{3} = 25 - 25 = 0.
+    $$
+
+    The correction rescales the scale so that guessing scores 0 and perfect scores 1, removing the 25 % free-guessing floor. Note the corrected score (20 %) is below the raw accuracy (40 %) because much of the raw accuracy was attributable to lucky guessing.
+
+**4.** On a HumanEval-style problem you draw $n = 5$ samples and $c = 2$ of them pass all unit tests. Using the chapter's unbiased pass@k estimator, compute pass@1 and pass@2 for this problem. Show that the pass@1 estimate equals $c/n$.
+
+??? note "Solution"
+    The unbiased single-problem estimator is
+
+    $$
+    \text{pass@k} = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}}, \qquad n = 5,\ c = 2.
+    $$
+
+    **pass@1** ($k = 1$):
+
+    $$
+    1 - \frac{\binom{3}{1}}{\binom{5}{1}} = 1 - \frac{3}{5} = 0.40.
+    $$
+
+    In general for $k = 1$: $1 - \dfrac{\binom{n-c}{1}}{\binom{n}{1}} = 1 - \dfrac{n-c}{n} = \dfrac{c}{n}$, which here is $2/5 = 0.40$. So pass@1 is exactly the fraction of samples that pass.
+
+    **pass@2** ($k = 2$):
+
+    $$
+    1 - \frac{\binom{3}{2}}{\binom{5}{2}} = 1 - \frac{3}{10} = 0.70.
+    $$
+
+    pass@2 (0.70) exceeds pass@1 (0.40) because drawing two samples gives two chances for at least one to pass. The term $\binom{n-c}{k}/\binom{n}{k}$ is the probability that *all* $k$ drawn samples come from the $n-c$ failing ones, so one minus it is the probability at least one passes.
+
+**5.** Implement `estimate_pass_at_k(n, c, k)` for the chapter's pass@k formula, in the chapter's code style. It must return the single-problem estimate $1 - \binom{n-c}{k}/\binom{n}{k}$, be numerically stable for large $n$ (do not form giant factorials), and handle the edge cases $c = 0$ (return 0.0), $c \geq$ enough that every draw passes (return 1.0), and $k > n$ (invalid). Verify it against Exercise 4.
+
+??? note "Solution"
+    The stable trick, used by the Codex paper, is to write $\dfrac{\binom{n-c}{k}}{\binom{n}{k}}$ as a product $\prod_{i=n-c+1}^{n} \dfrac{i-k}{i}$, which stays in $[0, 1]$ and never builds a large factorial. When $n - c < k$ every $k$-subset must include a passing sample, so pass@k $= 1$; when $c = 0$ the product is 1 and pass@k $= 0$.
+
+    ```python
+    def estimate_pass_at_k(n: int, c: int, k: int) -> float:
+        """
+        Unbiased single-problem pass@k estimate: 1 - C(n-c, k) / C(n, k),
+        where n = samples drawn, c = samples that pass, k = budget.
+
+        Computed as a running product prod_{i=n-c+1..n} (i - k) / i to avoid
+        forming large binomial coefficients. Stays in [0, 1].
+        """
+        if not (0 <= c <= n):
+            raise ValueError("need 0 <= c <= n")
+        if not (1 <= k <= n):
+            raise ValueError("need 1 <= k <= n")
+        if c == 0:
+            return 0.0
+        if n - c < k:
+            # fewer than k failing samples => every k-subset contains a pass
+            return 1.0
+        prob_all_fail = 1.0
+        for i in range(n - c + 1, n + 1):
+            prob_all_fail *= (i - k) / i
+        return 1.0 - prob_all_fail
+
+
+    # Verification against Exercise 4 (n=5, c=2):
+    assert abs(estimate_pass_at_k(5, 2, 1) - 0.40) < 1e-9   # == c/n
+    assert abs(estimate_pass_at_k(5, 2, 2) - 0.70) < 1e-9
+    # Edge cases:
+    assert estimate_pass_at_k(5, 0, 1) == 0.0               # nothing passes
+    assert estimate_pass_at_k(5, 4, 2) == 1.0               # only 1 failing < k
+    ```
+
+    A full pass@k over a benchmark averages `estimate_pass_at_k(n, c_problem, k)` across problems, matching the expectation $\mathbb{E}_{\text{problem}}[\cdot]$ in the chapter's formula.
+
+**6.** You want to *measure* position bias, not just score existing predictions. Using `make_position_bias_variants` from the chapter, you run a model on all permutations of a four-choice question and, aggregating over many questions, obtain the following accuracies grouped by which letter the gold answer landed on: A = 0.74, B = 0.61, C = 0.58, D = 0.55. (a) For a single four-choice question, how many permutations does `make_position_bias_variants` produce, and how many times does the gold option land on each letter? (b) Write a small function `position_bias_spread(acc_by_letter)` that returns the max-minus-min spread, compute it here, and explain why post-hoc shuffling of `(prediction, gold)` pairs could *not* have produced these numbers.
+
+??? note "Solution"
+    **(a)** For four options the function enumerates `itertools.permutations(range(4))`, which is $4! = 24$ permutations. By symmetry the gold option occupies each of A, B, C, D in exactly $24 / 4 = 6$ of them (the chapter's sanity check asserts `Counter(...) == {"A": 6, "B": 6, "C": 6, "D": 6}`). So every letter gets an equal, fair number of trials.
+
+    **(b)**
+
+    ```python
+    def position_bias_spread(acc_by_letter: dict) -> float:
+        """Max minus min accuracy across gold-letter positions.
+        0.0 means no measurable position bias; larger means more bias."""
+        vals = list(acc_by_letter.values())
+        return max(vals) - min(vals)
+
+    acc = {"A": 0.74, "B": 0.61, "C": 0.58, "D": 0.55}
+    assert abs(position_bias_spread(acc) - 0.19) < 1e-9
+    ```
+
+    The spread is $0.74 - 0.55 = 0.19$, i.e. 19 percentage points — a large position bias favouring answer "A," exactly the "bias toward the first option" the chapter describes.
+
+    Post-hoc shuffling of `(prediction, gold)` pairs could never produce these numbers because reordering the list of already-generated predictions leaves every individual pred/gold pairing unchanged; accuracy is invariant under permuting examples. Detecting position bias requires **fresh model calls**: you must re-render each question with the options permuted (`make_position_bias_variants`) and query the model again for each ordering, because the bias lives in *how the model responds* to a given ordering, not in the static scoring of fixed outputs.

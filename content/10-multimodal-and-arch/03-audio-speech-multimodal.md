@@ -644,3 +644,161 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 - **Moshi:** Défossez et al., "Moshi: a speech-text foundation model for real-time dialogue," Kyutai technical report, 2024.
 - **SpeechTokenizer:** Zhang et al., "SpeechTokenizer: Unified Speech Tokenizer for Speech Language Models," arXiv 2308.16692, 2023.
 - **HiFi-GAN:** Kong et al., "HiFi-GAN: Generative Adversarial Networks for Efficient and High Fidelity Speech Synthesis," *NeurIPS*, 2020.
+
+## Exercises
+
+**1.** A team builds a neural audio codec that runs at $f_s = 16$ kHz with a stride of $320$ samples per frame and $K = 4$ RVQ levels. (a) How many frames per second does it emit? (b) With a flat interleave of all levels, how many tokens does a 60-second clip cost? (c) If the model instead uses only the coarsest RVQ level for semantic modeling, how many tokens does the same clip cost? (d) Roughly how many BPE tokens would the 60-second transcript occupy at 130 words/minute, and what is the audio-to-text token ratio for the full-codec case? Use the chapter's rule of thumb that $65$ words is about $90$ BPE tokens.
+
+??? note "Solution"
+    (a) Frames per second is the sample rate divided by the stride:
+    $$
+    \frac{f_s}{\text{stride}} = \frac{16000}{320} = 50 \text{ frames/s}.
+    $$
+
+    (b) With a flat interleave, every frame contributes one token per RVQ level, so the token rate is $50 \times 4 = 200$ tokens/s. Over 60 seconds:
+    $$
+    60 \times 200 = 12{,}000 \text{ tokens}.
+    $$
+
+    (c) Using only the coarsest level drops the per-frame cost to a single token: $50$ tokens/s, so $60 \times 50 = 3{,}000$ tokens. This is a $4\times$ reduction, exactly the number of RVQ levels $K$ — the same lever the chapter's worked example describes as "use only the coarsest 1-2 RVQ levels."
+
+    (d) At 130 words/min, a 60-second clip is $130$ words. Scaling the chapter's rule ($65$ words $\approx 90$ tokens, i.e. $\approx 1.38$ tokens/word) gives $130 \times 1.38 \approx 180$ BPE tokens. The audio-to-text ratio for the full codec is
+    $$
+    \frac{12{,}000}{180} \approx 67\times.
+    $$
+    Even at this modest 4-level, 16 kHz configuration the codec stream is dozens of times denser than the transcript, which is the core token-budget tension of the chapter.
+
+**2.** The chapter's `multimodal_cross_entropy` down-weights audio tokens because "600 audio tokens/s vs ~3 text tokens/s means audio dominates the loss 200:1." (a) Derive the 200:1 figure. (b) The default `audio_weight=0.1`: after weighting, what is the ratio of total audio-token loss weight to total text-token loss weight over one second? (c) What value of `audio_weight` would make audio and text contribute *equally* to the (weight-normalized) loss over equal wall-clock time?
+
+??? note "Solution"
+    (a) Over one second the model sees about $600$ audio tokens and about $3$ text tokens. With no weighting every token carries weight $1$, so the audio share of the summed loss weight is proportional to the token counts:
+    $$
+    \frac{600}{3} = 200 \quad \Rightarrow \quad 200{:}1.
+    $$
+
+    (b) The weighted scheme gives audio tokens weight $0.1$ and text tokens weight $1.0$. Total audio weight over one second is $0.1 \times 600 = 60$; total text weight is $1.0 \times 3 = 3$. The ratio is
+    $$
+    \frac{60}{3} = 20 \quad \Rightarrow \quad 20{:}1.
+    $$
+    So `audio_weight=0.1` shrinks the imbalance by $10\times$ (from 200:1 to 20:1) but audio still dominates.
+
+    (c) Equal contribution means the summed weights are equal:
+    $$
+    w_{\text{audio}} \times 600 = 1.0 \times 3
+    \quad \Rightarrow \quad
+    w_{\text{audio}} = \frac{3}{600} = 0.005.
+    $$
+    An `audio_weight` of $0.005$ balances the two modalities per second. In practice teams pick something between this and $1.0$ so audio still receives a meaningful gradient rather than being nearly ignored.
+
+**3.** Whisper's encoder always processes exactly 1500 positions, "regardless of actual utterance duration." (a) Trace how a raw 30-second clip becomes 1500 encoder positions given the chapter's numbers (16 kHz input, 10 ms hop, and a convolutional front-end that halves the temporal resolution). (b) What does the pipeline do with a 5-second clip, and what is the compute cost consequence? (c) What happens to a 40-second clip, and why can this silently hurt transcription quality?
+
+??? note "Solution"
+    (a) At 16 kHz with a 10 ms hop, each frame covers $160$ samples, so a 30-second clip yields $30 \text{ s} \times 100 \text{ frames/s} = 3000$ log-Mel frames (the `(80, 3000)` tensor in the transcription code). The convolutional front-end halves the temporal resolution, $3000 \to 1500$, which is the fixed number of positions each self-attention block attends over.
+
+    (b) `whisper.pad_or_trim` pads the 5-second clip with silence up to the full 30-second window before feature extraction, so it still becomes a `(80, 3000)` input and 1500 encoder positions. The padded/silent region is masked, but the encoder self-attention still runs over all 1500 positions — so a 5-second utterance costs the same encoder compute as a 30-second one. Short utterances waste compute, exactly the downside the chapter lists for the fixed-length-window strategy.
+
+    (c) A 40-second clip is *trimmed* to the first 30 seconds. The final 10 seconds are simply discarded, so any speech there is never transcribed. Because the API returns a fluent transcript for the portion it did see, the truncation is silent — there is no error, just missing words. The chapter's remedy is dynamic chunking: split long audio into overlapping 30-second windows, encode each, and concatenate.
+
+**4.** AudioLM and SpeechTokenizer both hinge on separating *semantic* from *acoustic* information. (a) Using the chapter's figures, contrast the token rate of semantic tokens versus EnCodec acoustic tokens for a 30-second clip. (b) Explain why AudioLM models semantic tokens *first* and only then generates acoustic tokens. (c) SpeechTokenizer reaches a similar goal differently — how, and what practical property does that give its level-1 tokens?
+
+??? note "Solution"
+    (a) The chapter states a 30-second clip needs only about $1{,}500$ semantic tokens (roughly $50$ tokens/s) but about $18{,}000$ EnCodec acoustic tokens ($600$ tokens/s across 8 RVQ levels). Semantic tokens are therefore about $12\times$ more compact.
+
+    (b) Semantic tokens capture long-range structure — content, melody, prosody — in a compact stream, so an autoregressive LM can plan the *global* shape of the audio over a short, tractable sequence before committing to detail. Acoustic tokens are far denser and mostly encode surface fidelity; generating them first would force the model to decide fine acoustic detail before it has settled what is even being said. Modeling semantics first, then conditioning acoustic generation on those tokens, mirrors the coarse-to-fine intuition the chapter draws to BPE merges and RVQ levels.
+
+    (c) SpeechTokenizer keeps a single RVQ codec but adds a distillation loss $\mathcal{L}_{\text{semantic}}$ that forces VQ level-1 outputs to match HuBERT's discrete pseudo-labels, so
+    $$
+    \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{reconstruct}} + \lambda \cdot \mathcal{L}_{\text{semantic}}.
+    $$
+    This makes level-1 tokens carry *what was said* while higher levels carry *how it was said*. The practical payoff: level-1 tokens become a drop-in replacement for text tokens in a speech LM, so the disentanglement is built into the tokenizer rather than needing a separate semantic model.
+
+**5.** The chapter's `ResidualVQ` returns only the per-level indices, never a reconstruction. Extend it with a `decode` method that turns a list of per-level index tensors back into the reconstructed vector $\hat{\mathbf{z}}_t = \sum_{k=1}^{K} \mathbf{e}^{(k)}_{i^{*}_k}$, then write a short check that reconstruction error decreases as more RVQ levels are used.
+
+??? note "Solution"
+    Decoding just looks up each level's codebook entry for the stored indices and sums them, following the RVQ reconstruction formula. Adding a `decode` (and a small `reconstruct_prefix` helper that sums only the first $j$ levels) lets us measure the error curve:
+
+    ```python
+    import torch
+    import torch.nn as nn
+
+    class ResidualVQ(nn.Module):
+        def __init__(self, num_levels: int, codebook_size: int, dim: int):
+            super().__init__()
+            self.levels = nn.ModuleList([
+                VectorQuantizer(codebook_size, dim) for _ in range(num_levels)
+            ])
+
+        def forward(self, z: torch.Tensor):
+            residual = z
+            all_indices = []
+            for vq in self.levels:
+                quantized, indices = vq(residual)
+                residual = residual - quantized.detach()
+                all_indices.append(indices)          # (B, T) per level
+            return all_indices
+
+        def decode(self, all_indices: list[torch.Tensor]) -> torch.Tensor:
+            """Sum codebook lookups across all provided levels -> (B, T, D)."""
+            recon = None
+            for vq, idx in zip(self.levels, all_indices):
+                e = vq.codebook(idx)                 # (B, T, D)
+                recon = e if recon is None else recon + e
+            return recon
+
+    # --- check: error falls monotonically as levels are added ---
+    torch.manual_seed(0)
+    B, T, D, C, K = 2, 50, 16, 256, 4
+    rvq = ResidualVQ(num_levels=K, codebook_size=C, dim=D)
+    z = torch.randn(B, T, D)
+    all_indices = rvq(z)
+
+    for j in range(1, K + 1):
+        recon_j = rvq.decode(all_indices[:j])        # use first j levels only
+        mse = (z - recon_j).pow(2).mean().item()
+        print(f"levels=1..{j}  reconstruction MSE = {mse:.4f}")
+    ```
+
+    Because each level quantizes the residual left by the previous ones, `decode(all_indices[:j])` reconstructs $\sum_{k=1}^{j}\mathbf{e}^{(k)}$, and the MSE decreases as $j$ grows — the numeric embodiment of the chapter's statement that "level 1 alone captures coarse semantics; levels 2-8 refine acoustic detail." (The codebooks here are randomly initialized, not trained, so the absolute MSE is large; the point is the monotone decrease.)
+
+**6.** The chapter contrasts flat interleaving with the *delay pattern* used by AudioLM, VALL-E, and MusicGen. Implement `apply_delay_pattern(codes, pad_id)` that takes a codec tensor of shape `(B, K, T)` (K RVQ levels over T frames) and returns the delayed layout where level $k$ (0-indexed) is shifted right by $k$ steps, with `pad_id` filling the exposed positions. State the output shape and explain, in one sentence, why this pattern helps a causal autoregressive model.
+
+??? note "Solution"
+    Each level $k$ is written into the output starting at column $k$, so higher levels lag behind level 0. The output has $K - 1$ extra columns to hold the staggered tail:
+
+    ```python
+    import torch
+
+    def apply_delay_pattern(codes: torch.Tensor, pad_id: int) -> torch.Tensor:
+        """
+        codes:  (B, K, T) integer codec tokens, K RVQ levels over T frames.
+        Returns (B, K, T + K - 1): level k is delayed by k steps; exposed
+        positions are filled with pad_id.
+        """
+        B, K, T = codes.shape
+        out = torch.full((B, K, T + K - 1), pad_id,
+                         dtype=codes.dtype, device=codes.device)
+        for k in range(K):
+            out[:, k, k:k + T] = codes[:, k, :]
+        return out
+
+    # --- tiny illustration ---
+    codes = torch.arange(1, 1 + 3 * 4).reshape(1, 3, 4)  # (B=1, K=3, T=4)
+    print(codes[0])
+    print(apply_delay_pattern(codes, pad_id=0)[0])
+    ```
+
+    Running it shows level 0 unshifted, level 1 shifted right by one, level 2 by two, with zeros padding the exposed corners:
+
+    ```text
+    codes (K=3, T=4):
+    [[ 1  2  3  4]
+     [ 5  6  7  8]
+     [ 9 10 11 12]]
+
+    delayed (K=3, T+K-1=6):
+    [[ 1  2  3  4  0  0]
+     [ 0  5  6  7  8  0]
+     [ 0  0  9 10 11 12]]
+    ```
+
+    The output shape is `(B, K, T + K - 1)`. When the model predicts one column at a time, the delay guarantees that a fine level's token for frame $t$ is emitted only after the coarser levels for that frame (and all earlier frames) are already in context — so each level can condition on the coarser structure while the causal LM only ever looks at the past, which is exactly the "limiting temporal lookahead" property the chapter attributes to the delay pattern.

@@ -1172,3 +1172,158 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
 - **MMLU** — Hendrycks et al., *Measuring Massive Multitask Language Understanding*, ICLR 2021. The most widely-used multiple-choice benchmark; the source code demonstrates log-likelihood evaluation mechanics clearly.
 - **Calibration in NLP** — Desai and Durrett, *Calibration of Pre-trained Transformers*, EMNLP 2020. Explains why accuracy alone is insufficient and how to measure uncertainty quality.
 - **Statistical significance in NLP** — Dror et al., *The Hitchhiker's Guide to Testing Statistical Significance in Natural Language Processing*, ACL 2018. Practical guidance on test selection and multiple comparison correction for benchmark comparisons.
+
+## Exercises
+
+**1.** Two teams each report an MMLU accuracy for the *same* base model on the *same* 14,079 test questions: Team X reports 71.2% and Team Y reports 68.4%. Before concluding that Team X ran a better model, list four concrete evaluation choices from this chapter that could produce a gap this large even though the underlying model weights are identical. For each, state in one sentence *why* it moves the number.
+
+??? note "Solution"
+    The chapter's central claim is that a bare accuracy number is meaningless without the "story" of how it was produced. Any four of the following are valid:
+
+    - **Prompt template.** "Question: ... Answer:" vs. "Q: ... A:" vs. adding an explicit "The best answer is:" suffix. The chapter states the same model can vary by 5-10 points on MMLU purely from format, because a base model's next-token distribution is sensitive to surface form.
+    - **Number of few-shot examples.** 0-shot vs. 5-shot changes how well the model locks onto the answer format; more shots typically raise the score by teaching the expected completion.
+    - **Scoring mode.** Log-likelihood argmax over choices vs. constrained/free generation with answer extraction. These score different things (probability of a choice string vs. a parsed letter) and disagree.
+    - **Length normalization.** Reporting `acc` (raw argmax of $\sum \log p$) vs. `acc_norm` (divided by token length). The chapter shows these can pick different answers and differ by 1-3 points on MMLU.
+    - **Chat template.** Applying `apply_chat_template` vs. raw concatenation. For an instruction-tuned model, raw concatenation is out-of-distribution and can suppress accuracy by several points. (For a pure base model this matters less, but a wrapper/system prompt still shifts the distribution.)
+    - **Answer-extraction regex** or the normalization pipeline (lowercasing, article/punctuation stripping) used to match a generation against the gold answer.
+
+    The takeaway: to conclude anything about the *model*, both runs must fix all of these knobs to the same values — ideally by running through the same harness version.
+
+**2.** A 4-choice question is scored with log-likelihood. The model assigns the following raw log-likelihoods and token counts to the choices:
+
+| Choice | $\log p(c_i \mid x)$ | tokens |
+|---|---|---|
+| A | $-2.0$ | 2 |
+| B | $-5.0$ | 4 |
+| C | $-3.0$ | 5 |
+| D | $-2.5$ | 2 |
+
+(a) Which choice does `acc` (raw argmax) select? (b) Which does `acc_norm` (length-normalized) select? (c) If the gold answer is C, what are the `acc` and `acc_norm` contributions of this single item (0 or 1 each)?
+
+??? note "Solution"
+    **(a) Raw argmax** picks the *least negative* $\log p$: $A=-2.0$, $B=-5.0$, $C=-3.0$, $D=-2.5$. The maximum is $A=-2.0$, so `acc` selects **A**.
+
+    **(b) Length-normalized** divides each by its token count:
+    $$
+    A: \frac{-2.0}{2} = -1.00,\quad B: \frac{-5.0}{4} = -1.25,\quad C: \frac{-3.0}{5} = -0.60,\quad D: \frac{-2.5}{2} = -1.25
+    $$
+    The maximum is $C=-0.60$, so `acc_norm` selects **C**.
+
+    **(c)** Gold is C. Raw argmax chose A (wrong): `acc` contribution $= 0$. Normalized argmax chose C (correct): `acc_norm` contribution $= 1$. This is exactly the disagreement the chapter warns about: the two metrics differ on this item, and if you compare your `acc` against someone else's `acc_norm` you are comparing incomparable numbers. Normalization helped here because C's log-probability was spread over 5 tokens, so its raw sum was penalized for length.
+
+**3.** You evaluate a new model at $p_A = 0.702$ and a baseline at $p_B = 0.678$, each on the *same independent* set of $n = 2500$ questions (treat the two runs as independent for this part). (a) Compute the Bernoulli standard error of each score. (b) Compute the standard error of the difference. (c) Compute the z-score for the 2.4-point gap and state whether it clears the usual $z > 2$ bar for significance at $\alpha = 0.05$.
+
+??? note "Solution"
+    **(a)** Using $\text{SE} = \sqrt{p(1-p)/n}$ with $n = 2500$:
+    $$
+    \text{SE}_A = \sqrt{\frac{0.702 \times 0.298}{2500}} = \sqrt{\frac{0.20920}{2500}} = \sqrt{0.00008368} \approx 0.00915
+    $$
+    $$
+    \text{SE}_B = \sqrt{\frac{0.678 \times 0.322}{2500}} = \sqrt{\frac{0.21832}{2500}} = \sqrt{0.00008733} \approx 0.00934
+    $$
+
+    **(b)** Standard error of the difference (independence assumption):
+    $$
+    \text{SE}_{A-B} = \sqrt{\text{SE}_A^2 + \text{SE}_B^2} = \sqrt{0.00008368 + 0.00008733} = \sqrt{0.00017101} \approx 0.01308
+    $$
+
+    **(c)** The observed difference is $0.702 - 0.678 = 0.024$:
+    $$
+    z = \frac{0.024}{0.01308} \approx 1.83
+    $$
+    Since $1.83 < 2$, the gap does **not** clear the usual significance bar; it corresponds to a two-sided $p \approx 0.067$. The chapter's guidance applies: a ~2-point gap on only 2500 examples is not convincing on its own. Note also that these runs are on the *same* documents, so the independence assumption is conservative — a paired McNemar's test would use the discordant pairs directly and is more powerful, and might or might not reach significance depending on how correlated the two models' errors are.
+
+**4.** The chapter's `score_choices` includes a long comment about a BOS double-count bug. Explain (a) what the bug is, (b) why it silently produces ~25% accuracy on a 4-choice task rather than crashing, and (c) the two invariants the smoke test checks to catch it. Why is `acc == acc_norm` a valid check *specifically* for this single-letter scoring scheme?
+
+??? note "Solution"
+    **(a) The bug.** `score_choices` encodes the context separately to find where the continuation begins (`context_len`). If the context is encoded with `add_special_tokens=True`, the tokenizer prepends a BOS token, so `context_len` already counts that BOS. The code then also does `ctx_len = context_ids.shape[1] + 1` to account for the BOS it manually prepends to `full_ids` — double-counting the BOS. The context/continuation split `ctx_len` is therefore one position too far to the right. The fix in the chapter is to encode the context with `add_special_tokens=False` so its ids are exactly a prefix of the full encoding.
+
+    **(b) Why it's silent, and why ~25%.** The continuations are single tokens (`" A"`.." D"). If the split index is shifted by one, the slice of continuation tokens `cont_ids = full_ids[0, ctx_len:]` becomes *empty*. With no continuation tokens the summed log-likelihood is $0.0$ for every choice, so all four scores tie. `np.argmax` on all-equal values returns index 0 for every question, so the model "answers A" every time. On a balanced 4-choice set that is the chance floor, ~25%. Nothing raises an exception — the tensors are all valid shapes — so the run looks normal. (The chapter added an `assert len(cont_ids) >= 1` guardrail precisely to convert this silent failure into a loud one.)
+
+    **(c) The two invariants.**
+    - *(a)* Within one question the four raw log-likelihoods must be **distinct and strictly negative**. If they are all equal, or any is exactly $0.0$, the split is broken (the empty-continuation signature).
+    - *(b)* Because `" A"`.." D"` are each a single token for common tokenizers (gpt2, Llama-3, Mistral), each choice's continuation is exactly one token, so dividing by token count ($=1$) leaves the score unchanged. Therefore `acc` must equal `acc_norm` **exactly**. If they differ, the continuations are being tokenized into more than one token (or the split is wrong), which would violate the single-token assumption the scheme relies on. The check is valid *only* for this single-letter scheme; it would not hold if you scored multi-token answer *text*, where length normalization genuinely changes the winner (see Exercise 2).
+
+**5.** The CI/CD workflow calls `scripts/check_regression.py --baseline results/baseline.json --current .../results.json --threshold 0.005`, but the script itself is not shown. Implement it. It should load two lm-eval-style results files, compare every task/metric present in *both*, and exit with a non-zero status (failing the pipeline) if any current metric drops below its baseline by more than the threshold. Print a per-task report. Assume each results file has the shape `{"results": {"mmlu": {"acc": 0.741, "acc_norm": 0.75}, "hellaswag": {...}}}`.
+
+??? note "Solution"
+    A drop is `baseline - current`; we flag it when it exceeds `threshold`. We only compare metrics present in both files, skip non-numeric fields (lm-eval mixes in stderr keys and version strings), and exit `1` on any regression so the GitHub Actions step fails and blocks the merge.
+
+    ```python
+    #!/usr/bin/env python3
+    """check_regression.py
+
+    Fail the CI pipeline if any benchmark metric regresses beyond a threshold.
+
+    Usage:
+        python check_regression.py \
+            --baseline results/baseline.json \
+            --current  eval_results/<sha>/results.json \
+            --threshold 0.005
+    """
+    import argparse
+    import json
+    import sys
+
+
+    def load_metrics(path: str) -> dict:
+        """Return {task: {metric: value}} for numeric metrics only."""
+        with open(path) as f:
+            data = json.load(f)
+        out = {}
+        for task, metrics in data.get("results", {}).items():
+            clean = {}
+            for name, value in metrics.items():
+                # lm-eval keys like "acc_stderr" and "alias" are not comparands;
+                # keep only plain numeric point estimates.
+                if name.endswith("_stderr") or not isinstance(value, (int, float)):
+                    continue
+                clean[name] = float(value)
+            out[task] = clean
+        return out
+
+
+    def check(baseline: dict, current: dict, threshold: float) -> bool:
+        """Print a report; return True if any metric regressed beyond threshold."""
+        regressed = False
+        for task in sorted(baseline):
+            if task not in current:
+                print(f"[skip] {task}: absent from current run")
+                continue
+            for metric in sorted(baseline[task]):
+                if metric not in current[task]:
+                    continue
+                base = baseline[task][metric]
+                cur = current[task][metric]
+                drop = base - cur                    # positive => got worse
+                flag = drop > threshold
+                mark = "FAIL" if flag else "ok"
+                print(f"[{mark}] {task}/{metric}: "
+                      f"{base:.4f} -> {cur:.4f} (delta {cur - base:+.4f})")
+                regressed = regressed or flag
+        return regressed
+
+
+    def main() -> int:
+        p = argparse.ArgumentParser()
+        p.add_argument("--baseline", required=True)
+        p.add_argument("--current", required=True)
+        p.add_argument("--threshold", type=float, default=0.005)
+        args = p.parse_args()
+
+        baseline = load_metrics(args.baseline)
+        current = load_metrics(args.current)
+        regressed = check(baseline, current, args.threshold)
+
+        if regressed:
+            print(f"\nRegression exceeds threshold {args.threshold}; failing.")
+            return 1
+        print(f"\nNo regression beyond {args.threshold}.")
+        return 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+    ```
+
+    Key design points tied to the chapter: (1) exiting non-zero is what actually *blocks the merge* in the GitHub Actions step; (2) we compare only the point estimate and ignore `_stderr` keys, but a stricter version would incorporate the standard error — a drop smaller than $\text{SE}_{diff}$ is within noise, so a threshold of $0.005$ on a task with $\text{SE} \approx 0.004$ is roughly a "more than ~1 SE" rule; (3) comparing only tasks/metrics present in both files avoids crashing when the suite changes, matching the reproducibility discipline of pinning the harness version.

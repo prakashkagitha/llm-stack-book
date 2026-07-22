@@ -684,3 +684,315 @@ Note: this sketch omits the attention mask construction, the transformer impleme
 - Zhan et al., "AnyGPT: Unified Multimodal LLM with Discrete Sequence Modeling", 2024.
 - Mentzer et al., "Finite Scalar Quantization: VQ-VAE Made Simple", ICLR 2024.
 - Défossez et al., "High Fidelity Neural Audio Compression" (EnCodec), 2022.
+
+## Exercises
+
+**1.** Chameleon's data-mixture section reports that if image tokens are under-represented
+in the training mix, the model "forgets how to generate them even though it can still
+understand them." Explain why the forgetting is *asymmetric* — why understanding survives
+but generation degrades — and relate this to the modality-balance guidance in the chapter.
+
+??? note "Solution"
+
+    Under the tokenize-everything paradigm the model both *reads* and *writes* image tokens
+    through the same joint vocabulary, but the two skills are exercised by different position
+    types in the sequence.
+
+    - **Understanding (image -> text)** only requires the model to *attend to* image tokens
+      that are given as input in the context. The image tokens are provided; the model never
+      has to place probability mass on the image portion of the vocabulary. Even a modest
+      amount of image-then-text data keeps the attention pathways that map visual tokens to
+      text alive, and those pathways are further reinforced by every captioning/VQA example.
+
+    - **Generation (text -> image)** requires the model to *predict* image tokens at output
+      positions — i.e. put and keep large probability mass on the 8,192 image codebook
+      entries of the 65,536-token softmax. If image *target* positions are rare, the
+      cross-entropy gradient that pushes the unembedding toward image tokens is rare too, so
+      the softmax drifts back toward the far more frequent text tokens. The model effectively
+      learns the prior "the next token is almost never an image token," which is fatal for
+      generation but harmless for understanding.
+
+    This is the catastrophic-forgetting mechanism the chapter flags (cross-referencing SFT):
+    a capability decays when the loss stops rewarding it. The fix is the modality-balance
+    recipe — keep image and text *token counts* roughly equal (with a modest text
+    over-representation) so image-target positions remain frequent enough to sustain the
+    generation head, and use the staged curriculum (text warmup -> low image ratio -> full
+    mix) so the ratio is never so low that generation collapses.
+
+**2.** Using the chapter's tokenisation arithmetic, compute the discrete token budget for
+each case. Assume square spatial grids of $\frac{H}{f}\times\frac{W}{f}$.
+
+   (a) A $1024\times1024$ image at $f=16$, and the same image at $f=8$.
+   (b) A 5-second video clip at 24 FPS, resolution $256\times256$, with per-frame spatial
+   factor $f=8$ and a temporal downsampling factor $f_t=4$.
+   (c) If a text context window is 8,192 tokens, how many of the $f=8$ images from (a) fit
+   in the window at once (image tokens only)?
+
+??? note "Solution"
+
+    (a) Spatial grid side $= H/f$.
+
+    $$
+    f=16:\quad \frac{1024}{16}\times\frac{1024}{16} = 64\times64 = 4096 \text{ tokens}
+    $$
+
+    $$
+    f=8:\quad \frac{1024}{8}\times\frac{1024}{8} = 128\times128 = 16{,}384 \text{ tokens}
+    $$
+
+    Halving $f$ quadruples the token count (area scales with $1/f^2$).
+
+    (b) Number of frames $= 5 \times 24 = 120$. Spatial tokens per frame at $f=8$:
+    $32\times32 = 1024$. Before temporal compression:
+
+    $$
+    120 \times 1024 = 122{,}880 \text{ tokens.}
+    $$
+
+    Applying temporal downsampling $f_t=4$ divides by 4:
+
+    $$
+    \frac{122{,}880}{4} = 30{,}720 \text{ tokens.}
+    $$
+
+    This matches the chapter's point that video is by far the most expensive modality —
+    a single short clip already dwarfs a full text context window.
+
+    (c) Each $f=8$ image is 16,384 tokens, which *already exceeds* an 8,192-token window.
+    So $\lfloor 8192 / 16384 \rfloor = 0$ — not even one such image fits. This is exactly
+    the scaling pressure the chapter cites: high-resolution discrete tokenisation forces
+    either a larger context, a bigger $f$, or a hierarchical/masked generation scheme.
+
+**3.** The chapter notes that image and text tokens have very different per-token entropies,
+so naive token-level loss averaging over-weights image generation. Consider a mixed-modal
+sequence with $N_\text{text}=256$ text positions and $N_\text{image}=1024$ image positions.
+Suppose the average per-token loss is 3 nats for text and 6 nats for image.
+
+   (a) Compute the naive sequence-averaged loss (sum over all positions, divided by the
+   total number of positions).
+   (b) What fraction of the *summed* loss (and hence, to first order, of the gradient signal)
+   comes from image positions?
+   (c) Using the chapter's modality-normalised loss with $w_\text{img}=1$,
+   $\mathcal{L}=\frac{\mathcal{L}_\text{text}}{N_\text{text}}+w_\text{img}\frac{\mathcal{L}_\text{image}}{N_\text{image}}$,
+   compute the value and comment on how the image contribution changes.
+
+??? note "Solution"
+
+    Summed losses: $\mathcal{L}_\text{text}=256\times3=768$ nats,
+    $\mathcal{L}_\text{image}=1024\times6=6144$ nats.
+
+    (a) Naive average over all $256+1024=1280$ positions:
+
+    $$
+    \frac{768 + 6144}{1280} = \frac{6912}{1280} = 5.4 \text{ nats/token.}
+    $$
+
+    (b) Image fraction of the summed loss:
+
+    $$
+    \frac{6144}{6912} \approx 0.889 = 88.9\%.
+    $$
+
+    So even though images are only $1024/1280 = 80\%$ of the positions, they supply nearly
+    89% of the loss magnitude because their per-token loss is higher. Under naive averaging
+    the text objective is drowned out, which the chapter warns "over-weights image generation
+    relative to text comprehension." (The gap widens further as image loss approaches its
+    ceiling of $\ln 8192 \approx 9$ nats.)
+
+    (c) Modality-normalised:
+
+    $$
+    \frac{768}{256} + 1\cdot\frac{6144}{1024} = 3 + 6 = 9.
+    $$
+
+    Now each modality contributes its *mean* per-token loss, so text and image enter as
+    $3:6$ rather than $768:6144$. The image share drops from 88.9% to $6/9 = 66.7\%$, and
+    $w_\text{img}$ becomes an explicit dial: setting $w_\text{img}=0.5$ would equalise the two
+    contributions at $3:3$. Normalisation decouples the loss balance from the accident of how
+    many tokens each modality happens to occupy.
+
+**4.** Chameleon stabilises training with QK-Norm and a modality-aware z-loss. (a) Explain
+mechanistically why applying RMS/unit normalisation to queries and keys before the attention
+dot product prevents "attention logit explosion" at modality boundaries. (b) The z-loss
+penalises $(\log\sum_j e^{z_j})^2$ per modality. Explain what pathology it targets and why
+computing it *separately* per modality matters given a 65,536-token joint vocabulary.
+
+??? note "Solution"
+
+    (a) The pre-softmax attention logit for a query $q$ and key $k$ is
+    $\frac{q\cdot k}{\sqrt{d_h}} = \frac{\lVert q\rVert\,\lVert k\rVert\cos\theta}{\sqrt{d_h}}$.
+    Its magnitude grows with the *norms* of $q$ and $k$, not just their alignment. At a
+    modality boundary the model encounters token combinations it has rarely seen, and the
+    projections can produce unusually large $\lVert q\rVert$ or $\lVert k\rVert$; the logit
+    then blows up, softmax saturates to a near one-hot distribution, and the gradient through
+    that step becomes tiny or explosive — training diverges within a few thousand steps (as
+    the chapter reports). QK-Norm forces $\lVert q\rVert=\lVert k\rVert=1$ (times a *learned,
+    bounded* per-head scale), so the logit reduces to $\propto\cos\theta\in[-1,1]$ scaled by a
+    controlled factor. The dot product can no longer explode from raw norm growth; only the
+    learned scale, which optimisation keeps in a sane range, sets the temperature.
+
+    (b) The z-loss targets the softmax *partition function* $Z=\sum_j e^{z_j}$: penalising
+    $(\log Z)^2$ pushes the overall logit magnitudes down, preventing the output softmax from
+    saturating and keeping logits numerically well-conditioned (this is the same z-loss used
+    to stabilise large-vocabulary LMs). Computing it *per modality* matters because the joint
+    65,536-token softmax mixes two populations with very different frequencies: text tokens
+    are common, the 8,192 image tokens comparatively rare. A single global penalty would be
+    dominated by whichever modality has the larger logits, letting the other drift. Splitting
+    it ensures the text vocabulary and the image vocabulary are each held in check
+    independently, so "neither text nor image vocabulary dominates the softmax," which is
+    exactly the balance the chapter says the modality-aware z-loss is designed to enforce.
+
+**5.** The chapter's `ModalityAwareMoE` warns that a router can collapse — sending all image
+tokens to a few experts that then never see text, so cross-modal reasoning fails. The
+suggested mitigation is an entropy regularisation loss on the routing distribution. Implement
+a function `router_entropy_loss(router_logits)` that returns the *negative mean entropy of
+the batch-averaged expert-assignment distribution* (so that minimising it encourages tokens
+to spread across experts), consistent with the chapter's code style. Explain the sign.
+
+??? note "Solution"
+
+    We want to *encourage* high entropy of the average routing distribution (uniform expert
+    usage), so we add the *negative* entropy to the training loss — minimising a negative
+    entropy maximises entropy. Averaging the router probabilities over the batch *before*
+    taking entropy is what discourages collapse: it is maximised when the whole batch spreads
+    its mass evenly across experts, penalising the "all image tokens -> a few experts" regime.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def router_entropy_loss(router_logits: torch.Tensor,
+                            eps: float = 1e-9) -> torch.Tensor:
+        """
+        Load-balancing regulariser for the ModalityAwareMoE router.
+
+        router_logits: (B*T, n_experts) — pre-softmax routing scores.
+
+        Returns the NEGATIVE entropy of the batch-averaged assignment
+        distribution. Add it (times a small coefficient) to the training
+        loss; minimising it maximises entropy, i.e. pushes the batch to use
+        all experts evenly and prevents modality-collapse of the router.
+        """
+        # Per-token soft assignment over experts.
+        probs = F.softmax(router_logits, dim=-1)        # (B*T, n_experts)
+        # Average assignment across all tokens in the batch.
+        mean_probs = probs.mean(dim=0)                  # (n_experts,)
+        # Entropy of that averaged distribution.
+        entropy = -(mean_probs * (mean_probs + eps).log()).sum()
+        # Negative entropy so that MINIMISING the loss MAXIMISES spread.
+        return -entropy
+
+
+    # --- sanity check ---
+    n_experts = 8
+    # Collapsed router: every token floods expert 0.
+    collapsed = torch.zeros(100, n_experts); collapsed[:, 0] = 20.0
+    # Balanced router: near-uniform logits.
+    balanced  = torch.zeros(100, n_experts)
+    loss_collapsed = router_entropy_loss(collapsed)
+    loss_balanced  = router_entropy_loss(balanced)
+    # Balanced usage => higher entropy => lower (more negative) loss.
+    assert loss_balanced < loss_collapsed
+    # Uniform over 8 experts hits the entropy ceiling ln(8).
+    assert torch.isclose(loss_balanced, -torch.tensor(n_experts).float().log(),
+                         atol=1e-4)
+    print("router entropy loss OK:",
+          float(loss_collapsed), float(loss_balanced))
+    ```
+
+    The maximum entropy over $E$ experts is $\ln E$ (here $\ln 8 \approx 2.079$), reached at
+    uniform usage; the collapsed router has entropy near 0, so its loss ($\approx 0$) is much
+    larger than the balanced router's ($\approx -2.079$). Used with a small coefficient
+    alongside the task loss, this nudges the router away from the modality-collapse failure
+    mode the chapter describes, without hard-partitioning experts.
+
+**6.** Transfusion trains image patches with flow matching:
+$x_t=(1-t)x_0+t\epsilon$ and target velocity $(\epsilon-x_0)$. (a) Show that the constant
+target velocity $v=\epsilon-x_0$ is exactly $\frac{dx_t}{dt}$, and use that to write the Euler
+integration rule that generates a clean patch $x_0$ starting from pure noise. (b) Implement
+`flow_match_target(x0, eps)` (the training regression target) and
+`sample_patch(velocity_fn, x1, n_steps)` that integrates from $t=1$ (noise) to $t=0$ (clean)
+with `n_steps` Euler steps, in the chapter's style. Verify that if the learned velocity field
+is *perfect* — i.e. `velocity_fn` returns exactly $\epsilon-x_0$ — the sampler recovers $x_0$
+in a single step.
+
+??? note "Solution"
+
+    (a) Differentiate the interpolation path:
+
+    $$
+    x_t=(1-t)x_0+t\epsilon \;\Rightarrow\; \frac{dx_t}{dt}= -x_0+\epsilon = \epsilon-x_0,
+    $$
+
+    which is precisely the constant target the model regresses onto. Because the velocity is
+    constant along the path, integrating the ODE $\frac{dx}{dt}=v_\theta(x_t,t)$ backward from
+    the noise end $t=1$ to the data end $t=0$ recovers $x_0$. A forward Euler step of size
+    $\Delta t$ toward *smaller* $t$ is
+
+    $$
+    x_{t-\Delta t} = x_t - \Delta t\, v_\theta(x_t, t),
+    $$
+
+    starting from $x_1=\epsilon$. With the true constant velocity and a single step
+    $\Delta t = 1$: $x_0 = x_1 - 1\cdot(\epsilon-x_0) = \epsilon-(\epsilon-x_0)=x_0$. Exact.
+
+    (b) Runnable implementation:
+
+    ```python
+    import torch
+
+    def flow_match_target(x0: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
+        """
+        Flow-matching regression target: the constant velocity (eps - x0)
+        that the diffusion head learns to predict at every timestep t.
+
+        x0, eps: (..., D_patch) clean patch and sampled Gaussian noise.
+        """
+        return eps - x0
+
+
+    @torch.no_grad()
+    def sample_patch(velocity_fn, x1: torch.Tensor, n_steps: int) -> torch.Tensor:
+        """
+        Generate a clean patch by integrating the flow ODE from t=1 (noise)
+        to t=0 (data) with forward Euler.
+
+        velocity_fn(x_t, t) -> predicted velocity, same shape as x_t.
+        x1: (..., D_patch) starting Gaussian noise (the t=1 endpoint).
+        n_steps: number of Euler steps.
+        """
+        x  = x1
+        dt = 1.0 / n_steps
+        for i in range(n_steps):
+            t = 1.0 - i * dt                      # current time, going 1 -> 0
+            t_batch = torch.full(x.shape[:1], t, device=x.device)
+            v = velocity_fn(x, t_batch)           # predicted dx/dt
+            x = x - dt * v                         # step toward smaller t
+        return x
+
+
+    # --- verify: a perfect (oracle) velocity field recovers x0 in one step ---
+    torch.manual_seed(0)
+    D = 16
+    x0  = torch.randn(4, D)          # "true" clean patches
+    eps = torch.randn(4, D)          # noise endpoint
+    x1  = eps                        # sampler starts from noise
+
+    # Oracle: the constant true velocity, independent of x_t and t.
+    def oracle_velocity(x_t, t):
+        return flow_match_target(x0, eps)
+
+    recovered = sample_patch(oracle_velocity, x1, n_steps=1)
+    assert torch.allclose(recovered, x0, atol=1e-5), "one Euler step must recover x0"
+    # More steps also work because the true velocity is constant along the path.
+    recovered_many = sample_patch(oracle_velocity, x1, n_steps=50)
+    assert torch.allclose(recovered_many, x0, atol=1e-5)
+    print("flow-matching sampler OK: oracle velocity recovers x0")
+    ```
+
+    With a *perfect* velocity field the path is a straight line, so a single Euler step is
+    exact and extra steps cost accuracy nothing. In practice $v_\theta$ is only approximate
+    and the true trajectory curves, so real Transfusion sampling uses many steps
+    ($N$ denoising steps as the chapter notes) — but each step still processes the whole
+    image in parallel, which is the efficiency argument the chapter makes for diffusion over
+    token-by-token autoregression.

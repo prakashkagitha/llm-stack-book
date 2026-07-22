@@ -803,3 +803,142 @@ For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Hai
 - **Ouyang et al., "Training language models to follow instructions with human feedback" (InstructGPT, 2022)** — reward modeling methodology that underpins RM-as-judge.
 - **Chatbot Arena Leaderboard (LMSYS)** — live crowdsourced human preference ranking; a model for large-scale Elo-based evaluation.
 - **OpenAI Evals** (github.com/openai/evals) — open-source eval framework with LLMaaJ templates and model-graded eval types.
+
+---
+
+## Exercises
+
+**1.** Pairwise judging achieves higher agreement with human preference than pointwise scoring (see the "When to Use Each" table), yet the same table lists pairwise as having *high* susceptibility to position bias while pointwise is *low*. Explain, in terms of what each paradigm asks the judge to do, why relative comparison is both better calibrated *and* newly vulnerable to position bias — a failure mode pointwise scoring essentially does not have.
+
+??? note "Solution"
+    The two properties come from the same source: pairwise judging places both responses in a single context and asks a *relative* question ("which is better?").
+
+    - **Why better calibrated.** As the chapter notes, relative judgments are cognitively easier and better anchored than absolute ones — "the judge (like a human) can often tell which of two things is better even when scoring each on an absolute scale is hard." Pointwise scoring forces the judge to map a response onto an absolute 1-5 scale with no anchor, so its notion of what a "4" means drifts across prompt types. Pairwise removes the need for a stable absolute scale: the two responses anchor each other.
+
+    - **Why newly vulnerable to position bias.** Position bias is defined only for pairwise setups: the judge "systematically favors whichever response appears first (or second)." This can only happen because both candidates share one prompt and occupy distinct slots (A vs B). Pointwise scoring evaluates a *single* response in isolation — there is no "first" or "second" slot for the model to anchor on, so ordering cannot bias it (the table lists pointwise position-bias susceptibility as low for exactly this reason). The very structure that lets the two responses anchor each other for better calibration is the structure that introduces a slot the judge can spuriously favor.
+
+    The chapter's mitigation (run both orderings and aggregate) directly targets this: it cancels the slot preference while preserving the relative-comparison advantage.
+
+**2.** Use the weighted aggregation from the chapter's `judge_response` implementation, with weights `correctness=0.4, helpfulness=0.4, conciseness=0.1, safety=0.1`. A judge returns these per-criterion scores for the two responses in the chapter's usage example:
+
+- Concise answer ("Paris is the capital..."): correctness 5, helpfulness 5, conciseness 5, safety 5.
+- Verbose answer ("Great question! France..."): correctness 5, helpfulness 4, conciseness 2, safety 5.
+
+Compute the `overall` score for each. Does the aggregation reward the concise answer, as the code comment ("A well-calibrated judge should penalize verbosity here") predicts? Which single criterion drives the gap, and by how much of the overall difference?
+
+??? note "Solution"
+    Apply $S_{\text{overall}} = \sum_c w_c \cdot s_c$.
+
+    Concise answer:
+    $$
+    S = 0.4(5) + 0.4(5) + 0.1(5) + 0.1(5) = 2.0 + 2.0 + 0.5 + 0.5 = 5.00
+    $$
+
+    Verbose answer:
+    $$
+    S = 0.4(5) + 0.4(4) + 0.1(2) + 0.1(5) = 2.0 + 1.6 + 0.2 + 0.5 = 4.30
+    $$
+
+    The concise answer scores higher (5.00 vs 4.30), so yes, the aggregation penalizes verbosity as intended.
+
+    Decompose the gap of $5.00 - 4.30 = 0.70$ by criterion:
+
+    - helpfulness: $0.4(5-4) = 0.40$
+    - conciseness: $0.1(5-2) = 0.30$
+    - correctness and safety: $0$ each (tied at 5).
+
+    The **helpfulness** criterion contributes the larger share ($0.40$ of the $0.70$ gap), even though conciseness is the criterion "about" length. This illustrates a subtlety from the chapter: because conciseness carries only weight $0.1$, a large 3-point conciseness deficit ($0.30$) is worth less than a 1-point helpfulness deficit at weight $0.4$. If verbosity manifests mainly as padding that dilutes helpfulness, the low conciseness weight still catches it indirectly; but if you want length itself to dominate the penalty, you would need to raise $w_{\text{conciseness}}$ (weights "should be set based on product requirements and validated against human preference labels").
+
+**3.** Two models enter an automated arena using the chapter's `EloRanker` (start rating 1000, $K = 32$, base 10, scale 400).
+
+(a) In the very first battle, model A and model B are both at 1000 and the judge declares A the winner. Compute both new ratings.
+
+(b) Later, model A sits at 1200 and model B at 1000. Compute $P(A \succ B)$, the judge-free expected win probability.
+
+(c) The chapter says a 400-point gap corresponds to a 10:1 win-rate advantage. What rating gap corresponds to a 3:1 advantage (i.e. $P(A \succ B) = 0.75$)?
+
+??? note "Solution"
+    **(a)** With equal ratings, $P(A \succ B) = \frac{1}{1 + 10^{0}} = 0.5$. Outcome A wins, so $s_A = 1$, $s_B = 0$:
+    $$
+    \theta_A' = 1000 + 32(1 - 0.5) = 1000 + 16 = 1016
+    $$
+    $$
+    \theta_B' = 1000 + 32(0 - 0.5) = 1000 - 16 = 984
+    $$
+    A rises to **1016**, B falls to **984**. With a completely uninformative prior (equal ratings), the update is the maximum symmetric $\pm K/2 = \pm 16$.
+
+    **(b)** Gap $= \theta_A - \theta_B = 200$:
+    $$
+    P(A \succ B) = \frac{1}{1 + 10^{(1000-1200)/400}} = \frac{1}{1 + 10^{-0.5}} = \frac{1}{1 + 0.3162} = \frac{1}{1.3162} \approx 0.760
+    $$
+    So about a **76%** expected win rate for A.
+
+    **(c)** A 3:1 advantage means $P = 0.75$, i.e. odds of 3. From the logistic model, odds $= 10^{\Delta/400}$ where $\Delta$ is the gap. Solve:
+    $$
+    10^{\Delta/400} = 3 \;\Rightarrow\; \frac{\Delta}{400} = \log_{10} 3 = 0.4771 \;\Rightarrow\; \Delta = 400 \times 0.4771 \approx 191
+    $$
+    A gap of about **191 points** gives a 3:1 (75%) win-rate advantage. (Sanity check: the 200-point gap in part (b) gave 0.760, just above 0.75, consistent with the required gap being slightly under 200.)
+
+**4.** You audit a pairwise judge against a human-labeled gold set. The judge's label marginals are A $= 60\%$, B $= 30\%$, tie $= 10\%$; the human majority-vote marginals are A $= 50\%$, B $= 35\%$, tie $= 15\%$ (these are exactly the numbers in the chapter's Cohen's-kappa section). Suppose the judge and human labels agree on $72\%$ of examples ($p_o = 0.72$). Compute Cohen's $\kappa$. Interpret the result against the chapter's stated range for a "good judge," and explain why raw agreement of $72\%$ overstates the judge's quality.
+
+??? note "Solution"
+    Expected chance agreement $p_e$ is the dot product of the two label marginals (probability both raters land on the same category by chance):
+    $$
+    p_e = (0.60)(0.50) + (0.30)(0.35) + (0.10)(0.15) = 0.300 + 0.105 + 0.015 = 0.420
+    $$
+    Then:
+    $$
+    \kappa = \frac{p_o - p_e}{1 - p_e} = \frac{0.72 - 0.42}{1 - 0.42} = \frac{0.30}{0.58} \approx 0.517
+    $$
+    So $\kappa \approx 0.52$, which sits at the low end of the chapter's "0.5-0.7 range for a good judge" — acceptable but not strong.
+
+    Raw agreement of $72\%$ overstates quality because both raters lean heavily toward label A (judge 60%, human 50%), so they would collide on A frequently *even if the judge answered randomly according to its marginals*. That chance floor is $p_e = 42\%$. Kappa rescales the observed agreement into the band above chance: of the $1 - 0.42 = 0.58$ "room" for non-chance agreement, the judge captured $0.30$, i.e. about $52\%$ of the achievable non-chance agreement. Reporting $72\%$ alone hides the fact that nearly six-tenths of that agreement is attributable to shared marginal bias rather than genuine matching judgment.
+
+**5.** The chapter's `pairwise_judge_debiased` runs both orderings and returns `"tie"` whenever they disagree — but it *discards* the fact that a disagreement happened, which is exactly the signal you need for the calibration protocol's "bias profile per ordering." Implement a function
+
+    ```python
+    def measure_position_bias(judge_fn, pairs):
+        ...
+    ```
+
+    that runs both orderings for every pair and estimates the judge's *first-position preference rate*: among all non-tie decisions across both orderings, the fraction in which the judge picked whichever response was presented **first**. Under an unbiased judge this rate should be about $0.50$; a value well above $0.50$ indicates first-position bias. `pairs` is a list of `(question, response_a, response_b)` tuples; `judge_fn(question, first, second)` returns `"A"`, `"B"`, or `"tie"`, where `"A"` always means "the first-presented response won." Return the rate (or `None` if there are no decisive judgments).
+
+??? note "Solution"
+    The key observation is that `judge_fn` reports its verdict in *slot* terms, not identity terms: `"A"` always means the first-presented response won and `"B"` means the second won. So we do **not** flip results back into A/B identity space (as the debiasing helper does) — we count slot wins directly. Each pair yields two independent decisions (one per ordering); we pool all decisive ones.
+
+    ```python
+    def measure_position_bias(judge_fn, pairs):
+        """
+        pairs: list of (question, response_a, response_b)
+        judge_fn(question, first, second) -> "A" | "B" | "tie"
+            where "A" means the FIRST-presented response won.
+
+        Returns the first-position preference rate: among all non-tie
+        decisions (2 per pair), the fraction won by the first slot.
+        ~0.5 => unbiased; >0.5 => favors first position. None if no
+        decisive judgments.
+        """
+        first_wins = 0
+        decisive = 0
+
+        for question, resp_a, resp_b in pairs:
+            # Ordering 1: resp_a first, resp_b second
+            r1 = judge_fn(question, resp_a, resp_b)
+            # Ordering 2: swap so resp_b is now first
+            r2 = judge_fn(question, resp_b, resp_a)
+
+            for r in (r1, r2):
+                if r == "tie":
+                    continue
+                decisive += 1
+                if r == "A":        # "A" == first-presented slot won
+                    first_wins += 1
+
+        if decisive == 0:
+            return None
+        return first_wins / decisive
+    ```
+
+    Why this measures position bias cleanly: for any given pair, if the judge were driven purely by content, the *same underlying response* would win in both orderings, so its slot-win would land in the first slot once and the second slot once — contributing one first-win and one second-win, i.e. a net of $0.5$. Only a genuine slot preference pushes the pooled rate away from $0.5$. Averaged over many pairs, a rate of, say, $0.62$ means the judge favors the first-presented response about $62\%$ of the time among decisive calls -- a first-position bias of roughly $12$ percentage points, in the range the chapter cites ("10-15 percentage points on win rate").
+
+    This is the per-ordering "bias profile" the calibration protocol asks for. If the rate exceeds an acceptance threshold you would either strengthen the judge prompt or rely on the both-orderings aggregation in `pairwise_judge_debiased` for all production calls.

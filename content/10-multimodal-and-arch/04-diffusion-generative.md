@@ -595,3 +595,109 @@ Why should an engineer focused on language models care about diffusion?
     - Flow matching (Rectified Flow, CFM) is a cleaner framework: train the network to predict the straight-line velocity $\mathbf{x}_1 - \mathbf{x}_0$; requires fewer ODE steps and is now the backbone of SD3 and Flux.
     - Diffusion LMs apply masking as the noise process and generate text in parallel (all positions at once), offering an alternative to strict left-to-right autoregressive generation with natural infilling support.
     - As an LLM engineer you need diffusion literacy for multimodal architectures, RLHF-for-diffusion, serving system design, and breadth interview questions.
+
+## Exercises
+
+**1.** (Conceptual) The forward marginal is $q(\mathbf{x}_t\mid\mathbf{x}_0)=\mathcal{N}(\sqrt{\bar\alpha_t}\,\mathbf{x}_0,\,(1-\bar\alpha_t)\mathbf{I})$. Explain (a) why the *signal* coefficient is $\sqrt{\bar\alpha_t}$ and the *noise* coefficient is $\sqrt{1-\bar\alpha_t}$ rather than, say, $\bar\alpha_t$ and $1-\bar\alpha_t$; and (b) why the schedule is engineered so that $\bar\alpha_T\approx 0$. What would go wrong at sampling time if $\bar\alpha_T$ were, say, $0.5$ instead?
+
+??? note "Solution"
+    (a) Under the one-shot reparameterization $\mathbf{x}_t=\sqrt{\bar\alpha_t}\,\mathbf{x}_0+\sqrt{1-\bar\alpha_t}\,\boldsymbol\epsilon$ with $\boldsymbol\epsilon\sim\mathcal{N}(\mathbf0,\mathbf I)$, the *variance* of a scaled Gaussian scales with the *square* of the coefficient. So the coefficient $\sqrt{1-\bar\alpha_t}$ contributes variance $(1-\bar\alpha_t)$, matching the covariance $(1-\bar\alpha_t)\mathbf I$ in the marginal. The choice $\sqrt{\bar\alpha_t}$ for the signal and $\sqrt{1-\bar\alpha_t}$ for the noise makes the two variance contributions sum to $\bar\alpha_t\cdot\mathrm{Var}(\mathbf{x}_0)+(1-\bar\alpha_t)$; when the data is standardized to unit variance this keeps $\mathrm{Var}(\mathbf{x}_t)\approx 1$ at every $t$ (a *variance-preserving* process). Using $\bar\alpha_t$ and $1-\bar\alpha_t$ directly as coefficients would make the total variance shrink toward $\bar\alpha_t^2+(1-\bar\alpha_t)^2<1$ and break that invariant.
+
+    (b) Sampling starts from $\mathbf{x}_T\sim\mathcal{N}(\mathbf0,\mathbf I)$ — pure noise, containing no information about any particular $\mathbf{x}_0$. The marginal $q(\mathbf{x}_T\mid\mathbf{x}_0)=\mathcal{N}(\sqrt{\bar\alpha_T}\,\mathbf{x}_0,(1-\bar\alpha_T)\mathbf I)$ matches that prior only when $\bar\alpha_T\approx0$, so that $\sqrt{\bar\alpha_T}\,\mathbf{x}_0\approx\mathbf0$ and the covariance $\approx\mathbf I$ regardless of $\mathbf{x}_0$. If instead $\bar\alpha_T=0.5$, the true endpoint of the forward chain would still retain $\sqrt{0.5}\approx0.71$ of the original signal, but the sampler *ignores* this and initializes from $\mathcal{N}(\mathbf0,\mathbf I)$. This train/test mismatch means the network is fed a $\mathbf{x}_T$ from a distribution it never saw during training, producing biased or degraded samples — the reverse process would have to "hallucinate" the missing $0.71\,\mathbf{x}_0$ of structure it was never trained to reconstruct from noise alone.
+
+**2.** (Quantitative) Consider a *constant* noise schedule $\beta_t=0.01$ for all $t$, so $\alpha_t=0.99$ and $\bar\alpha_t=0.99^{\,t}$. (a) At what timestep $t$ does the signal energy fall to half, i.e. $\bar\alpha_t=0.5$? (b) Write out the numeric coefficients of $\mathbf{x}_0$ and $\boldsymbol\epsilon$ at that step. (c) What is the signal-to-noise ratio $\mathrm{SNR}(t)=\bar\alpha_t/(1-\bar\alpha_t)$ there, and how does it compare to the chapter's linear-schedule value at $t=500$?
+
+??? note "Solution"
+    (a) Solve $0.99^{\,t}=0.5$. Taking logs, $t=\dfrac{\ln 0.5}{\ln 0.99}=\dfrac{-0.6931}{-0.010050}\approx 68.97$, so $t\approx 69$. (Cross-check with the chapter's exponential approximation $\bar\alpha_t\approx\exp(-\sum\beta_s)=e^{-0.01t}$: setting $e^{-0.01t}=0.5$ gives $t=\ln 2/0.01=69.3$ — consistent.)
+
+    (b) At $t=69$, $\bar\alpha_t\approx0.5$, so
+    $$\mathbf{x}_{69}=\sqrt{0.5}\,\mathbf{x}_0+\sqrt{0.5}\,\boldsymbol\epsilon\approx 0.707\,\mathbf{x}_0+0.707\,\boldsymbol\epsilon.$$
+    Signal and noise contribute equally.
+
+    (c) $\mathrm{SNR}(69)=\dfrac{0.5}{1-0.5}=1.0$ (equivalently $0\,$dB). The chapter's linear schedule gives $\bar\alpha_{500}\approx0.08$ and $\mathrm{SNR}(500)\approx0.087$ — more than $10\times$ noisier. So the halfway point of *this* gentle constant schedule ($t\approx69$) is far less corrupted than the linear DDPM schedule is at its own midpoint $t=500$, illustrating how aggressively the standard linear schedule destroys structure early on.
+
+**3.** (Quantitative) At one denoising step a text-to-image model produces an unconditional noise prediction $\boldsymbol\epsilon_\emptyset=(0.20,\,-0.10)$ and a conditional one $\boldsymbol\epsilon_\mathbf{c}=(0.50,\,0.30)$ for a two-pixel toy latent. Using classifier-free guidance $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\emptyset+w(\boldsymbol\epsilon_\mathbf{c}-\boldsymbol\epsilon_\emptyset)$: (a) compute $\tilde{\boldsymbol\epsilon}$ for $w=7.5$; (b) give $\tilde{\boldsymbol\epsilon}$ for $w=0$ and $w=1$ and say what each corresponds to; (c) comparing the norm of $\tilde{\boldsymbol\epsilon}$ at $w=7.5$ to that of $\boldsymbol\epsilon_\mathbf{c}$, explain in one sentence why large $w$ is described as "extrapolation beyond the conditional distribution."
+
+??? note "Solution"
+    Let $\mathbf{d}=\boldsymbol\epsilon_\mathbf{c}-\boldsymbol\epsilon_\emptyset=(0.50-0.20,\;0.30-(-0.10))=(0.30,\,0.40)$, with $\|\mathbf{d}\|=\sqrt{0.30^2+0.40^2}=0.5$.
+
+    (a) $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\emptyset+7.5\,\mathbf{d}=(0.20+7.5\cdot0.30,\;-0.10+7.5\cdot0.40)=(0.20+2.25,\;-0.10+3.00)=(2.45,\,2.90)$.
+
+    (b) $w=0$: $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\emptyset=(0.20,-0.10)$ — the purely *unconditional* prediction. $w=1$: $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\mathbf{c}=(0.50,0.30)$ — the pure *conditional* model, no guidance.
+
+    (c) $\|\tilde{\boldsymbol\epsilon}\|_{w=7.5}=\sqrt{2.45^2+2.90^2}=\sqrt{6.00+8.41}=\sqrt{14.41}\approx3.80$, versus $\|\boldsymbol\epsilon_\mathbf{c}\|=\sqrt{0.25+0.09}=\sqrt{0.34}\approx0.58$. The guided vector is $\sim6.6\times$ longer and points well past the conditional point along the direction $\mathbf{d}$ — the model is pushed *further* than the conditional prediction itself, i.e. outside the region the conditional model would ever output, which is exactly the extrapolation that sharpens prompt adherence but risks over-saturation at large $w$.
+
+**4.** (Implementation) The chapter's `ddim_sample` is unconditional. Modify it into a `ddim_sample_cfg` that accepts a conditioning tensor `c`, a null embedding `null_c`, and a guidance scale `w`, applying classifier-free guidance at every step. Assume the model signature is now `model(x_t, t, c)`. Keep everything else (the $\mathbf{x}_0$ prediction, the deterministic $\eta=0$ path) intact.
+
+??? note "Solution"
+    We run the denoiser twice per step — once with the real conditioning `c`, once with `null_c` — and combine the two noise predictions with the CFG formula $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\emptyset+w(\boldsymbol\epsilon_\mathbf{c}-\boldsymbol\epsilon_\emptyset)$ before using $\tilde{\boldsymbol\epsilon}$ everywhere the original sampler used `eps_hat`. Everything downstream is unchanged.
+
+    ```python
+    @torch.no_grad()
+    def ddim_sample_cfg(model, shape, alphas_bar, c, null_c,
+                        w: float = 7.5, num_steps: int = 50,
+                        eta: float = 0.0, device: str = "cpu"):
+        """DDIM sampler with classifier-free guidance. model(x_t, t, c)."""
+        T = alphas_bar.shape[0]
+        step_size = T // num_steps
+        timesteps = list(reversed(range(0, T, step_size)))
+
+        x = torch.randn(shape, device=device)
+
+        for i, t in enumerate(timesteps):
+            t_prev = timesteps[i + 1] if i + 1 < len(timesteps) else -1
+            t_batch = torch.full((shape[0],), t, dtype=torch.long, device=device)
+
+            # --- classifier-free guidance: two forward passes ---
+            eps_c    = model(x, t_batch, c)
+            eps_null = model(x, t_batch, null_c)
+            eps_hat  = eps_null + w * (eps_c - eps_null)
+
+            ab_t    = alphas_bar[t]
+            ab_prev = alphas_bar[t_prev] if t_prev >= 0 else torch.tensor(1.0)
+
+            # predict x0 from the *guided* noise
+            x0_pred = (x - (1 - ab_t).sqrt() * eps_hat) / ab_t.sqrt()
+            x0_pred = x0_pred.clamp(-1, 1)
+
+            sigma_t = eta * ((1 - ab_prev) / (1 - ab_t)).sqrt() \
+                          * (1 - ab_t / ab_prev).sqrt()
+            dir_xt  = (1 - ab_prev - sigma_t**2).sqrt() * eps_hat
+
+            noise = torch.randn_like(x) if eta > 0 and t_prev >= 0 else 0.0
+            x = ab_prev.sqrt() * x0_pred + dir_xt + sigma_t * noise
+
+        return x
+    ```
+
+    Note the cost: CFG doubles the forward passes per step (matching the chapter's "CFG doubles the number of forward passes per step"). A batched implementation would instead concatenate `c` and `null_c` along the batch dimension and split the output, doing both predictions in one call.
+
+**5.** (Hard: derivation + implementation) The chapter's `ddpm_loss` uses the *noise-prediction* parameterization. An equivalent choice is *$\mathbf{x}_0$-prediction*, where the network outputs $\hat{\mathbf{x}}_0$ directly. (a) Starting from $\mathbf{x}_t=\sqrt{\bar\alpha_t}\,\mathbf{x}_0+\sqrt{1-\bar\alpha_t}\,\boldsymbol\epsilon$, derive the exact linear map between a noise prediction $\hat{\boldsymbol\epsilon}$ and the corresponding $\hat{\mathbf{x}}_0$ (both directions). (b) Explain why the naive MSE loss $\|\mathbf{x}_0-\hat{\mathbf{x}}_0\|^2$ is *not* identical to $\mathcal{L}_\text{simple}$, and give the per-timestep weight that makes them equal. (c) Implement an `x0_pred_loss` in the chapter's style that reproduces $\mathcal{L}_\text{simple}$ exactly.
+
+??? note "Solution"
+    (a) Rearranging the forward reparameterization for $\mathbf{x}_0$:
+    $$\hat{\mathbf{x}}_0=\frac{\mathbf{x}_t-\sqrt{1-\bar\alpha_t}\,\hat{\boldsymbol\epsilon}}{\sqrt{\bar\alpha_t}},\qquad\text{and inversely}\qquad \hat{\boldsymbol\epsilon}=\frac{\mathbf{x}_t-\sqrt{\bar\alpha_t}\,\hat{\mathbf{x}}_0}{\sqrt{1-\bar\alpha_t}}.$$
+    These are the two forms already used in the chapter (the $\mathbf{x}_0$ expression is exactly the "predicted $\mathbf{x}_0$" term inside `ddim_sample` and the DDIM update).
+
+    (b) Substitute the errors. Since $\mathbf{x}_t$ is shared by both the true and predicted quantities, the noise error and the $\mathbf{x}_0$ error differ only by a scalar:
+    $$\boldsymbol\epsilon-\hat{\boldsymbol\epsilon}=\frac{-\sqrt{\bar\alpha_t}\,(\mathbf{x}_0-\hat{\mathbf{x}}_0)}{\sqrt{1-\bar\alpha_t}}\quad\Longrightarrow\quad\|\boldsymbol\epsilon-\hat{\boldsymbol\epsilon}\|^2=\frac{\bar\alpha_t}{1-\bar\alpha_t}\,\|\mathbf{x}_0-\hat{\mathbf{x}}_0\|^2=\mathrm{SNR}(t)\,\|\mathbf{x}_0-\hat{\mathbf{x}}_0\|^2.$$
+    So a plain $\mathbf{x}_0$-MSE is *not* equal to $\mathcal{L}_\text{simple}$: it is missing the per-timestep factor $\mathrm{SNR}(t)=\bar\alpha_t/(1-\bar\alpha_t)$. Weighting the $\mathbf{x}_0$ loss by $\mathrm{SNR}(t)$ recovers $\mathcal{L}_\text{simple}$ exactly. (Conceptually: at large $t$, $\mathrm{SNR}\to0$ down-weights $\mathbf{x}_0$ errors, because when the input is nearly pure noise, reconstructing $\mathbf{x}_0$ precisely is neither possible nor important; noise-prediction bakes this weighting in automatically.)
+
+    (c) A drop-in variant matching `ddpm_loss`'s interface (`model` now predicts $\hat{\mathbf{x}}_0$):
+
+    ```python
+    def x0_pred_loss(model, x0, alphas_bar):
+        """x0-prediction loss weighted by SNR(t) == L_simple exactly."""
+        B = x0.shape[0]
+        T = alphas_bar.shape[0]
+        t = torch.randint(0, T, (B,), device=x0.device)
+        x_t, eps = q_sample(x0, t, alphas_bar)      # reuse chapter helper
+
+        x0_hat = model(x_t, t)                        # network predicts x0
+
+        ab  = alphas_bar[t].view(-1, 1, 1, 1)
+        snr = ab / (1.0 - ab)                         # SNR(t), broadcast
+        return (snr * (x0 - x0_hat).pow(2)).mean()
+    ```
+
+    With the $\mathrm{SNR}(t)$ weight, `x0_pred_loss` and `ddpm_loss` optimize the same objective (they differ only by which quantity the network's head emits); dropping the `snr` factor gives the common *unweighted* $\mathbf{x}_0$-prediction loss, which is a legitimate but different objective that emphasizes high-noise timesteps less.
