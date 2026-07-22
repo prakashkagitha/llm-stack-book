@@ -881,3 +881,206 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 - **Liang et al., "Encouraging Divergent Thinking in Large Language Models through Debate," 2023** — empirical study of multi-agent debate improving factual accuracy over single-model baselines.
 - **Chase, "LangChain Expression Language (LCEL) and agent patterns," LangChain blog** — practical treatment of chain composition and routing in production systems.
 - **Sumers et al., "Cognitive Architectures for Language Agents," TMLR 2024** — a unified theoretical framework covering memory, action, and planning in LLM agents, connecting multi-agent patterns to cognitive science.
+
+## Exercises
+
+**1.** For each of the following designs, decide whether the chapter would call it a **workflow** or an **agent**, and justify your answer in one sentence using the chapter's definition (who owns the control flow):
+
+- (a) A customer-support system where the model reads a ticket and emits `{"action": "transfer_to_billing"}` or `{"action": "transfer_to_technical"}`, and the framework routes accordingly.
+- (b) A document pipeline in which Python code runs `translate()`, then `summarize()`, then `format()` on every input in that fixed order.
+- (c) The LangGraph research graph from this chapter, whose `route_after_critic` edge sends the state back to the researcher unless the critique contains `APPROVED`.
+
+??? note "Solution"
+    The chapter's test is: *does the model decide the next action, or does developer-written code?* A **workflow** is a DAG whose routing is deterministic and written in code; an **agent** lets the model itself choose the next action.
+
+    - (a) **Agent.** The model's own output (`transfer_to_billing` vs `transfer_to_technical`) selects the next step — this is exactly the "agent-as-router" / Swarm handoff pattern, where control flow emerges from model output.
+    - (b) **Workflow.** The three stages run in a fixed, code-specified sequence; the model never chooses what runs next. It is a deterministic pipeline (chain topology).
+    - (c) **Hybrid, but the routing is a workflow.** The *edges* are developer-written code: `route_after_critic` is a Python function whose branch is decided by a string check (`"APPROVED" in state["critique"]`) plus a hard iteration cap. The model produces content, but the graph — not the model — owns control flow. This is the chapter's recommended pattern: a workflow shell (LangGraph edges) with model-driven work at the nodes.
+
+**2.** The chapter models the probability that at least one of $N$ independent agents (each succeeding with probability $p$) solves a task where any single correct solution suffices, as $P = 1 - (1-p)^N$.
+
+- (a) Compute $P$ for $p = 0.6$ with $N = 1, 2, 3, 4$.
+- (b) Your API budget lets you run either **one agent on the hard task** ($p = 0.6$) or **spend the same tokens elsewhere**. Roughly how many agents $N$ do you need so that $P \ge 0.95$?
+- (c) The chapter says the gain is largest for moderate $p$ and negligible for trivial or impossible tasks. Verify this by comparing the *absolute* gain from going $N=1 \to N=3$ at $p = 0.6$ versus at $p = 0.95$.
+
+??? note "Solution"
+    (a) Using $P = 1 - (1-p)^N$ with $1-p = 0.4$:
+
+    - $N=1:\ 1 - 0.4 = 0.600$
+    - $N=2:\ 1 - 0.4^2 = 1 - 0.16 = 0.840$
+    - $N=3:\ 1 - 0.4^3 = 1 - 0.064 = 0.936$
+    - $N=4:\ 1 - 0.4^4 = 1 - 0.0256 = 0.9744$
+
+    (b) We need $1 - 0.4^N \ge 0.95$, i.e. $0.4^N \le 0.05$. Take logs:
+
+    $$
+    N \ge \frac{\ln 0.05}{\ln 0.4} = \frac{-2.9957}{-0.9163} \approx 3.27
+    $$
+
+    So $N = 4$ agents (from part (a), $N=3$ gives $0.936 < 0.95$ and $N=4$ gives $0.974 \ge 0.95$). Four agents.
+
+    (c) Absolute gain going $N=1 \to N=3$:
+
+    - At $p = 0.6$: $0.936 - 0.600 = 0.336$ (a 33.6-point jump).
+    - At $p = 0.95$: $\big(1 - 0.05^3\big) - 0.95 = (1 - 0.000125) - 0.95 = 0.999875 - 0.95 = 0.0499$ (about 5 points).
+
+    The moderate-$p$ task gains ~0.34 while the near-certain task gains only ~0.05 for the *same* 3x cost, confirming that ensembling multiple agents pays off most when a single agent is unreliable but not hopeless.
+
+**3.** Reuse the chapter's cost model from the "5-agent pipeline" worked example (input USD 0.15 / 1M tokens, output USD 0.60 / 1M tokens). A team proposes cutting the pipeline from **5 stages to 3 stages** while keeping the same per-stage numbers: each stage still has a 1,000-token system prompt and generates 400 output tokens, and the forwarded context still grows by 500 tokens per stage starting at 0 (so stage 1 = 0, stage 2 = 500, stage 3 = 1,000).
+
+- (a) Compute the input tokens, output tokens, and dollar cost per run of the 3-stage pipeline.
+- (b) At 10,000 runs/day for 30 days, what is the monthly cost, and what fraction of the 5-stage pipeline's ~USD 800/month is saved?
+
+??? note "Solution"
+    (a) **Input tokens:** system prompts $3 \times 1000 = 3000$; forwarded context $0 + 500 + 1000 = 1500$. Total input $= 3000 + 1500 = 4500$ tokens.
+
+    **Output tokens:** $3 \times 400 = 1200$ tokens.
+
+    **Cost per run:**
+
+    $$
+    C = \frac{4500 \times 0.15}{10^6} + \frac{1200 \times 0.60}{10^6} = \$0.000675 + \$0.00072 = \$0.001395
+    $$
+
+    So about **USD 0.0014 per run**.
+
+    (b) Monthly cost: $0.001395 \times 10{,}000 \times 30 = \$418.5 \approx$ **USD 419/month**.
+
+    The 5-stage pipeline cost about USD 800/month (USD 0.0027/run). Savings $\approx 800 - 419 = \$381$, i.e. roughly **48%** cheaper. The reduction is more than linear in stage count because dropping the last two stages removes both their fixed system-prompt overhead *and* the largest forwarded-context blocks (the 1,500- and 2,000-token injections), which is the compounding "multi-agent tax" the chapter warns about.
+
+**4.** The chapter lists **over-parallelism** as an anti-pattern: "spawning 20 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled." The `orchestrate` function submits *every* work item to the `ThreadPoolExecutor` at once. Modify the worker layer so that no more than `rate_limit` model calls start per 60-second window, while still running workers concurrently up to that bound. Keep the chapter's `WorkItem` / `WorkResult` types and `call_model` unchanged.
+
+??? note "Solution"
+    A simple, correct approach is a token-bucket-style throttle enforced by a shared, thread-safe gate that every worker must pass before it calls the model. We block a worker until a slot in the current 60-second window is free.
+
+    ```python
+    import threading
+    import time
+    from collections import deque
+
+    class RateLimiter:
+        """Allow at most `max_calls` acquisitions per `period` seconds.
+
+        Thread-safe: shared by all worker threads. Each worker calls
+        acquire() and blocks until a slot in the rolling window is free.
+        """
+        def __init__(self, max_calls: int, period: float = 60.0):
+            self.max_calls = max_calls
+            self.period = period
+            self._calls: deque[float] = deque()   # timestamps of recent starts
+            self._lock = threading.Lock()
+
+        def acquire(self) -> None:
+            while True:
+                with self._lock:
+                    now = time.monotonic()
+                    # Drop timestamps older than the window
+                    while self._calls and now - self._calls[0] >= self.period:
+                        self._calls.popleft()
+                    if len(self._calls) < self.max_calls:
+                        self._calls.append(now)
+                        return
+                    # Otherwise, compute how long until the oldest call ages out
+                    wait = self.period - (now - self._calls[0])
+                time.sleep(max(wait, 0.01))   # sleep OUTSIDE the lock
+
+
+    def run_worker_limited(item: WorkItem, limiter: RateLimiter) -> WorkResult:
+        """Same as run_worker, but gated by the shared rate limiter."""
+        try:
+            limiter.acquire()                 # blocks if the window is full
+            user_msg = item.task
+            if item.context:
+                user_msg = f"Context:\n{item.context}\n\nTask:\n{item.task}"
+            output = call_model(item.system_prompt, user_msg)
+            return WorkResult(worker_id=item.worker_id, output=output)
+        except Exception as exc:
+            return WorkResult(worker_id=item.worker_id, output="",
+                              success=False, error=str(exc))
+    ```
+
+    Wire it into `orchestrate` by creating one shared limiter and passing it to every worker:
+
+    ```python
+    def orchestrate(goal: str, max_workers: int = 4, rate_limit: int = 60) -> str:
+        print(f"[Orchestrator] Planning: {goal}")
+        work_items = plan(goal)
+        print(f"[Orchestrator] {len(work_items)} sub-tasks: "
+              f"{[w.worker_id for w in work_items]}")
+
+        limiter = RateLimiter(max_calls=rate_limit, period=60.0)
+        results: list[WorkResult] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(run_worker_limited, item, limiter): item
+                for item in work_items
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                status = "OK" if result.success else f"FAILED: {result.error}"
+                print(f"  [Worker {result.worker_id}] {status}")
+                results.append(result)
+
+        print("[Orchestrator] Synthesising results ...")
+        return synthesise(goal, results)
+    ```
+
+    Key points: (1) the limiter is *shared* across threads and guarded by a `Lock`, so the rolling window is counted correctly under concurrency; (2) `time.sleep` happens **outside** the lock so a waiting worker does not block others from checking the window; (3) `ThreadPoolExecutor(max_workers=...)` still caps in-flight concurrency, while the limiter caps the *rate* — the two constraints compose. Note the plan itself already fits the pool, but the limiter protects against the case where `len(work_items)` (or a burst of retries) exceeds the provider's requests-per-minute ceiling.
+
+**5.** The chapter's `self_critique_loop` retries a single worker with an appended critique until its score clears a threshold. Two problems with using it in production: (i) it can keep the *worse* of two attempts, since it returns the last attempt after `max_retries` rather than the best-scoring one; and (ii) the critique text accumulates unboundedly in `task`, inflating token cost on every retry. Rewrite the loop to (a) track and return the **highest-scoring** output seen, and (b) keep only the **most recent** critique in the prompt rather than appending forever. Preserve the signature and the early-return-on-success behavior.
+
+??? note "Solution"
+    We separate the *base task* (never mutated) from the *latest critique* (replaced, not appended), and remember the best (score, output) pair so a late low-scoring attempt cannot overwrite an earlier good one.
+
+    ```python
+    def self_critique_loop(
+        orchestrator_prompt: str,
+        worker_fn,
+        scoring_fn,
+        task: str,
+        threshold: float = 0.8,
+        max_retries: int = 3,
+    ) -> str:
+        """
+        Run a worker, score it, retry with critique if below threshold.
+        Returns the highest-scoring output seen across all attempts.
+        scoring_fn: (task, output) -> float in [0, 1]
+        """
+        base_task = task                 # immutable reference task
+        latest_critique = ""             # replaced each round, not appended
+        best_output = ""
+        best_score = -1.0
+
+        for attempt in range(max_retries):
+            # Build the prompt from the base task + only the most recent critique
+            prompt = base_task
+            if latest_critique:
+                prompt = (f"{base_task}\n\n[Revise. Previous critique: "
+                          f"{latest_critique}]")
+
+            output = worker_fn(prompt)
+            score = scoring_fn(base_task, output)
+
+            # (a) track the best attempt regardless of ordering
+            if score > best_score:
+                best_score = score
+                best_output = output
+
+            if score >= threshold:
+                return output            # early return on success, unchanged
+
+            # (b) overwrite the critique instead of appending
+            latest_critique = call_model(
+                "You are a quality assessor. Identify what is wrong or missing.",
+                f"Task: {base_task}\n\nOutput:\n{output}\n\nScore: {score:.2f}",
+            )
+
+        return best_output               # best-effort = highest-scoring attempt
+    ```
+
+    Why this fixes both problems:
+
+    - **(a) Best-of-N return.** `best_output`/`best_score` are updated on every attempt with a strict `>` comparison, so after `max_retries` we return the highest-scoring attempt rather than blindly the last one. If attempt 2 scored 0.75 and attempt 3 regressed to 0.60, we now return attempt 2.
+    - **(b) Bounded prompt growth.** `base_task` is fixed and `latest_critique` is *reassigned* each round, so the retry prompt stays roughly constant in size (base task + one critique) instead of growing by one full critique per iteration. This keeps the per-retry input token count flat, directly addressing the "coordination overhead" cost the chapter flags.
+
+    The early success path (`score >= threshold`) is preserved exactly.

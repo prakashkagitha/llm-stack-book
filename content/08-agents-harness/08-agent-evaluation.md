@@ -697,3 +697,135 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
 - Liu et al., "AgentBench: Evaluating LLMs as Agents" (2023) — multi-environment benchmark.
 - Xie et al., "OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments" (2024).
 - SWE-bench leaderboard and harness code: github.com/princeton-nlp/SWE-bench
+
+## Exercises
+
+**1.** *(Conceptual.)* Two coding agents, A and B, both score **0%** on a particular SWE-bench task after a single attempt each. A's trajectory correctly localized the buggy file and wrote a patch that fixed 9 of the 10 failing tests; B's trajectory never found the right file and edited unrelated code. Under the standard SWE-bench metric they are indistinguishable. Explain (a) why the metric collapses these two very different runs to the same score, and (b) what kind of scoring the chapter recommends to tell them apart, and one cost of adopting it.
+
+??? note "Solution"
+    (a) SWE-bench uses an **outcome** metric — *resolve rate*, the fraction of tasks where **all** tests pass. It is a *binary* per-task signal: the patch either makes the entire target test suite pass (score 1) or it does not (score 0). As the chapter notes, "a patch that fixes 9 of 10 failing tests still scores 0." Because scoring reads only the final state and demands *all* tests pass, both A (9/10 tests, right file) and B (0/10 tests, wrong file) map to the same failing outcome. The metric is maximally objective and cheap to compute, but it has low signal: it cannot see that A was one test away with correct localization while B was hallucinating.
+
+    (b) The chapter recommends **trajectory scoring** to distinguish them — measuring the quality of intermediate steps rather than only the final state. Relevant sub-approaches from the chapter include *step accuracy* (fraction of actions matching a reference/oracle trajectory), *subtask completion* (credit for each correctly completed decomposed step, e.g. "localized the right file"), and *process reward modeling* (a trained model scoring each step). Any of these would give A more credit than B. The cost: trajectory rewards "require annotated demonstrations, which are expensive" — you need human demonstrations, oracle solutions, or a trained process reward model, none of which scale as cheaply as running a test suite. (A second, subtler cost mentioned in the chapter: outcome-only RL rewards can be "hacked" by bizarre trajectories, which trajectory supervision helps mitigate — but the headline cost of trajectory scoring itself is annotation expense.)
+
+**2.** *(Quantitative.)* You run $n = 6$ independent agent trajectories on one SWE-bench task, and $c = 3$ of them produce a passing patch. Using the chapter's unbiased estimator, compute pass@1, pass@2, and pass@3 by hand. Then state, in one sentence, why pass@1 is the number that best predicts what a typical user experiences.
+
+??? note "Solution"
+    The estimator is
+
+    $$
+    \text{pass@}k = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}} = 1 - \frac{\binom{3}{k}}{\binom{6}{k}}.
+    $$
+
+    For $k = 1$:
+
+    $$
+    \text{pass@1} = 1 - \frac{\binom{3}{1}}{\binom{6}{1}} = 1 - \frac{3}{6} = 0.5.
+    $$
+
+    For $k = 2$:
+
+    $$
+    \text{pass@2} = 1 - \frac{\binom{3}{2}}{\binom{6}{2}} = 1 - \frac{3}{15} = 1 - 0.2 = 0.8.
+    $$
+
+    For $k = 3$:
+
+    $$
+    \text{pass@3} = 1 - \frac{\binom{3}{3}}{\binom{6}{3}} = 1 - \frac{1}{20} = 0.95.
+    $$
+
+    (Sanity check on pass@1: with $c/n = 3/6$, a single randomly chosen sample is correct with probability exactly $0.5$, matching the formula.)
+
+    pass@1 best predicts typical user experience because "real deployments usually cannot afford $k = 10$ full runs. pass@1 is what users experience; pass@$k$ describes what is possible with a strong verifier" — larger-$k$ numbers assume you can run $k$ samples *and* have a ground-truth checker to select the correct one at test time, which most deployments do not have.
+
+**3.** *(Quantitative.)* Your team evaluates a new scaffold on a held-out set of $N = 200$ tasks and observes a resolve rate of $p = 0.25$. (a) Compute the standard error of the proportion and give an approximate 95% confidence interval. (b) A rival scaffold scores 28% on the *same* 200 tasks. Based only on these aggregate numbers, is the 3-point gap convincing evidence that the rival is better? (c) What paired test does the chapter recommend instead, and what information does it need that the raw percentages throw away?
+
+??? note "Solution"
+    (a) Using the chapter's formula for the standard error of a proportion:
+
+    $$
+    \text{SE} = \sqrt{\frac{p(1-p)}{N}} = \sqrt{\frac{0.25 \times 0.75}{200}} = \sqrt{\frac{0.1875}{200}} = \sqrt{0.0009375} \approx 0.0306.
+    $$
+
+    The approximate 95% CI is $p \pm 1.96 \cdot \text{SE} = 0.25 \pm 1.96 \times 0.0306 = 0.25 \pm 0.060$, i.e. roughly $[0.19,\ 0.31]$.
+
+    (b) No. The rival's 28% falls squarely inside your $[0.19, 0.31]$ interval (and, symmetrically, the intervals overlap heavily), so a 3-point gap at this sample size is well within the noise band. The chapter makes exactly this point for $N = 500$ ("a reported improvement from 30% to 33% is statistically indistinguishable from noise"); with only $N = 200$ the interval is even wider, so the gap is even less convincing.
+
+    (c) The chapter recommends **McNemar's test** on the paired per-task outcomes (both scaffolds run on the *same* task set). The raw percentages discard the pairing: they only tell you *how many* tasks each scaffold solved, not *which* ones. McNemar's test needs the discordant counts — the number of tasks the rival solves that yours fails ($c$) and the number yours solves that the rival fails ($b$). Two scaffolds could each solve 25% vs 28% while overlapping almost entirely (few discordant tasks, unconvincing) or barely overlapping (many discordant tasks, more meaningful); the aggregate percentages cannot distinguish these cases.
+
+**4.** *(Implementation.)* The chapter's `pass_at_k` estimates "at least one of $k$ samples succeeds." tau-bench instead uses a **pass^k** reliability metric: the probability that $k$ *independent* trials on the same task **all** succeed — the right notion when you care about consistency, not best-of-$k$. Given $n$ samples of which $c$ are correct, the unbiased estimator is
+
+$$
+\text{pass}\hat{}\,k = \frac{\binom{c}{k}}{\binom{n}{k}}.
+$$
+
+Implement `pass_hat_k(n, c, k)` in the style of the chapter's `pass_at_k`: raise if $n < k$, handle the edge cases, compute in log space for stability, and return $0.0$ when fewer than $k$ correct samples exist. Then evaluate it for $n = 8,\ c = 6,\ k = 2$.
+
+??? note "Solution"
+    ```python
+    import math
+
+    def pass_hat_k(n: int, c: int, k: int) -> float:
+        """
+        Unbiased estimator of pass^k (tau-bench reliability metric):
+        probability that ALL k independent samples succeed.
+
+        n: total samples drawn per task
+        c: number of correct samples among n
+        k: number of samples to select (k <= n)
+
+        pass^k = C(c, k) / C(n, k)
+        """
+        if n < k:
+            raise ValueError(f"Cannot compute pass^{k} with only {n} samples")
+        if c < k:
+            # Fewer than k correct samples => no all-correct k-subset exists.
+            return 0.0
+        if c == n:
+            return 1.0
+        # C(c, k) / C(n, k), computed in log space for numerical stability.
+        # C(m, k) = prod_{i=0..k-1} (m - i) / (i + 1); the (i+1) denominators
+        # cancel between numerator and denominator, leaving a ratio of falling
+        # factorials, exactly as the chapter's pass_at_k does.
+        log_num = sum(math.log(c - i) for i in range(k))
+        log_den = sum(math.log(n - i) for i in range(k))
+        return math.exp(log_num - log_den)
+
+    print(pass_hat_k(8, 6, 2))  # -> 0.5357142857142857
+    ```
+
+    Working the requested value by hand:
+
+    $$
+    \text{pass}\hat{}\,2 = \frac{\binom{6}{2}}{\binom{8}{2}} = \frac{15}{28} \approx 0.536.
+    $$
+
+    Interpretation: even though $6/8$ single samples pass (pass@1 $= 0.75$), the chance that *two* independent runs *both* succeed is only about 54% — reliability degrades faster than single-shot accuracy, which is exactly why a customer-service benchmark like tau-bench reports pass^k. Note the contrast with the chapter's `pass_at_k`, whose edge case returns `1.0` when `n - c < k`; here the mirror-image edge case (`c < k`) returns `0.0`, because "all succeed" fails as soon as there are fewer than $k$ correct samples.
+
+**5.** *(Conceptual.)* A leaderboard entry reports "Model X: 45% on SWE-bench Verified." Your manager wants to reproduce it with your own model and compare. (a) List the four harness facts the chapter says you must know before the number is interpretable. (b) The published entry used **oracle file localization**; your reproduction uses **agent self-localization**. All else equal, roughly which direction and how large a gap does the chapter attribute to that single difference? (c) Independently, Model X's knowledge cutoff is much later than the benchmark's task dates. Name the risk this raises and one concrete check the chapter suggests to probe it.
+
+??? note "Solution"
+    (a) The chapter's "harness disclosure" pitfall lists exactly four items to report: (1) **oracle vs. retrieved file localization**, (2) **maximum iterations** (the iteration/retry budget), (3) **tools available** (the tool suite), and (4) **scaffold name and version**. Without these, "comparison across entries is meaningless."
+
+    (b) Oracle localization tells the agent exactly which files to edit and is an *upper bound* on localization; the chapter says it "typically lifts scores by **10–20 percentage points** on SWE-bench" relative to more realistic strategies. So the published oracle entry is expected to be roughly **10–20 points higher** than an otherwise-identical agent-self-localization reproduction — meaning your lower number may reflect the harness, not a weaker model. The chapter's interview corner makes the same point: "A difference in oracle-vs-retrieved localization alone can explain a 3-point gap" (and here the gap could be much larger).
+
+    (c) The risk is **contamination**: SWE-bench tasks are real GitHub issues whose merged patches are public, so a model with a later cutoff may have seen the solution (the diff, or discussion of it via Stack Overflow, blog posts, or PR threads) in its training crawl and be *retrieving memory* rather than solving fresh. Concrete checks the chapter suggests include: (i) **stratify solve rate by task creation date** — "if the model does disproportionately better on older tasks, contamination is likely"; (ii) **differential perturbation** — rename variables / change error messages and see whether the solve rate drops sharply (a large drop suggests memorization); or (iii) compare the model's knowledge cutoff against the benchmark's task date range and prefer recency-filtered / held-out splits.
+
+**6.** *(Quantitative + implementation.)* You run Model A and Model B on the **same** 300 SWE-bench Verified tasks. They agree on most tasks, but among the tasks where they differ: A solves **12** that B fails, and B solves **20** that A fails. (a) Using the chapter's McNemar statistic (with continuity correction), compute $\chi^2$ by hand. (b) The chapter's `mcnemar_test` derives its $p$-value from `stats.chi2.cdf(chi2, df=1)`; using the fact that for one degree of freedom $p = 2\big(1 - \Phi(\sqrt{\chi^2})\big)$ where $\Phi$ is the standard normal CDF, estimate the $p$-value and state whether the difference is significant at the 0.05 level. (c) Explain why only the **discordant** pairs (12 and 20) enter the statistic and the concordant pairs are ignored.
+
+??? note "Solution"
+    (a) With $b = 12$ (A-only) and $c = 20$ (B-only), the chapter's continuity-corrected statistic is
+
+    $$
+    \chi^2 = \frac{(|b - c| - 1)^2}{b + c} = \frac{(|12 - 20| - 1)^2}{12 + 20} = \frac{(8 - 1)^2}{32} = \frac{49}{32} \approx 1.531.
+    $$
+
+    (b) $\sqrt{\chi^2} = \sqrt{1.531} \approx 1.237$. From the standard normal CDF, $\Phi(1.237) \approx 0.892$, so
+
+    $$
+    p = 2\big(1 - \Phi(1.237)\big) \approx 2 (1 - 0.892) = 2 (0.108) \approx 0.216.
+    $$
+
+    Since $p \approx 0.22 > 0.05$, the difference is **not** significant at the 0.05 level. Even though B solved 8 more tasks net (20 vs 12 on the discordant set), that split is well within what chance would produce if the two models were equally capable — you should not claim B is better on this evidence. (Confirming with the chapter's code: `chi2 = (abs(12-20)-1)**2/(12+20)` gives `1.531`, and `1 - stats.chi2.cdf(1.531, df=1)` returns approximately `0.216`, so `significant_at_05` is `False`.)
+
+    (c) McNemar's test asks whether the two models *disagree symmetrically*. **Concordant** pairs — tasks both models solve, or both fail — carry no information about which model is better: they contribute equally to both scores and would cancel in any paired difference. Only the **discordant** pairs, where exactly one model succeeds, bear on the direction of the difference. Under the null hypothesis "the models are equally good," each discordant task is equally likely to fall to A or to B, so $b$ and $c$ should be roughly balanced; the statistic measures how far the observed split ($12$ vs $20$) departs from that $50/50$ expectation, normalized by the total number of discordant pairs $b + c$. This is precisely why the chapter insists on a *paired* test on the same task set rather than comparing the two raw resolve-rate percentages, which throw the pairing away.

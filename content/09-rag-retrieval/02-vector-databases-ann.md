@@ -652,3 +652,130 @@ For how these retrievers slot into a generation pipeline — query construction,
 - Jeff Johnson, Matthijs Douze, Hervé Jégou, *Billion-Scale Similarity Search with GPUs* (2017) — the FAISS paper.
 - Jon Kleinberg, *Navigation in a Small World* (Nature, 2000) — the navigable small-world result underpinning graph ANN.
 - The **FAISS** library (`facebookresearch/faiss`) and its wiki — the canonical reference implementation and index "factory" documentation.
+
+## Exercises
+
+**1.** (Conceptual) The chapter claims that once vectors are L2-normalized, a single index serves simultaneously as a cosine index and a Euclidean index. Starting from the identity $\|\mathbf{q} - \mathbf{x}\|_2^2 = 2 - 2\,\mathbf{q}^\top\mathbf{x}$ for unit vectors, show that ranking the corpus by *ascending* squared-L2 distance produces the *exact same order* as ranking by *descending* cosine similarity. Then explain what the "metric mismatch footgun" from the chapter's warning box would do to your results, and describe the one-line sanity check the chapter recommends.
+
+??? note "Solution"
+    For unit vectors, $\|\mathbf{q}-\mathbf{x}\|_2^2 = 2 - 2\,\mathbf{q}^\top\mathbf{x}$ and, since $\|\mathbf{q}\|=\|\mathbf{x}\|=1$, the cosine similarity is $\operatorname{sim}_{\cos}(\mathbf{q},\mathbf{x}) = \mathbf{q}^\top\mathbf{x}$. Substituting,
+
+    $$
+    \|\mathbf{q}-\mathbf{x}\|_2^2 = 2 - 2\,\operatorname{sim}_{\cos}(\mathbf{q},\mathbf{x}).
+    $$
+
+    This is an *affine, strictly decreasing* function of the cosine similarity: distance $= 2 - 2\,s$ with slope $-2 < 0$. A strictly decreasing map preserves the ranking but reverses its direction, so the vector with the *smallest* L2 distance is exactly the vector with the *largest* cosine similarity, and this holds for the entire ordering, not just the top-1. Concretely, for any two candidates $\mathbf{x}_a, \mathbf{x}_b$,
+
+    $$
+    \|\mathbf{q}-\mathbf{x}_a\|_2^2 < \|\mathbf{q}-\mathbf{x}_b\|_2^2 \iff \mathbf{q}^\top\mathbf{x}_a > \mathbf{q}^\top\mathbf{x}_b,
+    $$
+
+    so the top-$k$ sets are identical. That is why normalizing lets one index answer both metrics.
+
+    The footgun: if the embedding model emits cosine-normalized vectors but you build an L2 index over *un-normalized* vectors (or mix an inner-product index with un-normalized data), the equivalence above no longer holds — the $\|\mathbf{x}\|^2$ term stops being constant across candidates, so longer vectors get unfairly penalized or favored. The neighbors look plausible but are wrong, silently degrading RAG. Sanity check: query the index with a vector that is *in* the corpus and confirm it retrieves *itself* as the rank-1 neighbor with similarity $1.0$ (distance $0$). If it does not, your normalization or metric is misconfigured.
+
+**2.** (Quantitative) You deploy an IVF-Flat index over $N = 10^{8}$ vectors, choosing $n_{\text{list}} = \sqrt{N}$ centroids as the chapter's heuristic suggests, and search with $n_{\text{probe}} = 16$. (a) Roughly how many database vectors does one query scan? (b) What speedup is that over exact brute force? (c) The heuristic keeps $n_{\text{list}} = \sqrt{N}$; as $N$ grows, does the speedup at fixed $n_{\text{probe}}$ get better or worse, and why?
+
+??? note "Solution"
+    (a) With $n_{\text{list}} = \sqrt{10^{8}} = 10^{4}$ centroids, the expected number scanned is
+
+    $$
+    \mathbb{E}[\text{scanned}] \approx N \cdot \frac{n_{\text{probe}}}{n_{\text{list}}} = 10^{8} \cdot \frac{16}{10^{4}} = 1.6 \times 10^{5} \text{ vectors.}
+    $$
+
+    (b) Brute force scans all $N = 10^{8}$. The speedup is
+
+    $$
+    \frac{N}{\mathbb{E}[\text{scanned}]} = \frac{n_{\text{list}}}{n_{\text{probe}}} = \frac{10^{4}}{16} = 625\times.
+    $$
+
+    (This ignores the cost of the coarse step — finding the $n_{\text{probe}}$ nearest of $n_{\text{list}} = 10^4$ centroids — which is a small linear scan of $10^4$ dot products, negligible beside the $1.6\times 10^5$ candidate distances.)
+
+    (c) Better. With $n_{\text{list}} = \sqrt{N}$, the speedup $= n_{\text{list}}/n_{\text{probe}} = \sqrt{N}/n_{\text{probe}}$, which grows as $\sqrt{N}$. Going from $N = 10^{8}$ to $N = 10^{9}$ raises the speedup from $625\times$ to $\sqrt{10^9}/16 \approx 1976\times$. The catch not captured by this arithmetic is recall: at fixed $n_{\text{probe}}$ you scan a *shrinking fraction* of the corpus, so the boundary problem worsens and recall tends to fall — which is why real deployments raise $n_{\text{probe}}$ as $N$ grows and always measure recall against brute force.
+
+**3.** (Quantitative) You must fit $N = 10^{8}$ embeddings of dimension $d = 1024$ into RAM using Product Quantization with $m = 32$ subquantizers and $k^{*} = 256$ centroids per subspace. (a) How many bytes does one vector's PQ code take, and what is the compression ratio versus float32? (b) How many distinct vectors can the codebook *implicitly* represent? (c) How much RAM do the PQ codes for all $N$ vectors take, and how much do the codebooks themselves take? (d) What size is the per-query ADC lookup table, and what operations does scoring one database vector cost?
+
+??? note "Solution"
+    (a) Each subquantizer index is one of $k^{*} = 256$ values, i.e. exactly one byte, and there are $m = 32$ of them, so **32 bytes per vector**. A full-precision vector is $d \cdot 4 = 1024 \cdot 4 = 4096$ bytes. Compression ratio:
+
+    $$
+    \frac{4096}{32} = 128\times.
+    $$
+
+    (b) The reconstruction is the concatenation of one chosen centroid per subspace, so the number of representable combinations is
+
+    $$
+    (k^{*})^{m} = 256^{32} = (2^{8})^{32} = 2^{256} \approx 1.16 \times 10^{77},
+    $$
+
+    an astronomically large implicit codebook stored in only 32 bytes per vector.
+
+    (c) Codes: $N \cdot 32 = 10^{8} \cdot 32 = 3.2 \times 10^{9}$ bytes $\approx 3.2$ GB. Codebooks: $m \cdot k^{*} \cdot d^{*}$ floats, where $d^{*} = d/m = 1024/32 = 32$, so $32 \cdot 256 \cdot 32 = 262{,}144$ floats $\times 4$ bytes $\approx 1.05$ MB — negligible next to the 3.2 GB of codes (and, importantly, *fixed*, independent of $N$).
+
+    (d) The LUT has shape $m \times k^{*} = 32 \times 256 = 8192$ float32 entries ($\approx 32$ KB), computed once per query. Scoring one database vector is then $m = 32$ table lookups (one gather per subspace using that vector's code byte) and $m - 1 = 31$ additions — **no multiplications and no decompression**.
+
+**4.** (Implementation) The chapter mentions a **re-ranking** stage (`IndexRefineFlat`) that "fetches the top candidates' full vectors and re-scores them exactly to recover the recall that quantization lost." Extend the `ProductQuantizer` class with a method `search_rerank(self, q, codes, data, k=10, rerank=100)` that (1) uses fast ADC to shortlist the `rerank` best candidates, then (2) re-scores *only those* against their full-precision vectors in `data` with exact squared-L2 and returns the true top-$k$. Explain the cost you added and why it helps.
+
+??? note "Solution"
+    The method reuses the ADC path to build a cheap shortlist, then pays for exact distances on just that shortlist:
+
+    ```python
+    def search_rerank(self, q, codes, data, k=10, rerank=100):
+        """Two-stage: ADC shortlist -> exact re-rank on full vectors."""
+        rerank = min(rerank, codes.shape[0])
+        # --- Stage 1: ADC (same LUT trick as `search`), cheap over ALL codes ---
+        lut = np.empty((self.m, self.k_star), np.float32)
+        for j in range(self.m):
+            qsub = q[j*self.dsub:(j+1)*self.dsub]
+            diff = self.codebooks[j] - qsub
+            lut[j] = np.einsum("kd,kd->k", diff, diff)
+        approx = np.zeros(codes.shape[0], np.float32)
+        for j in range(self.m):
+            approx += lut[j, codes[:, j]]
+        # keep the `rerank` smallest approximate distances (O(N), no full sort)
+        cand = np.argpartition(approx, rerank - 1)[:rerank]
+        # --- Stage 2: exact squared-L2 on the shortlist's FULL vectors ---
+        diffs = data[cand] - q                       # (rerank, d)
+        exact = np.einsum("nd,nd->n", diffs, diffs)  # (rerank,)
+        order = np.argpartition(exact, min(k, rerank - 1))[:k]
+        order = order[np.argsort(exact[order])]
+        return cand[order]                           # exact top-k among shortlist
+    ```
+
+    Cost added: `rerank` full-precision squared-L2 evaluations, i.e. $O(\text{rerank} \cdot d)$ float multiply-adds plus the fetch of `rerank` full vectors (the very rows PQ was compressing away). Because `rerank` (e.g. 100–1000) is tiny next to $N$, this is a small fixed surcharge on top of the $O(N)$ ADC scan.
+
+    Why it helps: ADC ranks by *approximate* distance, so quantization error can shuffle the true near neighbors slightly out of the top-$k$ — but they usually still land within a somewhat larger shortlist of size `rerank`. Re-scoring that shortlist with exact distances removes the quantization error *for the candidates that matter*, so the final top-$k$ is ordered by true distance. This recovers most of the recall PQ lost while keeping PQ's memory savings, since only the handful of shortlisted vectors ever need full precision (in production those full vectors typically live on disk/SSD). The knob is `rerank`: larger shortlist means higher recall for more re-scoring work.
+
+**5.** (Quantitative) HNSW assigns each node a maximum layer by $\ell = \lfloor -\ln(U) \cdot m_L \rfloor$ with $U \sim \text{Uniform}(0,1)$ and $m_L = 1/\ln(M)$. Take $M = 16$. (a) Derive $P(\ell \geq L)$ as a function of $M$ and $L$. (b) For a graph of $N = 1{,}000{,}000$ nodes, how many nodes do you expect to appear in layer $\geq 1$, layer $\geq 2$, and layer $\geq 3$? (c) Explain in one or two sentences why this geometric thinning is what gives HNSW its logarithmic search cost.
+
+??? note "Solution"
+    (a) $\ell \geq L$ (with $L$ a positive integer) exactly when $-\ln(U)\, m_L \geq L$, because the floor of a value is $\geq L$ iff the value itself is $\geq L$. Rearranging with $m_L = 1/\ln M$:
+
+    $$
+    -\ln(U) \geq L\ln M \;\Longleftrightarrow\; \ln(U) \leq -L\ln M \;\Longleftrightarrow\; U \leq M^{-L}.
+    $$
+
+    Since $U$ is uniform on $(0,1)$, $P(U \leq M^{-L}) = M^{-L}$. So
+
+    $$
+    P(\ell \geq L) = M^{-L} = \left(\tfrac{1}{16}\right)^{L}.
+    $$
+
+    (b) The expected count at layer $\geq L$ is $N \cdot M^{-L}$:
+
+    - Layer $\geq 1$: $10^{6} \cdot 16^{-1} = 10^{6}/16 = 62{,}500$ nodes.
+    - Layer $\geq 2$: $10^{6} \cdot 16^{-2} = 10^{6}/256 \approx 3{,}906$ nodes.
+    - Layer $\geq 3$: $10^{6} \cdot 16^{-3} = 10^{6}/4096 \approx 244$ nodes.
+
+    (Layer 0, $L=0$, holds all $10^6$ nodes: $M^{0}=1$.)
+
+    (c) Each layer up holds a factor $1/M$ fewer nodes, so the number of populated layers grows like $\log_M N$, and the top layers are sparse "express lanes" with long-range links. Search starts at the single top entry point and greedily descends, covering large distances in the sparse upper layers with few hops before refining in the dense layer 0 — so the total hop count scales with the number of layers, $O(\log N)$, rather than with $N$.
+
+**6.** (Conceptual) A tenant runs the query "documents similar to $\mathbf{q}$ *where* `tenant_id = 42`", and `tenant_id = 42` matches only $0.1\%$ of the corpus. Contrast the **pre-filter** and **post-filter** strategies for this *filtered ANN* query: give the failure mode of each under such a selective predicate, and explain why a filter-aware HNSW traversal (as in Qdrant/Milvus) avoids both.
+
+??? note "Solution"
+    **Pre-filter** first computes the matching id set ($0.1\%$ of vectors), then searches only within it. The failure mode with a highly selective predicate: those matching vectors are scattered all over the HNSW graph, which was built over *all* vectors. Restricting traversal to the matching subset severs the graph's connectivity — the greedy walk can no longer use non-matching nodes as bridges — so recall craters, and the system often falls back to a brute-force scan over the (here, small) matching set, which is fine at $0.1\%$ but blows up when the filter is only moderately selective.
+
+    **Post-filter** runs the normal unfiltered ANN for the top-$k$, then discards results failing the predicate. The failure mode: at $0.1\%$ selectivity, almost none of the unfiltered top-$k$ satisfy `tenant_id = 42`, so you may retrieve $k = 10$ and have *zero* survive. You are forced to over-fetch by an unknown, potentially huge factor (here on the order of $1/0.001 = 1000\times$) with no guarantee of enough survivors, wasting work and latency.
+
+    **Filter-aware HNSW** consults the predicate *during* traversal: it still walks the full graph using non-matching nodes as connectivity bridges, but only *collects into the result set* nodes that satisfy the filter. This keeps the graph navigable (unlike pre-filter, which fragments it) while guaranteeing the returned neighbors all pass the predicate (unlike post-filter, which can return an empty set) — recovering recall without unbounded over-fetching. It is the production frontier the chapter flags as a strong design-round point.

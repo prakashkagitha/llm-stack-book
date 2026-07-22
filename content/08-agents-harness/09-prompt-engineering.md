@@ -785,3 +785,191 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
 - Brown, T. et al. — "Language Models are Few-Shot Learners" (GPT-3; NeurIPS 2020) — the foundational in-context learning result
 - Min, S. et al. — "Rethinking the Role of Demonstrations: What Makes In-Context Learning Work?" (EMNLP 2022) — shows labels matter less than format in few-shot
 - Anthropic prompt caching documentation — `docs.anthropic.com/en/docs/build-with-claude/prompt-caching`
+
+---
+
+## Exercises
+
+**1.** (Conceptual) Section 8.4 states that few-shot learning "works even when the labels are randomly permuted," citing the finding that the model "learns format, not semantics from labels." Explain the mechanism this implies, and use it to justify two of the four best practices in the "Example Selection and Ordering" list. If labels carried no information at all, would you expect few-shot to ever beat zero-shot? Explain.
+
+??? note "Solution"
+    The finding (Min et al., 2022, referenced in §8.4 and the SOTA box) says that scrambling the *label* attached to each demonstration barely hurts accuracy on many tasks. The mechanistic reading given in the chapter: in-context learning is not standard supervised learning over the demonstration labels. Instead the demonstrations communicate the *format*, *register*, *granularity*, and *implicit rubric* of a valid output, and they shift the model's prior over the output space without any weight update. The label slot mainly teaches the model *what a label looks like and where it goes*, not the true input->label mapping — the true mapping was already learned in pretraining.
+
+    This justifies at least two of the four best practices:
+
+    - **Consistent format** (practice 4): if the demonstrations carry information chiefly through their *structure*, then any inconsistency in spacing, punctuation, or layout is pure noise injected into the very channel the model relies on. Format noise is therefore more damaging than a wrong label.
+    - **Balanced labels** (practice 3): even though individual labels are not learned as a mapping, the *distribution* of labels across the demonstrations sets the model's prior. Showing five "positive" and one "negative" biases sampling toward "positive" regardless of the input, so a binary classifier should use equal counts.
+
+    (One could also invoke practice 2, "put hard examples last," via the recency-bias claim, or practice 1, "diversity," via the goal of demonstrating the full output format range.)
+
+    Would few-shot ever beat zero-shot if labels were *completely* uninformative? Yes. Even with meaningless labels, the demonstrations still convey format, output length, and the exact template (e.g., `Document: ... / Label: ...`). That structural signal alone can raise accuracy over a zero-shot prompt whose output format the model has to guess — which is exactly why the "labels don't matter much" result is surprising rather than a statement that demonstrations are useless.
+
+**2.** (Quantitative) You deploy a task whose system prompt is 800 tokens and is static across every request. You serve 3,000,000 requests/day, and input tokens cost USD 0.50 per million. Ignoring the user turn and the model's output, what does the system prompt alone cost per day? Per (365-day) year?
+
+??? note "Solution"
+    Using the same per-request-cost reasoning as the chapter's opening example, the daily cost of just the static system prompt is tokens x requests x price-per-token:
+
+    $$
+    800 \times 3{,}000{,}000 \times \frac{0.50}{10^6}
+    = 800 \times 3 \times 0.50 = 1200 \text{ USD/day}
+    $$
+
+    (The factor $3{,}000{,}000 / 10^6 = 3$ makes this easy by hand.)
+
+    Per year:
+
+    $$
+    1200 \times 365 = 438{,}000 \text{ USD/year}
+    $$
+
+    So 800 tokens of boilerplate, before any user logic runs, costs USD 1,200/day and about USD 438k/year. This is the concrete motivation for both prompt compression (Interview Corner, lever 2) and prompt caching (§8.7).
+
+**3.** (Quantitative) Reuse the "few-shot token budget" method from §8.4 with new numbers. The model context window is 4,096 tokens. Your system prompt is 400 tokens, each few-shot example costs ~60 tokens, you must reserve 1,024 tokens for the model's output, and the user query is typically 150 tokens. What is the theoretical maximum number of few-shot examples you can fit? Given the chapter's guidance, roughly how many would you actually use, and what should the leftover budget go toward?
+
+??? note "Solution"
+    Following §8.4, first subtract every non-example allocation from the context window to get the budget available for examples:
+
+    $$
+    4096 - \underbrace{400}_{\text{system}} - \underbrace{1024}_{\text{reserved output}} - \underbrace{150}_{\text{user query}} = 2522 \text{ tokens}
+    $$
+
+    At ~60 tokens per example:
+
+    $$
+    \left\lfloor \frac{2522}{60} \right\rfloor = \lfloor 42.03 \rfloor = 42 \text{ examples (theoretical maximum)}
+    $$
+
+    The chapter notes diminishing returns kick in around 4-16 examples for most tasks, so in practice you would use roughly 4-16 (selected dynamically via the `DynamicFewShotSelector`, picking the most informative handful from a larger library). The leftover budget — most of the ~2,522 tokens — is better spent on context injection or longer/clearer system instructions than on stacking 42 examples.
+
+**4.** (Quantitative) Apply the §8.7 caching cost model. A system prompt of 2,500 static tokens is marked cacheable; retrieved context is 1,000 tokens (dynamic) and the user query is 50 tokens (dynamic). Cache reads cost 10% of the normal prefill price. Prefill is USD 0.50 per million input tokens, and you serve 2,000,000 requests/day. Compute the daily input-token cost without caching and with caching, and the percentage saved. Then state, in one sentence, why moving even a stable 500-token block from *after* the dynamic context to *before* it can change the answer.
+
+??? note "Solution"
+    Without caching, all $2500 + 1000 + 50 = 3550$ tokens are billed at full price each request:
+
+    $$
+    3550 \times 2{,}000{,}000 \times \frac{0.50}{10^6} = 3550 \times 2 \times 0.50 = 3550 \text{ USD/day}
+    $$
+
+    With caching, the 2,500-token static prefix bills at 10% (i.e. USD 0.05 per million), and the $1000 + 50 = 1050$ dynamic tokens bill at full price:
+
+    $$
+    \underbrace{2500 \times 2{,}000{,}000 \times \frac{0.05}{10^6}}_{\text{cached prefix} = 250}
+    + \underbrace{1050 \times 2{,}000{,}000 \times \frac{0.50}{10^6}}_{\text{dynamic suffix} = 1050}
+    = 250 + 1050 = 1300 \text{ USD/day}
+    $$
+
+    Savings:
+
+    $$
+    3550 - 1300 = 2250 \text{ USD/day}, \qquad \frac{2250}{3550} \approx 0.634 = 63.4\%
+    $$
+
+    Why ordering matters: the cache is keyed on an exact byte-for-byte *prefix* match (§8.7), so any token of dynamic content placed before a stable block breaks the match for everything after it — putting the stable 500-token block ahead of the dynamic context lets it join the cached prefix instead of being re-billed at full price every request.
+
+**5.** (Quantitative) The self-consistency vote in §8.3 takes the plurality (argmax / `most_common`) answer over $k$ independent CoT chains. Model each chain as independently producing the correct answer with probability $p = 0.6$; treat every incorrect chain as producing a distinct wrong answer (so a wrong answer can never win a plurality). For $k = 5$, what is the probability the plurality vote is correct? Compare to a single chain, and state one real-world way the "distinct wrong answers" assumption can fail.
+
+??? note "Solution"
+    Under the stated assumption the correct answer is the *only* value that can appear more than once; every wrong answer is a distinct singleton holding exactly one vote. So the `argmax`/plurality rule of §8.3 selects the correct answer the moment it appears at least **twice** — two matching correct chains already outvote every singleton wrong. The vote is therefore correct exactly when the number of correct chains $C \ge 2$. (At $C = 1$ all five chains tie one-apiece and the correct answer is not the unique winner; at $C = 0$ it cannot win.) With $C \sim \text{Binomial}(5, 0.6)$ it is easiest to use the complement:
+
+    $$
+    P(C \ge 2) = 1 - P(C = 0) - P(C = 1)
+    $$
+
+    Term by term:
+
+    $$
+    P(C = 0) = \binom{5}{0}(0.6)^0(0.4)^5 = 1 \times 1 \times 0.01024 = 0.01024
+    $$
+    $$
+    P(C = 1) = \binom{5}{1}(0.6)^1(0.4)^4 = 5 \times 0.6 \times 0.0256 = 0.0768
+    $$
+
+    So:
+
+    $$
+    P(C \ge 2) = 1 - 0.01024 - 0.0768 = 0.91296 \approx 91.3\%
+    $$
+
+    So in this idealized "wrong answers scatter" model, self-consistency lifts accuracy from 60.0% (single chain) to about 91.3% at $k=5$ — a far larger jump than the "several percentage points" the chapter cites for real benchmarks, precisely because the assumption is optimistic. Note the plurality threshold ($C \ge 2$) is *weaker* than a strict majority ($C \ge 3$): scattering the wrong votes into singletons is exactly what lets a bare plurality of correct chains win.
+
+    How the assumption fails in practice: wrong chains are often *correlated* — a common misconception, an ambiguous problem statement, or a systematic tokenization/arithmetic error can drive many chains to the *same* wrong answer. When that happens the wrong answer can win the plurality, and majority voting no longer improves (or can even hurt) accuracy. This is why §8.3 stresses using non-zero temperature so the chains genuinely diverge.
+
+**6.** (Implementation) The `self_consistent_answer` function in §8.3 returns only the winning string. Modify it so it (a) also returns a *confidence* equal to the winning answer's vote share, (b) breaks ties deterministically (pick the answer that is alphabetically first among those tied for the most votes, so repeated runs on the same votes agree), and (c) accepts a real `extract_fn`. Write a regex-based `extract_fn` that pulls the number out of a final line like `The answer is 11.` and returns `"11"`, falling back to the stripped last line when no such pattern is found. Keep the chapter's async/`Counter` style.
+
+??? note "Solution"
+    The change is local to the vote-tabulation step: compute the max vote count, collect every answer tied at that count, and pick the alphabetically smallest for determinism. Confidence is `count / k`.
+
+    ```python
+    import re
+    import asyncio
+    from collections import Counter
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI()
+
+
+    def answer_is_extractor(text: str) -> str:
+        """
+        Pull the number from a final line like 'The answer is 11.'
+        Falls back to the stripped last non-empty line if the pattern
+        is absent. Returns a string so it slots straight into Counter.
+        """
+        # Search the whole response; take the LAST match so trailing
+        # 'The answer is X' wins over any earlier mention.
+        matches = re.findall(r"answer is\s*(-?\d+(?:\.\d+)?)", text, re.IGNORECASE)
+        if matches:
+            return matches[-1]
+        # Fallback: last non-empty line, stripped of trailing punctuation.
+        lines = [ln.strip() for ln in text.strip().split("\n") if ln.strip()]
+        return lines[-1].rstrip(".") if lines else ""
+
+
+    async def self_consistent_answer(
+        prompt: str,
+        k: int = 7,
+        model: str = "gpt-4o-mini",
+        extract_fn=None,
+    ) -> tuple[str, float]:
+        """
+        Generate k CoT responses in parallel, extract each final answer,
+        and return (winner, confidence) where confidence is the winner's
+        vote share. Ties are broken by alphabetical order for determinism.
+        """
+        tasks = [
+            client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,   # non-zero so chains diverge
+            )
+            for _ in range(k)
+        ]
+        responses = await asyncio.gather(*tasks)
+
+        answers = []
+        for resp in responses:
+            text = resp.choices[0].message.content
+            ans = extract_fn(text) if extract_fn else text.strip().split("\n")[-1]
+            answers.append(ans)
+
+        counter = Counter(answers)
+        top_count = max(counter.values())
+        # Deterministic tie-break: alphabetically first among the leaders.
+        winner = min(a for a, c in counter.items() if c == top_count)
+        confidence = top_count / k
+        print(f"Vote distribution: {dict(counter)}")
+        return winner, confidence
+
+
+    # Example usage (requires a running event loop):
+    # winner, conf = asyncio.run(
+    #     self_consistent_answer(COT_PROMPT, k=7, extract_fn=answer_is_extractor)
+    # )
+    # print(f"{winner} (confidence {conf:.0%})")
+    ```
+
+    Notes on the design choices:
+
+    - `extract_fn` is applied per response before voting, so the majority is taken over *normalized* answers (`"11"`) rather than whole CoT strings — two chains that reason differently but reach `The answer is 11.` now count as the same vote, which is the point of self-consistency.
+    - Using `re.findall(...)[-1]` grabs the *last* "answer is X", matching the convention in §8.3's `COT_PROMPT` where the final line states the answer.
+    - `min(...)` over the tied leaders makes the result independent of dict/`Counter` insertion order, so re-running on the same set of votes always returns the same winner — important for reproducible evals (§8.6).
+    - Confidence (`top_count / k`) gives a cheap abstention signal: a low share (e.g. 3/7) flags a hard case where you might escalate to a larger model or a human, echoing the agent stopping conditions in §8.8.

@@ -629,3 +629,196 @@ For the next stage — indexing these embeddings and querying them efficiently a
 - Wang et al., **Text Embeddings by Weakly-Supervised Contrastive Pre-training** (E5), 2022 — large-scale weakly supervised bi-encoder pre-training.
 - `sentence-transformers` library (Reimers, Hugging Face) — the practical go-to for embedding model training and inference.
 - `MTEB` Python package (Hugging Face) — easy reproducible evaluation of any embedding model.
+
+## Exercises
+
+**1.** *(Conceptual.)* A colleague proposes replacing your dense bi-encoder retriever with a cross-encoder, arguing that cross-encoders score relevance more accurately. Explain (a) why the bi-encoder, not the cross-encoder, is the design that makes first-stage retrieval over millions of documents tractable, and (b) what specifically breaks if you try to use a cross-encoder as the first-stage retriever. Then describe the standard way both architectures are used together in a production RAG pipeline.
+
+??? note "Solution"
+    **(a) Why the bi-encoder scales.** In a bi-encoder the query and each document are encoded *independently* by the same transformer, and the relevance score is a plain dot product (or cosine similarity) of the two pooled vectors. Independence is the load-bearing property: because a document's embedding does not depend on the query, every document embedding can be computed *offline*, stored once, and placed in an ANN index. At query time you embed only the query (one forward pass) and then do fast vector lookups. The transformer runs exactly once per query, no matter how large the corpus.
+
+    **(b) Why a cross-encoder cannot be the first-stage retriever.** A cross-encoder runs the query and a document *through the same forward pass with joint attention*, producing one score per (query, document) pair. The score cannot be decomposed into a query vector and a document vector, so nothing can be precomputed. To rank a corpus of $n$ documents you would need $n$ full transformer forward passes *per query* — $O(n)$ cost. For $n$ in the millions that is far too slow and cannot be served from an ANN index at all.
+
+    **Used together.** The bi-encoder is the cheap first stage: it retrieves a short candidate list (e.g., top-$k$ = 50-100) from the full corpus using precomputed embeddings and ANN search. The cross-encoder is then applied only to those few candidates as a *reranker*, spending its expensive joint-attention scoring where accuracy matters most. This two-stage retrieve-then-rerank design gets bi-encoder scalability with cross-encoder precision on the final ordering.
+
+**2.** *(Quantitative.)* A transformer produces the following final-layer token representations for a 3-token sequence with hidden dimension $d = 2$: $\mathbf{h}_1 = [1, 3]$, $\mathbf{h}_2 = [3, 1]$, $\mathbf{h}_3 = [10, 0]$. The attention mask is $\mathbf{m} = [1, 1, 0]$ (the third token is padding). (a) Compute the mean-pooled sentence embedding using the masked formula from the chapter, then L2-normalize it. (b) Now recompute the mean *ignoring the mask* (averaging all three tokens) and normalize. (c) Report the cosine similarity between the two resulting unit vectors and state the lesson.
+
+??? note "Solution"
+    **(a) Masked mean pool.** Using $\mathbf{e} = \frac{\sum_i m_i \mathbf{h}_i}{\sum_i m_i}$, only tokens 1 and 2 count:
+
+    $$
+    \sum_i m_i \mathbf{h}_i = [1,3] + [3,1] = [4, 4], \qquad \sum_i m_i = 2
+    $$
+
+    $$
+    \mathbf{e} = [4,4]/2 = [2, 2]
+    $$
+
+    Norm $= \sqrt{2^2 + 2^2} = \sqrt{8} = 2.8284$, so the normalized embedding is $[0.7071,\ 0.7071]$.
+
+    **(b) Unmasked mean.** Averaging all three tokens including the padding vector $[10, 0]$:
+
+    $$
+    \mathbf{e}' = \frac{[1,3] + [3,1] + [10,0]}{3} = \frac{[14, 4]}{3} = [4.667,\ 1.333]
+    $$
+
+    Norm $= \sqrt{4.667^2 + 1.333^2} = \sqrt{21.78 + 1.78} = \sqrt{23.56} = 4.8535$, so the normalized vector is $[0.9615,\ 0.2747]$.
+
+    **(c) Cosine similarity between them.** Both are unit vectors, so cosine similarity is just their dot product:
+
+    $$
+    0.7071 \cdot 0.9615 + 0.7071 \cdot 0.2747 = 0.6799 + 0.1942 = 0.874
+    $$
+
+    The two embeddings point in noticeably different directions (cosine $0.874$, not $1.0$) purely because one padding token leaked in. **Lesson:** padding tokens carry no meaning but do carry activations; if you forget the mask they corrupt the pooled vector. This is why `mean_pool` multiplies by the attention mask and divides by the count of *real* tokens.
+
+**3.** *(Quantitative.)* You are training with the symmetric in-batch InfoNCE loss from the chapter at temperature $\tau = 0.1$ and batch size $B = 2$. The similarity matrix of L2-normalized embeddings is
+
+$$
+\text{sim} = \begin{bmatrix} \mathbf{e}_{q_0}\cdot\mathbf{e}_{d_0} & \mathbf{e}_{q_0}\cdot\mathbf{e}_{d_1} \\ \mathbf{e}_{q_1}\cdot\mathbf{e}_{d_0} & \mathbf{e}_{q_1}\cdot\mathbf{e}_{d_1} \end{bmatrix} = \begin{bmatrix} 0.8 & 0.2 \\ 0.3 & 0.9 \end{bmatrix}
+$$
+
+Compute the symmetric loss $(\mathcal{L}_{q\to d} + \mathcal{L}_{d\to q})/2$ that `infonce_loss` returns. (Useful values: $e^2 = 7.389$, $e^3 = 20.086$, $e^8 = 2980.96$, $e^9 = 8103.08$.)
+
+??? note "Solution"
+    Divide every entry by $\tau = 0.1$ to get logits, then take a cross-entropy where the diagonal is the correct class.
+
+    **Query-to-document direction** (softmax over each *row*, target = row index):
+
+    Row 0, logits $[8, 2]$, target class 0:
+    $$
+    p = \frac{e^8}{e^8 + e^2} = \frac{2980.96}{2980.96 + 7.389} = 0.99753, \quad \ell_0 = -\ln 0.99753 = 0.00247
+    $$
+
+    Row 1, logits $[3, 9]$, target class 1:
+    $$
+    p = \frac{e^9}{e^3 + e^9} = \frac{8103.08}{20.086 + 8103.08} = 0.99753, \quad \ell_1 = 0.00248
+    $$
+
+    $\mathcal{L}_{q\to d} = (0.00247 + 0.00248)/2 = 0.00248$.
+
+    **Document-to-query direction** (softmax over each *column* of sim, i.e. rows of sim$^\top$):
+
+    Column 0, logits $[8, 3]$, target class 0:
+    $$
+    p = \frac{e^8}{e^8 + e^3} = \frac{2980.96}{2980.96 + 20.086} = 0.99331, \quad \ell_0 = 0.00672
+    $$
+
+    Column 1, logits $[2, 9]$, target class 1:
+    $$
+    p = \frac{e^9}{e^2 + e^9} = \frac{8103.08}{7.389 + 8103.08} = 0.99909, \quad \ell_1 = 0.00091
+    $$
+
+    $\mathcal{L}_{d\to q} = (0.00672 + 0.00091)/2 = 0.00381$.
+
+    **Symmetric loss:**
+    $$
+    \frac{\mathcal{L}_{q\to d} + \mathcal{L}_{d\to q}}{2} = \frac{0.00248 + 0.00381}{2} \approx 0.0031
+    $$
+
+    The loss is tiny because both queries already have their positive as the clear argmax. Note the two directions are *not* equal: query 0 competes against a weak off-diagonal ($0.2$) in its row but document 0 competes against a stronger off-diagonal ($0.3$) in its column, so the $d\to q$ term is larger. That asymmetry is exactly why the chapter's loss averages both directions.
+
+**4.** *(Implementation.)* The chapter implements `mean_pool` but only mentions max pooling in prose. Implement a masked `max_pool(token_embeddings, attention_mask)` with the same signature and shape conventions as `mean_pool` (input `(B, L, H)` and `(B, L)`, output `(B, H)`). It must take the element-wise maximum over *real* token positions only. Explain why simply calling `.max(dim=1)` on the raw tensor is wrong, and how you handle padding correctly.
+
+??? note "Solution"
+    A naive `token_embeddings.max(dim=1)` includes padding positions. If a padding token happens to hold a large activation in some dimension, it wins the max and pollutes the pooled vector — the same failure mode as unmasked mean pooling in Exercise 2. The fix is to set padding positions to $-\infty$ *before* taking the max, so they can never be selected.
+
+    ```python
+    import torch
+
+
+    def max_pool(token_embeddings: torch.Tensor,
+                 attention_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Element-wise max over real (non-padding) token positions.
+
+        Args:
+            token_embeddings: shape (batch, seq_len, hidden_dim)
+            attention_mask:   shape (batch, seq_len), 1 for real tokens
+
+        Returns:
+            sentence_embeddings: shape (batch, hidden_dim)
+        """
+        # Expand mask to hidden_dim so it broadcasts over features
+        mask_expanded = attention_mask.unsqueeze(-1).bool()  # (B, L, 1)
+
+        # Send padding positions to -inf so they never win the max
+        masked = token_embeddings.masked_fill(~mask_expanded, float("-inf"))
+
+        # Max over the sequence (token) dimension
+        return masked.max(dim=1).values  # (B, H)
+    ```
+
+    Using `float("-inf")` (rather than a large negative constant) guarantees correctness even when real activations are themselves very negative. As with `mean_pool`, you would L2-normalize the result before computing cosine similarity. (Edge case: a row that is *all* padding would return $-\infty$; in practice every sequence has at least one real token, matching the `clamp(min=1e-9)` guard in `mean_pool`.)
+
+**5.** *(Quantitative + conceptual.)* You store embeddings for a 100-million-chunk corpus in an ANN index using `float32` (4 bytes per dimension). Your model was trained with Matryoshka Representation Learning and produces full 768-dimensional embeddings. (a) Compute the raw vector storage for the full 768-dim embeddings, and for MRL-truncated 128-dim embeddings. (b) What is the memory-savings ratio? (c) After truncating each stored vector to its first 128 dimensions, why must you re-normalize before doing cosine/dot-product search, and why does MRL make the 128-dim prefix usable at all (unlike truncating an ordinary embedding)?
+
+??? note "Solution"
+    **(a) Storage.** Bytes per vector = dimensions $\times$ 4.
+
+    Full 768-dim: $768 \times 4 = 3072$ bytes/vector. For $10^8$ vectors:
+    $$
+    3072 \times 10^8 = 3.072 \times 10^{11}\ \text{bytes} = 307.2\ \text{GB}
+    $$
+
+    Truncated 128-dim: $128 \times 4 = 512$ bytes/vector. For $10^8$ vectors:
+    $$
+    512 \times 10^8 = 5.12 \times 10^{10}\ \text{bytes} = 51.2\ \text{GB}
+    $$
+
+    **(b) Savings ratio.** $307.2 / 51.2 = 6\times$ (exactly the dimension ratio $768/128 = 6$, since bytes scale linearly with dimension). You cut index memory sixfold.
+
+    **(c) Re-normalization and why MRL works.** Slicing off the last 640 dimensions changes a vector's L2 norm: the first 128 components of a unit 768-vector generally have norm well below 1. The chapter's practitioner tip relies on stored vectors being unit-norm so that a dot product *equals* cosine similarity; if you skip re-normalization after truncation, the "cosine" scores are distorted by each vector's leftover prefix magnitude and rankings degrade. So you re-normalize the 128-dim prefix to unit length, restoring dot-product = cosine.
+
+    MRL makes the prefix *meaningful* in the first place. During training MRL adds an InfoNCE term at each prefix size ($32, 64, 128, \dots, d$), so gradients force the earliest dimensions to already carry the most discriminative signal — the first 128 dims form a standalone useful embedding. Truncating an *ordinary* (non-MRL) embedding has no such guarantee: its 768 dimensions were only ever trained to be discriminative *together*, so an arbitrary 128-dim prefix can be nearly useless.
+
+**6.** *(Implementation, harder.)* The chapter's `infonce_loss` uses only in-batch negatives. Extend it to `infonce_with_hard_negatives(query_emb, pos_emb, neg_emb, temperature)` where each query has one positive (`pos_emb`, shape `(B, D)`) and its own set of $K$ mined hard negatives (`neg_emb`, shape `(B, K, D)`), all L2-normalized. Build the per-query logit row as `[positive, K hard negatives]`, make the positive the target class, and return the mean cross-entropy. Explain how this connects to the "BM25-mined / ANN-mined negatives" discussion in the chapter, and why hard negatives give a stronger gradient than random in-batch negatives.
+
+??? note "Solution"
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+
+    def infonce_with_hard_negatives(
+        query_emb: torch.Tensor,   # (B, D), L2-normalized
+        pos_emb:   torch.Tensor,   # (B, D), L2-normalized
+        neg_emb:   torch.Tensor,   # (B, K, D), L2-normalized
+        temperature: float = 0.05,
+    ) -> torch.Tensor:
+        """
+        InfoNCE where each query has one positive and K per-query hard negatives.
+        The positive is class 0 in each row of logits.
+        """
+        B, D = query_emb.shape
+
+        # Positive similarity: elementwise dot -> (B, 1)
+        pos_logits = (query_emb * pos_emb).sum(dim=-1, keepdim=True)
+
+        # Hard-negative similarities: batched matmul (B,K,D) x (B,D,1) -> (B,K)
+        neg_logits = torch.bmm(neg_emb, query_emb.unsqueeze(-1)).squeeze(-1)
+
+        # Concatenate: (B, 1 + K); column 0 is the positive
+        logits = torch.cat([pos_logits, neg_logits], dim=1) / temperature
+
+        # Target class is 0 for every query
+        labels = torch.zeros(B, dtype=torch.long, device=query_emb.device)
+
+        return F.cross_entropy(logits, labels)
+
+
+    # ---- Sanity check ----
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        B, K, D = 4, 3, 768
+        q = F.normalize(torch.randn(B, D), dim=-1)
+        pos = F.normalize(torch.randn(B, D), dim=-1)
+        neg = F.normalize(torch.randn(B, K, D), dim=-1)
+        print(infonce_with_hard_negatives(q, pos, neg, 0.05).item())  # ~ log(1+K)
+    ```
+
+    At random initialization the loss is about $\log(1 + K)$ (uniform over the $1 + K$ candidates), just as plain in-batch InfoNCE starts near $\log B$.
+
+    **Connection to the chapter.** `neg_emb` is exactly where you feed the mined negatives the chapter describes: BM25-mined passages (high lexical overlap, wrong meaning), ANN/dense-mined passages from an earlier checkpoint (ANCE-style), or cross-encoder-filtered hardest negatives. You would embed those mined passages and pass them as the `(B, K, D)` tensor.
+
+    **Why hard negatives help.** Random in-batch negatives are usually topically unrelated, so their similarity to the query is already low and $\partial \mathcal{L}/\partial \theta$ is nearly zero — little to learn. Hard negatives sit close to the positive in embedding space, so they produce large logits, a non-trivial softmax mass on the wrong class, and therefore a large gradient that forces the model to carve out fine-grained distinctions. That is precisely the plateau-breaking effect the chapter attributes to hard-negative mining. (In practice you often combine both: concatenate these per-query hard negatives with the in-batch negatives for an even richer denominator.)
