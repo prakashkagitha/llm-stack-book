@@ -605,9 +605,11 @@ class UnifiedModel(nn.Module):
         h_with_t     = torch.cat([h_img, t_expanded.unsqueeze(-1)], dim=-1)
         pred_velocity = self.diffusion_head(h_with_t)                  # (N_img, D_patch)
 
-        # Target velocity: (ε - x_0)
+        # Target velocity: (ε - x_0). noise/image_patches are already image-only
+        # tensors of shape (B, T_img, D_patch), so this reshape is already aligned
+        # with h_img/pred_velocity — no further masking is needed (or correct: the
+        # mask below is full-sequence length while this tensor is image-only).
         target_velocity = (batch.noise - batch.image_patches).reshape(-1, batch.noise.shape[-1])
-        target_velocity = target_velocity[batch.is_image.reshape(-1)]
         flow_loss        = F.mse_loss(pred_velocity, target_velocity)
 
         # 6. Combine losses

@@ -463,7 +463,8 @@ Even if an injection reaches the model and influences its output, output filters
 
 ```python
 import re
-from typing import NamedTuple
+import json
+from typing import NamedTuple, Optional
 
 class FilterResult(NamedTuple):
     blocked: bool
