@@ -165,7 +165,7 @@ class WorkerGroupProxy:
         per_rank_args = dispatch_fn(self, batch)            # split + replicate
         # Launch the SAME method on every rank in parallel (Ray remote calls).
         futures = [w.__getattr__(method_name).remote(*a)
-                   for w, (a,) in zip(self.workers, per_rank_args)]
+                   for w, a in zip(self.workers, per_rank_args)]
         outputs = ray.get(futures)                          # gather all ranks
         return collect_fn(self, outputs)                    # fold into one DataProto
 ```
