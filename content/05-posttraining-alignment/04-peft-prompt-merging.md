@@ -213,7 +213,10 @@ class PrefixEncoder(nn.Module):
 encoder = PrefixEncoder(num_layers=32, num_heads=32, d_head=128, prefix_len=10, bottleneck_dim=512)
 trainable = sum(p.numel() for p in encoder.parameters())
 print(f"Prefix encoder params: {trainable:,}")
-# ~13 M params for a 70B-class attention shape — vs. 70B frozen
+# ~269 M params — the reparameterization MLP's up-projection
+# (bottleneck_dim*2 -> 2*L*H*d_head) dominates the count; this is exactly
+# why it is discarded after training and only the much smaller materialized
+# prefix tensors (2 * L * prefix_len * H * d_head ≈ 2.6M values) are kept.
 ```
 
 ### P-tuning v2
