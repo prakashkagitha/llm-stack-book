@@ -432,3 +432,130 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
 - Gao, Schulman & Hilton, **Scaling Laws for Reward Model Overoptimization** (2022) — the proxy-vs-gold reward over-optimization curve and the $\sqrt{\mathrm{KL}}$ functional form.
 - Touvron, Martin, Stone, et al., **Llama 2: Open Foundation and Fine-Tuned Chat Models** (2023) — iterated RLHF, separate helpfulness/safety RMs, rejection-sampling + PPO in practice.
 - HuggingFace **TRL** (`RewardTrainer`, `PPOTrainer`) and **OpenRLHF** repositories — production implementations of the reward loss and four-model loop; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html).
+
+## Exercises
+
+**1.** A colleague trains two reward models on the same preference data with different random seeds. On a fixed eval set, RM-A gives the chosen responses an average score of $+5.2$ and RM-B gives them $-1.8$. Your colleague concludes "RM-A is the stronger model, its rewards are higher." Explain why this reasoning is invalid, citing the relevant property of the Bradley-Terry model. Then explain the concrete consequence this same property has for the PPO stage (why the pipeline mean-centers rewards).
+
+??? note "Solution"
+    The reasoning is invalid because the Bradley-Terry model identifies the reward **only up to an additive constant**. The preference probability depends solely on the *difference* of scores: $\sigma\big((r_w + c) - (r_l + c)\big) = \sigma(r_w - r_l)$ for any constant $c$. Adding a constant to every score of a given RM leaves every preference probability, every training loss, and every gradient unchanged. So RM-A and RM-B could be scoring *identically* on every pair and still report wildly different average magnitudes — the absolute offset is an unidentified free parameter fixed by nothing in the loss. The only meaningful quantity is the *gap* between two responses' scores (and hence the RM's held-out preference accuracy). To compare the two RMs you must look at score *differences* or accuracy, never raw averages.
+
+    Consequence for PPO: because the absolute level is meaningless and arbitrary, feeding raw RM scores into the optimizer would inject a constant offset into the advantage estimates that carries no information but does shift the gradient scale. The pipeline therefore **mean-centers the rewards** (subtracts the batch mean) before using them, removing the arbitrary offset and keeping only the informative relative structure. This is the same invariance the chapter flags as having "real consequences": you cannot compare raw magnitudes across separately-trained RMs, and you normalize before PPO.
+
+**2.** For one comparison a reward model outputs $r_\phi(x, y_w) = 1.2$ (chosen) and $r_\phi(x, y_l) = 1.0$ (rejected). (a) What preference probability does the model assign to the chosen response? (b) What is the per-example Bradley-Terry loss in nats? (c) What is the gradient of the loss with respect to the margin $\Delta$, and which direction does gradient descent push $\Delta$? (d) Now the model has a *different* pair backwards: $r_\phi(x, y_w) = 0.3$, $r_\phi(x, y_l) = 2.0$. Recompute (a)-(c) and comment on how the loss and gradient magnitudes changed. Use $e^{-0.2}\approx 0.819$, $e^{1.7}\approx 5.474$.
+
+??? note "Solution"
+    The margin is $\Delta = r_\phi(x,y_w) - r_\phi(x,y_l)$.
+
+    Correct-but-weak pair, $\Delta = 1.2 - 1.0 = 0.2$:
+
+    - (a) $\sigma(0.2) = \dfrac{1}{1 + e^{-0.2}} = \dfrac{1}{1 + 0.819} = \dfrac{1}{1.819} \approx 0.550$. The model thinks the chosen response wins about **55%** of the time — a very weak preference.
+    - (b) $\mathcal{L} = -\log\sigma(0.2) = \log(1 + e^{-0.2}) = \log(1.819) \approx 0.598$ nats. Just under $\log 2 \approx 0.693$, as expected for a margin barely above zero.
+    - (c) $\dfrac{\partial\mathcal{L}}{\partial\Delta} = -\big(1 - \sigma(0.2)\big) = -(1 - 0.550) = -0.450$. The gradient is negative, so gradient descent (stepping opposite the gradient) pushes $\Delta$ **up** — it spreads the two scores further apart.
+
+    Backwards pair, $\Delta = 0.3 - 2.0 = -1.7$:
+
+    - (a) $\sigma(-1.7) = \dfrac{1}{1 + e^{1.7}} = \dfrac{1}{1 + 5.474} = \dfrac{1}{6.474} \approx 0.154$. The model thinks the *chosen* response wins only ~15% of the time — it has the pair backwards.
+    - (b) $\mathcal{L} = -\log\sigma(-1.7) = -\log(0.154) \approx 1.868$ nats — about $3\times$ the loss of the first pair.
+    - (c) $-\big(1 - \sigma(-1.7)\big) = -(1 - 0.154) = -0.846$. The gradient magnitude ($0.846$) is nearly double that of the first pair ($0.450$) and approaches the saturation limit of $1$.
+
+    Comment: both the loss and the gradient magnitude grow with how *wrong* the model is. When the model is nearly right ($\Delta \approx 0.2$) it is barely corrected; when it has the pair backwards ($\Delta = -1.7$) it gets a strong push to flip the ordering, saturating toward magnitude $1$. This self-limiting behavior is the robustness property of the logistic loss.
+
+**3.** A labeler ranks $K$ completions of a single prompt from best to worst. (a) How many pairwise preference rows $\binom{K}{2}$ does this ranking yield for $K = 4, 5,$ and $9$? (b) InstructGPT puts all pairs from one prompt into a single forward/backward pass. Compare the number of transformer *encodings* of completions needed per prompt under (i) the naive approach that shuffles all pairs together and encodes both completions of each pair independently, versus (ii) the batched approach that encodes each completion once. Give a general formula for the ratio and evaluate it at $K = 9$. (c) Besides the compute saving, what training pathology does the batched approach prevent, and why?
+
+??? note "Solution"
+    (a) $\binom{K}{2} = \dfrac{K(K-1)}{2}$:
+
+    - $K=4$: $\binom{4}{2} = 6$ pairs.
+    - $K=5$: $\binom{5}{2} = 10$ pairs.
+    - $K=9$: $\binom{9}{2} = 36$ pairs.
+
+    (b) Naive shuffled-pairs approach: each of the $\binom{K}{2}$ pairs encodes 2 completions, so $2\binom{K}{2} = K(K-1)$ encodings per prompt. Batched approach: each of the $K$ completions is encoded exactly once, so $K$ encodings. The ratio is
+
+    $$
+    \frac{K(K-1)}{K} = K - 1.
+    $$
+
+    At $K = 9$ the naive approach does $9 \cdot 8 = 72$ encodings while the batched approach does $9$ — an **8x** saving (ratio $K-1 = 8$).
+
+    (c) It prevents **overfitting**. In the shuffled scheme each completion $y_i$ appears in $K-1$ different pairs; if those pairs are scattered across an epoch as independent examples, the model sees each completion many times and can memorize specific completions. Batching all $\binom{K}{2}$ pairs from one prompt into one gradient step means each completion contributes to the loss exactly once per step (all pairwise terms are computed from the $K$ scalars produced by those single encodings), which acts as a strong regularizer in addition to the compute win.
+
+**4.** Implement `uncertainty_aware_reward(rms, seq, attention_mask, lam)`, a defense against reward hacking that (a) scores a batch with an **ensemble** of reward models and (b) penalizes each response by the ensemble's **disagreement** (standard deviation), so out-of-distribution responses where the RMs disagree get a lower effective reward. Each element of `rms` is a `RewardModel` from the chapter that maps `(input_ids, attention_mask)` to a `(B,)` reward. Return the `(B,)` effective reward. Explain in one sentence why the standard-deviation term flags reward-hacking candidates.
+
+??? note "Solution"
+    ```python
+    import torch
+
+    def uncertainty_aware_reward(rms, seq, attention_mask, lam=0.5):
+        """Ensemble reward with an uncertainty (disagreement) penalty.
+
+        rms            : list of M frozen RewardModel instances (independently trained)
+        seq, attention_mask : (B, T) token ids and mask for B full sequences
+        lam            : weight on the disagreement penalty
+        Returns effective reward (B,) = mean_reward - lam * std_reward.
+        """
+        # (M, B): each row is one RM's scalar reward for the whole batch.
+        stacked = torch.stack([rm(seq, attention_mask) for rm in rms], dim=0)
+        mean_r = stacked.mean(dim=0)                 # (B,) ensemble consensus
+        # Unbiased=False so a single-model ensemble gives std 0 rather than NaN.
+        std_r  = stacked.std(dim=0, unbiased=False)  # (B,) disagreement
+        return mean_r - lam * std_r                  # (B,) penalized reward
+    ```
+
+    Averaging several independently trained RMs means the policy must hack *all* of them at once, which is harder than hacking one. The standard-deviation term flags reward-hacking candidates because genuinely degenerate / out-of-distribution responses (token soup, format farming) land in regions no RM trained on, where the independently-trained RMs have no shared signal and therefore **disagree** — high `std_r` signals an unreliable, likely-exploited score, so subtracting it deflates exactly the responses most likely to be hacks.
+
+**5.** In the skeleton RLHF loop, step 4 builds the per-token reward $R_t$ from the terminal RM score plus a per-token KL penalty (the formula in the chapter). Implement `build_per_token_rewards(scores, actor_logprobs, ref_logprobs, resp_mask, beta_kl)` returning a `(B, T)` tensor where every response token pays KL "rent" and the RM's scalar is added at each sequence's **last response token**. `scores` is `(B,)`, the log-prob tensors and `resp_mask` are `(B, T)` (mask is 1 on response tokens, 0 elsewhere). State which term of $R_t$ must be detached from the actor's graph and why.
+
+??? note "Solution"
+    ```python
+    import torch
+
+    def build_per_token_rewards(scores, actor_logprobs, ref_logprobs,
+                                resp_mask, beta_kl=0.02):
+        """Per-token reward R_t = -beta * KL_t  + r_phi * 1[t = T].
+
+        scores         : (B,)   terminal reward-model score per sequence
+        actor_logprobs : (B, T) log pi_theta(y_t | ...)   (from the actor)
+        ref_logprobs   : (B, T) log pi_ref(y_t | ...)     (frozen reference)
+        resp_mask      : (B, T) 1 on response tokens, 0 elsewhere
+        Returns rewards (B, T).
+        """
+        # KL estimate per token; detach the actor term -- the KL enters as a
+        # REWARD, not through the policy-gradient objective, so it must not
+        # backprop into the actor here (that path is handled by the PPO update).
+        kl_per_token = actor_logprobs.detach() - ref_logprobs      # (B, T)
+        rewards = -beta_kl * kl_per_token * resp_mask              # KL "rent" on resp tokens
+
+        # Add the terminal RM score at each sequence's LAST response token.
+        last = resp_mask.sum(dim=1) - 1                            # (B,) final resp index
+        batch_idx = torch.arange(rewards.size(0), device=rewards.device)
+        rewards[batch_idx, last] += scores                        # terminal reward
+        return rewards
+    ```
+
+    The **actor's log-probs in the KL term must be detached** (`actor_logprobs.detach()`). The KL penalty is folded into the scalar per-token *reward* signal that feeds advantage estimation; it is not the differentiable policy-gradient objective. If the actor term were left attached, gradients would flow into the actor through the reward signal itself (double-counting / wrong objective). The differentiable dependence of the loss on $\pi_\theta$ is supplied separately by the PPO clipped surrogate in the update step, exactly as in the skeleton's step 3/step 5. (The reference log-probs are already grad-free since the reference is frozen.)
+
+**6.** You are budgeting GPU memory for an RLHF run whose policy is a **13B**-parameter model in bf16, using the chapter's byte-accounting (bf16 weight = 2 bytes/param; a *trained* model also carries 2 bytes gradient + 8 bytes fp32 Adam moments = 16 bytes/param total; a *frozen* model carries only its 2 bytes/param of weights). (a) Estimate the resident footprint of the naive four-model setup, assuming the critic is also 13B. (b) Now apply two economizers from the chapter: use a small **1.5B** reward model, and **fold the value head onto the actor** so there is no separate critic model. Re-estimate the footprint. (c) By what factor did the footprint shrink, and which single model dominates it now?
+
+??? note "Solution"
+    Use bytes/param $\times$ #params, then convert ($1\,\text{GB} \approx 10^9$ bytes for this back-of-envelope).
+
+    (a) Naive four-model setup, all activations/KV-cache excluded:
+
+    - **Actor** (13B, trained): $16 \times 13\times 10^9 = 208\times 10^9$ bytes $= 208$ GB.
+    - **Critic** (13B, trained): another $16 \times 13\times 10^9 = 208$ GB.
+    - **Reward** (13B, frozen): $2 \times 13\times 10^9 = 26$ GB.
+    - **Reference** (13B, frozen): $2 \times 13\times 10^9 = 26$ GB.
+
+    Total $\approx 208 + 208 + 26 + 26 = \mathbf{468}$ **GB**.
+
+    (b) With economizers:
+
+    - **Actor** (13B, trained): $208$ GB (unchanged — plus a negligible extra scalar value head folded on).
+    - **Critic**: eliminated as a separate model; it shares the actor's trunk, so it contributes essentially nothing beyond the tiny value head $\approx 0$ GB.
+    - **Reward** (1.5B, frozen): $2 \times 1.5\times 10^9 = 3$ GB.
+    - **Reference** (13B, frozen): $26$ GB.
+
+    Total $\approx 208 + 0 + 3 + 26 = \mathbf{237}$ **GB**.
+
+    (c) The footprint shrank by a factor of $468 / 237 \approx \mathbf{2.0}$ (roughly halved). The **actor dominates** the remaining budget: at $208$ of $237$ GB it is about $88\%$ of the total, because it is the only full-size *trained* model left (weights + gradients + optimizer states), whereas the reference is frozen (weights only) and the reward model is both frozen and much smaller. This is why the chapter stresses making the RM and critic smaller than the policy and sharing the actor/reference/critic backbone — the trained full-size policy is the irreducible cost.

@@ -797,3 +797,99 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
     - 8-bit Adam provides a 4× optimizer state reduction with no change to architecture or training procedure.
     - Techniques compose: QLoRA + gradient checkpointing + gradient accumulation is the standard single-GPU fine-tuning stack.
     - When debugging OOM: identify whether the failure is in forward (activation issue) or during parameter update (optimizer state issue), then apply the appropriate remedy.
+
+## Exercises
+
+**1.** *(Static budget.)* You want to fully fine-tune a 3B-parameter model with standard Adam mixed-precision training. Using the chapter's $16P$ accounting, write out the size (in GB) of each of the four static categories, give the total, and state what fraction of the static footprint is pure optimizer state ($m_t$ and $v_t$). Then say what the total becomes if you swap fp32 Adam for **8-bit Adam**.
+
+??? note "Solution"
+    With $P = 3\times10^9$, each byte-per-parameter coefficient scales by $3$ GB (since $10^9$ bytes $= 1$ GB and $P = 3\times10^9$):
+
+    - bf16 weights: $2P = 6\,\text{GB}$
+    - fp32 master copy: $4P = 12\,\text{GB}$
+    - bf16 gradients: $2P = 6\,\text{GB}$
+    - fp32 Adam $m_t + v_t$: $4P + 4P = 8P = 24\,\text{GB}$
+
+    Total static: $6 + 12 + 6 + 24 = 48\,\text{GB} = 16P$. The pure optimizer moments ($m_t, v_t = 8P = 24\,\text{GB}$) are exactly **half** of the static footprint — this is why the chapter stresses that optimizer states, not weights, dominate.
+
+    **8-bit Adam** stores $m_t$ and $v_t$ as 8-bit integers with per-block scales, cutting them from $8P$ to roughly $2P$ bytes. The other three categories are unchanged, so the new total is $2P + 4P + 2P + 2P = 10P = 30\,\text{GB}$ — a $4\times$ reduction on the optimizer term and an $18\,\text{GB}$ overall saving.
+
+**2.** *(Activation memory and checkpointing.)* Take a LLaMA-style model with $L = 32$ layers and $d = 4096$, trained in bf16. Use the chapter's rule of thumb $M_{\text{act}} \approx 24\,B\,T\,d\,L$ bytes. (a) Compute the stored-activation memory for a batch of $B = 2$ at sequence length $T = 4096$. (b) If you switch to full gradient checkpointing that stores only each block's input ($L\,B\,T\,d \times 2$ bytes), how much activation memory remains? (c) Which of these two numbers does FlashAttention affect, and why?
+
+??? note "Solution"
+    **(a)** $M_{\text{act}} \approx 24 \times B \times T \times d \times L$ bytes:
+    $$24 \times 2 \times 4096 \times 4096 \times 32 = 2.577\times10^{10}\,\text{bytes} \approx 25.8\,\text{GB}.$$
+    (Sanity check against the chapter's worked example: at $B=1, T=2048$ this formula gives $24\times1\times2048\times4096\times32 \approx 6.4\,\text{GB}$, matching the LLaMA-7B example.)
+
+    **(b)** Storing only each block's input costs $L\,B\,T\,d \times 2$ bytes:
+    $$32 \times 2 \times 4096 \times 4096 \times 2 = 2.147\times10^{9}\,\text{bytes} \approx 2.1\,\text{GB}.$$
+    So checkpointing drops the activation cost from $\approx 25.8\,\text{GB}$ to $\approx 2.1\,\text{GB}$ (about a $12\times$ reduction), paying the price of one extra forward pass ($\approx +33\%$ compute).
+
+    **(c)** The $24\,B\,T\,d\,L$ rule of thumb is the term that is **linear in $T$** — it is what remains once the $T\times T$ attention-score matrix is excluded. FlashAttention affects the *other* contributor: the $O(T^2)$ attention-score term ($5\,a\,s^2\,b$ in Megatron's accounting), which it never materializes, recomputing softmax statistics on the fly. So FlashAttention removes the quadratic-in-$T$ activation cost but does not change the linear-in-$T$ numbers computed in (a) and (b).
+
+**3.** *(LoRA parameter budget.)* Consider a 13B-style model with hidden size $d = k = 5120$ and $L = 40$ layers. You attach rank-$r = 8$ LoRA adapters to all four attention projections (q, k, v, o), each a $5120 \times 5120$ matrix. (a) How many trainable parameters does this add in total? (b) What is the per-matrix compression ratio $\rho = r(d+k)/(dk)$? (c) Compare the Adam optimizer-state memory for these adapters (fp32, 8 bytes/param) against the $8P$ optimizer state of full fine-tuning.
+
+??? note "Solution"
+    **(a)** Per adapted matrix, $|\theta_{\text{LoRA}}| = r(d + k) = 8 \times (5120 + 5120) = 8 \times 10240 = 81{,}920$ parameters. With 4 matrices per layer over 40 layers:
+    $$81{,}920 \times 4 \times 40 = 13{,}107{,}200 \approx 13.1\text{M trainable params}.$$
+
+    **(b)** $\rho = \dfrac{r(d+k)}{dk} = \dfrac{81{,}920}{5120 \times 5120} = \dfrac{81{,}920}{26{,}214{,}400} \approx 0.00313 = 0.31\%.$ Since $d = k$ this equals $2r/d = 16/5120$; it is the same order as the chapter's quick estimate $\rho \approx r/d \approx 0.16\%$.
+
+    **(c)** Adapter optimizer state: $8 \times 13.1\text{M} \approx 1.05\times10^{8}$ bytes $\approx 0.10\,\text{GB}$. Full fine-tuning Adam state on all $P = 13\times10^9$ params: $8P = 1.04\times10^{11}$ bytes $\approx 104\,\text{GB}$. LoRA shrinks the optimizer state by a factor of $\approx P / 13.1\text{M} \approx 1000\times$ — from $\sim104\,\text{GB}$ to $\sim0.1\,\text{GB}$, which is the entire reason PEFT fits on small GPUs.
+
+**4.** *(Why the tricks work.)* Answer each briefly, grounding your reasoning in the chapter. (a) Optimal activation checkpointing places $k = \sqrt{L}$ checkpoints. Why does this particular $k$ minimize the memory-compute product, rather than $k = 1$ or $k = L$? (b) CPU offloading of optimizer states is described as viable, but offloading activations is generally not. What property of the access pattern makes optimizer-state offload tolerate PCIe latency? (c) Gradient accumulation is called an "offloading strategy" even though no tensor moves off the GPU. In what sense does it offload?
+
+??? note "Solution"
+    **(a)** With $k$ checkpoints, activation memory is $O(L/k)$ (you keep one saved tensor per segment plus the intermediates of the single segment being recomputed) and the extra recompute cost is $O(k)$. Minimizing the sum $L/k + k$ over $k$ gives derivative $-L/k^2 + 1 = 0$, i.e. $k = \sqrt{L}$, which balances the two terms so each is $O(\sqrt{L})$. $k = 1$ (store everything) gives $O(L)$ memory; $k = L$ (recompute every layer from its input) minimizes memory but maximizes recompute placement overhead. $\sqrt{L}$ is the classic sublinear sweet spot: $O(\sqrt{L})$ memory *and* $O(\sqrt{L})$ extra cost.
+
+    **(b)** Adam optimizer states ($m_t$, $v_t$, fp32 master weights) are touched exactly **once per optimizer step** — read to compute the update, written back with new values — and only *after* the gradient is ready. The Adam update is memory-bound and can run on the CPU, and there is only one round-trip per step, so a slow PCIe transfer (roughly $50\times$ slower than HBM) is amortized over the whole step and can overlap with GPU compute. Activations, by contrast, are read and written many times *within* every forward/backward pass, so moving them over PCIe would stall the critical path constantly.
+
+    **(c)** It separates the *memory cost* of a large effective batch from the *peak memory* of one forward-backward pass. Instead of materializing activations for the full batch $B$ at once, it processes $A$ micro-batches of size $B/A$ sequentially, accumulating gradients into a single persistent $2P$-byte buffer. The large batch's activation footprint is "offloaded" onto **time** (extra sequential passes) rather than onto a slower memory tier.
+
+**5.** *(Implementation.)* Write a function `training_memory_gb(P, r, d, n_adapted, mode)` that returns the approximate static training memory in GB for `mode` in `{"full", "lora", "qlora"}`, using only the chapter's formulas. Full training is $16P$ bytes. LoRA keeps the base in bf16 ($2P$) with no base gradients/optimizer state, plus bf16 adapters ($2|\theta|$) and fp32 Adam on adapters ($8|\theta|$). QLoRA replaces the bf16 base with a 4-bit base ($P/2$ bytes). Assume each adapted matrix is $d \times d$ so $|\theta| = r \cdot 2d \cdot n_{\text{adapted}}$. Verify it reproduces the chapter's LLaMA-7B QLoRA figure ($\approx 3.7$ GB) for $P = 7\times10^9$, $r = 16$, $d = 4096$, $n_{\text{adapted}} = 128$.
+
+??? note "Solution"
+    ```python
+    def training_memory_gb(P: float, r: int, d: int,
+                           n_adapted: int, mode: str) -> float:
+        """Approximate static training memory (GB) using the chapter's formulas.
+
+        P          : total base-model parameter count
+        r          : LoRA rank
+        d          : hidden size (each adapted matrix is d x d)
+        n_adapted  : number of adapted matrices (e.g. 4 proj * L layers)
+        mode       : "full" | "lora" | "qlora"
+        """
+        GB = 1e9  # 1 GB = 1e9 bytes (chapter's convention)
+
+        if mode == "full":
+            return 16 * P / GB                      # 2P+4P+2P+8P
+
+        # LoRA adapter parameter count: r*(d_in+d_out) per matrix, d_in=d_out=d
+        theta = r * 2 * d * n_adapted
+        adapters = 2 * theta                        # bf16 adapter weights
+        adam     = 8 * theta                        # fp32 Adam m,v on adapters
+
+        if mode == "lora":
+            base = 2 * P                            # frozen bf16 base, no grad/opt
+        elif mode == "qlora":
+            base = P / 2                            # 4-bit NF4 base
+        else:
+            raise ValueError(mode)
+
+        return (base + adapters + adam) / GB
+
+
+    if __name__ == "__main__":
+        P, r, d, n = 7e9, 16, 4096, 128   # LLaMA-7B: 4 attn proj * 32 layers
+        for m in ("full", "lora", "qlora"):
+            print(f"{m:6s}: {training_memory_gb(P, r, d, n, m):6.2f} GB")
+    ```
+
+    Working the QLoRA case by hand to check: $|\theta| = 16 \times 2 \times 4096 \times 128 = 16{,}777{,}216 \approx 16.8\text{M}$ params (matching the chapter's $16.8$M). Then:
+
+    - 4-bit base: $P/2 = 3.5\times10^9$ bytes $= 3.5\,\text{GB}$
+    - bf16 adapters: $2 \times 16.8\text{M} \approx 0.034\,\text{GB}$
+    - Adam on adapters: $8 \times 16.8\text{M} \approx 0.134\,\text{GB}$
+
+    Total $\approx 3.5 + 0.03 + 0.13 = 3.67 \approx 3.7\,\text{GB}$, reproducing the chapter's LLaMA-7B QLoRA figure. For reference the function also returns $112\,\text{GB}$ for `"full"` and $\approx 14.2\,\text{GB}$ for `"lora"` (the $2P$ bf16 base dominates the LoRA case), matching the chapter's narrative that quantizing the base is what takes QLoRA from $\sim14\,\text{GB}$ down to $\sim4\,\text{GB}$.

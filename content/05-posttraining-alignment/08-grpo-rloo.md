@@ -576,3 +576,127 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
 - John Schulman, **Approximating KL Divergence** (blog note) — the k1/k2/k3 estimators used for the GRPO KL term.
 - Williams, **Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning** (1992) — the original REINFORCE.
 - HuggingFace **TRL** (`GRPOTrainer`, `RLOOTrainer`) and **veRL** repositories — production implementations of everything in this chapter; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html) and [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html).
+
+## Exercises
+
+**1.** (Conceptual) The chapter claims that subtracting a baseline $b(q)$ from the reward leaves the policy-gradient estimator *unbiased for any $b$ that does not depend on the sampled action $o$*, yet RLOO goes to the trouble of excluding $R_i$ from the baseline of sample $i$. If any action-independent baseline is unbiased, why is the naive full-group mean $\bar R = \frac1G\sum_j R_j$ a *biased* baseline for sample $i$, while the leave-one-out mean $b_i=\frac1{G-1}\sum_{j\ne i}R_j$ is not? State the exact property the baseline must have and explain which one has it.
+
+??? note "Solution"
+    The required property is that the baseline used for sample $i$ must be **statistically independent of the sampled action $o_i$** (equivalently, it must not depend on $o_i$). The unbiasedness proof relies on this: for a baseline $b$ that does not depend on $o_i$,
+
+    $$
+    \mathbb{E}_{o_i}\big[b\,\nabla_\theta \log\pi_\theta(o_i\mid q)\big]
+    = b\,\nabla_\theta\!\!\sum_{o_i}\pi_\theta(o_i\mid q)
+    = b\,\nabla_\theta 1 = 0,
+    $$
+
+    so subtracting $b$ adds zero in expectation. The step $\mathbb{E}_{o_i}[b\,\nabla\log\pi]=b\,\mathbb{E}_{o_i}[\nabla\log\pi]$ is only valid when $b$ can be pulled out of the expectation over $o_i$ — i.e. when $b$ is not a function of $o_i$.
+
+    The full-group mean $\bar R = \frac1G\big(R_i + \sum_{j\ne i}R_j\big)$ **contains $R_i$**, which is a function of $o_i$. It is therefore correlated with the very action it is scoring and cannot be factored out of the expectation, so subtracting it introduces bias. The leave-one-out mean $b_i=\frac1{G-1}\sum_{j\ne i}R_j$ is built only from the *other* $G-1$ i.i.d. responses; it is independent of $o_i$ and preserves unbiasedness. (Note this is about the baseline of a *specific* sample: the global constant $\bar R$ subtracted uniformly is also fine, but RLOO wants the tighter per-sample baseline, and the correct independent version of it is the leave-one-out mean.)
+
+**2.** (Quantitative) For one prompt you sample $G=4$ responses with rewards $R=\{1.2,\;0.2,\;1.2,\;0.0\}$. (a) Compute the leave-one-out baseline $b_i$ and advantage $A_i=R_i-b_i$ for each response *directly* from the definition. (b) Verify each $A_i$ against the identity $A_i=\frac{G}{G-1}(R_i-\bar R)$. (c) What is $\sum_i A_i$, and why does this value hold for RLOO in general?
+
+??? note "Solution"
+    Group sum $=1.2+0.2+1.2+0.0=2.6$, so $\bar R = 2.6/4 = 0.65$. With $G-1=3$, $b_i=(2.6-R_i)/3$.
+
+    (a) Direct leave-one-out:
+
+    | $i$ | $R_i$ | $b_i=(2.6-R_i)/3$ | $A_i=R_i-b_i$ |
+    |---|---|---|---|
+    | 1 | $1.2$ | $1.4/3 = 0.4667$ | $+0.7333$ |
+    | 2 | $0.2$ | $2.4/3 = 0.8000$ | $-0.6000$ |
+    | 3 | $1.2$ | $1.4/3 = 0.4667$ | $+0.7333$ |
+    | 4 | $0.0$ | $2.6/3 = 0.8667$ | $-0.8667$ |
+
+    (b) Identity check with $\frac{G}{G-1}=\frac43$ and deviations $R_i-\bar R=\{0.55,-0.45,0.55,-0.65\}$:
+
+    $$
+    \tfrac43(0.55)=0.7333,\quad \tfrac43(-0.45)=-0.6000,\quad \tfrac43(0.55)=0.7333,\quad \tfrac43(-0.65)=-0.8667.
+    $$
+
+    Every value matches (a). The leave-one-out advantage is exactly the group-centered reward rescaled by $G/(G-1)$.
+
+    (c) $\sum_i A_i = 0.7333-0.6000+0.7333-0.8667 = 0$. This is exact for RLOO in general: $\sum_i A_i=\frac{G}{G-1}\sum_i(R_i-\bar R)=\frac{G}{G-1}\big(\sum_i R_i - G\bar R\big)=0$, since $\sum_i R_i = G\bar R$ by definition of the mean. The positive pushes on better-than-average responses are exactly balanced by the negative pushes on worse-than-average ones.
+
+**3.** (Quantitative) A prompt yields $G=4$ binary rewards $R=\{1,1,0,0\}$. (a) Compute the GRPO advantages $\hat A_i$ using the **population** std (the convention pinned by `grpo_advantage` in the chapter, `correction=0`), taking $\varepsilon\to 0$. (b) Recompute using PyTorch's default **sample** (Bessel-corrected) std and give the resulting advantages. (c) Take a token in a correct response ($\hat A>0$, use your part-(a) value) whose importance ratio after one update is $r_{i,t}=1.4$, with $\epsilon_{\text{low}}=0.2,\ \epsilon_{\text{high}}=0.28$. Is its surrogate clipped? (d) A different prompt yields $R=\{1,1,1,1\}$. What advantage does every token get, and what does this group contribute to the gradient?
+
+??? note "Solution"
+    (a) $\bar R = (1+1+0+0)/4 = 0.5$. Deviations $\{0.5,0.5,-0.5,-0.5\}$; squared sum $=1.0$. Population variance $=1.0/4=0.25$, so population $\operatorname{std}=0.5$. Advantages $\hat A_i=(R_i-0.5)/0.5$:
+
+    $$
+    \hat A = \{+1,\;+1,\;-1,\;-1\}.
+    $$
+
+    (b) Sample variance divides by $G-1=3$: $1.0/3=0.3333$, so $\operatorname{std}=\sqrt{0.3333}\approx 0.5774$. Advantages $=(R_i-0.5)/0.5774$:
+
+    $$
+    \hat A = \{+0.866,\;+0.866,\;-0.866,\;-0.866\}.
+    $$
+
+    Same signs and structure, just smaller magnitude — this is exactly the population-vs-sample convention gotcha from the chapter.
+
+    (c) Use $\hat A=+1$. Since $\hat A>0$ the ceiling is $1+\epsilon_{\text{high}}=1.28$. Unclipped surrogate $=r\hat A=1.4\times 1=1.40$; clipped $=\operatorname{clip}(1.4,0.8,1.28)\times 1 = 1.28$. Then $\min(1.40,1.28)=1.28$ — the **clipped** branch wins, so this token is clipped and its gradient is zeroed. The single update moved the token's probability by $+40\%$, beyond the $+28\%$ trust-region ceiling.
+
+    (d) $\bar R = 1$, every deviation is $0$, so every $\hat A_i = 0/(0+\varepsilon)=0$. This is a **dead group**: every token's advantage is zero, so it contributes *exactly zero gradient*. The $\varepsilon$ only prevents a divide-by-zero NaN; it does not resurrect any signal. Such all-equal groups are the motivation for DAPO's dynamic sampling.
+
+**4.** (Conceptual) GRPO's original loss has two "optimization biases" that Dr. GRPO removes. (a) Explain how the per-response factor $\frac1{|o_i|}$ biases the gradient with respect to response *length*, and state the token-level fix. (b) Explain how dividing the advantage by $\operatorname{std}(\{R\})$ re-weights *prompts*, and state the fix. (c) Separately, DAPO's clip-higher raises only the *upper* clip. What failure mode does the symmetric upper clip cause, and why does raising it help?
+
+??? note "Solution"
+    (a) **Length-normalization bias.** The inner term $\frac1{|o_i|}\sum_t(\cdot)$ divides a response's summed token loss by its own token count, so each *response* contributes equally but each *token* in a long response gets a $1/|o_i|$-smaller gradient than a token in a short response with the same advantage. For positive advantage this means long correct responses are reinforced *less per token* than short correct ones; for negative advantage, long wrong responses are penalized *less per token* than short wrong ones. That asymmetry creates a standing pressure toward longer responses (rambling is "cheap" when wrong, and under-penalized). **Fix (token-level loss):** stop dividing per response; sum the loss over *all* tokens in the batch and divide by the total token count (or a constant), $\frac{1}{\sum_i|o_i|}\sum_i\sum_t(\cdot)$, so every token carries equal weight and length no longer modulates the per-token gradient. In the chapter code this is the `token_level=True` branch, `(pg*mask).sum()/mask.sum()`.
+
+    (b) **Std-normalization bias.** Dividing by $\operatorname{std}(\{R\})$ makes the advantage magnitude inversely proportional to the group's reward spread, so a low-variance group (e.g. $\{1,1,1,0\}$) gets its advantages *amplified* relative to a high-variance group (e.g. $\{1,1,0,0\}$). This silently re-weights prompts by the inverse of their reward spread — an artifact, worst for very easy/very hard prompts where std is tiny. **Fix:** drop the division and keep only the mean-subtraction, $\hat A_i^{\text{Dr.GRPO}}=R_i-\operatorname{mean}(\{R\})$ (the legitimate baseline, i.e. the RLOO group-mean up to the $G/(G-1)$ factor). In the code, `normalize_std=False`.
+
+    (c) The symmetric upper clip $1+\epsilon$ caps how much a *currently-low-probability but useful* token can be boosted in a single update (a token at $\pi_{\text{old}}=0.01$ can only be lifted to $\le 1.01\times$ its probability). Repeatedly, the policy can never quickly promote promising rare tokens, so it doubles down on already-likely tokens and **entropy collapses** (exploration dies). **Clip-higher** decouples the bounds and raises the ceiling ($\epsilon_{\text{high}}>\epsilon_{\text{low}}$, e.g. $0.28$ vs $0.2$), giving rare-but-good tokens more headroom to grow per step and sustaining entropy, while the tight lower clip still guards against catastrophically over-suppressing tokens.
+
+**5.** (Implementation) DAPO's *dynamic sampling* discards groups whose rewards are all equal (dead groups contribute zero gradient) so every update sees only informative groups. Building on the chapter's code, (a) write a function `dynamic_sampling_mask(rewards, group_size)` that returns a per-*response* boolean mask (`True` for responses whose group is non-degenerate) and the *fraction of non-degenerate groups* (the diagnostic the chapter says to monitor). (b) Show how to use it in `grpo_loss`'s token-level branch so dead-group tokens are excluded from the loss. Keep it consistent with the chapter's tensor conventions.
+
+??? note "Solution"
+    A group is non-degenerate iff not all its rewards are equal, i.e. iff its reward range (max minus min) exceeds a small tolerance. We compute one boolean per group, expand it to per-response, and report the group-level fraction.
+
+    ```python
+    import torch
+
+    def dynamic_sampling_mask(rewards, group_size, tol=1e-8):
+        """
+        DAPO dynamic sampling: flag responses in NON-degenerate groups.
+
+        rewards    : (B,) scalar terminal reward per response; every contiguous
+                     block of `group_size` rows shares a prompt (chapter layout).
+        group_size : G.
+        Returns
+          keep_resp : (B,) bool, True where the response's group has mixed rewards.
+          frac      : float, fraction of groups that are non-degenerate.
+        """
+        G = group_size
+        g = rewards.view(-1, G)                                   # (n_prompts, G)
+        # Non-degenerate <=> rewards are not all identical in the group.
+        alive = (g.max(dim=1).values - g.min(dim=1).values) > tol  # (n_prompts,) bool
+        frac = alive.float().mean().item()
+        keep_resp = alive.unsqueeze(1).expand(-1, G).reshape(-1)   # (B,) bool
+        return keep_resp, frac
+    ```
+
+    Combine this per-response mask with the existing token-level response mask so dead-group tokens drop out of both the numerator and the denominator of the loss. Because the aggregation divides by the surviving token count, discarding dead groups does not shrink the loss magnitude — it just removes zero-advantage tokens (which contribute nothing anyway) and keeps the diagnostic honest:
+
+    ```python
+    def grpo_loss_dyn(input_ids, resp_mask, advantage, old_lp, ref_lp,
+                      rewards, group_size):
+        new_lp, mask = token_logprobs(policy, input_ids, resp_mask)  # (B, T-1)
+        A = advantage.unsqueeze(1)                                   # (B, 1)
+
+        ratio = (new_lp - old_lp).exp()
+        unclipped = ratio * A
+        clipped   = torch.clamp(ratio, 1 - CLIP_EPS_LOW, 1 + CLIP_EPS_HIGH) * A
+        pg = -torch.min(unclipped, clipped)
+        if KL_BETA > 0:
+            pg = pg + KL_BETA * k3_kl(new_lp, ref_lp)
+
+        # Zero out tokens belonging to dead (all-equal-reward) groups.
+        keep_resp, frac = dynamic_sampling_mask(rewards, group_size)  # (B,), float
+        mask = mask * keep_resp.unsqueeze(1).float()                  # (B, T-1)
+
+        loss = (pg * mask).sum() / mask.sum().clamp(min=1.0)          # token-level
+        return loss, frac                                            # frac = diagnostic
+    ```
+
+    Notes: (1) the dead-group tokens already had advantage $0$, so masking them changes the loss only through the denominator — the practical payoff of *true* dynamic sampling is that you would **resample fresh prompts** to refill the batch with informative groups rather than merely dropping them; this function is the filter that decision is built on. (2) `frac` is exactly the "fraction of non-degenerate groups" the chapter flags as a first-class training metric; log it every step, since it is the *only* source of gradient and naturally decays toward $0$ as the policy saturates. (3) The range-based test matches the population/sample-std discussion: it needs no std at all and never divides by a near-zero denominator.

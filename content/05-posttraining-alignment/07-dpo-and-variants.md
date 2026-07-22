@@ -488,3 +488,85 @@ DPO and its variants are the **offline preference-tuning** layer of post-trainin
 - Xu, Fu, Gao, et al., **Is DPO Superior to PPO for LLM Alignment? A Comprehensive Study** (2024) — the empirical core of the DPO-vs-PPO debate.
 - Bradley & Terry, **Rank Analysis of Incomplete Block Designs** (1952) — the preference model underlying all of the above.
 - HuggingFace **TRL** (`DPOTrainer`, `KTOTrainer`, `ORPOTrainer`, `CPOTrainer`) — production implementations; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html).
+
+## Exercises
+
+**1.** (Conceptual) DPO never trains, evaluates, or even stores a reward model, yet the chapter insists it is *implicitly* optimizing the same Bradley–Terry objective a reward model would. Explain precisely (a) what the "implicit reward" $r_\theta(x,y)$ is in terms of the policy and reference, (b) why the intractable partition term $\beta\log Z(x)$ never has to be computed, and (c) what would break if the loss compared *absolute* implicit rewards $r_\theta(x,y)$ instead of the *difference* $r_\theta(x,y_w)-r_\theta(x,y_l)$.
+
+??? note "Solution"
+    (a) Inverting the closed-form optimum $\pi^*(y\mid x)\propto \pi_{\text{ref}}(y\mid x)\exp(\tfrac1\beta r(x,y))$ gives $r(x,y)=\beta\log\frac{\pi(y\mid x)}{\pi_{\text{ref}}(y\mid x)}+\beta\log Z(x)$. Parameterizing the reward through the policy we actually want to train yields the **implicit reward**
+
+    $$
+    r_\theta(x,y)=\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}+\beta\log Z(x),
+    $$
+
+    i.e. $\beta$ times the policy-to-reference log-ratio, plus a prompt-only constant. The log-ratio is computable from two forward passes (policy and frozen reference); no separate reward network exists.
+
+    (b) The Bradley–Terry model depends only on the reward *difference* $r_\theta(x,y_w)-r_\theta(x,y_l)$. Since $\beta\log Z(x)$ is a sum over *all* responses of a given prompt $x$, it is **identical for the winner and the loser** and cancels exactly in the difference. So the one intractable quantity is precisely the one that disappears — that cancellation is the whole reason DPO works.
+
+    (c) $\beta\log Z(x)$ would no longer cancel, and it is intractable (an astronomically large sum), so an absolute-reward loss would be uncomputable. Even setting that aside, the reference/partition offset is unidentifiable from preference data — preferences only ever pin down *differences* — so any absolute-reward objective is ill-posed. DPO is well-defined exactly because it is a loss on differences.
+
+**2.** (Quantitative) Take $\beta=0.1$ and one preference pair. The policy assigns summed log-probs $\log\pi_\theta(y_w)=-8.0$ and $\log\pi_\theta(y_l)=-7.0$; the reference assigns $\log\pi_{\text{ref}}(y_w)=-9.0$ and $\log\pi_{\text{ref}}(y_l)=-7.2$. Compute (a) the two log-ratios, (b) the implicit rewards $r_w,r_l$ and whether the model currently ranks the pair correctly, (c) the margin $\Delta$ and the DPO loss $-\log\sigma(\Delta)$ in nats, and (d) the gradient weight $\sigma(-\Delta)$. Is the loss above or below the coin-flip value $\log 2$?
+
+??? note "Solution"
+    (a) Chosen log-ratio: $-8.0-(-9.0)=+1.0$. Rejected log-ratio: $-7.0-(-7.2)=+0.2$.
+
+    (b) $r_w=\beta\cdot 1.0=0.1$ and $r_l=\beta\cdot 0.2=0.02$. Since $r_w>r_l$, the model **ranks this pair correctly** (chosen implicit reward exceeds rejected).
+
+    (c) $\Delta=\beta(1.0-0.2)=0.1\times0.8=0.08$. Then $\sigma(0.08)=\frac{1}{1+e^{-0.08}}=\frac{1}{1+0.92312}=0.5200$, so the loss is $-\log(0.5200)=0.654$ nats.
+
+    (d) Weight $=\sigma(-\Delta)=\sigma(-0.08)=1-0.5200=0.480$.
+
+    The loss $0.654$ is **below** $\log 2\approx0.693$, consistent with the pair already being (weakly) ranked correctly. The margin is small, so the weight $0.480$ is still large — this pair still contributes a substantial corrective gradient that raises $\log\pi_\theta(y_w)$ and lowers $\log\pi_\theta(y_l)$.
+
+**3.** (Conceptual) During a DPO run your `reward_acc` climbs steadily past 0.7, but generations get shorter and more repetitive, and you notice the *absolute* chosen log-prob $\log\pi_\theta(y_w)$ is falling throughout training. (a) Explain how reward accuracy can improve while the chosen response's own probability drops. (b) Where is the displaced probability mass going, and why does the loss not punish it? (c) Give two fixes drawn from this chapter's variants and say what each one changes.
+
+??? note "Solution"
+    (a) The DPO loss constrains only the *difference* $\Delta=\beta[(\log\tfrac{\pi_\theta(y_w)}{\pi_{\text{ref}}(y_w)})-(\log\tfrac{\pi_\theta(y_l)}{\pi_{\text{ref}}(y_l)})]$. The model can grow $\Delta$ (and thus `reward_acc`, which just checks $r_w>r_l$) by pushing the *rejected* log-ratio down faster than the chosen — dragging the chosen log-prob down too, as long as it falls more slowly than the rejected. Accuracy measures ranking, not absolute likelihood, so it looks healthy.
+
+    (b) Probability is conserved, so lowering both $\pi_\theta(y_w)$ and $\pi_\theta(y_l)$ moves mass onto **other, unseen responses** — often degenerate ones (short, repetitive). The loss is evaluated only on the dataset's $(y_w,y_l)$ pairs, so it never sees or penalizes this off-distribution mass. This is the degeneration footgun.
+
+    (c) Any two of: (1) **raise $\beta$** to tighten the KL leash to $\pi_{\text{ref}}$, limiting how far the policy can drift. (2) Add an **SFT/NLL anchor on the chosen response** — exactly what **CPO** and **ORPO** bake in — which directly holds $\log\pi_\theta(y_w)$ up in absolute terms. (3) Switch to **KTO**, whose prospect-theory value scores each response against a reference point $z_0$, giving an absolute anchor rather than a pure difference. (4) Switch to **IPO**, whose finite target margin $\tfrac{1}{2\beta}$ removes the incentive to push the margin (and the rejected log-prob) toward infinity. In every case: always log absolute chosen log-prob, not just reward accuracy.
+
+**4.** (Quantitative) SimPO argues DPO's *summed* log-prob reward is length-biased. Consider two responses to the same prompt that are equally fluent per token — both have an average log-prob of $-1.0$ per token — but response $A$ has length $10$ (summed log-prob $-10$) and response $B$ has length $30$ (summed log-prob $-30$). (a) Using a summed-log-prob reward $r=\beta\sum_t\log\pi_\theta$ with $\beta=0.1$ (take the reference term as identical for both, so it drops out), compute $r_A$ and $r_B$ and say which the summed reward prefers. (b) Using SimPO's length-normalized reward $r=\frac{\beta}{|y|}\log\pi_\theta$ with $\beta=2.0$, compute $r_A$ and $r_B$. (c) In one sentence, state what this shows about a length-blind summed reward.
+
+??? note "Solution"
+    (a) $r_A=0.1\times(-10)=-1.0$ and $r_B=0.1\times(-30)=-3.0$. The summed reward strongly **prefers the shorter response $A$** ($r_A>r_B$ by $2.0$), even though the two are equally fluent per token — the preference is entirely an artifact of $B$ having more tokens to sum over.
+
+    (b) SimPO first divides by length: mean log-prob is $-10/10=-1.0$ for $A$ and $-30/30=-1.0$ for $B$. So $r_A=2.0\times(-1.0)=-2.0$ and $r_B=2.0\times(-1.0)=-2.0$. The two rewards are **equal** — SimPO is length-invariant here.
+
+    (c) A summed-log-prob reward conflates *quality* with *length*: because every extra token adds a negative term, longer sequences look worse (and shorter ones better) independent of per-token quality, which is the length bias SimPO removes by normalizing — and which the chapter cites as a driver of DPO's tendency to distort response length.
+
+**5.** (Implementation) The chapter gives the CPO loss as a formula but no code. CPO is "reference-free DPO plus an SFT anchor":
+
+    $$
+    \mathcal{L}_{\text{CPO}} = -\log\sigma\big(\beta\log\pi_\theta(y_w\mid x) - \beta\log\pi_\theta(y_l\mid x)\big)\;-\;\lambda\log\pi_\theta(y_w\mid x).
+    $$
+
+    Implement `cpo_loss` in the chapter's style. It takes the policy sequence log-probs for the chosen and rejected responses (outputs of `sequence_logprob`) and the chosen SFT negative log-likelihood `chosen_nll` (as `orpo_loss` does), plus `beta` and `lam`. Return the mean loss. Note that no reference log-probs appear anywhere — that is the point.
+
+??? note "Solution"
+    Two observations. First, the contrastive term is exactly the DPO loss with the reference dropped, so it is $-\log\sigma(\beta(\text{chosen}-\text{rejected}))$ on the *raw* policy log-probs. Second, the SFT anchor $-\lambda\log\pi_\theta(y_w\mid x)$ equals $\lambda$ times the chosen negative log-likelihood, so we reuse `chosen_nll` just like `orpo_loss`.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def cpo_loss(pol_chosen_logps, pol_rejected_logps, chosen_nll,
+                 beta=0.1, lam=1.0):
+        """
+        pol_chosen_logps / pol_rejected_logps : (B,) SEQUENCE log-probs (sum over
+            tokens) of chosen/rejected under the policy -- output of sequence_logprob.
+            NOTE: no reference log-probs -- CPO is reference-free.
+        chosen_nll : (B,) standard SFT negative log-likelihood on the chosen response
+            (= -pol_chosen_logps if you score the full chosen sequence).
+        """
+        # Reference-free contrastive term: DPO's log-sigmoid on RAW policy log-probs.
+        logits = beta * (pol_chosen_logps - pol_rejected_logps)      # (B,)
+        contrastive = -F.logsigmoid(logits)                         # -log sigma(.)
+
+        # SFT anchor -lambda * log pi(yw) == lambda * chosen_nll, holds chosen up.
+        return (contrastive + lam * chosen_nll).mean()
+    ```
+
+    Sanity checks consistent with the chapter: (1) dropping the reference means CPO saves the reference model's memory and its forward pass, matching the "memory-light" claim in the variants table. (2) The SFT anchor is the same absolute-log-prob anchor recommended in Exercise 3 as a degeneration fix, so CPO cannot satisfy its loss by cratering the chosen log-prob — the $\lambda\,\text{chosen\_nll}$ term directly penalizes that. (3) With $\lambda=0$ this reduces to reference-free DPO on summed log-probs.

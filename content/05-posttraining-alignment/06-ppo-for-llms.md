@@ -571,3 +571,118 @@ The honest summary: PPO is the *right general algorithm* and the most *education
 - Ziegler, Stiennon, Wu, et al., **Fine-Tuning Language Models from Human Preferences** (2019) — the earlier blueprint for KL-regularized RLHF.
 - Huang et al., **The N Implementation Details of RLHF with PPO** / the **CleanRL** and **TRL** PPO implementations — concrete, debuggable reference code; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html).
 - John Schulman, **Approximating KL Divergence** (blog note) — the k1/k2/k3 KL estimators used for the penalty.
+
+## Exercises
+
+**1.** In the text MDP the transition kernel $P(s_{t+1}\mid s_t, a_t)$ is *deterministic*, unlike robotics or Atari where the environment injects its own randomness. (a) Explain concretely, in terms of tokens and context windows, why appending a token is a deterministic transition. (b) Name two distinct mechanical consequences of this determinism that make RL for LLMs easier than classic RL, and tie each to a specific quantity that appears in the PPO loss.
+
+??? note "Solution"
+    **(a)** A state is $s_t = (q, o_{<t})$, the prompt plus the tokens generated so far, and an action is the single next token $a_t = o_t$. The transition is "concatenate $o_t$ onto the context," which yields *exactly one* successor state $s_{t+1} = (q, o_{\le t})$ with probability 1. There is no coin flip in the environment: once the token is chosen, the next context is fully determined. All the randomness in a trajectory lives in the policy's own sampling step $o_t \sim \pi_\theta(\cdot\mid s_t)$, never in $P$.
+
+    **(b)** Two consequences:
+
+    - **No transition model to learn and no environment noise to average over.** In the policy-gradient derivation the transition terms $\log P(s_{t+1}\mid s_t,a_t)$ have zero gradient *and* are known exactly, so they drop out cleanly and we never have to estimate them. The advantage $\hat A_t$ and value $V_\phi(s_t)$ therefore have to account only for the policy's own stochasticity, not for a noisy world.
+    - **A trajectory's probability is exactly the product of token probabilities**, $p_\theta(\tau) = p(s_0)\prod_t \pi_\theta(o_t\mid s_t)$, computable in a single forward pass. This makes the log-probs $\log\pi_\theta(o_t\mid s_t)$ (hence the importance ratio $r_t(\theta) = \pi_\theta/\pi_{\text{old}}$ and the KL penalty $\log\pi_\theta - \log\pi_{\text{ref}}$) *exact* rather than Monte Carlo estimates over environment outcomes.
+
+**2.** A single-token bandit ("choose one of three responses") has current policy probabilities $\pi = (0.2, 0.5, 0.3)$ for responses $(A, B, C)$ and reward-model scores $R = (8.0, 7.0, 9.0)$. (a) Compute the value-function baseline $b = V^\pi = \mathbb{E}_{o\sim\pi}[R]$. (b) Compute the advantage $A_i = R_i - b$ for each response and state which tokens get pushed up vs. down. (c) The chapter says a constant baseline does not bias the gradient. Verify this *for this bandit* by showing that $\sum_i \pi_i (R_i - b)\,\nabla_\theta\log\pi_i$ has the same expectation as $\sum_i \pi_i R_i \nabla_\theta\log\pi_i$, i.e. that the extra term $\sum_i \pi_i\, b\, \nabla_\theta \log \pi_i$ vanishes.
+
+??? note "Solution"
+    **(a)** $b = 0.2(8.0) + 0.5(7.0) + 0.3(9.0) = 1.6 + 3.5 + 2.7 = 7.8$.
+
+    **(b)**
+
+    | response | $R_i$ | $A_i = R_i - 7.8$ | direction |
+    |---|---|---|---|
+    | A | $8.0$ | $+0.2$ | push up |
+    | B | $7.0$ | $-0.8$ | push down |
+    | C | $9.0$ | $+1.2$ | push up |
+
+    Without the baseline all three signals are $\approx +8$ (a large common-mode offset that says "make everything more likely," which is incoherent since probabilities sum to 1). Subtracting $b$ leaves only the discriminative part: A and C are above average and get boosted, B is below average and gets suppressed.
+
+    **(c)** The baseline term is
+    $$
+    \sum_i \pi_i\, b\, \nabla_\theta \log \pi_i = b \sum_i \pi_i \frac{\nabla_\theta \pi_i}{\pi_i} = b \sum_i \nabla_\theta \pi_i = b\,\nabla_\theta \sum_i \pi_i = b\,\nabla_\theta (1) = 0,
+    $$
+    using $\nabla_\theta\log\pi_i = \nabla_\theta\pi_i/\pi_i$ (the log-derivative identity) and $\sum_i \pi_i = 1$. Because $b$ is a constant that does not depend on the action index $i$, it factors out of the sum and multiplies the gradient of the constant $1$, which is $0$. Hence subtracting $b$ changes the variance of the estimator but not its mean.
+
+**3.** Take one response with three real tokens (`response_mask = [1, 1, 1]`), `gamma = 1.0`, `lam = 0.5`. The terminal reward-model score $R = 6$ sits on the last token: `rewards = [0, 0, 6]`. The critic outputs `values = [2, 4, 1]`. Using the terminal bootstrap $V(s_T) = 0$, compute (a) the TD residuals $\delta_t$, (b) the raw GAE advantages $\hat A_t$ via the backward recursion, and (c) the critic's regression targets $\hat R_t = \hat A_t + V_\phi(s_t)$ (returns, before whitening).
+
+??? note "Solution"
+    Recursion: $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$, then $\hat A_t = \delta_t + \gamma\lambda\,\hat A_{t+1}$, walking $t$ from 2 down to 0 with $\gamma=1$, $\lambda=0.5$.
+
+    **(a) and (b), step by step:**
+
+    - $t=2$: $V(s_3)=0$ (terminal bootstrap). $\delta_2 = 6 + 1\cdot 0 - 1 = 5$. $\hat A_2 = 5$ (nothing to its right).
+    - $t=1$: $V(s_2)=1$. $\delta_1 = 0 + 1\cdot 1 - 4 = -3$. $\hat A_1 = -3 + 0.5\cdot 5 = -0.5$.
+    - $t=0$: $V(s_1)=4$. $\delta_0 = 0 + 1\cdot 4 - 2 = 2$. $\hat A_0 = 2 + 0.5\cdot(-0.5) = 1.75$.
+
+    | $t$ | $r_t$ | $V_t$ | $V(s_{t+1})$ | $\delta_t$ | $\hat A_t$ |
+    |---|---|---|---|---|---|
+    | 0 | 0 | 2 | 4 | $2$ | $1.75$ |
+    | 1 | 0 | 4 | 1 | $-3$ | $-0.5$ |
+    | 2 | 6 | 1 | 0 | $5$ | $5$ |
+
+    **(c) Returns** $\hat R_t = \hat A_t + V_t$: $\hat R_0 = 1.75 + 2 = 3.75$, $\hat R_1 = -0.5 + 4 = 3.5$, $\hat R_2 = 5 + 1 = 6$. So `returns = [3.75, 3.5, 6]`. (Note the last return equals the terminal reward $6$ exactly, since $\hat A_2 = \delta_2 = R - V_2$ and $\hat R_2 = R$: the critic on the final token is regressed straight onto the observed score.)
+
+**4.** With $\epsilon = 0.2$, evaluate the per-token clipped objective $L^{\text{CLIP}}_t = \min\!\big(r_t\hat A_t,\ \operatorname{clip}(r_t,\,0.8,\,1.2)\,\hat A_t\big)$ and state whether the clip engages (i.e. whether the gradient through this token is zero) for each token. (a) $\hat A_t = +0.5$, $r_t = 1.35$. (b) $\hat A_t = -0.5$, $r_t = 0.70$. (c) $\hat A_t = +0.5$, $r_t = 1.10$. Then (d) explain in one sentence why the clip in (a) is *not* a bug even though we wanted to push this good token up.
+
+??? note "Solution"
+    **(a)** Good token ($\hat A>0$), $r_t = 1.35 > 1.2$. Unclipped $= 1.35 \times 0.5 = 0.675$; clipped $= 1.2 \times 0.5 = 0.60$. $\min(0.675, 0.60) = 0.60$, taken from the *clipped* branch, which is constant in $r_t$ → **clip engages, gradient is zero.**
+
+    **(b)** Bad token ($\hat A<0$), $r_t = 0.70 < 0.8$. Unclipped $= 0.70 \times (-0.5) = -0.35$; clipped $= 0.8 \times (-0.5) = -0.40$. $\min(-0.35, -0.40) = -0.40$, taken from the *clipped* branch → **clip engages, gradient is zero.** (The `min` of two negatives picks the more negative one, which here is the clipped term, so the floor at $1-\epsilon$ binds.)
+
+    **(c)** Good token, $r_t = 1.10 \in [0.8, 1.2]$. Unclipped $= 1.10 \times 0.5 = 0.55$; clipped $= 1.10 \times 0.5 = 0.55$ (clip does nothing inside the window). $\min = 0.55$ from the unclipped branch → **clip does NOT engage, gradient flows.**
+
+    **(d)** The optimizer has already moved this token's probability $35\%$ above its rollout value — past the $20\%$ trust region — so PPO deliberately zeroes further incentive *this epoch*; the token gets another chance after the next rollout resets $\pi_{\text{old}}$ to the current policy and the ratio restarts at $1.0$.
+
+**5.** The chapter's `make_token_rewards` uses the **k1** KL estimator $\log\pi_\theta - \log\pi_{\text{ref}}$, which is unbiased but can be *negative* for an individual token (giving that token a positive reward for sitting below the reference). Reimplement it using Schulman's always-non-negative **k3** estimator $\rho - \log\rho - 1$ with $\rho = \pi_{\text{ref}}/\pi_\theta$, keeping the terminal-RM-score placement identical. Then compute the k3 per-token KL penalty for the chapter's interior token ($\pi_\theta = 0.14$, $\pi_{\text{ref}} = 0.08$, $\beta = 0.05$) and compare its sign and magnitude to the k1 value of $-0.028$.
+
+??? note "Solution"
+    In log space, $\log\rho = \log\pi_{\text{ref}} - \log\pi_\theta = $ `ref_logprobs - policy_logprobs`, and $\rho = \exp(\log\rho)$. The k3 KL is $\rho - \log\rho - 1 \ge 0$ for all $\rho > 0$, so the penalty $-\beta\,(\rho - \log\rho - 1)$ is always $\le 0$: unlike k1, a token below the reference is never *rewarded*, only penalized less.
+
+    ```python
+    def make_token_rewards_k3(policy_logprobs, ref_logprobs, rm_scores, mask, kl_beta=0.05):
+        """Same as make_token_rewards but with Schulman's k3 (always >= 0) KL estimator."""
+        log_rho = ref_logprobs - policy_logprobs          # log(pi_ref / pi_theta)
+        rho = log_rho.exp()
+        kl_k3 = rho - log_rho - 1.0                        # k3, elementwise, always >= 0
+        token_rewards = -kl_beta * kl_k3 * mask            # KL penalty on every response token
+
+        # Terminal RM score on the last unmasked token (found positionally, as before).
+        positions = torch.arange(mask.size(1), device=mask.device).unsqueeze(0).expand_as(mask)
+        last_idx = (positions * mask).amax(dim=1).long()   # (B,)
+        rows = torch.arange(token_rewards.size(0), device=mask.device)
+        token_rewards[rows, last_idx] += rm_scores
+        return token_rewards
+    ```
+
+    **Numeric check.** $\log\rho = \log(0.08/0.14) = \log(0.5714) = -0.5596$, so $\rho = 0.5714$. Then
+    $$
+    \text{k3} = \rho - \log\rho - 1 = 0.5714 - (-0.5596) - 1 = 0.1310,
+    $$
+    and the penalty is $-\beta\cdot\text{k3} = -0.05 \times 0.1310 = -0.00655$. Comparison: k1 gave $-0.028$ (from $-0.05\times(\log 0.14 - \log 0.08) = -0.05\times 0.560$). Both are negative here because this token is *above* the reference, but the k3 penalty is about $4\times$ smaller in magnitude — k3 is likewise an *unbiased* estimator of the same KL (since $\mathbb{E}_{\pi_\theta}[\rho] = 1$ gives $\mathbb{E}[\rho - \log\rho - 1] = -\mathbb{E}[\log\rho] = \mathbb{D}_{\text{KL}}[\pi_\theta\|\pi_{\text{ref}}]$) but with much lower variance, and critically it is always $\ge 0$, so the penalty can never flip to a reward — no token is ever paid to drift below the reference.
+
+**6.** The full PPO loss uses an entropy bonus, and the training loop calls `entropy = policy_entropy(policy, buf["input_ids"][sl], buf["mask"][sl])`, but `policy_entropy` is never defined in the chapter. Implement it: return the mask-averaged per-token entropy $S = -\sum_{v}\pi_\theta(v\mid s_t)\log\pi_\theta(v\mid s_t)$ of the policy's next-token distribution, consistent with the chapter's shift/alignment convention (logits `[:, :-1]` line up with the mask derived from `resp_mask[:, 1:]`). Explain in one line why maximizing this entropy (adding `-ENT_COEF * entropy` to the loss) helps.
+
+??? note "Solution"
+    Entropy is computed over the *full vocabulary distribution* at each position (not the single sampled token), then averaged over response tokens with the same mask used everywhere else. Because the driver adds `- ENT_COEF * entropy` to the minimized loss, and `policy_entropy` returns a positive entropy, the optimizer is pushed to *increase* entropy.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def policy_entropy(model, input_ids, mask):
+        """
+        Mean per-token entropy of the policy's next-token distribution over the
+        response tokens. Shapes match the chapter: logits[:, :-1] aligns with the
+        mask taken from resp_mask[:, 1:].
+        """
+        out = model(input_ids)                       # logits (B, T, V)
+        logits = out.logits[:, :-1]                  # (B, T-1, V), drop last position
+        logp = F.log_softmax(logits.float(), dim=-1) # (B, T-1, V)
+        p = logp.exp()
+        token_entropy = -(p * logp).sum(dim=-1)      # (B, T-1)  S = -sum_v p log p
+        return (token_entropy * mask).sum() / mask.sum().clamp(min=1.0)
+    ```
+
+    **Why it helps (one line):** a higher-entropy next-token distribution keeps the policy from collapsing prematurely to a near-deterministic output, preserving the exploration the on-policy gradient needs to keep discovering better tokens before the clip and KL leash lock the policy in.

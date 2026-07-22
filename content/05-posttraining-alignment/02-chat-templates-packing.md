@@ -819,3 +819,162 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
 - **Krell et al., "Efficient Sequence Packing without Cross-contamination"** (2021) — empirical study on the impact of cross-document attention in packed pretraining sequences, and the efficacy of document-boundary masks.
 - **Tri Dao, "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning"** (2023) — the `flash_attn_varlen_func` API used for packing without explicit mask materialisation.
 - **Zheng et al., "SGLang: Efficient Execution of Structured Language Model Programs"** (2023) — covers structured generation and how tool-call schemas interact with constrained decoding, complementing the template story.
+
+## Exercises
+
+**1.** *(Conceptual)* The chapter insists that during SFT we set `labels = -100` on every prompt and role token and supervise only the assistant-turn content. Suppose instead you trained on the *full* sequence — every token both an input and a target, exactly as in pretraining. Name the two concrete failure modes the chapter attributes to this choice, and explain what each one does to the resulting model.
+
+??? note "Solution"
+    The chapter lists two failure modes for including the prompt in the loss (see "Why Mask the Prompt?"):
+
+    1. **Gradient pollution.** The gradient signal for role/structure tokens such as `<|im_start|>user` is dominated by the many examples in which those tokens appear, yet none of that signal makes the model a better *assistant*. Compute and gradient budget are spent learning to reproduce boilerplate and user text rather than to respond.
+
+    2. **Objective mismatch (distribution mismatch).** At inference time the model never generates the user's message — the harness supplies it. Training the model to produce user turns teaches a behaviour it will never be asked to perform, creating a mismatch between the training objective and the deployment objective.
+
+    Empirically, the chapter notes that prompt-masked SFT converges to lower perplexity on held-out *completions* (not full sequences) and produces fewer verbatim repetitions of the system prompt in responses.
+
+**2.** *(Quantitative)* Take the worked example from the chapter: a 26-token packed conversation in which exactly 3 tokens are assistant content (`loss_mask = True`) and the other 23 are masked. During one forward pass the model assigns the following per-token negative log-probabilities $-\log p_\theta(x_t \mid x_{<t})$ to the three supervised positions: $0.50$, $1.00$, $0.30$. Using the chapter's masked-loss formula, compute $\mathcal{L}_{\text{masked}}$. Then compute what the loss *would* have been if you had (incorrectly) normalised by the full sequence length $T = 26$ while still summing only the supervised terms. By what factor do the two differ, and which normaliser does the chapter say is correct?
+
+??? note "Solution"
+    The chapter's masked loss is
+
+    $$
+    \mathcal{L}_{\text{masked}} = -\frac{1}{\sum_t m_t} \sum_{t=1}^{T} m_t \log p_\theta(x_t \mid x_{<t}).
+    $$
+
+    The numerator (sum over supervised positions) is the same in both cases:
+
+    $$
+    \sum_t m_t \big(-\log p_\theta\big) = 0.50 + 1.00 + 0.30 = 1.80.
+    $$
+
+    Correct normaliser, $\sum_t m_t = 3$:
+
+    $$
+    \mathcal{L}_{\text{masked}} = \frac{1.80}{3} = 0.60.
+    $$
+
+    Wrong normaliser, dividing by $T = 26$:
+
+    $$
+    \frac{1.80}{26} \approx 0.0692.
+    $$
+
+    They differ by a factor of $26/3 \approx 8.67$. The chapter is explicit that the denominator must be the number of *supervised* tokens ($\sum_t m_t$), not the total sequence length, "so that longer prompts do not dilute the gradient." Normalising by $T$ would shrink both the loss and its gradient by the prompt-to-completion ratio, and — worse — that ratio varies example to example, so it would silently reweight examples by how much prompt they happen to carry.
+
+**3.** *(Quantitative)* You are packing an SFT dataset with `max_length = 1024`. The five examples have token lengths: A = 700, B = 500, C = 450, D = 300, E = 150. Apply the chapter's **first-fit-decreasing** bin packer (sort longest-first, then place each example in the first bin it fits). List the resulting bins and their fill. Then compute the token utilisation both **without** packing (one right-padded row per example) and **with** packing, and state how many training rows each approach produces.
+
+??? note "Solution"
+    Total real content = $700 + 500 + 450 + 300 + 150 = 2100$ tokens.
+
+    Sort longest-first: A(700), B(500), C(450), D(300), E(150). Place each into the first bin with room (`bin_len + L <= 1024`):
+
+    - **A (700):** no bin yet -> open **Bin 1** = [A], fill 700.
+    - **B (500):** Bin 1 has 700, $700+500=1200 > 1024$ -> open **Bin 2** = [B], fill 500.
+    - **C (450):** Bin 1 $700+450=1150>1024$; Bin 2 $500+450=950\le1024$ -> Bin 2 = [B, C], fill 950.
+    - **D (300):** Bin 1 $700+300=1000\le1024$ -> Bin 1 = [A, D], fill 1000.
+    - **E (150):** Bin 1 $1000+150=1150>1024$; Bin 2 $950+150=1100>1024$ -> open **Bin 3** = [E], fill 150.
+
+    Resulting bins:
+
+    | Bin | Contents | Fill | Pad | Utilisation |
+    |-----|----------|------|-----|-------------|
+    | 1 | A + D | 1000 | 24 | 98% |
+    | 2 | B + C | 950 | 74 | 93% |
+    | 3 | E | 150 | 874 | 15% |
+
+    **Without packing** (5 rows, each right-padded to 1024):
+    $$
+    \text{utilisation} = \frac{2100}{5 \times 1024} = \frac{2100}{5120} \approx 41\% \quad (\textbf{5 rows}).
+    $$
+
+    **With packing** (3 bins):
+    $$
+    \text{utilisation} = \frac{2100}{3 \times 1024} = \frac{2100}{3072} \approx 68\% \quad (\textbf{3 rows}).
+    $$
+
+    Packing cuts the row count from 5 to 3 and raises utilisation from ~41% to ~68%. The lone short example E in Bin 3 is what drags utilisation down; with a larger, smoother dataset the chapter notes real runs reach 85-95%.
+
+**4.** *(Conceptual)* In the packed collator, a colleague sets `pack=True` and builds the attention mask with the one-liner `attention_mask = (batch_ids != tokenizer.pad_token_id)`. Their tokenizer follows the Chapter 5.1 Llama-style convention `pad_token = eos_token`. Describe the **two** independent things wrong here — one specific to the `pad == eos` choice, and one intrinsic to using any 2D row-level mask with packing — and state the chapter's fix for each.
+
+??? note "Solution"
+    **Bug 1 — `pad_token_id == eos_token_id` zeroes real end-of-turn tokens.** When the pad id equals the EOS id, the comparison `batch_ids != pad_token_id` is `False` not only at padding positions but at every *real* end-of-turn token (`<|im_end|>`, `<|eot_id|>`, EOS) inside the content. Those are exactly the tokens the model must attend to and must learn to emit as a stop signal; masking them out corrupts training. **Fix:** never derive the mask from `input_ids != pad_token_id`. Build it from the known sequence lengths, marking the first `content_len` positions of each row as 1 (as the chapter's collator does).
+
+    **Bug 2 — a 2D row-level mask cannot enforce block-diagonal attention.** With `pack=True` several documents share one row. A 1D-per-row mask only distinguishes *content* from *padding*; it does nothing to separate document 1 from document 2 within the content region. So document 2's first token can still attend to document 1's last token — the cross-document leakage the chapter warns about. A row-level mask plus the per-document `position_ids` reset are *necessary but not sufficient*. **Fix:** feed the collator's `cu_seqlens` to Flash Attention's `flash_attn_varlen_func` (varlen kernel), or materialise a `make_block_diagonal_mask` and pass it as a 4D additive mask, so attention is confined within each document.
+
+**5.** *(Implementation)* The chapter's `build_chatml_loss_mask` supervises the *entire* assistant turn, including any `<tool_call>...</tool_call>` JSON. Some practitioners prefer to treat the tool-call JSON as "planning overhead" and **exclude** it from the loss while still supervising the surrounding assistant prose. Write a function `mask_tool_call_json(input_ids, loss_mask, tokenizer)` that takes the tensors returned by `build_chatml_loss_mask` and sets `loss_mask = False` on every token from `<tool_call>` through `</tool_call>` inclusive. Assume `<tool_call>` and `</tool_call>` are ordinary text that tokenizes to a stable id sequence (not single special tokens). Keep it consistent with the chapter's scanning style.
+
+??? note "Solution"
+    We reuse the same "encode the delimiter, scan for its id subsequence" approach the chapter uses to find `assistant\n`. Because the delimiters are ordinary text rather than single special tokens, we match on the *list* of ids that `tokenizer.encode` produces for each delimiter, then zero the mask across each matched span.
+
+    ```python
+    import torch
+    from transformers import PreTrainedTokenizerFast
+
+    def _find_subseq(ids: list[int], pat: list[int], start: int = 0) -> int:
+        """Return the index of the first occurrence of pat in ids at/after
+        `start`, or -1 if not found."""
+        if not pat:
+            return -1
+        last = len(ids) - len(pat)
+        for i in range(start, last + 1):
+            if ids[i : i + len(pat)] == pat:
+                return i
+        return -1
+
+    def mask_tool_call_json(
+        input_ids: torch.Tensor,   # (seq_len,)
+        loss_mask: torch.Tensor,   # (seq_len,) bool, from build_chatml_loss_mask
+        tokenizer: PreTrainedTokenizerFast,
+    ) -> torch.Tensor:
+        """
+        Set loss_mask = False across every <tool_call> ... </tool_call> span
+        (inclusive of both delimiters), so the tool-call JSON is excluded from
+        the loss while surrounding assistant prose stays supervised.
+        Returns the modified loss_mask (also mutated in place).
+        """
+        ids = input_ids.tolist()
+        open_ids  = tokenizer.encode("<tool_call>",  add_special_tokens=False)
+        close_ids = tokenizer.encode("</tool_call>", add_special_tokens=False)
+
+        cursor = 0
+        while True:
+            o = _find_subseq(ids, open_ids, cursor)
+            if o == -1:
+                break
+            c = _find_subseq(ids, close_ids, o + len(open_ids))
+            if c == -1:
+                # Unterminated block: mask to end of sequence to be safe.
+                loss_mask[o:] = False
+                break
+            span_end = c + len(close_ids)          # exclusive
+            loss_mask[o:span_end] = False          # delimiters + JSON masked out
+            cursor = span_end
+
+        return loss_mask
+    ```
+
+    Usage, chaining onto the chapter's builder:
+
+    ```python
+    input_ids, loss_mask = build_chatml_loss_mask(tokenizer, messages)
+    loss_mask = mask_tool_call_json(input_ids, loss_mask, tokenizer)
+    labels = labels_from_mask(input_ids, loss_mask)   # -100 at masked positions
+    ```
+
+    Notes consistent with the chapter:
+
+    - We only ever *clear* bits that `build_chatml_loss_mask` set, so tokens outside assistant turns (already `False`) are untouched, and the `tool`-role return turn stays masked as before.
+    - The loop handles multiple tool calls in one conversation (e.g. multi-turn tool use) by advancing `cursor` past each closed block.
+    - If the delimiters were promoted to genuine *special tokens*, you would instead match single ids via `convert_tokens_to_ids("<tool_call>")` — the same simplification the chapter draws between special tokens (immune to BPE splitting) and ordinary strings.
+
+**6.** *(Conceptual / short calculation)* Checklist item 3 says a quick sanity check before training is `(labels != -100).float().mean()`, which should land in roughly $0.25$-$0.50$ for chat data. For the 26-token worked example (3 supervised tokens) this quantity is $3/26 \approx 0.115$ — well below that band. Give two reasons the chapter's own text explains why a single tiny example falls under the typical range, and describe one dataset-level situation that would push the *aggregate* fraction *above* $0.50$.
+
+??? note "Solution"
+    Why the single toy example reads low ($\approx 0.115$):
+
+    1. **Fixed template overhead dominates a short example.** Every turn pays a fixed cost of role headers and delimiters (`<|im_start|>role\n`, `<|im_end|>`, newline) that are always masked. In the 26-token example the system and user turns plus all role headers are ~23 masked tokens against a 2-3 token answer ("4."), so structure swamps content. The chapter's own count shows roughly 10 + 10 tokens of masked system/user turn versus ~3 supervised assistant tokens.
+
+    2. **It is one turn with a very short completion.** The chapter's 0.25-0.50 figure is an *aggregate* over a dataset that averages ~200 tokens and where "roughly 30-40% of tokens are typically assistant tokens." A single Q->"4." example has an unusually long prompt relative to its answer, so it sits below the aggregate band. (This is exactly why the checklist compares the mean over a *batch/dataset*, not one row.)
+
+    A dataset-level situation pushing the aggregate *above* 0.50: **multi-turn conversations with long assistant responses and short user turns.** Because multi-turn masking supervises *every* assistant turn (not just the last), a dialogue of several long assistant answers to terse user prompts makes supervised assistant tokens outweigh the masked prompt/structure tokens, driving `(labels != -100).mean()` above 0.5. (Conversely, long system prompts and long user questions with terse answers push it the other way.)
