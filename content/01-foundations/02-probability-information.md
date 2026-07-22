@@ -594,10 +594,10 @@ Running the script produces output like:
 
 ```text
 === CE / KL decomposition demo ===
-H(p)              = 0.8019 nats
-KL(p || q)        = 0.0719 nats
-H(p) + KL(p||q)   = 0.8738 nats
-H(p, q) directly  = 0.8738 nats
+H(p)              = 0.9404 nats
+KL(p || q)        = 0.0969 nats
+H(p) + KL(p||q)   = 1.0373 nats
+H(p, q) directly  = 1.0373 nats
 Match: True
 
 One-hot target:
@@ -608,13 +608,15 @@ This equals -log(q[0]) = -log(0.5) = 0.6931
 Perplexity = 5.173  (expected ~5.17)
 
 === Perplexity from logits ===
-Perplexity from logits = 5.821
+Perplexity from logits = 6.538
 
 === Label-smoothed loss ===
-Label-smoothed loss = 4.6231
-Hard cross-entropy  = 4.5814
-Label smoothing adds regularization: LS loss > hard CE = True
+Label-smoothed loss = 5.6843
+Hard cross-entropy  = 5.7464
+Label smoothing adds regularization: LS loss > hard CE = False
 ```
+
+The first block (CE/KL decomposition) is deterministic — `p` and `q` are fixed tensors, so those four numbers are exact and will match on any machine. The last two blocks depend on `torch.manual_seed(42)`-seeded random logits, so the specific numbers (and even the `True`/`False` outcome of the last comparison) can differ across PyTorch versions and hardware. The point the code demonstrates is architectural — `H(p,q) = H(p) + D_KL(p‖q)` holds exactly — not that label smoothing is guaranteed to increase the loss on any single random draw of untrained logits.
 
 ---
 

@@ -346,7 +346,7 @@ A residual network with skip connections has a better-conditioned loss landscape
     \mathcal{L}(\theta_2) = 3.24^2 = 10.50
     $$
 
-    After step 1 the $\theta_2$ component (high-curvature direction) is already zeroed out. The remaining convergence is geometric: $\mathcal{L}$ decreases by factor $(1 - 2 \cdot 0.05)^2 = 0.81$ per step. To reach $\mathcal{L} < 0.01$ from $\mathcal{L} = 12.96$: $t \geq \log(0.01/12.96) / \log(0.81) \approx 38$ steps.
+    After step 1 the $\theta_2$ component (high-curvature direction) is already zeroed out. The remaining convergence is geometric: $\mathcal{L}$ decreases by factor $(1 - 2 \cdot 0.05)^2 = 0.81$ per step. To reach $\mathcal{L} < 0.01$ from the initial loss $\mathcal{L}(\theta_0) = 4^2 + 10 \cdot 1^2 = 26$: $t \geq \log(0.01/26) / \log(0.81) \approx 38$ steps. (Counting instead from the post-step-1 loss of 12.96 gives $\approx 34$ *additional* steps — the same order of magnitude, since step 1 already did most of the work by zeroing the high-curvature component.)
 
     With Nesterov (rate $O(1/\sqrt{\kappa})$): $\approx 12$ steps to the same tolerance — $3\times$ faster.
 
@@ -561,21 +561,23 @@ Running this script produces output like:
 
 ```text
 === Rosenbrock surface (non-convex) ===
-  Starting loss: 6.2500
+  Starting loss: 312.5000
   Global minimum at (1, 1), loss = 0
 
-  GD            final_loss=0.012341  theta=(0.8882, 0.7898)
-  Momentum      final_loss=0.000412  theta=(0.9797, 0.9594)
-  Adam          final_loss=0.000003  theta=(0.9990, 0.9980)
-  SGD+Noise     final_loss=0.094821  theta=(0.7631, 0.5823)
+  GD            final_loss=0.053318  theta=(0.7693, 0.5908)
+  Momentum      final_loss=0.000000  theta=(0.9999, 0.9998)
+  Adam          final_loss=2.681244  theta=(-0.6368, 0.4102)
+  SGD+Noise     final_loss=0.053240  theta=(0.7695, 0.5911)
 
 === Quadratic surface (condition number κ=10) ===
-  GD          steps to loss<0.01: 147
-  Momentum    steps to loss<0.01: 42
-  Adam        steps to loss<0.01: 18
+  GD          steps to loss<0.01: 45
+  Momentum    steps to loss<0.01: 60
+  Adam        steps to loss<0.01: 61
 ```
 
-Notice that Adam converges fastest on both surfaces, momentum is $\sim$3.5x faster than GD on the ill-conditioned quadratic (matching the $\sqrt{\kappa}$ theory), and SGD noise prevents convergence to the Rosenbrock minimum — illustrating the generalization-vs-convergence tradeoff.
+(Note: with $\theta_0 = (-1.5, 0.5)$ the actual starting Rosenbrock loss is $(1-(-1.5))^2 + 100(0.5-(-1.5)^2)^2 = 6.25 + 306.25 = 312.5$, not $6.25$ — the smaller term alone is only the $(1-x)^2$ piece.)
+
+These numbers are worth sitting with, because they cut against the "Adam always wins" intuition. On the Rosenbrock surface, **momentum** — not Adam — reaches the global minimum almost exactly, because the curved valley rewards accumulating velocity along a consistent direction. Adam actually does *worse* than plain GD here: its per-coordinate normalization by $\sqrt{\hat v_t}$ treats $x$ and $y$ independently, which fights against Rosenbrock's tightly coupled, curved valley, and with these particular (untuned) hyperparameters it stalls well short of the minimum. On the quadratic, plain GD wins on *both* metrics with these hyperparameters: it not only reaches the loss $<0.01$ threshold first (45 steps vs. 60–61), it also ends up at a lower final loss after 200 steps ($5\times 10^{-14}$ vs. $\sim 10^{-8}$ for momentum and Adam) — its learning rate happens to be unusually well-matched to this simple, low-dimensional bowl, while momentum and Adam overshoot and oscillate for the first several dozen steps (visible if you print the early loss curve) before settling down. The lesson: the textbook convergence-rate rankings (Nesterov beats GD by $O(\sqrt{\kappa})$, Adam preconditions ill-conditioned directions) describe *asymptotic, well-tuned* behavior and are landscape-dependent — naive default learning rates do not automatically realize those speedups on every problem, and which optimizer "wins" for a given step budget and hyperparameter choice is an empirical question you have to check on your actual loss surface, not something to assume from the algorithm's name.
 
 ---
 
