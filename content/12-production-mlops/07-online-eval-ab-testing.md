@@ -251,7 +251,9 @@ def compute_interleaving_win_rate(
     win_rate = wins_treatment / n
 
     # Under H0: win_rate = 0.5; use binomial test
-    p_value = stats.binom_test(wins_treatment, n, p=0.5, alternative="two-sided")
+    # (scipy.stats.binom_test was deprecated in SciPy 1.7 and removed in 1.12+;
+    # use the modern binomtest API, which returns a result object.)
+    p_value = stats.binomtest(wins_treatment, n, p=0.5, alternative="two-sided").pvalue
 
     return {
         "win_rate": win_rate,
@@ -497,7 +499,7 @@ def should_rollback(
 rollback, reason = should_rollback(
     canary_metrics={
         "thumb_down_rate": 0.062,
-        "latency_p99_ms": 1850,
+        "latency_p99_ms": 1845,
         "cost_per_session_usd": 0.041,
         "safety_violation_rate": 0.0,
     },
@@ -516,7 +518,7 @@ rollback, reason = should_rollback(
 )
 print(f"Rollback: {rollback}, reason: {reason}")
 # Rollback: False, reason: all guardrails passed
-# (P99 latency increased 30.3% — just barely passes; in practice, tighten to 0.25)
+# (P99 latency increased 29.9% — just barely passes; in practice, tighten to 0.25)
 ```
 
 A well-run canary pipeline can catch regressions within minutes. The 1% initial stage exists specifically for catastrophic failures (model returns empty strings, crashes with certain inputs). The 10% stage provides the first statistically meaningful read on behavioral metrics. The 50% stage is where you run the full hypothesis test.

@@ -70,6 +70,11 @@ def pass_at_k(n: int, c: int, k: int) -> float:
     if c == n:
         # All samples pass — all possible draws of k pass.
         return 1.0
+    if n - c < k:
+        # Fewer failing samples than k: any draw of k must include a
+        # passing sample. C(n-c, k) is 0 by definition (can't choose k
+        # items from a pool of n-c), so the failure probability is 0.
+        return 1.0
     # Numerically stable: compute log(C(n-c, k) / C(n, k))
     # = sum(log((n-c-i)/(n-i)) for i in range(k))
     log_prob_fail = sum(
@@ -104,11 +109,11 @@ for k in [1, 10, 20]:
 
 ```text
 Pass@ 1: 0.338
-Pass@10: 0.770
+Pass@10: 0.689
 Pass@20: 0.750
 ```
 
-Pass@20 is lower than Pass@10 here because one problem has $c=0$: once all $k$ draws must come from 20 samples and $c=0$, the probability remains 0 regardless of $k$.
+Pass@k is monotonically non-decreasing in $k$ for a fixed $n$: drawing more samples can only increase the chance that at least one of them passes. Pass@20 here equals $k=n=20$ — drawing *all* the generated samples — so it collapses to a simple rule: the score is 1.0 for every problem with at least one passing sample ($c > 0$) and 0.0 for the one problem with $c=0$, giving $(1+1+0+1)/4 = 0.750$. That one $c=0$ problem is also what caps Pass@20 below 1.0: no amount of additional draws can produce a pass when zero of the generated samples passed.
 
 ## Code Execution Sandboxes
 
@@ -135,7 +140,6 @@ Running untrusted model-generated code on the host machine is a security catastr
 ```python
 import subprocess
 import tempfile
-import textwrap
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -170,19 +174,25 @@ def run_in_sandbox(
         f"'Failed: {tc['input']}'"
         for tc in test_cases
     )
-    full_script = textwrap.dedent(f"""
-        import resource, sys
-        # Hard memory limit (Linux only)
-        resource.setrlimit(
-            resource.RLIMIT_AS,
-            ({memory_mb * 1024 * 1024}, {memory_mb * 1024 * 1024})
-        )
-        # --- Model-generated solution below ---
-        {code}
-        # --- Test assertions ---
-        {test_body}
-        print("PASS")
-    """)
+    # Note: interpolate at column 0, don't dedent afterwards — `code` is
+    # itself unindented, and textwrap.dedent() looks at the *combined*
+    # string's common leading whitespace. Since {code} contributes
+    # zero-indent lines, dedent would find no common prefix and leave the
+    # template lines (e.g. "import resource, sys") wrongly indented,
+    # causing an IndentationError before the script even runs.
+    full_script = f"""
+import resource, sys
+# Hard memory limit (Linux only)
+resource.setrlimit(
+    resource.RLIMIT_AS,
+    ({memory_mb * 1024 * 1024}, {memory_mb * 1024 * 1024})
+)
+# --- Model-generated solution below ---
+{code}
+# --- Test assertions ---
+{test_body}
+print("PASS")
+"""
 
     with tempfile.NamedTemporaryFile(
         mode='w', suffix='.py', delete=False
