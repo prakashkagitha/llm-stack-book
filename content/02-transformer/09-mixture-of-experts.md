@@ -474,3 +474,149 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
 - Dai, Deng, Zhao, et al. (DeepSeek) — *DeepSeekMoE: Towards Ultimate Expert Specialization* (2024), and the *DeepSeek-V3 Technical Report* (2024). Fine-grained and shared experts; auxiliary-loss-free balancing.
 - Gale, Narayanan, Zaharia, et al. — *MegaBlocks: Efficient Sparse Training with Mixture-of-Experts* (2022). Block-sparse / grouped-GEMM kernels that make MoE dropless.
 - Jacobs, Jordan, Nowlan, Hinton — *Adaptive Mixtures of Local Experts* (1991). The original mixture-of-experts formulation that started it all.
+
+## Exercises
+
+**1.** In one or two sentences, explain the *rich-get-richer* feedback loop that makes an un-regularized sparse router collapse onto a single expert. Then explain why the auxiliary loss $\mathcal{L}_\text{aux} = \alpha E \sum_e f_e P_e$ multiplies a *hard* dispatch count $f_e$ by a *soft* probability $P_e$ instead of using either quantity alone.
+
+??? note "Solution"
+    **The collapse loop.** Early in training one expert is, by random initialization, slightly better than the rest. The router therefore sends it a few more tokens; those extra tokens give it more gradient, so it improves faster; being better, it wins the top-$k$ comparison for even more tokens next step. The unselected experts receive little or no gradient (gradients flow only through selected experts), so they never catch up and atrophy. The fixed point is a model that routes almost everything to one expert — you paid for $E$ experts and trained one.
+
+    **Why the hard/soft product.** We want to penalize the thing that actually causes imbalance: the *hard dispatch counts* $f_e$. But $f_e$ comes from a `top-k`/`argmax`, which is non-differentiable, so it carries no gradient by itself. The *soft* probabilities $P_e = \frac{1}{N}\sum_i p_e(x_i)$ are differentiable but describe the router's intended mass, not the realized load. The trick is to use each for what it is good at: $f_e$ (held constant, treated as a detached coefficient) supplies the *direction* — which experts are currently overloaded — and $P_e$ supplies the *gradient* — the loss pushes the router's probability down on the overloaded experts and up on the starved ones. Using $f_e$ alone gives no gradient; using $P_e$ alone (e.g. $\sum_e P_e^2$) penalizes only the router's *intended* distribution and ignores the actual realized counts that the discrete top-$k$ produces. The product "reads" imbalance from the hard counts and "writes" the correction through the soft probabilities.
+
+**2.** Consider an MoE layer with $E = 16$ experts, top-$k = 2$ routing, $d_\text{model} = 2048$, $d_\text{ff} = 8192$, processing a batch of $N = 4096$ tokens with capacity factor $C_f = 1.5$. Treat each expert as a 2-matrix FFN ($W_1, W_2$, ignore biases). Compute: (a) the average tokens per expert; (b) the per-expert capacity; (c) the number of tokens dropped at this layer if the router sends 900 tokens to one hot expert; (d) the total parameters in the layer's experts; (e) the active expert-parameters used *per token*; (f) the total-to-active ratio.
+
+??? note "Solution"
+    (a) **Average load:** $Nk/E = 4096 \times 2 / 16 = 512$ tokens per expert.
+
+    (b) **Capacity:** $\lceil C_f \cdot Nk/E \rceil = \lceil 1.5 \times 512 \rceil = 768$ token-slots per expert.
+
+    (c) **Dropping:** the hot expert wants 900 tokens but its buffer holds 768, so $900 - 768 = 132$ tokens are dropped at this layer (they skip the FFN and pass through on the residual).
+
+    (d) **Total expert parameters:** one expert FFN holds $2 \, d_\text{model} d_\text{ff} = 2 \times 2048 \times 8192 = 33{,}554{,}432 \approx 3.36 \times 10^{7}$. Sixteen experts: $16 \times 33{,}554{,}432 = 536{,}870{,}912 \approx 5.37 \times 10^{8}$ parameters.
+
+    (e) **Active per token:** only $k = 2$ experts run, so $2 \times 3.36 \times 10^{7} = 6.71 \times 10^{7}$ expert-parameters per token.
+
+    (f) **Total-to-active ratio:** $E/k = 16/2 = 8\times$ (equivalently $5.37\times10^{8} / 6.71\times10^{7} = 8$). The layer holds 8x the parameters of a 2-expert dense FFN while paying the per-token FLOPs of only 2 experts.
+
+**3.** Take the router logits from the chapter for a single token over 8 experts: $h = [2.0,\ 1.0,\ 0.1,\ -1.0,\ 0.5,\ 3.0,\ -2.0,\ 0.2]$ and $k = 2$. Compute the selected expert indices and their gate weights under **both** conventions — softmax-then-top-k (GShard/Switch) and top-k-then-softmax (Mixtral). State numerically why the two differ and what property renormalization guarantees.
+
+??? note "Solution"
+    The two largest logits are $3.0$ (expert 5) and $2.0$ (expert 0), so **both** methods select experts $\{5, 0\}$. Only the *weights* differ.
+
+    **Top-k-then-softmax (Mixtral).** Softmax over just $\{3.0, 2.0\}$:
+    $$
+    w_5 = \frac{e^{3}}{e^{3}+e^{2}} = \frac{20.086}{20.086+7.389} = \frac{20.086}{27.475} \approx 0.731,\qquad
+    w_0 = \frac{7.389}{27.475} \approx 0.269.
+    $$
+    These sum to $0.731 + 0.269 = 1.000$.
+
+    **Softmax-then-top-k (GShard/Switch).** Softmax over *all 8* logits first. The exponentials are
+    $e^{2}=7.389,\ e^{1}=2.718,\ e^{0.1}=1.105,\ e^{-1}=0.368,\ e^{0.5}=1.649,\ e^{3}=20.086,\ e^{-2}=0.135,\ e^{0.2}=1.221$, summing to $Z \approx 34.671$. Keeping the top-2 probabilities:
+    $$
+    p_5 = \frac{20.086}{34.671} \approx 0.579,\qquad p_0 = \frac{7.389}{34.671} \approx 0.213.
+    $$
+    These do **not** sum to 1 ($0.579 + 0.213 = 0.792$) — they are a slice of the full 8-way distribution, and the missing $0.208$ of mass sat on the 6 unselected experts.
+
+    **Why it matters.** Renormalizing over the chosen experts (Mixtral) forces the gate weights to sum to 1, so the total magnitude of the FFN contribution is fixed regardless of how confident or flat the router was. With softmax-then-top-k a router that is uncertain (flat distribution) produces small kept weights and a correspondingly weak FFN contribution; renormalization decouples "how much total signal flows" from "how spread the router's confidence was."
+
+**4.** DeepSeek-style *fine-grained* experts split each expert into $m$ smaller ones and raise $k$ by the same factor $m$, keeping active parameters fixed. Starting from $E = 8$, $k = 2$, apply $m = 4$. (a) What are the new $E$ and $k$? (b) Show the active parameter count is unchanged. (c) Compute the number of distinct expert *combinations* a token can select before and after ($\binom{E}{k}$), and comment on why this is the point of the design.
+
+??? note "Solution"
+    (a) **New counts:** $E' = mE = 4 \times 8 = 32$ experts, each $1/m = 1/4$ the size; $k' = mk = 4 \times 2 = 8$.
+
+    (b) **Active parameters unchanged.** Let a full-size expert hold $p$ parameters. Before: $k \cdot p = 2p$ active per token. After: each fine-grained expert holds $p/m = p/4$, and $k' = 8$ of them run, so active $= 8 \times p/4 = 2p$. Identical — the FLOPs/active budget is preserved by construction.
+
+    (c) **Combinations.** Before: $\binom{8}{2} = 28$. After: $\binom{32}{8} = 10{,}518{,}300$. The number of distinct expert *subsets* a token can express explodes from 28 to over ten million at the *same* active cost. This is the whole point: with only 8 coarse experts the router is forced into redundancy (to combine "code" and "math" knowledge it has few coarse options), whereas many small experts give the router a richer, combinatorial palette that empirically yields sharper specialization and less redundant relearning of the same sub-skills across experts.
+
+**5.** Modify the chapter's `SparseMoE` to add a single **shared expert** (DeepSeek-MoE style): an FFN that *every* token always passes through, added to the routed contribution. The routed path keeps its top-$k$ over the remaining routed experts. Write the changed `__init__` and `forward`, and explain in one line what problem the shared expert solves.
+
+??? note "Solution"
+    The shared expert runs on *all* $N$ tokens as one dense batched matmul (no routing, no capacity), and its output is added to the routed output. Only the changed pieces are shown; the routing/dispatch loop and the auxiliary loss are unchanged from the chapter's `SparseMoE`.
+
+    ```python
+    class SparseMoEWithShared(SparseMoE):
+        def __init__(self, d_model, d_ff, n_experts, k=2,
+                     capacity_factor=1.25, n_shared=1):
+            super().__init__(d_model, d_ff, n_experts, k, capacity_factor)
+            # Always-on experts; run densely on every token.
+            self.shared = nn.ModuleList(
+                [Expert(d_model, d_ff) for _ in range(n_shared)]
+            )
+
+        def forward(self, x):
+            B, T, D = x.shape
+            # Routed (sparse) path: reuse the parent's full implementation.
+            routed_out, aux_loss = super().forward(x)   # (B, T, D), scalar
+
+            # Shared (dense) path: every token, no routing, no capacity, no gate.
+            flat = x.reshape(-1, D)                      # (N, D)
+            shared_out = torch.zeros_like(flat)
+            for se in self.shared:
+                shared_out = shared_out + se(flat)       # sum over shared experts
+            shared_out = shared_out.reshape(B, T, D)
+
+            return routed_out + shared_out, aux_loss
+
+    # --- smoke test ---
+    torch.manual_seed(0)
+    moe = SparseMoEWithShared(d_model=32, d_ff=64, n_experts=8, k=2, n_shared=1)
+    x = torch.randn(4, 16, 32)
+    y, aux = moe(x)
+    print(y.shape, float(aux))     # torch.Size([4, 16, 32]) <positive scalar>
+    ```
+
+    **What it solves (one line):** the shared expert absorbs common, universal knowledge (basic syntax, morphology) so the routed experts do not each have to redundantly relearn it and can specialize on the residual. Note the shared expert adds to *active* parameters for every token (it always runs), so a fair active-parameter accounting must include it.
+
+**6.** Implement the DeepSeek-V3 **auxiliary-loss-free** bias-adjustment balancer as a small helper. Given per-expert dispatch counts from the last step and a running per-expert bias vector $b$, the bias is added to the routing logits *for selection only* (top-$k$ uses $h + b$) while the *gate weights* still come from the unbiased logits $h$. After each step, decrement $b_e$ for overloaded experts and increment it for underloaded ones by a fixed step $\gamma$. Write (a) a `select_with_bias(logits, bias, k)` function and (b) an `update_bias(bias, counts, gamma)` function, and state in one line why the bias is kept out of the gate weights.
+
+??? note "Solution"
+    Selection uses $h + b$ so that persistently overloaded experts (which get their bias pushed *down*) are gradually deselected in favor of starved ones (bias pushed *up*), driving the dispatch counts toward uniform. The gate weights are computed from the *unbiased* logits over the selected set, so the bias never enters the forward output or its gradient — it only reshuffles *which* experts are chosen, leaving the language-modeling gradient uncontaminated (the reason it is called "auxiliary-loss-free": no extra loss term fights the LM objective).
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    def select_with_bias(logits, bias, k):
+        """
+        logits: (N, E) unbiased router logits h(x).
+        bias:   (E,)   per-expert selection bias b (updated across steps).
+        Returns (gate, idx): gate weights from the UNBIASED logits over the
+        selected set (Mixtral-style renorm), and the selected indices.
+        """
+        biased = logits + bias                          # (N, E), selection only
+        idx = torch.topk(biased, k, dim=-1).indices     # (N, k) selection uses h + b
+        # Gate weights come from the UNBIASED logits at the chosen indices.
+        chosen = torch.gather(logits, -1, idx)          # (N, k)
+        gate = F.softmax(chosen, dim=-1)                # (N, k), rows sum to 1
+        return gate, idx
+
+    @torch.no_grad()
+    def update_bias(bias, counts, gamma):
+        """
+        bias:   (E,) current per-expert bias, updated in place.
+        counts: (E,) tokens dispatched to each expert this step.
+        gamma:  fixed step size (e.g. 1e-3).
+        Overloaded experts (above mean load) get bias decremented;
+        underloaded experts get it incremented.
+        """
+        mean_load = counts.float().mean()
+        # sign(mean - count): +1 if underloaded, -1 if overloaded, 0 if exactly mean.
+        bias += gamma * torch.sign(mean_load - counts.float())
+        return bias
+
+    # --- demo: an initially imbalanced router self-corrects ---
+    torch.manual_seed(0)
+    N, E, k = 4096, 8, 2
+    logits = torch.randn(N, E)
+    logits[:, 0] += 3.0                    # expert 0 is a hot favorite
+    bias = torch.zeros(E)
+    for step in range(200):
+        gate, idx = select_with_bias(logits, bias, k)
+        counts = torch.bincount(idx.reshape(-1), minlength=E)
+        update_bias(bias, counts, gamma=1e-2)
+    print("final dispatch counts:", counts.tolist())   # far more uniform than at step 0
+    print("final bias:", bias.round(decimals=2).tolist())  # negative on expert 0
+    ```
+
+    After the loop the bias on the hot expert 0 has been driven negative enough to offset its logit advantage, so the dispatch counts equalize toward $Nk/E = 4096\times2/8 = 1024$ per expert — balance achieved with no gradient interference, since `gate` never saw `bias`.

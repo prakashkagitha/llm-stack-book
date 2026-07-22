@@ -1134,3 +1134,140 @@ As of mid-2026, the field has reached some pragmatic conclusions:
 - AI21 Labs (2024). **Jamba: A Hybrid Transformer-Mamba Language Model.** arXiv:2403.19887.
 - GitHub: **state-spaces/mamba** — official Mamba implementation and selective scan CUDA kernels.
 - GitHub: **BlinkDL/RWKV-LM** — official RWKV training code.
+
+---
+
+## Exercises
+
+**1. The reassociation trick and why causality breaks it.**
+(a) Linear attention replaces $\operatorname{softmax}(QK^\top)V$ with $\phi(Q)\big(\phi(K)^\top V\big)$. Explain in words why computing $\phi(K)^\top V$ *first* changes the asymptotic cost, and why this reordering is only valid *non-causally* — what has to change for a causal (autoregressive) model? (b) Take $N = 4096$, feature dimension $r = d_k = 64$, and $d_v = 64$. Count the scalar multiplications for the quadratic route (materialize $QK^\top$, then multiply by $V$) versus the linear route ($\phi(K)^\top V$ first, then $\phi(Q)$ times that). What is the ratio, and how does it depend on $N$ and $r$?
+
+??? note "Solution"
+    **(a)** The quadratic route forms the $N \times N$ score matrix $QK^\top$ explicitly — $O(N^2 d_k)$ work and $O(N^2)$ memory. Matrix multiplication is associative, so $\phi(Q)\big(\phi(K)^\top V\big) = \big(\phi(Q)\phi(K)^\top\big)V$; but if we contract $\phi(K)^\top V$ first we get an $r \times d_v$ matrix (independent of $N$) in $O(N r d_v)$ time, then left-multiply by $\phi(Q)$ ($N \times r$) for another $O(N r d_v)$. The $N \times N$ object never appears, so cost is linear in $N$.
+
+    This is only valid non-causally because $\phi(K)^\top V = \sum_{i=1}^{N}\phi(k_i)\,v_i^\top$ sums over the *entire* sequence — every query would see every key, including future ones. A causal model needs query $t$ to see only keys $i \le t$, i.e. the *prefix* sum $S_t = \sum_{i\le t}\phi(k_i)\,v_i^\top$. Restoring causality therefore requires either the recurrent form (carry $S_t$ and update it one token at a time, $O(r d_v)$ per step) or the chunked form (exact masked attention inside each chunk, a running state $S$ carried between chunks) — both shown in the chapter's `linear_attention_recurrent_step` / `linear_attention_chunked`.
+
+    **(b)** Quadratic route: $QK^\top$ costs $N^2 d_k = 4096^2 \times 64 = 16{,}777{,}216 \times 64 \approx 1.07 \times 10^9$ multiplies; multiplying the $N\times N$ scores by $V$ costs another $N^2 d_v \approx 1.07 \times 10^9$, so $\approx 2.15 \times 10^9$ total. Linear route: $\phi(K)^\top V$ costs $N r d_v = 4096 \times 64 \times 64 \approx 1.68 \times 10^7$, and $\phi(Q)$ times the $r\times d_v$ result costs another $N r d_v \approx 1.68 \times 10^7$, so $\approx 3.36 \times 10^7$ total.
+
+    Ratio $= \dfrac{2 N^2 d}{2 N r d} = \dfrac{N}{r} = \dfrac{4096}{64} = 64\times$ fewer multiplies. The saving grows linearly with sequence length $N$ and shrinks as the feature dimension $r$ grows — which is exactly why linear attention pays off at long context but a large $r$ (needed for expressive recall) eats into the advantage.
+
+**2. Inference memory: KV cache vs. recurrent state at 128K context.**
+Use the chapter's 7B configuration: 32 layers, $d = 4096$, $d_k = d_v = 128$, fp16 (2 bytes/element). For a context of $N = 131072$ (128K) tokens compute (a) the transformer KV-cache size across all layers, (b) the Mamba state size (state dim $N_s = 16$), and (c) the RWKV state size (scalar state per channel). Then give the transformer-to-Mamba ratio, and state which of the three grows with $N$.
+
+??? note "Solution"
+    **(a) Transformer KV cache.** Per layer we store both $K$ and $V$ for all $N$ tokens: $2 \times N \times d \times 2\text{ bytes} = 2 \times 131072 \times 4096 \times 2 = 2{,}147{,}483{,}648$ bytes $= 2048$ MB $= 2$ GB per layer. Across 32 layers: $2\text{ GB} \times 32 = \mathbf{64}$ **GB**. (Consistent with the chapter's 16 GB at $N=32768$: 128K is $4\times$ longer, and the KV cache is linear in $N$, so $16 \times 4 = 64$ GB.)
+
+    **(b) Mamba state.** Per layer $d \times N_s \times 2\text{ bytes} = 4096 \times 16 \times 2 = 131{,}072$ bytes $= 128$ KB. Across 32 layers: $128\text{ KB} \times 32 = \mathbf{4}$ **MB** — independent of $N$.
+
+    **(c) RWKV state.** Scalar state per channel (numerator + denominator accumulators are $O(d)$): $\approx d \times 2\text{ bytes} = 4096 \times 2 = 8$ KB per layer, $\times 32 = \mathbf{256}$ **KB** — independent of $N$.
+
+    **Ratio.** $\dfrac{64\text{ GB}}{4\text{ MB}} = \dfrac{64 \times 1024\text{ MB}}{4\text{ MB}} = 16384\times$. Only the transformer KV cache grows with $N$ (linearly); the Mamba and RWKV states are fixed-size regardless of how long the sequence gets — the core inference-memory advantage of recurrent/SSM models.
+
+**3. The semiseparable decay mask by hand.**
+The Mamba-2 SSD layer computes $Y = \big(L \circ (C B^\top)\big) V$ with the 1-semiseparable causal decay mask $L_{ij} = \prod_{k=j+1}^{i} a_k$ for $i \ge j$ (and $0$ for $i < j$), where $a_k = \exp(\Delta_k A)$ are scalar per-step decays. Take a length-4 sequence with $a_1 = 0.9,\ a_2 = 0.5,\ a_3 = 0.8,\ a_4 = 0.5$ (1-indexed). (a) Write out the full $4\times4$ matrix $L$. (b) Show that if every $a_k$ equals a constant $\gamma$, then $L$ reduces to RetNet's decay mask $D_{mn} = \gamma^{\,m-n}$.
+
+??? note "Solution"
+    **(a)** The diagonal is the empty product $L_{ii} = 1$. Off-diagonal entries multiply the decays *strictly after* column $j$ up to and including row $i$:
+
+    - $L_{11}=1,\ L_{22}=1,\ L_{33}=1,\ L_{44}=1$
+    - $L_{21}=a_2=0.5$
+    - $L_{31}=a_2 a_3 = 0.5\times0.8=0.4$;\quad $L_{32}=a_3=0.8$
+    - $L_{41}=a_2 a_3 a_4 = 0.4\times0.5=0.2$;\quad $L_{42}=a_3 a_4 = 0.8\times0.5=0.4$;\quad $L_{43}=a_4=0.5$
+
+    $$
+    L = \begin{pmatrix}
+    1 & 0 & 0 & 0\\
+    0.5 & 1 & 0 & 0\\
+    0.4 & 0.8 & 1 & 0\\
+    0.2 & 0.4 & 0.5 & 1
+    \end{pmatrix}
+    $$
+
+    Note $a_1 = 0.9$ never appears: $a_1$ would only enter products of the form $\prod_{k=j+1}^{i}$ with $j+1 \le 1$, i.e. $j \le 0$, which do not exist. The first token's own decay is irrelevant to how later tokens weight it.
+
+    **(b)** With $a_k \equiv \gamma$, the product $\prod_{k=j+1}^{i}\gamma$ has $i - j$ factors, so $L_{ij} = \gamma^{\,i-j}$ for $i \ge j$ and $0$ otherwise — identical to RetNet's $D_{mn}=\gamma^{\,m-n}$ (with $m=i,\ n=j$). Constant decay is the special case of the SSD mask where the per-step decays are *not* input-dependent; Mamba-2's selectivity is precisely making each $a_k$ a function of the input.
+
+**4. Implement the recurrent form of RetNet retention.**
+The chapter gives RetNet's parallel retention $Y = \big(QK^\top \odot D\big)V$ with $D_{mn}=\gamma^{\,m-n}$ (for $m \ge n$). Implement its $O(1)$-per-step *recurrent* form using a running state matrix $S_t \in \mathbb{R}^{d_k \times d_v}$, and verify numerically that it reproduces the parallel form. State the state-update and readout equations you are implementing.
+
+??? note "Solution"
+    Expanding the parallel form, row $t$ of the output is
+    $$
+    y_t = \sum_{n \le t} \gamma^{\,t-n}\,(q_t^\top k_n)\, v_n = q_t^\top \underbrace{\sum_{n \le t}\gamma^{\,t-n} k_n v_n^\top}_{S_t}.
+    $$
+    The inner sum satisfies the recurrence $S_t = \gamma\,S_{t-1} + k_t v_t^\top$ (outer product), with readout $y_t = q_t^\top S_t$. This is $O(d_k d_v)$ per step with $O(d_k d_v)$ state — no dependence on sequence length.
+
+    ```python
+    import torch
+
+    def retention_parallel(Q, K, V, gamma: float):
+        # Q, K: (T, d_k)   V: (T, d_v)   gamma in (0, 1)
+        T = Q.shape[0]
+        m = torch.arange(T)[:, None]
+        n = torch.arange(T)[None, :]
+        exp = (m - n).clamp(min=0).float()               # exponent m-n, masked below
+        D = torch.where(m >= n, gamma ** exp, torch.zeros(()))
+        return (Q @ K.T * D) @ V                          # (T, d_v)
+
+    def retention_recurrent(Q, K, V, gamma: float):
+        T, d_k = Q.shape
+        d_v = V.shape[-1]
+        S = torch.zeros(d_k, d_v)                         # running state
+        outs = []
+        for t in range(T):
+            S = gamma * S + torch.outer(K[t], V[t])       # S_t = gamma S_{t-1} + k_t v_t^T
+            outs.append(Q[t] @ S)                         # y_t = q_t^T S_t
+        return torch.stack(outs, dim=0)                   # (T, d_v)
+
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        T, d_k, d_v, gamma = 12, 8, 5, 0.9
+        Q, K = torch.randn(T, d_k), torch.randn(T, d_k)
+        V = torch.randn(T, d_v)
+        par = retention_parallel(Q, K, V, gamma)
+        rec = retention_recurrent(Q, K, V, gamma)
+        assert torch.allclose(par, rec, atol=1e-5)
+        print("recurrent retention matches parallel form: OK")
+    ```
+
+    The two forms agree because the recurrent state $S_t$ is exactly the causal, $\gamma$-decayed sum that the masked matrix $D$ encodes. This is the "training-parallel / inference-recurrent" duality the chapter highlights: train with the batched matmul, decode with the constant-cost recurrence.
+
+**5. Verify the State Space Duality: SSD layer == selective scan.**
+For a single channel, the selective SSM recurrence is $h_t = a_t\,h_{t-1} + B_t\,x_t$ with readout $y_t = C_t^\top h_t$, where $a_t$ is a scalar decay, $B_t, C_t \in \mathbb{R}^{N}$, and $x_t \in \mathbb{R}$. The Mamba-2 SSD claim is that this equals $Y_i = \sum_{j \le i} L_{ij}\,(C_i^\top B_j)\,x_j$ with $L_{ij}=\prod_{k=j+1}^{i} a_k$. Implement both and confirm they agree. Why is the matmul (SSD) form preferred on GPUs?
+
+??? note "Solution"
+    Unrolling the recurrence gives $h_t = \sum_{j \le t}\big(\prod_{k=j+1}^{t} a_k\big) B_j x_j = \sum_{j\le t} L_{tj}\,B_j\,x_j$, hence $y_t = C_t^\top h_t = \sum_{j \le t} L_{tj}\,(C_t^\top B_j)\,x_j$ — exactly the SSD sum. So the sequential scan and the masked-matmul are two evaluation orders of the same function.
+
+    ```python
+    import torch
+
+    def selective_scan(a, B, C, x):
+        # a: (T,)   B, C: (T, N)   x: (T,)   -- single channel
+        T, N = B.shape
+        h = torch.zeros(N)
+        ys = []
+        for t in range(T):
+            h = a[t] * h + B[t] * x[t]            # h_t = a_t h_{t-1} + B_t x_t
+            ys.append((C[t] * h).sum())           # y_t = C_t . h_t
+        return torch.stack(ys)                    # (T,)
+
+    def ssd_matmul(a, B, C, x):
+        T, N = B.shape
+        Acum = torch.cumsum(torch.log(a), dim=0)              # Acum[i] = sum_{k<=i} log a_k
+        i = torch.arange(T)[:, None]; j = torch.arange(T)[None, :]
+        # L[i,j] = prod_{k=j+1}^{i} a_k = exp(Acum[i] - Acum[j]) for i >= j, else 0
+        L = torch.where(i >= j, torch.exp(Acum[:, None] - Acum[None, :]), torch.zeros(()))
+        Score = C @ B.T                                      # (T, T), entry C_i . B_j
+        return ((L * Score) * x[None, :]).sum(dim=-1)        # sum_j L_ij Score_ij x_j
+
+    if __name__ == "__main__":
+        torch.manual_seed(0)
+        T, N = 16, 4
+        a = torch.rand(T) * 0.5 + 0.4          # decays in (0.4, 0.9), so log a is finite
+        B, C = torch.randn(T, N), torch.randn(T, N)
+        x = torch.randn(T)
+        assert torch.allclose(selective_scan(a, B, C, x), ssd_matmul(a, B, C, x), atol=1e-5)
+        print("SSD matmul matches selective scan: OK")
+    ```
+
+    The cumulative-product mask is computed in log-space (`cumsum` of `log a`, then `exp` of differences) for numerical stability, matching how production kernels build $L$. The SSD form is preferred on GPUs because $C B^\top$ and the elementwise-masked $\times V$ are dense matrix multiplications that map directly onto tensor cores, whereas the `for t in range(T)` scan is inherently sequential and memory-bandwidth-bound. In practice Mamba-2 does not form the full $T \times T$ $L$ (that would reintroduce the $O(N^2)$ cost); it block-decomposes $L$ — diagonal blocks via masked intra-chunk matmuls, off-diagonal blocks via low-rank inter-chunk state passing — recovering linear cost while staying on tensor cores.

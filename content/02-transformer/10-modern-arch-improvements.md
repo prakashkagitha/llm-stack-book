@@ -837,3 +837,107 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
 - Xiao et al., "Efficient Streaming LLMs with Attention Sinks," ICLR 2024 — attention sink phenomenon and StreamingLLM.
 - Kaplan et al., "Scaling Laws for Neural Language Models," arXiv 2020 — depth vs width trade-offs in the context of scaling.
 - Meta AI, Llama 3 model card and technical report, 2024 — updated RoPE theta and architectural decisions at 70B/405B scale.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) LayerNorm applies $\frac{x-\mu}{\sqrt{\sigma^2+\epsilon}}\cdot\gamma + \beta$, whereas RMSNorm applies $\frac{x}{\text{RMS}(x)}\cdot\gamma$ with no $\beta$. (a) Which two operations present in LayerNorm does RMSNorm discard, and which one does it keep? (b) Zhang & Sennrich justified the discard empirically — what did their ablation find? (c) In the chapter's `RMSNorm.forward`, why is the input cast to `float32` before computing the norm and cast back afterward?
+
+??? note "Solution"
+    (a) RMSNorm discards **mean subtraction** (the $-\mu$ re-centering) and the **learned shift $\beta$**. It keeps the **re-scaling**: division by a per-vector magnitude statistic followed by the learned element-wise scale $\gamma$. The magnitude statistic changes from the standard deviation $\sigma$ (computed around the mean) to the root-mean-square $\text{RMS}(x)=\sqrt{\frac{1}{d}\sum_i x_i^2 + \epsilon}$ (computed around zero), so no mean is ever needed.
+
+    (b) Their ablation of LayerNorm into its components found that the **re-scaling via $\gamma$ drives almost all of LayerNorm's benefit**, while **mean subtraction contributes little to final performance** yet costs roughly a third of LayerNorm's compute (a second reduction pass plus a subtraction kernel). Dropping it is therefore near-free in quality but ~10-30% faster.
+
+    (c) The normalization involves squaring every element, summing, and taking a reciprocal square root. In low-precision formats like bf16 the squared sum can lose precision or overflow the narrow dynamic range, and the reciprocal-square-root is sensitive to rounding. Computing `x.float().pow(2).mean(...)` in float32 keeps the reduction accurate; the result is then cast back with `.type_as(x)` so the rest of the network still runs in the model's working precision. This is exactly the pattern used in the Llama reference code.
+
+**2.** (Quantitative) You are configuring a SwiGLU FFN for a model with hidden dimension $d = 4096$. A vanilla two-matrix FFN would use a 4x expansion (intermediate $= 4d$). (a) Compute the parameter count of that vanilla FFN. (b) Using the iso-parameter rule for SwiGLU's three matrices, compute the target intermediate dimension, then round it to the nearest multiple of 256. (c) Compute the SwiGLU FFN's parameter count at that rounded dimension and confirm it is close to the vanilla count.
+
+??? note "Solution"
+    (a) Vanilla FFN has two matrices, $W_1\in\mathbb{R}^{d\times 4d}$ and $W_2\in\mathbb{R}^{4d\times d}$:
+    $$P_{\text{vanilla}} = 2 \cdot d \cdot 4d = 8d^2 = 8 \times 4096^2 = 134{,}217{,}728 \approx 134.2\text{M}.$$
+
+    (b) SwiGLU has three matrices ($W$, $V$, $W_2$), so its cost is $3\,d\,d_{ff}$. Setting this equal to $8d^2$ gives the iso-parameter rule:
+    $$d_{ff} = \frac{8d^2}{3d} = \frac{8d}{3} = \frac{8 \times 4096}{3} = 10922.67.$$
+    Rounding to the nearest multiple of 256: $10922.67 / 256 = 42.67 \to 43$, and $43 \times 256 = 11008$. (This is exactly the intermediate size Llama 2 7B uses.)
+
+    (c) At $d_{ff}=11008$:
+    $$P_{\text{SwiGLU}} = 3 \cdot 4096 \cdot 11008 = 135{,}266{,}304 \approx 135.3\text{M}.$$
+    This is within about 0.8% of the vanilla $134.2$M — the small excess comes from rounding $10922.67$ up to $11008$. SwiGLU is thus iso-parameter with the vanilla 4x FFN while adding multiplicative gating.
+
+**3.** (Quantitative) A decoder-only model has $L = 48$ layers, $H_q = 40$ query heads, head dimension $d_k = 128$, and uses GQA with $H_{kv} = 8$ KV heads. It runs in bf16 (2 bytes/element). (a) Compute the KV-cache size per token per layer. (b) Compute the total KV cache for a context of 16,384 tokens across all layers, in GiB. (c) What would the same total be with full MHA ($H_{kv} = H_q = 40$), and what is the reduction factor?
+
+??? note "Solution"
+    (a) The cache stores both K and V for each KV head:
+    $$\text{bytes/token/layer} = 2\,(\text{K and V}) \times H_{kv} \times d_k \times 2\,(\text{bytes}) = 2 \times 8 \times 128 \times 2 = 4096\ \text{bytes} = 4\ \text{KiB}.$$
+
+    (b) Total over all layers and all context positions:
+    $$4096 \times 48 \times 16384 = 3{,}221{,}225{,}472\ \text{bytes} = 3 \times 2^{30}\ \text{bytes} = 3\ \text{GiB}.$$
+
+    (c) With full MHA, $H_{kv}=40$ so bytes/token/layer $= 2 \times 40 \times 128 \times 2 = 20480$ bytes $= 20$ KiB. Total:
+    $$20480 \times 48 \times 16384 = 16{,}106{,}127{,}360\ \text{bytes} = 15\ \text{GiB}.$$
+    The reduction factor is $15 / 3 = 5$, exactly $H_q / H_{kv} = 40/8 = 5$ — GQA shrinks the KV cache by the grouping ratio $G$, here $G=5$.
+
+**4.** (Conceptual) Llama 1 used `rope_theta = 10000`; Llama 3 raised it to `rope_theta = 500000` specifically to improve long-context behavior. (a) In the frequency formula $\theta_i = \text{base}^{-2i/d_k}$, what happens to the set of rotation frequencies as the base increases from 10,000 to 500,000? (b) Why does that change help a model extrapolate to positions beyond its training length? (c) RoPE is described as giving a "relative position" property — state precisely what quantity the attention dot product $q_m^\top k_n$ ends up depending on, and why that property is desirable.
+
+??? note "Solution"
+    (a) Each frequency is $\theta_i = \text{base}^{-2i/d_k}$, a value in $(0,1]$ that shrinks as $i$ grows. Raising the base makes the exponential decay steeper, so the frequencies (especially at larger $i$) become **smaller** — the rotations turn more slowly and the corresponding **wavelengths become longer**. The overall frequency spectrum is stretched/spread out: the fastest pair still rotates at $\theta_0 = 1$, but the slow pairs rotate far more slowly than with base 10,000.
+
+    (b) With longer wavelengths, a given absolute position $m$ produces a smaller total rotation angle $m\theta_i$ on the low-frequency pairs. This means positions farther apart than anything seen in training still fall within the first, unambiguous part of each sinusoid rather than "wrapping around" and aliasing onto angles the model saw for nearby positions. Spreading the frequencies more broadly therefore keeps distant positions distinguishable and makes extrapolation to longer contexts at inference time behave more gracefully.
+
+    (c) Because position $m$ rotates the query and position $n$ rotates the key by angles proportional to $m$ and $n$ in each 2D subspace, the inner product $q_m^\top k_n$ depends only on the **relative offset $(m-n)$**, not on the absolute positions $m$ and $n$ individually. This is desirable because linguistic relationships are typically relative ("the previous word", "three tokens back"): a model whose attention scores are a function of distance generalizes across the sequence and to unseen absolute positions, and needs no separate learned position-embedding table.
+
+**5.** (Implementation) Gemma 2 applies logit soft-capping in two places: on the **attention logits** (pre-softmax, $c=50$) and on the **final vocabulary logits** ($c=30$), using $\hat z = c\cdot\tanh(z/c)$. Starting from the chapter's `ModernTransformerBlock`, modify its `forward` so that attention logits are soft-capped at $c=50$. Then (a) explain why the cap must be applied *before* the causal `-inf` mask, and (b) verify by hand what an uncapped logit of $75$ becomes after soft-capping at $c=50$.
+
+??? note "Solution"
+    Add a `soft_cap` helper and insert one line into the attention path, capping the scaled logits **before** the causal mask and softmax:
+
+    ```python
+    import torch
+    import math
+
+    def soft_cap(x: torch.Tensor, cap: float) -> torch.Tensor:
+        # Smoothly squashes x toward [-cap, +cap]; ~linear for |x| << cap.
+        return cap * torch.tanh(x / cap)
+
+    def forward(self, x: torch.Tensor, attn_logit_cap: float = 50.0) -> torch.Tensor:
+        B, T, C = x.shape
+        # --- Attention sublayer (pre-norm) ---
+        h = self.attn_norm(x)
+        q = self.q_proj(h).view(B, T, self.n_heads,    self.head_dim)
+        k = self.k_proj(h).view(B, T, self.n_kv_heads, self.head_dim)
+        v = self.v_proj(h).view(B, T, self.n_kv_heads, self.head_dim)
+
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
+        k = self._repeat_kv(k)
+        v = self._repeat_kv(v)
+
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        attn_logits = (q @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+
+        # >>> soft-cap the attention logits (Gemma 2, c=50) BEFORE masking <<<
+        attn_logits = soft_cap(attn_logits, attn_logit_cap)
+
+        mask = torch.tril(torch.ones(T, T, device=x.device)).bool()
+        attn_logits = attn_logits.masked_fill(~mask, float('-inf'))
+        attn_w = torch.softmax(attn_logits, dim=-1)
+
+        out = (attn_w @ v).transpose(1, 2).contiguous().view(B, T, C)
+        x = x + self.o_proj(out)
+
+        # --- MLP sublayer (pre-norm) ---
+        x = x + self.ffn(self.ffn_norm(x))
+        return x
+    ```
+
+    (a) The mask fills the disallowed (future) positions with $-\infty$ so that softmax assigns them exactly zero weight. If we soft-capped *after* masking, every masked entry $-\infty$ would be sent to $50\cdot\tanh(-\infty/50) = -50$, a finite value — those future tokens would then receive non-zero attention weight and the causal property would be broken. Capping must therefore act only on the real, finite logits, i.e. **before** the `-inf` mask is applied. (This mirrors QK-norm and soft-capping being complementary front-end guards on the logits, with masking as the final step.)
+
+    (b) With $z = 75$ and $c = 50$: $z/c = 1.5$, and $\tanh(1.5) \approx 0.9051$. So
+    $$\hat z = 50 \times 0.9051 \approx 45.26.$$
+    The logit is compressed from $75$ toward the cap of $50$ (not hard-clipped): it stays below $50$, preserves sign and ordering, and remains differentiable, which is precisely the point of using $\tanh$ rather than a hard clamp.

@@ -983,3 +983,192 @@ For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, a
 - **Gunasekar et al., "Textbooks Are All You Need" (2023)** — shows how LLM-rated quality classifiers can dramatically improve sample efficiency.
 - **Carlini et al., "Extracting Training Data from Large Language Models" (2021)** — demonstrates the connection between duplication frequency and memorization; motivates dedup as a privacy tool.
 - **Penedo et al., "The RefinedWeb Dataset for Falcon LLM" (2023)** — production-quality pipeline with aggressive near-dedup and quality filters for a 5-trillion-token English corpus.
+
+## Exercises
+
+**1.** Language identification is described as the *gating* step: LangID runs before any heuristic quality filter. Explain why the order matters. What specifically goes wrong if you apply the English-tuned document-level heuristics from the table (mean word length in $[3.0, 10.0]$, stop-word coverage $\geq 0.10$) directly to a raw multilingual crawl without a LangID gate first?
+
+??? note "Solution"
+    The heuristics in the table encode assumptions about English prose. Two of them are language-specific in a way that makes them misfire badly on other languages:
+
+    - **Stop-word coverage $\geq 0.10$.** The `STOP_WORDS` set is English function words ("the", "of", "and", ...). A perfectly clean German, Finnish, or Vietnamese document contains essentially none of them, so `stop_word_frac` is near $0$ and the document is dropped as a "word list" even though it is high-quality prose. Without a LangID gate you would silently delete most non-English text.
+    - **Mean word length in $[3.0, 10.0]$.** This is calibrated to English. Agglutinative or compounding languages (Finnish, German, Turkish) routinely exceed a mean of $10$ characters per word; languages written without spaces between words (Chinese, Japanese, Thai) break `text.split()` in the opposite direction. Either way the filter's threshold is meaningless without knowing the language.
+
+    LangID first lets the pipeline (a) route each document to the correct per-language thresholds (or the correct stop-word list), and (b) for an English-centric corpus, cheaply discard non-English documents *before* spending any compute on heuristics that would reject them anyway for the wrong reason. This is exactly the CCNet ordering: LangID, then per-language filtering. It also makes per-language token accounting possible, which is what enables later upsampling of low-resource languages.
+
+**2.** Consider the spam document `text = "cheap deals cheap deals cheap deals cheap deals cheap deals"` (the two-word phrase "cheap deals" repeated five times). Using the definitions in `compute_heuristics`, compute by hand: (a) `mean_word_len`, (b) `stop_word_frac`, and (c) `top_bigram_frac`. Then, using `passes_heuristic_filters`, list every check this document fails.
+
+??? note "Solution"
+    The document has 10 whitespace-separated tokens: five copies each of "cheap" (5 letters) and "deals" (5 letters).
+
+    **(a) `mean_word_len`.** Every word has length $5$, and `n_words = 10`, so
+
+    $$
+    \text{mean\_word\_len} = \frac{\sum_i |w_i|}{n\_words} = \frac{10 \times 5}{10} = 5.0 .
+    $$
+
+    This is inside $[3.0, 10.0]$, so it passes that check.
+
+    **(b) `stop_word_frac`.** Neither "cheap" nor "deals" is in `STOP_WORDS`, so `sw_count = 0` and
+
+    $$
+    \text{stop\_word\_frac} = \frac{0}{10} = 0.0 .
+    $$
+
+    **(c) `top_bigram_frac`.** There are `len(words) - 1 = 9` bigrams. They alternate `"cheap deals"` and `"deals cheap"`; `"cheap deals"` occurs at the 5 even positions ($0,2,4,6,8$), so its count is $5$:
+
+    $$
+    \text{top\_bigram\_frac} = \frac{5}{9} \approx 0.556 .
+    $$
+
+    **Failed checks.** Running `passes_heuristic_filters`:
+
+    - `50 <= n_tokens` fails: `n_tokens = 10 < 50` (minimum length).
+    - `stop_word_frac >= 0.10` fails: $0.0 < 0.10$.
+    - `top_bigram_frac <= 0.20` fails: $0.556 > 0.20$.
+
+    (The other checks pass: `alpha_frac = 50/59 \approx 0.85 \geq 0.60`, `digit_frac = 0`, `mean_word_len = 5.0`, `bullet_frac = 0`, `curly_frac = 0`.) The document trips three independent filters, which is the point: obvious keyword-spam is caught redundantly, so no single threshold has to be perfectly tuned.
+
+**3.** You are Bloom-filter deduplicating $n = 2 \times 10^{8}$ documents at a target false-positive rate $p = 10^{-4}$. Using the chapter's sizing formulas, compute: (a) the bits per element $m/n$, (b) the number of hash functions $k$, (c) the total memory in GB, and (d) the expected number of *unique* documents wrongly dropped. Compare the memory to the SHA-256 hash-set approach (32 bytes per document).
+
+??? note "Solution"
+    **(a) Bits per element.** From $\dfrac{m}{n} = -\dfrac{\ln p}{(\ln 2)^2}$ with $p = 10^{-4}$:
+
+    $$
+    \frac{m}{n} = -\frac{\ln(10^{-4})}{(\ln 2)^2} = \frac{9.210}{0.4805} \approx 19.2 \text{ bits/element}.
+    $$
+
+    **(b) Hash functions.** $k = \dfrac{m}{n}\ln 2 = 19.2 \times 0.6931 \approx 13.3$, so $k = 13$ (rounded, as in `BloomFilter.__init__`).
+
+    **(c) Total memory.** $m = 19.2 \times 2\times10^{8} = 3.83 \times 10^{9}$ bits $= 4.79 \times 10^{8}$ bytes $\approx 0.48$ GB.
+
+    **(d) Unique documents wrongly dropped.** A false positive drops a genuinely unique document, and each document is tested once before insertion. If essentially all $n$ are unique, the expected number of false positives is
+
+    $$
+    p \times n = 10^{-4} \times 2\times10^{8} = 2\times10^{4} = 20{,}000 \text{ documents}.
+    $$
+
+    There are **no** false negatives, so a true duplicate is never kept — the asymmetry the chapter highlights.
+
+    **Comparison.** The SHA-256 set stores $32$ bytes $= 256$ bits per document $= 32 \times 2\times10^{8} = 6.4$ GB. The Bloom filter uses $0.48$ GB, a saving of $256 / 19.2 \approx 13\times$. (The chapter's $9\times$ figure is for the stricter $p = 10^{-6}$; loosening $p$ to $10^{-4}$ shrinks the filter further, at the cost of dropping more unique docs.)
+
+**4.** MinHash with $k = 128$ hashes. Instead of the chapter's $b = 16, r = 8$ banding, you try $b = 32, r = 4$. (a) Compute the LSH threshold $t^{*}$. (b) Compute $P(\text{candidate})$ for a pair at true similarity $s = 0.9$ and at $s = 0.6$. (c) Explain, relative to the chapter's $16 \times 8$ split, what this does to recall and to verification cost, and what happens to the number of (band, bucket) entries.
+
+??? note "Solution"
+    With $b \times r = 32 \times 4 = 128$ the constraint is satisfied.
+
+    **(a) Threshold.** $t^{*} \approx \left(\dfrac{1}{b}\right)^{1/r} = \left(\dfrac{1}{32}\right)^{1/4} = 32^{-1/4} = 2^{-5/4} \approx 0.420.$
+
+    So the S-curve inflection sits near $0.42$ Jaccard — much lower than the $16\times8$ value of $t^{*} = 16^{-1/8} = 2^{-1/2} \approx 0.707$.
+
+    **(b) Candidate probabilities**, using $P = 1 - (1 - s^{r})^{b}$ with $r = 4, b = 32$:
+
+    - $s = 0.9$: $0.9^{4} = 0.6561$, $\;(1 - 0.6561)^{32} = 0.3439^{32} \approx 1.5\times10^{-15}$, so $P \approx 1.000$.
+    - $s = 0.6$: $0.6^{4} = 0.1296$, $\;(1 - 0.1296)^{32} = 0.8704^{32} \approx 0.0118$, so $P \approx 0.988$.
+
+    For contrast, the $16\times8$ split gives $P(\text{candidate}\mid s{=}0.6) = 1 - (1 - 0.6^{8})^{16} \approx 0.24$.
+
+    **(c) Interpretation.** Lowering $t^{*}$ from $0.707$ to $0.420$ makes the banding far more permissive: a moderately similar pair ($s = 0.6$) becomes a candidate $\sim 99\%$ of the time instead of $\sim 24\%$. This **raises recall** (fewer genuine near-duplicates slip through) but **greatly raises verification cost**, because many more pairs — including ones far below the $0.8$ target — collide in a band and must go through the exact `est_j >= threshold` check. The number of (band, bucket) entries is $N \times b$: doubling $b$ from $16$ to $32$ literally doubles the number of hashed entries and buckets that must be built and scanned. The $(b, r)$ split is the knob trading recall against verification/index cost; you size it so $t^{*}$ sits just below your true similarity target, not far below it.
+
+**5.** The document-level heuristics catch a page whose *bigrams* repeat, but not a page assembled from many identical *lines* (e.g. a navigation footer duplicated across sections). Implement a Gopher-style `duplicate_line_fraction(text)` — the fraction of non-empty lines that are exact repeats of an earlier identical line — add it to `compute_heuristics` as `dup_line_frac`, and add a `dup_line_frac <= 0.30` check to `passes_heuristic_filters`. Show it rejects a document that is mostly a repeated footer.
+
+??? note "Solution"
+    For each distinct line value with count $c$, exactly $c - 1$ of its occurrences are repeats, so the number of repeated lines is $\sum_v (c_v - 1) = (\text{total lines}) - (\text{distinct lines})$.
+
+    ```python
+    from collections import Counter
+
+    def duplicate_line_fraction(text: str) -> float:
+        """Fraction of non-empty lines that are duplicates of an earlier
+        identical line (Gopher-style). 0.0 if there are no lines."""
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if not lines:
+            return 0.0
+        distinct = len(Counter(lines))
+        repeated = len(lines) - distinct
+        return repeated / len(lines)
+    ```
+
+    Add the signal inside `compute_heuristics` (just before the `return`) and include it in the returned dict:
+
+    ```python
+        dup_line_frac = duplicate_line_fraction(text)
+        # ... existing keys ...
+        "dup_line_frac": dup_line_frac,
+    ```
+
+    Then extend the filter:
+
+    ```python
+    def passes_heuristic_filters(text: str) -> bool:
+        h = compute_heuristics(text)
+        return (
+            50 <= h["n_tokens"] <= 100_000
+            and 3.0 <= h["mean_word_len"] <= 10.0
+            and h["alpha_frac"] >= 0.60
+            and h["digit_frac"] <= 0.15
+            and h["stop_word_frac"] >= 0.10
+            and h["top_bigram_frac"] <= 0.20
+            and h["bullet_frac"] <= 0.90
+            and h["curly_frac"] <= 0.01
+            and h["dup_line_frac"] <= 0.30      # new: reject repeated-line pages
+        )
+    ```
+
+    Demonstration — a page that is one real paragraph plus the same footer line repeated nine times:
+
+    ```python
+    footer = "Home | About | Contact | Privacy Policy | Terms of Service"
+    body = "This paragraph is the only genuine content on the page."
+    doc = body + "\n" + "\n".join([footer] * 9)
+
+    lines = [l for l in doc.splitlines() if l.strip()]   # 10 lines
+    # distinct = {body, footer} = 2  ->  repeated = 10 - 2 = 8
+    print(duplicate_line_fraction(doc))   # 8 / 10 = 0.8
+    ```
+
+    `dup_line_frac = 0.8 > 0.30`, so the new check fails and the document is dropped, even though its bigram and word-length signals look fine. This complements `top_bigram_frac`, which measures phrase-level rather than whole-line repetition.
+
+**6.** `find_near_duplicates` returns *pairs* $(a, b, \hat{J})$, but near-duplication is transitive at the cluster level: if `doc1`~`doc2` and `doc2`~`doc5`, all three are the same content and only one should survive. Implement `dedup_keep_set(all_ids, near_dup_pairs)` that groups the pairs into connected components (clusters) and returns the set of document IDs to keep — one representative per cluster. Run it on the demo output from the chapter's MinHash code and state the resulting keep-set.
+
+??? note "Solution"
+    Connected components over the "is-a-near-duplicate-of" graph are exactly a union-find (disjoint-set) problem. Union every reported pair, then keep one canonical representative (the component root) per cluster. Singletons — documents in no pair — are their own root and are always kept.
+
+    ```python
+    def dedup_keep_set(all_ids, near_dup_pairs):
+        """Cluster near-duplicate pairs into connected components and return
+        the set of IDs to keep: the smallest ID in each component (its root),
+        plus every document that appears in no pair."""
+        parent = {i: i for i in all_ids}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]   # path compression
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                # Keep the lexicographically smaller ID as the surviving root.
+                lo, hi = (ra, rb) if ra <= rb else (rb, ra)
+                parent[hi] = lo
+
+        for a, b, _ in near_dup_pairs:
+            union(a, b)
+
+        return {find(i) for i in all_ids}
+    ```
+
+    Running on the chapter's demo, whose near-duplicate pairs are
+    `[("doc1","doc2",0.938), ("doc1","doc5",0.594), ("doc2","doc5",0.547)]`
+    over `all_ids = ["doc1","doc2","doc3","doc4","doc5"]`:
+
+    ```python
+    all_ids = ["doc1", "doc2", "doc3", "doc4", "doc5"]
+    pairs = [("doc1", "doc2", 0.938), ("doc1", "doc5", 0.594), ("doc2", "doc5", 0.547)]
+    print(sorted(dedup_keep_set(all_ids, pairs)))
+    # -> ['doc1', 'doc3', 'doc4']
+    ```
+
+    `doc1`, `doc2`, `doc5` collapse into one component (root `doc1`), while `doc3` and `doc4` are singletons. The keep-set is `{doc1, doc3, doc4}` — the corpus shrinks from 5 to 3 documents. The transitive grouping is what makes `doc2` and `doc5` both get dropped in favor of a single representative, even though `doc2`~`doc5` was only surfaced indirectly through their shared similarity to `doc1`.

@@ -422,3 +422,138 @@ Diffusion and non-AR language models are best understood as a third major branch
 - Arriola, M., et al. (2025). **Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models (BD3-LM).** ICLR 2025.
 - Inception Labs (2025). **Mercury / Mercury Coder** — commercial diffusion LLM.
 - Gong, S., et al. (2025). **Dream 7B** — autoregressive-to-diffusion adaptation.
+
+---
+
+## Exercises
+
+**1.** Continuous image-diffusion models almost always inject the timestep $t$ into the network (via sinusoidal embeddings). Several strong masked-diffusion LLMs, including LLaDA, drop explicit time conditioning entirely and still generate coherent text. What implicit signal lets the network infer "where it is" in the denoising process without being told $t$, and why does that signal exist specifically in the *absorbing-state* formulation?
+
+??? note "Solution"
+    The implicit clock is **the number of `[MASK]` tokens in the input sequence**. In the absorbing forward process each clean token is independently replaced by `[MASK]` with probability $1 - \alpha_t$, so the *expected* fraction of masked positions is $1 - \alpha_t$, a monotone function of $t$ ($\alpha_0 = 1 \Rightarrow$ nothing masked; $\alpha_1 = 0 \Rightarrow$ everything masked). Because $\alpha_t$ is monotone, the observed mask count is (in expectation) an invertible readout of $t$: a sequence that is 90% `[MASK]` is necessarily near $t \approx 1$, and one that is 10% `[MASK]` is near $t \approx 0$. The model sees this directly on its own input, so feeding $t$ separately is largely redundant.
+
+    This works *because the corruption is absorbing*. The only transition is data $\to$ `[MASK]`; there is never mask $\to$ data or data $\to$ different-data. So the mask count only ever grows with $t$ and cleanly encodes the noise level. In a general D3PM process where any token can flip to any other token, the "amount of corruption" is not visible from a simple count — a corrupted token looks like an ordinary token — so the mask-count clock does not exist and explicit time conditioning is far more necessary. (See the "Time conditioning, or the lack of it" section and the RADD result of Ou et al., 2024.)
+
+**2.** A dense $3\text{B}$-parameter model runs in bf16 ($b = 2$ bytes/param) on a GPU with HBM bandwidth $\beta = 2.0$ TB/s. Using the decode-step memory floor $t_{\text{step}} \gtrsim P b / \beta$, compute, for a single sequence of $L = 256$ output tokens:
+
+   (a) the autoregressive wall-clock time and tokens/sec;
+
+   (b) the diffusion wall-clock time and tokens/sec for $N = 32$ denoising steps, taking $t_{\text{step}}' = 9$ ms per (compute-heavier) parallel step;
+
+   (c) the single-stream latency speedup of diffusion over AR.
+
+??? note "Solution"
+    The per-step memory floor is
+    $$
+    t_{\text{step}} \gtrsim \frac{P \cdot b}{\beta} = \frac{3 \times 10^9 \times 2}{2.0 \times 10^{12}} = \frac{6 \times 10^9}{2.0 \times 10^{12}} = 3.0 \times 10^{-3}\ \text{s} = 3\ \text{ms}.
+    $$
+
+    (a) **Autoregressive**: one forward pass per token, so $T_{\text{AR}} = L \cdot t_{\text{step}} = 256 \times 3\ \text{ms} = 768\ \text{ms} = 0.768\ \text{s}$. Throughput $= 256 / 0.768 \approx \mathbf{333}$ **tokens/s**.
+
+    (b) **Diffusion**: serial depth is $N$, not $L$, so $T_{\text{NAR}} = N \cdot t_{\text{step}}' = 32 \times 9\ \text{ms} = 288\ \text{ms} = 0.288\ \text{s}$. Throughput $= 256 / 0.288 \approx \mathbf{889}$ **tokens/s**.
+
+    (c) Speedup $= T_{\text{AR}} / T_{\text{NAR}} = 768 / 288 \approx \mathbf{2.67\times}$.
+
+    The win comes entirely from cutting serial depth from $256$ to $32$; each diffusion step is 3x more expensive ($9$ ms vs $3$ ms) because it processes all $256$ positions in parallel, which is why the speedup ($2.67\times$) is well below the $8\times$ reduction in step count.
+
+**3.** Consider a block-diffusion model generating $L = 256$ tokens with block size $B = 16$ and $N_B = 4$ denoising steps per block. Compute (a) the number of blocks, (b) the total number of block-denoising forward passes and the resulting serial depth, (c) how the serial depth compares to the equivalent AR model, and (d) the total position-evaluations by the denoiser versus AR. What does the comparison of (c) and (d) tell you about the nature of the diffusion speedup?
+
+??? note "Solution"
+    (a) Number of blocks $= L / B = 256 / 16 = \mathbf{16}$ blocks.
+
+    (b) Blocks are generated left-to-right (autoregressively), and each block runs $N_B$ denoising steps, so total block-denoising passes $= 16 \times 4 = \mathbf{64}$. Because the blocks are sequential and the steps within a block are sequential, the serial depth is exactly $\mathbf{64}$ dependent steps.
+
+    (c) The equivalent AR model needs $L = 256$ sequential single-token passes. Serial depth drops $256 \to 64$, a $\mathbf{4\times}$ reduction — this is the single-stream latency win.
+
+    (d) Each of the $64$ passes evaluates a block's worth of $B = 16$ positions, so total position-evaluations $\approx 64 \times 16 = \mathbf{1024}$, versus AR's $256$ — about $\mathbf{4\times}$ *more* position-evaluations. (With KV-cache reuse the finalized earlier blocks are not recomputed, so the extra cost is the within-block MLP work on the $16$ live positions across $4$ steps.)
+
+    The lesson: the diffusion speedup is a **serial-depth (latency) win, not a FLOPs win**. Here it reduces dependent steps by $4\times$ while doing $4\times$ more total position-evaluation work. That extra compute is nearly free when the GPU is otherwise idle (low batch) and expensive when it is already saturated (high batch) — the whole economic trade-off in one calculation.
+
+**4.** Within a single denoising step the model predicts every masked position independently: $p_\theta(x_0 \mid x_t) = \prod_i p_\theta(x_0^i \mid x_t)$. Explain why this factorization is *wrong* for natural language, what failure you would observe if you filled all masked positions in a single step, and how the iterative remasking loop recovers the missing structure. What choice of $N$ (number of steps) makes the error vanish, and what is the cost?
+
+??? note "Solution"
+    **Why it is wrong.** The true joint distribution over the masked tokens is highly correlated — the identity of one masked token strongly constrains the others (subject/verb agreement, matching brackets, a noun that must agree with an earlier article). A product of per-position marginals $\prod_i p_\theta(x_0^i \mid x_t)$ throws away all of that cross-position dependence and treats the masked tokens as if they were independent.
+
+    **Failure mode.** If you sample every masked position at once from this factorized distribution, each token is *individually* plausible given the context, but the tokens are *jointly* incoherent — a subject and verb that disagree, a pronoun with the wrong antecedent, code that is locally valid but globally inconsistent. This is the direct analog of why you cannot sample all pixels of an image independently in one shot.
+
+    **How remasking fixes it.** The sampler never trusts a single step to fill everything. Each step commits only a *subset* of predictions (e.g. the highest-confidence ones under confidence-based remasking) and returns the rest to `[MASK]`. Crucially, each committed token becomes bidirectional *context* for the next step, so the next step's per-position marginals are conditioned on the already-placed tokens. Over $N$ steps this re-conditioning reintroduces the inter-token correlations that any one step's factorization discards.
+
+    **When the error vanishes, and the cost.** With $N = L$ and a one-token-per-step schedule, exactly one position is committed per step conditioned on all previously committed tokens — this is an (order-flexible) autoregressive factorization, which is *exact*, so the conditional-independence error disappears and coherence matches AR. The cost is that serial depth returns to $L$: you have thrown away the entire speed advantage. Production systems pick the smallest $N$ (empirically $\sim L/4$ to $L/2$, or a few steps per block) that still holds quality. **More steps trade compute for coherence.**
+
+**5.** The sampler in the chapter uses *confidence-based* remasking: each step it keeps the `n_keep` highest-confidence predictions. Modify the sampler to implement **random remasking** instead — keep a uniformly random subset of the currently-masked positions of size `n_keep`. Give the replacement code block and explain, in terms of the chapter's argument, why confidence-based remasking generally produces better text at the same step budget.
+
+??? note "Solution"
+    Only the selection of *which* masked positions to commit changes; the schedule (`masked_target`, `n_keep`) and the prediction of `pred`/`x_candidate` stay identical. Replace the confidence-ranking block (the `torch.topk(conf_masked, n_keep)` branch) with a random draw among the currently-masked positions:
+
+    ```python
+        # Random remasking: keep a uniformly random subset of the masked
+        # positions of size n_keep, remask the rest.
+        masked_idx = masked.nonzero(as_tuple=True)[0]   # indices still masked
+        if n_keep > 0:
+            perm = masked_idx[torch.randperm(masked_idx.numel(), device=device)]
+            keep_idx = perm[:n_keep]                     # random subset to commit
+            new_x = x.clone()
+            new_x[masked] = MASK_ID                      # provisionally remask all
+            new_x[keep_idx] = x_candidate[keep_idx]      # commit the random ones
+            x = new_x
+    ```
+
+    Note this no longer needs `conf` at all for the selection (it is still computed to build `x_candidate`, and you could skip it under greedy decoding). The `conf_masked`/`topk` lines are dropped.
+
+    **Why confidence-based is better at the same $N$.** The whole engine of iterative denoising is that *committed tokens become context that sharpens the conditionals for everything still masked*. Confidence-based remasking commits exactly the positions the model is most sure about — the ones least likely to be wrong — so each round adds *reliable* context and defers the genuinely ambiguous positions until they have accumulated more surrounding evidence. Random remasking, by contrast, will often lock in a low-confidence (likely-wrong) guess early; because absorbing diffusion never un-commits a token, that mistake becomes permanent, misleading context for the remaining predictions. So at a fixed step budget confidence-based remasking wastes fewer commitments on bad guesses and produces more coherent output; random remasking needs more steps to reach comparable quality (the chapter notes it "wastes steps committing to low-confidence guesses early").
+
+**6.** Implement the training-side counterpart of the sampler: a function `masked_diffusion_loss(denoiser, x0, alpha_fn)` that returns one Monte-Carlo estimate of the absorbing-diffusion loss
+$$
+\mathcal{L}(\theta) = \mathbb{E}_{t \sim \mathcal{U}(0,1)}\, \mathbb{E}_{x_t}\left[ \frac{1}{1-\alpha_t} \sum_{i:\, x_t^i = \texttt{[MASK]}} -\log p_\theta(x_0^i \mid x_t) \right]
+$$
+for a single clean sequence `x0`. Follow the chapter's conventions (`MASK_ID`, a `denoiser` returning `(L, V)` logits). Then answer: which positions contribute to the loss, and what would go wrong if you dropped the $1/(1-\alpha_t)$ weight?
+
+??? note "Solution"
+    A single Monte-Carlo sample: draw one time $t$, mask each token independently with probability $1 - \alpha_t$, run one bidirectional forward pass, and take a weighted cross-entropy over the masked positions only.
+
+    ```python
+    import torch
+    import torch.nn.functional as F
+
+    MASK_ID = 0  # same absorbing-token convention as the sampler
+
+    def masked_diffusion_loss(denoiser, x0, alpha_fn, device="cpu"):
+        """
+        One Monte-Carlo estimate of the absorbing-diffusion loss for a clean
+        sequence x0 (LongTensor[L]). `alpha_fn(t)` maps t in [0,1] to the
+        survival probability alpha_t (alpha_0 = 1, alpha_1 = 0).
+        `denoiser(xt)` returns (L, V) logits over clean tokens.
+        """
+        x0 = x0.to(device)
+        L = x0.numel()
+
+        # 1. Sample a time t ~ U(0,1) and its survival probability.
+        t = torch.rand(1, device=device).item()
+        alpha_t = alpha_fn(t)                          # scalar in [0, 1]
+
+        # 2. Mask each token independently with prob (1 - alpha_t): data -> [MASK].
+        keep = torch.rand(L, device=device) < alpha_t  # True = survives unmasked
+        xt = x0.clone()
+        xt[~keep] = MASK_ID
+        masked = ~keep                                 # positions that got masked
+
+        # Degenerate draw: nothing masked -> no loss signal this sample.
+        if masked.sum() == 0:
+            return torch.zeros((), device=device)
+
+        # 3. One bidirectional pass predicting the clean token at every position.
+        logits = denoiser(xt)                          # (L, V), no causal mask
+
+        # 4. Cross-entropy on MASKED positions only (unmasked = context, no loss).
+        ce = F.cross_entropy(logits[masked], x0[masked], reduction="sum")
+
+        # 5. Weight by 1 / (1 - alpha_t) to make the masked-LM loss a valid
+        #    negative-log-likelihood bound across all masking rates.
+        return ce / (1.0 - alpha_t)
+    ```
+
+    A linear schedule `alpha_fn = lambda t: 1.0 - t` is the common default (then $1 - \alpha_t = t$, so the weight is $1/t$).
+
+    **Which positions contribute.** Only the masked positions (`logits[masked]`, `x0[masked]`) enter the cross-entropy. Unmasked positions are fed to the network as *context* but carry no loss term — the model is rewarded solely for reconstructing what was hidden. This mirrors point 1 of the objective discussion and matches the sampler, which never overwrites clamped/committed context.
+
+    **Why the $1/(1-\alpha_t)$ weight matters.** It corrects for the masking rate so that the expectation over $t$ forms a tight Evidence Lower Bound on the true negative log-likelihood (MDLM/RADD). Without it you would just be averaging BERT-style masked cross-entropy uniformly over masking rates, which is a representation-learning objective, not a proper generative one. Concretely, low-$t$ samples mask only a few tokens; the large weight $1/(1-\alpha_t)$ makes each of those rare masked positions count heavily, while high-$t$ samples (almost everything masked, weight $\approx 1$) are the hard denoising regime. Dropping the weight mis-balances these regimes, so the loss no longer bounds the likelihood and the model is not trained to be a valid generator across the full $0\% \to 100\%$ masking range that iterative sampling actually traverses.
