@@ -116,6 +116,8 @@ A well-tuned large pretraining run lands somewhere in the 0.3–0.55 MFU range o
 
 ## Kaplan vs. Chinchilla: The Great Correction
 
+{{tool:scaling-law-optimal}}
+
 ### Kaplan et al. (2020): scaling laws are born
 
 The first systematic scaling study — Kaplan et al., *Scaling Laws for Neural Language Models* — established the power-law form and, crucially, asked the **compute-optimal allocation** question: given a fixed budget $C$, how should you split it between $N$ and $D$?

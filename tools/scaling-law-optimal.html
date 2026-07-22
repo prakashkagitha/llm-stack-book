@@ -1,0 +1,54 @@
+<div class="viz-tool" id="tool-scaling-law-optimal">
+  <div class="vt-title">Chinchilla compute-optimal allocator</div>
+  <div class="vt-grid">
+    <label>Compute budget C (FLOPs)
+      <span class="vt-in"><input id="sl-C" type="number" value="5.88" step="0.1" min="0"><select id="sl-Cu"><option value="1e21">e21</option><option value="1e23" selected>e23</option><option value="1e25">e25</option></select></span>
+    </label>
+    <label>&hellip; or from GPU-hours
+      <span class="vt-in"><input id="sl-gh" type="number" value="0" min="0" placeholder="GPU-hrs"><input id="sl-tf" type="number" value="400" min="1" title="effective TFLOP/s per GPU"></span>
+    </label>
+    <label>Tokens/param target (Chinchilla &asymp; 20)
+      <input id="sl-r" type="number" value="20" min="1" step="1">
+    </label>
+  </div>
+  <div class="vt-out" id="sl-out"></div>
+  <div class="vt-note">Compute-optimal means splitting a fixed budget <b>C = 6&middot;N&middot;D</b> between parameters N and tokens D. Chinchilla found the split scales as N,D &prop; &radic;C at a ratio of ~<b>20 tokens per parameter</b> (adjust the ratio for over-/under-training, e.g. inference-aware training uses more). GPU-hours convert via C = GPU-hrs &times; 3600 &times; effective FLOP/s.</div>
+  <style>
+    #tool-scaling-law-optimal{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-scaling-law-optimal .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-scaling-law-optimal .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 18px; }
+    #tool-scaling-law-optimal label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-scaling-law-optimal input, #tool-scaling-law-optimal select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-scaling-law-optimal .vt-in{ display:flex; gap:6px; } #tool-scaling-law-optimal .vt-in input, #tool-scaling-law-optimal .vt-in select{ flex:1; min-width:0; }
+    #tool-scaling-law-optimal .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-scaling-law-optimal .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
+    #tool-scaling-law-optimal .vt-stat .n{ font-size:1.28rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-scaling-law-optimal .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-scaling-law-optimal .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-scaling-law-optimal');
+    function v(id){return parseFloat(root.querySelector('#'+id).value)||0;}
+    function sel(id){return parseFloat(root.querySelector('#'+id).value)||1;}
+    function fmt(x){ if(!isFinite(x)||x<=0)return '—'; var a=Math.abs(x);
+      if(a>=1e12)return (x/1e12).toFixed(2)+'T'; if(a>=1e9)return (x/1e9).toFixed(2)+'B';
+      if(a>=1e6)return (x/1e6).toFixed(1)+'M'; return x.toPrecision(3); }
+    function upd(){
+      var C=v('sl-C')*sel('sl-Cu');
+      var gh=v('sl-gh'); if(gh>0){ C=gh*3600*v('sl-tf')*1e12; }
+      var r=v('sl-r')||20;
+      // C = 6 N D, D = r N  ->  C = 6 r N^2  ->  N = sqrt(C/(6r)), D = r N
+      var N=Math.sqrt(C/(6*r)), D=r*N;
+      var out=[
+        ['N* = '+fmt(N), 'Compute-optimal parameters'],
+        ['D* = '+fmt(D)+' tok', 'Compute-optimal tokens'],
+        [r.toFixed(0)+' : 1', 'Tokens : parameters'],
+        [fmt(C)+' FLOP', 'Compute budget used'],
+      ];
+      root.querySelector('#sl-out').innerHTML=out.map(function(o){
+        return '<div class="vt-stat"><div class="n">'+o[0]+'</div><div class="l">'+o[1]+'</div></div>';}).join('');
+    }
+    root.querySelectorAll('input,select').forEach(function(e){e.addEventListener('input',upd);});
+    upd();
+  })();</script>
+</div>

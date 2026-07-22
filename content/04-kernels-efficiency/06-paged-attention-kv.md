@@ -8,6 +8,8 @@ By the end you should be able to: compute KV-cache memory exactly; explain why c
 
 ## Why the KV Cache Exists, and How Big It Gets
 
+{{tool:kv-cache-budgeter}}
+
 Autoregressive generation produces one token at a time. To generate token $t$, a decoder-only transformer must attend over all previous tokens $1 \dots t-1$. Attention needs the **keys** and **values** of those tokens at every layer. If we recomputed them from scratch each step, generating a sequence of length $n$ would cost $O(n^2)$ work *per new token* — quadratically wasteful.
 
 The KV cache is the standard fix: after a token is processed, we store its per-layer key and value vectors and reuse them forever. Generation then splits into two phases (covered in depth in [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html)):

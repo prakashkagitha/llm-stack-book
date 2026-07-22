@@ -1,0 +1,57 @@
+<div class="viz-tool" id="tool-kv-cache-budgeter">
+  <div class="vt-title">KV-cache &amp; context memory budgeter</div>
+  <div class="vt-grid">
+    <label>Layers <input id="kv-L" type="number" value="80" min="1"></label>
+    <label>KV heads (GQA)<input id="kv-h" type="number" value="8" min="1"></label>
+    <label>Head dim <input id="kv-d" type="number" value="128" min="1"></label>
+    <label>Context length <input id="kv-s" type="number" value="128000" min="1"></label>
+    <label>Concurrent requests <input id="kv-b" type="number" value="1" min="1"></label>
+    <label>KV dtype
+      <select id="kv-dt"><option value="2" selected>bf16/fp16 (2 B)</option><option value="1">fp8/int8 (1 B)</option><option value="4">fp32 (4 B)</option></select>
+    </label>
+    <label>GPU memory each (GB)<input id="kv-gpu" type="number" value="80" min="1"></label>
+    <label>Model weights (GB, for context)<input id="kv-w" type="number" value="140" min="0"></label>
+  </div>
+  <div class="vt-out" id="kv-out"></div>
+  <div class="vt-note">KV bytes = <b>2 &times; layers &times; KV-heads &times; head-dim &times; tokens &times; bytes</b> (the 2 is K and V). With grouped-query attention only the <i>KV</i> heads count — that's the whole memory point of GQA/MLA. Total tokens = context &times; concurrent requests.</div>
+  <style>
+    #tool-kv-cache-budgeter{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-kv-cache-budgeter .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-kv-cache-budgeter .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px 18px; }
+    #tool-kv-cache-budgeter label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-kv-cache-budgeter input, #tool-kv-cache-budgeter select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-kv-cache-budgeter .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-kv-cache-budgeter .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
+    #tool-kv-cache-budgeter .vt-stat .n{ font-size:1.28rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-kv-cache-budgeter .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-kv-cache-budgeter .vt-warn .n{ color:var(--warn,#e0a106); }
+    #tool-kv-cache-budgeter .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-kv-cache-budgeter');
+    function v(id){return parseFloat(root.querySelector('#'+id).value)||0;}
+    function gb(bytes){ return bytes/1e9; }
+    function fmtGB(x){ return x>=1000? (x/1000).toFixed(2)+' TB' : x.toFixed(x<10?2:1)+' GB'; }
+    function upd(){
+      var L=v('kv-L'),h=v('kv-h'),d=v('kv-d'),s=v('kv-s'),b=v('kv-b'),dt=v('kv-dt'),gpu=v('kv-gpu'),w=v('kv-w');
+      var perTok=2*L*h*d*dt;                 // bytes per token (all layers, K and V)
+      var total=perTok*s*b;                  // bytes
+      var kvGB=gb(total);
+      var perReqGB=gb(perTok*s);
+      var budgetForKV=gpu>0? Math.max(0, gpu - w/1) : 0; // naive single-GPU headroom
+      var out=[
+        ['', fmtGB(kvGB), 'Total KV cache ('+b+' req &times; '+ (s>=1000?(s/1000).toFixed(0)+'k':s) +' tok)'],
+        ['', (perTok/1e3).toFixed(1)+' KB', 'KV per token (all layers)'],
+        ['', fmtGB(perReqGB), 'KV per request'],
+        ['', (w+kvGB).toFixed(0)+' GB', 'Weights + KV total'],
+      ];
+      // fit check on one GPU
+      var over = (w + kvGB) > gpu;
+      out.push([ over?'vt-warn':'', over? 'does NOT fit':'fits', 'On one '+gpu+'GB GPU (weights+KV)']);
+      root.querySelector('#kv-out').innerHTML=out.map(function(o){
+        return '<div class="vt-stat '+o[0]+'"><div class="n">'+o[1]+'</div><div class="l">'+o[2]+'</div></div>';}).join('');
+    }
+    root.querySelectorAll('input,select').forEach(function(e){e.addEventListener('input',upd);});
+    upd();
+  })();</script>
+</div>
