@@ -482,3 +482,130 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
 - Zhang et al. — *Negative Preference Optimization* (NPO), 2024.
 - Li et al. — *The WMDP Benchmark* (and RMU for unlearning), 2024.
 - Zhang et al. — *EasyEdit: An Easy-to-use Knowledge Editing Framework for LLMs*.
+
+## Exercises
+
+**1.** A colleague runs an edit and reports success: the model now completes "The capital of Australia is ___" with "Sydney" instead of "Canberra." Explain why this is *not* sufficient evidence that the model's underlying knowledge changed, and name three concrete probes from this chapter that could reveal the edit is only a surface association. Then explain why the identical distinction is what makes machine *unlearning* so hard to certify.
+
+??? note "Solution"
+    A greedy completion of one exact prompt only demonstrates that the **output** on that phrasing moved; it does not show the model's web of associations updated. The chapter's "output changed vs knowledge changed" pitfall lists the sideways probes:
+
+    - **Inverse / relational query**: ask "Of which country is Sydney the capital?" or "What is the capital city of Australia, in one word?" phrased differently. If it still answers Canberra, only one association was patched.
+    - **Cross-lingual probe**: ask the same question in another language. Surface edits rarely transfer across languages.
+    - **Multi-hop / paraphrase probe**: ask a 2-hop question ("The Australian government sits in the city of ___") or a rephrasing. This is exactly the **ripple-effect** failure of Section 5.2 — a rank-one bump installs an *association*, not a *belief*, so the model can assert "capital is Sydney" while still placing the parliament in Canberra.
+
+    The same gap governs unlearning (Section 6.5): making the model *refuse* or raising forget-set perplexity changes outputs, but the legal/erasure standard is about removing the data's **influence**. Suppressing one phrasing leaves the knowledge reachable by another path (relearning, paraphrase, membership inference), so "the model won't say it" is not "the model unlearned it."
+
+**2.** Consider a ROME-style rank-one edit to the down-projection $W_{\text{down}}$ of a single GPT-2 small MLP block, where $d_{\text{mlp}} = 3072$ and $d_{\text{model}} = 768$ (the model has $\approx$ 124M parameters total). (a) How many parameters are in that one $W_{\text{down}}$ matrix? (b) The rank-one update $\Delta$ is stored as two vectors — how many numbers is that, and what fraction of the single matrix is it? (c) What fraction of the whole model does the stored update represent? (d) In one sentence, why does this smallness make *locality* even possible?
+
+??? note "Solution"
+    (a) $W_{\text{down}}$ has shape $d_{\text{mlp}} \times d_{\text{model}} = 3072 \times 768 = 2{,}359{,}296$ parameters ($\approx 2.36$M).
+
+    (b) A rank-one update $\Delta = u\,w^\top$ is stored as the two vectors $u \in \mathbb{R}^{d_{\text{mlp}}}$ and $w \in \mathbb{R}^{d_{\text{model}}}$, i.e. $3072 + 768 = 3840$ numbers. As a fraction of the matrix: $3840 / 2{,}359{,}296 \approx 1.63 \times 10^{-3}$, about **0.16%**.
+
+    (c) Relative to the full model: $3840 / 124{,}000{,}000 \approx 3.1 \times 10^{-5}$, about **0.0031%**.
+
+    (d) The update is a "whisper" — a rank-one, tiny-Frobenius-norm perturbation that moves one direction in weight space, so almost every other key's mapping ($W k$ for $k$ nearly orthogonal to the edit) is left essentially unchanged, which is precisely what locality requires.
+
+**3.** Work a ROME rank-one update by hand in two dimensions. Let $d_{\text{mlp}} = d_{\text{model}} = 2$, with current weight $W_0 = I_2$ (so $W_0$ maps a key $k$ to $W_0 k$). Take key $k_* = [1,\,1]^\top$, desired value $v_* = [3,\,1]^\top$, and covariance $C = I_2$ (the identity approximation). Using
+$$
+\Delta = \frac{(v_* - W_0 k_*)\,\big(C^{-1} k_*\big)^\top}{\big(C^{-1} k_*\big)^\top k_*},
+$$
+(a) compute $\Delta$ and the edited weight $W = W_0 + \Delta$; (b) verify $W k_* = v_*$; (c) show that a key $k' = [1,\,-1]^\top$ that is orthogonal to the steering direction is left completely unchanged, i.e. $\Delta k' = 0$.
+
+??? note "Solution"
+    With $C = I$ we have $C^{-1} k_* = k_* = [1,\,1]^\top$.
+
+    Residual (numerator left factor): $v_* - W_0 k_* = [3,1]^\top - I[1,1]^\top = [3,1]^\top - [1,1]^\top = [2,\,0]^\top$.
+
+    Denominator: $(C^{-1}k_*)^\top k_* = [1,1]\cdot[1,1] = 2$.
+
+    (a) Outer product then divide:
+    $$
+    \Delta = \frac{1}{2}\begin{bmatrix}2\\0\end{bmatrix}\begin{bmatrix}1&1\end{bmatrix} = \frac{1}{2}\begin{bmatrix}2&2\\0&0\end{bmatrix} = \begin{bmatrix}1&1\\0&0\end{bmatrix},\qquad W = I + \Delta = \begin{bmatrix}2&1\\0&1\end{bmatrix}.
+    $$
+
+    (b) Check: $W k_* = \begin{bmatrix}2&1\\0&1\end{bmatrix}\begin{bmatrix}1\\1\end{bmatrix} = \begin{bmatrix}2+1\\0+1\end{bmatrix} = \begin{bmatrix}3\\1\end{bmatrix} = v_*.$ The edit takes exactly.
+
+    (c) For $k' = [1,-1]^\top$: because $\Delta = \text{(residual)}\,(C^{-1}k_*)^\top$, we get $\Delta k' = \text{residual}\cdot\big((C^{-1}k_*)^\top k'\big)$. The scalar is $(C^{-1}k_*)^\top k' = [1,1]\cdot[1,-1] = 1 - 1 = 0$, so $\Delta k' = [2,0]^\top \cdot 0 = [0,0]^\top$. A key orthogonal to the $C^{-1}k_*$ steering direction is perfectly preserved — the mechanism behind locality, and why the $C^{-1}$ term (which points the update into under-used directions) matters when $C \neq I$.
+
+**4.** MEMIT installs a batch of edits by spreading the required residual over a band of $L$ middle layers, so each layer absorbs a fraction $\approx 1/L$ of the change. (a) Intuitively, why does spreading the same total change over 6 layers preserve fluency better than dumping it all into 1 layer? (b) The chapter warns that 1{,}000 single ROME edits applied one-after-another are *not* equivalent to one 1{,}000-fact batch edit. Explain the mechanism that makes the sequential version degrade. (c) In one or two sentences, describe how AlphaEdit's null-space projection attacks that mechanism.
+
+??? note "Solution"
+    (a) The damage an edit does to preserved knowledge grows super-linearly with how violently it perturbs a single matrix (a large $\Delta$ in one layer distorts many keys' outputs and can push activations off the manifold the rest of the network expects). By amortizing — each layer takes only $\sim 1/L$ of the residual — no single matrix is perturbed hard, so the accumulated collateral distortion stays small and fluency survives. This is what lets MEMIT reach $\sim$10,000 edits.
+
+    (b) The closed-form update depends on the preserved-key covariance $C$ (and, in the batch solve, on all keys jointly). A **batch** solve sees every key at once and balances them. In **sequential** editing each rank-one bump changes $W_0$ — and thus the key distribution / statistics that the *next* edit's solve assumed. Early edits corrupt the covariance that later edits rely on; the preserved knowledge **drifts**, and after enough steps the model can collapse into incoherence.
+
+    (c) AlphaEdit computes the projector $P$ onto the **null space** of the preserved-key covariance $C_{\text{preserved}} = K_p K_p^\top$ (via SVD, keeping near-zero-singular-value directions) and applies $\Delta_{\text{AlphaEdit}} = P\,\Delta_{\text{MEMIT}}$. Because the projected update lives in directions orthogonal to what preserved keys excite, $\Delta K_{\text{preserved}} \approx 0$ — the update "doesn't talk to" old facts, so their outputs stay put and drift is dramatically reduced across long sequential runs.
+
+**5.** The `minimal_rome.py` listing in Section 7 has a deliberately weak locality check: its `[locality]` line probes "The Colosseum is located in the city of", but the injected target was " Rome" and the Colosseum is *already* in Rome — so the probe cannot detect a locality violation. (a) Explain precisely why this probe is uninformative. (b) Rewrite the verification block so it uses an unrelated subject whose correct answer differs from the injected object, and add a second, differently-phrased locality probe, printing a clear PASS/FAIL by checking whether the injected object leaked into the output.
+
+??? note "Solution"
+    (a) A locality probe must have a *known correct answer that is different from the edited object*, so that if the edit bled into it you would see the wrong answer. Here the edit injects " Rome" for the Eiffel Tower, but the Colosseum's true city is also Rome. Whether or not the edit leaked, the expected and the leaked answer coincide ("Rome"), so the line can never distinguish "locality preserved" from "locality violated" — it is a vacuous test.
+
+    (b) Pick subjects whose true city is *not* Rome (e.g. the Statue of Liberty $\to$ New York, the Brandenburg Gate $\to$ Berlin) and flag any appearance of the injected object:
+
+    ```python
+    # ---- Better locality check: unrelated subjects whose answer is NOT the edit ----
+    LEAK = "Rome"   # the injected (false) object; it must NOT appear below
+    locality_probes = [
+        ("The Statue of Liberty is located in the city of", "New York"),
+        ("The Brandenburg Gate is located in the city of",  "Berlin"),
+    ]
+    print("\n--- locality ---")
+    all_ok = True
+    for prompt, expected in locality_probes:
+        out = generate(prompt)
+        completion = out[len(prompt):]            # only the newly generated text
+        leaked = LEAK.lower() in completion.lower()
+        status = "FAIL (edit leaked)" if leaked else "PASS"
+        all_ok = all_ok and not leaked
+        print(f"[{status}] expect ~{expected!r:12} -> {out}")
+    print("locality overall:", "PASS" if all_ok else "FAIL")
+    ```
+
+    The check is deliberately conservative: it does not require the model to be *correct* (GPT-2 small may be shaky on geography), only that the *injected* object "Rome" did not contaminate an unrelated subject. A cleaner locality signal would compare the model's probability on these prompts before vs. after the splice, but the leak-detection above is the minimal fix that makes the probe informative.
+
+**6.** Implement MEMIT's mass-edit closed form as a reusable function. From Section 3.1, the multi-fact update is
+$$
+\Delta = R\,K_1^\top\big(C + K_1 K_1^\top\big)^{-1},\qquad R = V_1 - W_0 K_1,
+$$
+where $K_1 \in \mathbb{R}^{d_{\text{mlp}} \times n}$ stacks $n$ keys (columns), $V_1 \in \mathbb{R}^{d_{\text{model}} \times n}$ the desired values, $W_0 \in \mathbb{R}^{d_{\text{model}} \times d_{\text{mlp}}}$, and $C \in \mathbb{R}^{d_{\text{mlp}} \times d_{\text{mlp}}}$ the preserved-key covariance. (a) Write `memit_update(W0, K1, V1, C)` returning $\Delta$ with correct shapes. (b) Write a small test that, with $C = I$ and 3 random facts, applies the update and reports the mean residual $\lVert (W_0+\Delta)K_1 - V_1\rVert$ per fact. (c) Why does raising the strength of the regularizer $C$ trade edit fidelity for locality?
+
+??? note "Solution"
+    (a) A direct transcription of the formula. The only care needed is matrix shapes and using a linear solve rather than an explicit inverse:
+
+    ```python
+    import torch
+
+    def memit_update(W0, K1, V1, C):
+        # W0: [d_model, d_mlp]   K1: [d_mlp, n]   V1: [d_model, n]   C: [d_mlp, d_mlp]
+        R = V1 - W0 @ K1                       # residuals, [d_model, n]
+        A = C + K1 @ K1.t()                    # [d_mlp, d_mlp], symmetric PD
+        # Delta = R K1^T A^{-1}  ==  (A^{-1} (K1 R^T))^T  via a solve for stability
+        X = torch.linalg.solve(A, K1 @ R.t())  # [d_mlp, d_model]
+        Delta = X.t()                          # [d_model, d_mlp]
+        return Delta
+    ```
+
+    (b) Test with the identity covariance and 3 facts:
+
+    ```python
+    torch.manual_seed(0)
+    d_model, d_mlp, n = 8, 16, 3
+    W0 = torch.randn(d_model, d_mlp)
+    K1 = torch.randn(d_mlp, n)
+    V1 = torch.randn(d_model, n)               # arbitrary target values
+    C  = torch.eye(d_mlp)                       # identity-approx covariance
+
+    Delta = memit_update(W0, K1, V1, C)
+    assert Delta.shape == W0.shape
+    W = W0 + Delta
+    resid = (W @ K1 - V1).norm(dim=0)          # per-fact residual [n]
+    print("per-fact residual:", resid.tolist())
+    print("mean residual   :", resid.mean().item())
+    ```
+
+    With $C = I$ (mild regularization) the residuals are small but nonzero: the solve minimizes $\lVert WK_1 - V_1\rVert^2$ *plus* a penalty tying $W$ to $W_0$ through $C$, so the fit is a compromise, not exact interpolation. Shrinking $C$ toward $0$ drives the residuals toward zero (near-exact edits); growing $C$ pulls $\Delta$ toward $0$.
+
+    (c) $C$ encodes the preserved keys the layer normally sees ($C \approx K_p K_p^\top$). Appearing as $ (C + K_1K_1^\top)^{-1}$, a larger $C$ down-weights the update in directions that preserved keys excite, so those old facts move less — better **locality** — but the same damping means the new facts are fit less tightly — worse **efficacy/fidelity**. The regularizer is exactly the knob on the locality-vs-reliability frontier of Section 5.1.

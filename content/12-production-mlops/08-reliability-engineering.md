@@ -891,3 +891,145 @@ War Room Checklist
 - LangSmith (LangChain). Observability and tracing for LLM pipelines — a practical reference for trace schema design. langchain.com/langsmith.
 - OpenLLMetry / Traceloop. OpenTelemetry-based instrumentation for LLM systems; provides standard span attributes for model calls, prompt versions, and retrieval stages.
 - Ribeiro, Wu, Guestrin, Singh. "Beyond Accuracy: Behavioral Testing of NLP Models with CheckList." ACL 2020. Foundation for golden-set canary eval design — systematic behavioral test suites rather than held-out accuracy alone.
+
+---
+
+## Exercises
+
+**1.** A teammate proposes that the team's single reliability SLI should be the HTTP success rate: `(responses with status 200) / (total requests)`, targeted at 99.9%. Using the chapter's framework, explain why this SLI can look healthy while users are receiving poor service, and name the additional SLI dimension the chapter argues you must add. Give two concrete failure modes from the chapter that this SLI would completely miss.
+
+??? note "Solution"
+    HTTP success rate only measures **availability** — whether a request received *any* response. LLM systems break the binary success assumption: a response can be syntactically valid (HTTP 200) but semantically wrong. As the chapter notes, "A system could maintain 99.9% HTTP success while delivering value only 70% of the time," because a hallucinated phone number, a mid-paragraph language switch, or a blank string all return HTTP 200.
+
+    The missing dimension is a **quality SLO** — an automated-judge pass rate, defined on a sliding window as
+
+    $$
+    \frac{\text{judged-good responses in last } W \text{ minutes}}{\text{total judged responses in last } W \text{ minutes}} \geq \theta
+    $$
+
+    Two failure modes from the chapter's "gradual silent collapse" section that HTTP success rate cannot see:
+
+    1. **Silent provider model swap** — the provider rolls out a new model version that scores slightly worse on your task. No HTTP errors are produced; the latency dashboard stays green.
+    2. **Retrieval corpus staleness / prompt drift** — documents age out and the RAG index returns off-topic chunks, or someone edits a prompt template without review. Again, no HTTP errors — "Your latency dashboard looks green. Only a quality SLO with a short enough window catches them early."
+
+    (The chapter's full vocabulary is three dimensions: availability, latency tail percentiles, and quality.)
+
+**2.** Your availability SLO is 99.9% over a 30-day window. Separately, your quality SLO is 95% judged-good, and you serve 3,000 requests per hour. A provider regression drops the judged-good rate to 0.83.
+
+(a) How many minutes of downtime does the availability error budget permit over the 30-day window?
+(b) At the baseline 95% target, how many bad responses per hour constitute one error-budget-rate ("1x burn") of quality?
+(c) How many *extra* bad responses per hour does the regression to 0.83 produce, and what is the burn multiple relative to the 1x rate?
+(d) Treating the monthly quality budget as `5% x total requests`, in how many days is it exhausted at that burn rate?
+
+??? note "Solution"
+    Follow the chapter's "error budget arithmetic" worked example, substituting the new numbers.
+
+    (a) Total minutes in 30 days $= 30 \times 24 \times 60 = 43{,}200$ minutes. Allowed downtime $= 43{,}200 \times (1 - 0.999) = 43{,}200 \times 0.001 = 43.2$ minutes.
+
+    (b) At the 95% target, the tolerated bad-response rate is $5\%$ of traffic: $3{,}000 \times 0.05 = 150$ bad responses/hour. This is the 1x error-budget rate.
+
+    (c) The regression drops judged-good from 0.95 to 0.83, i.e. an *extra* bad-response fraction of $0.95 - 0.83 = 0.12$. That is $3{,}000 \times 0.12 = 360$ extra bad responses/hour. Burn multiple $= 360 / 150 = 2.4\times$.
+
+    (Sanity check via the burn-rate formula: $\frac{1 - \text{SLI}}{1 - \text{SLO}} = \frac{1 - 0.83}{1 - 0.95} = \frac{0.17}{0.05} = 3.4\times$ total burn. The *extra* burn above the 1x baseline is $3.4 - 1.0 = 2.4\times$, matching part (c).)
+
+    (d) The 30-day budget is consumed $2.4\times$ faster than planned, so it is exhausted in $30 / 2.4 = 12.5$ days — a clear threshold to trigger incident escalation.
+
+**3.** The chapter recommends alerting on quality *drift* — a shift in the mean automated score — as a leading indicator, using the heuristic $\epsilon = 2\sigma_{\text{historical}}$. Suppose the historical mean quality score is $\bar{s} = 0.91$ with standard deviation $\sigma_{\text{historical}} = 0.015$, and your quality SLO pass threshold is $\theta = 0.85$ (a response counts as good if its score $\geq \theta$).
+
+(a) Compute the drift alert threshold $\epsilon$.
+(b) The current window has mean score $\bar{s}_t = 0.875$. Does this trip the drift alert? Does it breach the pass-rate SLO threshold directly?
+(c) Explain, in the chapter's terms, why the drift alert is valuable *even though* part (b)'s mean is still above the pass threshold.
+
+??? note "Solution"
+    (a) $\epsilon = 2\sigma_{\text{historical}} = 2 \times 0.015 = 0.03$.
+
+    (b) Quality drift $= \bar{s}_t - \bar{s}_{t-\Delta} = 0.875 - 0.91 = -0.035$. Its magnitude $|{-0.035}| = 0.035 > \epsilon = 0.03$, so it **trips the drift alert** (the chapter requires this to hold for two consecutive windows before paging). Meanwhile the mean $0.875$ is still above the pass threshold $\theta = 0.85$, so a naive check of "is the mean above the SLO bar?" would *not* fire — and the pass *rate* has not necessarily breached 95% yet either.
+
+    (c) Drift is a **leading indicator of imminent breach**. As the chapter puts it, a shift in mean score "may not breach the SLO threshold yet, but it is a leading indicator." Tracking only the pass/fail rate throws away information in the score *distribution*; a mean sliding from 0.91 toward the 0.85 bar means the whole distribution is drifting downward, so more responses will cross below threshold soon. Catching this early shrinks MTTD (which, per the chapter, is otherwise dominated by the width of your quality SLI window) and preserves error budget before a user-visible incident.
+
+**4.** Consider the `MultiProviderGateway` from the chapter. On-call reports that when the *primary* provider starts returning HTTP 500s, requests still eventually succeed on the secondary, but users experience elevated latency for a sustained period even after the primary is clearly unhealthy — every request keeps *trying* the primary first before falling through. Trace through the `complete` / circuit logic and explain (a) why this happens on the first several requests, and (b) what mechanism eventually stops requests from trying the dead primary, and after how many failures it engages given the default `ProviderConfig`.
+
+??? note "Solution"
+    (a) In `complete`, `_available_providers()` returns every provider whose circuit `is_open(...)` returns `False`, sorted by `weight` descending — so the higher-weight primary is tried first. On each failed attempt the code runs:
+
+    ```python
+    circuit.record_failure(provider.window_seconds)
+    if circuit.is_open(provider.max_failures):
+        circuit.trip(cooldown=30.0)
+    ```
+
+    `is_open` returns `True` only once `len(self.failures) >= max_failures` (or while `open_until` is in the future). With the default `max_failures = 5`, the first four failures accumulate in `self.failures` but keep the circuit **closed** — so on requests 1 through 4 the gateway still lists the primary as available, tries it first, eats the 500 (and its latency), and only *then* falls through to the secondary. That is the elevated-latency window users feel.
+
+    (b) The stopping mechanism is the **circuit breaker**. On the 5th failure within the 60-second window (`window_seconds = 60.0`), `len(self.failures) >= 5` makes `is_open` return `True`; the code then calls `circuit.trip(cooldown=30.0)`, which sets `open_until = now + 30` and clears the failure list. From then on `_available_providers()` filters the primary out for the 30-second cooldown, so subsequent requests go **straight to the secondary** with no wasted primary attempt. So the dead primary keeps being tried for its first 5 failures per window, after which the circuit opens for 30 seconds.
+
+    (Design takeaway consistent with the chapter: `max_failures` and `cooldown` trade off failover speed against flapping. A lower `max_failures` opens the circuit sooner — less user-visible latency — at the cost of tripping on transient blips.)
+
+**5.** Implement a `QualitySLOMonitor` that ingests a stream of judged responses on a sliding time window and computes both the chapter's quality SLI and the fast-burn-rate alert. It should expose:
+
+- `record(timestamp: float, good: bool)` — add one judged response.
+- `sli(now: float) -> float` — judged-good fraction over the last `window_seconds`.
+- `burn_rate(now: float) -> float` — using the chapter's formula $\frac{1 - \text{SLI}}{1 - \text{SLO}}$.
+- `alert_level(now: float) -> str` — return `"page"` if burn rate $\geq 14.4$, `"warn"` if $\geq 6$, else `"ok"`.
+
+Write it in the chapter's style (dataclass-ish, standard library only), evicting samples older than the window. Then show it firing a page.
+
+??? note "Solution"
+    ```python
+    from collections import deque
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class QualitySLOMonitor:
+        """
+        Sliding-window quality SLO monitor with multi-burn-rate alerting.
+        Mirrors the chapter: quality SLI = judged-good / total over a window,
+        burn rate = (1 - SLI) / (1 - SLO), page at >=14.4x, warn at >=6x.
+        """
+        slo_target: float = 0.95
+        window_seconds: float = 1800.0            # 30-minute window
+        _events: deque = field(default_factory=deque)  # (timestamp, good: bool)
+
+        def _evict(self, now: float) -> None:
+            cutoff = now - self.window_seconds
+            while self._events and self._events[0][0] < cutoff:
+                self._events.popleft()
+
+        def record(self, timestamp: float, good: bool) -> None:
+            self._events.append((timestamp, good))
+
+        def sli(self, now: float) -> float:
+            self._evict(now)
+            if not self._events:
+                return 1.0  # no data: assume healthy, avoid divide-by-zero
+            good = sum(1 for _, g in self._events if g)
+            return good / len(self._events)
+
+        def burn_rate(self, now: float) -> float:
+            sli = self.sli(now)
+            denom = 1.0 - self.slo_target
+            if denom <= 0:
+                return 0.0
+            return (1.0 - sli) / denom
+
+        def alert_level(self, now: float) -> str:
+            br = self.burn_rate(now)
+            if br >= 14.4:
+                return "page"
+            if br >= 6.0:
+                return "warn"
+            return "ok"
+
+
+    # Demo: a provider regression drives SLI to 0.28 -> burn rate ~14.4x -> page.
+    mon = QualitySLOMonitor(slo_target=0.95, window_seconds=1800.0)
+    t = 10_000.0
+    # 100 judged responses; 72 bad, 28 good  =>  SLI = 0.28
+    for i in range(100):
+        mon.record(t + i, good=(i >= 72))
+    now = t + 100
+    print(f"SLI       = {mon.sli(now):.3f}")          # 0.280
+    print(f"burn rate = {mon.burn_rate(now):.2f}x")   # (1-0.28)/(1-0.95) = 14.40x
+    print(f"alert     = {mon.alert_level(now)}")      # page
+    ```
+
+    Working the numbers by hand for the demo: SLI $= 28/100 = 0.28$, so burn rate $= \frac{1 - 0.28}{1 - 0.95} = \frac{0.72}{0.05} = 14.4\times$, which hits the fast-burn page threshold exactly. Per the chapter, a $14.4\times$ burn exhausts a 30-day error budget in $30/14.4 \approx 2$ days, which is why it pages rather than merely warns. The `_evict` call in every read keeps the window honest: samples older than `window_seconds` are dropped so the SLI reflects only recent traffic, and the MTTD for a fault is bounded by the window width.

@@ -765,3 +765,163 @@ The weekly retraining cycle is a practical baseline. Teams with very high traffi
     - Replay buffers at $\rho \approx 0.3$–$0.5$ are the primary defense against catastrophic forgetting during weekly retraining cycles.
     - The eval gate is not optional: win-rate vs. production, a regression suite, and safety checks must all pass before any deployment, however small. Without this gate, the flywheel degrades via Goodhart's Law — the model optimizes for the training distribution rather than genuine quality.
     - Data quality beats data volume past a certain scale. Hard negatives, diverse examples from the long tail, and preference labels on uncertain cases have far higher marginal value than additional random samples of easy cases.
+
+## Exercises
+
+**1.** (Conceptual) The chapter's third design rule for explicit feedback collection is "Log what you did not show" — during an A/B test between two model variants, log the output of *both* variants on every request even though the user only ever sees one. Explain why this is required for offline reward model training, and what specifically breaks if you only log the output that was actually served.
+
+??? note "Solution"
+    Offline reward model (RM) training consumes *pairwise* comparisons of the form $(\text{prompt}, \text{output}_A, \text{output}_B, \text{preference})$. The reward model learns from the *contrast* between two responses to the same prompt — that is the training signal in the Bradley-Terry / pairwise-ranking objective used in [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html).
+
+    If you only log the served output, you have at most $(\text{prompt}, \text{output}_{\text{served}}, \text{signal})$ — a single response with an absolute rating (e.g. thumbs-up). You cannot reconstruct what the *other* variant would have produced after the fact, because generation is stochastic (sampling temperature, seeds) and the losing variant may already be retired by the time you assemble the training set. The counterfactual output is unrecoverable.
+
+    What breaks concretely:
+
+    - You lose the ability to build within-prompt pairs from live A/B traffic, which is exactly the highest-value, on-distribution preference data. `sample_pairs_for_labeling` groups candidates `by_prompt` and requires `len(resps) >= 2`; with only the served output you have one response per prompt and the pair enumeration produces nothing.
+    - Even the implicit signal becomes biased: the served output is chosen by the routing policy, so a plain absolute-rating dataset is confounded by which variant was routed. A pair from the *same* prompt cancels prompt difficulty out of the comparison; an absolute rating does not.
+
+    So the counterfactual output must be captured synchronously at serve time (log both, show one). It costs one extra forward pass, and it is the only moment the counterfactual exists.
+
+**2.** (Quantitative) You are scoring candidate response pairs for annotation with the chapter's pipeline. For one candidate response the model emitted five tokens with natural-log per-token logprobs $[-0.1, -0.2, -2.0, -0.3, -0.4]$.
+
+   (a) Compute the uncertainty proxy $H(\text{output}) = -\frac{1}{T}\sum_{t} \log p_\theta(y_t\mid y_{<t},x)$.
+
+   (b) For a pair whose two responses have reward-model scores $r_A = 1.3$ and $r_B = 0.5$, compute `uncertainty_score` as defined in the chapter (reward scale clipped at $2.0$).
+
+   (c) The pair's normalized edit-distance ratio is $0.5$. Using `uncertainty_weight = 0.6`, compute the final selection `score` that `sample_pairs_for_labeling` would assign.
+
+??? note "Solution"
+    (a) $H$ is the average negative log-probability per token. Sum of logprobs $= -0.1-0.2-2.0-0.3-0.4 = -3.0$, over $T=5$ tokens:
+
+    $$
+    H = -\frac{1}{5}(-3.0) = \frac{3.0}{5} = 0.6
+    $$
+
+    The lone low-logprob token ($-2.0$) is what drives the uncertainty up; the model was confident on the other four positions.
+
+    (b) `uncertainty_score` uses the reward margin, inverted and clipped: margin $= |r_A - r_B| = |1.3 - 0.5| = 0.8$.
+
+    $$
+    \text{unc} = \max\!\left(0,\; 1 - \frac{0.8}{2.0}\right) = 1 - 0.4 = 0.6
+    $$
+
+    (c) The selection score is a weighted blend of uncertainty and diversity (the edit-distance ratio), with `diversity = ed = 0.5`:
+
+    $$
+    \text{score} = 0.6 \cdot \text{unc} + (1-0.6)\cdot \text{diversity} = 0.6\cdot 0.6 + 0.4\cdot 0.5 = 0.36 + 0.20 = 0.56
+    $$
+
+    A higher-margin (more confidently ranked) or more near-identical pair would score lower and fall below the top-`n_pairs` cutoff.
+
+**3.** (Quantitative) A weekly retraining run accumulates $D_{\text{new}} = 6000$ freshly labeled examples. You mix them with a frozen replay buffer using the chapter's ratio $\mathcal{D}_{\text{train}} = (1-\rho)\,\mathcal{D}_{\text{new}} \cup \rho\,\mathcal{D}_{\text{replay}}$, where the new data forms the $(1-\rho)$ fraction of the final training set. You want to use all 6000 new examples.
+
+   (a) With $\rho = 0.4$, how large is the assembled training set, and how many replay examples are drawn?
+
+   (b) A teammate proposes $\rho = 0.1$ to "learn faster from fresh data." How many replay examples does that draw, and which failure mode from the chapter does this invite?
+
+??? note "Solution"
+    The new examples occupy the $(1-\rho)$ fraction, so if all 6000 are used, the total size is $|\mathcal{D}_{\text{train}}| = D_{\text{new}} / (1-\rho)$, and replay count $= |\mathcal{D}_{\text{train}}| - D_{\text{new}}$.
+
+    (a) With $\rho = 0.4$:
+
+    $$
+    |\mathcal{D}_{\text{train}}| = \frac{6000}{1 - 0.4} = \frac{6000}{0.6} = 10000, \qquad \text{replay} = 10000 - 6000 = 4000
+    $$
+
+    This sits squarely in the chapter's recommended $\rho \in [0.3, 0.5]$ band.
+
+    (b) With $\rho = 0.1$:
+
+    $$
+    |\mathcal{D}_{\text{train}}| = \frac{6000}{0.9} \approx 6667, \qquad \text{replay} = 6667 - 6000 \approx 667
+    $$
+
+    Only ~667 old examples survive against 6000 new ones. This invites **catastrophic forgetting**: the chapter names replay buffers at $\rho \approx 0.3$-$0.5$ as the primary defense, warning that too low a replay fraction lets the model forget earlier capabilities (better on the new week's data, worse on some existing capability). The regression test suite would likely catch it at the eval gate and block deployment — wasting the training run.
+
+**4.** (Implementation) The chapter's implicit-signal table says a proxy reward model can label the ~95% of traffic with no explicit thumbs-up/down. As a first, rule-based version of that proxy, implement a function `implicit_proxy_reward(record: RequestRecord) -> float` returning a scalar in $[-1, 1]$. Follow the chapter's table: an explicit thumbs signal dominates; otherwise a copy is a strong positive; an edit means "close but wrong" (scale the penalty by how much was edited, reusing `edit_distance_ratio`); no signal at all is neutral. Keep it consistent with the `RequestRecord` fields defined in `request_logger.py`.
+
+??? note "Solution"
+    The `RequestRecord` fields available as signals are `thumbs_up` (`Optional[bool]`), `copied_output` (`Optional[bool]`), and `edited_output` (`Optional[str]`, the user's edited text). We map them to the chapter's table: explicit feedback is the strongest and overrides everything; a copy is "often strong positive"; an edit is "close but wrong" whose severity scales with edit distance from the original `model_output`.
+
+    ```python
+    # flywheel/labeling/implicit_proxy.py
+    from flywheel.logging.request_logger import RequestRecord
+    from flywheel.labeling.preference_sampler import edit_distance_ratio
+
+
+    def implicit_proxy_reward(record: RequestRecord) -> float:
+        """
+        Rule-based proxy reward in [-1, 1] derived from implicit signals.
+        Priority: explicit thumbs > copy > edit > no signal (neutral).
+        A later learned classifier would replace these hand-set weights,
+        trained to predict thumbs_up from the same features.
+        """
+        # 1. Explicit feedback dominates when present.
+        if record.thumbs_up is not None:
+            return 1.0 if record.thumbs_up else -1.0
+
+        # 2. A copy is a strong positive (chapter: "often strong positive").
+        if record.copied_output:
+            return 0.7
+
+        # 3. An edit means "close but wrong": penalty scales with how much
+        #    of the output the user had to change. Small edit -> mild
+        #    negative; wholesale rewrite -> stronger negative.
+        if record.edited_output is not None:
+            frac_changed = edit_distance_ratio(
+                record.model_output, record.edited_output
+            )  # in [0, 1]
+            return -0.5 * frac_changed
+
+        # 4. No signal: neutral. (Session-continuation signals, if joined
+        #    in, could nudge this slightly positive.)
+        return 0.0
+    ```
+
+    Notes on the design choices, all grounded in the chapter:
+
+    - `thumbs_up` is checked first because explicit human preference is described as "the highest-quality signal"; when it exists it should not be diluted by weaker proxies.
+    - The edit penalty reuses `edit_distance_ratio` from `preference_sampler.py` so a one-character fix returns a value near $0$ (barely wrong) while a full rewrite approaches $-0.5$ (mostly wrong but still better than an outright regenerate, which the table flags as "clearly bad").
+    - The output is bounded in $[-1, 1]$, so these scores can be dropped straight into `reward_model_score` slots for `uncertainty_score` / `sample_pairs_for_labeling`, or used as regression targets when you later train the *learned* proxy RM to predict `thumbs_up` from these features.
+
+**5.** (Implementation / quantitative) Turn the chapter's "Compounding Data Advantage" model into a runnable simulator and report the moat after 10 rounds. Use this well-posed version of the recurrences (each round, update data, then quality, then users):
+
+$$
+D_{k+1} = D_k + d\cdot N_k, \qquad Q_{k+1} = Q_k + \beta\log\!\frac{D_{k+1}}{D_k}, \qquad N_{k+1} = N_k\,(1 + \alpha\,\Delta Q_{k+1})
+$$
+
+   with $\Delta Q_{k+1} = Q_{k+1}-Q_k$. Initialize $N_0 = 10000$, $D_0 = 100000$, $Q_0 = 1.0$, and use $\alpha = 0.1$, $\beta = 0.05$, $d = 10$. Compute $N_{10}/N_0$, and explain why the per-round *quality* gain $\Delta Q_k$ shrinks even as the user base keeps compounding.
+
+??? note "Solution"
+    ```python
+    # flywheel/analysis/compounding_sim.py
+    import math
+
+
+    def simulate_flywheel(rounds=10, N0=10000.0, D0=100000.0, Q0=1.0,
+                          alpha=0.1, beta=0.05, d=10.0):
+        N, D, Q = N0, D0, Q0
+        for _ in range(rounds):
+            D_next = D + d * N                    # new examples from current users
+            Q_next = Q + beta * math.log(D_next / D)  # log-linear data -> quality
+            dQ = Q_next - Q
+            N_next = N * (1.0 + alpha * dQ)       # better quality attracts users
+            N, D, Q = N_next, D_next, Q_next
+        return N, D, Q
+
+
+    if __name__ == "__main__":
+        N, D, Q = simulate_flywheel()
+        print(f"N10/N0 = {N/10000.0:.6f}")   # -> 1.012085
+        print(f"N10={N:.2f}  D10={D:.2f}  Q10={Q:.4f}")
+    ```
+
+    Running it (matching a hand-check of the first two rounds):
+
+    - Round 1: $D_1 = 100000 + 10\cdot 10000 = 200000$; $Q_1 = 1 + 0.05\ln 2 \approx 1.03466$; $\Delta Q_1 \approx 0.03466$; $N_1 = 10000(1 + 0.1\cdot 0.03466) \approx 10034.7$.
+    - Round 2: $D_2 = 200000 + 10\cdot 10034.7 \approx 300347$; $Q_2 \approx 1.05499$; $\Delta Q_2 \approx 0.02033$; $N_2 \approx 10055.1$.
+    - After 10 rounds: $N_{10}/N_0 \approx \mathbf{1.0121}$, with $D_{10} \approx 1.108\times 10^{6}$ and $Q_{10} \approx 1.120$.
+
+    Why $\Delta Q_k$ shrinks: quality grows with the *log ratio* $\ln(D_{k+1}/D_k)$, consistent with the log-linear scaling-law intuition the chapter invokes. Even though the absolute number of new examples $d\cdot N_k$ grows every round, the *ratio* $D_{k+1}/D_k = 1 + d N_k / D_k$ shrinks toward $1$ because the cumulative denominator $D_k$ grows faster than the per-round increment. So $\ln(D_{k+1}/D_k)\to 0$ and each round buys less quality than the last — diminishing returns on raw volume.
+
+    This is exactly the chapter's punchline: past a certain scale, another random on-distribution example barely moves quality (the $\log$ is flattening), so the marginal value of *data volume* collapses while the marginal value of *hard, long-tail, high-uncertainty* examples stays high. The moat is not the modest $1.2\%$ user compounding in these tame parameters — it is that a round-10 entrant starts at $N_0, D_0$ with *zero* accumulated coverage of the long tail, a distribution gap no architecture tweak closes.

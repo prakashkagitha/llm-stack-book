@@ -611,3 +611,123 @@ The engineering upshot is a single sentence you can take to a design review: **d
 - **Yu, Naik, Backurs, Gopi, Inan, Kamath, Kulkarni, Lee, Manoel, Wutschitz, Zanella-Béguelin et al., "Differentially Private Fine-tuning of Language Models," ICLR 2022** — shows DP fine-tuning of large LMs recovers most utility at single-digit $\varepsilon$.
 - **Nasr et al., "Scalable Extraction of Training Data from (Production) Language Models," 2023** — the divergence ("repeat this word") attack on aligned models.
 - **microsoft/presidio** and **pytorch/opacus** — production-grade open-source libraries for PII detection/anonymization and for DP-SGD training, respectively.
+
+---
+
+## Exercises
+
+**1.** *(Conceptual.)* A colleague reports that their fine-tuned model has a healthy, still-*decreasing* validation loss and no gap between train and validation loss, and concludes "there's no overfitting, so there's no privacy problem — and if there were, I'd just add weight decay and early stopping." Explain, using the chapter's definitions, why this reasoning is wrong on two counts: (a) why memorization can be severe even when validation loss looks perfectly healthy, and (b) why the classic regularizers they name are the wrong tools.
+
+??? note "Solution"
+    **(a) Memorization is decoupled from overfitting.** Validation loss is an *average* over the bulk of the data distribution, whereas verbatim memorization concerns the *tail* of rare, high-surprise examples (a unique credit-card number, a UUID, a one-off secret). A model can drive the loss of thousands of unique sequences to near zero — storing them in its weights — while the *average* validation loss keeps falling smoothly, because those memorized tail examples are a vanishing fraction of the average. So "no train/val gap" tells you nothing about the tail. As the chapter puts it, the two phenomena "are decoupled because memorization concerns the tail of rare examples while validation loss is an average over the bulk."
+
+    Moreover, memorization is not pathological overfitting at all: for a unique, low-entropy, high-surprise sequence there is *no generalizable rule* that predicts the next token, so the only way maximum likelihood can lower that sequence's loss is to store it verbatim. Memorization is therefore the *optimal* behavior of the cross-entropy objective on rare sequences, and it appears *well before* the model overfits in the classical rising-validation-loss sense.
+
+    **(b) Weight decay, dropout, and early stopping target the wrong statistic.** These regularizers are designed to close the train/val *average* gap — exactly the statistic that is already healthy here. They do not specifically suppress the storage of individual rare sequences; early stopping in particular is useless because memorization happens early, before any validation-loss turnaround it could trigger on. The right tools operate on the tail and on individual-record influence: **deduplication** (collapses the highest-duplication, most-extractable tail), **PII scrubbing** (removes the secrets pre-training), and **DP-SGD** (formally bounds how much any single record changes the model). Only DP gives a guarantee; the standard regularizers give none.
+
+**2.** *(Quantitative.)* You insert a canary of the form `"the vault code is XXXXXX"` whose body is 6 random digits, so the body space is $|R| = 10^6$. After training you rank the true body among all $10^6$ candidates by model log-likelihood (rank 1 = lowest perplexity).
+
+   (a) What is $\log_2|R|$, and what exposure would a *non-memorized* canary have?
+   (b) You measure the true body at rank $256$. Compute its exposure in bits.
+   (c) How many brute-force guesses does an attacker who enumerates from most-to-least likely need to recover the secret, and is this alarming?
+   (d) You now re-run the audit after deduplicating the corpus and measure rank $\approx 4.9\times10^5$. What is the new exposure, and what does this demonstrate?
+
+??? note "Solution"
+    **(a)** $\log_2 10^6 = 6\log_2 10 \approx 6 \times 3.3219 = 19.93$ bits. A non-memorized canary has a roughly *uniform* rank, so $\mathbb{E}[\operatorname{rank}] \approx |R|/2 = 5\times10^5$, giving
+    $$\operatorname{exposure} = 19.93 - \log_2(5\times10^5) = 19.93 - 18.93 = 1.0 \text{ bit}.$$
+    Baseline exposure is about **1 bit** — the "safe" reading.
+
+    **(b)** With rank $= 256 = 2^8$:
+    $$\operatorname{exposure} = \log_2|R| - \log_2\operatorname{rank} = 19.93 - \log_2 256 = 19.93 - 8 = 11.93 \text{ bits}.$$
+
+    **(c)** An attacker ranking candidates by the model's own likelihood finds the true body at position 256, so at most **256 guesses** recover it. That is trivially cheap — well within a scripted brute force — so yes, this is **alarming**: an exposure of ~12 bits on a low-duplication canary means the pipeline is memorizing far too aggressively.
+
+    **(d)** $\operatorname{exposure} = 19.93 - \log_2(4.9\times10^5) = 19.93 - 18.90 = 1.03$ bits — essentially back to the ~1-bit baseline. The secret's rank is now near $|R|/2$, i.e. indistinguishable from a body the model never saw. This demonstrates the chapter's central cheap-defense claim: **deduplication collapses exposure toward baseline at essentially zero utility cost**, turning an extractable secret back into noise.
+
+**3.** *(Quantitative.)* In DP-SGD the noisy averaged gradient is
+   $$\hat{g} = \frac{1}{B}\Big(\sum_{i=1}^{B}\tilde{g}_i + \mathcal{N}(0,\sigma^2 C^2 \mathbf{I})\Big),$$
+   with clip norm $C = 1.0$ and noise multiplier $\sigma = 1.1$. Consider one coordinate.
+
+   (a) What is the standard deviation of the added noise *per coordinate* on the **summed** (pre-average) gradient, and does it depend on the batch size $B$?
+   (b) After dividing by $B$, what is the noise std per coordinate on $\hat{g}$ for $B = 256$ versus $B = 4096$?
+   (c) Assume the clipped per-example gradients are roughly aligned so the *signal* per coordinate of the averaged gradient is about constant at $g \approx 0.02$ regardless of $B$. Compute the signal-to-noise ratio (SNR) for each batch size. Explain in one sentence why the chapter says "large physical batch sizes are essential for DP to work well."
+
+??? note "Solution"
+    **(a)** The Gaussian noise added to the *sum* is $\mathcal{N}(0, \sigma^2 C^2 \mathbf{I})$, so the per-coordinate std on the summed gradient is
+    $$\sigma C = 1.1 \times 1.0 = 1.1.$$
+    This is **independent of $B$** — the same amount of noise is added to the sum whether the batch has 256 or 4096 examples.
+
+    **(b)** Averaging divides by $B$, so the per-coordinate noise std on $\hat{g}$ is $\sigma C / B$:
+    - $B = 256$: $1.1 / 256 \approx 4.30\times10^{-3}$.
+    - $B = 4096$: $1.1 / 4096 \approx 2.69\times10^{-4}$.
+
+    **(c)** $\text{SNR} = g \,/\, (\sigma C / B) = g\,B/(\sigma C)$:
+    - $B = 256$: $0.02 \times 256 / 1.1 \approx 4.65$.
+    - $B = 4096$: $0.02 \times 4096 / 1.1 \approx 74.5$.
+
+    The SNR grows *linearly* in $B$ (a $16\times$ larger batch gives a $16\times$ better SNR here) because the injected noise is fixed on the sum while the averaged useful signal is constant — so the only way to drown out the DP noise and get a usable gradient direction is to average over a very large batch. That is why DP-SGD "wants very large batches," and it compounds the compute/memory cost of per-example gradients.
+
+**4.** *(Quantitative / conceptual.)* Your DP accountant reports the fine-tune achieved $(\varepsilon, \delta) = (8.0, 10^{-6})$ on a dataset of $N = 2\times10^6$ records.
+
+   (a) By what multiplicative factor can an adversary's posterior odds that a given record was a member shift, in the worst case? Compare to a target of $\varepsilon = 1.0$.
+   (b) Is the chosen $\delta$ appropriate for this $N$? State the rule of thumb and check it.
+   (c) One reviewer says "$e^{8} \approx 2981$ is a huge odds shift, so this model is basically not private." Give the two-part rebuttal the chapter supports.
+
+??? note "Solution"
+    **(a)** The $(\varepsilon,\delta)$ guarantee bounds the odds shift by $e^\varepsilon$:
+    - $\varepsilon = 8.0$: $e^{8.0} \approx 2981$.
+    - $\varepsilon = 1.0$: $e^{1.0} \approx 2.72$.
+
+    So at $\varepsilon = 8$ an attacker's membership odds can move by up to ~$2981\times$ in the worst case, versus only ~$2.7\times$ at $\varepsilon = 1$. The chapter's rules of thumb: $\varepsilon \le 1$ is strong, $\varepsilon \approx 8$ is "meaningful but loose," $\varepsilon \gg 50$ is mostly cosmetic.
+
+    **(b)** The rule of thumb is $\delta \ll 1/N$. Here $1/N = 1/(2\times10^6) = 5\times10^{-7}$. The chosen $\delta = 10^{-6}$ is *larger* than $1/N$, so it is **not** comfortably below the threshold — you would want $\delta$ at least an order of magnitude under $5\times10^{-7}$ (say $10^{-7}$ or smaller). A $\delta$ above $1/N$ is dangerous because the $+\delta$ slack can, in principle, permit leaking a whole record.
+
+    **(c) Rebuttal, two parts.** (i) $e^\varepsilon$ is a **worst-case bound over all adversaries, all side information, and all records simultaneously** — it is a ceiling, not the leakage of a typical attack. Empirically, the strongest membership-inference attack against a model trained to single-digit $\varepsilon$ gets TPR @ 1% FPR only marginally above chance; the realized privacy is far better than the loose bound suggests (this is exactly what tight DP auditing shows). (ii) The bound still *guarantees* that no attacker can ever do better than that ceiling — unlike scrubbing or inference guardrails, which give no guarantee at all. So $\varepsilon = 8$ is a meaningful-but-loose guarantee, not "basically not private." If a tighter guarantee is required, raise $\sigma$ (more noise) or cut steps to push toward $\varepsilon \approx 1$, at a utility cost the accountant makes explicit.
+
+**5.** *(Implementation.)* The reference-calibrated MIA in `audit_privacy.py` scores membership as `ref_loss - target_loss`. The chapter lists an alternative membership signal, the **zlib ratio**, which divides the model's log-likelihood by the string's `zlib` compression entropy so that intrinsically compressible strings (which are trivially low-perplexity) are penalized. Implement a `zlib_membership_scores` function, in the harness's style, that scores each record by $\dfrac{\log p_\theta(s)}{\text{zlib\_entropy}(s)}$ (a *larger* score should indicate a likely member), and can be dropped into `roc_tpr_at_fpr` in place of the reference signal. Note in one line why this signal is attractive when you have *no* reference model.
+
+??? note "Solution"
+    We need the model's *total* log-probability of the string (in bits, to match zlib's byte/bit units the ratio is scale-free anyway), and the zlib entropy = size in bytes of the compressed string. A member should have unusually high model likelihood *relative to how compressible the text intrinsically is*, so a larger ratio flags membership. Because $\log p_\theta(s) < 0$ and $\text{zlib\_entropy}(s) > 0$, the ratio is negative and *less negative* (larger) for memorized strings.
+
+    ```python
+    import zlib
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    @torch.no_grad()
+    def total_logprob(model, tokenizer, text, device="cuda"):
+        """Sum of per-token log p_theta(text) in NATS (negative number)."""
+        ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
+        logits = model(ids).logits[:, :-1]
+        lp = F.log_softmax(logits, dim=-1)
+        tgt = ids[:, 1:]
+        return lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1).sum().item()
+
+    def zlib_entropy(text: str) -> float:
+        """Compressed size in BYTES; a proxy for the string's intrinsic entropy.
+        Larger for high-entropy (random-looking) strings, small for repetitive ones."""
+        return len(zlib.compress(text.encode("utf-8")))
+
+    def zlib_membership_scores(target, tokenizer, records, device="cuda"):
+        """
+        Score = log p_theta(s) / zlib_entropy(s).   No reference model needed.
+        log p_theta(s) is negative; dividing by the (positive) compressed size
+        normalizes away 'this text is just cheap to model because it's compressible'.
+        A MEMORIZED string is much more likely than its compressibility predicts,
+        so its (still-negative) score is comparatively LARGE -> flagged member.
+        """
+        scores = []
+        for text in records:
+            lp = total_logprob(target, tokenizer, text, device)   # nats, < 0
+            z = zlib_entropy(text) + 1e-9                          # bytes, > 0
+            scores.append(lp / z)
+        return np.array(scores)
+
+    # Drop-in: swap the reference signal for the zlib signal, same low-FPR metric.
+    #   m = zlib_membership_scores(target, tokenizer, members)
+    #   n = zlib_membership_scores(target, tokenizer, nonmembers)
+    #   tpr_table, auc = roc_tpr_at_fpr(m, n)   # report TPR @ 0.1%, 1% FPR
+    ```
+
+    **Why it is attractive with no reference model:** the reference-model signal `ref_loss - target_loss` needs a second trained model that did *not* see the private data; the zlib ratio replaces that reference with a *free, model-independent* baseline (a general-purpose compressor), so you can calibrate away a string's intrinsic difficulty without training or hosting any shadow/reference model. As with every MIA in this chapter, evaluate it at TPR @ low FPR on a log-ROC, not by average accuracy.

@@ -518,3 +518,153 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
 - Conmy et al., *Towards Automated Circuit Discovery* (ACDC, 2023); Nanda, *Attribution Patching* (2023); Rajamanoharan et al., *Gated / JumpReLU SAEs* (DeepMind, 2024); *Gemma Scope* (2024).
 - Arditi et al., *Refusal in Language Models Is Mediated by a Single Direction* (2024); Marks et al., *Sparse Feature Circuits* (2024).
 - **TransformerLens** (Neel Nanda) and **SAELens / Neuronpedia** — the standard open tooling.
+
+## Exercises
+
+**1.** *(Conceptual.)* A colleague proposes to interpret a GPT-2 MLP by finding, for each hidden neuron, the single English concept it "means," building a dictionary of `n_neurons` concepts. Using the chapter's mental model, explain why this project is doomed for the MLP hidden layer, why it would be *even more* hopeless if attempted on the residual stream directly, and what tool §6 offers as the principled fix.
+
+??? note "Solution"
+    The project fails because of **superposition** and the **polysemanticity** it forces (§1.3). A language model tracks far more features (tens or hundreds of thousands of entities, syntactic roles, topics, code constructs) than it has dimensions, so it packs $n \gg d_\text{model}$ features into $d_\text{model}$ coordinates as *non-orthogonal* directions. The consequence is that a single MLP hidden neuron responds to a *mix* of unrelated features (the chapter's example: academic citations, HTTP headers, *and* Korean text). The neuron is therefore not the unit of computation; the *feature direction* — spread across many neurons — is. Assigning one concept per neuron mislabels a polysemantic unit.
+
+    It is worse on the residual stream because the residual stream has a **non-privileged basis** (see the aside in §1.3): nothing distinguishes its coordinate axes, since every operation that reads it (`LN` then a linear map) is free to rotate. So residual features can point in *any* direction, and reading them off coordinate-by-coordinate is meaningless. MLP hidden activations at least have a **privileged basis** — the element-wise nonlinearity acts coordinate-by-coordinate, giving neurons a slight tendency to align with features — but superposition still wins and they remain polysemantic.
+
+    The principled fix is a **sparse autoencoder** (§6): train a wide, sparsely-active dictionary ($d_\text{sae} \gg d_\text{model}$) to reconstruct the activations, so that the learned decoder columns are monosemantic *feature directions* recovered from superposition, rather than pretending each neuron is already a clean concept.
+
+**2.** *(Quantitative.)* You run a denoising activation-patching sweep with metric $m = \log p(\text{Paris}) - \log p(\text{Rome})$. The clean run gives $m_\text{clean} = +5.0$ and the corrupted run $m_\text{corrupt} = -3.0$. For three candidate sites you measure the patched metric: site A $m_\text{patched}=+2.0$, site B $m_\text{patched}=+5.6$, site C $m_\text{patched}=-4.0$. Compute the recovery for each with the chapter's formula, and say in one sentence what B's and C's values mean.
+
+??? note "Solution"
+    The recovery formula (§4.1) is
+    $$
+    \text{recovery}(c) = \frac{m_\text{patched}(c) - m_\text{corrupt}}{m_\text{clean} - m_\text{corrupt}},
+    $$
+    with denominator $m_\text{clean} - m_\text{corrupt} = 5.0 - (-3.0) = 8.0$.
+
+    - Site A: $\dfrac{2.0 - (-3.0)}{8.0} = \dfrac{5.0}{8.0} = 0.625$ — patching this one site restores about 63% of the swing, a substantial causal contribution.
+    - Site B: $\dfrac{5.6 - (-3.0)}{8.0} = \dfrac{8.6}{8.0} = 1.075$ — recovery **above 1.0**: patching *overshoots* the clean behavior, pushing the model even more toward `Paris` than the clean run did (the site carries more than the full distinguishing signal in this direction).
+    - Site C: $\dfrac{-4.0 - (-3.0)}{8.0} = \dfrac{-1.0}{8.0} = -0.125$ — **negative** recovery: injecting the clean activation here moved the output slightly *away* from the clean answer rather than toward it, so this site does not carry the recall in the helpful direction.
+
+**3.** *(Quantitative.)* The chapter states that with pairwise interference bounded by $\langle v_i, v_j\rangle \le \epsilon$, the number of almost-orthogonal features you can pack grows roughly like $\exp(\epsilon^2 d_\text{model})$. Take $d_\text{model} = 512$. (a) Estimate the packing capacity at $\epsilon = 0.1$ and at $\epsilon = 0.2$. (b) What does the ratio tell you about the model's design pressure? (c) The chapter also says interference noise scales with the number of *co-active* features $k$, not the total $n$. If a token activates $k = 20$ features instead of $k = 5$, by what factor does expected squared interference grow, and why does sparsity matter?
+
+??? note "Solution"
+    (a) Capacity $\approx \exp(\epsilon^2 d_\text{model})$.
+
+    - $\epsilon = 0.1$: exponent $= (0.1)^2 \cdot 512 = 0.01 \cdot 512 = 5.12$, so capacity $\approx e^{5.12} \approx 167$ features.
+    - $\epsilon = 0.2$: exponent $= (0.2)^2 \cdot 512 = 0.04 \cdot 512 = 20.48$, so capacity $\approx e^{20.48} \approx 7.9 \times 10^{8}$ features.
+
+    (b) Doubling the tolerated interference $\epsilon$ from $0.1$ to $0.2$ raised capacity from a couple hundred to nearly a billion — a factor of about $e^{20.48 - 5.12} = e^{15.36} \approx 4.7 \times 10^{6}$. The relationship is *exponential in $\epsilon^2 d_\text{model}$*, so the model has enormous incentive to tolerate a little more interference in exchange for representing vastly more features. This is exactly the design pressure that produces superposition rather than a clean orthogonal code.
+
+    (c) Expected squared interference scales with $k$, so going from $k = 5$ to $k = 20$ multiplies it by $20/5 = 4\times$. Sparsity matters because the noise each feature reads from co-active others is governed by how many fire *at once*, not by the total dictionary size $n$: keeping only a handful active per token holds interference manageable even when $n \gg d_\text{model}$. That is why superposition is viable only for sparse features.
+
+**4.** *(Conceptual.)* In the IOI circuit, an analyst finds that a particular name-mover head has **denoising recovery near 1.0** (patching its clean output into a corrupted run restores the answer) yet **ablating it barely changes the metric**. Explain how both can be true at once, name the phenomenon, and state which of "necessity" and "sufficiency" each of denoising and noising measures.
+
+??? note "Solution"
+    Denoising and noising answer *different* questions (§4.2):
+
+    - **Denoising** (corrupted run, patch *in* the clean activation) asks whether that activation is **sufficient** to recover the behavior — does injecting it restore the clean answer? Recovery near 1.0 says yes.
+    - **Noising / ablation** (clean run, patch *in* a corrupted/mean activation) asks whether the component is **necessary** — does destroying it break the behavior?
+
+    Both can be true because of **backup heads** (specifically **backup name-mover heads** in the IOI work, §5.1). The model has redundant components: when the primary name-mover is ablated, a backup head that was previously dormant activates and takes over the copying, so the metric barely drops — the head looks *unnecessary*. Yet its clean output genuinely carries the answer, so denoising it into a corrupted run is *sufficient* to restore behavior. The disagreement between the two directions is itself the diagnostic signal for redundancy, which is why the chapter recommends running *both* denoising and noising and treating a "sufficient but ablation-robust" component as evidence of a backup circuit to widen the analysis.
+
+**5.** *(Implementation.)* Using the chapter's hook style on GPT-2, implement `difference_of_means_direction(model, tok, pos_prompts, neg_prompts, layer)` that returns a **unit-norm steering vector** $v$ for a behavior: cache the layer-`layer` residual-stream output at the *last token* for each prompt, average over the positive prompts, subtract the average over the negative prompts, and normalize. This is the "contrastive / difference-of-means" recipe from §7.1; the returned $v$ can be fed straight into the chapter's `steering_hook`.
+
+??? note "Solution"
+    ```python
+    import torch
+    from transformers import GPT2LMHeadModel, GPT2TokenizerFast
+
+    def difference_of_means_direction(model, tok, pos_prompts, neg_prompts, layer):
+        device = next(model.parameters()).device
+        captured = {}
+
+        def hook(_m, _i, out):
+            # out[0]: (batch, seq, d_model) residual stream AFTER block `layer`
+            captured["resid"] = out[0].detach()
+
+        def last_token_means(prompts):
+            acc = []
+            for text in prompts:
+                ids = tok(text, return_tensors="pt").input_ids.to(device)
+                handle = model.transformer.h[layer].register_forward_hook(hook)
+                with torch.no_grad():
+                    _ = model(ids)
+                handle.remove()
+                acc.append(captured["resid"][0, -1])   # (d_model,) last-token residual
+            return torch.stack(acc).mean(dim=0)
+
+        mu_pos = last_token_means(pos_prompts)
+        mu_neg = last_token_means(neg_prompts)
+        v = mu_pos - mu_neg
+        return v / (v.norm() + 1e-9)                    # unit-norm direction
+
+    # ---- usage ----
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    # tok   = GPT2TokenizerFast.from_pretrained("gpt2")
+    # model = GPT2LMHeadModel.from_pretrained("gpt2").to(device).eval()
+    # pos = ["I absolutely love this, it is wonderful",
+    #        "What a fantastic and delightful day"]
+    # neg = ["I really hate this, it is awful",
+    #        "What a terrible and miserable day"]
+    # v = difference_of_means_direction(model, tok, pos, neg, layer=6)
+    # h = model.transformer.h[6].register_forward_hook(steering_hook(v, alpha=+8.0))
+    # ... generate ...  then h.remove()
+    ```
+
+    The vector points from the "negative" cluster mean toward the "positive" cluster mean in residual-stream space; normalizing makes `alpha` interpretable in units of residual-stream norm (as the chapter's `steering_hook` comment notes). Because it is a single direction, validate the steered model on a broad eval, not just the target behavior — "one direction = one concept" is only an approximation (§7.1).
+
+**6.** *(Implementation, hard.)* Attribution patching (§5.2) approximates the effect of denoising-patching component $c$ with the first-order term $\Delta m_c \approx \langle \nabla_{a_c} m,\; a_c^\text{clean} - a_c^\text{corrupt}\rangle$, obtainable from a *single backward pass* instead of one forward pass per site. Implement an attribution-patching estimate of the per-layer (whole residual-stream) patching effect on GPT-2 for the `Paris - Rome` metric, and explain in one line what error you are trading away versus the exact sweep in §4.3.
+
+??? note "Solution"
+    We cache the *corrupted* residual (the point where the gradient is evaluated) **with** `requires_grad`, also cache the *clean* residual, backprop the metric, and take the dot product of gradient and (clean - corrupted) difference per layer. One backward pass yields all layers' gradients at once.
+
+    ```python
+    import torch
+    from transformers import GPT2LMHeadModel, GPT2TokenizerFast
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tok   = GPT2TokenizerFast.from_pretrained("gpt2")
+    model = GPT2LMHeadModel.from_pretrained("gpt2").to(device).eval()
+
+    clean_ids   = tok("The Eiffel Tower is in the city of", return_tensors="pt").input_ids.to(device)
+    corrupt_ids = tok("The Colosseum  is in the city of",   return_tensors="pt").input_ids.to(device)
+    assert clean_ids.shape == corrupt_ids.shape
+
+    paris = tok(" Paris").input_ids[0]
+    rome  = tok(" Rome").input_ids[0]
+    n_layer = model.config.n_layer
+
+    # ---- 1. Cache CLEAN residual per layer (no grad needed). ----
+    clean_cache = {}
+    def cache_hook(idx):
+        def hook(_m, _i, out):
+            clean_cache[idx] = out[0].detach()
+        return hook
+    hs = [blk.register_forward_hook(cache_hook(i)) for i, blk in enumerate(model.transformer.h)]
+    with torch.no_grad():
+        model(clean_ids)
+    for h in hs: h.remove()
+
+    # ---- 2. Corrupted run: capture each layer's residual as a grad-tracked leaf. ----
+    corrupt_act, grads = {}, {}
+    def grab_hook(idx):
+        def hook(_m, _i, out):
+            a = out[0]
+            a.retain_grad()          # keep grad on this non-leaf activation
+            corrupt_act[idx] = a
+            return out
+        return hook
+    hs = [blk.register_forward_hook(grab_hook(i)) for i, blk in enumerate(model.transformer.h)]
+    logits = model(corrupt_ids).logits[0, -1]
+    m = logits[paris] - logits[rome]        # the metric (a scalar)
+    m.backward()                            # ONE backward pass -> grads for every layer
+    for h in hs: h.remove()
+
+    # ---- 3. First-order attribution estimate per layer (summed over positions). ----
+    print("layer | attribution estimate of patching whole residual")
+    for i in range(n_layer):
+        g    = corrupt_act[i].grad[0]                  # (seq, d_model) = d m / d a_c
+        diff = (clean_cache[i] - corrupt_act[i].detach())[0]   # a_clean - a_corrupt
+        delta_m = (g * diff).sum().item()              # <grad, clean - corrupt>
+        print(f"  L{i:<2}  {delta_m:+.3f}")
+    ```
+
+    **Error traded away:** the estimate is a *first-order (linear) approximation* around the corrupted activation, so it is accurate only where the metric is roughly linear in $a_c$; where the true patching effect is strongly **nonlinear** (large activation swings, saturating nonlinearities, or LayerNorm renormalization) it can misrank or miss a site that the exact forward-pass sweep in §4.3 would catch. You buy $O(1)$ passes instead of $O(\text{sites})$ at the cost of that linearization error.

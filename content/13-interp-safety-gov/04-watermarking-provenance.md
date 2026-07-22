@@ -567,3 +567,164 @@ Despite their elegance, current watermarking schemes face several real-world lim
 - C2PA Technical Specification v2.0 — Coalition for Content Provenance and Authenticity (2024). The normative standard for content credentials.
 - Google DeepMind — *SynthID: Identifying AI-Generated Content* (Nature, 2024). Details of SynthID image and audio watermarking.
 - Zhao, X., Ananth, P., Li, L., and Wang, Y. — *Provably Robust Multi-bit Watermarking for AI-Generated Text* (2023). Multi-bit extensions with information-theoretic robustness proofs.
+
+---
+
+## Exercises
+
+**1.** The chapter lists three desiderata for a watermark — *detectability*, *imperceptibility*, and *robustness* — and claims they cannot all be maximized at once. Using the KGW green-list scheme, explain concretely how turning the hardness knob $\delta$ up trades one desideratum against another. Then explain why a hospital deploying an AI clinical-summary tool might prefer the Kuditipudi et al. distortion-free construction over KGW even though both are "detectable."
+
+??? note "Solution"
+    In KGW the only lever on signal strength is $\delta$, the additive boost applied to every green-list logit before softmax.
+
+    - Raising $\delta$ increases **detectability and robustness**: green tokens are sampled at a higher rate, so for a fixed length $T$ the green count $g$ rises, the $z$-score $z=(g-\gamma T)/\sqrt{T\gamma(1-\gamma)}$ grows, and more of the text must be destroyed before an attacker can push $z$ below threshold.
+    - But raising $\delta$ *degrades* **imperceptibility**: the boost distorts the model's output distribution away from what the unwatermarked model would have produced. When the top-scoring token under the true distribution is red, a large $\delta$ can override it and force a lower-quality green token. As $\delta\to\infty$ the sampler ignores the model's own preferences entirely and quality collapses.
+
+    So detectability/robustness and imperceptibility sit on opposite ends of the same $\delta$ dial — you cannot push both up. (A third tension, from the chapter's "low-entropy text" discussion: no setting of $\delta$ helps when the model has essentially one viable continuation, because there may be no green token to promote.)
+
+    A hospital cares that the summary's *content* is not silently altered — a distorted token in a medication dose or a negation ("no evidence of" vs "evidence of") is a safety hazard. The Kuditipudi et al. scheme is **distortion-free**: it uses the key to draw random numbers $r_t=\text{PRF}(k,t)$ and selects the token via the inverse-CDF transform $w_t=F_t^{-1}(r_t)$. Because that is a monotone transformation of a uniform draw, the *marginal* distribution of each emitted token is exactly the unwatermarked model's distribution — the text is statistically identical to ordinary sampling, so no bias toward "wrong but green" tokens is introduced. The detectable signal instead lives in the correlation between the observed tokens and the known key sequence. For a quality-critical medical setting, preserving the exact output distribution is worth more than KGW's simpler implementation.
+
+**2.** A detector receives a candidate passage of $T = 400$ tokens produced with a watermark parameter $\gamma = 0.25$ (a quarter of the vocabulary is green at each step). It counts $g = 140$ green tokens. Compute the mean and standard deviation of the green count under the human-text null, the $z$-score, and decide whether the passage is flagged at $z^\* = 4.0$. Roughly what is the one-sided $p$-value?
+
+??? note "Solution"
+    Under the null hypothesis the green count is $g \sim \text{Binomial}(T,\gamma)$, so:
+
+    - Mean: $\mu = \gamma T = 0.25 \times 400 = 100$.
+    - Standard deviation: $\sigma = \sqrt{T\gamma(1-\gamma)} = \sqrt{400 \times 0.25 \times 0.75} = \sqrt{75} \approx 8.66$.
+
+    The $z$-score:
+
+    $$
+    z = \frac{g - \gamma T}{\sqrt{T\gamma(1-\gamma)}} = \frac{140 - 100}{8.66} \approx 4.62.
+    $$
+
+    Since $4.62 > 4.0$, the passage **is flagged**.
+
+    The one-sided $p$-value is the standard-normal tail $P(Z > 4.62) = \tfrac{1}{2}\,\text{erfc}(4.62/\sqrt{2}) \approx 1.9 \times 10^{-6}$ — well under the $\sim 10^{-5}$ document-level false-positive rate the chapter associates with $z^\* \approx 4$. Note this passage clears the bar with a *smaller* green fraction than the $\gamma=0.5$ worked example because $g=140$ is $40$ tokens above the mean and the null $\sigma$ is small.
+
+**3.** Copy-paste splicing. An attacker takes a strongly watermarked snippet of $60$ tokens (assume, optimistically for the attacker's target, that *every* one of those 60 is green) and pastes it into $240$ tokens of genuinely human-written text, giving a document of $T = 300$ tokens. The watermark uses $\gamma = 0.5$. Compute the expected $z$-score of the spliced document. Then show that *no* 60-token watermarked snippet, however strong, can push this 300-token document over $z^\* = 4.0$, and explain the lesson.
+
+??? note "Solution"
+    Expected green count of the spliced document = (green from the snippet) + (expected green from the human part). The human tokens are green with probability $\gamma=0.5$ by chance:
+
+    $$
+    \mathbb{E}[g] = 60 + 0.5 \times 240 = 60 + 120 = 180.
+    $$
+
+    Null parameters for $T=300$, $\gamma=0.5$: $\mu = 0.5 \times 300 = 150$, $\sigma = \sqrt{300 \times 0.5 \times 0.5} = \sqrt{75} \approx 8.66$.
+
+    $$
+    z = \frac{180 - 150}{8.66} \approx 3.46 < 4.0.
+    $$
+
+    So even in the best case for detection — all 60 snippet tokens green — the document is **not flagged**.
+
+    To reach the threshold we would need $g \geq \mu + z^\*\sigma = 150 + 4.0 \times 8.66 = 184.6$, i.e. at least $185$ green tokens. But the snippet contributes at most $60$ green tokens and the human portion contributes only $\approx 120$ in expectation, for a ceiling of $180 < 185$. The threshold is unreachable regardless of how strong the snippet's watermark is.
+
+    **Lesson:** the $z$-score is a *document-level* statistic and a small watermarked span gets **diluted** by surrounding unwatermarked text (this is the "copy-paste splicing" row in the attack table). Robust detection of short embedded spans requires *windowed* or token-level detection — scanning sub-passages and testing each — rather than a single whole-document $z$-test.
+
+**4.** The "System-Level Architecture" section recommends **per-request key derivation**: instead of a single global secret, derive a per-request subkey from a master key and a request ID, so a leaked subkey does not compromise the whole system. Implement a `derive_subkey(master_key, request_id)` helper (HMAC-SHA256 based) and show the minimal changes needed to `generate_watermarked` and `detect_watermark` so both use the derived subkey. Verify that detection succeeds only when the *correct* request ID is supplied.
+
+??? note "Solution"
+    The subkey is just a keyed hash of the request ID under the master key; the existing functions already accept an arbitrary `secret_key: bytes`, so we derive a subkey and pass it straight through — no change to the green-list logic is required.
+
+    ```python
+    import hmac
+    import hashlib
+
+    def derive_subkey(master_key: bytes, request_id: str) -> bytes:
+        """
+        Deterministically derive a per-request watermark subkey.
+        HMAC-SHA256(master_key, request_id) -> 32-byte subkey.
+        Leaking one subkey does not reveal master_key or any other subkey.
+        """
+        return hmac.new(master_key, request_id.encode("utf-8"),
+                        hashlib.sha256).digest()
+
+
+    MASTER_KEY = b"master-operator-key-in-HSM"
+    REQ_ID = "req-2026-07-000123"
+
+    # --- generation: derive, then reuse the existing sampler unchanged ---
+    subkey = derive_subkey(MASTER_KEY, REQ_ID)
+    wm_tokens = generate_watermarked(
+        seed_token=1234, length=200, secret_key=subkey,
+        delta=2.0, gamma=0.5,
+    )
+
+    # --- detection with the CORRECT request id -> flagged ---
+    correct = detect_watermark(
+        wm_tokens, seed_token=1234,
+        secret_key=derive_subkey(MASTER_KEY, REQ_ID),
+    )
+    print("correct id:", correct["z_score"], correct["flagged"])
+    # e.g. z_score ~ 11.5, flagged=True
+
+    # --- detection with the WRONG request id -> not flagged ---
+    wrong = detect_watermark(
+        wm_tokens, seed_token=1234,
+        secret_key=derive_subkey(MASTER_KEY, "req-2026-07-000999"),
+    )
+    print("wrong id:  ", wrong["z_score"], wrong["flagged"])
+    # z_score ~ 0, flagged=False
+    ```
+
+    The only "changes" to the pipeline are that both call sites compute `secret_key = derive_subkey(MASTER_KEY, request_id)` before calling the existing functions. A wrong request ID produces a completely different subkey, hence a different green list at every step, so the green count for the watermarked tokens falls back to the chance rate $\gamma$ and $z \approx 0$ — detection fails, exactly as intended. In production you would also keep an **audit log** mapping `request_id` to the derivation so a flagged document can be traced (with proper authorization), as the chapter notes.
+
+**5.** Extend the from-scratch code with a `robustness_sweep(...)` function that, for a fixed watermarked sequence, measures the detector $z$-score after randomly replacing a fraction $p$ of tokens, for $p \in \{0.0, 0.1, \dots, 0.9\}$. Report the smallest $p$ at which $z$ drops below the $z^\*=4.0$ threshold *in this toy simulation*, and reconcile the result with the chapter's claim that against a *real* LM an adversary must destroy roughly 70–80% of tokens.
+
+??? note "Solution"
+    We reuse `generate_watermarked` and `detect_watermark` unchanged and just wrap a substitution loop around them.
+
+    ```python
+    import random
+
+    def robustness_sweep(
+        wm_tokens: list[int],
+        seed_token: int,
+        secret_key: bytes,
+        gamma: float = 0.5,
+        fractions=None,
+        trials: int = 20,
+        base_seed: int = 0,
+    ) -> list[tuple[float, float]]:
+        """
+        For each replacement fraction p, average the detector z-score over
+        `trials` random substitutions, and return [(p, mean_z), ...].
+        """
+        if fractions is None:
+            fractions = [i / 10 for i in range(10)]  # 0.0 .. 0.9
+        n = len(wm_tokens)
+        out = []
+        for p in fractions:
+            zs = []
+            for t in range(trials):
+                rng = random.Random(base_seed + t)
+                attacked = list(wm_tokens)
+                for i in range(n):
+                    if rng.random() < p:
+                        attacked[i] = rng.randint(0, VOCAB_SIZE - 1)
+                res = detect_watermark(attacked, seed_token, secret_key,
+                                       gamma=gamma)
+                zs.append(res["z_score"])
+            out.append((p, sum(zs) / len(zs)))
+        return out
+
+
+    if __name__ == "__main__":
+        KEY = b"supersecret-operator-key-2024"
+        wm = generate_watermarked(1234, 200, KEY, delta=2.0, gamma=0.5)
+        for p, mean_z in robustness_sweep(wm, 1234, KEY):
+            flag = "flagged" if mean_z > 4.0 else "clear"
+            print(f"p={p:.1f}  mean_z={mean_z:6.2f}  {flag}")
+    ```
+
+    Because the substituted tokens land in the green list only at the chance rate $\gamma=0.5$, the expected green count after replacing fraction $p$ is $\mathbb{E}[g] \approx (1-p)\,g_0 + p\,\gamma T$, where $g_0$ is the unattacked green count. With $g_0 \approx 181$, $\gamma T = 100$, $T=200$, $\sigma=7.07$:
+
+    $$
+    z(p) \approx \frac{(1-p)\,181 + 100p - 100}{7.07} = \frac{81(1-p)}{7.07} \approx 11.5\,(1-p).
+    $$
+
+    Setting $z(p) = 4.0$ gives $1-p \approx 4.0/11.5 \approx 0.35$, i.e. $p \approx 0.65$. So in this **toy** simulation the mean $z$ falls below threshold at roughly $p \approx 0.6$–$0.7$ (the single fixed-seed run in the chapter's demo already dips below $4$ at $p=0.4$ because of variance in one draw; averaging over trials smooths this out).
+
+    Reconciliation: this synthetic model uses **random Gaussian logits**, so it has no genuine preference among tokens — the watermark is the *only* structure present and each destroyed token removes signal at close to the theoretical $(1-p)$ rate. A **real** LM produces confident, low-entropy continuations: many positions have one overwhelmingly likely token that the $\delta$ boost barely perturbs, and the watermark's per-token signal is concentrated in the higher-entropy positions. Empirically that redundancy means an adversary must overwrite a much larger fraction — the chapter's cited 70–80% — before $z$ reliably drops under threshold, and by then the passage has been essentially rewritten and its original content is gone.

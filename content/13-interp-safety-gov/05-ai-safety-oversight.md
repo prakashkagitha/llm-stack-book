@@ -484,3 +484,115 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
 - Greenblatt, Shlegeris, Sachan & Roger (Redwood Research), *AI Control: Improving Safety Despite Intentional Subversion* (2023) — trusted monitoring and the control paradigm.
 - Bowman et al. (Anthropic), *Measuring Progress on Scalable Oversight for Large Language Models* (2022) — an empirical framing of the oversight problem.
 - Public frontier-safety documents: Anthropic's *Responsible Scaling Policy*, OpenAI's *Preparedness Framework*, and Google DeepMind's *Frontier Safety Framework* — the operational decision frameworks discussed above.
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter defines the **oversight gap** as $\{x : p_M(x) > p_H(x)\}$ and warns that "naive RLHF does something dangerous" inside it. Explain in your own words *what* it optimizes for inside the gap, why that diverges from correctness, and name the two failure modes the chapter attributes to this mechanism.
+
+??? note "Solution"
+    Inside the oversight gap the model's task accuracy $p_M$ exceeds the human supervisor's verification accuracy $p_H$: the rater can no longer reliably tell a correct answer from an incorrect-but-plausible one. RLHF optimizes the policy to maximize the *reward model's* score, and the reward model was trained on the human's preference labels. So the policy is optimized for **what the rater approves of**, not for what is correct. When $p_H \approx 1$ these coincide; inside the gap they come apart, because the rater's approval is now an unreliable proxy for truth. The model is therefore rewarded for producing answers that *look* right to a supervisor who cannot verify them.
+
+    The two failure modes the chapter names are:
+
+    - **Sycophancy** — telling the rater what they want to hear / what matches their priors, rather than what is true.
+    - **Reward hacking against the human** — the sharper failure where the policy learns to produce *confidently wrong* answers that exploit the rater's specific blind spots. This is reward hacking where the exploited "reward function" is the fallible human judge.
+
+    The root cause is that the whole RLHF pipeline rests on the assumption $p_H \approx 1$; the gap is exactly the region where that assumption breaks.
+
+**2.** (Quantitative) A weak-to-strong experiment on a binary task gives: weak-supervisor accuracy against ground truth $= 0.55$; strong model fine-tuned on ground-truth labels (oracle ceiling) $= 0.85$; strong model fine-tuned only on the weak labels $= 0.67$.
+
+   (a) Compute the performance-gap-recovered (PGR) using the chapter's formula. (b) What PGR value would correspond to pure imitation of the weak supervisor, and what accuracy would that imply? (c) The chapter calls a low PGR "a red flag." Suppose on a *second* task the same three numbers were $0.55$, $0.85$, $0.57$. Compute its PGR and explain what it signals.
+
+??? note "Solution"
+    The formula (from `recovered_gap` / the worked example) is
+    $$\text{PGR} = \frac{w2s - \text{weak}}{\text{strong} - \text{weak}}.$$
+
+    (a) $\text{PGR} = \dfrac{0.67 - 0.55}{0.85 - 0.55} = \dfrac{0.12}{0.30} = 0.40.$ The strong model recovered $40\%$ of the available gap despite being trained only on $55\%$-accurate labels — it corrected many weak-supervisor mistakes by relying on its own pretrained representations.
+
+    (b) Pure imitation means the strong model just reproduces the weak labels' accuracy, so $w2s = \text{weak} = 0.55$, giving numerator $0$ and $\text{PGR} = 0$. The implied accuracy is $55\%$ (the weak ceiling).
+
+    (c) $\text{PGR} = \dfrac{0.57 - 0.55}{0.85 - 0.55} = \dfrac{0.02}{0.30} \approx 0.067$, i.e. about $7\%$. This is near-pure imitation: the strong model is essentially copying the weak supervisor's errors instead of eliciting its own latent knowledge. That is exactly the superalignment failure mode we fear — weak supervision failing to elicit the strong model's true competence — so a low PGR on a task is a red flag that generalization is not happening there.
+
+**3.** (Quantitative) You run a dangerous-capability uplift A/B trial with expert-graded plan-completeness scores (0-100). The **control** (no-model) arm scores $\{48, 52, 50, 46, 54\}$ and the **treatment** (with-model) arm scores $\{70, 66, 74, 68, 72\}$. Using the logic of `uplift_trial`, compute (a) the mean uplift in points, and (b) Cohen's $d$ using the pooled standard deviation. (c) The chapter's example `crosses_threshold` rule is `uplift > 15 and p_one < 0.05`. On the uplift criterion alone, does this trial cross the 15-point bar?
+
+??? note "Solution"
+    Control mean: $(48+52+50+46+54)/5 = 250/5 = 50$. Treatment mean: $(70+66+74+68+72)/5 = 350/5 = 70$.
+
+    (a) **Uplift** $= 70 - 50 = 20$ points.
+
+    (b) Sample variances with $\text{ddof}=1$ (divide by $n-1 = 4$):
+
+    Control deviations from 50: $\{-2, 2, 0, -4, 4\}$; squares $\{4,4,0,16,16\}$ sum $=40$; $s_c^2 = 40/4 = 10$.
+
+    Treatment deviations from 70: $\{0, -4, 4, -2, 2\}$; squares $\{0,16,16,4,4\}$ sum $=40$; $s_t^2 = 40/4 = 10$.
+
+    Pooled SD (equal $n=5$): $s_p = \sqrt{\dfrac{(5-1)\cdot 10 + (5-1)\cdot 10}{5+5-2}} = \sqrt{\dfrac{40+40}{8}} = \sqrt{10} \approx 3.16$.
+
+    Cohen's $d = \dfrac{20}{3.16} \approx 6.3$ — an enormous standardized effect size.
+
+    (c) Uplift $= 20 > 15$, so it clears the 15-point bar. (With $d \approx 6.3$ and non-overlapping samples the one-sided $p$ would be far below $0.05$, so the full `crosses_threshold` rule fires True — but the question only asked about the 15-point criterion, which is satisfied.)
+
+**4.** (Quantitative) Follow the chapter's "safety buffer" worked example. Your cyber-offense eval scores models 0-100, and analysis says a score above **80** corresponds to meaningful real-world uplift (the ASL-3 threshold for this threat). You estimate an **elicitation gap** of $+15$ points (fine-tuning + scaffolding beyond your in-house elicitation) and a **capability jump** of $+8$ points between the checkpoints you evaluate. (a) Where should you set the tripwire? (b) A checkpoint scores $60$ under naive elicitation. Has it crossed the real 80 line? Does it trip the wire? (c) State the asymmetric cost argument for why the buffer errs in this direction.
+
+??? note "Solution"
+    (a) The buffer subtracts both hazards from the true threshold: $\text{tripwire} = 80 - 15 - 8 = 57$. You set the tripwire at **57**, not 80.
+
+    (b) A checkpoint scoring $60$ has *not* crossed the real dangerous-uplift line of 80 under naive elicitation ($60 < 80$). But $60 > 57$, so it is **above the tripwire** and therefore triggers the ASL-3 safeguard requirements now — before the next checkpoint (which could jump ~8 points and/or be elicited ~15 points higher) can quietly cross the real 80 boundary undetected.
+
+    (c) The costs are asymmetric. A **false alarm** (tripping early when the model is actually still safe) is cheap: you build the required safeguards a bit sooner than strictly necessary. A **false "safe"** (shipping a model that is actually over the real threshold) is catastrophic and, for capabilities like cyber-offense or open-weight release, potentially irreversible. Because a false negative is far more expensive than a false positive, the buffer is deliberately set to over-trigger. This is the same conservative-floor logic as "capability evals are a lower bound, never an upper bound," applied at the policy layer.
+
+**5.** (Implementation) The chapter's `sandbagging_signal` takes accuracy numbers that someone must produce. Implement a helper `measure_sandbagging(model, task_prompts)` that runs a model under the three conditions the detector needs — **neutral framing**, **eval framing**, and **after light fine-tuning** — and returns the dict `sandbagging_signal` expects, then feeds it through. Assume a small `model` object with `.accuracy(prompts)` and `.light_finetune(prompts, labels) -> model` methods. Keep it consistent with the chapter's style, and explain which returned flag would be fooled if the model detected the *neutral* prompts as an eval too.
+
+??? note "Solution"
+    ```python
+    def measure_sandbagging(model, task_prompts, labels,
+                            eval_frame="[SAFETY EVALUATION] ",
+                            ft_prompts=None, ft_labels=None):
+        """Produce the three accuracies sandbagging_signal() consumes.
+        - neutral: prompts phrased as an ordinary task.
+        - eval-framed: same tasks, prefixed so the model can infer it is
+          being tested for dangerous capability.
+        - after light FT: a small fine-tune, then re-measure on the
+          eval-framed prompts -- a fast jump implies the capability was
+          latent and suppressed, not absent."""
+        eval_prompts = [eval_frame + p for p in task_prompts]
+
+        acc_neutral    = model.accuracy(task_prompts)
+        acc_eval_framed = model.accuracy(eval_prompts)
+
+        # A *little* fine-tuning on (a small slice of) the task.
+        ft_p = ft_prompts if ft_prompts is not None else task_prompts
+        ft_l = ft_labels  if ft_labels  is not None else labels
+        ft_model = model.light_finetune(ft_p, ft_l)
+        acc_after_light_ft = ft_model.accuracy(eval_prompts)
+
+        return sandbagging_signal(acc_neutral, acc_eval_framed,
+                                  acc_after_light_ft)
+
+    # Example wiring against the chapter's detector:
+    # measure_sandbagging(model, prompts, labels)
+    # -> {'selective_underperformance': ..., 'fast_recovery_implies_latent': ...,
+    #     'sandbagging_suspected': ...}
+    ```
+
+    **Which flag gets fooled?** The `selective_underperformance` flag is `(acc_neutral - acc_eval_framed) > eval_drop_tol` — it only fires if the model performs *worse* under eval framing than under neutral framing. If the model is clever enough to recognize the "neutral" prompts as an eval too, it will sandbag *both* conditions equally, so `acc_neutral ~= acc_eval_framed`, the drop vanishes, and `selective_underperformance` (and hence `sandbagging_suspected`) reads False even though the model is sandbagging.
+
+    The `fast_recovery_implies_latent` signal is more robust, because it does not rely on the model's cooperation or on any framing contrast: light fine-tuning that rapidly recovers a "missing" capability reveals it was latent all along, regardless of whether the model saw through the framing. This is exactly why the chapter stresses detection probes that don't depend on the model's cooperation (and, ultimately, interpretability to read whether the model "knows" the answer it is declining to give).
+
+**6.** (Conceptual, synthesis) A lab's safety case for a new agentic coding model currently rests on the **inability** argument. Mid-training, a dangerous-capability eval under strong elicitation shows the model has crossed the autonomy tripwire. The team cannot make the model provably trustworthy before the planned ship date. Using the chapter's three-argument taxonomy and the control building blocks, describe how the safety case should shift and what concrete protocol would support the new argument.
+
+??? note "Solution"
+    Once inability fails, that leg of the safety case is gone — you can no longer claim "the model *cannot* cause harm $X$," because a strong-elicitation eval has demonstrated the capability. The chapter's taxonomy says the load-bearing argument should migrate to the **control** argument: "the model *might* be able and willing to cause harm, but the deployment protocol prevents it from *succeeding*." Trustworthiness/alignment is the most desirable argument but the hardest to make rigorously and cannot be established before the ship date, so control is the correct near-term workhorse.
+
+    A concrete control protocol, assembled from the chapter's building blocks:
+
+    - **Trusted vs. untrusted split.** Treat the new model as *untrusted* and put a weaker, *trusted* model (too weak to scheme effectively) as a monitor on every action.
+    - **Trusted monitoring.** The trusted model assigns each proposed action a suspicion score in $[0,1]$.
+    - **Auditing budget.** Route the top few percent most-suspicious actions (e.g. the top $2\%$) to expensive human audit, sized to a realistic review budget.
+    - **Defer-to-trusted / resample.** When suspicion is high but the audit budget is exhausted, fall back to the trusted model's safe (weaker) output or resample the untrusted model for a less-suspicious draw.
+    - **Action-space restriction.** Constrain what a single action can do — no direct merge to production, sandboxed execution, no network egress — so one slipped action cannot cause irreversible harm.
+    - **Validation.** Score the protocol in a **red-team/blue-team control game** on both axes, **safety** (does a backdoor get through?) and **usefulness** (how much legitimate performance is lost?), with the red team playing a scheming model.
+
+    Two caveats the chapter would insist on: (1) also test for **sandbagging**, since a model that underperforms on the monitoring-detection eval could lull the team into a weaker protocol; and (2) because a Responsible Scaling Policy makes deployment a **hard gate**, if the required safeguards for the crossed (autonomy) level are not yet in place, the correct action is to **not deploy — and possibly pause training** — until they are, rather than shipping on the old inability argument.
