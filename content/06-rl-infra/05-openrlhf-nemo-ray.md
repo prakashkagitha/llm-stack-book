@@ -895,3 +895,174 @@ One practical note: as of mid-2025, OpenRLHF has a larger and more active open-s
 - **Megatron-LM** — Narayanan et al., "Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM", SC 2021.
 - **GAE** — Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation", ICLR 2016.
 - **veRL HybridFlow** — Sheng et al., "HybridFlow: A Flexible and Efficient RLHF Framework", 2024. (GitHub: volcengine/verl)
+
+---
+
+## Exercises
+
+**1.** In OpenRLHF the vLLM engine holds a *read-only* copy of the policy weights, and after every batch of PPO updates the controller runs a `sync_weights_to_vllm()` step (Phase 6 of `run_ppo_training`). A naive single-process PPO implementation has no such step. Explain *why* the extra copy and the sync step exist in OpenRLHF, and state precisely which correctness property of PPO would silently degrade if you simply never called the sync.
+
+??? note "Solution"
+    OpenRLHF decomposes the system into independent Ray actors: the **policy training actor** (DeepSpeed ZeRO-3) and the **vLLM rollout actor** are *different processes on different GPUs* with *different weight representations*. The training actor holds sharded, trainable bf16 parameters plus gradients and optimizer state; vLLM holds a dense, inference-optimized copy laid out for PagedAttention decoding. They cannot share the same tensors, so vLLM necessarily works from a copy. A single-process PPO uses one model object for both generation and the gradient step, so "sync" is implicit — the same weights that generated the rollout are the ones being updated.
+
+    The property that degrades without sync is the **on-policy-ness** of the data, i.e. the validity of the importance-sampling ratio $r_t(\theta) = \exp(\log \pi_\theta(a_t\mid s_t) - \log \pi_{\theta_{\text{old}}}(a_t\mid s_t))$. PPO assumes the rollout was drawn from a policy close to the current one, and it corrects the small remaining mismatch with $r_t$ and the clip range $[1-\epsilon,\,1+\epsilon]$. If you never sync, vLLM keeps generating from the *initial* weights forever while the training actor drifts arbitrarily far away. The behavior policy $\pi_{\theta_{\text{old}}}$ and the target policy $\pi_\theta$ diverge without bound, the ratio blows past the clip range on essentially every token (so the clipped surrogate stops providing a useful gradient signal), and every update becomes heavily off-policy. Training does not crash — it silently learns from stale data and the KL-to-reference and reward curves stop tracking what the policy is actually doing. Sync is what keeps the generation policy $\approx$ the training policy so PPO's near-on-policy assumption holds.
+
+**2.** The placement-group example reserves 8 bundles with `strategy="STRICT_PACK"` for a tensor-parallel (TP=8) actor group. (a) What partial-allocation failure does using a placement group prevent in the first place? (b) Why specifically `STRICT_PACK` rather than the default spread, given the actor is tensor-parallel? (c) What would go wrong at runtime if 4 of the 8 shards landed on node A and 4 on node B?
+
+??? note "Solution"
+    **(a)** Without a placement group, a request for 8 single-GPU workers is granted greedily and independently. On a busy cluster you can acquire, say, 5 GPUs and then block indefinitely waiting for the other 3 while still holding the 5 — and if several jobs do this simultaneously they deadlock, each pinning GPUs the others need. A placement group reserves the whole "bundle" of 8 GPUs **atomically (gang scheduling)**: `ray.get(pg.ready())` returns only when all 8 are secured, so you never hold a partial, unusable allocation.
+
+    **(b)** TP splits a single transformer layer's matmuls across all 8 ranks, so every layer requires all-reduce / all-gather collectives among the 8 shards *on the critical path of every forward and backward pass*. That traffic must ride the fast intra-node fabric (NVLink). `STRICT_PACK` forces all 8 bundles onto **one node**; the default spread strategy would scatter them across nodes, pushing the per-layer collectives onto slow cross-node links.
+
+    **(c)** The group still initializes (the NCCL communicator forms across both nodes), but every TP collective now traverses the inter-node network (InfiniBand/TCP at ~25-200 GB/s) instead of NVLink (~600 GB/s) for *each layer of every step*. Since these collectives are on the hot path and happen many times per token, generation and training throughput collapse — you pay a cross-node round trip repeatedly where you expected NVLink. It is a correctness-preserving but catastrophic performance regression, which is exactly what `STRICT_PACK` exists to prevent.
+
+**3.** Use the chapter's Weight Sync Bandwidth Example. A 70B policy is 140 GB in bf16. Assume one PPO update phase takes $T = 30$ s, and define sync overhead as $\text{sync}/(\text{sync} + T)$. (a) Compute the sync time and the overhead fraction for NVLink (600 GB/s), PCIe Gen4 (64 GB/s), and InfiniBand HDR (200 GB/s aggregate). (b) On the PCIe path, below what update time $T$ does sync overhead exceed 25%? (c) You cannot change the interconnect but you can apply *lazy sync* (sync once every $N$ update phases). With PCIe and $T = 6$ s, what $N$ brings the *amortized* overhead below 10%?
+
+??? note "Solution"
+    **(a)** Sync time is $140\,\text{GB}$ divided by bandwidth:
+
+    - NVLink: $140/600 = 0.233$ s. Overhead $= 0.233/(0.233+30) = 0.77\%$.
+    - PCIe Gen4: $140/64 = 2.19$ s. Overhead $= 2.19/(2.19+30) = 6.8\%$.
+    - InfiniBand HDR: $140/200 = 0.70$ s. Overhead $= 0.70/(0.70+30) = 2.3\%$.
+
+    These land in the chapter's stated "1-7% at $T\approx30$ s" range.
+
+    **(b)** With PCIe, $\text{sync} = 2.19$ s. Solve $\dfrac{2.19}{2.19 + T} > 0.25$:
+    $$
+    2.19 + T < \frac{2.19}{0.25} = 8.76 \quad\Rightarrow\quad T < 6.57 \text{ s}.
+    $$
+    So once an update phase drops below about $6.6$ s, PCIe sync overhead exceeds 25%. This is why small/fast models suffer most.
+
+    **(c)** Lazy sync amortizes one $2.19$ s transfer over $N$ updates of $6$ s each. Amortized overhead:
+    $$
+    \frac{2.19}{2.19 + N\cdot 6} < 0.10 \quad\Rightarrow\quad 2.19 + 6N > 21.9 \quad\Rightarrow\quad N > 3.28.
+    $$
+    So $N = 4$ suffices (overhead $= 2.19/(2.19 + 24) = 8.4\%$; $N=3$ gives $10.8\%$, just over). The cost is that the rollout policy is now up to 4 update phases stale — more off-policy data, the trade-off the "Reducing Weight Sync Overhead" section flags.
+
+**4.** The Worked Memory Example places the 70B policy training actor on **16** GPUs (ZeRO-3, Adam offloaded to CPU) and reports ~14-18 GB per 80 GB GPU. Suppose you instead give the policy only **8** GPUs, keeping ZeRO-3 and CPU Adam offload. Estimate per-GPU memory for parameters, partitioned gradients, and activations, give a total, and say whether it still fits and how "comfortable" it is compared with the 16-GPU layout.
+
+??? note "Solution"
+    ZeRO-3 shards parameters and gradients evenly across the data-parallel group, so halving the GPU count doubles each shard.
+
+    - **Parameters (bf16):** $140\,\text{GB} / 8 = 17.5$ GB per GPU (was $140/16 = 8.75$).
+    - **Gradients (bf16, ZeRO-3 partitioned, same size as params):** $17.5$ GB per GPU (was $8.75$).
+    - **Optimizer state (Adam):** offloaded to CPU, so $\approx 0$ GB on the GPU (same as the 16-GPU case — offload makes this term independent of GPU count).
+    - **Activations (micro-batch 8, len 2048, gradient checkpointing):** the chapter's ~2-4 GB per GPU still applies; call it ~3 GB.
+
+    **Total:** $17.5 + 17.5 + 3 \approx 38$ GB per GPU.
+
+    It still fits on an 80 GB A100/H100 with room to spare, but it is markedly less comfortable than the 16-GPU layout (~14-18 GB). You have roughly doubled the per-GPU footprint (~18 GB → ~38 GB), cutting free headroom from ~62 GB to ~42 GB (about a third less), which directly shrinks the room for larger micro-batches, longer contexts, or activation memory spikes. The parameter and gradient shards scale as $1/(\text{\#GPUs})$; the offloaded optimizer term does not scale, which is exactly why CPU Adam offload is what keeps the 8-GPU layout viable at all.
+
+**5.** Modify the minimal Ray RLHF loop (Section 6.5.6) to use **lazy weight sync**: pass a `sync_every=K` argument to `main()` so the policy weights are pushed to the rollout actor only every $K$ steps instead of every step. Show the changed `main()` loop, and explain in one or two sentences what becomes stale and why the `old_logprobs` used inside `ppo_step` are still the correct ones to use.
+
+??? note "Solution"
+    Only the tail of the loop changes: gate the `get_state_dict` / `update_weights` sync on the step index. Everything else (rollout, reward, advantage, `ppo_step`) is unchanged.
+
+    ```python
+    def main(sync_every: int = 1):
+        ray.init(ignore_reinit_error=True)
+
+        MODEL_NAME = "gpt2"
+        prompts = [
+            "Tell me about the water cycle:",
+            "Explain gradient descent:",
+            "What is a transformer model?",
+            "Describe how the internet works:",
+        ] * 4
+
+        rollout_actor = RolloutActor.remote(MODEL_NAME)
+        policy_actor = PolicyActor.remote(MODEL_NAME)
+
+        for step in range(5):
+            # 1. Generate rollouts (from the LAST synced weights)
+            results = ray.get(rollout_actor.generate.remote(prompts))
+            responses = [r[0] for r in results]
+            old_logprobs = [r[1] for r in results]
+
+            # 2. Score
+            rewards = reward_fn(responses)
+
+            # 3. Advantages
+            mean_r = np.mean(rewards)
+            std_r = np.std(rewards) + 1e-8
+            advantages = [(r - mean_r) / std_r for r in rewards]
+
+            # 4. PPO update
+            stats = ray.get(policy_actor.ppo_step.remote(
+                prompts, responses, old_logprobs, advantages
+            ))
+            print(f"Step {step}: loss={stats['policy_loss']:.4f}, "
+                  f"mean_reward={mean_r:.4f}")
+
+            # 5. LAZY sync: only push weights every `sync_every` steps
+            if step % sync_every == 0:
+                sd_ref = policy_actor.get_state_dict.remote()
+                ray.get(rollout_actor.update_weights.remote(sd_ref))
+
+    if __name__ == "__main__":
+        main(sync_every=2)
+    ```
+
+    What goes stale is the **rollout actor's copy of the policy**: between syncs it keeps generating from weights that are up to $K-1$ steps behind the training actor, so the collected data is increasingly off-policy (the trade-off named in "Reducing Weight Sync Overhead"). The `old_logprobs` remain correct because PPO's importance ratio is defined relative to *the policy that actually produced the tokens* ($\pi_{\theta_{\text{old}}}$), and those log-probs were returned by the rollout actor *at generation time* — they always describe the exact distribution the sampled tokens came from, regardless of how many steps ago that policy was synced.
+
+**6.** Extend the minimal loop with a **reference model and a KL penalty**, mirroring the reward construction in the NeMo-Aligner section (`reward = RM score - kl_coef * KL`). Implement a `ReferenceActor` whose `log_probs(prompts, responses)` returns the per-sequence summed log-probability under a frozen model, then show how to fold a sequence-level KL term into the reward before computing advantages in `main()`. Use the chapter's toy `reward_fn` as the "RM".
+
+??? note "Solution"
+    The reference actor loads the same base model as the policy but is frozen; it recomputes log-probs of the *already generated* responses with a teacher-forced forward pass — the same slicing trick `PolicyActor.ppo_step` uses (`prompt_len - 1 : -1`). We return one scalar per sequence (the summed response log-prob) so it lines up with the toy loop's sequence-level advantages.
+
+    ```python
+    @ray.remote(num_gpus=0.5)
+    class ReferenceActor:
+        """Frozen reference model: scores responses for the KL penalty."""
+        def __init__(self, model_name: str):
+            self.tok = AutoTokenizer.from_pretrained(model_name)
+            self.tok.pad_token = self.tok.eos_token
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, torch_dtype=torch.float32
+            )
+            self.model.eval()
+            self.device = "cpu"
+
+        def log_probs(self, prompts, responses):
+            """Per-sequence summed log-prob of the response tokens."""
+            seq_logps = []
+            for prompt, resp in zip(prompts, responses):
+                tokens = self.tok(prompt + resp, return_tensors="pt").to(self.device)
+                prompt_len = self.tok(
+                    prompt, return_tensors="pt"
+                )["input_ids"].shape[1]
+                with torch.no_grad():
+                    logits = self.model(**tokens).logits          # [1, T, vocab]
+                resp_logits = logits[0, prompt_len - 1:-1, :]      # [resp_len, vocab]
+                resp_ids = tokens["input_ids"][0, prompt_len:]
+                lps = F.log_softmax(resp_logits, dim=-1)
+                tok_lps = lps[torch.arange(len(resp_ids)), resp_ids]
+                seq_logps.append(tok_lps.sum().item())
+            return seq_logps
+    ```
+
+    In `main()`, create the actor once and adjust the reward with a sequence-level KL estimate $\text{KL}_{\text{seq}} \approx \sum_t (\log \pi_{\text{old}}(a_t) - \log \pi_{\text{ref}}(a_t))$, which is just `sum(old_logprobs) - ref_logprob_sum` per sequence. Insert between the scoring and advantage steps:
+
+    ```python
+    KL_COEF = 0.05
+    ref_actor = ReferenceActor.remote(MODEL_NAME)   # created alongside the others
+
+    # ... inside the loop, after `rewards = reward_fn(responses)` ...
+
+    # Reference log-probs (per-sequence sum) for the KL penalty
+    ref_logps = ray.get(ref_actor.log_probs.remote(prompts, responses))
+
+    # Sequence-level KL: sum of per-token (old - ref); old_logprobs is per-token
+    kl_seq = [sum(old_lp) - ref_lp
+              for old_lp, ref_lp in zip(old_logprobs, ref_logps)]
+
+    # reward = RM score (toy reward_fn) - kl_coef * KL      [NeMo-Aligner form]
+    rewards = [r - KL_COEF * kl for r, kl in zip(rewards, kl_seq)]
+
+    # advantages are then computed from these KL-penalized rewards, unchanged:
+    mean_r = np.mean(rewards)
+    std_r = np.std(rewards) + 1e-8
+    advantages = [(r - mean_r) / std_r for r in rewards]
+    ```
+
+    This reproduces the NeMo-Aligner recipe `rewards = -kl_coef * kl_penalty` with the RM score added on top, but at sequence granularity to fit the toy loop. Because $\pi_{\text{old}}$ (the rollout policy) and $\pi_{\text{ref}}$ start identical, $\text{KL}_{\text{seq}} \approx 0$ at step 0 and grows as the policy drifts from the reference, penalizing responses that stray too far — exactly the role of the KL term in RLHF. Note the reference actor is frozen and holds no optimizer state, matching the chapter's memory budget (parameters only, ~17.5 GB/GPU for a 70B reference).

@@ -768,3 +768,164 @@ The script `train_grpo_math.py` is essentially the GRPOTrainer example from §4,
 - **DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning" (2025)** — demonstrates the RLVR recipe with verifiable rewards; the most influential recent application of GRPO.
 - **TRL GitHub repository (HuggingFace/trl)** — source code, examples, and trainer documentation; the `examples/` directory contains complete training scripts for each trainer.
 - **HuggingFace Accelerate documentation** — for multi-GPU/multi-node launch configurations used with all TRL trainers.
+
+## Exercises
+
+**1.** When you pass a `peft_config` (LoRA) to `DPOTrainer` or `GRPOTrainer` and set `ref_model=None`, the chapter claims the reference model is "nearly memory-free." Explain *why* this is true for LoRA but would **not** be true if you were doing full fine-tuning. What does TRL do at the code level to obtain the reference forward pass?
+
+??? note "Solution"
+
+    With LoRA, the policy is the frozen base model plus a small set of trainable adapter weights (the low-rank delta $\Delta W = BA$). The reference distribution $\pi_\text{ref}$ that DPO/GRPO needs is exactly the *original* model — i.e., the base weights **without** the adapter contribution. Because the policy and reference share the identical base tensors already resident on the GPU, TRL does not allocate a second copy of the model. Instead it computes the reference forward pass by temporarily switching the adapters off:
+
+    ```python
+    model.disable_adapter_layers()          # switch to base weights only -> reference
+    ref_logits = model(input_ids).logits    # forward without the adapter delta
+    model.enable_adapter_layers()           # restore policy for the training pass
+    ```
+
+    The only extra memory is the adapter delta itself (a few hundred MB for rank-64 on a 7B model), which is negligible. So the reference is "free."
+
+    Under **full** fine-tuning there are no adapters to disable — every parameter of the policy is being updated, so the reference (the pre-update weights) genuinely differs from the policy everywhere. TRL must therefore hold a second, frozen `deepcopy` of the entire model (e.g., another ~14 GB in bf16 for a 7B model). That is the case the chapter describes when it says TRL "does a deepcopy (if full fine-tuning) at trainer initialization." The alternative for very large full-FT models is the EMA-style `sync_ref_model=True` / `ref_model_sync_steps=N` scheme, which periodically snapshots the policy as the new reference instead of keeping a permanent second copy.
+
+**2.** You launch a GRPO run on **8 GPUs** with `per_device_train_batch_size=2`, `num_generations=8`, and `gradient_accumulation_steps=4`. (a) How many *unique prompts* contribute to one optimizer step? (b) How many total *rollouts* (completions) are generated per optimizer step? (c) If each completion is capped at `max_new_tokens=512`, how many generated tokens does one optimizer step cost in the worst case?
+
+??? note "Solution"
+
+    Recall from the chapter that for GRPO the effective batch is `prompts x G`, that `per_device_train_batch_size` counts *prompts per device*, and that gradient accumulation multiplies the work done before a single optimizer step.
+
+    (a) Unique prompts per optimizer step:
+    $$8 \text{ GPUs} \times 2 \text{ prompts/GPU} \times 4 \text{ accum steps} = 64 \text{ prompts}.$$
+
+    (b) Each prompt is expanded into $G = 8$ completions, so total rollouts:
+    $$64 \times 8 = 512 \text{ rollouts}.$$
+
+    (c) Worst case every completion runs to the 512-token cap:
+    $$512 \text{ rollouts} \times 512 \text{ tokens} = 262{,}144 \text{ generated tokens per optimizer step}.$$
+
+    This is exactly why the chapter flags generation (step 1 of the GRPO loop, $P \times G$ completions) as the dominant wall-clock cost and motivates the vLLM backend.
+
+**3.** Using the DPO objective from the chapter, compute the loss for a single triple with $\beta = 0.2$ and the following per-sequence log-probabilities:
+
+| Quantity | Value |
+|---|---|
+| $\log \pi_\theta(y_w \mid x)$ | $-8.0$ |
+| $\log \pi_\text{ref}(y_w \mid x)$ | $-9.0$ |
+| $\log \pi_\theta(y_l \mid x)$ | $-11.0$ |
+| $\log \pi_\text{ref}(y_l \mid x)$ | $-9.5$ |
+
+Report the two log-ratios, the implicit reward margin, and the final loss. Is the policy currently ranking this pair correctly?
+
+??? note "Solution"
+
+    Chosen log-ratio:
+    $$\log \frac{\pi_\theta(y_w)}{\pi_\text{ref}(y_w)} = -8.0 - (-9.0) = +1.0.$$
+
+    Rejected log-ratio:
+    $$\log \frac{\pi_\theta(y_l)}{\pi_\text{ref}(y_l)} = -11.0 - (-9.5) = -1.5.$$
+
+    Implicit reward margin:
+    $$\beta \cdot (1.0 - (-1.5)) = 0.2 \times 2.5 = 0.5.$$
+
+    DPO loss:
+    $$\mathcal{L} = -\log \sigma(0.5).$$
+    With $\sigma(0.5) = \dfrac{1}{1 + e^{-0.5}} = \dfrac{1}{1 + 0.6065} = 0.6225$,
+    $$\mathcal{L} = -\log(0.6225) \approx 0.474.$$
+
+    The margin is **positive**, so the policy already assigns relatively more probability mass (versus the reference) to $y_w$ than to $y_l$ — it ranks the pair correctly. This would register as a hit in the `train/rewards/accuracies` metric. The loss (0.474) is still well above the 0.1-0.2 "well-trained" range, so there is room to push the margin higher.
+
+**4.** For one GRPO prompt you sample a group of $G = 8$ completions and score them with the verifiable `math_reward_fn` (reward $1.0$ for a correct boxed answer, else $0.0$). Three completions are correct: $r = [1, 1, 1, 0, 0, 0, 0, 0]$. (a) Compute the group baseline and the advantage $A_i$ for a correct and for an incorrect completion. (b) Now suppose a *different* prompt is so easy that **all 8** completions are correct ($r = [1,1,1,1,1,1,1,1]$). What are the advantages, and what does this imply about the gradient contribution from that prompt? (c) Why does this make dataset difficulty selection important for GRPO?
+
+??? note "Solution"
+
+    (a) Group baseline (mean reward):
+    $$\bar{r} = \frac{1}{8}(1+1+1+0+0+0+0+0) = \frac{3}{8} = 0.375.$$
+    Advantage $A_i = r_i - \bar{r}$:
+    - Correct completion: $A = 1.0 - 0.375 = +0.625$.
+    - Incorrect completion: $A = 0.0 - 0.375 = -0.375$.
+
+    So correct responses are pushed up and incorrect ones down, with no critic needed.
+
+    (b) If all 8 are correct, $\bar{r} = 1.0$, and every advantage is
+    $$A_i = 1.0 - 1.0 = 0.$$
+    Since the GRPO objective multiplies the (clipped) importance ratio by $A_i$, a zero advantage means this prompt contributes **zero policy-gradient signal**. The same is true for a prompt where all completions are wrong ($\bar{r}=0 \Rightarrow A_i = 0$ for all). This is the flip side of the group-relative baseline: learning signal comes only from *within-group reward variance*.
+
+    (c) Prompts that are always solved or never solved waste rollout compute — you pay for $G$ generations but get no gradient. Effective GRPO training wants prompts of intermediate difficulty (mixed success within a group), which maximizes `train/reward_std` and hence the useful signal. This is why curated, difficulty-balanced datasets (and curriculum/filtering) matter, and it connects to the practitioner tip that small $G$ gives noisy baselines: with few samples you also more often land on the all-correct or all-wrong degenerate cases.
+
+**5.** The chapter estimates PPO memory for a 7B model at ~100 GB. (a) Reproduce the policy + optimizer and reference-model figures using the chapter's byte accounting, then redo the calculation for a **13B** model. (b) With that 13B number, how many A100-80GB cards does full-FT PPO minimally need? (c) Explain, in memory terms, how switching to GRPO + LoRA lets the same 13B model train on a single 80 GB card.
+
+??? note "Solution"
+
+    (a) The chapter's accounting for the policy under full fine-tuning is bf16 weights (2 bytes/param) plus Adam optimizer states (8 bytes/param, i.e. fp32 first + second moment), giving 10 bytes/param; the reference is inference-only bf16 (2 bytes/param).
+
+    7B check:
+    $$\text{policy+opt} = 7\times10^9 \times (2 + 8) = 70 \text{ GB}, \qquad \text{ref} = 7\times10^9 \times 2 = 14 \text{ GB},$$
+    totaling ~84 GB before activations/rollout buffers — consistent with the chapter's "easily exceed 100 GB."
+
+    13B:
+    $$\text{policy+opt} = 13\times10^9 \times 10 = 130 \text{ GB}, \qquad \text{ref} = 13\times10^9 \times 2 = 26 \text{ GB},$$
+    totaling ~156 GB before activations, value-head, and rollout buffers.
+
+    (b) 156 GB already exceeds one 80 GB card and, once activations and the rollout buffer are added, comfortably needs **at least two** A100-80GB cards (160 GB aggregate) — and realistically FSDP sharding across more.
+
+    (c) GRPO + LoRA collapses this on three fronts:
+    - **No value head / critic.** GRPO replaces the learned value function with the group-mean baseline, so there is no critic model or its optimizer states to hold.
+    - **Optimizer states only on adapters.** Only the LoRA delta is trainable, so the 8-bytes/param Adam cost applies to a few million adapter params, not all 13B. The frozen base is just 26 GB in bf16 (or ~6.5 GB under QLoRA 4-bit).
+    - **Free reference.** As in Exercise 1, the reference is the base model with adapters disabled — no second copy.
+
+    What remains is roughly one copy of the base weights plus tiny adapter optimizer states plus rollout activations, which fits in 80 GB (and gradient checkpointing / QLoRA give further headroom).
+
+**6.** The `composite_reward` function in the chapter applies the length penalty as a hard cliff: `-0.3` as soon as a completion exceeds 800 whitespace tokens, and `0` otherwise. This creates a discontinuity the model can sit just under. **Modify** `composite_reward` so the length penalty is a *smooth linear ramp*: no penalty up to 800 tokens, then a penalty that grows linearly with the overage and saturates at `-0.3` once the completion is 400 tokens over the threshold (i.e. at 1200 tokens). Keep the format and correctness rewards unchanged, and keep the function signature and return type identical.
+
+??? note "Solution"
+
+    Replace only the length-penalty branch with a clamped linear ramp. Let $n$ be the token count; the penalty is $0$ for $n \le 800$, grows linearly as $-0.3 \cdot (n - 800)/400$, and is clamped to $-0.3$ for $n \ge 1200$.
+
+    ```python
+    import re
+    from typing import Any
+
+    def composite_reward(
+        prompts: list[str],
+        completions: list[str],
+        **kwargs: Any,
+    ) -> list[float]:
+        """
+        Composite reward for math reasoning:
+        - +0.5 if completion contains a <think>...</think> block (format reward)
+        - +1.0 if the boxed answer matches the ground truth (correctness reward)
+        - smooth length penalty: 0 up to 800 tokens, ramping linearly to
+          -0.3 at 1200 tokens (and staying at -0.3 beyond).
+        """
+        ground_truths = kwargs.get("answer", [""] * len(completions))
+        rewards = []
+
+        for completion, gt in zip(completions, ground_truths):
+            r = 0.0
+
+            # --- Format reward ---
+            if re.search(r"<think>.*?</think>", completion, re.DOTALL):
+                r += 0.5
+
+            # --- Correctness reward ---
+            pred = extract_boxed_answer(completion)
+            if pred is not None and pred.strip() == str(gt).strip():
+                r += 1.0
+
+            # --- Smooth length penalty ---
+            n_tokens = len(completion.split())
+            overage = n_tokens - 800
+            if overage > 0:
+                frac = min(overage / 400.0, 1.0)   # 0 -> 1 over [800, 1200]
+                r -= 0.3 * frac
+
+            rewards.append(r)
+
+        return rewards
+
+
+    def extract_boxed_answer(text: str) -> str | None:
+        match = re.search(r"\\boxed\{([^}]+)\}", text)
+        return match.group(1).strip() if match else None
+    ```
+
+    Quick sanity checks: a 700-token answer incurs `0`; an 800-token answer incurs `0`; a 1000-token answer incurs $-0.3 \times (200/400) = -0.15$; a 1200-token (or longer) answer incurs the full $-0.3$. Because the ramp is continuous, there is no single token boundary the model can exploit, and the gradient of the reward w.r.t. length is now informative rather than a step. The signature `(prompts, completions, **kwargs) -> list[float]` is unchanged, so it still drops into `GRPOTrainer(reward_funcs=[composite_reward], ...)` exactly as before.

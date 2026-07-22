@@ -516,3 +516,98 @@ Read top to bottom, this is the entire RL-for-LLM training loop. Every other cha
 - DeepSeek-AI, **DeepSeek-R1** (2025) and Shao et al., **DeepSeekMath** (2024) — the GRPO loop whose five phases this chapter dissects.
 - Noukhovitch, et al., **Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models** (2024) — quantifies the staleness-vs-throughput tradeoff of overlapping generation and training.
 - HuggingFace **TRL** (`PPOTrainer`, `GRPOTrainer`) and the **veRL** / **OpenRLHF** repositories — production implementations of the loop; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html), [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html), and [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html).
+
+## Exercises
+
+**1.** (Conceptual) The chapter's warning box insists you should **recompute the "old"/behavior log-probs on the trainer** rather than feed vLLM's sampling log-probs straight into the importance ratio's denominator. Suppose you ignore this advice and use the sampler's log-probs as the denominator and the trainer's recomputed log-probs as the numerator. At the very first minibatch of epoch 0 — before any optimizer step has moved $\theta$ — what value *should* the ratio $r_{i,t}$ take, what will you actually observe, and why? What downstream metric will most visibly reveal the bug?
+
+??? note "Solution"
+    Before any optimizer step, the numerator policy $\pi_\theta$ and the behavior policy $\pi_{\theta_{\text{behavior}}}$ are *the same weights* — the generator sampled with exactly the $\theta$ the trainer now holds (Phase 5 pushed those weights before the rollout). So mathematically
+
+    $$
+    r_{i,t}(\theta) = \frac{\pi_\theta(o_{i,t}\mid\cdot)}{\pi_{\theta_{\text{behavior}}}(o_{i,t}\mid\cdot)} = 1 \quad\text{exactly, for every token.}
+    $$
+
+    But the two log-probs are computed in **different numerics**: vLLM's kernels/attention/dtype (possibly a quantized decode path) for the denominator, the trainer's FSDP full-bf16 forward for the numerator. They are not bitwise identical, and the tiny per-token discrepancies compound over a long sequence. So instead of $r=1$ you observe ratios scattered around 1 — some tokens at 1.02, some at 0.97, and a growing spread the longer the response.
+
+    The most visible symptom is the **clip fraction at the first minibatch of epoch 0**: it should be $\approx 0$ (no token has drifted, nothing to clip), but with mismatched numerics a nontrivial fraction of tokens already fall outside $[1-\epsilon, 1+\epsilon]$. The chapter lists exactly this check — "Ratio at the first minibatch of epoch 0 ... should be $\approx 1.0$ with clip_frac $\approx 0$. If it isn't, you have the numerics bug." The fix is to recompute the denominator with the trainer's own `no_grad` forward so numerator and denominator share kernels and dtype; the ratio is then $1.0$ by construction at step 0.
+
+**2.** (Conceptual) Rung 2 of the async ladder ("pipelined / one-step-stale") is described as costing "exactly one step of staleness." Explain concretely *which* weights generated the rollouts the trainer consumes, why one step of staleness is tolerable here, and what specific piece of machinery in the PPO/GRPO objective makes it safe. Then explain why the fully-async Rung 3 needs an *explicit* `max_staleness` cap when Rung 2 does not.
+
+??? note "Solution"
+    In Rung 2, while the trainer updates on rollout batch $k$, the generator is *already* producing batch $k+1$ using weights from step $k-1$ or $k$. So when the trainer finally consumes batch $k+1$, those tokens were sampled by weights exactly one optimizer step behind the current $\theta$. The behavior policy $\pi_{\theta_{\text{behavior}}}$ is therefore $\theta$ from one step ago, and the importance ratio $r_{i,t} = \pi_\theta / \pi_{\theta_{\text{behavior}}}$ is close to but no longer exactly 1.
+
+    This is safe because of the **clipped surrogate** $\min(r\hat A,\ \operatorname{clip}(r,1-\epsilon,1+\epsilon)\hat A)$. The clip bounds how much any single off-policy token can contribute, so a bounded drift of the behavior policy from the current policy produces a bounded, well-behaved gradient. One step of drift keeps the ratio near 1 and the clip fraction low — exactly the regime PPO/GRPO were designed for. This is the same reason the chapter gives for tolerating `ppo_epochs > 1`: the clip "exists precisely so that we are allowed to be a little off-policy."
+
+    Rung 2 needs no explicit cap because the staleness is **structurally fixed at exactly one step** by the pipeline schedule — there is no way for a rollout to age further. Rung 3 decouples generators and trainer through a *queue*: staleness is "whatever the queue depth and sync interval make it — bounded but variable." A slow generator or a transient stall can let a rollout sit in the queue for many steps, so its ratio drifts far from 1, the clip discards most of its gradient (it contributes almost nothing useful while still burning a full training step), and the behavior-vs-current KL creeps up. Hence Rung 3 must explicitly tag each rollout with its `gen_version` and drop any rollout older than `max_staleness`, as in the chapter's async skeleton.
+
+**3.** (Quantitative) Using the chapter's FLOP/bandwidth accounting, work an RL step for a **13B** model in bf16 on a single H100 (HBM bandwidth $= 3.35$ TB/s; peak bf16 $= 990$ TFLOP/s dense; assume 45% MFU for training). Batch: $P = 32$ prompts, $G = 16$ (so $B = 512$), prompt length $L_p = 256$, mean generation length $L_g = 512$, `ppo_epochs` $E = 2$. Compute: (a) the weight-read time per decode step and the total weight-read-bound decode time over $L_g$ steps; (b) the training FLOPs $C_{\text{train}}$ and the training time on a *single* H100; (c) comment on the ratio and on what changes if the whole training pass is sharded across 8 GPUs.
+
+??? note "Solution"
+    **(a) Decode (Phase 1), bandwidth-bound.** Weight traffic per decode step is $N \cdot b_{\text{param}} = 13\text{e}9 \times 2 = 2.6\times10^{10}$ bytes $= 26$ GB. This read is *amortized across the whole batch* — all 512 sequences advance one token together, reading the weights once. Time per step:
+
+    $$
+    T_{\text{decode-step}} \approx \frac{2.6\times10^{10}\ \text{bytes}}{3.35\times10^{12}\ \text{bytes/s}} \approx 7.76\ \text{ms}.
+    $$
+
+    Over $L_g = 512$ decode steps: $512 \times 7.76\ \text{ms} \approx 3.97$ s of weight-read-bound decode (ignoring the KV-cache traffic, which only adds more, and prefill of the prompts).
+
+    **(b) Training (Phase 4), compute-bound.** Train on response tokens of all $B$ sequences, $E$ times, at $6N$ FLOPs/token:
+
+    $$
+    C_{\text{train}} = 6N \cdot B \cdot L_g \cdot E = 6 \times 13\text{e}9 \times 512 \times 512 \times 2 \approx 4.09\times10^{16}\ \text{FLOPs}.
+    $$
+
+    Effective throughput at 45% MFU: $0.45 \times 990\text{e}12 = 4.455\times10^{14}$ FLOP/s. Time on one H100:
+
+    $$
+    T_{\text{train}} \approx \frac{4.09\times10^{16}}{4.455\times10^{14}} \approx 91.8\ \text{s}.
+    $$
+
+    **(c) Comment.** On a *single* GPU the training pass ($\approx 92$ s) looks far larger than the decode weight-read floor ($\approx 4$ s) — but this is exactly the trap the chapter warns about: training is compute-bound and *parallelizes*, whereas decode runs at terrible MFU. Shard the training pass across 8 GPUs and it drops to $\approx 92/8 \approx 11.5$ s, while decode does not shrink the same way (it stays memory-bandwidth-bound and, with realistic KV traffic and imperfect batching, is more like 6-10 s scaled to this size, and it gates a fresh rollout *every* outer step while training runs only $E=2$ epochs). Once training is spread across the pool, generation reclaims its usual 60-80% share of wall-clock. The headline stands: doubling backward-pass speed barely moves the step; doubling generation throughput nearly halves it.
+
+**4.** (Quantitative) A GRPO group has $G = 4$ completions for one prompt, with rewards $\mathbf{r} = [1, 0, 1, 0]$ (verifiable pass/fail). (a) Compute the group-relative advantage for each completion **without** std normalization (Dr.GRPO style, `normalize_std=False`). (b) Recompute **with** std normalization (`normalize_std=True`, `eps = 1e-4`), using the population std that `torch.std(..., unbiased=False)` would give. (c) A second prompt's group returns $\mathbf{r} = [1, 1, 1, 1]$ (all correct). What advantage does *each* member get, with and without std normalization, and why does this case motivate the `eps` term and the "contested std norm" comment in the code?
+
+??? note "Solution"
+    **(a) No std normalization.** Baseline is the group mean $\bar r = (1+0+1+0)/4 = 0.5$. Advantage $= r_i - \bar r$:
+
+    $$
+    \hat A = [\,1-0.5,\ 0-0.5,\ 1-0.5,\ 0-0.5\,] = [\,0.5,\ -0.5,\ 0.5,\ -0.5\,].
+    $$
+
+    Passing completions get $+0.5$, failing ones $-0.5$. This scalar is then broadcast to every response token.
+
+    **(b) With std normalization.** Population std (unbiased=False): variance $= \frac14\sum (r_i - 0.5)^2 = \frac14(0.25+0.25+0.25+0.25) = 0.25$, so $\sigma = 0.5$. Divide the centered values by $\sigma + \text{eps} = 0.5 + 10^{-4} = 0.5001$:
+
+    $$
+    \hat A = [\,0.5/0.5001,\ -0.5/0.5001,\ \ldots\,] \approx [\,0.9998,\ -0.9998,\ 0.9998,\ -0.9998\,].
+    $$
+
+    The normalization rescales the advantages to roughly unit magnitude ($\pm 1$). (Note that the chapter's `grpo_advantages` calls `g.std(...)`, which uses PyTorch's *default* `unbiased=True` — the Bessel-corrected sample std that divides by $G-1=3$. That gives $\sigma = \sqrt{1/3} \approx 0.577$ and thus $\hat A \approx \pm 0.5/0.5774 \approx \pm 0.866$. We use the population std ($\div G$) here for cleaner arithmetic; the qualitative point — rescaling to order-unity magnitude — is identical either way.)
+
+    **(c) The all-correct group $\mathbf{r} = [1,1,1,1]$.** Mean $\bar r = 1$, so *without* std norm every member gets $\hat A = 1 - 1 = 0$ — the group provides **no learning signal** (all completions are equally good relative to the baseline; nothing to prefer). *With* std norm, the std is $\sigma = 0$, so the code divides $0 / (0 + \text{eps}) = 0 / 10^{-4} = 0$ — still zero, but the `eps` is what prevents a divide-by-zero (a $0/0 \to$ NaN) that would poison the whole batch. This is why `eps` exists. The "contested std norm" comment flags a known issue: dividing by the group std **up-weights low-variance (nearly-solved or nearly-failed) groups** relative to high-variance ones, introducing a difficulty-dependent bias into the gradient. Dr.GRPO/DAPO recipes therefore often drop the std division entirely (`normalize_std=False`), keeping only the mean baseline — which is why the chapter's assembled `rl_outer_step` calls `grpo_advantages(..., normalize_std=False)`.
+
+**5.** (Implementation) The chapter's `minibatch_update_loop` computes `clip_frac` as `((ratio - 1.0).abs() > eps_low).float().mean()` — but this is **unmasked** (it averages over prompt/padding tokens too) and it uses the symmetric `eps_low` even though the loop supports an asymmetric clip range `[1 - eps_low, 1 + eps_high]` (the DAPO "decoupled clip"). Write a corrected `masked_clip_frac(ratio, mask, eps_low, eps_high)` that (a) counts a token as clipped only if `ratio < 1 - eps_low` or `ratio > 1 + eps_high`, and (b) averages only over response tokens using `mask`. Then show the one-line change to the diagnostics block. Keep the chapter's style.
+
+??? note "Solution"
+    The existing diagnostic has two flaws: it uses `eps_low` on both sides (wrong when `eps_high != eps_low`, the decoupled-clip case the loop explicitly supports with `eps_high=0.28`), and `.mean()` divides by *all* tokens including masked prompt/padding positions, diluting the true response-token clip fraction. A masked, asymmetric version:
+
+    ```python
+    def masked_clip_frac(ratio, mask, eps_low, eps_high):
+        """Fraction of RESPONSE tokens whose ratio left [1-eps_low, 1+eps_high].
+        ratio, mask: (m, L-1) aligned to next-token targets. mask is 1 on response.
+        """
+        clipped = (ratio < 1.0 - eps_low) | (ratio > 1.0 + eps_high)  # (m, L-1) bool
+        clipped = clipped.float() * mask                              # zero out non-response
+        return clipped.sum() / mask.sum().clamp(min=1.0)              # masked mean
+    ```
+
+    The corresponding change inside `minibatch_update_loop`'s diagnostics block (replacing the single `clip_frac = ...` line):
+
+    ```python
+            with torch.no_grad():
+                clip_frac = masked_clip_frac(ratio, mask, eps_low, eps_high).item()
+                approx_kl = (old_lp[mb] - new_lp).mul(mask).sum() / mask.sum()
+    ```
+
+    Note the symmetry with the rest of the loop: `ratio` and `mask` here are the same `(m, L-1)` tensors already used to form the masked loss `(pg_loss * mask).sum() / mask.sum()`, so the clip-fraction denominator now matches the loss denominator (response-token count) exactly. This makes the diagnostic directly comparable to the "few percent healthy, 30%+ too off-policy" guidance in the chapter, and correctly attributes clipping to the high side (`eps_high`) versus the low side when the two thresholds differ.

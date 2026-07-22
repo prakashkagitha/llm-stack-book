@@ -422,3 +422,136 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
 - **Rajbhandari et al., "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models"** and **Shoeybi et al., "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism"** — the two training-side layouts (sharded data parallel and tensor/pipeline parallel) whose mismatch with inference TP creates the resharding problem.
 - **NVIDIA NCCL documentation and the CUDA IPC runtime API** — the collective-communication and zero-copy-handle primitives underlying weight-sync Mechanisms 2 and 3.
 - **DeepSeek-AI, "DeepSeek-R1" (2025)** — a large-scale RLVR run whose long reasoning rollouts are the canonical rollout-bound workload motivating disaggregation.
+
+## Exercises
+
+**1.** (Memory profile.) You want to run full-parameter GRPO on a 7B-parameter policy in bf16 with the Adam optimizer, and serve rollouts from the *same* 80 GB GPUs. Using the chapter's formulas, compute (a) the trainer state $M_\text{train}$ ignoring activations, and (b) the inference weight footprint (ignoring KV cache). Then explain, in one or two sentences, why these two numbers make simultaneous colocation impossible on an 80 GB GPU and force a time-slicing + offload strategy.
+
+??? note "Solution"
+    Take $P = 7\text{e}9$ parameters.
+
+    (a) Trainer state, from $M_\text{train} = 2P + 2P + 12P = 16P$ bytes (weights + grads + Adam $m,v$ + fp32 master):
+
+    $$M_\text{train} = 16 \times 7\text{e}9 = 1.12\text{e}11\ \text{bytes} \approx 112\ \text{GB}.$$
+
+    (b) Inference weights only, from $M_\text{infer} = 2P + M_\text{KV}$; ignoring the KV cache the resident weights are
+
+    $$2P = 2 \times 7\text{e}9 = 1.4\text{e}10\ \text{bytes} = 14\ \text{GB}.$$
+
+    Why simultaneous colocation fails: the training state alone (112 GB) already exceeds one 80 GB GPU, so it must be sharded across GPUs *and* you still cannot additionally park 14 GB of inference weights plus a useful (tens-of-GB) KV cache on the same devices at the same instant. The combined footprint does not fit, so the colocated design must **time-slice**: during rollout the trainer's $12P = 84$ GB of optimizer state is offloaded to host RAM to free room for the KV cache, and during training the inference engine sleeps and releases its KV pool. The two roles take turns owning HBM rather than coexisting.
+
+**2.** (Offload cost.) During the rollout phase of the time-sliced colocated loop, the 7B model's Adam state is offloaded to host RAM and later reloaded before the optimizer step. (a) How many bytes is the Adam state ($m$, $v$, fp32 master)? (b) Compute the round-trip (out + in) copy time over a PCIe 4.0 x16 link at 64 GB/s. (c) Recompute the round-trip over an NVLink-C2C link at 450 GB/s, and state the speedup. (d) Why does the chapter insist on *pinned* host memory and a *dedicated CUDA stream* for these copies?
+
+??? note "Solution"
+    (a) The offloaded Adam state is the $12P$ term (m, v, and the fp32 master copy):
+
+    $$12P = 12 \times 7\text{e}9 = 8.4\text{e}10\ \text{bytes} = 84\ \text{GB}.$$
+
+    (b) PCIe 4.0 x16 at 64 GB/s, one way: $84 / 64 \approx 1.31$ s. Round trip (out then back in):
+
+    $$2 \times 1.31 \approx 2.6\ \text{s per iteration}.$$
+
+    (c) NVLink-C2C at 450 GB/s, one way: $84 / 450 \approx 0.187$ s. Round trip:
+
+    $$2 \times 0.187 \approx 0.37\ \text{s}.$$
+
+    Speedup vs PCIe: $2.6 / 0.37 \approx 7\times$ (equivalently the bandwidth ratio $450/64 \approx 7$).
+
+    (d) A naive `tensor.cpu()` allocates *pageable* host memory, which the driver must first stage through a pinned bounce buffer, serializing the transfer and blocking the calling stream. Pre-allocating **pinned (page-locked)** buffers lets the DMA engine copy directly at full link bandwidth, and issuing the copy on a **dedicated CUDA stream** with `non_blocking=True` lets it overlap with the tail of the previous phase (e.g. the end of decode) instead of adding a serial stall. That turns a ~2.6 s exposed copy into a largely hidden one.
+
+**3.** (Utilization and rebalancing.) A synchronous 7B run on 16 H100s measures these per-iteration stage times: $T_\text{rollout} = 50$ s, $T_\text{reward} = 2$ s, $T_\text{train} = 6$ s, $T_\text{offload} = 3$ s, $T_\text{sync} = 0.02$ s. (a) Compute the colocated iteration time and the training-GPU utilization $U_\text{colo}$. (b) You switch to async disaggregation, splitting the 16 GPUs into $g_t$ training and $g_r = 16 - g_t$ rollout GPUs. Assuming stage time scales inversely with GPU count, find the *smallest* $g_t$ (integer) such that training still hides fully under rollout, and compute the resulting async iteration time. (c) Contrast what happened to training-GPU utilization.
+
+??? note "Solution"
+    (a) Colocated (serial) iteration time:
+
+    $$T_\text{iter}^\text{colo} = 50 + 2 + 6 + 3 + 0.02 \approx 61\ \text{s}.$$
+
+    Training-GPU utilization is the compute-bound share:
+
+    $$U_\text{colo} = \frac{T_\text{train}}{T_\text{iter}^\text{colo}} = \frac{6}{61.02} \approx 9.8\%.$$
+
+    So for ~55 of every 61 s, all 16 training-capable H100s run memory-bound decode.
+
+    (b) With inverse scaling, rollout on $g_r$ GPUs takes $T_\text{rollout}' = 50 \cdot 16 / g_r$ and training on $g_t$ GPUs takes $T_\text{train}' = 6 \cdot 16 / g_t$. Training hides fully when $T_\text{train}' \le T_\text{rollout}'$ with $g_r = 16 - g_t$:
+
+    $$\frac{6 \cdot 16}{g_t} \le \frac{50 \cdot 16}{16 - g_t} \;\Longrightarrow\; 6(16 - g_t) \le 50\,g_t \;\Longrightarrow\; 96 \le 56\,g_t \;\Longrightarrow\; g_t \ge 1.71.$$
+
+    Smallest integer: $g_t = 2$ training, $g_r = 14$ rollout. Then
+
+    $$T_\text{rollout}' = 50 \cdot 16 / 14 \approx 57.1\ \text{s}, \qquad T_\text{train}' = 6 \cdot 16 / 2 = 48\ \text{s} \le 57.1\ \text{s}.$$
+
+    Async iteration (rollout overlaps training):
+
+    $$T_\text{iter}^\text{async} \approx \max(57.1,\ 48) + 0.02 \approx 57.1\ \text{s}.$$
+
+    (c) Wall-clock barely improved (61 s -> 57 s), which is the chapter's point: disaggregation is not an automatic speedup. The real change is utilization. The 2 dedicated training GPUs are busy 48 s of every 57 s ($\approx 84\%$) instead of 16 GPUs busy at ~10%. Rollout — the cheap, memory-bound, dominant stage — is now the only thing on the critical path, and it can run on cheaper/more numerous inference GPUs, which is where the effective-cost win comes from. The hidden cost is that each update now trains on rollouts one iteration stale (staleness $k=1$), corrected by the GRPO importance ratio.
+
+**4.** (Sync mechanism choice + resharding.) (a) For a 70B model (140 GB in bf16), compute the weight-sync time for NCCL broadcast over a 900 GB/s NVLink fabric, and for checkpoint reload over an NFS mount sustaining 1.2 GB/s. State the ratio. (b) The chapter warns that even with a fast NCCL path, sync is "not a memcpy." Name the three axes along which trainer and inference layouts differ, and explain concretely what a trainer running FSDP + TP=8 must do to feed an inference engine running TP=2.
+
+??? note "Solution"
+    (a) NCCL broadcast, moving 140 GB at 900 GB/s:
+
+    $$T_\text{NCCL} = 140 / 900 \approx 0.156\ \text{s}.$$
+
+    Checkpoint reload over NFS at 1.2 GB/s (the dominant read/write cost):
+
+    $$T_\text{ckpt} \approx 140 / 1.2 \approx 117\ \text{s} \approx 2\ \text{min}.$$
+
+    Ratio: $117 / 0.156 \approx 750\times$. This is why checkpoint reload is fine as a periodic fault-tolerance fallback but far too slow for the hot per-step sync path, whereas NCCL broadcast (sub-second even for 70B) can run every step.
+
+    (b) The three axes are:
+
+    - **Sharding (parallelism layout):** trainer FSDP flattens+shards every parameter across data-parallel ranks; inference uses head-aligned tensor parallelism, and often at a *different degree*.
+    - **Fusion:** the inference engine fuses $W_Q, W_K, W_V$ into one `qkv_proj` and `gate_proj`+`up_proj` into `gate_up_proj`; with GQA the concatenation follows a specific head-grouped order.
+    - **Dtype/quantization:** trainer holds bf16 (plus fp32 master); the engine may run FP8/INT8/INT4, so sync must recompute the quantized representation rather than copy bytes.
+
+    Going FSDP+TP=8 -> TP=2 concretely: the sync layer must (1) **gather** each FSDP-sharded parameter back into a full, un-flattened tensor (an all-gather that undoes the trainer's sharding), (2) **fuse** Q/K/V and gate/up into the engine's fused tensors honoring GQA head grouping, and then (3) **re-shard** from 8 slices down to 2 — each of the 2 inference ranks must own the head-aligned columns that previously lived on 4 different training ranks, so it effectively gathers the slices of four TP=8 ranks. This is done layer by layer to cap transient memory at one fused layer's worth rather than the whole model.
+
+**5.** (Implementation.) Implement the **fuse + re-shard** step (steps 2 and 4 of the chapter's `reshard_and_sync` recipe) for a GQA attention block. Write `fuse_qkv(w_q, w_k, w_v)` that concatenates the three full projection weights into one `qkv_proj` tensor in `[Q; K; V]` output-row order, and `shard_qkv_for_tp(w_q, w_k, w_v, tp)` that produces the per-rank fused shard for each of `tp` inference ranks such that each rank holds a *contiguous, head-aligned* block of Q, K, and V heads (a naive `torch.chunk` of the already-fused tensor would split heads incorrectly). Verify on `hidden=4096, n_heads=32, n_kv_heads=8, head_dim=128, tp=2`.
+
+??? note "Solution"
+    The full fused tensor has output dimension $(n_\text{heads} + 2\,n_\text{kv\_heads})\cdot d$. The subtlety: fusing first and then `chunk`-ing along the output dim would slice through the Q/K/V boundary and hand each rank a semantically wrong mix. The correct order is to split *each* projection into per-rank head groups first, then fuse per rank — exactly what vLLM's `QKVParallelLinear` does.
+
+    ```python
+    import torch
+
+    def fuse_qkv(w_q, w_k, w_v):
+        # Full (TP=1) fused layout: rows are [all Q heads; all K heads; all V heads].
+        # w_q: [n_heads*d, hidden], w_k/w_v: [n_kv_heads*d, hidden].
+        return torch.cat([w_q, w_k, w_v], dim=0)   # [(n_heads + 2*n_kv_heads)*d, hidden]
+
+    def shard_qkv_for_tp(w_q, w_k, w_v, tp, n_heads, n_kv_heads, head_dim):
+        # GQA constraint: heads must divide evenly across TP ranks.
+        assert n_heads % tp == 0 and n_kv_heads % tp == 0, "heads must be divisible by tp"
+        q_per = (n_heads   // tp) * head_dim     # Q rows per rank
+        kv_per = (n_kv_heads // tp) * head_dim   # K (and V) rows per rank
+        shards = []
+        for r in range(tp):
+            # Split EACH projection into contiguous head groups, THEN fuse per rank.
+            q_r = w_q[r * q_per : (r + 1) * q_per]
+            k_r = w_k[r * kv_per : (r + 1) * kv_per]
+            v_r = w_v[r * kv_per : (r + 1) * kv_per]
+            shards.append(torch.cat([q_r, k_r, v_r], dim=0))  # rank-local qkv_proj
+        return shards
+
+    # ---- Verify ----
+    hidden, n_heads, n_kv_heads, head_dim, tp = 4096, 32, 8, 128, 2
+    w_q = torch.randn(n_heads   * head_dim, hidden)   # [4096, 4096]
+    w_k = torch.randn(n_kv_heads * head_dim, hidden)  # [1024, 4096]
+    w_v = torch.randn(n_kv_heads * head_dim, hidden)  # [1024, 4096]
+
+    full = fuse_qkv(w_q, w_k, w_v)
+    assert full.shape == ((n_heads + 2 * n_kv_heads) * head_dim, hidden)  # [6144, 4096]
+
+    shards = shard_qkv_for_tp(w_q, w_k, w_v, tp, n_heads, n_kv_heads, head_dim)
+    # Each rank: (16 Q + 4 K + 4 V) heads * 128 = 3072 rows.
+    assert all(s.shape == ((n_heads//tp + 2*(n_kv_heads//tp)) * head_dim, hidden)
+               for s in shards)                        # each [3072, 4096]
+
+    # Correctness: rank 0 holds the first half of Q/K/V heads, exactly.
+    assert torch.equal(shards[0][:16*head_dim],                  w_q[:16*head_dim])
+    assert torch.equal(shards[0][16*head_dim:16*head_dim+4*head_dim], w_k[:4*head_dim])
+    print("fused:", tuple(full.shape), "| per-rank:", tuple(shards[0].shape))
+    ```
+
+    Output: `fused: (6144, 4096) | per-rank: (3072, 4096)`. The full fused tensor is $(32 + 2\cdot 8)\cdot 128 = 6144$ rows, and each of the 2 ranks receives a `[3072, 4096]` block holding 16 Q, 4 K, and 4 V heads in the correct `[Q; K; V]` order. Each shard is what Mechanism 2 broadcasts (or Mechanism 3 aliases) into inference rank $r$'s `qkv_proj` buffer. Note that fusing first and then `torch.chunk(full, 2, dim=0)` would give rank 0 all 32 Q heads plus half the K heads — silent garbage, precisely the pitfall in the "name and shape mismatch" warning.

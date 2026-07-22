@@ -454,3 +454,121 @@ The throughline: TRL optimizes for *velocity at modest scale* by keeping everyth
 - Kwon, Li, Zhuang, et al., **Efficient Memory Management for Large Language Model Serving with PagedAttention** (vLLM, 2023) — the rollout engine veRL drives; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
 - Moritz, Nishihara, Wang, et al., **Ray: A Distributed Framework for Emerging AI Applications** (2018) — the actor and placement-group substrate underneath veRL's single controller.
 - Shao, Wang, Zhu, et al., **DeepSeekMath** (2024) and DeepSeek-AI, **DeepSeek-R1** (2025) — the GRPO algorithm most veRL runs implement; see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html).
+
+## Exercises
+
+**1.** (Conceptual) A colleague proposes building an RL-for-LLM trainer as a *pure single-controller* system: one driver process issues every operation as a remote call and holds all the algorithm logic. They argue this is the most readable design. State the two distinct ways this pure design fails at scale, and then identify which *one* line of veRL's driver loop (`fit`) genuinely belongs on the single-controller side and why it is safe to keep it there.
+
+??? note "Solution"
+    The pure single-controller design fails in two complementary ways described in the chapter:
+
+    1. **Driver bottleneck.** Everything the algorithm touches — per-token log-probs, response token ids, attention masks — is gathered to the driver, sliced, and re-scattered. For a 7B policy update with 1024 prompts x 8 samples x 2048 tokens these tensors are hundreds of MB to GB per step, so the driver becomes a serialization and network-congestion bottleneck.
+    2. **Cannot express or compose intra-stage parallelism.** The driver only knows how to call "the actor"; it has no way to express the all-reduces inside the actor's backward or the all-gathers inside generation. So the parallelism must either be absent (slow) or hidden inside opaque workers, which forfeits the ability to compose the trainer's parallelism with a different rollout parallelism.
+
+    The line that genuinely belongs on the single-controller side is the advantage computation:
+
+    ```python
+    batch = compute_advantage(batch, adv_estimator=self.config.adv_estimator)
+    ```
+
+    It is safe there because it operates only on *tiny* per-sample tensors (rewards, values, advantages) with no collectives — it is local single-threaded Python. This is precisely the part researchers change most often, and keeping it on the driver is the productivity win of HybridFlow: swapping GAE for GRPO's group baseline is a one-function edit with no distributed code. The heavy stages (`generate_sequences`, `compute_log_prob`, `update_actor`, `update_critic`) do *not* belong on the driver — they must run as multi-controller SPMD `WorkerGroup`s so their activations and gradients never cross the boundary.
+
+**2.** (Conceptual) veRL's driver loop calls `compute_log_prob` under the *training-layout* actor immediately after generation, even though vLLM already produced per-token log-probs during rollout (step 2 recomputes what step 1 seemingly gave you). Why is this recomputation not redundant? What correctness quantity depends on it?
+
+??? note "Solution"
+    It is not redundant because vLLM's generation kernels and the trainer's forward pass are *different code paths* that compute log-probs with different numerics (different kernels, fusion, and precision handling). The log-prob vLLM used while sampling can therefore disagree with the log-prob the training engine would assign to the same token — the **train/inference numerical mismatch**.
+
+    The quantity that depends on getting this right is the **importance-sampling ratio** in the PPO/GRPO objective, $r_t = \exp(\log \pi_{\text{new}}(a_t) - \log \pi_{\text{old}}(a_t))$. The `old_log_prob` in the denominator must be computed by the *same* engine that will later compute `new_log_prob` during the update; otherwise the ratio is systematically biased at step zero (it would not equal 1 even before any gradient step), corrupting the clipping and the gradient. By recomputing `old_log_prob` under the training engine, veRL keeps the ratio self-consistent. Note this is a *correctness* fix, not a performance one — it costs an extra forward pass every step.
+
+**3.** (Quantitative) An actor `WorkerGroup` occupies a world of 8 ranks configured with tensor-parallel degree 2 (and no pipeline parallelism), so in the dispatch code `tp_size = 2` and `dp_size = 4`. The driver calls a method registered with `DP_COMPUTE_PROTO` on a `DataProto` batch of `B = 1024` samples. Using the chapter's `dispatch_dp_compute_proto` / `collect_dp_compute_proto` sketch: (a) how many samples does each of the 8 ranks receive? (b) which ranks' outputs does the collect function keep, and (c) how many samples are in the final reassembled `DataProto`? (d) If you had *mistakenly* concatenated all 8 ranks' outputs instead of one representative per DP group, how many samples would you get and why is that wrong?
+
+??? note "Solution"
+    (a) `DP_COMPUTE_PROTO` splits the batch across the **data-parallel** dimension only. With `dp_size = 4`, the batch is chunked into 4 pieces of $1024 / 4 = 256$ samples each. Each chunk is then *replicated* to every rank in its TP group (`tp_size = 2`). So all 8 ranks receive **256 samples** — ranks 0 and 1 get chunk 0, ranks 2 and 3 get chunk 1, ranks 4 and 5 get chunk 2, ranks 6 and 7 get chunk 3.
+
+    (b) `collect_dp_compute_proto` keeps one representative per DP group: `outputs[dp_rank * tp_size]` for `dp_rank` in $\{0,1,2,3\}$ with `tp_size = 2`, i.e. ranks **0, 2, 4, 6**.
+
+    (c) Concatenating those 4 representatives of 256 samples each gives $4 \times 256 = \mathbf{1024}$ samples — the original batch order is reconstructed.
+
+    (d) Concatenating all 8 outputs would give $8 \times 256 = 2048$ samples. That is wrong because the two ranks in each TP group computed on the *identical* replicated chunk — their outputs are duplicates, not new data. Keeping both double-counts every sample, so you would train on each example twice with corrupted batch alignment.
+
+**4.** (Quantitative) The chapter budgets a 7B GRPO run on 8xA100-80GB and finds it fits comfortably. You instead want to run **PPO with a 7B critic**, still on 8xA100-80GB, FSDP for both actor and critic, vLLM rollout at TP=2, bf16 weights, Adam. Compute the per-GPU *baseline* resident memory during the rollout stage (training state of both models, plus the rollout weight copy), and state how much is left for the vLLM KV cache and activations. Use the chapter's convention that Adam fp32 master weights + two moments cost 12 bytes/parameter.
+
+??? note "Solution"
+    Work per rank, with FSDP sharding all training state across 8 ranks.
+
+    **Actor training state (resident all step):**
+
+    - Parameters (bf16): $7\text{B} \times 2\,\text{B} = 14\,\text{GB}$ total $\Rightarrow 14/8 = 1.75\,\text{GB}$/rank.
+    - Gradients (bf16): $1.75\,\text{GB}$/rank.
+    - Adam fp32 (master + 2 moments), $12\,\text{B/param}$: $7\text{B} \times 12 = 84\,\text{GB}$ total $\Rightarrow 84/8 = 10.5\,\text{GB}$/rank.
+    - Actor subtotal: $1.75 + 1.75 + 10.5 = 14\,\text{GB}$/rank.
+
+    **Critic training state:** a 7B critic has the same shape, so another $\approx 14\,\text{GB}$/rank.
+
+    **Rollout weights (vLLM, TP=2):** a full bf16 copy of the 7B actor split across the TP=2 group $\Rightarrow 14\,\text{GB}/2 = 7\,\text{GB}$/rank. (The critic does not generate, so it contributes no rollout copy.)
+
+    **Baseline resident during rollout:** $14 + 14 + 7 = \mathbf{35\,\text{GB}}$/rank.
+
+    **Left for KV cache + activations:** $80 - 35 = \mathbf{45\,\text{GB}}$/rank.
+
+    So it still *nominally* fits, but the headroom fell from $\sim 59\,\text{GB}$ (GRPO, no critic) to $\sim 45\,\text{GB}$ — the extra $14\,\text{GB}$ of critic training state is exactly the tightening the chapter warns about. With long group-of-$G$ generations the KV cache can want tens of GB, so you would likely enable `optimizer_offload` (spilling the $2 \times 10.5 = 21\,\text{GB}$/rank of Adam state to CPU during rollout) to restore comfortable headroom. This mechanical squeeze is one reason the field prefers critic-free GRPO/RLOO for large policies.
+
+**5.** (Implementation) The chapter's `grpo_group_advantage` uses the *group mean* of all $G$ samples as the baseline. Implement `rloo_group_advantage(rewards, group_size)` instead, using the **leave-one-out** baseline: each sample's baseline is the mean of the *other* $G-1$ samples in its group, so $A_i = r_i - \frac{1}{G-1}\sum_{j \ne i} r_j$. Keep it as pure local Python on a `(B,)` tensor in the chapter's style (fully vectorized, no Python loop over samples), and note the one edge case that must hold on `group_size`.
+
+??? note "Solution"
+    The leave-one-out sum for sample $i$ is (group total minus $r_i$), so the leave-one-out mean is $(\text{sum} - r_i)/(G-1)$. Everything vectorizes over the `(n_prompts, G)` view:
+
+    ```python
+    def rloo_group_advantage(rewards, group_size):
+        """rewards: (B,) with B = n_prompts * group_size, grouped contiguously.
+        RLOO leave-one-out baseline: A_i = r_i - mean_{j != i} r_j."""
+        assert group_size > 1, "RLOO needs G > 1 (divide-by-(G-1))"
+        g = rewards.view(-1, group_size)                 # (n_prompts, G)
+        group_sum = g.sum(dim=1, keepdim=True)           # (n_prompts, 1)
+        loo_mean = (group_sum - g) / (group_size - 1)    # each sample excluded
+        adv = g - loo_mean                               # (n_prompts, G)
+        return adv.reshape(-1)                           # one advantage / sample
+    ```
+
+    The load-bearing edge case is **`group_size > 1`**: the denominator is $G-1$, so a group size of 1 would divide by zero (and is meaningless anyway — you cannot form a leave-one-out baseline from a single sample). Like `grpo_group_advantage`, this runs on the *driver* over a tiny `(B,)` tensor with zero distributed code; a multi-controller system would need explicit cross-rank all-gathers to form the same group reductions.
+
+**6.** (Implementation) The chapter's `reshard_column_parallel` reshards a *column*-parallel weight (split along the output dim, `dim=1`). Implement the symmetric `reshard_row_parallel` for a **row-parallel** weight (e.g. an MLP down-projection, split along the *input* dim, `dim=0`), resharding from `train_tp_size` shards to `rollout_tp_size` shards in GPU memory. Keep the same three-step structure and the same rank-to-rollout-shard mapping, and state which dimension changes versus the column-parallel case.
+
+??? note "Solution"
+    The only change is the axis: a row-parallel weight is split along the **input** dimension (`dim=0`), so both the all-gather reconstruction and the re-split happen along `dim=0` instead of `dim=1`. The gather-within-a-small-TP-group then re-split logic, and the `rank_in_group < q` ownership mapping, are identical.
+
+    ```python
+    import torch
+    import torch.distributed as dist
+
+    def reshard_row_parallel(local_shard: torch.Tensor,
+                             train_tp_group, train_tp_size: int,
+                             rollout_tp_size: int, rank_in_group: int):
+        """
+        Reshard one ROW-parallel weight (split along the INPUT dim, dim=0) from
+        train_tp_size shards to rollout_tp_size shards, IN GPU MEMORY.
+
+        local_shard : this rank's slice, shape (in_dim/p, out_dim).
+        Returns this rank's rollout slice, shape (in_dim/q, out_dim), or None if
+        this rank is not used by the rollout engine (q < p case).
+        """
+        p, q = train_tp_size, rollout_tp_size
+
+        # --- Step 1: gather the p row-shards into the full input dimension. ---
+        gathered = [torch.empty_like(local_shard) for _ in range(p)]
+        dist.all_gather(gathered, local_shard, group=train_tp_group)
+        full_weight = torch.cat(gathered, dim=0)         # (in_dim, out_dim) full
+
+        # --- Step 2: re-split into q rollout shards along the SAME (input) dim. ---
+        in_dim = full_weight.shape[0]
+        assert in_dim % q == 0, "input dim must be divisible by rollout TP degree"
+        rollout_shards = full_weight.chunk(q, dim=0)     # list of q tensors
+
+        # --- Step 3: which rollout shard does THIS physical GPU own? ---
+        if rank_in_group < q:
+            return rollout_shards[rank_in_group].contiguous()  # (in_dim/q, out_dim)
+        else:
+            return None                                  # not a rollout rank
+    ```
+
+    Versus the column-parallel case, the changed dimension is `dim=1 -> dim=0` in both the `torch.cat` (step 1) and the `chunk` (step 2), and the divisibility assertion is now on the input dim rather than the output dim. As the chapter notes, attention QKV/`o_proj` weights need additional *head-aware* regrouping so whole heads stay intact after re-sharding, which neither the pure column nor pure row routine handles on its own.

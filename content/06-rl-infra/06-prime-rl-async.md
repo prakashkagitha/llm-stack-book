@@ -456,3 +456,162 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
 - Ong, et al. (Prime Intellect), **TOPLOC: A Locality-Sensitive Hashing Scheme for Trustless Verifiable Inference** (2024) — verifying that an untrusted GPU ran the claimed model.
 - Schulman, Wolski, Dhariwal, et al., **Proximal Policy Optimization Algorithms** (2017) — the clipped surrogate that doubles as the staleness corrector.
 - Espeholt, et al. (DeepMind), **IMPALA: Scalable Distributed Deep-RL with Importance Weighted Actor-Learner Architectures** (2018) — the classic decoupled actor-learner with V-trace off-policy correction, the conceptual ancestor of async LLM RL.
+
+## Exercises
+
+**1.** *(Conceptual.)* The chapter distinguishes the **one-step-staleness trap** from ordinary staleness and prescribes decoupling "at the *sample* level, not the batch level." Suppose you naively implement async RL by keeping exactly one batch in flight: while the trainer trains on batch $k$, the generators produce batch $k+1$, and no rollout is ever more than one step stale. Explain (a) why this scheme can *still* stall the trainer despite guaranteeing $s \le 1$, and (b) how the sample-level pipelined queue removes the stall. In your answer, name which property of the response-length distribution is the culprit.
+
+??? note "Solution"
+    **(a) Why it still stalls.** Bounding staleness to $s \le 1$ says nothing about *when* the next batch is ready. With one batch in flight, the trainer cannot begin step $k+1$ until *all* $B$ rollouts of batch $k+1$ are finished, and — exactly as in the synchronous case — a batch is not done until its *longest* response finishes:
+    $$
+    T_{\text{gen}}(k+1) \approx t_{\text{tok}}\cdot \max_i \ell_i .
+    $$
+    The culprit is the **heavy tail (high variance / large max-to-mean ratio) of the response-length distribution**: a single 16,000-token straggler in batch $k+1$ holds up the whole batch, and once the trainer exhausts batch $k$ it idles waiting on that one outlier. So the "one batch in flight" design re-imports the straggler tax at the batch boundary even though it technically keeps staleness $\le 1$. This is the one-step-staleness trap.
+
+    **(b) How sample-level pipelining fixes it.** Decouple at the granularity of individual rollouts. The queue holds *finished rollouts*, not batches; each inference worker that finishes a short 200-token response immediately grabs the next prompt instead of waiting for the batch to close. The trainer assembles each training batch from *whatever finished rollouts are currently in the queue*. The 16,000-token outlier finishes whenever it finishes and simply joins a *later* training batch, carrying a larger staleness stamp (which the staleness gate and importance-sampling correction handle). Because short samples are never blocked behind long ones and the trainer always has a full queue to draw from, neither side idles on the tail. The straggler still costs its own compute, but it no longer sits on the critical path of everyone else.
+
+**2.** *(Quantitative — throughput bookkeeping.)* You are running async RL with a training batch of $B = 640$ rollouts. Each training step (forward + backward + optimizer) takes $T_{\text{train}} = 16$ s. Each inference worker sustains $2{,}500$ tok/s and the mean response length is $1{,}000$ tokens. (a) What per-worker rollout rate does that imply, and how many workers $M$ do you need so that the fleet's generation rate $r_{\text{gen}}$ just equals the trainer's consumption rate $B/T_{\text{train}}$? (b) With that $M$, is the run generation-bound or training-bound? (c) You now add 4 extra workers beyond $M$ as a straggler-absorbing surplus. What is the new per-step wall-clock time under the async model $T_{\text{step}}^{\text{async}} = \max(T_{\text{train}},\, B/r_{\text{gen}})$, and what is the trainer GPU utilization?
+
+??? note "Solution"
+    **(a) Per-worker rate and $M$.** One worker at $2{,}500$ tok/s producing $1{,}000$-token responses finishes
+    $$
+    \frac{2{,}500 \text{ tok/s}}{1{,}000 \text{ tok/rollout}} = 2.5 \text{ rollouts/s per worker.}
+    $$
+    The trainer consumes $B/T_{\text{train}} = 640/16 = 40$ rollouts/s. To match, set $r_{\text{gen}} = M \cdot 2.5 = 40$, so
+    $$
+    M = \frac{40}{2.5} = 16 \text{ workers.}
+    $$
+
+    **(b) Bound.** At exactly $M=16$ the rates are equal ($r_{\text{gen}} = B/T_{\text{train}} = 40$/s), i.e. the balanced knife-edge. With no surplus the run is effectively **generation-bound** in practice, because any straggler variance makes the fleet momentarily unable to keep up and the trainer starves. (Formally $B/T_{\text{train}} = r_{\text{gen}}$; the chapter's rule calls it generation-bound when $B/T_{\text{train}} > r_{\text{gen}}$, and here they are equal, so there is zero slack to absorb variance.)
+
+    **(c) With 4 surplus workers.** Now $M = 20$, so $r_{\text{gen}} = 20 \times 2.5 = 50$ rollouts/s. Then
+    $$
+    B / r_{\text{gen}} = 640 / 50 = 12.8 \text{ s} < T_{\text{train}} = 16 \text{ s},
+    $$
+    so
+    $$
+    T_{\text{step}}^{\text{async}} = \max(16,\, 12.8) = 16 \text{ s}.
+    $$
+    The run is now **training-bound** with a generation surplus, and the trainer never waits: its utilization is
+    $$
+    \frac{T_{\text{train}}}{T_{\text{step}}^{\text{async}}} = \frac{16}{16} = 100\%.
+    $$
+    The surplus workers cost extra generation compute but buy headroom against the straggler tail — exactly the "small generation surplus to absorb straggler variance" the chapter recommends.
+
+**3.** *(Quantitative — importance-sampling variance.)* Consider a response of length $L = 2{,}000$ tokens. Suppose that, purely from benign engine mismatch (inference vs training), every per-token log-ratio $\log \rho_t$ is a small constant $\delta = 0.001$ (the trainer assigns each token slightly higher probability than the logged inference engine did). (a) Compute the *sequence-level* ratio $\prod_{t=1}^{L}\rho_t$. (b) Now suppose instead $\delta = -0.001$ on every token; what is the sequence ratio? (c) Explain what these two numbers illustrate about using a raw sequence-level product as an importance weight, and state which per-token defense in the chapter prevents this blow-up and why it works at the token level.
+
+??? note "Solution"
+    **(a) Positive bias.** In log-space the sequence log-ratio is $\sum_t \log\rho_t = L\,\delta = 2{,}000 \times 0.001 = 2.0$. So
+    $$
+    \prod_{t=1}^{L} \rho_t = e^{2.0} \approx 7.39 .
+    $$
+    A *per-token* discrepancy of one part in a thousand compounds into a $\sim 7.4\times$ sequence weight.
+
+    **(b) Negative bias.** Now $\sum_t \log\rho_t = 2{,}000 \times (-0.001) = -2.0$, so
+    $$
+    \prod_{t=1}^{L} \rho_t = e^{-2.0} \approx 0.135 .
+    $$
+
+    **(c) What this shows and the fix.** A tiny, even *unbiased-looking* per-token noise floor produces sequence-level weights that swing over a range of roughly $7.39 / 0.135 \approx 55\times$ — and with random rather than constant $\delta$ the variance of the product is effectively unbounded. This is the "variance explosion" the chapter warns about: the sequence ratio $\prod_t \rho_t$ is astronomically sensitive because errors multiply over thousands of tokens. The defense is **PPO clipping applied per token**: each factor is replaced by $\operatorname{clip}(\rho_t, 1-\varepsilon, 1+\varepsilon)$, so no single token's contribution can leave $[1-\varepsilon, 1+\varepsilon]$ and the multiplicative product can never compound into an extreme value. Because the clip acts at the token level (and the loss is a *sum* over clipped per-token terms, not a product), it caps how far the target policy can move on any one token and bounds each term's magnitude to $[1-\varepsilon,1+\varepsilon]\cdot|\hat A_t|$. (**Truncated importance sampling**, which caps the raw behavior-side ratio at a constant $C$, is the complementary defense specifically aimed at this systematic engine-mismatch bias.)
+
+**4.** *(Conceptual — the silent async bug.)* A colleague reports that their async run's `approx_kl`, measured on *fresh* rollouts during the very first epoch over that data (staleness $s = 0$), is not zero — it sits around $0.03$ and slowly drifts upward — even though reward initially climbs. They insist staleness must be the problem and ask you to lower $s_{\max}$. Explain why lowering $s_{\max}$ will not help, identify the actual root cause, and describe the two fixes the chapter prescribes plus the one diagnostic you would log to confirm.
+
+??? note "Solution"
+    **Why $s_{\max}$ is irrelevant here.** The symptom is a nonzero, drifting `approx_kl` *on fresh data at $s = 0$*. At zero staleness the behavior policy and the target policy are the *same weights* $\theta_{\text{old}} = \theta$, so an honest importance ratio should be $\rho_t \approx 1$ and `approx_kl` $\approx 0$ by construction. Because the problem is already present at $s=0$, it cannot be caused by staleness, and tightening $s_{\max}$ (which only controls how *old* rollouts may be) changes nothing.
+
+    **Actual root cause: engine mismatch.** The behavior log-probs were *logged by the inference engine* (e.g. vLLM in fp8 with paged/fused kernels), while the numerator is *recomputed by the trainer* (e.g. FSDP in bf16 with different kernels). These two engines do not compute bit-identical log-probs for the same weights and tokens, so $\pi_{\theta_{\text{old}}}^{\text{infer}} \ne \pi_{\theta_{\text{old}}}^{\text{train}}$ and the ratio is systematically biased away from 1 even at zero staleness. That is precisely the chapter's "silent engine-mismatch bias" — the most insidious async bug — and the drifting KL with reward that climbs then risks collapsing is its signature.
+
+    **The two fixes.**
+    1. **Recompute `logp_train` in the trainer** for the numerator (never reuse the inference engine's log-probs as the numerator; the numerator must also be differentiable w.r.t. $\theta$). This ensures the ratio is trainer-vs-inference, not inference-vs-inference.
+    2. **Truncated importance sampling (TIS):** cap the behavior-side ratio at a constant $C \in [2,10]$ (e.g. `tis_cap=4.0`) so the systematic engine bias cannot accumulate into large weights.
+
+    **The diagnostic.** Log *both* log-probs (inference-engine behavior log-prob and trainer-recomputed log-prob) for the same tokens and monitor their **mean absolute difference** (equivalently, watch `approx_kl` on fresh $s=0$ data — it should be essentially zero). A nonzero, drifting value confirms engine mismatch rather than an RL bug.
+
+**5.** *(Implementation — TOPLOC robustness/sensitivity test.)* The chapter gives `toploc_commit` and `toploc_verify`. Write a short, runnable test harness that empirically demonstrates the two properties TOPLOC must have: (a) **robustness** — an honest recomputation with small benign numerical noise added to the activations still *passes*; and (b) **sensitivity** — a "different model" (a meaningfully perturbed / re-rolled activation tensor) *fails*. Use the chapter's functions unchanged. Print the verifier's boolean verdict for both cases.
+
+??? note "Solution"
+    The idea: build one honest activation tensor, commit to it, then verify against (a) the same tensor plus tiny noise (benign GPU/kernel jitter) and (b) a substantially different tensor (a forged / different-model run). We reuse `toploc_commit` and `toploc_verify` from the chapter verbatim.
+
+    ```python
+    import torch
+    # from the chapter:
+    # def toploc_commit(hidden_states, k=128): ...
+    # def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90, mag_tol=2): ...
+
+    torch.manual_seed(0)
+    T, d, k = 64, 4096, 128            # 64 tokens, hidden dim 4096, top-128 commitment
+
+    # The prover's honest activations at the committed layer.
+    honest = torch.randn(T, d)
+    commitment = toploc_commit(honest, k=k)
+
+    # (a) ROBUSTNESS: an honest verifier on different hardware sees the SAME activations
+    #     perturbed only by tiny benign numerical noise (low-bit float jitter).
+    benign_noise = 1e-3 * torch.randn(T, d)
+    honest_recompute = honest + benign_noise
+    verdict_honest = toploc_verify(commitment, honest_recompute, k=k)
+
+    # (b) SENSITIVITY: a forged / different-model run produces a substantially
+    #     different activation geometry (large perturbation re-ranks the top-k).
+    forged = honest + 1.0 * torch.randn(T, d)     # noise on the same scale as the signal
+    verdict_forged = toploc_verify(commitment, forged, k=k)
+
+    print("honest (benign noise) passes:", verdict_honest)   # expect True
+    print("forged (different model) passes:", verdict_forged) # expect False
+    ```
+
+    **Why it behaves this way.** `toploc_verify` recomputes the top-$k$ largest-magnitude activation indices per token and checks the fraction shared with the prover's committed indices against `tol_frac = 0.90`, accepting only if most tokens agree. Under **benign noise** ($10^{-3}$ scale) the dominant components barely move: the same large-$|h|$ coordinates stay in the top-$k$, so per-token index overlap is well above $0.90$ and the run passes. Under a **large perturbation** ($1.0$ scale, comparable to the signal) the ranking of components is scrambled, the top-$k$ index sets diverge, per-token overlap falls below tolerance, and verification fails. That is exactly the locality-sensitive property the chapter wants: *nearby* activation tensors (honest run, benign hardware noise) produce consistent commitments, while *distant* ones (different model / precision / fabricated tokens) do not — robust to benign numerics, sensitive to real model changes. (You can sweep the perturbation scale from $10^{-3}$ up to $1.0$ to see the verdict flip as the noise starts to re-rank the dominant components.)
+
+**6.** *(Implementation — modify the async loss.)* The chapter's `async_ppo_loss` applies a *hard* staleness gate: rollouts with $s \le s_{\max}$ are kept at full weight, everything staler is dropped. A colleague proposes a *soft* alternative: instead of a cliff at $s_{\max}$, down-weight each rollout's loss contribution by an exponential staleness decay $w(s) = \gamma^{s}$ (with, say, $\gamma = 0.8$), while *still* hard-dropping anything past a safety ceiling $s_{\text{ceil}}$. Modify `async_ppo_loss` to implement this, keeping the token-level aggregation correct (the denominator must reflect the same weighting as the numerator), and explain in one sentence why a per-sample weight must be folded into *both*.
+
+??? note "Solution"
+    Introduce a per-sample staleness weight $w_i = \gamma^{\,s_i}$, zeroed beyond the safety ceiling, and multiply it into the token mask so it appears in both the numerator and the normalizing denominator. Because the loss is a *weighted mean* over tokens, `loss = -(weighted per-token sum) / (sum of weights)`, the same factor must be in the denominator or the effective learning signal would be silently rescaled (a batch of mostly-stale, down-weighted samples would otherwise be divided by a too-large token count and shrink the gradient inconsistently).
+
+    ```python
+    import torch
+
+    def async_ppo_loss_soft(
+        logp_train, logp_behavior, advantages, response_mask, staleness,
+        eps_low=0.2, eps_high=0.28, tis_cap=4.0,
+        gamma=0.8,        # exponential staleness decay base, w(s) = gamma**s
+        s_ceil=8,         # hard safety ceiling: drop anything staler than this
+    ):
+        B, T = logp_train.shape
+
+        # --- 1. Soft staleness weight w(s) = gamma**s, hard-zeroed past the ceiling -------------
+        s = staleness.float()
+        soft_w = torch.pow(torch.tensor(gamma), s)                 # (B,)  gamma**s
+        soft_w = soft_w * (staleness <= s_ceil).float()            # zero beyond safety ceiling
+        weight = soft_w.unsqueeze(1)                               # (B, 1)
+        mask = response_mask * weight                              # (B, T) weighted token mask
+
+        # --- 2. Per-token PPO ratio (log-space) --------------------------------------------------
+        log_ratio = logp_train - logp_behavior
+        ratio = torch.exp(log_ratio)
+
+        # --- 3. Truncated importance sampling (behavior-side cap) --------------------------------
+        ratio = torch.clamp(ratio, max=tis_cap)
+
+        # --- 4. PPO clipped surrogate, token level ----------------------------------------------
+        adv = advantages.unsqueeze(1)
+        unclipped = ratio * adv
+        clipped = torch.clamp(ratio, 1.0 - eps_low, 1.0 + eps_high) * adv
+        per_token = torch.min(unclipped, clipped)
+
+        # --- 5. Weighted token-level aggregation: SAME weighted mask in numerator & denominator --
+        loss = -(per_token * mask).sum() / mask.sum().clamp(min=1.0)
+
+        with torch.no_grad():
+            approx_kl = ((ratio - 1.0) - log_ratio)
+            approx_kl = (approx_kl * mask).sum() / mask.sum().clamp(min=1.0)
+            clipfrac = (((ratio < 1 - eps_low) | (ratio > 1 + eps_high)).float()
+                        * mask).sum() / mask.sum().clamp(min=1.0)
+            eff_dropped = 1.0 - (soft_w > 0).float().mean()        # fully-ceiling-dropped fraction
+        return loss, {"approx_kl": approx_kl.item(),
+                      "clipfrac": clipfrac.item(),
+                      "frac_hard_dropped": eff_dropped.item(),
+                      "mean_staleness": staleness.float().mean().item(),
+                      "mean_soft_weight": soft_w.mean().item()}
+    ```
+
+    Key points versus the original: the hard `fresh` gate is replaced by a continuous `soft_w = gamma**s` (so $s=0 \Rightarrow w=1$, $s=1 \Rightarrow 0.8$, $s=2 \Rightarrow 0.64$, …), an outer hard cutoff at `s_ceil` still discards genuinely useless rollouts, and — crucially — `soft_w` is folded into `mask`, which drives *both* the numerator `(per_token * mask).sum()` and the denominator `mask.sum()`. That keeps the token-level aggregation a correct weighted mean; at $\gamma \to 1$ with $s_{\text{ceil}} = s_{\max}$ it reduces exactly to the chapter's hard-gate loss.
