@@ -427,9 +427,12 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     d_in, d_out, r = 64, 48, 8
     layer = MultiLoRALinear(d_in, d_out, max_adapters=4, rank=r)
-    reg = AdapterRegistry(layer, n_gpu_slots=2)        # only 2 GPU slots: forces eviction
+    reg = AdapterRegistry(layer, n_gpu_slots=3)        # exactly enough for this batch's
+                                                        # 3 concurrent adapters; a 4th
+                                                        # distinct adapter in a later batch
+                                                        # would force an eviction
 
-    # Register 3 adapters into the CPU warm pool (more than GPU slots).
+    # Register 3 adapters into the CPU warm pool (exactly filling GPU slots).
     refs = {}
     for name in ["contracts", "game-lore", "med-notes"]:
         A = torch.randn(r, d_in) * 0.02

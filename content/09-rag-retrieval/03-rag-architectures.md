@@ -612,6 +612,7 @@ class FaithfulnessChecker:
             f"{premise} [SEP] {hypothesis}",
             truncation=True,
             max_length=512,
+            top_k=None,  # return scores for all labels, not just the top-1
         )
         label_score = {r["label"]: r["score"] for r in result}
         return label_score.get("entailment", 0.0)
