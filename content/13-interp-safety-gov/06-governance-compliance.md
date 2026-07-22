@@ -923,3 +923,218 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 - European AI Office, GPAI Code of Practice drafts (2025) — the operationalisation guidance for GPAI providers; check the EU AI Office website for the latest version.
 - Luccioni et al., "Power Hungry Processing: Watts Driving the Cost of AI Deployment?" ACL 2023 — empirical energy measurement methodology relevant to Art. 55(1)(d) reporting.
 - Bommasani et al., "On the Opportunities and Risks of Foundation Models," Stanford CRFM 2021 — comprehensive analysis of systemic risks relevant to the systemic-risk regulatory category.
+
+---
+
+## Exercises
+
+**1.** A DDoS attack knocks your inference API offline for four hours, and separately a user reports that your mental-health triage assistant gave biased advice that plausibly contributed to self-harm. Your SRE on-call wants to file both through the same incident channel. Explain why, under the EU AI Act, these are two different kinds of incident, and state which one (if any) triggers an Article 62 serious-incident notification.
+
+??? note "Solution"
+
+    The chapter's "Common pitfall" admonition draws the exact distinction. AI Act serious-incident reporting is triggered by *harm or potential harm to people*, not by service availability or a security breach per se.
+
+    - The **DDoS attack** is a security/availability incident. It degrades the service but is not, by itself, an event that "resulted, or could have resulted, in death or serious harm to health," property damage, disruption of an essential service, or a fundamental-rights violation. It flows through the ordinary SRE/security incident-response path. (It could become an AI Act incident only if the outage itself caused one of those harms — e.g. an essential service failing.)
+
+    - The **biased mental-health advice that plausibly contributed to self-harm** is exactly an Article 62 *serious incident*: an event that "could have resulted in death or serious harm to health." It must be notified to the relevant national market-surveillance authority.
+
+    The engineering consequence stated in the chapter is that you build *separate triage paths*: one keyed on availability/security signals, one keyed on harm-to-people signals. Merging them into a single channel risks either flooding the regulatory pipeline with irrelevant outages or, worse, burying a genuine harm event inside routine SRE noise and missing the notification deadline.
+
+**2.** A team trains a dense transformer with $200$ billion parameters on $8$ trillion tokens. (a) Using the Chinchilla FLOP approximation from the chapter, compute the training compute. (b) Is the model a GPAI model with systemic risk? (c) How many *additional* tokens (beyond the $8$ T already used) would be needed to cross the $10^{25}$-FLOP threshold, holding parameter count fixed?
+
+??? note "Solution"
+
+    The chapter gives $C_{\text{train}} \approx 6 \cdot N \cdot D$.
+
+    **(a)** With $N = 2 \times 10^{11}$ and $D = 8 \times 10^{12}$:
+
+    $$
+    C = 6 \times (2 \times 10^{11}) \times (8 \times 10^{12})
+      = 6 \times 1.6 \times 10^{24}
+      = 9.6 \times 10^{24} \text{ FLOPs}
+    $$
+
+    **(b)** $9.6 \times 10^{24} < 10^{25}$, so the model is **below** the systemic-risk threshold. It is still a GPAI model (self-supervised, broad generality) and therefore carries the Article 53 base obligations — technical documentation, training-data summary, copyright policy, downstream-deployer information — but it does *not* trigger the Article 55 systemic-risk obligations (adversarial testing, two-day incident reporting, cybersecurity, energy disclosure). It sits close to the bar, so the FlopTracker's 80% warning would already have fired.
+
+    **(c)** Solve for the token count $D^{*}$ that hits the threshold with $N$ fixed:
+
+    $$
+    D^{*} = \frac{10^{25}}{6 \cdot N} = \frac{10^{25}}{6 \times 2 \times 10^{11}}
+          = \frac{10^{25}}{1.2 \times 10^{12}}
+          \approx 8.33 \times 10^{12} \text{ tokens}
+    $$
+
+    Additional tokens needed: $8.33 \times 10^{12} - 8 \times 10^{12} \approx 3.3 \times 10^{11}$, i.e. roughly **330 billion more tokens**. A modest extension of the run would tip the model across the line and pull in the full Article 55 regime.
+
+**3.** The EU AI Act caps fines as the *higher* of a fixed euro amount or a percentage of global annual turnover: EUR 35 M / 7% for prohibited practices, EUR 15 M / 3% for other violations, EUR 7.5 M / 1.5% for supplying incorrect information. Compute the maximum fine for each violation category for (a) a large provider with EUR 2 billion global annual turnover, and (b) a startup with EUR 100 million turnover. Which company is bound by the fixed cap rather than the percentage, and for which categories?
+
+??? note "Solution"
+
+    For each category, take $\max(\text{fixed cap}, \ \text{percentage} \times \text{turnover})$.
+
+    **(a) Turnover = EUR 2 billion ($2\times10^{9}$):**
+
+    - Prohibited: $\max(35\text{M},\ 0.07 \times 2\text{B}) = \max(35\text{M},\ 140\text{M}) = \textbf{EUR 140 M}$.
+    - Other violations: $\max(15\text{M},\ 0.03 \times 2\text{B}) = \max(15\text{M},\ 60\text{M}) = \textbf{EUR 60 M}$.
+    - Incorrect information: $\max(7.5\text{M},\ 0.015 \times 2\text{B}) = \max(7.5\text{M},\ 30\text{M}) = \textbf{EUR 30 M}$.
+
+    For the large provider the **percentage term dominates in every category** — the euro caps are irrelevant to it.
+
+    **(b) Turnover = EUR 100 million ($1\times10^{8}$):**
+
+    - Prohibited: $\max(35\text{M},\ 0.07 \times 100\text{M}) = \max(35\text{M},\ 7\text{M}) = \textbf{EUR 35 M}$ (fixed cap).
+    - Other violations: $\max(15\text{M},\ 0.03 \times 100\text{M}) = \max(15\text{M},\ 3\text{M}) = \textbf{EUR 15 M}$ (fixed cap).
+    - Incorrect information: $\max(7.5\text{M},\ 0.015 \times 100\text{M}) = \max(7.5\text{M},\ 1.5\text{M}) = \textbf{EUR 7.5 M}$ (fixed cap).
+
+    The **startup is bound by the fixed euro caps in all three categories**, because 7% of its turnover (EUR 7 M) is smaller than the EUR 35 M fixed floor, and likewise for the other rows. The "higher of" rule is what makes the euro caps bite hardest on smaller firms while the percentage bites hardest on large ones — a prohibited-practice fine of EUR 35 M is 35% of the startup's turnover but only 1.75% of the large provider's.
+
+**4.** The chapter's `write_log_record` note says to "include a chain hash for tamper evidence in high-assurance deployments." Implement that: modify the logging code so each record embeds the SHA-256 of the *previous* record's serialized JSON, forming a hash chain (a mini blockchain). Then write a verifier that walks a log file and returns the index of the first tampered record, or `None` if the chain is intact.
+
+??? note "Solution"
+
+    We add a `prev_hash` field to each record and derive it from the fully serialized previous line, so any edit to an earlier record invalidates every subsequent link. The genesis record chains from a fixed sentinel.
+
+    ```python
+    # chained_logger.py
+    # Tamper-evident extension of eu_ai_act_logger.py using a SHA-256 hash chain.
+
+    import hashlib
+    import json
+
+    GENESIS_HASH = "0" * 64   # sentinel prev_hash for the first record
+
+
+    def _record_digest(line: str) -> str:
+        """SHA-256 of one serialized JSON log line (the exact bytes written)."""
+        return hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+
+    def write_chained_record(record_dict: dict, log_path: str) -> str:
+        """
+        Append `record_dict` to log_path, injecting `prev_hash` = digest of the
+        last line already in the file (or GENESIS_HASH if empty).
+        Returns the digest of the line just written (the next record's prev_hash).
+        """
+        prev_hash = GENESIS_HASH
+        try:
+            with open(log_path, "r", encoding="utf-8") as fh:
+                lines = [ln for ln in fh.read().splitlines() if ln]
+            if lines:
+                prev_hash = _record_digest(lines[-1])
+        except FileNotFoundError:
+            pass  # first write -> genesis
+
+        record_dict = dict(record_dict)          # do not mutate caller's dict
+        record_dict["prev_hash"] = prev_hash
+        # Canonical serialization: sort keys so the digest is reproducible.
+        line = json.dumps(record_dict, sort_keys=True)
+
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+        return _record_digest(line)
+
+
+    def verify_chain(log_path: str):
+        """
+        Walk the log file and check that each record's prev_hash equals the
+        digest of the previous line. Returns the 0-based index of the first
+        record whose link is broken, or None if the chain is intact.
+        """
+        with open(log_path, "r", encoding="utf-8") as fh:
+            lines = [ln for ln in fh.read().splitlines() if ln]
+
+        expected_prev = GENESIS_HASH
+        for i, line in enumerate(lines):
+            rec = json.loads(line)
+            if rec.get("prev_hash") != expected_prev:
+                return i                     # this record's back-pointer is wrong
+            expected_prev = _record_digest(line)
+        return None
+    ```
+
+    Why it detects tampering: `verify_chain` recomputes `expected_prev` from the *actual bytes* of each stored line. If an attacker edits record $k$ (changing an `output_text`, say), the digest of line $k$ changes, so at index $k+1$ the stored `prev_hash` no longer matches the recomputed digest and the verifier returns $k+1$. Editing record $k$'s own `prev_hash` instead breaks the check at index $k$. To forge a clean chain the attacker would have to rewrite record $k$ *and every record after it* — and if the head digest is anchored externally (published, or in a write-once store as the chapter suggests), even that is detectable. Using `sort_keys=True` makes the serialization canonical so verification is deterministic regardless of dict insertion order.
+
+    ```python
+    # Smoke test
+    if __name__ == "__main__":
+        path = "/tmp/chain-demo.jsonl"
+        open(path, "w").close()
+        for i in range(3):
+            write_chained_record({"event_id": i, "output_text": f"out-{i}"}, path)
+        assert verify_chain(path) is None            # intact
+
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+        rec0 = json.loads(lines[0]); rec0["output_text"] = "TAMPERED"
+        lines[0] = json.dumps(rec0, sort_keys=True)
+        with open(path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        assert verify_chain(path) == 1               # break detected at next link
+        print("chain verification OK")
+    ```
+
+**5.** Extend the incident pipeline with deadline logic. Article 55(1)(b) gives a systemic-risk incident **2 days** to notify the EU AI Office; an Article 62 serious incident gives **15 days** to notify the national authority; `SIGNIFICANT` is internal-only (no external deadline) and `MINOR` needs no notification. Implement `notification_deadline_ms(report)` returning the absolute deadline timestamp (or `None` when no external notification is required), and `is_overdue(report, now_ms)` returning whether the deadline has passed without a notification having been sent.
+
+??? note "Solution"
+
+    We map each `IncidentSeverity` to a deadline measured from `detection_timestamp_ms`, reusing the enum and `AIIncidentReport` dataclass from the chapter's `incident_reporter.py`. `MINOR` and `SIGNIFICANT` carry no external clock, so the deadline is `None`.
+
+    ```python
+    # incident_deadlines.py
+    # Deadline extension for incident_reporter.py.
+
+    from incident_reporter import AIIncidentReport, IncidentSeverity
+
+    _MS_PER_DAY = 24 * 60 * 60 * 1000
+
+    # Days allowed for EXTERNAL notification, keyed by severity.
+    _DEADLINE_DAYS = {
+        IncidentSeverity.SYSTEMIC: 2,    # Art. 55(1)(b): EU AI Office
+        IncidentSeverity.SERIOUS: 15,    # Art. 62: national authority
+        # SIGNIFICANT and MINOR: no external deadline
+    }
+
+
+    def notification_deadline_ms(report: AIIncidentReport):
+        """
+        Absolute deadline (Unix epoch ms) by which an external notification
+        must be sent, or None if this severity requires no external report.
+        """
+        days = _DEADLINE_DAYS.get(report.severity)
+        if days is None:
+            return None
+        return report.detection_timestamp_ms + days * _MS_PER_DAY
+
+
+    def is_overdue(report: AIIncidentReport, now_ms: float) -> bool:
+        """
+        True iff an external notification was required, the deadline has passed,
+        and no notification has been sent (notification_timestamp_ms is None).
+        """
+        deadline = notification_deadline_ms(report)
+        if deadline is None:
+            return False                       # nothing was due
+        if report.notification_timestamp_ms is not None:
+            return False                       # already notified -> not overdue
+        return now_ms > deadline
+    ```
+
+    Notes on the design. The deadline is anchored to `detection_timestamp_ms` (the moment of "becoming aware"), matching the Act's wording. A `SYSTEMIC` incident detected at day 0 must be reported within `2 * 86_400_000` ms; if `now_ms` exceeds that and `notification_timestamp_ms` is still `None`, `is_overdue` returns `True`, which is exactly the condition a monitor should page on. Once `notify_authority` sets `notification_timestamp_ms`, the incident is no longer overdue even after the deadline — the obligation was met. `SIGNIFICANT`/`MINOR` return `None`/`False` because the chapter classifies them as internal-only, so they never fire an external-deadline alert.
+
+    ```python
+    # Sanity check
+    if __name__ == "__main__":
+        r = AIIncidentReport(
+            incident_id="x", detection_timestamp_ms=0.0,
+            severity=IncidentSeverity.SYSTEMIC, description="d",
+            affected_system="s", number_of_affected_persons=None,
+            harm_category="health", corrective_measures_taken="", ongoing=True,
+            detected_by="automated_monitor", assigned_to="team",
+        )
+        two_days = 2 * 24 * 60 * 60 * 1000
+        assert notification_deadline_ms(r) == two_days
+        assert is_overdue(r, now_ms=two_days + 1) is True     # missed it
+        r.notification_timestamp_ms = two_days - 1000         # notified in time
+        assert is_overdue(r, now_ms=two_days + 1) is False
+        print("deadline logic OK")
+    ```
