@@ -139,6 +139,26 @@ def expand_figures(raw):
     return _FIG_RE.sub(lambda m: "\n\n" + _load_figure(m.group(1)) + "\n\n", raw)
 
 
+# Interactive-tool include system: `{{tool:name}}` -> contents of tools/name.html (a
+# self-contained interactive widget; unlike figures, tools MAY contain an inline <script>).
+_TOOL_RE = re.compile(r"\{\{tool:([a-z0-9\-]+)\}\}")
+_TOOLS_DIR = os.path.join(ROOT, "tools")
+_TOOL_MISSING = set()
+
+
+def _load_tool(name):
+    path = os.path.join(_TOOLS_DIR, name + ".html")
+    if os.path.exists(path):
+        return open(path).read().strip()
+    _TOOL_MISSING.add(name)
+    return (f'<div class="viz viz-missing"><div class="viz-missing-note">'
+            f'Tool <code>{html.escape(name)}</code> not found.</div></div>')
+
+
+def expand_tools(raw):
+    return _TOOL_RE.sub(lambda m: "\n\n" + _load_tool(m.group(1)) + "\n\n", raw)
+
+
 # ----------------------------------------------------------------------------- collection model
 
 def load_manifest(name):
@@ -340,6 +360,7 @@ def build_collection(coll):
             placeholders += 1
 
         raw = expand_figures(raw)
+        raw = expand_tools(raw)
         body = md.convert(raw)
         body = coll.rewrite_links(body)
         toc_tokens = getattr(md, "toc_tokens", [])

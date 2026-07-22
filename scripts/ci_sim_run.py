@@ -41,6 +41,19 @@ def main():
         print("usage: ci_sim_run.py <test.py>", file=sys.stderr)
         return 2
     path = sys.argv[1]
+    # Simulate CPU-only CI faithfully: unset CUDA_HOME (so CUDA *compilation* fails as in CI),
+    # and make torch report no GPU (so runtime device selection lands on CPU, exactly like the
+    # CPU-only CI runner — rather than blanking CUDA_VISIBLE_DEVICES, which behaves differently
+    # on a machine that does have a CUDA driver).
+    import os
+    os.environ.pop("CUDA_HOME", None)
+    os.environ.pop("CUDA_PATH", None)
+    try:
+        import torch
+        torch.cuda.is_available = lambda: False
+        torch.cuda.device_count = lambda: 0
+    except Exception:
+        pass
     builtins.__import__ = _guarded_import
     src = open(path).read()
     g = {"__name__": "__main__", "__file__": path}

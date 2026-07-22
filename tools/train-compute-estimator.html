@@ -1,0 +1,69 @@
+<div class="viz-tool" id="tool-train-compute-estimator">
+  <div class="vt-title">Training compute &amp; cost estimator</div>
+  <div class="vt-grid">
+    <label>Parameters N
+      <span class="vt-in"><input id="tce-N" type="number" value="7" step="0.1" min="0"><select id="tce-Nu"><option value="1e6">M</option><option value="1e9" selected>B</option><option value="1e12">T</option></select></span>
+    </label>
+    <label>Training tokens D
+      <span class="vt-in"><input id="tce-D" type="number" value="2" step="0.1" min="0"><select id="tce-Du"><option value="1e9">B</option><option value="1e12" selected>T</option></select></span>
+    </label>
+    <label>Number of GPUs
+      <input id="tce-g" type="number" value="256" step="1" min="1">
+    </label>
+    <label>Peak TFLOP/s per GPU (bf16)
+      <input id="tce-tf" type="number" value="989" step="1" min="1">
+    </label>
+    <label>MFU (%)
+      <input id="tce-mfu" type="number" value="45" step="1" min="1" max="100">
+    </label>
+    <label>Price per GPU-hour ($)
+      <input id="tce-price" type="number" value="2.5" step="0.1" min="0">
+    </label>
+  </div>
+  <div class="vt-out" id="tce-out"></div>
+  <div class="vt-note">Training FLOPs use the standard <b>6ND</b> rule (forward+backward, dense). Memory uses the Adam mixed-precision <b>16 bytes/parameter</b> optimizer-state budget (fp16 param+grad + fp32 master+m+v), sharded evenly across GPUs (ZeRO-3/FSDP) — activation memory is extra and not shown.</div>
+  <style>
+    #tool-train-compute-estimator{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-train-compute-estimator .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-train-compute-estimator .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-train-compute-estimator label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-train-compute-estimator input, #tool-train-compute-estimator select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#94a3b8); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-train-compute-estimator .vt-in{ display:flex; gap:6px; } #tool-train-compute-estimator .vt-in input{ flex:1; min-width:0; }
+    #tool-train-compute-estimator .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-train-compute-estimator .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
+    #tool-train-compute-estimator .vt-stat .n{ font-size:1.28rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-train-compute-estimator .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-train-compute-estimator .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; }
+  </style>
+  <script>(function(){
+    var root=document.getElementById('tool-train-compute-estimator');
+    function v(id){return parseFloat(root.querySelector('#'+id).value)||0;}
+    function sel(id){return parseFloat(root.querySelector('#'+id).value)||1;}
+    function fmt(x){ if(!isFinite(x))return '—'; var a=Math.abs(x);
+      if(a>=1e12)return (x/1e12).toFixed(2)+'T'; if(a>=1e9)return (x/1e9).toFixed(2)+'B';
+      if(a>=1e6)return (x/1e6).toFixed(2)+'M'; if(a>=1e3)return (x/1e3).toFixed(1)+'k';
+      return x.toFixed(a<10?2:0); }
+    function money(x){ if(x>=1e6)return '$'+(x/1e6).toFixed(2)+'M'; if(x>=1e3)return '$'+(x/1e3).toFixed(1)+'k'; return '$'+x.toFixed(0); }
+    function upd(){
+      var N=v('tce-N')*sel('tce-Nu'), D=v('tce-D')*sel('tce-Du'), g=v('tce-g'),
+          tf=v('tce-tf')*1e12, mfu=v('tce-mfu')/100, price=v('tce-price');
+      var flops=6*N*D;
+      var effPeak=g*tf*mfu;                      // achieved FLOP/s across the cluster
+      var secs=flops/effPeak, hours=secs/3600, days=hours/24;
+      var gpuHours=g*hours, cost=gpuHours*price;
+      var memPerGpu=16*N/g;                       // bytes, Adam mixed-precision state, sharded
+      var out=[
+        ['n', fmt(flops)+' FLOP', 'Total training compute (6ND)'],
+        ['n', days.toFixed(days<2?2:1)+' days', 'Wall-clock ('+fmt(g)+' GPUs @ '+(mfu*100).toFixed(0)+'% MFU)'],
+        ['n', fmt(gpuHours)+' GPU-hr', 'GPU-hours'],
+        ['n', money(cost), 'Cost @ '+money(price).replace('$','$')+'/GPU-hr'],
+        ['n', (memPerGpu/1e9).toFixed(1)+' GB', 'Optimizer+model state / GPU'],
+        ['n', (D/N).toFixed(1), 'Tokens per parameter']
+      ];
+      root.querySelector('#tce-out').innerHTML=out.map(function(o){
+        return '<div class="vt-stat"><div class="n">'+o[1]+'</div><div class="l">'+o[2]+'</div></div>';}).join('');
+    }
+    root.querySelectorAll('input,select').forEach(function(e){e.addEventListener('input',upd);});
+    upd();
+  })();</script>
+</div>

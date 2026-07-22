@@ -232,6 +232,8 @@ for n in (6.7e9, 13e9, 70e9):
 
 ## Model FLOPs Utilization (MFU)
 
+{{tool:train-compute-estimator}}
+
 For *training* we want a single dimensionless number that says how well a run uses the hardware. **Model FLOPs Utilization** (MFU), introduced in the PaLM paper, is:
 
 $$
