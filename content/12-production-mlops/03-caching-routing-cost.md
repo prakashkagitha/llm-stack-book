@@ -535,6 +535,9 @@ Key design decisions:
 ```python
 import signal, sys
 
+class ServiceUnavailableError(Exception):
+    """Raised when the worker is draining and cannot accept new requests."""
+
 class InferenceWorker:
     def __init__(self):
         self.accepting_new = True

@@ -221,12 +221,12 @@ V = np.array([
 Q = np.array([[0.1, 3.0, 0.1, 0.0]])
 
 out, w = scaled_dot_product_attention(Q, K, V)
-print("attention weights:", np.round(w, 3))   # ~ [[0.13 0.74 0.13]]
-print("output:", np.round(out, 2))            # ~ [[20.1 20.1]] -> mostly value 1
+print("attention weights:", np.round(w, 3))   # ~ [[0.16 0.681 0.16]]
+print("output:", np.round(out, 2))            # ~ [[20. 20.]] -> mostly value 1
 print("rows sum to 1:", np.allclose(w.sum(axis=-1), 1.0))  # True
 ```
 
-The query points mostly along axis 1, so it scores highest against key 1, softmax concentrates ~0.74 of its mass there, and the output is pulled toward value 1 (`[20, 20]`) — a soft retrieval of "the value whose key best matches my query." Crank the query's second component up to, say, 30 and the weight on key 1 approaches 1.0 and the output approaches exactly `[20, 20]`: hard retrieval recovered in the limit. That single experiment *is* the intuition for everything attention does.
+The query points mostly along axis 1, so it scores highest against key 1, softmax concentrates ~0.68 of its mass there, and the output is pulled toward value 1 (`[20, 20]`) — a soft retrieval of "the value whose key best matches my query." Crank the query's second component up to, say, 30 and the weight on key 1 approaches 1.0 and the output approaches exactly `[20, 20]`: hard retrieval recovered in the limit. That single experiment *is* the intuition for everything attention does.
 
 ## Causal & Padding Masks: Same Machinery, Different Information Flow
 

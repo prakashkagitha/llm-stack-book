@@ -132,7 +132,7 @@ def my_func(x):
 
 explanation = dynamo.explain(my_func)(torch.randn(5))
 print(explanation.graphs)          # Two subgraphs
-print(explanation.graph_break_reasons)  # "Data-dependent control flow"
+print(explanation.break_reasons)  # "Data-dependent control flow"
 ```
 
 {{fig:dynamo-graph-breaks-subgraphs}}
@@ -226,7 +226,7 @@ torch._dynamo.config.verbose = True
 
 # Alternatively, use the explain() API:
 explanation = torch._dynamo.explain(model)(example_input)
-for reason in explanation.graph_break_reasons:
+for reason in explanation.break_reasons:
     print(reason)
 ```
 
@@ -522,9 +522,13 @@ import torch._dynamo
 model = torch.compile(model, dynamic=True)
 
 # More surgical control with torch._dynamo.mark_dynamic
+# mark_dynamic must be called on the input tensor BEFORE it enters a
+# compiled region — calling it from inside a @torch.compile'd function
+# raises "Attempt to trace forbidden callable".
+torch._dynamo.mark_dynamic(x, 0)   # dim 0 is dynamic
+
 @torch.compile
 def forward(x):
-    torch._dynamo.mark_dynamic(x, 0)   # dim 0 is dynamic
     return model(x)
 ```
 

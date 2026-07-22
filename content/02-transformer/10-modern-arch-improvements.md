@@ -489,8 +489,8 @@ z = torch.tensor([-100.0, -30.0, -10.0, 0.0, 10.0, 30.0, 100.0])
 capped = soft_cap(z, cap=30.0)
 print("Raw    :", z.tolist())
 print("Capped :", [f"{v:.2f}" for v in capped.tolist()])
-# Output:  Capped: [-30.00, -28.59, -24.88, 0.00, 24.88, 28.59, 30.00]
-# Note: 100 -> 30, 30 -> 28.59 (compressed, not clipped)
+# Output:  Capped: [-29.92, -22.85, -9.65, 0.00, 9.65, 22.85, 29.92]
+# Note: 100 -> 29.92, 30 -> 22.85 (compressed, not clipped)
 ```
 
 ---
