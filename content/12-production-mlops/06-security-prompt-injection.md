@@ -750,7 +750,7 @@ Red-teaming
     **Recent advances (2023–2026)**
 
     - [Anil et al. (Anthropic), *Many-shot Jailbreaking* (NeurIPS 2024)](https://www.anthropic.com/research/many-shot-jailbreaking) — demonstrates that filling the context window with fabricated compliant examples overrides RLHF training; attack strength follows a power law in the number of shots.
-    - [Debenedetti et al. (Google), *Defeating Prompt Injections by Design* (2025)](https://arxiv.org/abs/2503.18813) — introduces CaMeL, a capability-tracking system layer that enforces data-flow policies around the LLM agent, achieving near-zero injection success on benchmark attacks for GPT-4o.
+    - [Debenedetti et al. (Google), *Defeating Prompt Injections by Design* (2025)](https://arxiv.org/abs/2503.18813) — introduces CaMeL, a capability-tracking system layer that separates control and data flow around the LLM agent; solves 77% of AgentDojo benchmark tasks with provable security guarantees (vs. 84% for an undefended baseline), trading a small utility cost for architectural injection resistance.
 
     **Open-source & tools**
 
@@ -775,7 +775,7 @@ Red-teaming
 
 - **Bai et al., "Constitutional AI: Harmlessness from AI Feedback" (2022)** — Anthropic; the foundational paper on using AI feedback for safety alignment that injection defenses build upon.
 
-- **OWASP Top 10 for Large Language Model Applications (2023, updated 2024)** — industry-maintained list of LLM-specific vulnerabilities; LLM01 is prompt injection. Available at owasp.org/www-project-top-10-for-large-language-model-applications/.
+- **OWASP Top 10 for Large Language Model Applications (2023, since migrated to the OWASP GenAI Security Project's 2025 edition)** — industry-maintained list of LLM-specific vulnerabilities; LLM01 is prompt injection. Current version at genai.owasp.org/llm-top-10/.
 
 - **Willison, "Prompt injection: What's the worst that could happen?"** — Simon Willison's blog has the most consistently updated practitioner writing on prompt injection defenses; start with his "dual LLM pattern" post.
 

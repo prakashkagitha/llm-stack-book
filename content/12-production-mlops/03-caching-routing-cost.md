@@ -154,7 +154,7 @@ Semantic caching integrates naturally with RAG systems (see [Retrieval-Augmented
 
 Distinct from the application-level caches above, providers like Anthropic (prompt caching) and OpenAI (caching) offer server-side KV-cache reuse for repeated prompt prefixes. If you send a 2,000-token system prompt on every call, the provider can skip recomputing the key-value tensors for that prefix after the first request.
 
-The economics are significant. Anthropic's prompt caching charges roughly 10% of the normal input price for cache-hit tokens (as of 2025). For a 2,000-token system prompt at \$0.003/1K tokens:
+The economics are significant. Anthropic's prompt caching charges roughly 10% of the normal input price for cache-hit tokens — a rate that has held steady through 2026 — plus a modest premium (roughly 1.25× to 2× the base input price, depending on cache TTL) on the initial write. For a 2,000-token system prompt at \$0.003/1K tokens:
 
 - Without caching: 2,000 tokens × \$0.003/1K = \$0.006 per call
 - With caching (after first call): 2,000 tokens × \$0.0003/1K = \$0.0006 per call
@@ -671,7 +671,7 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    LLM cost control has matured into a well-structured engineering discipline: semantic caching, model-routing cascades, and provider-side KV-prefix caching can collectively cut production API spend by 50–90% without sacrificing quality. Open frameworks such as RouteLLM and GPTCache have made these techniques production-accessible, while research on non-prefix KV reuse (CacheBlend) and learned routers continues to push the frontier.
+    LLM cost control has matured into a well-structured engineering discipline: semantic caching, model-routing cascades, and provider-side KV-prefix caching can collectively cut production API spend by 50–90% without sacrificing quality. By 2026 these patterns are largely table stakes rather than bespoke engineering — bundled into unified LLM gateways (e.g., LiteLLM) alongside purpose-built routing frameworks such as RouteLLM, and SGLang's RadixAttention has become a mainstream serving-layer default for KV-prefix reuse rather than a research novelty.
 
     **Foundational work**
 
@@ -681,15 +681,16 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
 
     **Recent advances (2023–2026)**
 
-    - [Ong et al., *RouteLLM: Learning to Route LLMs with Preference Data* (2024)](https://arxiv.org/abs/2406.18665) — trained routers reduce costs by up to 85% while maintaining 95% of strong-model quality across MT-Bench, MMLU, and GSM8K.
+    - [Ong et al., *RouteLLM: Learning to Route LLMs with Preference Data* (2024)](https://arxiv.org/abs/2406.18665) — trained routers that dynamically pick a strong or weak model per query, cutting cost by over 2× in the paper's benchmarks without compromising response quality (LMSYS's own follow-up blog post reports up to 85% cost savings while retaining 95% of GPT-4-level quality on some benchmarks — see "Go deeper" below).
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — introduces RadixAttention for automatic KV-prefix reuse across structured programs and multi-turn conversations.
     - [Yao et al., *CacheBlend: Fast LLM Serving for RAG with Cached Knowledge Fusion* (2024)](https://arxiv.org/abs/2405.16444) — extends prefix caching to non-prefix RAG chunks, reducing time-to-first-token by 2–3× without quality loss.
 
     **Open-source & tools**
 
-    - [zilliztech/GPTCache](https://github.com/zilliztech/GPTCache) — pluggable semantic cache library for LLM APIs; supports FAISS, Qdrant, and Milvus backends with drop-in LangChain/LlamaIndex integration.
+    - [BerriAI/litellm](https://github.com/BerriAI/litellm) — unified gateway/SDK for 100+ LLM providers with built-in request caching and router-based fallback/load-balancing across model deployments; the most common way production teams wire caching and routing together as of 2026.
+    - [zilliztech/GPTCache](https://github.com/zilliztech/GPTCache) — pluggable semantic cache library for LLM APIs; supports FAISS, Qdrant, and Milvus backends with drop-in LangChain/LlamaIndex integration. Feature development has slowed since 2024 (maintainers note they are no longer adding support for new model APIs) — still a solid reference implementation of the pattern, but prefer LiteLLM above for an actively-developed dependency.
     - [lm-sys/RouteLLM](https://github.com/lm-sys/routellm) — open-source routing framework from LMSYS; drop-in OpenAI-compatible client that redirects queries to cheap or strong models based on trained preference-data routers.
-    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance serving framework with RadixAttention prefix caching; achieves up to 6.4× higher throughput than baseline systems.
+    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance serving framework with RadixAttention prefix caching; achieves up to 6.4× higher throughput than baseline systems (verified against the original paper's abstract), and by 2026 supports current-generation accelerators (e.g., NVIDIA GB300 NVL72) alongside its original GPU targets.
 
     **Go deeper**
 

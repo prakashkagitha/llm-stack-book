@@ -375,7 +375,7 @@ $$
 P\!\left(\text{reject } H_0 \text{ at any time } t \leq \tau \mid H_0\right) \leq \alpha
 $$
 
-For Bernoulli outcomes, a practical implementation uses the Robbins confidence sequence — an always-valid confidence interval that shrinks as data accumulates. Many experimentation platforms (Statsig, Optimizely) now implement this by default.
+For Bernoulli outcomes, a practical implementation uses the Robbins confidence sequence — an always-valid confidence interval that shrinks as data accumulates. Many experimentation platforms (Statsig, Optimizely, GrowthBook) now implement this by default, often alongside CUPED and bandit-based adaptive traffic allocation in the same stats engine. (Statsig itself was acquired by OpenAI in a ~$1.1B all-stock deal announced in September 2025 — its founder became OpenAI's CTO of Applications — but the platform continues operating and serving outside customers.)
 
 ```python
 def always_valid_ci(
@@ -732,7 +732,7 @@ The lifecycle makes explicit that offline evaluation, shadow testing, canaries, 
     **Go deeper**
 
     - [Kohavi, Tang & Xu, *Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing* (Cambridge UP, 2020)](https://www.cambridge.org/core/books/trustworthy-online-controlled-experiments/D97B26382EB0EB2DC2019A7A7B518F59) — the definitive practitioner book on running experiments at scale, written by leaders from Microsoft, Google, and LinkedIn.
-    - [Statsig, *Beyond Prompts: A Data-Driven Approach to LLM Optimization* (2024)](https://www.statsig.com/blog/llm-optimization-online-experimentation) — end-to-end walkthrough of applying online A/B experimentation to prompt, model, and parameter tuning for LLM products.
+    - [Statsig, *Beyond Prompts: A Data-Driven Approach to LLM Optimization* (2025)](https://www.statsig.com/blog/llm-optimization-online-experimentation) — end-to-end walkthrough of applying online A/B experimentation to prompt, model, and parameter tuning for LLM products; Statsig was acquired by OpenAI in September 2025 but continues to operate its experimentation platform for outside customers.
 
 ## Further Reading
 

@@ -463,7 +463,7 @@ Rather than a general-purpose encoder classifier, Meta's **Llama Guard** (Inan e
 1. **In-context policy definition**: the harm taxonomy is provided as part of the prompt, so you can extend or modify policy without retraining.
 2. **Generative explanation**: the model can produce a natural-language reason for its decision, useful for audit trails.
 3. **Joint prompt+response classification**: the model reads the full conversation, capturing context that a shorter encoder would miss.
-4. **Open weights**: Llama Guard models (7B, 2B) are publicly available on HuggingFace, enabling on-premise deployment without sending user data to a third party.
+4. **Open weights**: Llama Guard models — the original 7B/2B checkpoints, Llama Guard 3 (8B, 1B, and an 11B vision variant), and the natively multimodal Llama Guard 4 (12B, dense, pruned from Llama 4 Scout, released April 2025 and unifying the prior text-only and vision-only lines) — are publicly available on HuggingFace, enabling on-premise deployment without sending user data to a third party.
 
 ```python
 # llama_guard_usage.py
@@ -757,7 +757,7 @@ Not all content categories carry the same stakes. A pragmatic architecture uses 
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Production safety stacks have matured from ad-hoc heuristics into layered, open-source ecosystems: decoder-based shield models (Llama Guard 3, WildGuard, Granite Guardian) now handle prompt/response classification with customizable harm taxonomies, while programmable guardrail frameworks (NeMo Guardrails, LlamaFirewall) add structured policy layers and agent-aware security on top of the base classifiers.
+    Production safety stacks have matured from ad-hoc heuristics into layered, open-source ecosystems: decoder-based shield models (Llama Guard — now in its natively multimodal 4th generation — WildGuard, Granite Guardian) handle prompt/response classification with customizable harm taxonomies, while programmable guardrail frameworks (NeMo Guardrails, LlamaFirewall) add structured policy layers and agent-aware security on top of the base classifiers.
 
     **Foundational work**
 
@@ -769,22 +769,24 @@ Not all content categories carry the same stakes. A pragmatic architecture uses 
     - [Rebedea et al., *NeMo Guardrails: A Toolkit for Controllable and Safe LLM Applications* (2023)](https://arxiv.org/abs/2310.10501) — programmable rails via a dialogue-management runtime, independent of the underlying LLM.
     - [Mazeika et al., *HarmBench: A Standardized Evaluation Framework for Automated Red Teaming and Robust Refusal* (2024)](https://arxiv.org/abs/2402.04249) — the standard benchmark for comparing jailbreak attacks and safety classifier robustness across 33+ target models.
     - [Han et al., *WildGuard: Open One-Stop Moderation Tools for Safety Risks, Jailbreaks, and Refusals of LLMs* (2024)](https://arxiv.org/abs/2406.18495) — NeurIPS 2024; lightweight open classifier covering prompt safety, response safety, and refusal detection in a single model.
-    - [Padhi et al., *Granite Guardian* (2024)](https://arxiv.org/abs/2412.07724) — IBM's open safeguard models covering social bias, jailbreaks, and RAG-specific hallucination risks with strong benchmark generalisation.
+    - [Padhi et al., *Granite Guardian* (2024)](https://arxiv.org/abs/2412.07724) — IBM's open safeguard models covering social bias, jailbreaks, and RAG-specific hallucination risks with strong benchmark generalisation; the lineage is now at Granite Guardian 3.3 (Aug. 2025), which added a "thinking mode" that emits reasoning before its safety verdict.
+    - [Meta, *Llama Guard 4* model card (Apr. 2025)](https://huggingface.co/meta-llama/Llama-Guard-4-12B) — a natively multimodal safeguard (12B, dense, pruned from a Llama 4 Scout checkpoint) that merges the prior text-only and vision-only Llama Guard 3 models into one classifier spanning 14 hazard categories over text-and-image prompts.
     - [Chennabasappa et al., *LlamaFirewall: An Open Source Guardrail System for Building Secure AI Agents* (2025)](https://arxiv.org/abs/2505.03574) — Meta's production agentic security stack: PromptGuard 2 (jailbreak detection), Agent Alignment Checks (chain-of-thought auditing), and CodeShield (insecure-code prevention).
 
     **Open-source & tools**
 
-    - [microsoft/presidio](https://github.com/microsoft/presidio) — fast PII detection and anonymisation across text, images, and structured data; the de facto standard for NER-based redaction in production LLM pipelines.
-    - [NVIDIA/NeMo-Guardrails](https://github.com/NVIDIA/NeMo-Guardrails) — Colang-based toolkit for adding input, dialog, retrieval, and output rails to any LLM application.
-    - [centerforaisafety/HarmBench](https://github.com/centerforaisafety/HarmBench) — open evaluation harness for running 18+ red-teaming attack methods against your safety stack.
+    - [data-privacy-stack/presidio](https://github.com/data-privacy-stack/presidio) — fast PII detection and anonymisation across text, images, and structured data; the de facto standard for NER-based redaction in production LLM pipelines, now maintained as an independent, open-governance project after transitioning out of Microsoft's GitHub org (the `presidio-analyzer`/`presidio-anonymizer` packages and APIs are unchanged).
+    - [NVIDIA/NeMo-Guardrails](https://github.com/NVIDIA/NeMo-Guardrails) — Colang-based toolkit for adding input, dialog, retrieval, and output rails to any LLM application; actively released (v0.23.0 as of mid-2026), with recent versions adding lightweight HuggingFace classifier rails and RAG context-bloat detection.
+    - [meta-llama/PurpleLlama](https://github.com/meta-llama/PurpleLlama) — Meta's umbrella safety-tooling repo hosting the full Llama Guard family, Prompt Guard, CodeShield, and LlamaFirewall in one place.
+    - [centerforaisafety/HarmBench](https://github.com/centerforaisafety/HarmBench) — open evaluation harness for running red-teaming attack methods against your safety stack.
 
 ## Further Reading
 
 - **Inan et al., "Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations," Meta AI, 2023** — the technical report introducing the Llama Guard model family and the safety taxonomy it uses.
 - **Bai et al., "Constitutional AI: Harmlessness from AI Feedback," Anthropic, 2022** — the foundational paper on using a written constitution for both training and inference-time self-critique.
-- **OpenAI, "OpenAI's Approach to AI Safety" and the "Instruction Hierarchy" technical report (2024)** — describes how system-prompt priority is trained into GPT-4-class models.
+- **OpenAI, "OpenAI's Approach to AI Safety" and the "Instruction Hierarchy" technical report (2024)** — describes how system-prompt priority is trained into instruction-following models, a training-level defense that later model generations have continued to build on.
 - **Röttger et al., "HarmBench: A Standardized Evaluation Framework for Automated Red Teaming and Robust Refusal," 2024** — the benchmark for evaluating safety classifier and jailbreak robustness.
-- **Microsoft Presidio** (GitHub: microsoft/presidio) — the open-source PII detection and anonymization library used widely in production LLM systems.
+- **Presidio** (GitHub: data-privacy-stack/presidio, formerly hosted under Microsoft's org) — the open-source PII detection and anonymization library used widely in production LLM systems.
 - **Rebedea et al., "NeMo Guardrails: A Toolkit for Controllable and Safe LLM Applications," NVIDIA, 2023** — describes a programmable guardrails framework with dialogue management and safety checks.
 - **Perez and Ribeiro, "Ignore Previous Prompt: Attack Techniques For Language Models," 2022** — the canonical early paper on prompt injection attacks, motivating the design of input guardrails.
 - **Ziegler et al., "Fine-Tuning Language Models from Human Preferences," OpenAI, 2019** — the paper that established RLHF as the primary alignment mechanism, providing the model-level foundation that guardrails complement.

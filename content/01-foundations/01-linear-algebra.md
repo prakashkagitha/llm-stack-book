@@ -93,7 +93,7 @@ Multiplying an $(m \times k)$ matrix by a $(k \times n)$ matrix costs $2mkn$ FLO
 - A single linear projection $W \in \mathbb{R}^{4096 \times 4096}$ applied to a batch $X \in \mathbb{R}^{B \times S \times 4096}$ costs $2 \cdot B \cdot S \cdot 4096^2 \approx 34 \times 10^9 \cdot B \cdot S$ FLOPs.
 - At batch size 1 and sequence length 512, that is roughly 17 GFLOPs per linear layer.
 
-Modern A100 GPUs deliver on the order of 312 TFLOPS in BF16. So in theory you can run hundreds of linear layers per second — but memory bandwidth is often the bottleneck, not raw FLOPs. See [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) for the full story.
+By 2026, flagship datacenter GPUs have moved well past the once-"modern" A100 (312 TFLOPS in BF16, circa 2020) through the Hopper (H100/H200) generation to NVIDIA's Blackwell (B200/GB200) and Blackwell Ultra (GB300) chips, each delivering roughly an order of magnitude more raw BF16 throughput than the A100. So in theory you can run enormous numbers of linear layers per second — but memory bandwidth is still often the bottleneck, not raw FLOPs. See [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) for the full story.
 
 ### Matrix multiplication in NumPy and PyTorch
 

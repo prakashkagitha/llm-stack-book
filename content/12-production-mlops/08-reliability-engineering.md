@@ -88,7 +88,7 @@ This tree is a triage guide, not a decision tree in the ML sense. You should che
 - Provider API error rate increases (5xx, 429, timeout).
 - TTFT or E2E latency p99 spike without change in traffic volume.
 - Quality drops suddenly on canary eval but prompt/retrieval show no change.
-- Provider status page (e.g., OpenAI's status.openai.com, Anthropic's status.anthropic.com) shows an incident.
+- Provider status page (e.g., OpenAI's status.openai.com, Anthropic's status.claude.com) shows an incident.
 
 **Immediate actions:**
 1. Check provider status page programmatically (see runbook code below).
@@ -269,7 +269,7 @@ class PromptRegistry:
 
 For self-hosted models, model rollback means reverting the serving deployment to a previous checkpoint. For API providers, you cannot directly control model versions, but you can:
 
-1. Pin a specific model version string (e.g., `gpt-4o-2024-08-06` instead of `gpt-4o`). Pinned versions are deprecated on a schedule, but they give you control over when to absorb a model update.
+1. Pin a specific model version string rather than a rolling alias, where the provider offers one (e.g., Anthropic's dated snapshot `claude-sonnet-4-5-20250929` instead of the floating `claude-sonnet-4-5` alias). Pinned versions are deprecated on a schedule, but they give you control over when to absorb a model update.
 2. Maintain a *shadow model* running the new version against 5% of traffic. Monitor quality SLI on both. Only switch 100% traffic after the shadow passes.
 3. If the provider offers no pinning and degrades quality, activate the secondary provider.
 
@@ -621,7 +621,7 @@ The gateway handles:
 1. **Health probing** — lightweight synthetic request every 30 s per provider.
 2. **Circuit breaking** — if a provider returns >5% errors in a 60-second window, open its circuit and route to the next provider.
 3. **Latency SLO enforcement** — if provider latency p95 exceeds budget, deprioritize (soft circuit break) and increase weight on the faster provider.
-4. **Model equivalence mapping** — map your internal model alias (e.g., `llm-v2`) to provider-specific model IDs (e.g., `gpt-4o-2024-08-06` or `claude-opus-4-5`).
+4. **Model equivalence mapping** — map your internal model alias (e.g., `llm-v2`) to provider-specific model IDs (e.g., `gpt-5.6-sol` or `claude-opus-5`).
 
 ```python
 import asyncio
@@ -873,8 +873,8 @@ War Room Checklist
 
     **Open-source & tools**
 
-    - [traceloop/openllmetry](https://github.com/traceloop/openllmetry) — OpenTelemetry-based instrumentation for LLM pipelines; provides standard span attributes for model calls, prompt versions, and retrieval stages across 10+ providers.
-    - [BerriAI/litellm](https://github.com/BerriAI/litellm) — Python SDK and proxy gateway (49k+ stars) unifying 100+ LLM providers with built-in fallbacks, circuit-breaker-style cooldowns, and per-provider spend tracking.
+    - [traceloop/openllmetry](https://github.com/traceloop/openllmetry) — OpenTelemetry-based instrumentation for LLM pipelines; provides standard span attributes for model calls, prompt versions, and retrieval stages across 15+ providers.
+    - [BerriAI/litellm](https://github.com/BerriAI/litellm) — Rust-core AI gateway with Python SDK (54k+ stars) unifying 100+ LLM providers with built-in fallbacks, circuit-breaker-style cooldowns, MCP gateway support, and per-provider spend tracking.
     - [LangSmith](https://www.langchain.com/langsmith) — trace-level observability platform for LLM agents; supports online evaluations, quality scoring, and PagerDuty/webhook alerting on production traces.
 
     **Go deeper**

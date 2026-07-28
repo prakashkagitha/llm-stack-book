@@ -443,7 +443,7 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
     - **Multi-model serving is a memory-management problem.** Multiplex LoRA adapters over a shared base, hot-swap whole models with an LRU/pinned cache, and statically partition only the few high-QPS models.
 
 !!! sota "State of the Art & Resources (2026)"
-    LLM serving systems have matured into a rich stack: continuous batching (Orca/vLLM) and PagedAttention are now table-stakes defaults, while prefill/decode disaggregation, KVCache-centric architectures (Mooncake), and multi-LoRA multiplexing define the production frontier for high-throughput, SLO-compliant fleets.
+    LLM serving systems have matured into a rich stack: continuous batching (Orca/vLLM) and PagedAttention are now table-stakes defaults, while prefill/decode disaggregation, KVCache-centric architectures (Mooncake), dedicated disaggregated-serving orchestration layers (NVIDIA Dynamo), and multi-LoRA multiplexing define the production frontier for high-throughput, SLO-compliant fleets.
 
     **Foundational work**
 
@@ -461,9 +461,10 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
 
     **Open-source & tools**
 
-    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the leading open-source serving engine (81k+ stars); PagedAttention, continuous batching, multi-LoRA, 200+ model architectures.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the leading open-source serving engine (87k+ stars); PagedAttention, continuous batching, multi-LoRA, 200+ model architectures.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance alternative with RadixAttention, disaggregated prefill/decode, powering 400k+ GPUs in production.
     - [NVIDIA/TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM) — NVIDIA's optimized inference library with custom attention kernels, speculative decoding, and Triton integration.
+    - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA's open-source datacenter-scale orchestration layer (2025) that runs alongside vLLM, SGLang, or TensorRT-LLM to coordinate disaggregated prefill/decode pools and KV-aware routing across multi-node clusters — a production instantiation of the disaggregation and cache-affinity ideas this chapter builds from first principles.
 
     **Go deeper**
 

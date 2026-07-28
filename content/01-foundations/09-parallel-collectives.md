@@ -250,9 +250,9 @@ Communication cost is not uniform across a cluster. You need to understand the p
 
 ### Intra-Node: NVLink and NVSwitch
 
-**NVLink** is NVIDIA's proprietary high-bandwidth GPU-to-GPU interconnect. On an H100 SXM server, each GPU has 18 NVLink 4.0 lanes, providing roughly 900 GB/s bidirectional bandwidth per GPU — vastly higher than PCIe Gen 5 (on the order of 128 GB/s bidirectional).
+**NVLink** is NVIDIA's proprietary high-bandwidth GPU-to-GPU interconnect. On an H100 SXM server, each GPU has 18 NVLink 4.0 lanes, providing roughly 900 GB/s bidirectional bandwidth per GPU — vastly higher than PCIe Gen 5 (on the order of 128 GB/s bidirectional). H100/H200 (NVLink 4) remain common training and inference hardware as of 2026, but the current frontier generation is Blackwell, whose fifth-generation NVLink roughly doubles per-GPU bandwidth to about 1.8 TB/s.
 
-**NVSwitch** is a crossbar switch that connects all GPUs on a node with full NVLink bandwidth — every GPU can communicate with every other GPU simultaneously at full speed, rather than routing through a chain. An 8-GPU DGX H100 uses four NVSwitch 3.0 chips, providing an effective 3.6 TB/s of all-to-all bandwidth within the node.
+**NVSwitch** is a crossbar switch that connects all GPUs on a node with full NVLink bandwidth — every GPU can communicate with every other GPU simultaneously at full speed, rather than routing through a chain. An 8-GPU DGX H100 uses four NVSwitch 3.0 chips, providing an effective 3.6 TB/s of all-to-all bandwidth within the node. NVIDIA's Blackwell-generation GB200 NVL72 rack extends this idea to rack scale: NVSwitch fabric ties 72 GPUs into a single NVLink domain with roughly 130 TB/s of aggregate GPU-to-GPU bandwidth, letting an all-to-all or all-reduce span far more GPUs before ever touching the slower inter-node network.
 
 This topology means:
 
@@ -267,8 +267,8 @@ NCCL exploits NVSwitch by using its own **all-reduce algorithm** that leverages 
 Between nodes, current clusters use **InfiniBand** (IB). Common configurations:
 
 - **HDR (200 Gb/s):** ~25 GB/s effective unidirectional per port
-- **NDR (400 Gb/s):** ~50 GB/s effective unidirectional per port
-- **XDR (800 Gb/s):** emerging in 2025 deployments
+- **NDR (400 Gb/s):** ~50 GB/s effective unidirectional per port, the mainstream choice in most H100/H200-era clusters
+- **XDR (800 Gb/s):** shipping since 2024 (e.g., NVIDIA Quantum-X800 switches) and increasingly common in new Blackwell-generation deployments as of 2026
 
 A cluster of nodes is connected through an IB fabric, often organized as a **fat-tree** or **dragonfly** topology, providing full bisection bandwidth in principle (but subject to hotspots in practice). The IB Host Channel Adapter (HCA) on each node connects the CPUs and GPUs to the fabric; GPU Direct RDMA (Remote Direct Memory Access) allows the NIC to read/write GPU HBM directly, bypassing the CPU.
 
@@ -621,7 +621,6 @@ Understanding this table is what separates an engineer who can debug a distribut
 
     **Recent advances (2021–2024)**
 
-    - [Li et al., *PyTorch Distributed: Experiences on Accelerating Data Parallel Training* (2020)](https://arxiv.org/abs/2006.15704) — details DDP gradient bucketing, hook-based overlap, and the design decisions in `torch.distributed`.
     - [Narayanan et al., *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM* (2021)](https://arxiv.org/abs/2104.04473) — demonstrates composing data, tensor, and pipeline parallelism across 3,072 GPUs; defines the 3D-parallelism collective pattern.
     - [Jiang et al., *MegaScale: Scaling Large Language Model Training to More Than 10,000 GPUs* (2024)](https://arxiv.org/abs/2402.15627) — production engineering report covering hierarchical collectives, IB topology tuning, and fault recovery at extreme scale.
 
@@ -630,10 +629,11 @@ Understanding this table is what separates an engineer who can debug a distribut
     - [NVIDIA/nccl](https://github.com/NVIDIA/nccl) — the authoritative implementation of GPU collective communication; topology-aware algorithm selection, NVLink and InfiniBand support.
     - [NVIDIA/nccl-tests](https://github.com/NVIDIA/nccl-tests) — benchmarking suite for measuring achieved bus-bandwidth across all NCCL collective operations; standard tool for cluster acceptance testing.
     - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — reference implementation of 3D-parallel transformer training; shows exactly which collectives fire in each parallelism dimension.
+    - [DeepSeek-AI/DeepEP](https://github.com/deepseek-ai/DeepEP) — open-source, high-throughput/low-latency all-to-all GPU kernels purpose-built for MoE dispatch/combine, the exact operation sketched in this chapter's `moe_dispatch` example; illustrates how far the all-to-all collective has been specialized since the vanilla `dist.all_to_all_single` path.
 
     **Go deeper**
 
-    - [PyTorch torch.distributed API docs](https://docs.pytorch.org/docs/2.7/distributed.html) — full API reference for process groups, backends, collective calls, and async operations.
+    - [PyTorch torch.distributed API docs](https://docs.pytorch.org/docs/2.13/distributed.html) — full API reference for process groups, backends, collective calls, and async operations.
     - [NVIDIA NCCL Documentation — Overview](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/overview.html) — official guide covering algorithm selection, topology detection, environment variables, and tuning.
     - [Understanding NCCL Tuning to Accelerate GPU-to-GPU Communication (NVIDIA Blog, 2025)](https://developer.nvidia.com/blog/understanding-nccl-tuning-to-accelerate-gpu-to-gpu-communication/) — explains NCCL's cost model, dynamic scheduler, and tuner-plugin interface for cluster-specific optimization.
 

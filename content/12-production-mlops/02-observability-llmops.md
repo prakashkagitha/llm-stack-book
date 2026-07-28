@@ -599,7 +599,7 @@ Beyond Langfuse, the ecosystem includes:
 - **Datadog LLM Observability**: Managed, enterprise-grade; integrates with existing Datadog alerts.
 - **OpenLIT**: OpenTelemetry-native SDK with native GPU metric collection, useful when running self-hosted inference.
 
-For organizations running self-hosted inference with vLLM or SGLang, expose the OpenAI-compatible `/metrics` endpoint that these servers natively provide, then scrape with Prometheus. vLLM emits metrics including `vllm:num_requests_running`, `vllm:gpu_cache_usage_perc`, and `vllm:generation_tokens_total` — see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for details.
+For organizations running self-hosted inference with vLLM or SGLang, expose the OpenAI-compatible `/metrics` endpoint that these servers natively provide, then scrape with Prometheus. vLLM emits metrics including `vllm:num_requests_running`, `vllm:kv_cache_usage_perc`, and `vllm:generation_tokens_total` — see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for details.
 
 ## The LLMOps Lifecycle and Continuous Improvement
 
@@ -657,7 +657,7 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
 {{fig:obs-burn-rate-vs-fixed-threshold}}
 
 !!! sota "State of the Art & Resources (2026)"
-    LLMOps observability has rapidly matured from ad-hoc logging into a principled discipline: OpenTelemetry GenAI semantic conventions now provide a vendor-neutral standard for LLM spans and metrics, while purpose-built platforms (Langfuse, Arize Phoenix, MLflow Tracing) offer production-grade trace storage, eval pipelines, and drift monitoring. The key challenge in 2025–2026 is scaling these practices to multi-agent systems with complex, nested execution graphs.
+    LLMOps observability has rapidly matured from ad-hoc logging into a principled discipline: OpenTelemetry GenAI semantic conventions — now developed in a dedicated `semantic-conventions-genai` repository and still marked "Development" status — provide a maturing vendor-neutral standard for LLM spans and metrics, while purpose-built platforms (Langfuse, Arize Phoenix, MLflow Tracing) offer production-grade trace storage, eval pipelines, and drift monitoring. The key challenge through 2026 remains scaling these practices to multi-agent systems with complex, nested execution graphs.
 
     **Foundational work**
 
@@ -666,8 +666,8 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
 
     **Recent advances (2023–2026)**
 
-    - [OpenTelemetry GenAI Semantic Conventions — Spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) — the emerging CNCF-backed standard for LLM span attributes (model, token counts, finish reason), now supported by Datadog, Google Cloud, AWS, and Azure.
-    - [OpenTelemetry GenAI Semantic Conventions — Metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/) — companion spec covering client-side metrics including time-to-first-token and throughput, enabling consistent dashboards across providers.
+    - [OpenTelemetry GenAI Semantic Conventions — Spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md) — the CNCF-backed standard for LLM span attributes (model, token counts, finish reason); the spec relocated from the main OpenTelemetry docs site into this dedicated repository and remains in "Development" status pending stabilization.
+    - [OpenTelemetry GenAI Semantic Conventions — Metrics](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md) — companion spec covering client-side metrics including time-to-first-token and throughput, enabling consistent dashboards across providers; also now maintained in the repository above.
     - [Jain, *An Introduction to Observability for LLM-based Applications using OpenTelemetry* (2024)](https://opentelemetry.io/blog/2024/llm-observability/) — official OpenTelemetry blog walkthrough for instrumenting LLM apps with OTel and exporting to Prometheus and Jaeger.
 
     **Open-source & tools**
@@ -691,7 +691,7 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
 - **Arize Phoenix** (github.com/Arize-ai/phoenix) — OTel-native tracing and embedding drift for LLMs and RAG.
 - **Google SRE Book, Chapter 5: Eliminating Toil** (sre.google/sre-book) — the error-budget and burn-rate alerting model that LLMOps adapts.
 - **Klaise et al., "Alibi Detect: Algorithms for Outlier, Adversarial and Drift Detection" (JMLR 2022)** — statistical toolkit for production drift detection including CUSUM and PSI.
-- **OpenTelemetry LLM Semantic Conventions** (opentelemetry.io/docs/specs/semconv/gen-ai/) — the emerging standard for LLM span attributes, maintained by the OTel community.
+- **OpenTelemetry GenAI Semantic Conventions** (github.com/open-telemetry/semantic-conventions-genai) — the emerging standard for LLM span attributes, maintained by the OTel community; relocated in 2025–2026 from the main OpenTelemetry docs site into this dedicated repository and still marked "Development" status.
 
 !!! key "Key Takeaways"
     - LLM observability requires all three pillars: distributed **traces** (per-request causal chains), **metrics** (aggregated time-series for TTFT, tokens, cost), and **logs** (verbatim prompts and responses for qualitative debugging).

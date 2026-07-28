@@ -294,6 +294,8 @@ Equivalently, $\lambda_{\max}(H) \leq L$ everywhere. The gradient doesn't change
 
 If $\eta > 1/L$, GD can overshoot and diverge. A common rule of thumb: start with $\eta = 1/L$ and use a learning rate finder or warmup (see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)) to tune from there.
 
+In practice, real neural network training does not stay safely inside this classical regime: Cohen et al. (2021) showed empirically that full-batch (and often mini-batch) gradient descent instead self-stabilizes at the "edge of stability," with the Hessian's largest eigenvalue hovering just above $2/\eta$ and the loss oscillating non-monotonically step-to-step while still trending down over longer horizons. This doesn't overturn the $\eta \lesssim 1/L$ intuition for *why* a learning rate has a stability ceiling — it shows that real training runs right at that ceiling rather than staying comfortably beneath it.
+
 ### The Condition Number
 
 For strongly convex functions (Hessian eigenvalues bounded below by $\mu > 0$), the **condition number** $\kappa = L / \mu$ governs convergence:
@@ -683,6 +685,7 @@ The full probabilistic picture of why the loss landscape is navigable — the st
     **Recent advances (2021–2026)**
 
     - [Foret et al., *Sharpness-Aware Minimization for Efficiently Improving Generalization* (2021)](https://arxiv.org/abs/2010.01412) — SAM adds a min-max perturbation step to explicitly seek flat minima; consistent gains across vision and NLP benchmarks.
+    - [Cohen et al., *Gradient Descent on Neural Networks Typically Occurs at the Edge of Stability* (ICLR 2021)](https://arxiv.org/abs/2103.00065) — empirically complicates the classical $\eta \leq 1/L$ story: real training self-stabilizes with sharpness hovering just above $2/\eta$ rather than staying below it.
 
     **Open-source & tools**
 
