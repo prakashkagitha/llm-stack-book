@@ -192,6 +192,8 @@ LLM judges tend to prefer longer responses, independent of quality. A response t
 3. Normalize scores by response length in your analysis pipeline to detect length artifacts.
 4. Test your judge's calibration by sampling response pairs where one is a padded version of the other.
 
+Public leaderboards now correct for this at the aggregation level: LMArena's **style control** adds answer length and markdown structure (headers, bold, lists) as covariates in its Bradley-Terry regression, and length is the dominant style factor — applying it demonstrably reshuffles rankings, pulling verbose-but-weaker models down.
+
 ### Self-Preference Bias
 
 When the judge model is the same as (or closely related to) one of the evaluated models, it tends to prefer its own outputs. GPT-4 as judge overrates GPT-4 responses. This is sometimes called the "narcissism" problem.
@@ -409,7 +411,7 @@ if __name__ == "__main__":
 
 ## Chatbot Arena and the Elo Rating System
 
-Chatbot Arena (Zheng et al., LMSYS, 2023) is the crowd-sourced human preference platform that pits two anonymous models against each other on a user-provided prompt. Millions of such pairwise battles are aggregated into a single ranking via the **Elo rating system**, originally designed for chess.
+Chatbot Arena (Zheng et al., LMSYS, 2023 — now operated as **LMArena** at arena.ai) is the crowd-sourced human preference platform that pits two anonymous models against each other on a user-provided prompt. Millions of such pairwise battles are aggregated into a single ranking via the **Elo rating system**, originally designed for chess. (The live leaderboard now fits a static Bradley-Terry MLE with style-control covariates rather than the streaming online-Elo update taught below; the online algorithm remains the clearest way to build intuition, and the two agree in the large-sample limit.)
 
 ### The Elo Model
 
@@ -739,7 +741,7 @@ async def bulk_judge(examples: list[dict], max_concurrency: int = 20) -> list[di
 
 ### Judge Cost Model
 
-For a daily evaluation run of 10,000 examples using GPT-4o (on the order of USD 5 per million input tokens as of mid-2025):
+For a daily evaluation run of 10,000 examples using a mid-tier frontier judge (on the order of a few USD per million input tokens as of writing; frontier judge pricing has trended down year over year):
 
 - Average prompt tokens: ~500 (system + question + response)
 - Average output tokens: ~150 (rationale + JSON)
@@ -771,7 +773,7 @@ For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Hai
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    LLM-as-a-Judge has become the standard backbone of automated evaluation pipelines since 2023, with a rich body of work characterizing its biases and open-source tooling now mature enough for production use. Dedicated open-source judge models (Prometheus) and length-debiased benchmarks (LC-AlpacaEval) have largely addressed early criticism about reliability, while crowd-sourced platforms like Chatbot Arena provide large-scale human-preference ground truth.
+    LLM-as-a-Judge has become the standard backbone of automated evaluation pipelines since 2023, with a rich body of work characterizing its biases and open-source tooling now mature enough for production use. Dedicated open-source judge models (Prometheus), synthetic-data-trained evaluators, and leaderboard-level debiasing (LMArena's Bradley-Terry style control, LC-AlpacaEval) have addressed much of the early criticism about reliability. That said, dedicated judge benchmarks (JudgeBench, 2024) show that even frontier judges remain near chance on the hardest reasoning/coding pairs — calibration against human labels is still mandatory. Crowd-sourced platforms like Chatbot Arena (now LMArena) provide large-scale human-preference ground truth.
 
     **Foundational work**
 
@@ -785,12 +787,13 @@ For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Hai
     - [Kim et al., *Prometheus 2: An Open Source Language Model Specialized in Evaluating Other Language Models* (2024)](https://arxiv.org/abs/2405.01535) — extends Prometheus to both absolute and pairwise grading; achieves 72–85% agreement with human judgments across benchmarks.
     - [Dubois et al., *Length-Controlled AlpacaEval: A Simple Way to Debias Automatic Evaluators* (2024)](https://arxiv.org/abs/2404.04475) — regression-based length normalization that removes the dominant verbosity bias from LLM-based win-rate estimates.
     - [Chiang et al., *Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference* (2024)](https://arxiv.org/abs/2403.04132) — describes the statistical backbone (Bradley-Terry model) of the Arena platform and its use as a large-scale human-preference ground truth.
+    - [Tan et al., *JudgeBench: A Benchmark for Evaluating LLM-based Judges* (2024; ICLR 2025)](https://arxiv.org/abs/2410.12784) — meta-evaluation on challenging response pairs; finds even strong judges barely beat random chance on hard knowledge/reasoning/math/coding items, a caution against over-trusting any single judge.
 
     **Open-source & tools**
 
-    - [prometheus-eval/prometheus](https://github.com/prometheus-eval/prometheus) — official repo for the Prometheus judge model family; includes training code, the Feedback Collection dataset, and inference utilities.
+    - [prometheus-eval/prometheus-eval](https://github.com/prometheus-eval/prometheus-eval) — official repo for the Prometheus judge model family (including multilingual M-Prometheus); the `prometheus-eval` package, training code, the Feedback Collection dataset, and inference utilities.
     - [tatsu-lab/alpaca_eval](https://github.com/tatsu-lab/alpaca_eval) — AlpacaEval harness with length-controlled win-rate; achieves 0.98 Spearman correlation with Chatbot Arena at under $10 per run.
-    - [openai/evals](https://github.com/openai/evals) — OpenAI's eval framework with model-graded eval templates and a community registry of benchmarks.
+    - [LMArena Style Control](https://arena.ai/blog/style-control) — how the live leaderboard debiases length and markdown formatting by adding them as Bradley-Terry regression covariates; length is the dominant style factor.
     - [confident-ai/deepeval](https://github.com/confident-ai/deepeval) — production-ready pytest-style LLM evaluation framework with 40+ built-in metrics including G-Eval, RAG faithfulness, and hallucination detection.
 
 ## Further Reading

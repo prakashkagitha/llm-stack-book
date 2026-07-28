@@ -326,7 +326,7 @@ for a, b in pairs:
 
 **MATH** (Hendrycks et al., 2021) is substantially harder: 12,500 competition math problems across algebra, geometry, number theory, and calculus, at levels AMC 8 through AIME. Difficulty is labeled 1–5; level 5 problems (olympiad-style) remain challenging even for top models.
 
-**AIME** (American Invitational Mathematics Examination) is now commonly used as a frontier discriminator. It is scored out of 15 (each problem worth 1 point), with no partial credit. The short integer answer format makes verification trivial while the mathematical depth is substantial. Frontier models in 2025 began scoring in the range of 5–12 on AIME I/II, a range previously only top human competitors reached.
+**AIME** (American Invitational Mathematics Examination) is now commonly used as a frontier discriminator. It is scored out of 15 (each problem worth 1 point), with no partial credit. The short integer answer format makes verification trivial while the mathematical depth is substantial. By 2025–2026 the strongest reasoning models score near the top of the scale on AIME — approaching saturation, a level previously only top human competitors reached — so each year's fresh contest (e.g., AIME 2025) is used as a contamination-controlled discriminator, and evaluators are increasingly moving to newer, harder olympiad sets as headroom on AIME disappears.
 
 **Olympiad-level benchmarks** (FrontierMath, OlympiadBench) push further, collecting unpublished research-level problems to prevent data contamination.
 
@@ -775,8 +775,8 @@ The data flywheel for reasoning models is: hard evals reveal failure modes → n
 
     - [Jimenez et al., *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* (2023)](https://arxiv.org/abs/2310.06770) — real-repo issue-fixing benchmark; SWE-bench Verified (2024) is the dominant coding-agent leaderboard target.
     - [Jain et al., *LiveCodeBench: Holistic and Contamination Free Evaluation of LLMs for Code* (2024)](https://arxiv.org/abs/2403.07974) — living benchmark adding post-cutoff competitive programming problems to prevent contamination.
-    - [Glazer et al., *FrontierMath: A Benchmark for Evaluating Advanced Mathematical Reasoning in AI* (2024)](https://arxiv.org/abs/2411.04872) — research-level unpublished math problems; frontier models solve under 2%, providing a non-saturating discriminator.
-    - [Xie et al., *OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments* (2024)](https://arxiv.org/abs/2404.07972) — full desktop-environment agentic eval; best models reach ~12% vs. human 72%.
+    - [Glazer et al., *FrontierMath: A Benchmark for Evaluating Advanced Mathematical Reasoning in AI* (2024)](https://arxiv.org/abs/2411.04872) — research-level unpublished math problems; at release (2024) frontier models solved under 2%, and although top reasoning models have since improved markedly it remains one of the hardest non-saturated math discriminators.
+    - [Xie et al., *OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments* (2024)](https://arxiv.org/abs/2404.07972) — full desktop-environment agentic eval; at launch (2024) the best agents reached only ~12% vs. ~72% for humans, a gap that has narrowed substantially as computer-use agents have matured.
 
     **Open-source & tools**
 

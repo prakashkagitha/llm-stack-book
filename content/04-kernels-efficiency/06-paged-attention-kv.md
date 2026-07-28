@@ -453,7 +453,7 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
 
     **Recent advances (2023–2026)**
 
-    - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — introduces RadixAttention, a radix-tree KV-cache index that generalises COW prefix sharing to arbitrary program structures, achieving up to 5× inference speedup.
+    - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — introduces RadixAttention, a radix-tree KV-cache index that generalises COW prefix sharing to arbitrary program structures, achieving up to 6.4× higher throughput than prior state-of-the-art inference systems.
     - [Prabhu et al., *vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention* (2024)](https://arxiv.org/abs/2405.04437) — leverages OS demand-paging to keep KV cache virtually contiguous, avoiding custom paged kernels while matching or beating PagedAttention throughput; accepted ASPLOS 2025.
     - [Hooper et al., *KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization* (2024)](https://arxiv.org/abs/2401.18079) — per-channel + non-uniform 4-bit/3-bit KV quantization enabling 10M-token contexts on a single A100; NeurIPS 2024.
     - [Ye et al., *FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving* (2025)](https://arxiv.org/abs/2501.01005) — composable attention kernels (paged, ragged, sparse) adopted by vLLM, SGLang, and TRT-LLM; MLSys 2025.

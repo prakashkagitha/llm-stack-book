@@ -24,7 +24,7 @@ The secondary benefit is velocity: a well-designed harness lets a practitioner a
 
 ## lm-evaluation-harness: Architecture and Mechanics
 
-The [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) (Gao et al.) is the de facto standard for open-model evaluation. It supports hundreds of tasks and is the backend for most open leaderboards, including the Open LLM Leaderboard on Hugging Face.
+The [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) (Gao et al.) is the de facto standard for open-model evaluation. It supports hundreds of tasks and is the backend for most open leaderboards, including the Hugging Face Open LLM Leaderboard, which stopped accepting new submissions in 2025 and is now a static archive.
 
 ### High-Level Architecture
 
@@ -1065,7 +1065,7 @@ When running a model on 50+ benchmarks and cherry-picking the best ones, you inf
 | Multi-metric per task | acc / acc_norm | accuracy + calibration + fairness + toxicity + efficiency |
 | Speed | Very fast (batched LL scoring) | Slower (full generation for most tasks) |
 | Reproducibility artifacts | JSON results + JSONL sample logs | structured JSON + web UI |
-| Leaderboard integration | Open LLM Leaderboard (HuggingFace) | HELM Leaderboard (Stanford CRFM) |
+| Leaderboard integration | Open LLM Leaderboard (HuggingFace, archived 2025) | HELM Leaderboard (Stanford CRFM) |
 | Custom task difficulty | Easy (YAML + optional Python) | Moderate (Python subclassing) |
 | Best for | Quick model comparisons, CI/CD integration | Multi-dimensional capability profiling |
 
@@ -1155,10 +1155,10 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
 
     **Open-source & tools**
 
-    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the de facto standard open-model eval framework; backs the Hugging Face Open LLM Leaderboard and supports 200+ tasks with log-likelihood and generation scoring.
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the de facto standard open-model eval framework; backed the Hugging Face Open LLM Leaderboard (archived in 2025) and still supports 200+ tasks with log-likelihood and generation scoring.
     - [stanford-crfm/helm](https://github.com/stanford-crfm/helm) — HELM's official Python package; multi-axis leaderboards covering capabilities, safety, MedHELM, and long-context evaluation.
     - [openai/evals](https://github.com/openai/evals) — OpenAI's eval framework and open-source benchmark registry; useful reference for generation-based and LLM-as-judge eval patterns.
-    - [Inspect AI](https://inspect.aisi.org.uk/) — UK AISI's open-source eval framework with 200+ pre-built evals, agent sandboxing, and multi-provider model support; particularly strong for agentic and safety evaluations.
+    - [Inspect AI](https://inspect.aisi.org.uk/) — open-source eval framework from the UK AI Security Institute and Meridian Labs, with 200+ pre-built evals, agent sandboxing, and multi-provider model support; particularly strong for agentic and safety evaluations.
 
     **Go deeper**
 

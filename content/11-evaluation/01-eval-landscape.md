@@ -72,7 +72,7 @@ $$
 
 **Why GSM8K saturated fast.** Frontier models exceeded 90 % on GSM8K by 2023. The problems are short and the arithmetic is tractable for any model that learned the step-by-step format. Once a model learns *how to write out* arithmetic reasoning, the benchmark mainly tests whether that format was in training data. This led to MATH and then to AIME (below).
 
-**AIME** (American Invitational Mathematics Examination). Problems from the real AIME competition test, where top high-school students in the US solve 15 very difficult integer-answer problems. A score of 4–5 out of 15 would historically have been considered noteworthy for language models; frontier reasoning models began surpassing that threshold around 2024–2025. Because new AIME exams are released yearly, contamination can be partially controlled by only evaluating on the most recent year's exam.
+**AIME** (American Invitational Mathematics Examination). Problems from the real AIME competition test, where top high-school students in the US solve 15 very difficult integer-answer problems. A score of 4–5 out of 15 would historically have been considered noteworthy for language models; frontier reasoning models began surpassing that threshold in 2024, and by 2026 the strongest reasoning models score near the top of the AIME range on recent exams, pushing the community toward harder, contamination-resistant math benchmarks such as FrontierMath (Glazer et al., 2024), on which frontier models still score in the single digits. Because new AIME exams are released yearly, contamination can be partially controlled by only evaluating on the most recent year's exam.
 
 ### Code: HumanEval and MBPP
 
@@ -110,7 +110,7 @@ BBH is typically reported with chain-of-thought prompting, making it a measure o
 
 **ARC-AGI** (Abstraction and Reasoning Corpus for Artificial General Intelligence, Chollet, 2019) is qualitatively different from all the above. Each task presents 3–5 input/output grid pairs where the grids contain colored cells, and the model must infer the transformation rule and apply it to a new test grid. The rules cannot be memorized from training data because they are novel compositions of simple visual primitives (reflection, tiling, counting, etc.).
 
-The benchmark is designed to test *fluid intelligence* — generalizing from a handful of examples to a novel rule — rather than crystallized knowledge or skill learned from large datasets. It proved very difficult for standard LLMs (scores in single digits for years); it attracted community attention during the ARC Prize challenge in 2024, where a combination of program synthesis and test-time compute approaches pushed scores meaningfully higher.
+The benchmark is designed to test *fluid intelligence* — generalizing from a handful of examples to a novel rule — rather than crystallized knowledge or skill learned from large datasets. It proved very difficult for standard LLMs (scores in single digits for years); it attracted community attention during the ARC Prize challenge in 2024, where a combination of program synthesis and test-time compute approaches pushed scores meaningfully higher. After frontier reasoning systems made rapid gains on the original benchmark, the ARC Prize team released **ARC-AGI-2** (2025), a harder successor on which frontier models initially scored far below the near-ceiling human baseline.
 
 ARC-AGI is important conceptually: it is a benchmark that *resists* the standard scaling law playbook, because more parameters and more tokens do not straightforwardly help if the capability is principled rule induction rather than pattern completion.
 
@@ -286,7 +286,7 @@ Contamination is not binary. There is a spectrum:
 
 Saturation occurs when frontier model performance clusters near the ceiling (90–100 %) so that benchmark scores no longer distinguish models. At that point, score differences are dominated by noise, ambiguous questions, and evaluation methodology choices rather than genuine capability differences.
 
-GSM8K crossed this threshold around 2023; HumanEval in 2024. MMLU approaches it: multiple frontier models score in the 85–90 % range. When a benchmark saturates, the community moves to harder variants (MMLU → MMLU-Pro) or new benchmarks (GSM8K → MATH → AIME).
+GSM8K crossed this threshold around 2023; HumanEval in 2024; by 2026 MMLU has effectively saturated as well, with frontier models clustering above 90 %, and GPQA — long considered frontier-hard — has been substantially cracked by reasoning models. When a benchmark saturates, the community moves to harder variants (MMLU → MMLU-Pro) or new benchmarks (GSM8K → MATH → AIME → FrontierMath), and the pursuit of an unsaturated frontier has driven newer, deliberately contamination-resistant suites such as Humanity's Last Exam and ARC-AGI-2.
 
 ### Floor Effects in Smaller Models
 
@@ -623,12 +623,14 @@ Reproducibility is a live problem. The same model evaluated with different harne
 
     **Recent advances (2023–2026)**
 
-    - [Rein et al., *GPQA: A Graduate-Level Google-Proof Q&A Benchmark* (2023)](https://arxiv.org/abs/2311.12022) — 448 PhD-level science questions where non-expert humans with internet access score ~34%; one of the last benchmarks not yet saturated by frontier models.
+    - [Rein et al., *GPQA: A Graduate-Level Google-Proof Q&A Benchmark* (2023)](https://arxiv.org/abs/2311.12022) — 448 PhD-level science questions where non-expert humans with internet access score ~34%; long a frontier-hard benchmark, though by 2026 the strongest reasoning models have pushed past the domain-expert level, motivating harder successors.
+    - [Phan et al., *Humanity's Last Exam* (2025)](https://arxiv.org/abs/2501.14249) — 2,500 expert-crafted, closed-ended questions across dozens of disciplines, each verifiable but not answerable via retrieval; designed as a deliberately unsaturated frontier-knowledge benchmark. Its companion [FrontierMath (Glazer et al., 2024)](https://arxiv.org/abs/2411.04872) plays the same role for research-level mathematics, where frontier models still score in the single digits.
     - [Wang et al., *MMLU-Pro: A More Robust and Challenging Multi-Task Language Understanding Benchmark* (2024)](https://arxiv.org/abs/2406.01574) — ten-choice questions with heavier reasoning load; NeurIPS 2024 Spotlight, replacing MMLU as the standard knowledge eval.
     - [Gema et al., *Are We Done with MMLU?* (2024)](https://arxiv.org/abs/2406.04127) — systematic audit finding pervasive label errors in MMLU; introduced MMLU-Redux (5,700 re-annotated questions) and showed reported scores are inflated.
     - [White et al., *LiveBench: A Challenging, Contamination-Limited LLM Benchmark* (2024)](https://arxiv.org/abs/2406.19314) — monthly-updated questions drawn from recent arXiv papers and news; auto-scored with objective ground truth, eliminating judge bias.
     - [Chiang et al., *Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference* (2024)](https://arxiv.org/abs/2403.04132) — crowdsourced pairwise Elo-style human evaluation with 240K+ votes; the dominant real-world usefulness signal.
     - [Chollet et al., *ARC Prize 2024: Technical Report* (2024)](https://arxiv.org/abs/2412.04604) — documents the ARC Prize competition where test-time training pushed ARC-AGI scores from 33 % to 55.5 %, revealing the limits of pure scaling for fluid-intelligence tasks.
+    - [Chollet et al., *ARC-AGI-2: A New Challenge for Frontier AI Reasoning Systems* (2025)](https://arxiv.org/abs/2505.11831) — harder successor to ARC-AGI after frontier reasoning systems made rapid gains, with a robust human baseline and finer-grained fluid-intelligence signal.
 
     **Open-source & tools**
 

@@ -16,7 +16,7 @@ $$
 
 This number — call it the machine's **ridge point** $\pi/\beta$, where $\pi$ is peak FLOP/s and $\beta$ is peak bytes/s — says: *the hardware can perform about 156 floating-point operations in the time it takes to read one byte from HBM.* If your kernel does fewer than ~156 FLOP per byte it touches, it will finish its arithmetic and then sit idle waiting for the next bytes to arrive. It is **memory-bound**. If it does more, the memory system keeps up and the arithmetic units are the bottleneck; it is **compute-bound**.
 
-On an H100 (SXM) the imbalance is even more extreme: roughly 3.35 TB/s of HBM3 bandwidth against close to 990 TFLOP/s of dense bf16 tensor-core throughput, for a ridge of roughly 295 FLOP/B. Each GPU generation has pushed FLOP/s up faster than bandwidth, so the ridge point keeps climbing and **more and more kernels fall into the memory-bound regime**. This is why so much of modern LLM systems work is about data movement, not arithmetic.
+On an H100 (SXM) the imbalance is even more extreme: roughly 3.35 TB/s of HBM3 bandwidth against close to 990 TFLOP/s of dense bf16 tensor-core throughput, for a ridge of roughly 295 FLOP/B. Each GPU generation has pushed FLOP/s up faster than bandwidth — a trend that continues through the Blackwell generation (B200/GB200), 2026's production data-center flagship — so the ridge point keeps climbing and **more and more kernels fall into the memory-bound regime**. This is why so much of modern LLM systems work is about data movement, not arithmetic.
 
 !!! note "Aside: why the asymmetry exists"
 
@@ -490,13 +490,13 @@ Despite these caveats, the roofline remains the most valuable single tool in per
     **Recent advances (2023–2026)**
 
     - [Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022)](https://arxiv.org/abs/2205.14135) — the canonical roofline-driven kernel redesign: avoids materializing the full attention matrix in HBM to cross the memory roof.
-    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — extends IO-aware attention to H100 hardware, exploiting async WGMMA and TMA instructions to push closer to the H100 compute roof.
+    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — extends IO-aware attention to H100 hardware, exploiting async WGMMA and TMA instructions to push closer to the H100 compute roof; the reference implementation has since added a FlashAttention-4 (CuTeDSL) kernel for Blackwell, in the same repo linked below.
     - [Yuan et al., *LLM Inference Unveiled: Survey and Roofline Model Insights* (2024)](https://arxiv.org/abs/2402.16363) — systematic survey that places every major LLM inference optimization (quantization, speculative decoding, sparsity) on a shared roofline framework with worked hardware numbers.
     - [Bi et al., *RooflineBench: A Benchmarking Framework for On-Device LLMs via Roofline Analysis* (2026)](https://arxiv.org/abs/2602.11506) — extends roofline analysis to edge/mobile hardware, identifies the operational-intensity regression as model depth grows, and evaluates MLA as a fix.
 
     **Open-source & tools**
 
-    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — official FlashAttention repo (v1–v4); the reference IO-aware CUDA kernel used in virtually every production LLM training stack.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — official FlashAttention repo (v1–v4, now including a CuTeDSL kernel for Hopper/Blackwell); the reference IO-aware attention implementation used in virtually every production LLM training stack.
     - [hahnyuan/LLM-Viewer](https://github.com/hahnyuan/LLM-Viewer) — open-source tool that computes per-layer arithmetic intensity, roofline position, and memory traffic for arbitrary LLM configs across hardware targets; companion to the Yuan et al. 2024 survey.
 
     **Go deeper**

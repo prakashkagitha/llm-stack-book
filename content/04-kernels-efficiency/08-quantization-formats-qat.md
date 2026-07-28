@@ -140,7 +140,7 @@ model = AutoModelForCausalLM.from_pretrained(
 Double quantization (also from QLoRA) applies a second quantization step to the scale factors themselves. Each group-128 scale is an FP32 value. With $g_2 = 256$ scales sharing a second-level scale (stored in FP8), the per-weight overhead of the primary scale is reduced from $32/128 = 0.25$ bits/weight to roughly $8/256 + 32/(256 \cdot 256) \approx 0.031 + 0.001 \approx 0.032$ bits/weight — an additional saving of about 0.22 bits/weight across the whole model.
 
 !!! example "Worked example: memory budget for a 70 B model"
-    A Llama-2-70B model has approximately 70 billion parameters. Let's compute memory under different quantization schemes.
+    Consider a 70B-parameter dense model (e.g., Llama 3.3 70B or a similarly sized open-weight model). Let's compute memory under different quantization schemes.
 
     **BF16 baseline:** $70 \times 10^9 \times 2 \text{ bytes} = 140 \text{ GB}$. Requires two 80 GB A100s minimum.
 
@@ -161,9 +161,11 @@ FP8 introduces a floating-point format at 8 bits. Two variants exist:
 - **E4M3:** 4 exponent bits, 3 mantissa bits. Dynamic range: roughly $[5.96 \times 10^{-8}, 448]$. Better for weights (need a wider range).
 - **E5M2:** 5 exponent bits, 2 mantissa bits. Wider dynamic range, less precision per number. Better for gradients during training.
 
-NVIDIA Hopper GPUs (H100, H200) introduced native FP8 Tensor Core support. The hardware performs FP8 × FP8 multiplications and accumulates in FP32, then scales and stores results in FP8 or FP16.
+NVIDIA Hopper GPUs (H100, H200) introduced native FP8 Tensor Core support, and the Blackwell generation (B200, GB200) carries FP8 forward while adding native 4-bit floating-point Tensor Cores as well. The hardware performs FP8 × FP8 multiplications and accumulates in FP32, then scales and stores results in FP8 or FP16.
 
 FP8 differs from INT8 in one crucial way: the scale granularity is coarser (per-tensor or per-row) and is baked into the hardware instruction as a scaling factor, rather than per-group. This makes FP8 better suited to weights and activations that are roughly uniform in magnitude, which is why FP8 shines for inference on GEMM-heavy forward passes (attention and FFN projections) but can degrade more than INT8 on outlier-heavy activations unless paired with SmoothQuant-style smoothing.
+
+On Blackwell, NVFP4 pushes this idea one step further into 4-bit floating point (E2M1: 1 sign, 2 exponent, 1 mantissa bit). It uses small 16-value micro-blocks, each with its own FP8 (E4M3) scale factor plus a single FP32 scale for the whole tensor — finer-grained than the 32-value blocks used by the open MXFP4 standard. NVIDIA reports roughly 1.8× lower memory footprint than FP8 with well under 1% accuracy degradation on language-modeling benchmarks; vLLM and TensorRT-LLM both support NVFP4 checkpoints (e.g., vLLM's `quantization="modelopt_fp4"`), and it is now being used for pretraining as well as inference (see *Pretraining Large Language Models with NVFP4* below), not just as a serving-time format.
 
 FP8 training is discussed in [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) and [FlashAttention 2 & 3: Work Partitioning, Warp Specialization & FP8](../04-kernels-efficiency/03-flash-attention-2-3.html).
 
@@ -223,6 +225,8 @@ The available k-quant types and their approximate sizes per weight:
 | Q5_K_S/M | 5.0–5.5 bits        | Near-BF16 quality on most models |
 | Q6_K     | 6.6 bits            | Essentially lossless for 7–13 B models |
 | Q8_0     | 8.0 bits            | INT8, simple scale-per-32-weights |
+
+GGUF has also picked up native 4-bit floating-point support alongside the integer k-quants: OpenAI's open-weight gpt-oss models ship natively in MXFP4, and llama.cpp added first-class MXFP4 loading (in collaboration with NVIDIA) so those weights run directly without a lossy conversion to a k-quant format.
 
 **Q4_K_M internal structure:** Each super-block covers 256 weights. It stores two fp16 super-block scales — `d` (applied to the sub-block scales) and `dmin` (applied to the sub-block mins) — plus 8 sub-block scales and 8 sub-block mins covering 8 sub-blocks of 32 weights each. Those 16 values (8 scales + 8 mins) are each quantized to 6 bits and packed into a 12-byte array. Individual weights are stored as 4-bit unsigned integers. This matches ggml's `block_q4_K` struct, which is the source of truth: `ggml_half d, dmin;` (the two fp16 super-block scales), `uint8_t scales[12];` (the sixteen 6-bit sub-block scales and mins), and `uint8_t qs[128];` (the 256 4-bit weights). The dequantization formula per weight is:
 
@@ -565,7 +569,7 @@ For a single-user, memory-bandwidth-bound decode scenario on an A100:
 | BF16         | 1× (baseline) | 1× |
 | INT8 W-only  | 0.5×          | ~1.5–1.8× |
 | INT4 W-only  | 0.25×         | ~2.5–3.5× |
-| FP8 (W+A)   | 0.5×          | ~2× (H100 only) |
+| FP8 (W+A)   | 0.5×          | ~2× (Hopper/Blackwell) |
 | INT8 W+A     | 0.5×          | ~1.8–2.2× |
 
 The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s hand-tuned INT4 GEMM kernels significantly outperform naive dequantize-then-FP16-GEMM approaches.
@@ -587,6 +591,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 |--------|--------|-------------|---------|---------------|
 | BF16   | 16     | —           | Any GPU | Training, highest quality |
 | FP8 E4M3 | 8   | Per-tensor  | H100+   | High-throughput inference |
+| FP4 (NVFP4) | 4 | Per-16-block (FP8 scale) | Blackwell only | Highest-throughput inference/training on B200/GB200 |
 | INT8 W-only | 8 | Per-col   | Any GPU | Drop-in quality-preserving compression |
 | INT8 W+A | 8  | Per-token   | Ampere+ | Highest server throughput |
 | NF4    | 4      | Per-group-64 | Any GPU | QLoRA base model |
@@ -600,7 +605,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
     - Double quantization compresses the per-group scale factors themselves (from FP32 to FP8), saving an additional ~0.22 bits/weight across the whole model — meaningful at 70 B scale.
     - QLoRA combines NF4 base model storage with BF16 LoRA adapters and paged optimizers, enabling full fine-tuning of a 65 B model on a single 48 GB GPU; gradients never need to pass through the NF4 rounding because the base model weights are frozen.
     - llama.cpp's GGUF k-quants (Q4_K_M, Q5_K_M, Q6_K) use block-level mixed precision with super-block and sub-block scales, offering a smooth tradeoff between file size and quality for CPU/edge deployment.
-    - FP8 (E4M3) inference on H100 GPUs achieves near-BF16 quality at roughly half the memory bandwidth, but requires per-tensor or per-row scaling and benefits from SmoothQuant-style activation smoothing.
+    - FP8 (E4M3) inference on Hopper and Blackwell GPUs achieves near-BF16 quality at roughly half the memory bandwidth, but requires per-tensor or per-row scaling and benefits from SmoothQuant-style activation smoothing; Blackwell further adds native FP4 (NVFP4) Tensor Cores for roughly another 1.8× memory reduction over FP8.
     - KV-cache quantization (INT8 or INT4 per-token) can halve or quarter KV memory overhead at long contexts; per-token scales are required because KV distributions vary dramatically across positions.
     - Quantization-aware training with the straight-through estimator (STE) allows gradient flow through the rounding operation by passing upstream gradients unchanged in the backward pass, at the cost of a biased gradient estimate.
     - As a rule of thumb: Q4_K_M / NF4 is the recommended default for 7–70 B models when maximizing quality-per-GB; INT8 W+A (SmoothQuant) is the right choice when maximizing server throughput on Ampere/Hopper GPUs.
@@ -608,7 +613,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Quantization has become the default deployment strategy for LLMs: FP8 W8A8 is the production standard on H100/H200 datacenters, INT4 weight-only (AWQ/GPTQ) dominates single-GPU server use, and GGUF k-quants (Q4_K_M) remain the go-to for CPU and edge inference — with rotation-based methods like QuaRot now enabling full W4A4 including KV cache.
+    Quantization has become the default deployment strategy for LLMs: FP8 W8A8 is the production standard on Hopper and Blackwell datacenters, INT4 weight-only (AWQ/GPTQ) dominates single-GPU server use, and GGUF k-quants (Q4_K_M) remain the go-to for CPU and edge inference — with rotation-based methods like QuaRot enabling full W4A4 including KV cache, and Blackwell's native NVFP4 format now pushing 4-bit floating point into both inference and pretraining.
 
     **Foundational work**
 
@@ -620,7 +625,8 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 
     - [Lin et al., *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration* (2023)](https://arxiv.org/abs/2306.00978) — protects 1 % of salient weights by per-channel activation scaling; MLSys 2024 Best Paper; now a first-class backend in vLLM and TGI.
     - [Ashkboos et al., *QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs* (2024)](https://arxiv.org/abs/2404.00456) — Hadamard rotation removes activation outliers end-to-end, enabling full W4A4 (weights, activations, and KV cache) with <0.5 PPL loss on Llama-2-70B.
-    - [Kurtic et al., *"Give Me BF16 or Give Me Death"? Accuracy-Performance Trade-Offs in LLM Quantization* (2024)](https://arxiv.org/abs/2411.02355) — 500 K+ evaluations across the Llama-3.1 family; finds FP8 W8A8 lossless, INT8 W8A8 only 1–3 % degradation, and W4A16 the most cost-efficient for synchronous serving.
+    - [Kurtic et al., *"Give Me BF16 or Give Me Death"? Accuracy-Performance Trade-Offs in LLM Quantization* (ACL 2025)](https://arxiv.org/abs/2411.02355) — 500 K+ evaluations across the Llama-3.1 family; finds FP8 W8A8 lossless, INT8 W8A8 only 1–3 % degradation, and W4A16 the most cost-efficient for synchronous serving.
+    - [NVIDIA et al., *Pretraining Large Language Models with NVFP4* (2025)](https://arxiv.org/abs/2509.25149) — trains a 12 B-parameter model on 10 T tokens natively in 4-bit floating point (NVFP4) on Blackwell, using random Hadamard rotations and 2D block scaling to match FP8-quality pretraining.
 
     **Open-source & tools**
 
@@ -631,7 +637,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
     **Go deeper**
 
     - [Hugging Face blog: *Making LLMs even more accessible with bitsandbytes, 4-bit quantization and QLoRA* (2023)](https://huggingface.co/blog/4bit-transformers-bitsandbytes) — step-by-step walkthrough of NF4, double quantization, and QLoRA in the Transformers ecosystem.
-    - [vLLM Quantization docs](https://docs.vllm.ai/en/latest/features/quantization/) — production reference covering AWQ, GPTQ, FP8 W8A8, INT8 W8A8, INT4 W4A16, and quantized KV cache in the leading open-source serving engine.
+    - [vLLM Quantization docs](https://docs.vllm.ai/en/latest/features/quantization/) — production reference covering AWQ, GPTQ, FP8 W8A8, INT8 W8A8, INT4 W4A16, NVFP4 (via NVIDIA Model Optimizer), and quantized KV cache in the leading open-source serving engine.
 
 ## Further Reading
 

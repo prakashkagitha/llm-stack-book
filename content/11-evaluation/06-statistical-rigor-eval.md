@@ -801,7 +801,7 @@ Bring it together with the skill this chapter exists to instill. When you look a
 
     - [Polo et al., *tinyBenchmarks: Evaluating LLMs with Fewer Examples* (ICML 2024)](https://arxiv.org/abs/2402.14992) — IRT-based method that estimates full-benchmark performance from ~100 curated items; shows MMLU rankings recoverable from 100 vs 14 000 items.
     - [Bowyer, Aitchison & Ivanova, *Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints* (ICML 2025 spotlight)](https://arxiv.org/abs/2503.01747) — demonstrates CLT-based CIs dramatically underestimate uncertainty on specialized small benchmarks; proposes frequentist and Bayesian alternatives.
-    - [Wu, Nair & Candès, *Efficient Evaluation of LLM Performance with Statistical Guarantees* (2025)](https://arxiv.org/abs/2601.20251) — Factorized Active Querying (FAQ) achieves up to 5× effective sample-size gains over baselines while preserving valid frequentist coverage.
+    - [Wu, Nair & Candès, *Efficient Evaluation of LLM Performance with Statistical Guarantees* (2026)](https://arxiv.org/abs/2601.20251) — Factorized Active Querying (FAQ) achieves up to 5× effective sample-size gains over baselines while preserving valid frequentist coverage.
     - [Ameli et al., *A Statistical Framework for Ranking LLM-Based Chatbots* (ICLR 2025)](https://arxiv.org/abs/2412.18407) — extends Bradley–Terry with a factored tie model and covariance structure for better-calibrated leaderboard intervals.
 
     **Open-source & tools**
@@ -812,7 +812,7 @@ Bring it together with the skill this chapter exists to instill. When you look a
 
     **Go deeper**
 
-    - [Cameron R. Wolfe, *Applying Statistics to LLM Evaluations* (2024)](https://cameronrwolfe.substack.com/p/stats-llm-evals) — practitioner-focused deep-dive covering CLT, clustered SEs, paired comparisons, and power analysis with worked examples.
+    - [Cameron R. Wolfe, *Applying Statistics to LLM Evaluations* (2026)](https://cameronrwolfe.substack.com/p/stats-llm-evals) — practitioner-focused deep-dive covering CLT, clustered SEs, paired comparisons, and power analysis with worked examples.
 
 ## Further reading
 

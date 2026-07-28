@@ -112,7 +112,7 @@ MEMIT (Meng et al., *Mass-Editing Memory in a Transformer*, 2022) generalizes RO
 
 ### 3.2 The drift problem and AlphaEdit
 
-Even MEMIT degrades under *sequential* batches (edit a batch, then another, then another). Each update changes the very key distribution that the *next* update's $C$ assumed. The model's preserved knowledge drifts. AlphaEdit (Fang et al., 2024) addresses this with a **null-space projection**: before applying an update, project it onto the null space of the preserved knowledge's key covariance, so that
+Even MEMIT degrades under *sequential* batches (edit a batch, then another, then another). Each update changes the very key distribution that the *next* update's $C$ assumed. The model's preserved knowledge drifts. AlphaEdit (Fang et al., ICLR 2025 oral) addresses this with a **null-space projection**: before applying an update, project it onto the null space of the preserved knowledge's key covariance, so that
 
 $$
 \Delta\,K_{\text{preserved}} \approx 0.
@@ -453,14 +453,14 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
 
     - [Hartvigsen et al., *Aging with GRACE: Lifelong Model Editing with Discrete Key-Value Adaptors* (NeurIPS 2023)](https://arxiv.org/abs/2211.11031) — memory-adapter approach that enables thousands of sequential edits while keeping base weights frozen.
     - [Cohen et al., *Evaluating the Ripple Effects of Knowledge Editing in Language Models* (TACL 2024)](https://arxiv.org/abs/2307.12976) — introduced the RippleEdits benchmark showing that editing one fact leaves multi-hop consequences inconsistent.
-    - [Fang et al., *AlphaEdit: Null-Space Constrained Knowledge Editing for Language Models* (2024)](https://arxiv.org/abs/2410.02355) — projects weight updates onto the null space of preserved-knowledge keys, dramatically reducing drift under long sequential editing.
+    - [Fang et al., *AlphaEdit: Null-Space Constrained Knowledge Editing for Language Models* (ICLR 2025, oral)](https://arxiv.org/abs/2410.02355) — projects weight updates onto the null space of preserved-knowledge keys (one extra line of code), dramatically reducing drift under long sequential editing; validated up to LLaMA-3-scale.
     - [Li et al., *The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning* (ICML 2024)](https://arxiv.org/abs/2403.03218) — benchmark for hazardous-capability removal and source of the RMU representation-misdirection unlearning method.
     - [Maini et al., *TOFU: A Task of Fictitious Unlearning for LLMs* (2024)](https://arxiv.org/abs/2401.06121) — clean-room unlearning benchmark using synthetic author biographies with retrained-from-scratch gold standard.
     - [Shi et al., *MUSE: Machine Unlearning Six-Way Evaluation for Language Models* (ICML 2024)](https://arxiv.org/abs/2407.06460) — six-desiderata evaluation (verbatim memorization, knowledge memorization, privacy, utility, scalability, sequential robustness) on realistic corpora.
 
     **Open-source & tools**
 
-    - [zjunlp/EasyEdit](https://github.com/zjunlp/EasyEdit) — ACL 2024 framework unifying ROME, MEMIT, GRACE, WISE, and others behind one API, including precomputed layer statistics; the standard starting point for practitioners.
+    - [zjunlp/EasyEdit](https://github.com/zjunlp/EasyEdit) — ACL 2024 framework unifying ROME, MEMIT, GRACE, WISE, AlphaEdit, and many newer editors (AnyEdit, UltraEdit, and more) behind one API, including precomputed layer statistics; the standard starting point for practitioners. Actively maintained through 2026 (Transformers 5.x support, multi-GPU editing), with a sibling **EasyEdit2** for real-time inference-time steering.
 
     **Go deeper**
 

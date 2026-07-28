@@ -84,7 +84,7 @@ The key definitions:
       = 3.6 \times 10^{25} \text{ FLOPs}
     $$
 
-    This *exceeds* $10^{25}$, triggering systemic-risk obligations. In practice as of 2025, models from Google (Gemini Ultra), OpenAI (GPT-4 class), Anthropic (Claude 3 Opus class), and Meta (Llama 3 405B trained at scale) are in or near this territory. Most research-scale and open models sit below it.
+    This *exceeds* $10^{25}$, triggering systemic-risk obligations. By 2026 this is no longer an exclusive club: essentially every frontier flagship model — successive releases from OpenAI, Google DeepMind, Anthropic, Meta, xAI, and DeepSeek — is trained well above the threshold, and even the 2023–2024 generation (GPT-4, Gemini Ultra, Claude 3 Opus, and Meta's Llama 3.1 405B) already sat in or near this territory. Most research-scale and smaller open-weight models still sit below it.
 
 ### GPAI Obligations for All Providers (Article 53)
 
@@ -887,7 +887,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    AI governance and compliance has rapidly moved from voluntary guidance to binding law: the EU AI Act is now in full enforcement for GPAI models (Aug 2025) and high-risk applications (Aug 2026), while the NIST AI RMF and ISO/IEC 42001 have become the operational backbone that organisations use to satisfy those obligations. The resources below cover the foundational papers, the primary regulatory texts, and the open-source tooling engineers need to build compliant systems.
+    AI governance and compliance has rapidly moved from voluntary guidance to binding law: the EU AI Act's GPAI-model obligations have been in force since Aug 2025 (with the Commission-endorsed GPAI Code of Practice as the primary compliance route), and the high-risk application regime — including fines up to 7% of global turnover — takes effect Aug 2026, while the NIST AI RMF and ISO/IEC 42001 have become the operational backbone that organisations use to satisfy those obligations. The resources below cover the foundational papers, the primary regulatory texts, and the open-source tooling engineers need to build compliant systems.
 
     **Foundational work**
 

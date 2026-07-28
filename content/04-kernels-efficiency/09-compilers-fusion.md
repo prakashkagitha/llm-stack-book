@@ -48,7 +48,7 @@ A `matmul` followed by an elementwise activation can be fused by computing tiles
 {{fig:fusion-dram-roundtrip-vs-fused}}
 
 
-The Triton language (covered in depth in [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)) makes writing such fused kernels tractable. TorchInductor, the backend behind `torch.compile`, generates Triton code automatically.
+The Triton language (covered in depth in [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)) makes writing such fused kernels tractable. TorchInductor, the backend behind `torch.compile`, generates Triton code automatically. For kernels that still need to be hand-authored, PyTorch's newer Helion DSL adds an autotuned, Python-embedded layer on top of Triton: you write ordinary PyTorch-style tensor code and Helion searches over indexing, tiling, and pipelining strategies to compile it down to Triton (and, more recently, to TPU Pallas), narrowing the gap between hand-tuned kernels and what `torch.compile` fuses automatically.
 
 ## CUDA Graphs: Eliminating CPU Launch Overhead
 
@@ -554,7 +554,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     - `torch.compile` composes with FSDP, DDP, and fused optimizers; compile the model before wrapping with FSDP, and use `fused=True` in AdamW to reduce optimizer kernel count.
 
 !!! sota "State of the Art & Resources (2026)"
-    `torch.compile` is now the standard path to production-quality training and inference performance in PyTorch, with TorchDynamo + TorchInductor delivering 1.4–2.3× geomean speedups across hundreds of real-world models; CUDA graphs, Triton-based code generation, and dynamic-shape support continue to mature rapidly through 2025–2026.
+    `torch.compile` is the standard path to production-quality training and inference performance in PyTorch, with TorchDynamo + TorchInductor delivering 1.4–2.3× geomean speedups across hundreds of real-world models; CUDA graph support, Triton-based code generation, and dynamic-shape handling have matured substantially since the PyTorch 2.0 launch. The newest addition to the stack is Helion, PyTorch's higher-level autotuned kernel-authoring DSL that compiles down to Triton (and now TPU Pallas), extending the same fusion/autotuning philosophy above hand-written Triton.
 
     **Foundational work**
 
@@ -570,6 +570,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 
     - [triton-lang/triton](https://github.com/triton-lang/triton) — the Triton GPU programming language and compiler; TorchInductor generates Triton as its primary GPU backend.
     - [pytorch/pytorch](https://github.com/pytorch/pytorch) — the PyTorch source; `torch/_dynamo`, `torch/_inductor`, and `torch/_functorch` contain the full compile stack.
+    - [pytorch/helion](https://github.com/pytorch/helion) — PyTorch's Python-embedded DSL for authoring autotuned ML kernels that compile down to Triton (and TPU Pallas); a higher-level complement to hand-written Triton and to Inductor's automatic fusion.
 
     **Go deeper**
 

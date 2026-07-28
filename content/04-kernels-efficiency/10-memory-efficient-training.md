@@ -281,7 +281,7 @@ DeepSpeed's ZeRO-Offload and ZeRO-Infinity implement optimizer-state and paramet
 }
 ```
 
-With ZeRO-3 + CPU offload, the GPU holds only a working subset of parameters and optimizer states at any time, allowing effective training of 30B+ models on a single GPU — at the cost of significantly reduced throughput (roughly 5–10× slowdown versus in-memory training due to PCIe bandwidth saturation).
+With ZeRO-3 + CPU offload, the GPU holds only a working subset of parameters and optimizer states at any time, allowing effective training of 30B+ models on a single GPU — at the cost of significantly reduced throughput (roughly 5–10× slowdown versus in-memory training due to PCIe bandwidth saturation). Newer offload engines attack this stall directly: DeepSpeed's ZenFlow (2025) updates only the highest-importance gradients synchronously on GPU and defers the rest to asynchronous, double-buffered CPU accumulation, overlapping PCIe transfer with GPU compute; DeepSpeed reports up to 5× end-to-end speedup over ZeRO-Offload with over 85% fewer GPU stalls on A100/H100 nodes.
 
 ### Gradient Accumulation as an Offloading Strategy
 
@@ -662,6 +662,10 @@ optimizer = bnb.optim.Adam8bit(
 # Drop-in replacement for torch.optim.Adam; uses ~4x less optimizer state memory.
 ```
 
+### Muon: A Single-Buffer Alternative to Adam
+
+A different lever, orthogonal to compressing Adam's states, is to replace Adam itself. Muon (an orthogonalized-momentum optimizer scaled to production LLM training by Liu et al., *Muon is Scalable for LLM Training*, 2025) applies Newton–Schulz iteration to orthogonalize the momentum matrix of each 2D weight, and needs only a single momentum buffer rather than Adam's first *and* second moments — roughly halving optimizer-state memory for the hidden-weight matrices that dominate transformer parameter counts. It saw rapid adoption in 2025–2026 pretraining and full-fine-tuning runs as a memory- and compute-efficient AdamW alternative; it is complementary to, not a substitute for, the PEFT techniques in this chapter, since LoRA already eliminates almost all optimizer state on frozen layers regardless of which optimizer updates the adapters.
+
 ### Gradient Accumulation and FP16 Gradients
 
 When gradient accumulation is used, gradients are held for multiple micro-batches. Using fp16 (rather than fp32) gradient buffers halves the $2P$ bytes to $P$ bytes. PyTorch's `autocast` + `GradScaler` handles this automatically in mixed-precision mode:
@@ -749,7 +753,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
 ```
 
 !!! sota "State of the Art & Resources (2026)"
-    Memory-efficient training has matured into a layered stack: activation checkpointing, ZeRO-stage offloading, and LoRA/QLoRA compose cleanly and together enable fine-tuning of 70B+ models on consumer hardware. Active research frontiers in 2024–2026 include gradient-space low-rank projections (GaLore) for full-parameter pretraining on tight budgets and weight-decomposed adaptation (DoRA) for higher-fidelity LoRA updates.
+    Memory-efficient training has matured into a layered stack: activation checkpointing, ZeRO-stage offloading, and LoRA/QLoRA compose cleanly and together enable fine-tuning of 70B+ models on consumer hardware. Weight-decomposed adaptation (DoRA) and gradient low-rank projection (GaLore) — both ICML 2024 orals — are now standard entries in the PEFT toolkit alongside LoRA/QLoRA. The 2025–2026 frontier has extended the stack in two further directions: momentum-only optimizers like Muon cut Adam's optimizer-state overhead directly (rather than only shrinking it via PEFT), and stall-free offload engines like ZenFlow close much of the throughput gap that has historically made CPU offloading a last resort.
 
     **Foundational work**
 
@@ -762,6 +766,8 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
     - [Rajbhandari et al., *ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning* (2021)](https://arxiv.org/abs/2104.07857) — extends ZeRO to NVMe offloading, enabling models beyond GPU + CPU DRAM capacity.
     - [Liu et al., *DoRA: Weight-Decomposed Low-Rank Adaptation* (2024)](https://arxiv.org/abs/2402.09353) — decomposes weights into magnitude + direction; ICML 2024 oral, consistently outperforms LoRA on instruction-tuning benchmarks.
     - [Zhao et al., *GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection* (2024)](https://arxiv.org/abs/2403.03507) — projects gradients (not weights) to a low-rank subspace, enabling full-parameter pretraining of a 7B model on a 24 GB GPU; ICML 2024 oral.
+    - [Liu et al., *Muon is Scalable for LLM Training* (2025)](https://arxiv.org/abs/2502.16982) — scales the orthogonalized-momentum Muon optimizer (one momentum buffer instead of Adam's two) to production pretraining, roughly halving optimizer-state memory on 2D weights.
+    - [PyTorch blog: *ZenFlow — Stall-Free Offloading Engine for LLM Training* (2025)](https://pytorch.org/blog/zenflow-stall-free-offloading-engine-for-llm-training/) — importance-aware top-k gradient updates with asynchronous CPU accumulation; up to 5× speedup over ZeRO-Offload with >85% fewer GPU stalls.
 
     **Open-source & tools**
 
@@ -771,7 +777,6 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
 
     **Go deeper**
 
-    - [HuggingFace blog: *Making LLMs even more accessible with bitsandbytes, 4-bit quantization and QLoRA* (2023)](https://huggingface.co/blog/4bit-transformers-bitsandbytes) — practical walkthrough of loading and fine-tuning with 4-bit NF4, with Colab notebooks.
     - [Sebastian Raschka, *Practical Tips for Finetuning LLMs Using LoRA* (2023)](https://magazine.sebastianraschka.com/p/practical-tips-for-finetuning-llms) — eight evidence-based takeaways on rank selection, target modules, learning rate, and merging, drawn from systematic ablations.
 
 ## Further Reading

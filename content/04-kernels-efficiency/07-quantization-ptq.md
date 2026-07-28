@@ -302,7 +302,7 @@ def awq_search_scales(W, X, n_bits=4, group_size=128, grid=20):
     return best_s
 ```
 
-AWQ is **faster than GPTQ** (no Hessian inverse, no sequential per-column loop — just a grid search over a scale vector), has **no overfitting to the calibration set** (it never solves a least-squares problem against specific tokens, only a magnitude statistic), and tends to **generalize better across domains**. In practice GPTQ and AWQ are both excellent at INT4-g128; AWQ is often the default in `vllm`/`sglang` serving stacks because its kernels are simple and it is robust.
+AWQ is **faster than GPTQ** (no Hessian inverse, no sequential per-column loop — just a grid search over a scale vector), has **no overfitting to the calibration set** (it never solves a least-squares problem against specific tokens, only a magnitude statistic), and tends to **generalize better across domains**. In practice GPTQ and AWQ are both excellent at INT4-g128, and their kernels remain popular in `vllm`/`sglang` serving stacks — though by 2026 the original standalone AutoGPTQ and AutoAWQ libraries have both been retired in favor of actively-maintained successors: [GPTQModel](https://github.com/ModelCloud/GPTQModel) for broad multi-backend GPTQ/AWQ support, and the vLLM Project's [`llm-compressor`](https://github.com/vllm-project/llm-compressor) for producing GPTQ/AWQ/SmoothQuant checkpoints tuned for vLLM deployment.
 
 !!! warning "Common pitfall"
 
@@ -445,31 +445,31 @@ For the actual file formats, packing, and how these integrate with `bitsandbytes
     - **W4A16 for memory-bound decoding, W8A8 for compute-bound prefill/throughput.** Always evaluate perplexity *and* a downstream task; keep `lm_head` and edge layers high-precision if accuracy slips.
 
 !!! sota "State of the Art & Resources (2026)"
-    Post-training quantization for LLMs is now a mature, production-grade discipline: INT4 weight-only (GPTQ/AWQ) and INT8 weight+activation (SmoothQuant) are standard in every major serving stack, and 2024–2025 research has pushed further into sub-4-bit regimes with incoherence-based and vector-quantization methods.
+    Post-training quantization for LLMs is now a mature, production-grade discipline: INT4 weight-only (GPTQ/AWQ) and INT8 weight+activation (SmoothQuant) are standard in every major serving stack. The *tooling* has consolidated, not the algorithms — the original standalone AutoGPTQ and AutoAWQ libraries have both been retired, superseded by multi-backend successors (GPTQModel) and by the vLLM Project's `llm-compressor`, which implements GPTQ, AWQ, and SmoothQuant natively for vLLM/SGLang deployment. Meanwhile research keeps pushing sub-4-bit quality with incoherence-processing, vector-quantization, and gradient-guided rounding methods.
 
     **Foundational work**
 
     - [Frantar et al., *GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers* (2022)](https://arxiv.org/abs/2210.17323) — Hessian-compensated column-wise rounding that made INT4 LLMs practical; ICLR 2023.
     - [Dettmers et al., *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale* (2022)](https://arxiv.org/abs/2208.07339) — Documents activation outliers and introduces the mixed INT8/FP16 decomposition; NeurIPS 2022.
-    - [Nagel et al., *A White Paper on Neural Network Quantization* (2021)](https://arxiv.org/abs/2106.08295) — Rigorous primer on scales, zero-points, granularity, PTQ vs QAT from Qualcomm AI Research.
 
     **Recent advances (2023–2026)**
 
     - [Lin et al., *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration* (2023)](https://arxiv.org/abs/2306.00978) — Salience-guided per-channel scaling with no Hessian; MLSys 2024 Best Paper.
     - [Xiao et al., *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models* (2022)](https://arxiv.org/abs/2211.10438) — Migrates activation difficulty into weights via a diagonal scale, enabling W8A8 on tensor cores; ICML 2023.
     - [Tseng et al., *QuIP#: Even Better LLM Quantization with Hadamard Incoherence and Lattice Codebooks* (2024)](https://arxiv.org/abs/2402.04396) — Pushes sub-4-bit quality with randomized Hadamard incoherence and E₈ lattice codebooks; ICML 2024.
+    - [Cheng et al., *Optimize Weight Rounding via Signed Gradient Descent for the Quantization of LLMs* (2023)](https://arxiv.org/abs/2309.05516) — Intel's SignRound/AutoRound method; replaces RTN with a lightweight signed-gradient search over rounding decisions, now a widely-used PTQ backend feeding GPTQ-, AWQ-, and `llm-compressor`-compatible checkpoints.
 
     **Open-source & tools**
 
-    - [IST-DASLab/gptq](https://github.com/IST-DASLab/gptq) — Original GPTQ reference implementation (ICLR 2023).
-    - [mit-han-lab/llm-awq](https://github.com/mit-han-lab/llm-awq) — Official AWQ repo with CUDA kernels, model zoo, and TinyChat edge inference.
+    - [mit-han-lab/llm-awq](https://github.com/mit-han-lab/llm-awq) — Official AWQ research repo with CUDA kernels, model zoo, and TinyChat edge inference.
     - [mit-han-lab/smoothquant](https://github.com/mit-han-lab/smoothquant) — Official SmoothQuant implementation enabling W8A8 for OPT, LLaMA, Mistral, and more.
-    - [bitsandbytes-foundation/bitsandbytes](https://github.com/TimDettmers/bitsandbytes) — The `load_in_8bit` / `load_in_4bit` library powering LLM.int8() and QLoRA in Hugging Face Transformers.
-    - [ModelCloud/GPTQModel](https://github.com/ModelCloud/GPTQModel) — Actively maintained successor to AutoGPTQ, supporting GPTQ, AWQ, FP8, GGUF and multi-backend inference.
+    - [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor) — Red Hat/vLLM Project toolkit that implements GPTQ, AWQ, SmoothQuant, AutoRound, FP8, and NVFP4/MXFP4 for models served with vLLM/SGLang; the successor to AutoAWQ, which is now archived.
+    - [ModelCloud/GPTQModel](https://github.com/ModelCloud/GPTQModel) — Actively maintained, multi-backend successor to AutoGPTQ (and, per its migration guide, AutoAWQ), supporting GPTQ, AWQ, FP8, GGUF and Marlin/BitBLAS kernels.
+    - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — The `load_in_8bit` / `load_in_4bit` library powering LLM.int8() and QLoRA in Hugging Face Transformers.
 
     **Go deeper**
 
-    - [Overview of natively supported quantization schemes in Transformers](https://huggingface.co/blog/overview-quantization-transformers) — Hugging Face blog comparing bitsandbytes vs GPTQ on speed, memory, and fine-tuning.
+    - [Quantization overview — Hugging Face Transformers docs](https://huggingface.co/docs/transformers/main/en/quantization/overview) — Living comparison table of every quantization backend Transformers supports (bitsandbytes, GPTQModel, AWQ, compressed-tensors, AutoRound, GGUF, torchao, and more), with hardware and feature support at a glance.
 
 ## Further reading
 

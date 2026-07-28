@@ -470,7 +470,7 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
 
     **Go deeper**
 
-    - [Anthropic, *Responsible Scaling Policy*](https://www.anthropic.com/responsible-scaling-policy) — live policy document defining ASL capability thresholds, required safeguards per level, and the hard deployment gate; currently at v3.3.
+    - [Anthropic, *Responsible Scaling Policy*](https://www.anthropic.com/responsible-scaling-policy) — live policy document defining ASL capability thresholds, required safeguards per level, and the hard deployment gate; at v3.4 as of July 2026, with revised thresholds for automated AI R&D.
     - [Google DeepMind, *Introducing the Frontier Safety Framework*](https://deepmind.google/blog/introducing-the-frontier-safety-framework/) — DeepMind's analogous Critical Capability Levels framework with evaluation protocols and deployment mitigations.
 
 ### Further reading

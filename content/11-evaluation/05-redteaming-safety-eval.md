@@ -536,7 +536,7 @@ Beyond knowledge, capability evals test whether a model could execute a complex 
 - **Self-replication**: Can the model reproduce its own weights or capabilities in a new context?
 - **Resource acquisition**: Does the model, when given tool access, attempt to acquire resources beyond what the task requires?
 
-These evaluations require careful sandboxing (see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html)) and adversarial elicitation to find the model's *maximum* capability, not just its default behavior.
+These evaluations require careful sandboxing (see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html)) and adversarial elicitation to find the model's *maximum* capability, not just its default behavior. Since tool-using agents became the dominant deployment mode, this axis has been standardized by benchmarks like **AgentHarm** (Andriushchenko et al., 2025), which score not just whether an agent *refuses* a malicious multi-step request but whether a jailbroken agent retains the *capability* to actually complete it — a distinction invisible to single-turn refusal benchmarks.
 
 ```python
 import subprocess
@@ -838,6 +838,7 @@ jobs:
     - [Röttger et al., *XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models* (2023)](https://arxiv.org/abs/2308.01263) — 250 safe + 200 unsafe prompts specifically designed to surface over-refusal; accepted at NAACL 2024.
     - [Chao et al., *JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Language Models* (2024)](https://arxiv.org/abs/2404.01318) — NeurIPS 2024 benchmark with leaderboard, 200 behaviors, and standardized threat model for reproducible jailbreak evaluation.
     - [Phuong et al., *Evaluating Frontier Models for Dangerous Capabilities* (2024)](https://arxiv.org/abs/2403.13793) — DeepMind's methodology for eliciting and assessing persuasion, cyber, self-replication, and reasoning capabilities in Gemini 1.0.
+    - [Andriushchenko et al., *AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents* (ICLR 2025)](https://arxiv.org/abs/2410.09024) — 110 malicious multi-step agent tasks (440 with augmentations) across 11 harm categories; the reference standard for red-teaming tool-using agents, testing whether a jailbroken agent both complies *and* retains the capability to finish the task.
 
     **Open-source & tools**
 
@@ -846,7 +847,7 @@ jobs:
 
     **Go deeper**
 
-    - [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) — live documentation of ASL capability thresholds and required safety/security standards that gate model deployment; updated to v3.3 as of May 2026.
+    - [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) — live documentation of ASL capability thresholds and required safety/security standards that gate model deployment; updated to v3.4, effective July 2026.
 
 ## Further Reading
 

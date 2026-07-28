@@ -465,7 +465,7 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
     **Go deeper**
 
     - [Dao, Haziza, Massa, Sizov — *Flash-Decoding for long-context inference* (2023)](https://crfm.stanford.edu/2023/10/12/flashdecoding.html) — split-KV parallelism that makes decode-time attention fast when the query is a single token and the KV cache is long.
-    - [PyTorch Blog — *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://pytorch.org/blog/flashattention-3/) — accessible technical walkthrough of FA3's three key techniques with context on PyTorch's SDPA dispatch.
+    - [PyTorch Blog — *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://pytorch.org/blog/flashattention-3/) — accessible technical walkthrough of FA3's three key techniques from the authors, with links into PyTorch's `scaled_dot_product_attention`.
     - [ICLR Blogposts 2026 — *The Evolution of FlashAttention*](https://iclr-blogposts.github.io/2026/blog/2026/the-evolution-of-flashattention/) — end-to-end survey from FA1 through FA4 with roofline analysis, backward-pass derivations, and coverage of Ring Attention and block-sparse extensions.
 
 ## Further reading

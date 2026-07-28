@@ -795,7 +795,7 @@ if __name__ == "__main__":
 
 Run the same test with `q, k, v` in fp32 and you should see errors tighten to roughly `1e-3` — the fp16 case's larger tolerance is accumulation-order noise, not a bug. Two failure signatures worth memorizing so you recognize them instantly: **dropping the $D_i$ subtraction** (using `dS = P * dP * sm_scale` instead of `P * (dP - D_i) * sm_scale`) makes `dQ` wrong by a per-row *constant* offset, because the softmax Jacobian's rank-1 correction term vanishes; **dropping the `sm_scale` fold** (forgetting to multiply `dS` by `sm_scale`, or applying it twice) makes *every* gradient off by a factor of $\sqrt d$.
 
-**Full-spectrum hardware notes.** On a laptop or CPU-only box, set `TRITON_INTERPRET=1` and shrink the problem (`B=1, H=1, N=64, D=16`) to check correctness only — the interpreter is very slow, so this is a debugging mode, not a benchmark. On a single A100 or H100, use realistic sizes (`N = 1024` to `8192`) for real timing; the backward does roughly 2x the forward's FLOPs (it recomputes `S`/`P` and additionally produces `dQ`, `dK`, `dV`), so expect the backward to cost about 2–2.5x the forward's latency at matched shapes. Multi-GPU is orthogonal here — this is a per-`(batch, head)` kernel; sharding across devices is handled by the training framework (data/tensor/context parallelism), not by anything inside the kernel.
+**Full-spectrum hardware notes.** On a laptop or CPU-only box, set `TRITON_INTERPRET=1` and shrink the problem (`B=1, H=1, N=64, D=16`) to check correctness only — the interpreter is very slow, so this is a debugging mode, not a benchmark. On a single A100, H100, or B200, use realistic sizes (`N = 1024` to `8192`) for real timing; the backward does roughly 2x the forward's FLOPs (it recomputes `S`/`P` and additionally produces `dQ`, `dK`, `dV`), so expect the backward to cost about 2–2.5x the forward's latency at matched shapes. Multi-GPU is orthogonal here — this is a per-`(batch, head)` kernel; sharding across devices is handled by the training framework (data/tensor/context parallelism), not by anything inside the kernel.
 
 **Library mapping.** The official Triton tutorial `06-fused-attention.py` implements exactly this structure: the forward stores `M` (the running max) and `L`-equivalent statistics, `_attn_bwd_preprocess` computes `delta = sum(o * do)`, and `_attn_bwd_dkdv` / `_attn_bwd_dq` split the backward the atomics-free way described above. [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) is the reference implementation to read once this kernel makes sense.
 
@@ -860,7 +860,7 @@ print(f"{ms:.3f} ms,  {flops / (ms * 1e-3) / 1e12:.1f} TFLOP/s")
     - You usually don't beat cuBLAS/cuDNN with hand Triton; you write Triton to **fuse** what they can't (quantized GEMMs, custom attention, MoE), and TorchInductor already emits Triton under `torch.compile`.
 
 !!! sota "State of the Art & Resources (2026)"
-    Triton is now the default GPU kernel language for the LLM stack: TorchInductor emits it under `torch.compile`, and virtually every major inference engine (vLLM, Unsloth, SGLang) ships hand-written Triton kernels for fused attention, RMSNorm, RoPE, and MoE routing. The compiler itself is actively evolving — gaining distributed-memory primitives, AMD/Intel backends, and LLM-assisted autotuning — while the FlashAttention line (v1/v2/v3) remains the canonical showcase of what expert Triton kernels can achieve.
+    Triton is now the default GPU kernel language for the LLM stack: TorchInductor emits it under `torch.compile`, and virtually every major inference engine (vLLM, Unsloth, SGLang) ships hand-written Triton kernels for fused attention, RMSNorm, RoPE, and MoE routing. The compiler itself is actively evolving — it now ships a Blackwell block-scaled matmul tutorial alongside its NVIDIA/AMD backends, plus distributed-memory primitives and LLM-assisted autotuning — while the FlashAttention line, now at v4 and spanning Hopper through Blackwell, remains the canonical showcase of IO-aware kernel design, even though its fastest paths (v3, v4) are hand-written CUDA/CUTLASS and CuTeDSL rather than Triton itself.
 
     **Foundational work**
 
@@ -870,21 +870,21 @@ print(f"{ms:.3f} ms,  {flops / (ms * 1e-3) / 1e12:.1f} TFLOP/s")
     **Recent advances (2023–2026)**
 
     - [Dao, *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning* (2023)](https://arxiv.org/abs/2307.08691) — improved work distribution across warps and thread blocks, ~2× speedup over FA-1 and 50–73% of peak A100 FLOPs.
-    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — exploits H100 WGMMA and TMA instructions for async pipelining; reaches 75% of peak H100 FLOPs.
+    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — exploits H100 WGMMA and TMA instructions for async pipelining; reaches 75% of peak H100 FLOPs. Superseded in 2026 by FlashAttention-4 (`flash-attn-4`), a from-scratch CuTeDSL rewrite spanning Hopper and Blackwell (H100, B200) — see the Dao-AILab repo below; no paper has been published for it yet.
     - [Hsu et al., *Liger Kernel: Efficient Triton Kernels for LLM Training* (2024)](https://arxiv.org/abs/2410.10989) — drop-in fused kernels for RMSNorm, RoPE, SwiGLU, and cross-entropy; 20% throughput gain and 60% memory reduction over HuggingFace defaults.
     - [Ringlein et al., *The Anatomy of a Triton Attention Kernel* (2025)](https://arxiv.org/abs/2511.11581) — step-by-step walkthrough of building a production paged-attention kernel in Triton that achieves cross-platform SOTA on NVIDIA and AMD.
 
     **Open-source & tools**
 
     - [triton-lang/triton](https://github.com/triton-lang/triton) — the official Triton language and compiler repository; includes the canonical vector-add, softmax, matmul, and fused-attention tutorial kernels.
-    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — reference implementations of FlashAttention v1/v2/v3 in both CUDA and Triton; the benchmark to beat for any attention kernel.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — reference implementations spanning FlashAttention v1 through v4 (v4 is a from-scratch CuTeDSL rewrite for Hopper and Blackwell); the benchmark to beat for any attention kernel.
     - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — production-ready Triton kernels for LLM training (RMSNorm, RoPE, SwiGLU, cross-entropy) compatible with HuggingFace Transformers and FSDP.
     - [unslothai/unsloth](https://github.com/unslothai/unsloth) — fine-tuning library whose entire backward pass is rewritten as hand-crafted Triton kernels, delivering 2× faster training with 70% less VRAM.
 
     **Go deeper**
 
     - [Official Triton tutorials](https://triton-lang.org/main/getting-started/tutorials/index.html) — the maintained, runnable reference for every kernel type covered in this chapter: vector add, fused softmax, matmul, layer norm, and fused attention (FA-2).
-    - [PyTorch 2.x — torch.compile and TorchInductor](https://pytorch.org/get-started/pytorch-2-x/) — explains how TorchInductor uses Triton as its GPU codegen backend, with benchmarks across 163 open-source models.
+    - [PyTorch — torch.compiler / TorchInductor docs](https://docs.pytorch.org/docs/stable/torch.compiler.html) — the maintained reference for how TorchInductor lowers `torch.compile`'d models to generated Triton code on NVIDIA/AMD GPUs.
 
 ## Further reading
 

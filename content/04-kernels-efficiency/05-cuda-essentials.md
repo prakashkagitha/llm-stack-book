@@ -473,7 +473,7 @@ For gradient support, wrap the function in `torch.autograd.Function` with a cust
 
 **When to write CUDA:**
 
-- You need Tensor Core access with custom memory layouts (e.g., FP8 mixed-precision not yet supported by Triton).
+- You need Tensor Core access with custom memory layouts (e.g., the block-scaled FP4/MXFP4 formats on Blackwell, where Triton support is still maturing relative to CUTLASS).
 - The operation has irregular memory access patterns (e.g., ragged batches, variable-length sequences) where Triton's tiled model is awkward.
 - You are writing a kernel that requires warp-level synchronization patterns not expressible in Triton (e.g., producer-consumer pipelines with warp specialization, as in FlashAttention 3).
 - Maximum performance for a widely deployed operation (cuBLAS, CUTLASS-level GEMM).
@@ -629,7 +629,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
     **Foundational work**
 
     - [Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022)](https://arxiv.org/abs/2205.14135) — definitive example of IO-aware, tiled, fused CUDA kernel design applied to attention.
-    - [Tillet et al., *Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations* (MAPL 2019)](https://www.researchgate.net/publication/366963691_Triton_an_intermediate_language_and_compiler_for_tiled_neural_network_computations) — original Triton paper introducing tile-level IR as an alternative to raw CUDA for ML kernels.
+    - [Tillet et al., *Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations* (MAPL 2019)](https://doi.org/10.1145/3315508.3329973) — original Triton paper introducing tile-level IR as an alternative to raw CUDA for ML kernels.
 
     **Recent advances (2023–2026)**
 
@@ -640,6 +640,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
     **Open-source & tools**
 
     - [NVIDIA/cutlass](https://github.com/NVIDIA/cutlass) — production-quality CUDA C++ templates for GEMM, including Tensor Core paths, pipeline stages, and Blackwell FP4/FP8 support; the reference for expert-level matmul kernels.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — official FlashAttention repository; now also ships FlashAttention-4, written in CuTeDSL and targeting Hopper and Blackwell Tensor Cores, alongside the FA2/FA3 kernels described above.
     - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — drop-in Triton kernel replacements for Hugging Face model components; shows the practical pattern for kernel-level LLM training optimization.
 
     **Go deeper**

@@ -528,7 +528,7 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
     - In practice you call `F.scaled_dot_product_attention` or the `flash-attn` library; know the fallback triggers (fp32, unsupported head dim, awkward masks). Custom variants are written in [Triton](../04-kernels-efficiency/04-triton-kernels.html).
 
 !!! sota "State of the Art & Resources (2026)"
-    FlashAttention is now the universal baseline for exact attention on modern GPUs: FA-2 ships inside PyTorch's `scaled_dot_product_attention`, FA-3 targets Hopper's async tensor cores and FP8, and FA-4 (beta) extends the approach to Blackwell. The core IO-aware tiling idea has spawned a broad ecosystem of inference-optimized and flexibly-programmable attention kernels.
+    FlashAttention is now the universal baseline for exact attention on modern GPUs: FA-2 ships inside PyTorch's `scaled_dot_product_attention`, FA-3 (still beta) targets Hopper's async tensor cores and FP8, and FA-4 has since shipped as a production `pip install flash-attn-4` package extending the approach to Blackwell (e.g. B200) alongside Hopper. The core IO-aware tiling idea has spawned a broad ecosystem of inference-optimized and flexibly-programmable attention kernels.
 
     **Foundational papers**
 
@@ -544,8 +544,8 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
 
     **Open-source & tools**
 
-    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the canonical production library: FA-1 through FA-4 (beta), `flash_attn_varlen_func` for packed sequences, sliding-window and ALiBi support.
-    - [flashinfer-ai/flashinfer](https://github.com/flashinfer-ai/flashinfer) — inference-focused attention engine with JIT kernel composition, block-sparse KV layout, and support for decode-phase workloads.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the canonical production library: FA-1/FA-2 stable (Ampere through Hopper), FA-3 beta (Hopper-only, FP8), and FA-4 a production Hopper+Blackwell package via `pip install flash-attn-4`; `flash_attn_varlen_func` for packed sequences, sliding-window and ALiBi support.
+    - [flashinfer-ai/flashinfer](https://github.com/flashinfer-ai/flashinfer) — inference-focused attention engine with JIT kernel composition, block-sparse KV layout, and (as of v0.4.0) Blackwell-class GPU support; adopted by vLLM, SGLang, and TensorRT-LLM.
 
     **Go deeper**
 
