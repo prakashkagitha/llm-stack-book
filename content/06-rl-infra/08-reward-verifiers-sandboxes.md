@@ -11,7 +11,7 @@ Every reward function takes a (prompt, completion) pair and optionally a referen
 | Family | Examples | Pros | Cons |
 |---|---|---|---|
 | **Rule-based verifier** | Math equivalence, regex match, code unit test | Deterministic, zero cost at training time | Only defined for tasks with ground truth |
-| **LLM-judge** | GPT-4o / Claude scoring correctness, helpfulness | Works for open-ended tasks | Expensive, noisy, gameable |
+| **LLM-judge** | A frontier model (GPT-5, Claude) scoring correctness, helpfulness | Works for open-ended tasks | Expensive, noisy, gameable |
 | **Learned reward model** | Bradley-Terry model trained on preference data | Smooth signal, general-purpose | Reward hacking, needs fresh data |
 
 In RLVR (the paradigm that produced DeepSeek-R1 and related reasoning models), the goal is to rely on the first family as much as possible. The key insight is that for tasks with a checkable ground truth, a rule-based verifier is both cheaper and harder to hack than a learned reward model. We still need LLM judges and learned reward models for tasks like "write a good essay," but we should use them sparingly.
@@ -1108,6 +1108,7 @@ async def compute_rewards_for_batch(
     - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — canonical RLVR recipe using rule-based math and format verifiers without any learned reward model.
     - [Wang et al., *Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations* (2023)](https://arxiv.org/abs/2312.08935) — automated PRM training via Monte Carlo rollouts, removing the need for human step-level labels.
     - [Khalifa et al., *Process Reward Models That Think* (ThinkPRM, 2025)](https://arxiv.org/abs/2504.16828) — PRMs that generate verification chain-of-thought, outperforming LLM-as-a-Judge with only 1% of the process labels.
+    - [Huang et al., *From Accuracy to Robustness: A Study of Rule- and Model-based Verifiers in Mathematical Reasoning* (2025)](https://arxiv.org/abs/2505.22203) — shows rule-based verifiers carry non-negligible false-negative rates that *grow* as policies improve, while model-based verifiers can be reward-hacked during training; the current motivation for verifier fuzzing and hybrid rule+model designs.
     - [Zheng et al., *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena* (2023)](https://arxiv.org/abs/2306.05685) — systematic analysis of positional, verbosity, and self-preference biases in LLM judges; standard reference for calibrating judge rewards.
 
     **Open-source & tools**

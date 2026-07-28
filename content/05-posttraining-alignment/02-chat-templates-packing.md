@@ -787,7 +787,7 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
     - Template inconsistency between training and inference is one of the most common silent causes of fine-tuned model degradation — always lock and test the template as part of your model release process.
 
 !!! sota "State of the Art & Resources (2026)"
-    Chat templates and sequence packing are mature but actively evolving: the HuggingFace ecosystem has converged on Jinja2 tokenizer templates and the `apply_chat_template` API as the interoperability standard, while Flash Attention's variable-length (`varlen`) API has made padding-free packed training mainstream at scale.
+    Chat templates and sequence packing are mature but actively evolving: the HuggingFace ecosystem has converged on Jinja2 tokenizer templates and the `apply_chat_template` API as the interoperability standard, while Flash Attention's variable-length (`varlen`) API — now carried into FlashAttention-3 on Hopper-generation GPUs — has made padding-free packed training mainstream at scale. The rise of reasoning models has also pushed templates to carry a separate `reasoning_content` / `thinking` field alongside visible content, rendered and prefilled independently.
 
     **Foundational work**
 
@@ -798,6 +798,7 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
 
     - [Meta, *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — introduces the `<|start_header_id|>` / `<|eot_id|>` header-token template and multi-turn RLHF data formatting at scale.
     - [Dao, *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning* (2023)](https://arxiv.org/abs/2307.08691) — the `flash_attn_varlen_func` / `cu_seqlens` API that makes packed training without explicit mask materialisation practical.
+    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — the current Hopper-generation kernel; it inherits the same `varlen` / `cu_seqlens` packing path while adding FP8 and asynchronous warp-specialised execution.
     - [Kundu et al., *Enhancing Training Efficiency Using Packing with Flash Attention* (2024)](https://arxiv.org/abs/2407.09105) — empirical analysis showing up to 2× throughput and ~20% memory reduction when combining packing with Flash Attention 2 across 14 model families.
 
     **Open-source & tools**
@@ -807,7 +808,7 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
 
     **Go deeper**
 
-    - [HuggingFace Transformers — Chat Templates](https://huggingface.co/docs/transformers/main/en/chat_templating) — canonical docs for `apply_chat_template`, Jinja2 template authoring, and the `add_generation_prompt` / `continue_final_message` parameters.
+    - [HuggingFace Transformers — Chat Templates](https://huggingface.co/docs/transformers/main/en/chat_templating) — canonical docs for `apply_chat_template`, Jinja2 template authoring, and the `add_generation_prompt` / `continue_final_message` parameters, including the newer reasoning-model conventions (a separate `reasoning_content` / `thinking` field that templates render and prefill independently of visible content).
     - [HuggingFace Blog — Improving Training Efficiency Through Packing with Flash Attention 2](https://huggingface.co/blog/packing-with-FA2) — step-by-step guide to enabling `DataCollatorWithFlattening` and `padding_free=True` in TRL, with throughput benchmarks across real SFT datasets.
 
 ## Further Reading

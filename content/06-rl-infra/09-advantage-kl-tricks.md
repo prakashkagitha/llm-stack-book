@@ -398,7 +398,7 @@ $$
 \mathcal{L}_{\text{seq}} = \frac{1}{N}\sum_i \frac{\sum_t m_{i,t}\ell_{i,t}}{L_i}.
 $$
 
-The difference is *how much a long sequence contributes*. Under token-mean, a 600-token response contributes 6x the gradient of a 100-token one — so **token-mean rewards length** when advantages are positive, and is implicated in the length-explosion failure mode of GRPO. Under sequence-mean, every response counts once, so per-token gradients in long sequences are *down-weighted* — which can under-train the very long reasoning chains you care about. DAPO's "token-level loss" and the surrounding discussion argue for token-mean (with a fixed global denominator) precisely to give long correct reasoning its due weight, while controlling length through *other* means (explicit length penalties, dynamic sampling).
+The difference is *how much a long sequence contributes*. Under token-mean, a 600-token response contributes 6x the gradient of a 100-token one — so **token-mean rewards length** when advantages are positive, and is implicated in the length-explosion failure mode of GRPO. Under sequence-mean, every response counts once, so per-token gradients in long sequences are *down-weighted* — which can under-train the very long reasoning chains you care about. DAPO's "token-level loss" and the surrounding discussion argue for token-mean (with a fixed global denominator) precisely to give long correct reasoning its due weight, while controlling length through *other* means (explicit length penalties, dynamic sampling). A parallel 2025–2026 development, **GSPO** (Group Sequence Policy Optimization, Zheng et al., 2025), pushes this token-vs-sequence granularity debate into the *importance ratio* itself: it replaces GRPO's per-token ratio with a single sequence-level ratio (the length-normalized geometric mean of per-token ratios) and clips at the sequence level, which sharply reduces the length-accumulated variance of token-level importance sampling and stabilizes long-response and Mixture-of-Experts RL — it was used to train the Qwen3 models.
 
 ```python
 def aggregate_loss(per_token_loss, mask, mode="token_mean"):
@@ -503,7 +503,7 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
     - The unglamorous tricks carry the run: ratio clamping before `exp`, global-norm grad clipping, reward clipping, consistent masking across loss/KL/entropy/normalization, and reconciling rollout-engine vs trainer logprobs.
 
 !!! sota "State of the Art & Resources (2026)"
-    Advantage estimation, KL control, and PPO clipping for LLMs are now a mature engineering discipline: the foundational algorithms (GAE, PPO, adaptive KL) date to 2015–2019, while 2023–2025 work has refined them specifically for sparse-reward, long-chain-of-thought settings — delivering clip-higher, Dr. GRPO, REINFORCE++, and the token-vs-sequence loss debate. The main open frameworks (verl, TRL, OpenRLHF) implement nearly all variants and are the best place to read production-grade code.
+    Advantage estimation, KL control, and PPO clipping for LLMs are now a mature engineering discipline: the foundational algorithms (GAE, PPO, adaptive KL) date to 2015–2019, while 2023–2026 work has refined them specifically for sparse-reward, long-chain-of-thought settings — delivering clip-higher, Dr. GRPO, REINFORCE++, the token-vs-sequence loss debate, and — most recently — a shift toward sequence-level importance ratios and clipping (GSPO) that stabilizes long-response and Mixture-of-Experts RL. The main open frameworks (verl, TRL, OpenRLHF) implement nearly all of these variants and are the best place to read production-grade code.
 
     **Foundational work**
 
@@ -517,6 +517,7 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
     - [Liu et al., *Understanding R1-Zero-Like Training: A Critical Perspective* (2025)](https://arxiv.org/abs/2503.20783) — diagnoses the std-normalization and length biases in GRPO; proposes Dr. GRPO (mean-only normalization).
     - [Yu et al., *DAPO: An Open-Source LLM RL System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — clip-higher, dynamic sampling, token-level loss, and overlong reward shaping; achieves SOTA on AIME 2024.
     - [Hu et al., *REINFORCE++* (2025)](https://arxiv.org/abs/2501.03262) — critic-free RL with global advantage normalization; more stable than GRPO, faster than PPO.
+    - [Zheng et al., *Group Sequence Policy Optimization (GSPO)* (2025)](https://arxiv.org/abs/2507.18071) — replaces GRPO's per-token importance ratio with a sequence-level ratio and sequence-level clipping; cuts the length-accumulated variance of token-level IS, stabilizes MoE RL, and was used to train Qwen3.
 
     **Open-source & tools**
 

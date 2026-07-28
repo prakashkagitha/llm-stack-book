@@ -34,7 +34,7 @@ even though the *mean* work is $t_{\text{tok}} \cdot \frac{1}{B}\sum_i \ell_i$. 
 {{fig:primerl-sync-vs-async-timeline}}
 
 
-The fix is conceptually simple: **let the generators keep generating while the trainer trains.** Don't synchronize on every step. Push fresh weights to the generators *occasionally* and let them continue producing rollouts from whatever weights they currently hold. This is asynchronous, off-policy RL — and it is the dominant paradigm for large-scale reasoning RL in 2025.
+The fix is conceptually simple: **let the generators keep generating while the trainer trains.** Don't synchronize on every step. Push fresh weights to the generators *occasionally* and let them continue producing rollouts from whatever weights they currently hold. This is asynchronous, off-policy RL — and by 2026 it is the dominant paradigm for large-scale reasoning RL.
 
 ## Decoupling generation from training: async off-policy RL
 
@@ -264,7 +264,7 @@ Three properties of async RL make decentralization tractable where synchronous R
 2. **Generation is the parallel, fault-tolerant part.** Inference workers are stateless w.r.t. each other. One dropping offline mid-rollout costs you one rollout. The trainer — the stateful, hard-to-replicate part — stays centralized on reliable hardware. This is the same disaggregation logic as [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html), pushed to a global scale.
 3. **Weight broadcast is infrequent and one-way.** Publishing weights every $N$ steps over the internet is a bandwidth problem, not a latency problem, and it is solvable with sharding, quantized weight deltas, and BitTorrent-style fan-out.
 
-This is the lineage of the **INTELLECT** models. **INTELLECT-1** (a ~10B-parameter base model) demonstrated globally-distributed *pretraining* across continents using Prime Intellect's **OpenDiLoCo** (an open implementation of DeepMind's DiLoCo — Distributed Low-Communication training), which performs many *local* optimizer steps between rare global synchronizations to slash communication. **INTELLECT-2** then applied the same decentralized philosophy to **RL**: globally-distributed, asynchronous reinforcement learning for a reasoning model, where permissionless, geographically-spread inference nodes contribute rollouts. prime-rl is the framework that orchestrates that RL.
+This is the lineage of the **INTELLECT** models. **INTELLECT-1** (a ~10B-parameter base model) demonstrated globally-distributed *pretraining* across continents using Prime Intellect's **OpenDiLoCo** (an open implementation of DeepMind's DiLoCo — Distributed Low-Communication training), which performs many *local* optimizer steps between rare global synchronizations to slash communication. **INTELLECT-2** (a 32B model, mid-2025) then applied the same decentralized philosophy to **RL**: globally-distributed, asynchronous reinforcement learning for a reasoning model, where permissionless, geographically-spread inference nodes contribute rollouts. prime-rl is the framework that orchestrates that RL. By late 2025 prime-rl had matured into a general async-RL stack — fully asynchronous, agentic (multi-turn, tool-use), scaling to trillion-parameter Mixture-of-Experts — and Prime Intellect used it to train **INTELLECT-3**, a 106B-parameter (~12B-active) MoE reasoning model post-trained from GLM-4.5-Air with large-scale RL. Tellingly, INTELLECT-3 ran on a *centralized* 512×H200 cluster rather than the permissionless network: the async architecture earns its keep inside a single data center too, and the decentralized-trust machinery below is what you add *on top* when the workers become untrusted.
 
 
 {{fig:primerl-decentralized-trust-pipeline}}
@@ -419,7 +419,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     - **Monitor staleness, `approx_kl` on fresh data, `clipfrac`, and TOPLOC reject rate.** A drifting `approx_kl` on the first epoch over fresh rollouts is the signature of engine mismatch — the most common silent async bug. Bring the run up synchronously, then dial $s_{\max}$ up.
 
 !!! sota "State of the Art & Resources (2026)"
-    Async, off-policy RL is now the default paradigm for large-scale reasoning-model training. The open frontier has shifted from *whether* to decouple generation from training to *how much staleness is tolerable*, how to correct for it rigorously, and how to push generation onto permissionless, globally-distributed hardware — the domain pioneered by Prime Intellect's INTELLECT-2 and prime-rl.
+    Async, off-policy RL is now the default paradigm for large-scale reasoning-model training. The open frontier has shifted from *whether* to decouple generation from training to *how much staleness is tolerable*, how to correct for it rigorously, and how to push generation onto permissionless, globally-distributed hardware — the domain pioneered by Prime Intellect's INTELLECT-2/3 and prime-rl.
 
     **Foundational work**
 
@@ -430,15 +430,16 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
 
     - [Fu et al., *AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning* (2025)](https://arxiv.org/abs/2505.24298) — full decoupling of generation and training with staleness-aware PPO; reports up to 2.77× speedup over synchronous baselines (NeurIPS 2025).
     - [Prime Intellect Team, *INTELLECT-2: A Reasoning Model Trained Through Globally Decentralized Reinforcement Learning* (2025)](https://arxiv.org/abs/2505.07291) — first 32B model trained via permissionless, globally-distributed async RL using prime-rl, TOPLOC, and SHARDCAST.
+    - [Prime Intellect Team, *INTELLECT-3: Technical Report* (2025)](https://arxiv.org/abs/2512.16144) — a 106B (~12B-active) MoE reasoning model post-trained from GLM-4.5-Air with large-scale async RL via prime-rl; state-of-the-art for its size, showing the async stack scales to agentic, MoE-scale training (run centralized on 512×H200).
     - [Ong et al., *TOPLOC: A Locality Sensitive Hashing Scheme for Trustless Verifiable Inference* (2025)](https://arxiv.org/abs/2501.16007) — compact top-k activation commitments enable cheap, hardware-robust verification that an untrusted GPU ran the claimed model.
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — introduces clip-higher asymmetric PPO, token-level loss aggregation, and dynamic sampling; key stabilization techniques for async off-policy runs.
     - [Sheng et al., *HybridFlow: A Flexible and Efficient RLHF Framework* (2024)](https://arxiv.org/abs/2409.19256) — the single-controller architecture underlying veRL; covers truncated importance sampling to handle inference-vs-training engine log-prob mismatch.
 
     **Open-source & tools**
 
-    - [PrimeIntellect-ai/prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) — async RL training framework used for INTELLECT-2; supports FSDP2, vLLM, TOPLOC verification, and multi-node deployment at 1000+ GPUs.
+    - [PrimeIntellect-ai/prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) — async RL training framework behind INTELLECT-2 and INTELLECT-3; FSDP2 + vLLM, fully-async agentic RL (multi-turn, tool use), FP8 inference and PD disaggregation, scaling from one node to 1000+ GPUs and up to trillion-parameter MoE models (v0.6.0, 2026).
     - [inclusionAI/AReaL](https://github.com/inclusionAI/AReaL) — production async RL system from Ant Group / Tsinghua IIIS; flexible, sample-level streaming with staleness control.
-    - [verl-project/verl](https://github.com/verl-project/verl) — widely-used HybridFlow-based RL post-training library integrating FSDP, Megatron, vLLM, and SGLang; 21k+ GitHub stars.
+    - [verl-project/verl](https://github.com/verl-project/verl) — widely-used HybridFlow-based RL post-training library integrating FSDP/FSDP2, Megatron, vLLM, and SGLang, with an experimental fully-async policy path; 22k+ GitHub stars.
 
     **Go deeper**
 
@@ -451,7 +452,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
 - Yu, et al. (Qwen / ByteDance Seed), **DAPO: An Open-Source LLM Reinforcement Learning System at Scale** (2025) — clip-higher, token-level loss, dynamic sampling.
 - Sheng, Zhang, et al., **HybridFlow (veRL): A Flexible and Efficient RLHF Framework** (2024) — the single-controller architecture and truncated-IS for engine mismatch; see [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html).
 - Prime Intellect, **INTELLECT-1: Launching the First Decentralized Training of a 10B Parameter Model** and **OpenDiLoCo** (2024) — globally-distributed low-communication pretraining.
-- Prime Intellect, **INTELLECT-2** and the **prime-rl** framework (2025) — globally-distributed asynchronous RL for reasoning models.
+- Prime Intellect, **INTELLECT-2** and the **prime-rl** framework (2025) — globally-distributed asynchronous RL for reasoning models; and **INTELLECT-3** (2025), a 106B MoE reasoning model trained end-to-end with prime-rl's async agentic RL.
 - Douillard, Feng, Rusu, et al. (DeepMind), **DiLoCo: Distributed Low-Communication Training of Language Models** (2023) — many local steps between rare global syncs.
 - Ong, et al. (Prime Intellect), **TOPLOC: A Locality-Sensitive Hashing Scheme for Trustless Verifiable Inference** (2024) — verifying that an untrusted GPU ran the claimed model.
 - Schulman, Wolski, Dhariwal, et al., **Proximal Policy Optimization Algorithms** (2017) — the clipped surrogate that doubles as the staleness corrector.

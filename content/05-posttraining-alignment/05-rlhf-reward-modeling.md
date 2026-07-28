@@ -414,13 +414,15 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
     - [Gao, Schulman & Hilton, *Scaling Laws for Reward Model Overoptimization* (2022)](https://arxiv.org/abs/2210.10760) — characterizes the proxy-vs-gold reward over-optimization curve and derives the √KL functional form; essential reading before tuning β.
     - [Touvron et al., *Llama 2* (2023)](https://arxiv.org/abs/2307.09288) — iterated RLHF in practice: five rounds of RM retraining, separate helpfulness/safety reward models, and rejection-sampling + PPO in combination.
     - [Lambert et al., *RewardBench: Evaluating Reward Models for Language Modeling* (2024)](https://arxiv.org/abs/2403.13787) — the first standardized benchmark for reward models; the leaderboard reveals which RMs generalize to safety, reasoning, and instruction-following.
+    - [Malik et al. (Ai2), *RewardBench 2: Advancing Reward Model Evaluation* (2025)](https://arxiv.org/abs/2506.01937) — the harder, best-of-4 successor built on fresh unseen human prompts (factuality, focus, math, precise instruction-following, safety, ties); frontier RMs score ~20 points lower than on the original, and results correlate more tightly with downstream PPO and best-of-N gains.
+    - [Liu et al. (DeepSeek), *Inference-Time Scaling for Generalist Reward Modeling* (DeepSeek-GRM, 2025)](https://arxiv.org/abs/2504.02495) — the 2025 shift from scalar heads toward *generative* reward models that emit principles and critiques (trained via Self-Principled Critique Tuning) and can be scaled at inference time, a direction the scalar-head recipe here now coexists with.
     - [Dong et al., *RLHF Workflow: From Reward Modeling to Online RLHF* (2024)](https://arxiv.org/abs/2405.07863) — comprehensive open-source recipe for online iterative RLHF, matching proprietary pipelines on AlpacaEval-2 and Arena-Hard.
 
     **Open-source & tools**
 
     - [huggingface/trl](https://github.com/huggingface/trl) — the standard library for RLHF in the HuggingFace ecosystem; `RewardTrainer` and `PPOTrainer` implement the core algorithms from this chapter.
     - [OpenRLHF/OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) — Ray + vLLM-based framework for scalable RLHF, supporting PPO, GRPO, REINFORCE++, and 70B+ models across multiple nodes.
-    - [allenai/reward-bench](https://github.com/allenai/reward-bench) — RewardBench inference and evaluation harness for comparing reward models on chat, safety, and reasoning subsets.
+    - [allenai/reward-bench](https://github.com/allenai/reward-bench) — Ai2's inference and evaluation harness for comparing reward models, now covering both the original RewardBench and the harder RewardBench 2 subsets.
 
 ## Further reading
 

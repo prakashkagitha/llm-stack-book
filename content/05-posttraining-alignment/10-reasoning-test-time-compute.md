@@ -520,7 +520,7 @@ The key findings:
 
 ## Long-Thinking Models: o1, DeepSeek-R1, and the Reasoning Era
 
-OpenAI's o1 (September 2024) was the first publicly released model designed around extended internal reasoning — a "thinking" trace visible to the model but (in the initial release) hidden from users. DeepSeek-R1 (January 2025) reproduced and open-sourced the training recipe. The key innovations:
+OpenAI's o1 (September 2024) was the first publicly released model designed around extended internal reasoning — a "thinking" trace visible to the model but (in the initial release) hidden from users. DeepSeek-R1 (January 2025) reproduced and open-sourced the training recipe. Within a year the approach became the industry default: OpenAI's o3 (April 2025) and unified GPT-5 (August 2025), Anthropic's Claude, and Google's Gemini all ship extended reasoning as a built-in mode rather than a separate product. The key innovations:
 
 ### Training Reasoning Models
 
@@ -679,7 +679,7 @@ Key practical points:
     - Production deployment of reasoning models requires careful KV-cache memory management and disaggregated infrastructure due to the large token footprints of thinking traces.
 
 !!! sota "State of the Art & Resources (2026)"
-    Test-time compute has become a first-class scaling axis: o1, DeepSeek-R1, and Claude 3.7 Sonnet all demonstrate that spending more tokens thinking — guided by process reward models and tree search — reliably improves accuracy on hard reasoning tasks, composing with (not replacing) training-time scale.
+    Test-time compute has become a first-class scaling axis, and by 2026 extended "thinking" is a standard, built-in capability rather than a special model class: OpenAI's o3 (April 2025) and unified GPT-5 (August 2025), Anthropic's Claude extended-thinking models, Google's Gemini thinking models, and open-weights DeepSeek-R1 (and its May 2025 R1-0528 update) all spend more tokens thinking — guided by process reward models and tree search — to reliably improve accuracy on hard reasoning tasks, composing with (not replacing) training-time scale.
 
     **Foundational work**
 
@@ -692,7 +692,8 @@ Key practical points:
 
     - [Yao et al., *Tree of Thoughts: Deliberate Problem Solving with Large Language Models* (2023)](https://arxiv.org/abs/2305.10601) — extends search from output-level voting to the reasoning tree itself using BFS/DFS with a value model.
     - [Snell et al., *Scaling LLM Test-Time Compute Optimally* (2024)](https://arxiv.org/abs/2408.03314) — power-law characterisation of test-time scaling; shows compute-optimal frontier between model size and number of samples.
-    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — open-weights reasoning model trained with pure RL; demonstrates emergent self-reflection and backtracking.
+    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — open-weights reasoning model trained with pure RL; demonstrates emergent self-reflection and backtracking. The [R1-0528 update (May 2025)](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528) deepens reasoning further (e.g., AIME 2025 87.5% vs. 70%), spending ~23k reasoning tokens per question.
+    - [OpenAI, *Introducing OpenAI o3 and o4-mini* (April 2025)](https://openai.com/index/introducing-o3-and-o4-mini/) — the frontier of the o-series reasoning line, later folded into the unified [GPT-5](https://openai.com/index/introducing-gpt-5/) (August 2025), which routes between fast and "thinking" modes automatically.
     - [Ji et al., *A Survey of Test-Time Compute: From Intuitive Inference to Deliberate Reasoning* (2025)](https://arxiv.org/abs/2501.02497) — comprehensive taxonomy covering self-correction, tree search, and process supervision across System-1 and System-2 paradigms.
 
     **Open-source & tools**
@@ -702,7 +703,7 @@ Key practical points:
 
     **Go deeper**
 
-    - [Anthropic, *Claude's extended thinking* (2025)](https://www.anthropic.com/news/visible-extended-thinking) — product write-up and benchmark results for extended thinking with a configurable token budget; illustrates the industry state of the art.
+    - [Anthropic, *Claude's extended thinking* (2025)](https://www.anthropic.com/news/visible-extended-thinking) — the product write-up that introduced a configurable thinking-token budget; a knob that has since become table stakes across frontier providers.
 
 ## Further Reading
 

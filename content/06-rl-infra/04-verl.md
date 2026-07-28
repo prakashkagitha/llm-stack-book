@@ -420,7 +420,7 @@ The throughline: TRL optimizes for *velocity at modest scale* by keeping everyth
     - **Known bottlenecks:** synchronous rollout tail-latency (stragglers) and the train/inference log-prob mismatch (mitigated by recomputing `old_log_prob` under the training engine). Async and disaggregated designs address the former.
 
 !!! sota "State of the Art & Resources (2026)"
-    veRL / HybridFlow has become the dominant open-source substrate for serious RL-for-LLM work; its single-controller + multi-controller hybrid and 3D-HybridEngine are now the reference architecture, with the framework scaling past 671B models and hundreds of GPUs as of 2026.
+    veRL / HybridFlow has become the dominant open-source substrate for serious RL-for-LLM work; its single-controller + multi-controller hybrid and 3D-HybridEngine are now the reference architecture, with the Megatron backend scaling to 671B-class MoE models (DeepSeek-671B, Qwen3-235B) on hundreds of GPUs as of 2026.
 
     **Foundational work**
 
@@ -436,19 +436,19 @@ The throughline: TRL optimizes for *velocity at modest scale* by keeping everyth
 
     **Open-source & tools**
 
-    - [volcengine/verl](https://github.com/volcengine/verl) — the production veRL library: WorkerGroup, ResourcePool, DataProto, FSDP/Megatron actor backends, vLLM/SGLang rollout backends, and all supported algorithms (PPO, GRPO, DAPO, PRIME, RLOO, …).
+    - [verl-project/verl](https://github.com/verl-project/verl) — the production veRL library (migrated in 2026 from `volcengine/verl`, which still redirects here): WorkerGroup, ResourcePool, DataProto, FSDP/Megatron actor backends, vLLM/SGLang rollout backends, and all supported algorithms (PPO, GRPO, DAPO, PRIME, RLOO, …).
     - [PRIME-RL/PRIME](https://github.com/PRIME-RL/PRIME) — open-source online RL with implicit process rewards; built on veRL and scales to multi-node clusters.
 
     **Go deeper**
 
     - [veRL HybridFlow Programming Guide](https://verl.readthedocs.io/en/latest/hybrid_flow.html) — official docs walking through ResourcePool, WorkerGroup, and the dispatch decorator with code examples.
     - [veRL v0.7 Release Blog](https://verl.readthedocs.io/en/latest/blog/v0.7.html) — covers the Hybrid-Controller architecture evolution, rollout-server mode, TransferQueue, and async pipeline support added in 2026.
-    - [SkyPilot Blog: *How to train and scale AI math/coding agents using VeRL* (2025)](https://blog.skypilot.co/verl-rl-training/) — practical end-to-end tutorial for launching veRL RL training on any cloud or Kubernetes cluster.
+    - [SkyPilot Blog: *How to train and scale AI math/coding agents using VeRL* (2025)](https://skypilot.ai/blog/verl-rl-training/) — practical end-to-end tutorial for launching veRL RL training on any cloud or Kubernetes cluster.
 
 ## Further reading
 
 - Sheng, Zhang, Ye, et al., **HybridFlow: A Flexible and Efficient RLHF Framework** (2024) — the paper that introduces the single-controller/multi-controller hybrid and the 3D-HybridEngine; the foundation of veRL.
-- The **`volcengine/verl`** repository — the production implementation: `WorkerGroup`, `ResourcePool`, `DataProto`, the `@register` dispatch layer, FSDP/Megatron actor backends, and vLLM/SGLang rollout backends.
+- The **`verl-project/verl`** repository (formerly `volcengine/verl`) — the production implementation: `WorkerGroup`, `ResourcePool`, `DataProto`, the `@register` dispatch layer, FSDP/Megatron actor backends, and vLLM/SGLang rollout backends.
 - Rajbhandari, Rasley, Ruwase, He, **ZeRO: Memory Optimizations Toward Training Trillion Parameter Models** (2020) — the sharding ideas behind FSDP that veRL's training engine uses; see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html).
 - Shoeybi, Patwary, Puri, et al., **Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism** (2019) — the tensor/pipeline parallelism that the Megatron actor backend and the resharding logic build on.
 - Kwon, Li, Zhuang, et al., **Efficient Memory Management for Large Language Model Serving with PagedAttention** (vLLM, 2023) — the rollout engine veRL drives; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).

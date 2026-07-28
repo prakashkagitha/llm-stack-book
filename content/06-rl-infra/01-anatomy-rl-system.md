@@ -388,7 +388,7 @@ Three load-bearing ideas to carry forward:
     - **To locate any framework in the design space, ask four questions:** colocated or disaggregated? single- or multi-controller? synchronous or async? how is weight sync done? Everything else is detail.
 
 !!! sota "State of the Art & Resources (2026)"
-    RL infrastructure for LLMs has matured rapidly since 2023: purpose-built frameworks (veRL, OpenRLHF, TRL, Prime-RL) have replaced ad-hoc training loops, and async/colocated designs now routinely train 70B+ models at scale. The central unsolved tensions — generation cost, weight-sync overhead, and off-policy drift — remain active engineering frontiers.
+    RL infrastructure for LLMs has matured rapidly since 2023: purpose-built frameworks (veRL, OpenRLHF, TRL, Prime-RL, and newer SGLang-native systems like slime and AReaL) have replaced ad-hoc training loops, and async/colocated designs now routinely train 70B+ models at scale. The central unsolved tensions — generation cost, weight-sync overhead, and off-policy drift — remain active engineering frontiers.
 
     **Foundational work**
 
@@ -408,7 +408,8 @@ Three load-bearing ideas to carry forward:
     - [verl-project/verl](https://github.com/verl-project/verl) — open-source HybridFlow; flexible single-controller RLHF framework integrating FSDP, Megatron-LM, vLLM, and SGLang with pluggable reward backends.
     - [OpenRLHF/OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) — Ray-native RL framework designed for 70B+ scale; separates model pools across nodes with vLLM rollout engine.
     - [huggingface/trl](https://github.com/huggingface/trl) — HuggingFace's TRL; the simplest multi-controller baseline, best starting point for experiments up to ~30B with GRPOTrainer/PPOTrainer.
-    - [PrimeIntellect-ai/prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) — async agentic RL framework (FSDP + vLLM), scales to 1000+ GPUs with support for decentralized and multi-turn setups.
+    - [PrimeIntellect-ai/prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) — async agentic RL framework (FSDP2 + vLLM), scales to 1000+ GPUs with support for decentralized and multi-turn setups.
+    - [THUDM/slime](https://github.com/THUDM/slime) — Megatron + SGLang RL post-training framework; the system behind the GLM-4.5–5.x model family, emphasizing large-scale agentic and long-horizon rollout workflows.
 
     **Go deeper**
 

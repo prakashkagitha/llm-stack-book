@@ -24,7 +24,7 @@ TRL exposes five major trainers relevant to alignment work. They sit at differen
 {{fig:trl-trainer-landscape-pipeline}}
 
 
-Each trainer is independently usable; you do not need to run them all in sequence. Many modern recipes (DeepSeek-R1, Qwen-2.5, etc.) skip the standalone reward model and go straight to GRPO with a verifiable reward function.
+Each trainer is independently usable; you do not need to run them all in sequence. Many modern recipes (DeepSeek-R1, Qwen3, etc.) skip the standalone reward model and go straight to GRPO with a verifiable reward function.
 
 ### SFTTrainer
 
@@ -560,7 +560,7 @@ The workflow with vLLM:
 {{fig:trl-vllm-colocate-rollout-flow}}
 
 
-After each training step, TRL calls `vllm_client.update_model_weights(trainer.model)` to push the latest policy weights to the vLLM server via shared memory or RDMA. The vLLM server then generates the next batch of rollouts while the training GPUs continue back-propagation. This overlap of generation and gradient computation can improve wall-clock throughput by 1.5–2x on large enough models.
+After each training step, TRL calls `vllm_client.update_model_weights(trainer.model)` to push the latest policy weights to the vLLM server via shared memory or RDMA. The vLLM server then generates the next batch of rollouts while the training GPUs continue back-propagation. This overlap of generation and gradient computation improves wall-clock throughput — HuggingFace's published co-located vLLM benchmarks report on the order of 1.3–1.7x on large enough models.
 
 For a deep dive on the PagedAttention mechanism powering vLLM's generation, see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
 
@@ -729,7 +729,7 @@ The script `train_grpo_math.py` is essentially the GRPOTrainer example from §4,
     - All trainers inherit from `transformers.Trainer` and use `accelerate` for distribution — any `accelerate` backend (FSDP, DeepSpeed, DDP) works without trainer-level code changes.
     - PEFT (LoRA, QLoRA) integrates transparently: the reference model shares the base backbone with the policy, making the reference model nearly memory-free for DPO and GRPO.
     - `GRPOTrainer` is the recommended entry point for reasoning alignment (replacing PPO): no value head, group-relative advantages, and verifiable reward functions as plain Python callables.
-    - The generation bottleneck is TRL's main throughput limitation; the vLLM integration (`use_vllm=True`) overlaps rollout generation with gradient computation for 1.5–2x wall-clock speedup.
+    - The generation bottleneck is TRL's main throughput limitation; the vLLM integration (`use_vllm=True`) overlaps rollout generation with gradient computation for roughly 1.3–1.7x wall-clock speedup.
     - Monitor `train/kl`, `train/reward`, and `train/clip_ratio`; a KL spike above 20 or a clip ratio above 0.5 signals instability.
     - TRL is the fastest path from research paper to running experiment; for production-scale multi-node runs (70B+), consider veRL or OpenRLHF which offer disaggregated rollout workers and higher throughput.
     - Composite reward functions (format + correctness + length penalty) are straightforward to implement as Python callables — no infrastructure overhead required.

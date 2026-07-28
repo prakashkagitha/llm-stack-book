@@ -440,7 +440,7 @@ This is distillation within a single model — the final layers teach the early-
 
 ### EAGLE: Speculative Drafting with Feature Distillation
 
-EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model's hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next token conditioned on the target model's feature map at layer $L-1$. Because the draft model has access to the verifier's internal representations, it achieves acceptance rates in the range of 2–3× speedup on typical text generation tasks.
+EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model's hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next token conditioned on the target model's feature map at layer $L-1$. Because the draft model has access to the verifier's internal representations, it achieves acceptance rates in the range of 2–3× speedup on typical text generation tasks. EAGLE-3 (Li et al., 2025) — the current standard-bearer, integrated into vLLM and SGLang — drops feature prediction in favor of direct token prediction with multi-layer feature fusion ("training-time test"), which lets acceptance keep improving as you scale draft-training data and pushes speedups up to ~6.5×.
 
 !!! interview "Interview Corner"
 
@@ -512,8 +512,8 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
     - [Sun et al., *A Simple and Effective Pruning Approach for Large Language Models* (2024)](https://arxiv.org/abs/2306.11695) — Wanda: prune by |weight| × activation norm, no Hessian inversion needed.
     - [Agarwal et al., *On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes* (2024)](https://arxiv.org/abs/2306.13649) — GKD: trains student on its own rollouts with teacher feedback, fixing distribution mismatch in standard KD.
     - [Gu et al., *MiniLLM: On-Policy Distillation of Large Language Models* (2024)](https://arxiv.org/abs/2306.08543) — replaces forward KL with reverse KL to prevent student from over-spreading onto low-probability teacher regions.
-    - [Li et al., *EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty* (2024)](https://arxiv.org/abs/2401.15077) — draft model trained on target model's hidden states achieves 2.7–3.5× inference speedup via feature-level distillation.
-    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — shows that verified CoT traces from a 671B teacher can SFT-distill strong reasoning into 7–32B student models.
+    - [Li et al., *EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test* (2025)](https://arxiv.org/abs/2503.01840) — the 2026 draft-model standard (in vLLM/SGLang): direct token prediction + multi-layer feature fusion, speedups up to ~6.5× with a scaling law in draft-training data. See the earlier [EAGLE (2024)](https://arxiv.org/abs/2401.15077) for the original feature-distillation formulation.
+    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — shows that verified CoT traces from a 671B teacher can SFT-distill strong reasoning into 7–32B student models; the R1-Distill-Qwen/Llama releases (1.5B–70B) remain the reference open recipe, now commonly reproduced on Qwen3 backbones.
 
     **Open-source & tools**
 

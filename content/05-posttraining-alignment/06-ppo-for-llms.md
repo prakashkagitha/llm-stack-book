@@ -536,7 +536,7 @@ The honest summary: PPO is the *right general algorithm* and the most *education
     - **PPO is finicky** because it juggles four models, a hard-to-train critic, a thicket of coupled hyperparameters, ever-present reward over-optimization, generation–training skew, and high generation cost — which is precisely the motivation for DPO (no RL loop), GRPO/RLOO (no critic), and RLVR (no reward model).
 
 !!! sota "State of the Art & Resources (2026)"
-    PPO remains the canonical, most general RL algorithm for RLHF, but since 2023 the field has largely moved toward critic-free variants (GRPO, RLOO, REINFORCE++) that preserve PPO's trust-region stability while eliminating the expensive value network; PPO's four-model loop is now mainly seen in large-scale or multi-turn agent training where the full generality is warranted.
+    PPO remains the canonical, most general RL algorithm for RLHF, but the field has largely moved toward critic-free variants (GRPO, RLOO, REINFORCE++) that preserve PPO's trust-region stability while eliminating the expensive value network. The 2025–2026 frontier reasoning recipes (DAPO, GSPO) keep PPO's clipped importance-ratio machinery but drop the critic and refine exactly the two knobs this chapter derives — DAPO decouples the clip bounds, GSPO moves the importance ratio $r_t$ from per-token to per-sequence. PPO's four-model loop is now mainly seen in large-scale or multi-turn agent training where the full generality is warranted.
 
     **Foundational work**
 
@@ -549,6 +549,8 @@ The honest summary: PPO is the *right general algorithm* and the most *education
 
     - [Zheng et al., *Secrets of RLHF in Large Language Models Part I: PPO* (2023)](https://arxiv.org/abs/2307.04964) — systematic ablation of every PPO-RLHF component; identifies policy-constraint tuning as the key stability factor and releases reproducible code.
     - [Hu et al., *REINFORCE++: Stabilizing Critic-Free Policy Optimization with Global Advantage Normalization* (2025)](https://arxiv.org/abs/2501.03262) — drops the critic entirely, adds global advantage normalization from PPO; matches PPO quality at lower compute cost.
+    - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — critic-free, but its four tricks (decoupled higher/lower clip, dynamic sampling, token-level loss, overlong reward shaping) are all surgery on the PPO objects in this chapter; the de-facto open large-scale reasoning recipe on verl.
+    - [Zheng et al., *Group Sequence Policy Optimization* (GSPO, Qwen, 2025)](https://arxiv.org/abs/2507.18071) — redefines the importance ratio $r_t$ at the *sequence* level instead of per token, fixing a GRPO variance/collapse failure mode and stabilizing MoE RL; used to train the Qwen3 models.
 
     **Open-source & tools**
 

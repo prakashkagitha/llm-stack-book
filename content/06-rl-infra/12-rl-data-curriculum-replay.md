@@ -435,6 +435,8 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — dynamic sampling (drop zero-variance groups, oversample to refill) as standard RLVR practice.
     - [DeepSeek-AI, *DeepSeek-R1* (2025)](https://arxiv.org/abs/2501.12948) and *DeepSeekMath* — the GRPO/RLVR baseline whose advantage structure makes pass rate the master variable.
     - [Kimi Team, *Kimi k1.5* (2025)](https://arxiv.org/abs/2501.12599) — curriculum and prioritized sampling at scale alongside partial-rollout infrastructure.
+    - [Kong et al., *Rethinking the Sampling Criteria in RL for LLM Reasoning: A Competence-Difficulty Alignment Perspective* (2025)](https://arxiv.org/abs/2505.17652) — CDAS: stable difficulty estimation by aggregating historical performance, selecting problems matched to current competence — the difficulty-targeted-selection idea of this chapter, made rigorous.
+    - [Zhang et al., *Improving Sampling Efficiency in RLVR through Adaptive Rollout and Response Reuse* (2025)](https://arxiv.org/abs/2509.25808) — AR3PO: allocate more rollouts to hard prompts and reuse past correct responses to fight the vanishing-advantage problem, reporting up to ~4x rollout-cost reduction.
 
     **Open-source & tools**
 

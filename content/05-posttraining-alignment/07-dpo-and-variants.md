@@ -416,7 +416,7 @@ The catch is that DPO is **off-policy and offline.** It learns only from the fix
 
 ### The honest synthesis
 
-The community's rough 2024–2025 consensus: **DPO is the better default** — simpler, cheaper, stable, and good enough for most alignment — while **well-tuned online RL (PPO, and increasingly GRPO) achieves the highest ceiling**, especially on hard, verifiable tasks. The gap narrows or vanishes if you make DPO *more online*: **iterative / online DPO** regenerates fresh pairs from the current policy (labeled by a reward model or judge) and re-runs DPO each round, recovering much of PPO's exploration benefit while keeping DPO's simple loss. This is why the frontier moved toward online and verifiable-reward RL ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)) rather than abandoning either family.
+The consensus that solidified across 2024–2026: **DPO is the better default** — simpler, cheaper, stable, and good enough for most alignment (style, format, safety) — while **well-tuned online RL (PPO, and increasingly GRPO) achieves the highest ceiling**, especially on hard, verifiable tasks. The gap narrows or vanishes if you make DPO *more online*: **iterative / online DPO** regenerates fresh pairs from the current policy (labeled by a reward model or judge) and re-runs DPO each round, recovering much of PPO's exploration benefit while keeping DPO's simple loss. This is why the frontier moved toward online and verifiable-reward RL ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)) rather than abandoning either family.
 
 !!! interview "Interview Corner"
 
@@ -451,7 +451,7 @@ DPO and its variants are the **offline preference-tuning** layer of post-trainin
     - **DPO vs PPO:** DPO is offline, stable, cheap, and the right default; well-tuned online RL (PPO/GRPO) explores and reaches a higher ceiling on hard, verifiable tasks. **Iterative/online DPO** closes much of the gap by regenerating fresh pairs each round.
 
 !!! sota "State of the Art & Resources (2026)"
-    DPO and its variants have become the dominant offline alignment paradigm; most open frontier models (Llama 3, Mistral, Gemma) use DPO or a close descendant as a post-SFT step, while the cutting edge has shifted toward online and iterative variants that close the gap with PPO on hard reasoning benchmarks.
+    DPO and its variants remain the dominant *offline* alignment paradigm in 2026 — the default tool for style, format, and safety tuning — and open models still use DPO or a close descendant as a preference-tuning step. But the frontier *ordering* has shifted: modern recipes often run SFT → online RL → a deliberately *lightweight* DPO pass. [Llama 4's post-training](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) does exactly this, after Meta reported that heavy SFT/DPO can *over-constrain* the model and restrict exploration during the online-RL stage on reasoning, coding, and math. For hard, verifiable tasks the ceiling now belongs to online / verifiable-reward RL (GRPO + RLVR).
 
     **Foundational work**
 

@@ -440,7 +440,7 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
     - **From narrow to general:** reasoning learned on verifiable math/code *transfers* to untrained domains; mix verifier + reward-model rewards in one run for deployable models; prefer the most exact verifier a task allows (symbolic > execution > LLM-judge > learned RM).
 
 !!! sota "State of the Art & Resources (2026)"
-    RLVR is now the dominant post-training paradigm for reasoning: every frontier reasoning model (OpenAI o-series, DeepSeek-R1, Qwen-QwQ) uses verifiable-reward RL, and open-source tooling (veRL, OpenRLHF, TRL) makes the full recipe reproducible at scale. Active research in 2025–2026 focuses on whether RLVR expands the base model's reasoning frontier or primarily elicits latent capability, on unbiased group-relative objectives, and on extending verifiable rewards to new domains.
+    RLVR is now the dominant post-training paradigm for reasoning: every frontier reasoning model (OpenAI's o-series and GPT-5, DeepSeek-R1, Qwen3's thinking mode) uses verifiable-reward RL, and open-source tooling (verl, OpenRLHF, TRL) makes the full recipe reproducible at scale. Active research in 2025–2026 focuses on whether RLVR expands the base model's reasoning frontier or primarily elicits latent capability, on unbiased group-relative objectives, and on extending verifiable rewards to new domains.
 
     **Foundational work**
 

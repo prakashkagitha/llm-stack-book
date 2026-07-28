@@ -462,7 +462,7 @@ def rejection_sampling_iteration(
 
 ### STaR: Self-Taught Reasoner
 
-Zeiler et al. (2022) introduced STaR (Self-Taught Reasoner), which addresses a key problem: when $k$ is small and the problem is hard, the model may produce zero correct completions for many prompts, yielding no training signal. STaR adds a *rationalization hint*: when the model fails, show it the ground-truth answer and ask it to construct a chain-of-thought that leads to that answer, then use that chain-of-thought as an additional training example.
+Zelikman et al. (2022) introduced STaR (Self-Taught Reasoner), which addresses a key problem: when $k$ is small and the problem is hard, the model may produce zero correct completions for many prompts, yielding no training signal. STaR adds a *rationalization hint*: when the model fails, show it the ground-truth answer and ask it to construct a chain-of-thought that leads to that answer, then use that chain-of-thought as an additional training example.
 
 $$
 \mathcal{D}_\text{STaR} = \underbrace{\{(x, r_{\text{sampled}}, y^*) : r \text{ correct}\}}_{\text{self-generated rationales}} \cup \underbrace{\{(x \| y^*, r_{\text{hint}}, y^*) : r \text{ incorrect}\}}_{\text{hint-conditioned rationales}}
@@ -778,7 +778,7 @@ def run_alignment_pipeline(
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Constitutional AI and RLAIF have become the default scaling strategy for alignment data in frontier labs: AI-generated preference labels now outnumber human labels by orders of magnitude, with constitutions providing auditable constraints on what the AI judge measures. Self-improvement loops (STaR, ReST, SPIN, self-rewarding LMs) are now standard post-training components, and the scalable-oversight question — how to supervise models that exceed human competence — is an active research frontier.
+    Constitutional AI and RLAIF have become the default scaling strategy for alignment data in frontier labs: AI-generated preference labels now outnumber human labels by orders of magnitude, with constitutions providing auditable constraints on what the AI judge measures. The 2025–2026 evolution is *reasoning over a written spec*: rather than judging pairs with a one-shot prompt, reasoning models are trained to recall and deliberate over a safety specification via chain-of-thought before answering (OpenAI's deliberative alignment), and natural-language constitutions are compiled into lightweight input/output classifiers for production jailbreak defense (Anthropic's Constitutional Classifiers). Self-improvement loops (STaR, ReST, SPIN, self-rewarding LMs) are now standard post-training components, and the scalable-oversight question — how to supervise models that exceed human competence — remains an active research frontier.
 
     **Foundational work**
 
@@ -792,7 +792,8 @@ def run_alignment_pipeline(
     - [Burns et al., *Weak-to-Strong Generalization* (2023)](https://arxiv.org/abs/2312.09390) — OpenAI study demonstrating that a strong student trained on weak labels exceeds its supervisor; central paper on scalable oversight.
     - [Yuan et al., *Self-Rewarding Language Models* (2024)](https://arxiv.org/abs/2401.10020) — same model acts as policy and judge; iterative DPO updates improve both roles simultaneously.
     - [Chen et al., *Self-Play Fine-Tuning (SPIN)* (2024)](https://arxiv.org/abs/2401.01335) — uses the model's own previous-iteration outputs as the rejected baseline in DPO, directly closing the gap to human data.
-    - [Wu et al., *Meta-Rewarding Language Models* (2024)](https://arxiv.org/abs/2407.19594) — adds a meta-judge role to fix reward saturation in self-rewarding loops; improves AlpacaEval 2 win rate from 22.9 % to 39.4 % on Llama-3-8B.
+    - [Guan et al., *Deliberative Alignment* (OpenAI, 2024)](https://arxiv.org/abs/2412.16339) — trains reasoning models (the o-series) to recall and reason over the safety spec in chain-of-thought before answering, without human-written CoTs; pushes the jailbreak-robustness / over-refusal Pareto frontier.
+    - [Sharma et al., *Constitutional Classifiers* (Anthropic, 2025)](https://arxiv.org/abs/2501.18837) — compiles a natural-language constitution into input/output classifiers trained on synthetic data, giving production-grade defense against universal jailbreaks across thousands of hours of red-teaming.
 
     **Open-source & tools**
 
@@ -807,7 +808,7 @@ def run_alignment_pipeline(
 
 - Bai et al., "Constitutional AI: Harmlessness from AI Feedback," Anthropic, 2022. The original CAI paper defining the critique-revision and RLAIF pipeline.
 - Lee et al., "RLAIF: Scaling Reinforcement Learning from Human Feedback with AI Feedback," Google, 2023. Controlled comparison of human vs. AI preference labels; introduces position-debiasing protocol.
-- Zeiler et al., "STaR: Bootstrapping Reasoning With Reasoning," NeurIPS 2022. Self-taught reasoner with hint-conditioned rationalization.
+- Zelikman et al., "STaR: Bootstrapping Reasoning With Reasoning," NeurIPS 2022. Self-taught reasoner with hint-conditioned rationalization.
 - Gulcehre et al., "Reinforced Self-Training (ReST) for Language Modeling," Google DeepMind, 2023. Grow-Improve curriculum for offline rejection sampling.
 - Yuan et al., "Self-Rewarding Language Models," Meta AI, 2024. The joint policy+judge training loop with DPO updates.
 - Chen et al., "Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models," 2024. SPIN: using the model's own outputs as the rejected baseline.

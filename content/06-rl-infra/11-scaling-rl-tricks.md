@@ -231,6 +231,8 @@ $$
 
 - **Token-level policy-gradient loss.** GRPO as originally written averages the loss *per sequence first, then over sequences* — so every sequence gets equal weight regardless of length, which means tokens in long sequences are *down-weighted*. DAPO computes the loss as a flat **mean over all tokens in the batch**, giving each token equal weight. This couples directly to the length-normalization bug that Dr. GRPO formalizes next.
 
+A newer member of the clip family, **GSPO** (Group Sequence Policy Optimization, the recipe behind the Qwen3 models), moves the importance ratio and clipping from the *token* level to a length-normalized *sequence* level. This markedly stabilizes large-scale and especially MoE RL, where compounding per-token ratios can explode and blow up training — it is increasingly the default for MoE reasoning runs.
+
 ### Dr. GRPO: removing GRPO's two normalization biases
 
 **Dr. GRPO** ("GRPO Done Right") makes a sharp, surgical claim: vanilla GRPO contains two normalization terms that introduce *optimization bias*, and one of them directly causes the runaway-length pathology.
@@ -344,7 +346,7 @@ The meta-point: **throughput in RL is won by overlap and by not wasting samples,
     - **Curriculum and dynamic sampling are the same idea** — spend the rollout budget on prompts near pass-rate 0.5, where reward variance $p(1-p)$ and thus gradient signal is maximal.
 
 !!! sota "State of the Art & Resources (2026)"
-    Scaling RL for LLMs is a fast-moving engineering discipline where the biggest wins come from eliminating generation bubbles (overlap, oversubscription, partial rollout) and from eliminating useless samples (dynamic sampling, curriculum). The 2025 open-source ecosystem has largely converged on DAPO-style dynamic sampling and token-level loss normalization as standard practice, while value-based methods (VAPO) and fully-async disaggregated fleets represent the frontier.
+    Scaling RL for LLMs is a fast-moving engineering discipline where the biggest wins come from eliminating generation bubbles (overlap, oversubscription, partial rollout) and from eliminating useless samples (dynamic sampling, curriculum). By 2026 the open-source ecosystem has largely converged on DAPO-style dynamic sampling and token-level loss normalization as standard practice, with sequence-level clipping (GSPO) now common for MoE runs; value-based methods (VAPO) and fully-async disaggregated fleets remain the moving frontier.
 
     **Foundational work**
 
@@ -356,6 +358,7 @@ The meta-point: **throughput in RL is won by overlap and by not wasting samples,
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — dynamic sampling, clip-higher, token-level loss, and over-long filtering; 50 pts on AIME 2024 with Qwen2.5-32B.
     - [Liu et al., *Understanding R1-Zero-Like Training: A Critical Perspective* / Dr. GRPO (2025)](https://arxiv.org/abs/2503.20783) — identifies length-normalization and std-normalization biases in GRPO; simple fix prevents runaway trace length.
     - [Yue et al., *VAPO: Efficient and Reliable Reinforcement Learning for Advanced Reasoning Tasks* (2025)](https://arxiv.org/abs/2504.05118) — first value-model-based RL framework to outperform critic-free methods on long-CoT; length-adaptive GAE and critic warm-up are key.
+    - [Zheng et al., *Group Sequence Policy Optimization (GSPO)* (2025)](https://arxiv.org/abs/2507.18071) — moves the importance ratio and clipping to the sequence level; the RL recipe behind Qwen3, notably more stable than token-level GRPO for MoE training.
     - [Kimi Team, *Kimi k1.5: Scaling Reinforcement Learning with LLMs* (2025)](https://arxiv.org/abs/2501.12599) — introduces partial rollout (truncate-and-resume) and long-context RL scaling to 128k tokens.
     - [Noukhovitch et al., *Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models* (ICLR 2025)](https://arxiv.org/abs/2410.18252) — formal treatment of overlapping generation and training; ~40–70% wall-clock speedup with provably small staleness cost.
 

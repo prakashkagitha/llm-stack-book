@@ -523,7 +523,7 @@ Read this against the single-turn GRPO loop in [TRL: HuggingFace's RL Library](.
     - The training algorithm is the same GRPO/PPO as single-turn RL; what is new is the trajectory bookkeeping, the mask, and the credit broadcast. The downstream agent behavior these methods produce is the subject of [Part VIII](../08-agents-harness/02-agentic-loop.html).
 
 !!! sota "State of the Art & Resources (2026)"
-    Agentic and multi-turn RL has advanced rapidly since 2023: frameworks such as veRL, RAGEN, and TRL now ship production-ready multi-turn trainers, SWE-bench Verified has become the canonical coding-agent leaderboard, and the field is converging on trajectory-level GRPO with masked policy gradients as the baseline recipe while actively exploring turn-level credit assignment and async rollout architectures.
+    Agentic and multi-turn RL has advanced rapidly since 2023: frameworks such as veRL, RAGEN, and TRL now ship production-ready multi-turn trainers, and the field has converged on trajectory-level GRPO with masked policy gradients as the baseline recipe while actively pushing turn-level credit assignment, stability diagnostics, and async rollout architectures. SWE-bench Verified remains the canonical coding-agent leaderboard but is now near-saturated at the frontier, driving harder successors such as SWE-bench Pro and terminal-native suites like Terminal-Bench; on the tool-use side τ²-bench's dual-control setting has superseded the original τ-bench.
 
     **Foundational work**
 
@@ -537,12 +537,13 @@ Read this against the single-turn GRPO loop in [TRL: HuggingFace's RL Library](.
     - [Wang & Ammanabrolu, *A Practitioner's Guide to Multi-Turn Agentic Reinforcement Learning* (2025)](https://arxiv.org/abs/2510.01132) — empirical map of design choices across environment, reward, and policy axes; the closest thing to a field-wide recipe guide.
     - [Wei et al., *Reinforcing Multi-Turn Reasoning in LLM Agents via Turn-Level Reward Design* (2025)](https://arxiv.org/abs/2505.11821) — first systematic study of turn-level reward signals for GRPO/PPO in multi-turn settings, directly relevant to the credit-assignment section.
     - [Jimenez et al., *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* (2024)](https://arxiv.org/abs/2310.06770) — the canonical benchmark driving multi-turn coding-agent RL, making long-horizon credit assignment a practical necessity.
-    - [Yao et al., *τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains* (2024)](https://arxiv.org/abs/2406.12045) — evaluates agents on multi-turn tool-calling with a simulated user, exposing reliability failures that motivate better trajectory-level training.
+    - [Yao et al., *τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains* (2024)](https://arxiv.org/abs/2406.12045) — evaluates agents on multi-turn tool-calling with a simulated user, exposing reliability failures that motivate better trajectory-level training; its successor [Barres et al., *τ²-bench* (2025)](https://arxiv.org/abs/2506.07982) adds a dual-control setting where both agent and user act on a shared world.
+    - [Merrill et al., *Terminal-Bench: Benchmarking Agents on Hard, Realistic Tasks in Command Line Interfaces* (2026)](https://arxiv.org/abs/2601.11868) — 89 human-verified terminal tasks (still <65% solved by frontier agents), the emerging standard for shell/CLI agentic evaluation and RL targets.
 
     **Open-source & tools**
 
     - [verl-project/verl](https://github.com/verl-project/verl) — production RL post-training library (HybridFlow) with multi-turn rollout support, integrates FSDP, Megatron-LM, vLLM, and SGLang.
-    - [RAGEN-AI/RAGEN](https://github.com/RAGEN-AI/RAGEN) — StarPO-based multi-turn agentic RL framework with 10 built-in Gym-compatible environments and trajectory filtering for training stability.
+    - [mll-lab-nu/RAGEN](https://github.com/mll-lab-nu/RAGEN) — StarPO-based multi-turn agentic RL framework with 10 built-in Gym-compatible environments; its 2026 V2 adds SNR-adaptive rollout filtering and reasoning-collapse diagnostics for training stability.
 
     **Go deeper**
 

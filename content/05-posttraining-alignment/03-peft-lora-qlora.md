@@ -77,7 +77,7 @@ So $BA = B \cdot A = 0 \cdot A = 0$ at step 0: the LoRA path contributes nothing
 
 LoRA can wrap *any* linear layer. The original paper found that adapting only the attention projections — and within those, often just the query and value projections $W_q, W_v$ — was enough to match full fine-tuning on their benchmarks, at minimal cost. That made "attention-only LoRA" the early default.
 
-The modern (2024–2025) consensus, driven by the QLoRA ablations and a great deal of community experience, is broader: **apply LoRA to *all* linear layers** — the four attention projections *and* the three MLP projections (gate/up/down in a SwiGLU block; see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html)). This "LoRA everywhere" setting closes most of the remaining gap to full fine-tuning, because the MLP holds the majority of a transformer's parameters and a lot of its task-relevant capacity. The cost is still tiny in absolute terms.
+The modern (2024–2025) consensus, driven by the QLoRA ablations and a great deal of community experience, is broader: **apply LoRA to *all* linear layers** — the four attention projections *and* the three MLP projections (gate/up/down in a SwiGLU block; see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html)). This "LoRA everywhere" setting closes most of the remaining gap to full fine-tuning, because the MLP holds the majority of a transformer's parameters and a lot of its task-relevant capacity. The cost is still tiny in absolute terms. This guidance was put on firmer empirical footing by Thinking Machines Lab's 2025 *LoRA Without Regret* study, which — sweeping rank across three orders of magnitude on Llama-3 and Qwen-3 models — found that LoRA applied to *all* layers (especially the MLP/MoE layers) matches full fine-tuning's sample efficiency and final quality across the typical post-training regime, whereas attention-only LoRA underperforms even at much higher rank.
 
 What you do **not** wrap: LayerNorm/RMSNorm scales (you may train these directly — they are vectors, almost free), the token embedding and the LM head (sometimes trained directly if the task needs new tokens), and biases. A common recipe is "LoRA on all linears + train the norms."
 
@@ -347,7 +347,7 @@ The key mental model for QLoRA: **the frozen base is stored in NF4, but every ma
 
 ## The LoRA family: DoRA, rsLoRA, LoRA+, VeRA
 
-LoRA's simplicity invited a wave of refinements. The four below are the ones a 2025 practitioner should know by name and mechanism.
+LoRA's simplicity invited a wave of refinements. The four below are the ones a 2026 practitioner should know by name and mechanism.
 
 ### rsLoRA — fixing the scaling factor at high rank
 
@@ -508,6 +508,7 @@ This connects directly to the data-formatting and templating choices in [Chat Te
 
     **Go deeper**
 
+    - [Schulman et al. (Thinking Machines Lab), *LoRA Without Regret* (2025)](https://thinkingmachines.ai/blog/lora/) — a careful rank sweep (1–512) on Llama-3/Qwen-3 shows LoRA on *all* layers matches full fine-tuning's sample efficiency and quality across the typical post-training regime, at a fraction of the compute; the PEFT defaults (α, A-random/B-zero, same LR up to ~10× full-FT) hold up.
     - [HuggingFace Blog: *Making LLMs even more accessible with bitsandbytes, 4-bit quantization and QLoRA* (2023)](https://huggingface.co/blog/4bit-transformers-bitsandbytes) — practical walkthrough of the full QLoRA stack with runnable code and memory benchmarks.
 
 ## Further reading

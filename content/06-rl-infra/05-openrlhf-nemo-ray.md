@@ -378,7 +378,7 @@ Understanding how OpenRLHF allocates memory across its four actor groups is esse
 
 ## 6.5.4 NeMo-Aligner: Megatron-Based RLHF
 
-**NVIDIA NeMo-Aligner** (released in 2023 as part of the NeMo framework) takes a fundamentally different approach: instead of Ray, it uses **Megatron-LM's** native 3D parallelism and **NCCL** collective communication as the backbone. TensorRT-LLM (TRT-LLM) serves as the rollout engine rather than vLLM.
+**NVIDIA NeMo-Aligner** (released in 2023 as part of the NeMo framework) takes a fundamentally different approach: instead of Ray, it uses **Megatron-LM's** native 3D parallelism and **NCCL** collective communication as the backbone. TensorRT-LLM (TRT-LLM) serves as the rollout engine rather than vLLM. We study it here as the canonical Megatron-native design point; note that NVIDIA archived NeMo-Aligner in late 2025 and re-architected it into **NeMo-RL**, which keeps the Megatron Core kernels but adds Ray scheduling and Hugging Face integration (the design lessons below carry over directly).
 
 ### Megatron-LM as the Foundation
 
@@ -827,14 +827,14 @@ Here is a practical guide for selecting between OpenRLHF, NeMo-Aligner, and alte
 |----------|----------------|
 | Research prototype, 7B–13B model, single node | TRL (simplest, no Ray needed) |
 | Research, 70B+ model, heterogeneous roles | OpenRLHF (flexible Ray decomposition) |
-| Production, NVIDIA DGX cluster, 70B+ model | NeMo-Aligner (optimized Megatron kernels, TRT-LLM) |
+| Production, NVIDIA DGX cluster, 70B+ model | NeMo-RL (Megatron Core kernels + Ray; successor to NeMo-Aligner) |
 | Custom RL algorithm with unique role topology | veRL (HybridFlow, explicit resource pools) |
 | Async / decentralized training across commodity | Prime-RL (see Chapter 6.6) |
 | GRPO or critic-free RL | TRL or veRL (no critic actor needed) |
 
 The choice between OpenRLHF and NeMo-Aligner is often less about algorithmic capability and more about **operational familiarity**: teams already running Megatron-LM pretraining will find NeMo-Aligner's configuration files familiar; teams comfortable with Ray (e.g., those using Ray Serve for inference) will find OpenRLHF's programming model more natural.
 
-One practical note: as of mid-2025, OpenRLHF has a larger and more active open-source community, more documented examples for GRPO and RLVR (see [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)), and broader model support. NeMo-Aligner is more tightly integrated with NVIDIA's hardware optimizations and is the framework of choice for production RLHF at NVIDIA scale.
+One practical note: as of 2026, OpenRLHF and veRL have the largest and most active open-source communities, with extensive documented examples for GRPO and RLVR (see [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)) and broad model support. On the NVIDIA side, NeMo-RL (the successor to the now-archived NeMo-Aligner) is the more tightly hardware-integrated option and the framework of choice for production RLHF at NVIDIA scale.
 
 !!! interview "Interview Corner"
 

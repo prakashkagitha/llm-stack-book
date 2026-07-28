@@ -479,7 +479,7 @@ Read top to bottom, this is the entire RL-for-LLM training loop. Every other cha
     - **Watch the right diagnostics:** clip fraction, old-vs-new approx KL, generation-length distribution (not just mean), and — in async — the staleness distribution. Cap and drop over-age rollouts.
 
 !!! sota "State of the Art & Resources (2026)"
-    The generation–training loop is the operational core of modern LLM RL, and the field has converged on a small set of production-grade rollout engines (vLLM, SGLang) paired with async-overlap frameworks (veRL, OpenRLHF) that pipeline generation against gradient updates to keep expensive inference hardware from sitting idle. Asynchronous and disaggregated architectures—where generators run continuously while trainers update on bounded-stale rollouts—are now the dominant production pattern for runs beyond a few billion parameters.
+    The generation–training loop is the operational core of modern LLM RL, and the field has standardized on a small set of production-grade rollout engines (vLLM, SGLang) paired with a fast-growing ecosystem of async-overlap frameworks — veRL and OpenRLHF alongside newer entrants such as AReaL, slime, and NeMo-RL — that pipeline generation against gradient updates to keep expensive inference hardware from sitting idle. Asynchronous and disaggregated architectures—where generators run continuously while trainers update on bounded-stale rollouts—are now the dominant production pattern, made all but mandatory by long chain-of-thought reasoning traces where a single batch of rollouts can take minutes to hours while the training GPUs would otherwise idle.
 
     **Foundational work**
 
@@ -491,6 +491,7 @@ Read top to bottom, this is the entire RL-for-LLM training loop. Every other cha
     - [Sheng et al., *HybridFlow: A Flexible and Efficient RLHF Framework* (2024)](https://arxiv.org/abs/2409.19256) — veRL's single-controller architecture and 3D-HybridEngine for zero-redundancy weight resharding between generation and training phases.
     - [Hu et al., *OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework* (2024)](https://arxiv.org/abs/2405.11143) — Ray + vLLM disaggregated design; first open framework to scale PPO/GRPO beyond 70B.
     - [Noukhovitch et al., *Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models* (2024)](https://arxiv.org/abs/2410.18252) — rigorous measurement of staleness-vs-throughput tradeoff; ~40–70% wall-clock speedup from overlapping generation and training (ICLR 2025).
+    - [Fu et al., *AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning* (2025)](https://arxiv.org/abs/2505.24298) — fully decoupled generation and training with a staleness-enhanced PPO variant; up to 2.77× faster training on math/code while matching final quality — a systems-level realization of this chapter's fully-async Rung 3.
     - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — the GRPO-based loop this chapter dissects; pure RL without SFT achieving o1-level reasoning.
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — production recipe for stable large-scale GRPO (decoupled clip, dynamic sampling); 50 pts on AIME 2024 with Qwen2.5-32B.
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — RadixAttention for prefix sharing across the group; direct 2–6× win on the rollout phase's dominant cost (NeurIPS 2024).
@@ -504,7 +505,7 @@ Read top to bottom, this is the entire RL-for-LLM training loop. Every other cha
     **Go deeper**
 
     - [vLLM docs: Async RL & Weight Transfer](https://docs.vllm.ai/en/latest/training/async_rl/) — official reference for `pause_generation` / `resume_generation` and pluggable weight-sync used in the Phase 5 weight-swap sketched in this chapter.
-    - [Hugging Face Blog, *Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries* (2025)](https://huggingface.co/blog/async-rl-training-landscape) — seven-axis comparison of async rollout architectures (staleness management, weight-sync protocols, rollout buffer designs) across the full open-source ecosystem.
+    - [Hugging Face Blog, *Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries* (2026)](https://huggingface.co/blog/async-rl-training-landscape) — seven-axis comparison of async rollout architectures (staleness management, weight-sync protocols, rollout buffer designs) across the full open-source ecosystem.
 
 ## Further reading
 

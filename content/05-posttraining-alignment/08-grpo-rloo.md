@@ -518,7 +518,7 @@ It helps to place these methods on a single map (full PPO treatment in [Policy G
 | **RLOO** | reward fn (any scalar) | no | yes | leave-one-out group mean | no (single step) |
 | **GRPO** | reward fn (any scalar) | no | yes | group z-score | yes (clip) |
 
-The mental model: **DPO** is the cheapest (offline, no generation) but is limited to pairwise preferences and can't exploit a *programmatic* reward. **PPO** is the most general and lowest-variance but carries the critic. **GRPO/RLOO** hit the sweet spot for *verifiable-reward* reasoning RL: online (so the policy explores its own current behavior), critic-free (cheap), and able to consume any scalar reward — which is exactly what a unit-test runner or math checker provides. That is why the entire 2025 reasoning-model wave runs on GRPO and its descendants rather than PPO or DPO.
+The mental model: **DPO** is the cheapest (offline, no generation) but is limited to pairwise preferences and can't exploit a *programmatic* reward. **PPO** is the most general and lowest-variance but carries the critic. **GRPO/RLOO** hit the sweet spot for *verifiable-reward* reasoning RL: online (so the policy explores its own current behavior), critic-free (cheap), and able to consume any scalar reward — which is exactly what a unit-test runner or math checker provides. That is why the 2025–2026 reasoning-model wave runs on GRPO and its descendants rather than PPO or DPO — including the sequence-level variant **GSPO** (Group Sequence Policy Optimization), which clips on whole-sequence rather than per-token importance ratios for extra stability on Mixture-of-Experts policies and trains the Qwen3 models.
 
 !!! interview "Interview Corner"
     **Q:** PPO and GRPO both use the same clipped surrogate objective. What exactly does GRPO remove, why is that valid for LLM RLHF, and what new failure mode does the replacement introduce?
@@ -541,7 +541,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
     - **Mental model:** the well-behaved core of GRPO is *token-level REINFORCE with a group-mean baseline plus a PPO clip* — i.e., RLOO's spirit with a trust region for off-policy reuse.
 
 !!! sota "State of the Art & Resources (2026)"
-    Critic-free group-baseline RL (GRPO/RLOO) is now the dominant post-training optimizer for open reasoning models; virtually every 2025–2026 open reasoning model—DeepSeek-R1, QwQ, Skywork-o, and their descendants—trains with GRPO or a direct derivative, and the main active research front is removing the remaining optimization biases (length inflation, std-normalization artifacts) identified by Dr. GRPO and DAPO.
+    Critic-free group-baseline RL (GRPO/RLOO) is now the dominant post-training optimizer for open reasoning models; virtually every 2025–2026 open reasoning model—DeepSeek-R1, QwQ, Qwen3, Skywork-o, and their descendants—trains with GRPO or a direct derivative. Beyond removing GRPO's optimization biases (length inflation, std-normalization artifacts) identified by Dr. GRPO and DAPO, the most consequential newer development is **GSPO** (Group Sequence Policy Optimization), which moves the importance ratio and clipping from the token level to the *sequence* level; this stabilizes training—especially for Mixture-of-Experts models, where per-token ratios are volatile—and is the algorithm behind the Qwen3 models.
 
     **Foundational work**
 
@@ -554,6 +554,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
     - [Liu et al., *Understanding R1-Zero-Like Training: A Critical Perspective* (2025)](https://arxiv.org/abs/2503.20783) — diagnoses GRPO's length-inflation and std-normalization biases; introduces Dr. GRPO (token-level loss, mean-only advantage) to fix both.
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — adds clip-higher, dynamic sampling, and overlong filtering; achieves 50 pts on AIME 2024 with Qwen2.5-32B.
     - [Hu et al., *REINFORCE++: Stabilizing Critic-Free Policy Optimization with Global Advantage Normalization* (2025)](https://arxiv.org/abs/2501.03262) — global batch-level advantage normalization that improves stability over both GRPO and RLOO without a critic.
+    - [Zheng et al., *Group Sequence Policy Optimization* (2025)](https://arxiv.org/abs/2507.18071) — the Qwen team's sequence-level successor to GRPO: the importance ratio and clipping act on whole-sequence likelihood rather than per token, which stabilizes MoE RL (removing the "routing replay" workaround) and powers the Qwen3 models. Available in TRL via `importance_sampling_level="sequence"`.
 
     **Open-source & tools**
 

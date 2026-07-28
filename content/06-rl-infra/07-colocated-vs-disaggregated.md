@@ -196,7 +196,7 @@ class WeightSyncGroup:
             dist.broadcast(buf, src=self.src_rank)     # buf filled in place
 ```
 
-In real systems (vLLM's `RLHFWorker` / collective-RPC interface, SGLang's weight-update API, OpenRLHF's `vllm_engine.update_weight`) this is wrapped so the trainer calls one RPC and the inference workers receive into their internal parameter storage. The transfer runs at NVLink/IB bandwidth: 14 GB of bf16 weights over a 900 GB/s NVLink fabric is $14 / 900 \approx 16$ ms — three orders of magnitude faster than NFS reload. This is why NCCL broadcast is the default in-band sync for every serious RL framework.
+In real systems (vLLM's `RLHFWorker` / collective-RPC interface, SGLang's weight-update API, OpenRLHF's `vllm_engine.update_weight`) this is wrapped so the trainer calls one RPC and the inference workers receive into their internal parameter storage. The transfer runs at NVLink/IB bandwidth: 14 GB of bf16 weights over a 900 GB/s NVLink 4 fabric (H100) is $14 / 900 \approx 16$ ms — three orders of magnitude faster than NFS reload. On Blackwell (B200/GB200), NVLink 5 roughly doubles that to ~1.8 TB/s per GPU, halving the already-negligible sync cost. This is why NCCL broadcast is the default in-band sync for every serious RL framework.
 
 Two practical wrinkles. First, **bf16 vs fp32**: broadcast in the dtype the inference engine consumes (usually bf16), halving the bytes versus fp32 master weights. Second, **bucketing**: broadcasting thousands of tiny tensors one at a time is latency-bound by kernel-launch and handshake overhead; frameworks flatten parameters into large contiguous buckets and broadcast a few big buffers instead, which is bandwidth-bound and far faster.
 
@@ -405,13 +405,13 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
 
     - [verl-project/verl](https://github.com/verl-project/verl) — the HybridFlow implementation; supports colocated hybrid engine and disaggregated mode, FSDP/Megatron training backends, vLLM/SGLang rollout, and a built-in resharding manager for gather-fuse-reshard-broadcast weight sync.
     - [OpenRLHF/OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) — Ray + vLLM disaggregated RL framework supporting PPO, GRPO, REINFORCE++; the most widely adopted open-source disaggregated RL codebase.
-    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance inference engine with first-class RL support: sleep/wake APIs, three weight-refit strategies (disk, tensor, distributed NCCL), and generation pause/resume for weight updates; see also the [SGLang for RL docs](https://sgl-project.github.io/advanced_features/sglang_for_rl.html).
+    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance inference engine with first-class RL support: sleep/wake APIs, three weight-refit strategies (disk, tensor, distributed NCCL), and generation pause/resume for weight updates; see also the [SGLang for RL docs](https://docs.sglang.io/docs/advanced_features/sglang_for_rl).
 
     **Go deeper**
 
     - [*Keep the Tokens Flowing: Lessons from 16 Open-Source RL Libraries* — Hugging Face Blog (2026)](https://huggingface.co/blog/async-rl-training-landscape) — surveys 16 frameworks across seven axes (orchestration, rollout buffer, weight sync protocol, staleness management, partial rollouts, LoRA support, training backend); the best single reference for comparing the async disaggregated landscape.
     - [*Updating 1T Parameters in Seconds: P2P Weight Transfer in Large-Scale Distributed RL* — LMSYS Blog (2026)](https://www.lmsys.org/blog/2026-04-29-p2p-update/) — RDMA-based P2P weight sync via Mooncake TransferEngine reduces a 1T-model broadcast from 53 s to 7.2 s, pointing toward the next generation of weight-sync infrastructure.
-    - [*Accelerating RLHF with vLLM: Best Practices from OpenRLHF* — vLLM Blog (2025)](https://vllm.ai/blog/2025-04-23-openrlhf-vllm) — practical walkthrough of colocated IPC and disaggregated NCCL weight sync in the OpenRLHF + vLLM stack, with code examples.
+    - [*Accelerating RLHF with vLLM: Best Practice from OpenRLHF* — vLLM Blog (2025)](https://blog.vllm.ai/2025/04/23/openrlhf-vllm.html) — practical walkthrough of colocated IPC and disaggregated NCCL weight sync in the OpenRLHF + vLLM stack, with code examples.
 
 ## Further Reading
 

@@ -612,7 +612,7 @@ $$
 
 Despite its simplicity, DARE often reduces interference well because the interference signal tends to be distributed among many small parameters, while the task-specific signal is concentrated in fewer large ones. Random dropping disproportionately removes the former.
 
-DARE is frequently combined with TIES (DARE-TIES): apply DARE's stochastic trimming first, then TIES's sign election and disjoint merge.
+DARE is frequently combined with TIES (DARE-TIES): apply DARE's stochastic trimming first, then TIES's sign election and disjoint merge. A magnitude-aware successor, DELLA (2024), makes the drop probability depend on each entry's rank by magnitude — dropping low-magnitude deltas more aggressively — and reports gains over both DARE and TIES.
 
 !!! example "Worked Example: Parameter Count and Memory for a TIES Merge"
 
@@ -694,7 +694,7 @@ Frankenmerges can be surprisingly capable, but they are sensitive to layer order
 
 ### Mergekit: The Practical Tool
 
-`mergekit` (by Charles Goddard) is the de facto library for model merging in the open-source community. It supports TIES, DARE, SLERP, task arithmetic, and Frankenmerges via a YAML config:
+`mergekit` (by Charles Goddard, now maintained under Arcee AI) is the de facto library for model merging in the open-source community. It supports TIES, DARE, SLERP, task arithmetic, and Frankenmerges — plus newer methods such as DELLA, Model Stock, and evolutionary merging — via a YAML config:
 
 ```yaml
 # mergekit config: TIES merge of two Mistral-7B fine-tunes
@@ -812,7 +812,9 @@ If your use case involves distribution shifts after merging, the evaluation fram
     - [Ilharco et al., *Editing Models with Task Arithmetic* (2023)](https://arxiv.org/abs/2212.04089) — formalizes task vectors as composable weight-space directions for adding, removing, and combining skills.
     - [Yadav et al., *TIES-Merging: Resolving Interference When Merging Models* (2023)](https://arxiv.org/abs/2306.01708) — trim-elect-sign pipeline that reduces parameter interference across merged task vectors.
     - [Yu et al., *Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch* (2023)](https://arxiv.org/abs/2311.03099) — introduces DARE, stochastic delta-weight dropout with rescaling to reduce merge interference.
-    - [Yang et al., *Model Merging in LLMs, MLLMs, and Beyond* (2024)](https://arxiv.org/abs/2408.07666) — comprehensive survey of model merging methods, theory, and applications across ML subfields.
+    - [Deep et al., *DELLA-Merging: Reducing Interference in Model Merging through Magnitude-Based Sampling* (2024)](https://arxiv.org/abs/2406.11617) — magnitude-ranked drop probabilities (MAGPRUNE) that outperform DARE and TIES on LM/Math/Code experts.
+    - [Akiba et al., *Evolutionary Optimization of Model Merging Recipes* (2024)](https://arxiv.org/abs/2403.13187) — Sakana AI's evolutionary search over merge configs in both parameter and data-flow space (published in *Nature Machine Intelligence*, 2025).
+    - [Yang et al., *Model Merging in LLMs, MLLMs, and Beyond* (2024)](https://arxiv.org/abs/2408.07666) — comprehensive survey of model merging methods, theory, and applications (ACM Computing Surveys, 2026).
 
     **Open-source & tools**
 
@@ -821,7 +823,7 @@ If your use case involves distribution shifts after merging, the evaluation fram
 
     **Go deeper**
 
-    - [HuggingFace PEFT: Soft Prompts Conceptual Guide](https://huggingface.co/docs/peft/conceptual_guides/prompting) — accessible walkthrough of prompt tuning, prefix tuning, and P-tuning with diagrams and code pointers.
+    - [HuggingFace PEFT: Soft Prompts Conceptual Guide](https://huggingface.co/docs/peft/main/en/conceptual_guides/prompting) — accessible walkthrough of prompt tuning, prefix tuning, P-tuning, multitask prompt tuning, and CPT with diagrams and code pointers.
     - [Goddard et al., *Arcee's MergeKit: A Toolkit for Merging Large Language Models* (2024)](https://arxiv.org/abs/2403.13257) — describes the engineering and algorithms behind mergekit, including out-of-core CPU-resident merging.
 
 ## Further Reading

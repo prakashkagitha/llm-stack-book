@@ -591,7 +591,7 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
 
 Evaluating instruction-following quality is genuinely hard. There is no single-number metric that captures all the dimensions we care about. The standard suite includes:
 
-**MT-Bench (Zheng et al., 2023).** An 80-question multi-turn benchmark covering reasoning, math, coding, writing, and roleplay. Answers are scored by a judge LLM (typically GPT-4 or a reward model) on a 1–10 scale. MT-Bench is widely reported and gives a good first-pass quality signal.
+**MT-Bench (Zheng et al., 2023).** An 80-question multi-turn benchmark covering reasoning, math, coding, writing, and roleplay. Answers are scored by a judge LLM (originally GPT-4, now typically a strong frontier model or a reward model) on a 1–10 scale. MT-Bench is widely reported and gives a good first-pass quality signal.
 
 **AlpacaEval.** A single-turn benchmark that compares model responses to a reference (GPT-4 or Davinci-003) using win-rate from an LLM judge. Quick to run, good for iteration.
 
@@ -620,7 +620,7 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
     SFT on a dataset where "correct" responses are consistently long will produce a model that gives verbose answers even when brevity is preferred. This is a form of shortcut learning: the model learns that long responses reduce training loss (because long responses contain more plausible next tokens). Prefer a response length distribution that matches your target use case, and consider length-normalizing your loss.
 
 !!! sota "State of the Art & Resources (2026)"
-    Instruction tuning has matured into a well-understood first stage of the post-training pipeline: the field has converged on response-only loss masking, curated data over raw quantity (the LIMA finding), and parameter-efficient adapters (LoRA/QLoRA) as the default compute strategy. Current frontier work focuses on data curation at scale, verifiable-reward RL layered on top of SFT, and fully open replication of the entire post-training stack.
+    Instruction tuning has matured into a well-understood first stage of the post-training pipeline: the field has converged on response-only loss masking, curated data over raw quantity (the LIMA finding), and parameter-efficient adapters (LoRA/QLoRA) as the default compute strategy. Current frontier work focuses on data curation at scale, verifiable-reward RL layered on top of SFT, distilling long chain-of-thought reasoning traces into smaller models via plain SFT, and fully open replication of the entire post-training stack.
 
     **Foundational work**
 
@@ -633,13 +633,14 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
     - [Chung et al., *Scaling Instruction-Finetuned Language Models* (FLAN-T5/v2, 2024)](https://arxiv.org/abs/2210.11416) — systematic study of how task count, model scale, and chain-of-thought data interact during instruction tuning.
     - [Xu et al., *WizardLM: Empowering Large Language Models to Follow Complex Instructions* (2024)](https://arxiv.org/abs/2304.12244) — Evol-Instruct: automatically rewrite seed instructions to progressively higher complexity, improving instruction-following on hard tasks.
     - [Lambert et al., *Tulu 3: Pushing Frontiers in Open Language Model Post-Training* (2024)](https://arxiv.org/abs/2411.15124) — fully open SFT → DPO → RLVR recipe from AllenAI that matches or exceeds proprietary fine-tuned models; includes training data, code, and evals.
+    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — showed that plain SFT on reasoning traces distilled from a strong RL-trained teacher gives smaller dense models (1.5B–70B) most of the teacher's reasoning ability, making trace distillation a mainstream SFT recipe.
     - [Zheng et al., *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena* (2023)](https://arxiv.org/abs/2306.05685) — introduced MT-Bench, the standard multi-turn benchmark for evaluating instruction-tuned models.
 
     **Open-source & tools**
 
     - [huggingface/trl](https://github.com/huggingface/trl) — HuggingFace's post-training library; `SFTTrainer` is the most-used one-stop SFT entry point in the ecosystem.
     - [hiyouga/LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — unified fine-tuning of 100+ LLMs with a web UI; supports SFT, DPO, GRPO, LoRA, QLoRA, and full fine-tuning (ACL 2024).
-    - [OpenAccess-AI-Collective/axolotl](https://github.com/OpenAccess-AI-Collective/axolotl) — YAML-driven fine-tuning framework with Flash Attention, sequence parallelism, and multi-GPU support; popular for research runs.
+    - [axolotl-ai-cloud/axolotl](https://github.com/axolotl-ai-cloud/axolotl) — YAML-driven fine-tuning framework with Flash Attention, multi-GPU support, and (as of 2025) GRPO and multimodal fine-tuning; popular for research runs.
     - [allenai/open-instruct](https://github.com/allenai/open-instruct) — AllenAI's fully open post-training codebase backing the Tulu series; covers SFT, DPO, and RLVR end-to-end.
 
 ## Further Reading
