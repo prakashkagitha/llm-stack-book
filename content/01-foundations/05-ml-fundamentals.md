@@ -460,7 +460,7 @@ How does any learning algorithm generalize at all? The deep answer lies in *indu
 
 **Implicit regularization by SGD.** Stochastic gradient descent, even without explicit regularization, biases toward flat minima (Keskar et al., 2017) and low-rank solutions (Li et al., 2018). The noise injected by mini-batches prevents convergence to sharp, narrow minima that generalize poorly. This is directly relevant to LLM training — the batch size, learning rate schedule, and optimizer choice all implicitly regularize the model. See [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) for the optimizer perspective.
 
-**Grokking.** A recently observed phenomenon (Power et al., 2022) where a model first memorizes training data (overfitting), then — after many more training steps — suddenly generalizes. This suggests that generalization can emerge from extended optimization, not just early stopping, and challenges the simple narrative that training longer always hurts.
+**Grokking.** First documented by Power et al. (2022): a model first memorizes training data (overfitting), then — after many more training steps — suddenly generalizes. Follow-up mechanistic-interpretability work (Nanda et al., 2023) reverse-engineered the learned algorithm on small algorithmic tasks and showed the "sudden" jump is actually the endpoint of a gradual internal phase transition, where a generalizing circuit forms and only later displaces the memorizing one. This suggests that generalization can emerge from extended optimization, not just early stopping, and challenges the simple narrative that training longer always hurts.
 
 ---
 
@@ -646,6 +646,7 @@ print(f"ROC-AUC: {roc_auc_score(y_true, y_score):.4f}")
     **Recent advances (2022–2026)**
 
     - [Power et al., *Grokking: Generalization Beyond Overfitting on Small Algorithmic Datasets* (2022)](https://arxiv.org/abs/2201.02177) — Demonstrates late generalization; challenges the simple "training longer hurts" narrative.
+    - [Nanda et al., *Progress Measures for Grokking via Mechanistic Interpretability* (2023)](https://arxiv.org/abs/2301.05217) — Reverse-engineers the algorithm a grokking network learns, showing the "sudden" generalization is the endpoint of a gradual internal phase transition.
     - [Nakkiran et al., *Deep Double Descent: Where Bigger Models and More Data Hurt* (2020)](https://arxiv.org/abs/1912.02292) — Shows double descent as a function of model size, dataset size, and training epochs; extends Belkin et al. to practice.
 
     **Visual explainers & tools**

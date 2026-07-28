@@ -659,7 +659,7 @@ A second favorite: *why does backprop cost about the same as the forward pass ra
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    MLPs and backpropagation are a half-century-old foundation: the algorithms are settled, but the engineering art of initializing, normalizing, and stabilizing deep networks continues to evolve with every new architecture. Today's billion-parameter transformers are still built from the same forward-pass/backward-pass loop described in this chapter, extended by residual connections, layer normalization, and sophisticated optimizers.
+    MLPs and backpropagation are a half-century-old foundation: the algorithms are settled, but the engineering art of initializing, normalizing, and stabilizing deep networks continues to evolve with every new architecture. Today's billion- to trillion-parameter transformers are still built from the same forward-pass/backward-pass loop described in this chapter, extended by residual connections, layer normalization, and sophisticated optimizers.
 
     **Foundational work**
 

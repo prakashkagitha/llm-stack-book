@@ -410,13 +410,15 @@ if torch.cuda.is_available():
     print(f"  bf16:           {err_bf16:.2e}")
 ```
 
-### FP8: the frontier
+### FP8, and the FP4 frontier
 
 FP8 (introduced in the H100 Transformer Engine) pushes further. Two variants:
 - **E4M3** (4 exponent, 3 mantissa): higher precision, for forward activations and weights.
 - **E5M2** (5 exponent, 2 mantissa): larger range, for gradients.
 
 Because FP8 has only 3 or 2 mantissa bits, it requires **dynamic quantization** — per-tensor or per-block scaling factors to keep values in the representable range. NVIDIA's Transformer Engine handles this automatically. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full workflow.
+
+By 2026, NVIDIA's Blackwell and Rubin generations push the same idea a step further with native 4-bit floating-point formats — **NVFP4** and **MXFP4** — applying finer-grained per-block scaling to keep a 4-bit mantissa usable. Transformer Engine now ships full NVFP4 *training* recipes (not just inference), typically pairing FP4 matmuls with higher-precision master weights and stochastic rounding to control the added quantization noise. FP8 remains the mainstream format for large-scale pretraining as of this writing; FP4 training is the current research and early-production frontier.
 
 ---
 
@@ -663,7 +665,7 @@ print(f"Gradient norm after clipping:  {norm_after:.4f}  (target: ≤ 1.0)")
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Floating-point numerics for deep learning has matured around **bf16** as the default training format and **FP8** (E4M3/E5M2) as the emerging frontier for H100/Blackwell hardware, with the foundational algorithms (stable softmax, Kahan summation, log-space arithmetic) now standard in every major framework. Current research focuses on sub-8-bit training and mixed-precision scheduling.
+    Floating-point numerics for deep learning has matured around **bf16** as the default training format, **FP8** (E4M3/E5M2) as the mainstream format for large-scale pretraining on Hopper/Blackwell hardware, and 4-bit floating-point formats (**NVFP4**, **MXFP4**) as the emerging frontier on Blackwell and Rubin GPUs, with the foundational algorithms (stable softmax, Kahan summation, log-space arithmetic) now standard in every major framework. Current research focuses on robust sub-8-bit (FP4) training and mixed-precision scheduling.
 
     **Textbooks & foundational papers**
 
@@ -681,7 +683,7 @@ print(f"Gradient norm after clipping:  {norm_after:.4f}  (target: ≤ 1.0)")
     **Open-source & tools**
 
     - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — reference implementation of FlashAttention 1–4, supporting CUDA and ROCm, used in virtually every major LLM training stack.
-    - [NVIDIA Transformer Engine — FP8 primer](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html) — official guide to FP8 / MXFP8 / NVFP4 training with delayed and block-wise scaling on H100/Blackwell.
+    - [NVIDIA Transformer Engine — FP8 & FP4 guide](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html) — official guide to FP8 / MXFP8, plus native NVFP4/MXFP4 training recipes with delayed and block-wise scaling, on Hopper, Blackwell, and Rubin GPUs.
 
     **Go deeper**
 

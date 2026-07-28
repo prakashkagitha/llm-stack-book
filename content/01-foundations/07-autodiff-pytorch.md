@@ -654,13 +654,13 @@ In a large pretraining run, reach for this at STEP 3 ("isolate the step") of the
 
     **Open-source & tools**
 
-    - [pytorch/functorch](https://github.com/pytorch/functorch) — the original JAX-like composable transform library (vmap, grad, jacrev) for PyTorch, now merged into `torch.func`.
+    - [pytorch/functorch](https://github.com/pytorch/functorch) — the original JAX-like composable transform library (vmap, grad, jacrev) for PyTorch; now archived, having been fully merged into `torch.func`.
     - [pytorch/pytorch `torch/csrc/autograd/`](https://github.com/pytorch/pytorch) — the canonical C++ autograd engine source; `engine.cpp` and `function.h` are the fastest path to understanding execution ordering and thread pools.
 
     **Go deeper**
 
     - [PyTorch official tutorial: *A Gentle Introduction to torch.autograd*](https://docs.pytorch.org/tutorials/beginner/blitz/autograd_tutorial.html) — the recommended starting point for understanding the autograd API and DAG mechanics.
-    - [PyTorch docs: *Autograd mechanics*](https://docs.pytorch.org/docs/2.12/notes/autograd.html) — deep-dive reference covering saved tensors, in-place ops, multithreaded backward, and Wirtinger calculus for complex numbers.
+    - [PyTorch docs: *Autograd mechanics*](https://docs.pytorch.org/docs/2.13/notes/autograd.html) — deep-dive reference covering saved tensors, in-place ops, multithreaded backward, and Wirtinger calculus for complex numbers.
     - [PyTorch docs: *Extending PyTorch* (custom autograd.Function)](https://docs.pytorch.org/docs/stable/notes/extending.html) — official reference for writing custom `Function` subclasses and registering new operators.
     - [E. Yang, *Let's Talk About the PyTorch Dispatcher* (2020)](https://blog.ezyang.com/2020/09/lets-talk-about-the-pytorch-dispatcher/) — the canonical deep-dive into the dispatch key table, operator registration, and boxing/unboxing.
     - [PyTorch tutorial: *Jacobians, Hessians, hvp, vhp, and more* (torch.func)](https://docs.pytorch.org/tutorials/intermediate/jacobians_hessians.html) — practical guide to composing vmap, vjp, and jvp for per-sample gradients and higher-order derivatives.

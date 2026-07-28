@@ -270,7 +270,7 @@ Intuition: a perplexity of $K$ means the model is "as confused as if it had to c
 
     The model is roughly as confused as if choosing among 5 options at each step on this sequence.
 
-    For reference, GPT-2 (1.5B) achieves roughly 18–20 perplexity on WikiText-103 in nats, while strong modern models (LLaMA-3, Gemma) can reach single-digit perplexity on held-out text from the same distribution.
+    For reference, GPT-2 (1.5B) achieves roughly 18–20 perplexity on WikiText-103 in nats, while the strong open-weight model families current as of this writing (Llama 4, Gemma 3, Qwen3) can reach single-digit perplexity on held-out text from the same distribution.
 
 ### Perplexity Pitfalls
 
