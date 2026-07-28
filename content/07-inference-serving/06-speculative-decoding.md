@@ -350,6 +350,7 @@ These trade off: a bigger drafter raises $\alpha$ but also raises $c$. The sweet
 - **Smaller sibling in the same family.** The classic setup from the original Google/DeepMind speculative-decoding papers (Leviathan et al.; Chen et al., 2023). Easy if the family ships multiple sizes with a shared tokenizer. The shared tokenizer is non-negotiable: token IDs must mean the same thing in both models for the accept test to be coherent.
 - **Distilled drafter.** Train a small model specifically to mimic the target via [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html). Distilling on the target's *own* outputs (sequence-level or logit-level KD) maximizes TV-closeness and thus $\alpha$ — far better than an off-the-shelf small model.
 - **Self-drafting heads.** Medusa and EAGLE (below) attach lightweight heads to the target itself, eliminating the separate model entirely and getting the drafter's features "for free" from the target's own hidden states.
+- **Native multi-token-prediction (MTP) heads.** Some frontier models now *ship* with a drafter built in: they are pretrained with extra multi-token-prediction heads — popularized by DeepSeek-V3 — that the serving engine reuses directly for self-speculation, with no separate drafter to train or align. DeepSeek-V3's single MTP head accepts on the order of 85–90% of its second-token proposals, and vLLM and SGLang expose it as a first-class `method: mtp` speculator.
 - **Retrieval / n-gram drafters.** No neural drafter at all: propose continuations from the prompt itself or a corpus via string matching (prompt lookup decoding). Astonishingly effective for tasks with high input-output overlap — summarization, code editing, RAG where the answer quotes the context. Acceptance on copied spans can approach 1.
 
 !!! tip "Practitioner tip: match the drafter to the workload"
@@ -563,12 +564,13 @@ A second, system-level caveat the formula hides: **batch size.** All these speed
     - [Li et al., *EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees* (2024)](https://arxiv.org/abs/2406.16858) — confidence-driven dynamic draft trees that allocate the token budget to the most-likely branches; 20–40% faster than EAGLE-1.
     - [Li et al., *EAGLE-3: Scaling up Inference Acceleration via Training-Time Test* (2025)](https://arxiv.org/abs/2503.01840) — multi-layer feature fusion and a training-time test objective; 3.3–6.5× speedup and now integrated into vLLM/SGLang/TRT-LLM.
     - [Fu et al., *Break the Sequential Dependency of LLM Inference Using Lookahead Decoding* (2024)](https://arxiv.org/abs/2402.02057) — Jacobi-iteration drafting with no extra model or training; lossless for greedy decoding.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — popularized native multi-token-prediction (MTP) heads, now reused directly as built-in self-speculators (`method: mtp`) in vLLM and SGLang.
 
     **Open-source & tools**
 
     - [SafeAILab/EAGLE](https://github.com/SafeAILab/EAGLE) — official reference implementation of EAGLE-1, EAGLE-2, and EAGLE-3 (ICML'24, EMNLP'24, NeurIPS'25).
     - [FasterDecoding/Medusa](https://github.com/FasterDecoding/Medusa) — Medusa training and inference code; includes recipes for both Medusa-1 (heads only) and Medusa-2 (joint fine-tune).
-    - [vLLM speculative decoding docs](https://docs.vllm.ai/en/latest/features/speculative_decoding/) — production guide covering draft models, EAGLE, n-gram, and the `--speculative-config` API.
+    - [vLLM speculative decoding docs](https://docs.vllm.ai/en/latest/features/speculative_decoding/) — production guide covering draft models, EAGLE, MTP, n-gram/suffix decoding, and the `--speculative-config` API.
 
     **Go deeper**
 

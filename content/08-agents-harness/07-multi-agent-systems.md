@@ -353,7 +353,7 @@ The blackboard's append-only design gives you a full audit trail for free. This 
 
 ## Frameworks: LangGraph, AutoGen, CrewAI, and OpenAI Swarm
 
-Four frameworks dominate the multi-agent landscape as of mid-2025. They differ fundamentally in their mental models.
+Four frameworks anchor the multi-agent landscape, and they differ fundamentally in their mental models. The ecosystem has consolidated by 2026: AutoGen has merged with Semantic Kernel into Microsoft's production-ready **Agent Framework** (1.0 GA, April 2026), and OpenAI's Swarm has been superseded by the **OpenAI Agents SDK**. We study the original four because each cleanly illustrates one mental model; the successors inherit those models rather than replacing them.
 
 ### LangGraph
 
@@ -478,7 +478,7 @@ LangGraph's chief virtue is **observability**: the state at every node transitio
 
 ### AutoGen
 
-Microsoft's AutoGen models multi-agent systems as **conversational agents** that exchange natural-language messages. The programmer registers agents and defines their reply functions; the conversation drives control flow. AutoGen sits closer to the *agent* end of the spectrum.
+Microsoft's AutoGen models multi-agent systems as **conversational agents** that exchange natural-language messages. The programmer registers agents and defines their reply functions; the conversation drives control flow. AutoGen sits closer to the *agent* end of the spectrum. (As of 2026 the classic `pyautogen` package is in maintenance mode: its conversational model has been folded into Microsoft's unified **Agent Framework**, while a community fork, **AG2**, continues the original line under Apache 2.0. The API below still runs, but new production work increasingly targets Agent Framework.)
 
 ```python
 """
@@ -700,7 +700,7 @@ if __name__ == "__main__":
 | State management | Typed dict per node | Message history | Task context passing | Context variables |
 | Debugging | Excellent (typed state) | Moderate | Moderate | Minimal |
 | Best for | Complex stateful workflows | Open-ended debates | Structured pipelines | Simple routing |
-| Maturity (mid-2025) | High | High | High | Low (educational) |
+| Maturity (2026) | High (v1.0 GA) | High (→ Agent Framework) | High (v1.0 GA) | Low (→ Agents SDK) |
 
 ## Handoff Protocols and Communication Patterns
 
@@ -863,14 +863,15 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 
     **Open-source & tools**
 
-    - [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) — low-level state-machine orchestration framework for stateful, long-running agents; typed state dicts, conditional edges, and built-in checkpointing.
-    - [microsoft/autogen](https://github.com/microsoft/autogen) — conversational-agent framework where agents coordinate via natural-language message exchange; 58k+ GitHub stars.
-    - [crewAIInc/crewai](https://github.com/crewaiinc/crewai) — role-based multi-agent framework with Crews (autonomous collaboration) and Flows (production event-driven pipelines); 52k+ stars, independent of LangChain.
+    - [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) — low-level state-machine orchestration framework for stateful, long-running agents; typed state dicts, conditional edges, and built-in checkpointing. Reached 1.0 GA in October 2025.
+    - [microsoft/autogen](https://github.com/microsoft/autogen) — conversational-agent framework where agents coordinate via natural-language message exchange; 60k+ GitHub stars but now in maintenance mode (see Agent Framework below).
+    - [crewAIInc/crewai](https://github.com/crewaiinc/crewai) — role-based multi-agent framework with Crews (autonomous collaboration) and Flows (production event-driven pipelines); ~45k+ stars, independent of LangChain, with native MCP and A2A support since its v1.0 release.
     - [openai/swarm](https://github.com/openai/swarm) — minimal educational reference implementation of the agent-handoff pattern; superseded in production by the OpenAI Agents SDK but ideal for studying core mechanics.
 
     **Go deeper**
 
     - [OpenAI Agents SDK — Agent Orchestration Guide](https://openai.github.io/openai-agents-python/multi_agent/) — official docs covering orchestration-via-code vs. LLM-driven routing, handoffs, and agents-as-tools patterns; the production successor to Swarm.
+    - [Microsoft Agent Framework docs](https://learn.microsoft.com/en-us/agent-framework/) — the 2026 GA convergence of AutoGen and Semantic Kernel into one production framework for .NET and Python, with middleware hooks, pluggable memory, and multi-agent workflows.
 
 ## Further Reading
 

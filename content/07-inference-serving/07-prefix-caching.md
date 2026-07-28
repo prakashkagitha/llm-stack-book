@@ -222,7 +222,7 @@ The implementation above shows the essential structure. In production (e.g., the
 
 ## 7.7.4 vLLM Automatic Prefix Caching (APC)
 
-vLLM's **Automatic Prefix Caching** (APC), introduced in vLLM 0.4, takes a simpler but highly effective approach: it reuses the existing PagedAttention block table and adds a global **evictor hash table** on top. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for the block allocator background.
+vLLM's **Automatic Prefix Caching** (APC), introduced in vLLM 0.4, takes a simpler but highly effective approach: it reuses the existing PagedAttention block table and adds a global **evictor hash table** on top. In the V1 engine (the default since 2025), APC was redesigned for constant-time eviction and near-zero overhead — under 1 % throughput cost even at a 0 % hit rate — and is now **enabled by default**, so you opt *out* with `--no-enable-prefix-caching` rather than opting in. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for the block allocator background.
 
 In vLLM's model:
 
@@ -344,7 +344,7 @@ Some deployments add **priority annotations** to cached blocks:
 - **Normal**: evicted LRU.
 - **Ephemeral**: evicted immediately after the owning request completes.
 
-vLLM's `--enable-prefix-caching` flag enables APC with normal-priority eviction. SGLang exposes finer-grained control through its `CacheEngine` API.
+On the vLLM V1 engine, APC runs with normal-priority LRU eviction by default (disable it with `--no-enable-prefix-caching`); the legacy V0 engine instead required opting in with `--enable-prefix-caching`. SGLang exposes finer-grained control through its `CacheEngine` API.
 
 ### Cache sizing heuristics
 
@@ -458,7 +458,7 @@ python -m vllm.entrypoints.openai.api_server \
     --block-size 16
 ```
 
-The `--block-size` parameter controls the hashing granularity. Larger blocks mean fewer hash lookups but coarser prefix alignment — a prompt that is one token short of a full block boundary gets no cache benefit for that trailing block.
+The `--block-size` parameter controls the hashing granularity. Larger blocks mean fewer hash lookups but coarser prefix alignment — a prompt that is one token short of a full block boundary gets no cache benefit for that trailing block. On the current V1 engine `--enable-prefix-caching` is redundant (APC is already on); pass `--no-enable-prefix-caching` only when you need it off — for example to force a full recomputation for debugging or benchmarking. (Requesting prompt logprobs does *not* require disabling APC on V1: the engine keeps caching on but transparently recomputes the full-prompt prefill for that request rather than returning cached logprobs.)
 
 ```python
 # Verify APC is active via vLLM metrics endpoint
@@ -621,6 +621,7 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
 
     - [Fast and Expressive LLM Inference with RadixAttention and SGLang](https://www.lmsys.org/blog/2024-01-17-sglang/) — LMSYS blog post with benchmarks and design rationale for the radix-tree cache.
     - [Automatic Prefix Caching — vLLM official docs](https://docs.vllm.ai/en/stable/design/prefix_caching/) — implementation details, hash-chaining design, and configuration guide for vLLM's APC.
+    - [vLLM V1: A Major Upgrade to vLLM's Core Architecture (2025)](https://vllm.ai/blog/2025-01-27-v1-alpha-release) — the V1 rewrite that makes prefix caching near-zero-overhead and turns it on by default (opt out via `--no-enable-prefix-caching`).
 
 ## Further Reading
 

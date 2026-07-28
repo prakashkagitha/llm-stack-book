@@ -250,7 +250,9 @@ Key trade-offs of wide-EP:
 
 - **Benefit**: each GPU holds fewer experts, so expert weight memory per GPU drops proportionally. Total KV-cache memory scales with the cluster.
 - **Cost**: all-to-all over InfiniBand has 10–50× higher latency than NVLink. For small batches, the network becomes the bottleneck.
-- **Mitigation**: two techniques help — (1) **compute-communication overlap** (prefetch the next all-to-all while computing the current layer), and (2) **expert load balancing** to avoid hot experts that increase effective network traffic. DeepSeek-V3 also uses an auxiliary loss during training to encourage balanced routing, which directly improves serving efficiency.
+- **Mitigation**: two techniques help — (1) **compute-communication overlap** (prefetch the next all-to-all while computing the current layer), and (2) **expert load balancing** to avoid hot experts that increase effective network traffic. DeepSeek-V3 also uses an auxiliary-loss-free balancing scheme during training to encourage balanced routing, which directly improves serving efficiency.
+
+As of 2026 the intra-node/inter-node boundary is itself shifting: on NVIDIA's Blackwell **GB200/GB300 NVL72** systems a single fifth-generation NVLink domain spans 72 GPUs at 1.8 TB/s per GPU, so an entire wide-EP group can sit inside one NVLink island — collapsing much of the inter-node all-to-all penalty that motivated these mitigations on Hopper-era (H100/H200) clusters.
 
 ```python
 # Simplified expert-parallel dispatch/gather (pseudocode with real shapes)
@@ -588,7 +590,7 @@ python -m sglang.launch_server \
     --trust-remote-code
 ```
 
-For wide-EP across nodes, SGLang and DeepSeek's own serving infrastructure use a specialized MoE dispatch layer that performs RDMA-based all-to-all via NCCL or a custom communication library.
+For wide-EP across nodes, vLLM and SGLang now build on DeepSeek's open-source **DeepEP** library — GPU-initiated, RDMA-based all-to-all dispatch/combine kernels, with a dedicated low-latency variant for the decode path — to perform the inter-node MoE routing. On H200 clusters this wide-EP path (DeepEP plus dual-batch compute–communication overlap) has been reported to sustain on the order of 2k output tokens/s per GPU for DeepSeek-V3-class models.
 
 ---
 
@@ -654,30 +656,31 @@ The wide-EP approach trades per-request latency for massive cluster-level throug
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Multi-GPU and multi-node inference is now a mature discipline, with production systems routinely spanning 512+ GPUs using combinations of tensor, pipeline, expert, and data parallelism. The frontier has shifted toward ultra-large MoE models (DeepSeek-V3, Mixtral, Qwen MoE) where wide expert parallelism over InfiniBand and compute–communication overlap are the defining challenges.
+    Multi-GPU and multi-node inference is now a mature discipline, with production systems routinely spanning 512+ GPUs using combinations of tensor, pipeline, expert, and data parallelism. The frontier has shifted toward trillion-parameter MoE models (DeepSeek-V3/R1, Kimi K2, Qwen3-MoE) where wide expert parallelism — now standardized in open frameworks via DeepSeek's open-source DeepEP all-to-all kernels — and compute–communication overlap are the defining challenges. On the hardware side, NVIDIA's Blackwell GB200/GB300 NVL72 (fifth-generation NVLink, 1.8 TB/s per GPU, up to a 72-GPU NVLink domain) is beginning to blur the old intra-node/inter-node boundary, letting far larger TP and EP groups stay on NVLink.
 
     **Foundational work**
 
     - [Shoeybi et al., *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism* (2019)](https://arxiv.org/abs/1909.08053) — introduced column/row-parallel tensor parallelism that underpins every major serving framework today.
-    - [Narayanan et al., *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM* (2021)](https://arxiv.org/abs/2104.04473) — formalizes the composition of TP × PP × DP and the interleaved 1F1B pipeline schedule.
 
     **Recent advances (2023–2026)**
 
     - [Kwon et al., *Efficient Memory Management for Large Language Model Serving with PagedAttention* (2023)](https://arxiv.org/abs/2309.06180) — PagedAttention enables high-throughput multi-GPU serving by eliminating KV-cache fragmentation; foundation of vLLM.
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — RadixAttention and compressed FSM scheduling for multi-GPU structured-output serving; NeurIPS 2024.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — 671B MoE with EP = 64 across 8 nodes, DualPipe compute–communication overlap, and auxiliary-loss-free expert load balancing.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — 1.04T-parameter MoE (32B active, 384 experts, MLA); a current standard-bearer for open trillion-parameter models that serve via wide EP.
 
     **Open-source & tools**
 
     - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the dominant open-source LLM serving engine; supports TP, PP, and EP with PagedAttention and continuous batching.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance serving framework with RadixAttention, wide EP support, and strong multi-node scaling.
-    - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — canonical reference implementation for TP/PP/DP composition; Megatron Core provides reusable parallelism building blocks.
     - [NVIDIA/TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM) — production-grade inference library with FP8/NVFP4 quantization, fused kernels, and multi-node TP + PP + EP via a PyTorch-native API.
-    - [deepseek-ai/FlashMLA](https://github.com/deepseek-ai/FlashMLA) — optimized CUDA kernels for Multi-head Latent Attention on H800/H100, achieving up to 640 TFlops prefill and 3 TB/s decode bandwidth.
+    - [deepseek-ai/DeepEP](https://github.com/deepseek-ai/DeepEP) — DeepSeek's open-source expert-parallel communication library: GPU-initiated, RDMA-based all-to-all dispatch/combine kernels (with a low-latency decode variant) now integrated into vLLM and SGLang.
+    - [deepseek-ai/FlashMLA](https://github.com/deepseek-ai/FlashMLA) — optimized CUDA kernels for Multi-head Latent Attention on Hopper GPUs, achieving up to 640 TFlops prefill and 3 TB/s decode bandwidth.
 
     **Go deeper**
 
-    - [NVIDIA Technical Blog, *Mastering LLM Techniques: Inference Optimization*](https://developer.nvidia.com/blog/mastering-llm-techniques-inference-optimization/) — practitioner-level walkthrough of TP, PP, sequence parallelism, and quantization with concrete framework guidance.
+    - [vLLM Blog, *Large Scale Serving: DeepSeek with Wide EP* (2025)](https://vllm.ai/blog/2025-12-17-large-scale-serving) — production wide-EP walkthrough reaching ~2.2k tokens/s/GPU on H200 with DeepEP and dual-batch overlap.
+    - [NVIDIA Technical Blog, *GB200 NVL72 Delivers Trillion-Parameter LLM Training and Real-Time Inference*](https://developer.nvidia.com/blog/nvidia-gb200-nvl72-delivers-trillion-parameter-llm-training-and-real-time-inference/) — how the 72-GPU NVLink domain reshapes TP/EP placement for very large MoE serving.
 
 ## Further Reading
 
@@ -685,6 +688,7 @@ The wide-EP approach trades per-request latency for massive cluster-level throug
 - Lepikhin et al., "GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding," ICLR 2021 — early expert parallelism for Transformers.
 - Fedus et al., "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity," JMLR 2022 — capacity factor, expert load balancing.
 - DeepSeek-AI, "DeepSeek-V3 Technical Report," 2024 — wide-EP serving, MLA, FP8 training, production deployment details.
+- Kimi Team, "Kimi K2: Open Agentic Intelligence," 2025 — 1T-parameter open MoE (32B active, 384 experts, MLA) representative of the trillion-parameter models now served with wide expert parallelism.
 - Rajbhandari et al., "ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning," SC 2021 — memory hierarchy for serving very large models with CPU/NVMe offload.
 - vLLM project (Kwon et al., 2023) and SGLang (Zheng et al., 2024) — open-source references for multi-GPU serving implementations; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
 - Huang et al., "GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism," NeurIPS 2019 — pipeline schedule analysis and bubble formulation.

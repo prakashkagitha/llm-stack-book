@@ -210,9 +210,9 @@ When choosing a GPU for inference, the relevant specs are different from those f
 | A100 80GB | 80 | 2.00 | 312 | ~\$3.50 |
 | H100 SXM5 | 80 | 3.35 | 989 | ~\$5.00 |
 | H200 SXM | 141 | 4.80 | 989 | ~\$7.00 |
-| B200 SXM | 192 | 8.00 | ~4,500 | ~\$10.00 |
+| B200 SXM | 192 | 8.00 | ~2,250 | ~\$10.00 |
 
-Note: prices are illustrative order-of-magnitude estimates and vary significantly by provider, region, and contract.
+Note: BF16 figures are dense (non-sparse) tensor-core peak, for consistency across rows. Prices are illustrative order-of-magnitude estimates and vary significantly by provider, region, and contract. As of 2026 the Blackwell generation is the volume frontier for inference — the B200 above, plus the newer Blackwell Ultra (B300/GB300) with 288 GB of HBM3e per GPU for larger models and longer-context KV caches — and its native FP4 tensor cores add a low-precision serving tier below FP8 (see below).
 
 For inference on a fixed model, the figures of merit are:
 1. **Tokens/s/dollar**: dominated by HBM bandwidth for decode-heavy workloads.
@@ -397,7 +397,7 @@ For a 70B model:
 | FP8 | 70 GB | 2.0× | 1× H100 |
 | INT4 (AWQ) | 35 GB | 4.0× | 1× H100 (with KV headroom) |
 
-FP8 inference is now supported natively on H100 and B200 hardware via the FP8 matmul units, offering near-BF16 quality with roughly 2× throughput improvement. This is a straightforward win for most production workloads.
+FP8 inference is supported natively on H100 and Blackwell hardware via the FP8 matmul units, offering near-BF16 quality with roughly 2× throughput improvement — a straightforward win for most production workloads. On Blackwell, NVIDIA's NVFP4 4-bit format (a micro-scaled FP4 storing one FP8 scale per 16 values) pushes this further: post-training quantization to NVFP4 has been shown to stay within about 1% of FP8 accuracy on models like DeepSeek-R1 while delivering roughly 3× the FP8 (up to 4× the BF16) peak throughput on Blackwell, and it is now deployable via TensorRT-LLM and vLLM. In 2026 this makes hardware-native 4-bit a viable production tier rather than a research curiosity.
 
 ### KV Cache Quantization
 
@@ -540,7 +540,7 @@ GPU compute is the dominant but not the only cost. A complete cost breakdown for
 
 At small scale, the marginal dollar usually goes further when spent on engineering (prompt compression, fine-tuning a smaller model, prefix caching implementation) than on more hardware.
 
-At large scale (> \$1M/month), negotiated reserved instance pricing, custom silicon (Google TPUs, AWS Trainium2, NVIDIA A100/H100 3-year reservations), and distillation programs pay off significantly.
+At large scale (> \$1M/month), negotiated reserved instance pricing, custom silicon (Google TPUs, AWS Trainium2, NVIDIA Hopper/Blackwell multi-year reservations), and distillation programs pay off significantly.
 
 !!! interview "Interview Corner"
 
@@ -618,7 +618,7 @@ Alert thresholds to set:
     - Always measure `cost_per_1m_output_tokens` as a first-class production metric alongside TTFT and GPU utilization. It surfaces inefficiencies that neither metric alone reveals.
 
 !!! sota "State of the Art & Resources (2026)"
-    Inference economics is a rapidly maturing discipline: by 2025 the field had moved from ad-hoc throughput maximization toward principled SLO-aware goodput optimization, hardware-native FP8 serving, and disaggregated prefill/decode architectures that are now standard in production clusters handling billions of tokens per day.
+    Inference economics is a rapidly maturing discipline: by 2025 the field had moved from ad-hoc throughput maximization toward principled SLO-aware goodput optimization, hardware-native FP8 serving, and disaggregated prefill/decode architectures that are now standard in production clusters handling billions of tokens per day. By 2026 the frontier has extended to Blackwell-class hardware with native 4-bit (NVFP4) serving and KV-cache-centric disaggregation across the memory hierarchy.
 
     **Foundational work**
 
@@ -634,7 +634,8 @@ Alert thresholds to set:
 
     **Open-source & tools**
 
-    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the reference high-throughput serving engine (PagedAttention, continuous batching, FP8, LoRA hot-swap); its `/metrics` endpoint is the fastest way to observe the cost formulas in this chapter on real hardware.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the reference high-throughput serving engine (PagedAttention, continuous batching, FP8/NVFP4, LoRA hot-swap); its `/metrics` endpoint is the fastest way to observe the cost formulas in this chapter on real hardware.
+    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — the other production-grade serving engine now standard alongside vLLM; adds RadixAttention prefix caching, prefill/decode disaggregation, and speculative decoding, and is a useful cross-check when calibrating throughput and cost numbers.
 
     **Go deeper**
 

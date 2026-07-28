@@ -810,7 +810,7 @@ The code in this chapter gives you a concrete starting point. In the next chapte
 
     **Open-source & tools**
 
-    - [mem0ai/mem0](https://github.com/mem0ai/mem0) — 57k-star "universal memory layer" combining vector, graph, and key-value stores; production-ready Python/TypeScript SDK.
+    - [mem0ai/mem0](https://github.com/mem0ai/mem0) — 60k+-star "universal memory layer" combining vector, graph, and key-value stores; production-ready Python/TypeScript SDK.
     - [letta-ai/letta](https://github.com/letta-ai/letta) — formerly MemGPT; stateful-agent platform with built-in virtual context management and a REST API for persistent agent services.
     - [topoteretes/cognee](https://github.com/topoteretes/cognee) — open-source memory control plane with remember/recall/forget/improve operations backed by embeddings and knowledge graphs.
 

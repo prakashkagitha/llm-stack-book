@@ -736,7 +736,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
     - Agentic RL trains the model to internalize the agentic loop as a policy, replacing fragile prompt engineering with learned behavior that generalizes across task distributions.
 
 !!! sota "State of the Art & Resources (2026)"
-    The agentic loop — observe, think, act — is now the dominant paradigm for deploying LLMs on real-world tasks, with ReAct as its canonical formulation. Since 2023 the field has moved rapidly from prompting-based agents to trained agentic policies and standardized benchmarks, with production frameworks like LangGraph and SWE-agent pushing reliability into software-engineering workflows.
+    The agentic loop — observe, think, act — is now the dominant paradigm for deploying LLMs on real-world tasks, with ReAct as its canonical formulation. Since 2023 the field has moved from prompting-based agents toward trained agentic policies, standardized tool interfaces (the Model Context Protocol, adopted across OpenAI, Google, and Microsoft in 2025 and now governed under the Linux Foundation), and agentic benchmarks led by SWE-bench Verified for coding agents. Production frameworks like LangGraph (now the de-facto stateful-agent runtime, used by Klarna, LinkedIn, Uber, and Replit) and SWE-agent continue pushing reliability into software-engineering workflows.
 
     **Foundational work**
 
@@ -749,8 +749,11 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
     - [Yang et al., *SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering* (2024)](https://arxiv.org/abs/2405.15793) — shows that a carefully designed agent-computer interface (ACI) is as important as the underlying model; NeurIPS 2024.
     - [Liu et al., *AgentBench: Evaluating LLMs as Agents* (2023)](https://arxiv.org/abs/2308.03688) — multi-environment benchmark across 8 tasks revealing large gaps between commercial and open-source models as agents; ICLR 2024.
     - [Wang et al., *A Survey on Large Language Model based Autonomous Agents* (2024)](https://arxiv.org/abs/2308.11432) — comprehensive taxonomy of agent construction, memory, planning, and action, covering 150+ papers.
+    - [SWE-bench (and the SWE-bench Verified leaderboard)](https://www.swebench.com/) — resolving real GitHub issues has become the reference measure for coding agents; the Verified split is the headline number frontier labs report for agentic capability.
 
     **Open-source & tools**
+
+    - [Anthropic, *Introducing the Model Context Protocol* (2024)](https://www.anthropic.com/news/model-context-protocol) — the open client-server standard that lets agents discover and invoke tools uniformly; adopted industry-wide through 2025, it is the tool-interface layer most production agentic loops now build on.
 
     - [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) — graph-based orchestration framework for stateful, long-running agents with cycles, conditionals, and durable execution; the de-facto production choice for Python agentic pipelines.
     - [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) — open-source ReAct-style agent that resolves real GitHub issues; reference implementation for tool-interface design.

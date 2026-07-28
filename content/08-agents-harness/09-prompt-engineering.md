@@ -420,7 +420,7 @@ pipeline = ReviewPipeline()
 # compiled_pipeline.save("compiled_review_pipeline.json")
 ```
 
-DSPy's key insight is that prompts are *hyperparameters* of your LLM program, and they should be tuned with the same discipline as model hyperparameters: against a metric, on a held-out set, with proper train/dev/test splits. The compiled program can be serialized as JSON, version-controlled, and re-optimized when you switch models.
+DSPy's key insight is that prompts are *hyperparameters* of your LLM program, and they should be tuned with the same discipline as model hyperparameters: against a metric, on a held-out set, with proper train/dev/test splits. The compiled program can be serialized as JSON, version-controlled, and re-optimized when you switch models. As of 2026 the strongest optimizers are no longer bootstrap-only: `MIPROv2` jointly searches instructions and demonstrations, and the reflective optimizer `GEPA` (Agrawal et al., 2025) mutates instructions from natural-language reflection on execution traces along a Pareto frontier, reportedly beating `MIPROv2` by 10%+ and RL-style tuning (GRPO) with up to 35× fewer rollouts.
 
 ---
 
@@ -719,7 +719,7 @@ Let us address the skeptical reader directly. Three objections and their answers
 
 **"It's not reproducible."** It is, if you treat prompts as code. Version control your templates. Pin your model version. Use fixed seeds for evals. Report metrics on held-out sets. The reason prompting feels unreproducible is that most practitioners do none of these things.
 
-**"It's not a transferable skill."** The specific wording that works for GPT-4o may not work for Gemini. But the principles — clear instructions, structured format, examples, decomposition, eval loops, caching strategy — transfer across models and over time. The meta-skill is knowing which levers to pull and in what order.
+**"It's not a transferable skill."** The specific wording that works for GPT-5.2 may not work for Gemini 3 or Claude Opus 4.5. But the principles — clear instructions, structured format, examples, decomposition, eval loops, caching strategy — transfer across models and over time. The meta-skill is knowing which levers to pull and in what order.
 
 The connection to the rest of the LLM stack is also real. Prompting interacts with:
 
@@ -763,10 +763,11 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
     - [Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models* (ICLR 2023)](https://arxiv.org/abs/2210.03629) — interleaved Thought/Action/Observation prompting pattern; foundational template for agentic system prompts.
     - [Zhou et al., *Large Language Models Are Human-Level Prompt Engineers* (APE; ICLR 2023)](https://arxiv.org/abs/2211.01910) — treats instruction generation as program synthesis; LLM proposes and scores candidate prompts automatically.
     - [Khattab et al., *DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines* (2023)](https://arxiv.org/abs/2310.03714) — typed signatures replace hand-written prompts; optimizers bootstrap few-shot examples against a metric.
+    - [Agrawal et al., *GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning* (2025; ICLR 2026 oral)](https://arxiv.org/abs/2507.19457) — the 2026 state-of-the-art DSPy optimizer; evolves instructions via natural-language reflection on execution traces, beating MIPROv2 by 10%+ and GRPO with up to 35× fewer rollouts.
 
     **Open-source & tools**
 
-    - [stanfordnlp/dspy](https://github.com/stanfordnlp/dspy) — the canonical framework for programming (not prompting) LMs; supports BootstrapFewShot, MIPROv2, and fine-tuning optimizers.
+    - [stanfordnlp/dspy](https://github.com/stanfordnlp/dspy) — the canonical framework for programming (not prompting) LMs; supports BootstrapFewShot, MIPROv2, and the reflective GEPA optimizer.
 
     **Go deeper**
 

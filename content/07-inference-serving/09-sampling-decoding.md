@@ -190,13 +190,13 @@ A typical production default is `top_p=0.9` with `temperature=0.8`. Note that to
 
 ## Min-p Sampling
 
-Min-p (Nguyen et al., 2023) takes a different angle: instead of keeping a top fraction by mass, it keeps all tokens whose probability is at least $p_{\min}$ times the *maximum* token probability:
+Min-p (Nguyen et al., 2024) takes a different angle: instead of keeping a top fraction by mass, it keeps all tokens whose probability is at least $p_{\min}$ times the *maximum* token probability:
 
 $$
 V_{\min\text{-}p} = \{t : P(t) \geq p_{\min} \cdot \max_{t'} P(t')\}
 $$
 
-This scales the threshold relative to the peak, so it automatically tightens when the model is confident and loosens when it is uncertain — similar to top-p, but parameterised differently and often producing smoother behaviour at extreme temperatures.
+This scales the threshold relative to the peak, so it automatically tightens when the model is confident and loosens when it is uncertain — similar to top-p, but parameterised differently and often producing smoother behaviour at extreme temperatures. By 2026 the temperature-plus-min-p pair (e.g. `temperature=0.7`–`1.0`, `min_p=0.05`–`0.1`) has become a common default among open-model serving stacks, while commercial APIs still expose top-p as their primary truncation knob. A newer refinement, *top-nσ* (Tang et al., 2024), thresholds on the pre-softmax logits — keeping tokens within $n$ standard deviations of the maximum logit — and is provably *temperature-invariant*: its candidate set does not change as you scale temperature, avoiding the noise-token blow-up that top-p and min-p can suffer at high $T$.
 
 ```python
 class MinPProcessor:
@@ -768,7 +768,7 @@ if __name__ == "__main__":
     - In **distillation**, high-temperature soft targets expose "dark knowledge" — the teacher's inter-token similarity structure — and should be scaled by $T^2$ to maintain gradient magnitude.
 
 !!! sota "State of the Art & Resources (2026)"
-    Sampling and decoding research has evolved from simple greedy/beam baselines into a rich family of adaptive, factuality-aware, and watermarking-capable methods. The current frontier focuses on dynamic truncation (min-p, typical sampling), contrastive layer-based decoding to reduce hallucinations, and inference-efficient alternatives that maintain or improve output quality.
+    Sampling and decoding research has evolved from simple greedy/beam baselines into a rich family of adaptive, factuality-aware, and watermarking-capable methods. The current frontier focuses on dynamic, temperature-robust truncation (min-p, top-nσ, typical sampling), contrastive layer-based decoding to reduce hallucinations, and inference-efficient alternatives that maintain or improve output quality.
 
     **Foundational work**
 
@@ -779,7 +779,8 @@ if __name__ == "__main__":
     **Recent advances (2023–2026)**
 
     - [Chuang et al., *DoLa: Decoding by Contrasting Layers Improves Factuality in LLMs* (ICLR 2024)](https://arxiv.org/abs/2309.03883) — single-model contrastive decoding using early vs. final layers to suppress hallucinations; +12–17 pp on TruthfulQA.
-    - [Nguyen et al., *Turning Up the Heat: Min-p Sampling for Creative and Coherent LLM Outputs* (ICLR 2025)](https://arxiv.org/abs/2407.01082) — dynamic threshold scaled to the peak probability; balances quality and creativity at high temperatures.
+    - [Nguyen et al., *Turning Up the Heat: Min-p Sampling for Creative and Coherent LLM Outputs* (ICLR 2025)](https://arxiv.org/abs/2407.01082) — dynamic threshold scaled to the peak probability; balances quality and creativity at high temperatures. Min-p (with temperature) has become a common default in open-model serving stacks.
+    - [Tang et al., *Top-nσ: Not All Logits Are You Need* (2024)](https://arxiv.org/abs/2411.07641) — pre-softmax statistical truncation keeping tokens within $n$ standard deviations of the max logit; provably temperature-invariant, avoiding the noise-token accumulation that top-p and min-p exhibit at high temperature.
     - [Kirchenbauer et al., *A Watermark for Large Language Models* (ICML 2023)](https://arxiv.org/abs/2301.10226) — logit-level "green/red list" watermarking detectable from short spans without model access.
     - [Shi et al., *A Thorough Examination of Decoding Methods in the Era of LLMs* (EMNLP 2024)](https://arxiv.org/abs/2402.06925) — broad empirical comparison of greedy, beam, top-k, top-p, typical, and contrastive decoding across tasks and model sizes.
 

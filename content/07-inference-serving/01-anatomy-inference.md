@@ -438,7 +438,7 @@ Three things to internalize from this skeleton. First, **prefill runs once, deco
     - Before optimizing, **profile your prefill:decode split** ($S:T$): prefill-heavy and decode-heavy traffic need entirely different playbooks.
 
 !!! sota "State of the Art & Resources (2026)"
-    Production LLM serving in 2026 is shaped by two dominant insights from this chapter: decode is memory-bandwidth-bound, so every major system optimizes KV-cache packing and weight access; and prefill and decode have opposite bottlenecks, so disaggregating them onto separate hardware is now a mainstream strategy. The open-source ecosystem — led by vLLM and SGLang — has made these ideas broadly accessible while research continues to push KV-cache compression and speculative decoding further.
+    Production LLM serving in 2026 is shaped by two dominant insights from this chapter: decode is memory-bandwidth-bound, so every major system optimizes KV-cache packing and weight access; and prefill and decode have opposite bottlenecks, so disaggregating them onto separate hardware is now a mainstream strategy. The open-source ecosystem — led by vLLM and SGLang — has made these ideas broadly accessible, and datacenter-scale orchestration layers (e.g. NVIDIA Dynamo, released 2025) now productionize disaggregated prefill/decode and multi-tier KV caching across multi-node GPU fleets, while research continues to push KV-cache compression and speculative decoding further.
 
     **Foundational papers**
 
@@ -456,11 +456,13 @@ Three things to internalize from this skeleton. First, **prefill runs once, deco
 
     - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the de facto standard high-throughput serving engine; implements PagedAttention, continuous batching, prefix caching, and speculative decoding.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — SGLang runtime with RadixAttention for automatic KV-cache reuse across requests sharing common prefixes.
+    - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA Dynamo, a datacenter-scale inference stack that orchestrates vLLM/SGLang/TensorRT-LLM engines with KV-aware routing, disaggregated prefill/decode, and tiered KV-cache offload to CPU/SSD/network.
 
     **Go deeper**
 
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2023)](https://arxiv.org/abs/2312.07104) — the RadixAttention paper; shows prefix-aware KV-cache management integrated directly into the serving runtime; NeurIPS 2024.
     - [vLLM Documentation](https://docs.vllm.ai/en/latest/) — official docs covering PagedAttention internals, automatic prefix caching design, and deployment guides.
+    - [Gordić, *Inside vLLM: Anatomy of a High-Throughput LLM Inference System* (vLLM blog, 2025)](https://vllm.ai/blog/2025-09-05-anatomy-of-vllm) — an end-to-end walkthrough of a production engine's scheduler, KV-cache manager, paged attention, prefix caching, and speculative decoding — the direct next step from this chapter's single-loop skeleton.
 
 ## Further Reading
 

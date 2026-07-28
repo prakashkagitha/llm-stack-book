@@ -430,7 +430,7 @@ A subtle but important rule: prefer to preempt the request whose progress you'll
 Every production engine is a continuous-batching scheduler with different emphases:
 
 - **Orca** introduced iteration-level scheduling and selective batching — the blueprint.
-- **vLLM** pairs continuous batching with **PagedAttention** so the KV cache is non-contiguous blocks, making admission/eviction a block-allocation problem and enabling near-zero memory fragmentation; its scheduler does FCFS with preemption (recompute or swap) and now defaults to chunked prefill. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
+- **vLLM** pairs continuous batching with **PagedAttention** so the KV cache is non-contiguous blocks, making admission/eviction a block-allocation problem and enabling near-zero memory fragmentation; its scheduler does FCFS with preemption (recompute or swap). The 2025 **V1** engine rewrite made this the default execution model and replaced the old prefill/decode split with a single *unified* scheduler that hands every request a slice of one shared token budget (`{request_id: num_tokens}`), so chunked prefill, prefix caching, and speculative decoding all fall out of one policy — decodes first, then prefill chunks backfill the remainder. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
 - **TGI** (HuggingFace Text Generation Inference) calls it *continuous batching* and exposes a `waiting_served_ratio` and token-budget knobs.
 - **TensorRT-LLM** calls it **in-flight batching** and fuses it with NVIDIA's optimized kernels.
 - **SGLang** adds **RadixAttention** for prefix-cache reuse on top of continuous batching, so shared prompt prefixes don't re-prefill — see [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
@@ -469,8 +469,9 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
 
     **Open-source & tools**
 
-    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the reference continuous-batching serving engine; PagedAttention, chunked prefill, and preemption all in one codebase; read the `Scheduler` class directly.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the reference continuous-batching serving engine; PagedAttention, chunked prefill, and preemption all in one codebase; read the `Scheduler` class directly. Its [V1 architecture rewrite (2025)](https://vllm.ai/blog/2025-01-27-v1-alpha-release) unifies prefill and decode under one token-budget scheduler for ~1.7× throughput over V0.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — SGLang's high-performance runtime with RadixAttention prefix caching; strong performance on multi-turn and structured-output workloads.
+    - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA Dynamo, a datacenter-scale orchestration layer *above* vLLM/TensorRT-LLM/SGLang that adds disaggregated prefill/decode, KV-aware routing, and multi-tier KV caching across nodes; the productionized form of the DistServe direction.
 
     **Go deeper**
 

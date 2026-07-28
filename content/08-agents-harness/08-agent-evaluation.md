@@ -129,7 +129,7 @@ tau-bench (Yao et al., 2024) evaluates tool-augmented agents in *realistic custo
 - *Policy compliance.* Many tasks have explicit policy rules (e.g., "refunds are only allowed within 30 days"). The agent must follow policy while still satisfying the user, creating a tension that tests instruction-following under constraint.
 - *Multi-turn scoring.* tau-bench records whether the agent correctly resolves the issue AND whether it violates any policy, producing a two-dimensional score.
 
-tau-bench is particularly relevant for production deployments of service agents. Its simulated-user design avoids the need for human annotators during evaluation while keeping the dynamics realistic.
+tau-bench is particularly relevant for production deployments of service agents. Its simulated-user design avoids the need for human annotators during evaluation while keeping the dynamics realistic. Its 2025 successor, τ²-bench (Sierra Research), extends this to a *dual-control* setting where the simulated user also holds tools and must act in a shared state, exposing coordination failures that the original single-control design could not.
 
 ### terminal-bench
 
@@ -509,7 +509,7 @@ Data contamination — the presence of benchmark tasks or solutions in pretraini
 
 Stepping back, what does the trajectory of agent benchmark scores tell us about real progress?
 
-**SWE-bench as a case study.** In mid-2023, the best published resolve rates on SWE-bench were around 3–5% (a single model without retrieval). By early 2025, leaderboard-leading entries using multi-agent scaffolds and oracle file localization were reporting rates on the order of 40–50% on SWE-bench Verified. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.
+**SWE-bench as a case study.** In mid-2023, the best published resolve rates on SWE-bench were around 3–5% (a single model without retrieval). By early 2025, leaderboard-leading entries were already reporting resolve rates past 60% on SWE-bench Verified, and by 2026 frontier systems cluster near saturation — on the order of 90% — so attention has shifted to harder, contamination-resistant successors such as SWE-bench Pro, where resolve rates remain below 25%. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.
 
 But much of the improvement came from scaffolding, not just the base model. The signal is real, but it is a *system* signal: (model + harness + compute budget) rather than model-in-isolation.
 
@@ -519,7 +519,7 @@ But much of the improvement came from scaffolding, not just the base model. The 
 - **Solve rate with and without oracle localization**: isolates code-generation ability from retrieval ability.
 - **Cost per solved task** (inference API cost): increasingly important for production deployment.
 
-**The floor and ceiling problem.** Benchmarks saturate. When any single benchmark approaches 70–80% solve rates, the remaining tasks are either pathologically hard, noisy, or require capabilities genuinely absent from current models. The field regularly needs new, harder benchmarks. terminal-bench and SciCode are recent examples of raising the difficulty ceiling.
+**The floor and ceiling problem.** Benchmarks saturate. When any single benchmark approaches 70–80% solve rates, the remaining tasks are either pathologically hard, noisy, or require capabilities genuinely absent from current models. SWE-bench Verified has itself largely saturated for frontier models, so the field has moved to harder, long-horizon, contamination-resistant successors — SWE-bench Pro (Scale AI, 2025) and Terminal-Bench 2.0, alongside SciCode — to raise the difficulty ceiling.
 
 See [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) for broader context on how agent benchmarks fit into the full evaluation landscape, and [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html) for the meta-question of what benchmarks are actually measuring.
 
@@ -661,7 +661,7 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
     - In production, augment pass@k with cost-normalized metrics (tasks solved per dollar) and ablation studies that separate model contribution from scaffold contribution.
 
 !!! sota "State of the Art & Resources (2026)"
-    Agent evaluation has matured rapidly: SWE-bench Verified scores rose from under 2% in late 2023 to over 75% by 2026, driven by both stronger base models and scaffold engineering. The field is now converging on richer metrics — cost-normalized solve rates, harness-ablated comparisons, and multi-domain benchmarks — to separate genuine capability gains from scaffolding and contamination effects.
+    Agent evaluation has matured rapidly: SWE-bench Verified scores rose from under 2% in late 2023 to roughly 90% by 2026 — near saturation for frontier systems — driven by both stronger base models and scaffold engineering. That saturation has pushed the field toward harder, contamination-resistant successors (SWE-bench Pro, Terminal-Bench 2.0, τ²-bench) and toward richer metrics — cost-normalized solve rates, harness-ablated comparisons, and pass^k reliability — to separate genuine capability gains from scaffolding and contamination effects.
 
     **Foundational work**
 
@@ -673,7 +673,9 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
     - [Zhou et al., *WebArena: A Realistic Web Environment for Building Autonomous Agents* (2023)](https://arxiv.org/abs/2307.13854) — sandboxed web benchmark across e-commerce, GitLab, and forum tasks; state-based functional evaluation.
     - [Mialon et al., *GAIA: a benchmark for General AI Assistants* (2023)](https://arxiv.org/abs/2311.12983) — three-level benchmark requiring multi-hop tool use with exact-match grading; humans score 92% vs. ~15% for GPT-4 with plugins.
     - [Yao et al., *τ-bench: Tool-Agent-User Interaction in Real-World Domains* (2024)](https://arxiv.org/abs/2406.12045) — simulated customer-service benchmark with policy-compliance scoring and a multi-turn pass^k metric.
-    - [Xie et al., *OSWorld: Benchmarking Multimodal Agents in Real Computer Environments* (2024)](https://arxiv.org/abs/2404.07972) — 369 tasks spanning Ubuntu, Windows, and macOS; best model achieves ~12% vs. 72% human performance.
+    - [Xie et al., *OSWorld: Benchmarking Multimodal Agents in Real Computer Environments* (2024)](https://arxiv.org/abs/2404.07972) — 369 tasks spanning Ubuntu, Windows, and macOS; at release the best model achieved ~12% vs. 72% human performance, though frontier computer-use agents have since risen well above that.
+    - [SWE-Bench Pro: Can AI Agents Solve Long-Horizon Software Engineering Tasks? (Scale AI, 2025)](https://arxiv.org/abs/2509.16941) — 1,865 enterprise-scale, multi-file tasks with public, held-out, and commercial splits designed to resist contamination; frontier resolve rates stay below 25% (Pass@1).
+    - [Barres et al., *τ²-Bench: Evaluating Conversational Agents in a Dual-Control Environment* (2025)](https://arxiv.org/abs/2506.07982) — extends τ-bench so the simulated user also wields tools in a shared state, modeling technical-support-style coordination.
     - [Yehudai et al., *Survey on Evaluation of LLM-based Agents* (2025)](https://arxiv.org/abs/2503.16416) — comprehensive survey across five evaluation dimensions: core capabilities, application benchmarks, generalist agents, benchmark analysis, and evaluation frameworks.
 
     **Open-source & tools**

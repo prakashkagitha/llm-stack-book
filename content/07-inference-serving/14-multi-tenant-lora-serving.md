@@ -134,7 +134,7 @@ When a request arrives for adapter $a$, the scheduler checks whether $a$ is GPU-
 
 ### Hot-swapping and the prefetch pipeline
 
-The art is **overlapping** adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch's needed adapters into GPU pages while the current batch is still executing on the compute stream. Because adapters are small (tens of MB) and PCIe/NVLink bandwidth is large (tens to hundreds of GB/s), an adapter swap from CPU DRAM typically takes well under a millisecond — comfortably hidden behind a decode step.
+The art is **overlapping** adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch's needed adapters into GPU pages while the current batch is still executing on the compute stream. Because adapters are small (tens of MB) and PCIe/NVLink bandwidth is large (tens to hundreds of GB/s), an adapter swap from CPU DRAM typically takes well under a millisecond — comfortably hidden behind a decode step for small adapters, though large or high-rank adapters can still dominate TTFT if loaded on the critical path. By 2026 this overlap has become a first-class, opt-in engine feature rather than a hand-rolled stream — SGLang's `--enable-lora-overlap-loading` (§7.14.6) is one such implementation.
 
 ```python
 # Sketch: overlap adapter prefetch with the current forward pass.
@@ -257,7 +257,7 @@ Both leading open-source engines ship production multi-LoRA support built on the
 
 **vLLM** exposes LoRA as a first-class serving feature. You launch with `--enable-lora`, set `--max-loras` (max distinct adapters per *batch/step*) and `--max-cpu-loras` (the CPU warm-pool size), and bound rank with `--max-lora-rank`. Adapters can be registered statically at launch (`--lora-modules name=path ...`) or **loaded dynamically at runtime** via the API, which is what makes a true multi-tenant platform possible — tenants upload adapters and route to them by name without restarting the server. Internally vLLM uses Punica-style SGMV/BGMV kernels (and Triton variants), the paged allocator holds adapter weights, and an LRU manager handles GPU↔CPU residency. Requests carry a `LoRARequest(name, id, path)` so the scheduler knows which adapter each belongs to.
 
-**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the cross-model prefix-reuse story above is native). Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
+**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the cross-model prefix-reuse story above is native). It exposes `--max-loras-per-batch` (the adapter-cardinality cap of §7.14.4, default 8) and, since early 2026, an opt-in `--enable-lora-overlap-loading` prefetcher that streams adapter weights on a side CUDA stream to hide cold-adapter transfer — cutting median TTFT by up to ~78% on large-adapter workloads (at the cost of occasionally fragmenting multi-adapter prefill batches). Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
 
 ```bash
 # vLLM: serve a base model with multi-LoRA, dynamic loading enabled.
@@ -527,7 +527,8 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
 
     - [punica-ai/punica](https://github.com/punica-ai/punica) — reference SGMV/BGMV CUDA kernels and multi-LoRA serving system from the Punica paper.
     - [predibase/lorax](https://github.com/predibase/lorax) — production-ready multi-LoRA inference server with dynamic adapter loading, tiered weight caching, and OpenAI-compatible API.
-    - [vLLM — LoRA Adapters](https://docs.vllm.ai/en/latest/features/lora/) — official docs for `--enable-lora`, `--max-loras`, `--max-cpu-loras`, and dynamic runtime adapter registration.
+    - [vLLM — LoRA Adapters](https://docs.vllm.ai/en/latest/features/lora/) — official docs for `--enable-lora`, `--max-loras`, `--max-cpu-loras`, and dynamic runtime adapter registration (including runtime `/v1/load_lora_adapter` / `/v1/unload_lora_adapter` endpoints).
+    - [SGLang — LoRA Serving](https://docs.sglang.io/docs/advanced_features/lora) — multi-LoRA over RadixAttention: `--max-loras-per-batch` and the 2026 `--enable-lora-overlap-loading` side-stream prefetcher that hides cold-adapter TTFT.
 
     **Go deeper**
 

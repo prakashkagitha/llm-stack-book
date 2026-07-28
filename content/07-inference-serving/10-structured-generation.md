@@ -577,7 +577,7 @@ This is more complex than pure JSON generation because the grammar is *partially
 {{fig:structgen-toolcall-constrained-flow}}
 
 
-SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) implements this via its `constrained_decode` primitive, which can be composed with its programmatic generation API. The vLLM serving stack integrates Outlines or XGrammar as a backend, activated per-request when `guided_json` or `guided_regex` is set in the request parameters.
+SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) implements this via its `constrained_decode` primitive, which can be composed with its programmatic generation API. The vLLM serving stack exposes several selectable backends — as of 2026 XGrammar is the default (with `auto` backend selection), and guidance/llguidance, Outlines, and lm-format-enforcer remain available — activated per-request when structured-output parameters such as `guided_json` or `guided_regex` are set.
 
 !!! note "Tool name as a vocabulary restriction"
 

@@ -553,7 +553,7 @@ You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the ru
     - The savings are real and bounded by your sharing: a long shared prefix can cut prefill compute by an order of magnitude or more; all-unique prompts see little benefit.
 
 !!! sota "State of the Art & Resources (2026)"
-    SGLang has become one of the two dominant open-source LLM inference engines (alongside vLLM), with RadixAttention now a standard technique widely replicated across serving frameworks. The zero-overhead overlap scheduler and XGrammar-backed structured generation represent the current frontier for high-throughput production serving as of 2026.
+    SGLang has become one of the two dominant open-source LLM inference engines (alongside vLLM), with RadixAttention now a standard technique widely replicated across serving frameworks. Its zero-overhead overlap scheduler and XGrammar-backed structured generation remain core, but as of the v0.5 line (mid-2026) the production frontier has moved further: **prefill–decode (PD) disaggregation** splits the compute-bound prefill and bandwidth-bound decode phases onto independently scaled GPU pools — with radix/prefix caching preserved across the split — and **EAGLE-3-style speculative decoding** — with Speculative-Decoding V2 now the default spec-decoding path when it is enabled — is a first-class decode accelerator, layered on the same radix tree and constrained-decoding stack described in this chapter.
 
     **Foundational work**
 
@@ -566,6 +566,7 @@ You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the ru
     - [Dong et al., *XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models* (2024)](https://arxiv.org/abs/2411.15100) — near-zero-overhead context-free grammar decoding; now the default structured-output backend in SGLang and vLLM.
     - [LMSYS, *SGLang v0.4: Zero-Overhead Batch Scheduler, Cache-Aware Load Balancer, Faster Structured Outputs* (2024)](https://www.lmsys.org/blog/2024-12-04-sglang-v0-4/) — engineering post detailing the overlap scheduler and cache-aware load balancing that define the current SGLang architecture.
     - [LMSYS, *Achieving Faster Open-Source Llama3 Serving with SGLang Runtime* (2024)](https://www.lmsys.org/blog/2024-07-25-sglang-llama3/) — benchmark showing SGLang matching or exceeding TensorRT-LLM on Llama-3 at various scales.
+    - [LMSYS, *SGLang Day 0 Support for DeepSeek-V3.2 with Sparse Attention* (2025)](https://www.lmsys.org/blog/2025-09-29-deepseek-V32/) — a representative v0.5-era post showing how the same radix-cache runtime tracks frontier models (here, DeepSeek sparse attention) and disaggregated serving.
 
     **Open-source & tools**
 
@@ -576,7 +577,7 @@ You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the ru
 
     - [LMSYS, *Fast and Expressive LLM Inference with RadixAttention and SGLang* (2024)](https://www.lmsys.org/blog/2024-01-17-sglang/) — the original blog post walking through RadixAttention's design and throughput results, an excellent complement to the paper.
     - [LMSYS, *Fast JSON Decoding for Local LLMs with Compressed Finite State Machine* (2024)](https://www.lmsys.org/blog/2024-02-05-compressed-fsm/) — deep-dive on jump-forward decoding and why the compressed FSM cuts JSON decode latency by up to 2×.
-    - [SGLang Documentation](https://sgl-project.github.io/) — official docs covering installation, server flags, structured output APIs, and deployment guides.
+    - [SGLang Documentation](https://docs.sglang.io/) — official docs covering installation, server flags, structured output APIs, and deployment guides.
 
 ## Further reading
 

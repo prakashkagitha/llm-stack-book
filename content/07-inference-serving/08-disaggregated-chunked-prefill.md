@@ -24,7 +24,7 @@ For large $T_p$, the numerator grows quadratically in $T_p$ (for attention, $O(T
 
 During decode, we generate one token at a time. The batch dimension is the number of concurrent sequences, $B_d$. Each layer executes a matrix-vector multiply: shape $[B_d, d_\text{model}]$ times $[d_\text{model}, d']$. Unless $B_d$ is in the hundreds, this is entirely memory-bandwidth-bound: we stream gigabytes of weights from HBM every step just to do a handful of FLOPs per byte.
 
-For a 70B parameter model in BF16 (140 GB of weights), each decode step reads roughly 140 GB from HBM regardless of batch size. On an A100 SXM with HBM bandwidth of roughly 2 TB/s, that's on the order of 70 ms of pure bandwidth time per step — leaving essentially no room for compute to hide. In contrast, a H100 (3.35 TB/s bandwidth) gets this to around 40 ms in theory.
+For a 70B parameter model in BF16 (140 GB of weights), each decode step reads roughly 140 GB from HBM regardless of batch size. On an A100 SXM with HBM bandwidth of roughly 2 TB/s, that's on the order of 70 ms of pure bandwidth time per step — leaving essentially no room for compute to hide. An H100 (3.35 TB/s bandwidth) gets this to around 40 ms in theory, and a 2026-frontier Blackwell B200 (8 TB/s HBM3e) to roughly 17 ms — but the decode phase stays bandwidth-bound on every generation of hardware.
 
 The key insight: **prefill wants to be compute-bound and loves big batches; decode wants high bandwidth and is bottlenecked by memory, not FLOPs.** These constraints point toward different hardware configurations: fewer, faster GPUs (or GPUs with high TFLOP/s) for prefill, and more, bandwidth-rich GPUs for decode.
 
@@ -78,6 +78,7 @@ Transferring 1 GB at NVLink4 speeds (~900 GB/s bidirectional between two H100s) 
 
 | Interconnect | Bandwidth | 1 GB KV transfer time | Notes |
 |---|---|---|---|
+| NVLink5 (Blackwell / GB200 NVL72) | ~1,800 GB/s | ~0.6 ms | 2026 frontier; up to 72 GPUs on one NVSwitch fabric |
 | NVLink4 (H100 NVSwitch) | ~900 GB/s | ~1 ms | On the same NVSwitch fabric |
 | NVLink3 (A100 NVSwitch) | ~600 GB/s | ~1.7 ms | |
 | PCIe 5.0 x16 | ~64 GB/s | ~16 ms | Cross-node CPU path |
@@ -290,7 +291,7 @@ where $r_P$ and $r_D$ are the number of replicas (GPU groups) allocated to prefi
 **Splitwise** (Patel et al., 2023, Microsoft Research) takes disaggregation one step further: it argues that because prefill is compute-bound and decode is memory-bandwidth-bound, you should use *different GPU models* for the two pools. Specifically:
 
 - **Prefill workers:** use high-FLOP/s, moderately-bandwidth GPUs. In an H100/A100 world, this often means fewer GPUs with aggressive compute configurations.
-- **Decode workers:** use high-bandwidth-memory GPUs — or even CPUs with large memory for small batches (CPU offloading). The H100 HBM3 memory at 3.35 TB/s shines here.
+- **Decode workers:** use high-bandwidth-memory GPUs — or even CPUs with large memory for small batches (CPU offloading). High-HBM parts shine here, from the H100's 3.35 TB/s HBM3 up to the Blackwell B200's ~8 TB/s HBM3e.
 
 Splitwise also introduced the term **"prompt phase"** for prefill and **"token phase"** for decode, now widely adopted in the systems literature. Their key empirical finding: on commercial cloud deployments, the decode phase uses far fewer FLOPs per token than prefill but consumes a comparable fraction of total serving cost due to the time it spends waiting for memory bandwidth. Disaggregation with heterogeneous hardware can reduce per-token cost by routing each phase to its best-fit hardware.
 
@@ -577,7 +578,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
     - Both vLLM and SGLang support chunked prefill in production today; full disaggregation requires orchestration infrastructure but is increasingly supported via project-level extensions.
 
 !!! sota "State of the Art & Resources (2026)"
-    Disaggregated prefill/decode has moved from research into production infrastructure: every major serving framework (vLLM, SGLang, NVIDIA Dynamo) now supports separate prefill and decode pools, while chunked prefill is enabled by default in most deployments. The key open challenges are optimizing KV-cache transfer cost across cluster topologies and dynamic pool rebalancing under bursty traffic.
+    Disaggregated prefill/decode has moved from research into production infrastructure: every major serving framework (vLLM, SGLang, NVIDIA Dynamo — now at 1.0 and production-ready, orchestrating vLLM/SGLang/TensorRT-LLM backends) now supports separate prefill and decode pools, while chunked prefill is enabled by default in most deployments. On rack-scale Blackwell (GB200 NVL72, 72 GPUs on one NVLink5 fabric), disaggregation is the default topology rather than an optimization. The key open challenges are optimizing KV-cache transfer cost across cluster topologies and dynamic pool rebalancing under bursty traffic.
 
     **Foundational work**
 
@@ -588,7 +589,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
     **Recent advances (2023–2026)**
 
     - [Agrawal et al., *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve* (2024)](https://arxiv.org/abs/2403.02310) — OSDI 2024 follow-up: stall-free scheduling with chunked prefill achieves 2.6–5.6× higher serving capacity over vLLM baselines.
-    - [Qin et al., *Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving* (2024)](https://arxiv.org/abs/2407.00079) — Moonshot AI's production system; disaggregates KV storage into a CPU/DRAM/SSD distributed pool, enabling 75% more requests handled under SLO in real workloads.
+    - [Qin et al., *Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving* (2024)](https://arxiv.org/abs/2407.00079) — Moonshot AI's production system (FAST 2025 Best Paper); disaggregates KV storage into a CPU/DRAM/SSD distributed pool, enabling 75% more requests handled under SLO in real workloads. Now integrated with vLLM and SGLang as a cross-instance KV-cache store.
 
     **Open-source & tools**
 

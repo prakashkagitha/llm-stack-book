@@ -29,7 +29,7 @@ At any decode step, the model sees a flat sequence of tokens. In an agent, that 
 +-----------------------------------------------------------+
 ```
 
-Every one of these competes for the same budget. A modern model might advertise a 200K-token window, but that headline number is a *capacity*, not a *recommendation*. Three separate costs push you to use far less than the maximum:
+Every one of these competes for the same budget. A frontier model in 2026 routinely advertises a 1M-token window (Gemini, Claude, and open-weight Llama 4.x all reach it; some Gemini tiers stretch to 2M), but that headline number is a *capacity*, not a *recommendation*. Three separate costs push you to use far less than the maximum:
 
 1. **Quality.** Accuracy degrades as the window fills (Sections on context rot and lost-in-the-middle below). The useful window is smaller than the advertised window.
 2. **Latency.** Prefill is roughly linear in input length, and attention is quadratic in sequence length; a 150K-token prompt can take seconds to prefill before the first token streams. See [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).
@@ -525,7 +525,7 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
 
     - [gkamradt/LLMTest_NeedleInAHaystack](https://github.com/gkamradt/LLMTest_NeedleInAHaystack) — the standard harness for sweeping context length × needle depth to measure your model's effective window; widely adopted by Anthropic, Google, and OpenAI.
     - [nelson-liu/lost-in-the-middle](https://github.com/nelson-liu/lost-in-the-middle) — code and data from the Lost-in-the-Middle paper; multi-doc QA and key-value retrieval benchmarks for position-effect evaluation.
-    - [mem0ai/mem0](https://github.com/mem0ai/mem0) — 57 k-star universal memory layer for agents; provides managed persistent memory that offloads long-term context from the window to an external store.
+    - [mem0ai/mem0](https://github.com/mem0ai/mem0) — 60 k+-star universal memory layer for agents; provides managed persistent memory that offloads long-term context from the window to an external store.
 
     **Go deeper**
 

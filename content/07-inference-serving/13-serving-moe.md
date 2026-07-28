@@ -1,6 +1,6 @@
 # 7.13 Serving Mixture-of-Experts: Expert Parallelism & All-to-All Inference
 
-A dense 70-billion-parameter model and a sparse 671-billion-parameter Mixture-of-Experts (MoE) model can have *identical* per-token FLOPs. DeepSeek-V3 has 671B total parameters but activates only ~37B per token; Llama-4 Maverick has ~400B total but ~17B active; Qwen3-235B-A22B activates ~22B of 235B. The promise of MoE — explained architecturally in [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) — is that *quality tracks total parameters while compute tracks active parameters*. That promise is what makes these models attractive to *train*. But it creates a serving problem that has almost nothing in common with serving a dense model of equivalent speed.
+A dense 70-billion-parameter model and a sparse 671-billion-parameter Mixture-of-Experts (MoE) model can have *identical* per-token FLOPs. DeepSeek-V3 has 671B total parameters but activates only ~37B per token; Kimi K2 pushes the same recipe to ~1T total with only ~32B active; Llama-4 Maverick has ~400B total but ~17B active; Qwen3-235B-A22B activates ~22B of 235B. The promise of MoE — explained architecturally in [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) — is that *quality tracks total parameters while compute tracks active parameters*. That promise is what makes these models attractive to *train*. But it creates a serving problem that has almost nothing in common with serving a dense model of equivalent speed.
 
 The trouble is memory and movement, not arithmetic. Those 671B parameters still have to *live* on GPUs — roughly 671 GB in FP8, over 1.3 TB in BF16 — even though any single token touches a tiny fraction of them. And because experts are scattered across dozens of GPUs, every MoE layer becomes a two-phase **all-to-all** communication: send each token to the GPUs holding its chosen experts (*dispatch*), then send the results back (*combine*). A dense model with the same active parameter count does a couple of cheap all-reduces per layer; a large MoE does two cluster-wide shuffles whose cost is set by the *slowest, most overloaded* GPU in the group. Serving MoE well is the art of making that shuffle cheap and keeping every expert busy.
 
@@ -125,7 +125,7 @@ That is per token, per MoE layer, in *each* direction — and DeepSeek-V3 has 58
 
 ## DeepEP: A Production All-to-All Kernel
 
-`all_to_all_single` from a generic NCCL build works, but it leaves a lot on the table for MoE decode: it does not overlap dispatch with router computation, it does not exploit the two-tier topology (NVLink within a node, RDMA across nodes), and it synchronizes the GPU with the host to compute split sizes. **DeepEP** (released by DeepSeek alongside DeepSeek-V3) is a purpose-built expert-parallel communication library that addresses all three. The mechanisms generalize to any large-EP serving stack (vLLM and SGLang both integrate DeepEP-style kernels), so they are worth understanding even if you never call the library directly.
+`all_to_all_single` from a generic NCCL build works, but it leaves a lot on the table for MoE decode: it does not overlap dispatch with router computation, it does not exploit the two-tier topology (NVLink within a node, RDMA across nodes), and it synchronizes the GPU with the host to compute split sizes. **DeepEP** (open-sourced by DeepSeek in early 2025 during its Open Source Week, and the communication library behind DeepSeek-V3/R1 serving) is a purpose-built expert-parallel communication library that addresses all three. The mechanisms generalize to any large-EP serving stack (vLLM and SGLang both integrate DeepEP-style kernels), so they are worth understanding even if you never call the library directly.
 
 DeepEP provides two families of kernels:
 
@@ -402,7 +402,7 @@ Every line of that loop is a decision this chapter argued for: local attention b
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    MoE serving is a fast-moving frontier: the core challenge of making per-layer all-to-all collectives invisible on the decode critical path is now well-understood, with large-EP + attention-DP hybrid layouts and purpose-built overlap kernels (DeepEP) achieving dense-equivalent throughput efficiency of 0.7–0.9 on frontier hardware. Production deployments at scale (96–128 GPUs) using disaggregated prefill/decode and redundant expert replication are now open-source and reproducible via vLLM and SGLang.
+    MoE serving is a fast-moving frontier: the core challenge of making per-layer all-to-all collectives invisible on the decode critical path is now well-understood, with large-EP + attention-DP hybrid layouts and purpose-built overlap kernels (DeepEP) achieving dense-equivalent throughput efficiency of 0.7–0.9 on frontier hardware. Production deployments at scale — from DeepSeek's own EP32-prefill / EP144-decode disaggregated system to open-source "wide-EP" reproductions on 96+ H100/H200 GPUs — using redundant expert replication are now reproducible via vLLM and SGLang, with per-GPU decode throughput in the low-thousands of tokens/s on H200-class hardware.
 
     **Foundational work**
 
@@ -412,10 +412,12 @@ Every line of that loop is a decision this chapter argued for: local attention b
 
     **Recent advances (2023–2026)**
 
-    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — canonical large-EP production MoE: MLA, auxiliary-loss-free load balancing, redundant expert replication, and EP=32 serving across nodes.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — canonical large-EP production MoE: MLA, auxiliary-loss-free load balancing, redundant expert replication, and disaggregated EP32-prefill / EP144-decode serving across nodes (32 redundant routed experts).
     - [Jiang et al., *Mixtral of Experts* (2024)](https://arxiv.org/abs/2401.04088) — first widely-deployed open-weight sparse MoE (8×7B), establishing the modern top-2 routing + grouped-GEMM baseline for MoE serving benchmarks.
     - [Gale et al., *MegaBlocks: Efficient Sparse Training with Mixture-of-Experts* (2022)](https://arxiv.org/abs/2211.15841) — block-sparse GPU kernels for MoE that eliminate token dropping and padding waste; widely used as the grouped-GEMM backend in serving stacks.
+    - [Kimi Team (Moonshot AI), *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — a ~1T-total / ~32B-active open-weight MoE (384 experts, MLA, $d_{\text{model}}=7168$) that scales the DeepSeek-V3 serving recipe to trillion-parameter total, the concrete "trillion-scale sparse model" this chapter's techniques target.
     - [LMSYS, *Deploying DeepSeek with PD Disaggregation and Large-Scale Expert Parallelism on 96 H100 GPUs* (2025)](https://www.lmsys.org/blog/2025-05-05-large-scale-ep/) — open-source reproduction of DeepSeek's production EP serving in SGLang: 52k input tokens/s/node, 5× over vanilla TP, at ~$0.20/1M output tokens.
+    - [vLLM, *Large-Scale Serving: DeepSeek at 2.2k tok/s/H200 with Wide-EP* (Dec 2025)](https://vllm.ai/blog/2025-12-17-large-scale-serving) — wide expert-parallel decode on an H200 cluster reaching ~2.2k output tokens/s per GPU, via Dual Batch Overlap (DBO) and fused all-to-all/grouped-GEMM kernels — the current open-source high-water mark.
 
     **Open-source & tools**
 

@@ -483,7 +483,7 @@ vLLM is not the only serving engine — [SGLang: RadixAttention & Structured Pro
     - Tune via `gpu_memory_utilization`, an honest `max_model_len`, `max_num_seqs`, and `max_num_batched_tokens`; quantizing weights and the KV cache buys concurrency, and the preemption/cache-hit metrics tell you whether you're oversubscribed.
 
 !!! sota "State of the Art & Resources (2026)"
-    vLLM has become the dominant open-source LLM serving engine, with its V1 architecture (2025) now the default: an isolated EngineCore process, unified token-budget scheduler, prefix caching on by default, and `torch.compile` + piecewise CUDA graphs — delivering up to 1.7× higher throughput than V0. Active research continues on tighter disaggregated prefill/decode, speculative decoding, and multi-LoRA efficiency.
+    vLLM has become the dominant open-source LLM serving engine, with its V1 architecture (2025) now the default: an isolated EngineCore process, unified token-budget scheduler, prefix caching on by default, and `torch.compile` + piecewise CUDA graphs — delivering up to 1.7× higher throughput than V0. By 2026 the frontier of vLLM development has shifted to **large-scale serving**: production multi-node deployment on NVIDIA Blackwell (GB200/B200) with wide expert parallelism (WideEP) and elastic scaling, disaggregated prefill/decode over fast KV connectors, and nightly performance tracking against frontier open models (DeepSeek V3.2, Qwen, Kimi). Active work also continues on multi-backend speculative decoding (EAGLE, MTP, n-gram) and KV offload to CPU under memory pressure.
 
     **Foundational work**
 
@@ -499,7 +499,7 @@ vLLM is not the only serving engine — [SGLang: RadixAttention & Structured Pro
 
     **Open-source & tools**
 
-    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the vLLM engine itself (~82k stars); reference implementation of PagedAttention, continuous batching, prefix caching, multi-LoRA, and speculative decoding.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the vLLM engine itself (~87k stars as of 2026); reference implementation of PagedAttention, continuous batching, prefix caching, multi-LoRA, and speculative decoding.
     - [flashinfer-ai/flashinfer](https://github.com/flashinfer-ai/flashinfer) — the FlashInfer kernel library used by vLLM V1's attention backend; supports paged KV-cache in block-sparse format with JIT compilation.
 
     **Go deeper**

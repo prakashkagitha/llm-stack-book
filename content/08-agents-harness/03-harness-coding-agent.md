@@ -476,7 +476,7 @@ The model sets the ceiling on raw reasoning and code-writing skill. The harness 
     - Project-memory files (`CLAUDE.md` / `AGENTS.md`) inject team-specific, verifiable instructions into the system prompt and are the highest-ROI user customization.
 
 !!! sota "State of the Art & Resources (2026)"
-    Coding-agent harnesses have matured rapidly: top submissions on SWE-bench Verified now resolve more than 70–90% of real GitHub issues, driven almost entirely by harness advances (better tool APIs, verification loops, context management) rather than raw model capability improvements. The field has converged on a set of reusable primitives — constrained edits, structural termination, sandboxed bash, and ground-truth verification — that are instantiated across Claude Code, Codex CLI, Aider, and OpenHands.
+    Coding-agent harnesses have matured rapidly: the strongest frontier systems (e.g., Claude Opus 4.8 and GPT-5-class models) now resolve on the order of 85–90% of SWE-bench Verified issues, and the benchmark is widely regarded as approaching saturation — driven by a mix of stronger base models *and* harness advances (better tool APIs, verification loops, context management). Those headline numbers should be read with care: 2026 audits find that a meaningful fraction of "resolved" patches pass only because the repository's own test suite is too weak to expose a subtly wrong fix — a pointed reminder that *verifier quality*, not just pass rate, is what the score really measures. The field has converged on a set of reusable primitives — constrained edits, structural termination, sandboxed bash, and ground-truth verification — that are instantiated across Claude Code, Codex CLI, Aider, and OpenHands.
 
     **Foundational work**
 
@@ -492,7 +492,7 @@ The model sets the ceiling on raw reasoning and code-writing skill. The harness 
     **Open-source & tools**
 
     - [swe-bench/SWE-bench](https://github.com/swe-bench/SWE-bench) — the evaluation harness, datasets, and Docker infrastructure for reproducing SWE-bench results.
-    - [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands) — open-source coding-agent platform (formerly OpenDevin); 75k+ stars; reference implementation of tool loops, sandboxing, and multi-agent patterns.
+    - [OpenHands/OpenHands](https://github.com/OpenHands/OpenHands) — open-source coding-agent platform (formerly OpenDevin); 80k+ stars; reference implementation of tool loops, sandboxing, and multi-agent patterns.
     - [Aider-AI/aider](https://github.com/Aider-AI/aider) — mature AI pair-programming CLI with best-in-class diff application and repo-map construction; study its edit strategies as a production harness reference.
     - [openai/codex](https://github.com/openai/codex) — OpenAI's open-source lightweight coding-agent CLI; readable Rust implementation of a sandboxed terminal harness.
 

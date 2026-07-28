@@ -373,7 +373,7 @@ Claude Desktop will launch the process, perform the `initialize` handshake, and 
 
 ## Roots, Sampling, and Advanced Primitives
 
-Two additional MCP capabilities are less commonly discussed but important for advanced use cases.
+Two additional MCP capabilities are less commonly discussed but important for advanced use cases. (Note: the protocol's mid-2026 revision — in release-candidate form as of writing — proposes deprecating roots and sampling as part of a move to a leaner, stateless architecture, with a stated 12-month runway before any removal. Both remain fully supported today; treat them as stable-but-evolving rather than removed.)
 
 ### Roots
 
@@ -454,11 +454,11 @@ HTTP-transport servers typically authenticate with OAuth 2.1. Tokens passed to t
 
 ## Ecosystem and Integration Patterns
 
-As of mid-2025, MCP has been adopted by a range of tooling:
+As of 2026, MCP has been adopted across the AI tooling ecosystem:
 
 - **Claude Desktop** ships with MCP support and a growing registry of first-party servers (filesystem, GitHub, Slack, Postgres, Google Drive).
 - **VS Code / Copilot** added MCP server integration in early 2025, letting IDE agents use the same servers as desktop agents.
-- **OpenAI** added support for remote MCP servers in its Responses API, meaning the same HTTP-transport server can be consumed by Claude, GPT-4o, and any other conforming host.
+- **OpenAI** added support for remote MCP servers in its Responses API, meaning the same HTTP-transport server can be consumed by Claude, OpenAI's GPT-5 models, and any other conforming host.
 - **LangChain and LlamaIndex** both ship MCP adapters that wrap an MCP server as a native `Tool` within their frameworks.
 - **Zed editor, Cursor, Windsurf** all implemented MCP for their coding agent integrations.
 
@@ -647,7 +647,7 @@ What MCP *does* cover — the plumbing between a host and its external capabilit
     - MCP covers only the plumbing layer; planning, memory, and multi-agent coordination are higher-level concerns handled by the rest of the agent stack.
 
 !!! sota "State of the Art & Resources (2026)"
-    MCP has become the de facto open standard for connecting AI agents to external tools and data, with thousands of servers in the official registry and support from every major AI provider (Anthropic, OpenAI, Microsoft, Google) as of 2025–2026. The protocol is actively evolving — the November 2025 spec added task-based workflows, simplified OAuth, and a formal extensions framework — making it one of the fastest-maturing infrastructure standards in the AI stack.
+    MCP has become the de facto open standard for connecting AI agents to external tools and data, with thousands of published servers and support from every major AI provider (Anthropic, OpenAI, Microsoft, Google) as of 2026. The protocol is evolving fast: the stable November 2025 (2025-11-25) spec added task-based workflows, simplified OAuth, and a formal extensions framework, and a mid-2026 revision — the largest since launch — reworks the transport toward a stateless architecture and deprecates roots, sampling, and logging on a 12-month runway. Expect the primitives described here to remain usable while the leading-edge spec shifts underneath them.
 
     **Foundational work**
 
@@ -659,6 +659,7 @@ What MCP *does* cover — the plumbing between a host and its external capabilit
 
     - [Anthropic Engineering, *Code execution with MCP* (2025)](https://www.anthropic.com/engineering/code-execution-with-mcp) — shows how agentic tool-loading in MCP can cut token costs by ~98% on multi-tool workflows.
     - [MCP Blog, *One Year of MCP: November 2025 Spec Release* (2025)](https://blog.modelcontextprotocol.io/posts/2025-11-25-first-mcp-anniversary/) — covers the November 2025 spec additions: task workflows, URL-based OAuth, sampling-with-tools, and the extensions framework.
+    - [MCP Blog, *The 2026-07-28 Specification Release Candidate* (2026)](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) — the largest revision since launch: a stateless protocol architecture, formal extension governance (MCP Apps, promoted Tasks), OAuth alignment, and a deprecation policy retiring roots, sampling, and logging.
     - [Huang et al., *MCP Threat Modeling and Vulnerabilities to Prompt Injection with Tool Poisoning* (2026)](https://arxiv.org/abs/2603.22489) — systematic STRIDE/DREAD analysis of seven MCP clients; identifies tool-poisoning in metadata as the dominant client-side attack vector.
 
     **Open-source & tools**

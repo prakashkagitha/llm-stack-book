@@ -28,6 +28,8 @@ TensorRT-LLM (TRTLLM) is NVIDIA's open-source library for building highly optimi
 
 The key insight: PyTorch runs an interpreter that dispatches individual CUDA kernels at every step. TensorRT traces the full forward pass, applies a library of graph optimizations — layer fusion, constant folding, precision calibration — and emits a binary engine that the CUDA runtime can execute with minimal host overhead. For a model that runs millions of requests per day, eliminating Python-level dispatch overhead is material.
 
+As of TensorRT-LLM 1.0 (2025), NVIDIA made a native PyTorch-based runtime the *default* flow and stabilized a high-level Python `LLM` API, so you no longer have to pre-compile an engine to get most of the performance. The AOT-engine path described below is still supported and still wins the last few percent of throughput, but much day-to-day work now runs through the PyTorch backend — which closes part of the deployment-friction gap with vLLM and TGI while keeping TensorRT-LLM's tuned CUDA kernels.
+
 {{fig:trtllm-eager-vs-compiled-engine}}
 
 ### Build and Run Pipeline
@@ -127,7 +129,7 @@ The key parameter is `--kv_cache_free_gpu_mem_fraction` (default 0.9): the fract
 
 ### Quantization in TensorRT-LLM
 
-TensorRT-LLM has first-class support for INT8 weight-only quantization, INT8 SmoothQuant, FP8 (on H100/H200), and GPTQ/AWQ. These are configured at engine build time:
+TensorRT-LLM has first-class support for INT8 weight-only quantization, INT8 SmoothQuant, FP8 (on H100/H200), NVFP4 (a 4-bit floating-point format with native tensor-core support on Blackwell B200/GB200, calibrated via NVIDIA ModelOpt), and GPTQ/AWQ. These are configured at engine build time:
 
 ```bash
 # FP8 engine for H100 — uses calibration data to determine per-tensor scales
@@ -166,6 +168,8 @@ The engine is platform-specific and must be rebuilt for each GPU SKU (A100 vs H1
 ### Architecture Overview
 
 Hugging Face's Text Generation Inference is a Rust-based server with a Python model-runner process. The Rust front-end handles HTTP/gRPC routing and request queuing; the Python process runs the model using PyTorch + custom CUDA kernels. Importantly, TGI ships its own custom attention kernels (including a FlashAttention-based implementation) and its own continuous batching scheduler.
+
+As of 2026, Hugging Face has moved TGI into maintenance mode — the repository was archived in March 2026 — and now steers new production work toward vLLM, SGLang, and llama.cpp/MLX, the very engines that adopted TGI's `transformers`-native architecture. TGI still runs well, and its multi-backend support can even front a vLLM or TensorRT-LLM engine behind the same API, but for a greenfield 2026 deployment vLLM is the more common default. The architecture below remains an instructive template for what a production LLM server actually does.
 
 {{fig:tgi-router-modelserver-architecture}}
 
@@ -294,7 +298,7 @@ print(f"13B Q4_K_M: {gguf_size_gb(13, 4.5):.1f} GB")   # ~7.7 GB
 
 ### Ollama: A Developer-Friendly Frontend
 
-Ollama wraps llama.cpp in a REST server with a model registry, automatic download, and a simple CLI. It is the fastest path from "zero" to running a local LLM:
+Ollama wraps llama.cpp in a REST server with a model registry, automatic download, and a simple CLI. It is the fastest path from "zero" to running a local LLM. (Since 2025 Ollama has also shipped its own GGML-based engine for newer and multimodal architectures, so it no longer routes every model through llama.cpp — though llama.cpp still powers much of the local-inference ecosystem, including tools like LM Studio.)
 
 ```bash
 # Install and run Llama-3-8B locally
@@ -538,7 +542,7 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
 
 !!! key "Key Takeaways"
     - TensorRT-LLM achieves peak NVIDIA GPU throughput through AOT compilation: kernels are selected and fused at build time, eliminating runtime dispatch overhead. The cost is hardware-specific engines and 30–60 minute build times.
-    - TGI provides a production-grade HTTP/gRPC server with continuous batching, custom FlashAttention kernels, and wide HuggingFace model support — no build step required, making it the default choice for teams that iterate quickly on models.
+    - TGI provides a production-grade HTTP/gRPC server with continuous batching, custom FlashAttention kernels, and wide HuggingFace model support — no build step required. It pioneered the `transformers`-native serving architecture that vLLM and SGLang later adopted; as of 2026 it is in maintenance mode, with Hugging Face pointing new deployments at those successors.
     - llama.cpp / Ollama democratize LLM inference on commodity hardware. GGUF's block quantization (Q4_K_M, Q5_K_M) trades a small quality loss for 4–8× memory reduction, enabling 70B models to run on a laptop or a single consumer GPU.
     - LMDeploy's TurboMind engine is a practical middle ground: custom CUDA kernels and blocked KV cache without the full AOT compilation step of TensorRT-LLM.
     - MLC-LLM uses TVM's compiler infrastructure to target heterogeneous hardware (CUDA, ROCm, Metal, Vulkan, WebGPU) from a single codebase — the right choice for browser deployment via WebLLM or mixed-hardware fleets.
@@ -549,7 +553,7 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    LLM serving has matured into a rich ecosystem of specialized runtimes ranging from NVIDIA's AOT-compiled TensorRT-LLM for peak GPU throughput to portable frameworks like llama.cpp and MLC-LLM for edge and heterogeneous hardware. The dominant trend through 2024–2026 is disaggregated prefill/decode serving, speculative decoding, and prefix-cache-aware scheduling — each delivering multiplicative throughput gains on top of the foundational PagedAttention memory model.
+    LLM serving has matured into a rich ecosystem of specialized runtimes ranging from NVIDIA's TensorRT-LLM (now PyTorch-backend-first as of the 1.0 release, with the AOT-compiled engine path still available) for peak GPU throughput to portable frameworks like llama.cpp and MLC-LLM for edge and heterogeneous hardware. The dominant trend through 2024–2026 is disaggregated prefill/decode serving, speculative decoding, and prefix-cache-aware scheduling — each delivering multiplicative throughput gains on top of the foundational PagedAttention memory model. The ecosystem has also consolidated: Hugging Face moved TGI into maintenance mode in 2026 and now recommends vLLM, SGLang, and llama.cpp, while NVFP4 4-bit inference on Blackwell (B200/GB200) has become the new datacenter frontier for throughput-per-watt.
 
     **Foundational work**
 
@@ -581,7 +585,7 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
 - **Text Generation Inference repository** — Hugging Face, github.com/huggingface/text-generation-inference. The Rust router source and Python model server are both readable and well-documented.
 - **Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention," SOSP 2023** — foundational paper for block-based KV cache management; the ideas are implemented in vLLM, TGI, TRT-LLM, and LMDeploy.
 - **Dao et al., "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness," NeurIPS 2022** — the attention kernel that every production stack now ships.
-- **llama.cpp repository** — Georgi Gerganov, github.com/ggerganov/llama.cpp. The GGUF specification and all backend implementations are in this repo.
+- **llama.cpp repository** — ggml-org (Georgi Gerganov), github.com/ggml-org/llama.cpp. The GGUF specification and all backend implementations are in this repo.
 - **MLC-LLM: Universal LLM Deployment** — Chen et al., MLC team, github.com/mlc-ai/mlc-llm. Describes the TVM-based compilation pipeline and cross-platform targets.
 - **LMDeploy repository** — Shanghai AI Laboratory, github.com/InternLM/lmdeploy. TurboMind engine design documentation and AWQ quantization integration.
 - **Aminabadi et al., "DeepSpeed-Inference: Enabling Efficient Inference of Transformer Models at Unprecedented Scale," SC 2022** — covers multi-GPU inference kernels and the design philosophy behind high-throughput serving at scale.

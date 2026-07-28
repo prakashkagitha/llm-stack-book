@@ -755,7 +755,7 @@ for msg in example:
 
 ### Data sources for tool-call training
 
-1. **Synthetic generation**: Use a capable model (GPT-4, Claude 3.5) to generate (query, tool call, result, answer) tuples given tool schemas. This scales cheaply and can cover arbitrary tool combinations.
+1. **Synthetic generation**: Use a capable frontier model (as of 2026, e.g. GPT-5, Gemini 3, or Claude Opus 4.5) to generate (query, tool call, result, answer) tuples given tool schemas. This scales cheaply and can cover arbitrary tool combinations.
 2. **Templated math/code tasks**: For calculator-style tools, many reasoning benchmarks (GSM8K, MATH) can be automatically converted: "call `calculate` with the expression, then state the answer."
 3. **Human demonstrations**: The highest quality but most expensive. Necessary for tools with complex multi-call chains.
 4. **Negative examples**: Include examples where the model correctly decides *not* to call a tool (the answer is in its parametric knowledge). Without these, over-calling becomes a problem.
@@ -784,7 +784,7 @@ In a long agentic session, the message history grows without bound. Strategies t
 
 ### The Model Context Protocol (MCP)
 
-The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a standardized JSON-RPC-based protocol that lets any server expose tools, resources, and prompts to any compliant client. Instead of writing bespoke tool dispatch code per application, MCP provides a universal adapter: a tool server speaks MCP, the harness speaks MCP, and new tools can be plugged in without changing the client. See [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html) for a deep dive.
+The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a standardized JSON-RPC-based protocol that lets any server expose tools, resources, and prompts to any compliant client. Instead of writing bespoke tool dispatch code per application, MCP provides a universal adapter: a tool server speaks MCP, the harness speaks MCP, and new tools can be plugged in without changing the client. It has since become the de facto industry standard — OpenAI adopted it in March 2025, Google and Microsoft followed, and in December 2025 Anthropic donated the specification to the Linux Foundation's Agentic AI Foundation, with a public ecosystem of over 10,000 active MCP servers. See [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html) for a deep dive.
 
 ---
 
@@ -813,13 +813,13 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
 
     - [Qin et al., *ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs* (2023)](https://arxiv.org/abs/2307.16789) — large-scale SFT dataset and benchmark spanning 16k+ real REST APIs; introduced depth-first search–based decision tree for multi-step tool planning.
     - [Patil et al., *Gorilla: Large Language Model Connected with Massive APIs* (2023)](https://arxiv.org/abs/2305.15334) — studied and reduced API hallucination via retrieval-augmented training; spawned the Berkeley Function Calling Leaderboard.
-    - [Patil et al., *Berkeley Function Calling Leaderboard (BFCL)* (2024–2026)](https://gorilla.cs.berkeley.edu/leaderboard.html) — live, continuously updated benchmark evaluating single-call, parallel, multi-turn, and agentic tool-call accuracy across all major models.
+    - [Patil et al., *Berkeley Function Calling Leaderboard (BFCL)* (2024–2026)](https://gorilla.cs.berkeley.edu/leaderboard.html) — live, continuously updated benchmark evaluating single-call, parallel, multi-turn, and agentic tool-call accuracy across all major models; the current V4 revision adds holistic agentic and web-search evaluation.
 
     **Open-source & tools**
 
     - [OpenBMB/ToolBench](https://github.com/OpenBMB/ToolBench) — ICLR 2024 spotlight; training data, ToolLLaMA model, and evaluation harness for 16k-API tool use.
     - [ShishirPatil/gorilla](https://github.com/ShishirPatil/gorilla) — Gorilla OpenFunctions models, BFCL evaluation code, and GoEx safe execution engine.
-    - [modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol) — Anthropic's open MCP specification; the emerging standard for universal tool/resource interfaces between LLM clients and servers.
+    - [modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol) — the open MCP specification (donated to the Linux Foundation's Agentic AI Foundation in December 2025); the de facto standard for universal tool/resource interfaces, adopted by OpenAI, Google, and Microsoft.
 
     **Go deeper**
 
