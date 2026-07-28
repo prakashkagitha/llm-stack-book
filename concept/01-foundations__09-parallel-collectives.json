@@ -1,0 +1,77 @@
+{
+  "chapter_id": "01-foundations/09-parallel-collectives",
+  "one_liner": "Reason about GPU collective communication costs and choose the right collective for a parallelism strategy.",
+  "key_terms": [
+    {
+      "term": "SPMD (Single-Program Multiple-Data)",
+      "definition": "Programming model where every process runs the identical program but operates on different data, branching on its rank when needed; backbone of distributed GPU training."
+    },
+    {
+      "term": "process group",
+      "definition": "A named set of ranks sharing a communicator; collective operations are always called on a process group, either the default (all ranks) or a sub-group."
+    },
+    {
+      "term": "NCCL (NVIDIA Collective Communications Library)",
+      "definition": "Low-level library that torch.distributed calls on GPU backends; implements collective operations and auto-selects algorithms based on message size and topology."
+    },
+    {
+      "term": "All-Reduce",
+      "definition": "Collective where all ranks contribute data that is combined (e.g., summed) and every rank receives the full result, used for averaging gradients in data parallelism."
+    },
+    {
+      "term": "Reduce-Scatter",
+      "definition": "Collective that reduces contributions across ranks and gives each rank only its own slice of the result (output size M/n), the first phase of ring all-reduce."
+    },
+    {
+      "term": "All-Gather",
+      "definition": "Collective where each rank contributes a slice and every rank ends up with the concatenation of all slices (output size nM); the second phase of ring all-reduce."
+    },
+    {
+      "term": "All-to-All",
+      "definition": "Collective where each rank sends a distinct chunk to every other rank; used to route tokens to expert GPUs in Mixture-of-Experts dispatch."
+    },
+    {
+      "term": "ring all-reduce",
+      "definition": "Bandwidth-optimal all-reduce algorithm that arranges ranks in a logical ring and runs reduce-scatter then all-gather, avoiding a single-node bottleneck."
+    },
+    {
+      "term": "alpha-beta cost model",
+      "definition": "Cost model T(B) = alpha + B/beta estimating message transfer time as fixed per-call latency (alpha) plus size-dependent bandwidth cost (B/beta)."
+    },
+    {
+      "term": "NVLink / NVSwitch",
+      "definition": "NVIDIA's high-bandwidth intra-node GPU interconnect (NVLink) and the crossbar switch (NVSwitch) that lets every GPU on a node talk to every other at full speed."
+    },
+    {
+      "term": "InfiniBand",
+      "definition": "High-speed inter-node network fabric (HDR/NDR/XDR) connecting GPU nodes, roughly 10-50x slower than intra-node NVLink, often the bottleneck in multi-node training."
+    },
+    {
+      "term": "gradient bucketing",
+      "definition": "Technique of grouping small gradient tensors into larger buffers (e.g., 25 MB) before issuing all-reduce, amortizing per-call latency and enabling overlap with backward computation."
+    }
+  ],
+  "introduces": [
+    "SPMD (Single-Program Multiple-Data)",
+    "process group",
+    "NCCL (NVIDIA Collective Communications Library)",
+    "All-Reduce",
+    "Reduce-Scatter",
+    "All-Gather",
+    "All-to-All",
+    "ring all-reduce",
+    "alpha-beta cost model",
+    "NVLink / NVSwitch",
+    "InfiniBand",
+    "gradient bucketing"
+  ],
+  "prerequisites": [
+    "gradient descent and backpropagation",
+    "GPU memory hierarchy (HBM) and CUDA basics",
+    "Python and PyTorch tensor operations",
+    "basic computer networking (bandwidth vs. latency)",
+    "processes vs. threads / operating-system basics"
+  ],
+  "difficulty": "core",
+  "tags": ["systems", "gpu", "training", "scaling", "optimization"]
+}

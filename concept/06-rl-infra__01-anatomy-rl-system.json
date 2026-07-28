@@ -1,0 +1,71 @@
+{
+  "chapter_id": "06-rl-infra/01-anatomy-rl-system",
+  "one_liner": "Map the six components and dataflow of any RL-for-LLM system and diagnose its bottlenecks.",
+  "key_terms": [
+    {
+      "term": "Actor (policy)",
+      "definition": "The trainable language model πθ; exists as separate generation weights (rollout engine) and training weights (learner) that must stay synchronized."
+    },
+    {
+      "term": "Rollout / generation engine",
+      "definition": "The inference component that autoregressively samples responses under the current policy, producing token ids and behavior log-probs; usually the dominant per-step cost."
+    },
+    {
+      "term": "Reward model / verifier",
+      "definition": "The component scoring responses (learned reward model, rule-based verifier, code sandbox, or LLM judge) as a pluggable function returning a scalar reward."
+    },
+    {
+      "term": "Learner / trainer",
+      "definition": "The distributed training engine that recomputes current-policy log-probs, forms advantages, and applies the clipped policy-gradient loss via backprop and an optimizer step."
+    },
+    {
+      "term": "Reference model",
+      "definition": "A frozen copy of the policy (usually the SFT checkpoint) used only to supply log-probs for the KL-divergence penalty that limits policy drift."
+    },
+    {
+      "term": "Experience buffer",
+      "definition": "The in-memory, short-lived dataset of one iteration's rollouts (tokens, behavior log-probs, rewards, advantages) that the learner draws minibatches from."
+    },
+    {
+      "term": "Weight synchronization",
+      "definition": "Propagating updated policy parameters from the training layout (e.g., FSDP shards) into the inference engine's layout (e.g., tensor-parallel) every step."
+    },
+    {
+      "term": "Colocated vs. disaggregated design",
+      "definition": "Whether generation and training share the same GPUs time-sliced (colocated) or run on separate GPU pools that must synchronize weights (disaggregated)."
+    },
+    {
+      "term": "Importance ratio",
+      "definition": "The ratio πθ/πθ_old of current- to behavior-policy probabilities for sampled tokens, used with clipping to correct for off-policy drift."
+    },
+    {
+      "term": "Group-relative advantage (GRPO)",
+      "definition": "Advantage computed by normalizing each response's reward against the mean and standard deviation of rewards within its sampled group, requiring no critic."
+    },
+    {
+      "term": "Controller",
+      "definition": "The (often uncounted seventh) component running the outer RL loop — a single Python driver, a Ray single-controller, or an async scheduler — coordinating the other components."
+    }
+  ],
+  "introduces": [
+    "Actor (policy)",
+    "Rollout / generation engine",
+    "Reward model / verifier",
+    "Learner / trainer",
+    "Reference model",
+    "Experience buffer",
+    "Weight synchronization",
+    "Colocated vs. disaggregated design",
+    "Controller"
+  ],
+  "prerequisites": [
+    "policy-gradient RL for LLMs (PPO)",
+    "GRPO / RLOO critic-free RL",
+    "autoregressive decoding and KV cache",
+    "distributed training (FSDP / data parallelism)",
+    "mixed precision training",
+    "basics of LLM inference serving"
+  ],
+  "difficulty": "core",
+  "tags": ["rl", "systems", "training", "inference", "scaling"]
+}

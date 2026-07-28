@@ -1,0 +1,67 @@
+{
+  "chapter_id": "03-pretraining/09-optimizers",
+  "one_liner": "Pick, derive, and implement an optimizer (AdamW, Adafactor, Lion, Shampoo, Muon) for a memory/speed budget.",
+  "key_terms": [
+    {
+      "term": "AdamW",
+      "definition": "Adam optimizer with weight decay decoupled from the adaptive gradient term, applying a clean multiplicative shrink to weights; the de-facto LLM pretraining default."
+    },
+    {
+      "term": "bias correction",
+      "definition": "Dividing Adam's zero-initialized first/second moment EMAs by (1-β^t) to remove the early-step bias that would otherwise make updates far too large."
+    },
+    {
+      "term": "decoupled weight decay",
+      "definition": "Applying θ←(1-ηλ)θ directly to weights rather than adding λθ to the gradient, avoiding Adam's adaptive denominator under-decaying high-gradient parameters."
+    },
+    {
+      "term": "optimizer state memory",
+      "definition": "The extra per-parameter tensors (moments, fp32 master weights) an optimizer stores; AdamW costs ~12 bytes/param, often exceeding the model weights themselves."
+    },
+    {
+      "term": "Adafactor",
+      "definition": "Optimizer that factors the second-moment matrix into a row vector and column vector (O(n+m) memory) and can drop the first moment entirely."
+    },
+    {
+      "term": "Lion (Evolved Sign Momentum)",
+      "definition": "Optimizer discovered by program search that steps by the sign of an interpolated momentum term, using a single buffer at half AdamW's memory."
+    },
+    {
+      "term": "Shampoo",
+      "definition": "Second-order optimizer that preconditions a weight matrix's gradient with Kronecker-factored row/column curvature matrices (L^-1/4 G R^-1/4) instead of a diagonal preconditioner."
+    },
+    {
+      "term": "Muon",
+      "definition": "Optimizer that replaces the momentum update of 2-D weight matrices with its nearest semi-orthogonal matrix, computed via a matmul-only Newton-Schulz iteration."
+    },
+    {
+      "term": "Newton-Schulz iteration",
+      "definition": "A fixed sequence of matrix-multiply-only cubic-polynomial steps that drives a matrix's singular values toward 1, used by Muon to approximate UV^T without an SVD."
+    },
+    {
+      "term": "8-bit Adam",
+      "definition": "Variant that keeps Adam's full first/second moment tensors but quantizes them to 8 bits with block-wise scaling, cutting their memory footprint 4x."
+    }
+  ],
+  "introduces": [
+    "AdamW",
+    "bias correction",
+    "decoupled weight decay",
+    "optimizer state memory",
+    "Adafactor",
+    "Lion (Evolved Sign Momentum)",
+    "Shampoo",
+    "Muon",
+    "Newton-Schulz iteration",
+    "8-bit Adam"
+  ],
+  "prerequisites": [
+    "stochastic gradient descent and backpropagation",
+    "the Hessian and condition number of a loss surface",
+    "singular value decomposition (SVD)",
+    "mixed-precision training (bf16/fp32 master weights)",
+    "matrix multiplication and basic linear algebra"
+  ],
+  "difficulty": "core",
+  "tags": ["optimization", "training", "math", "systems"]
+}

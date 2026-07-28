@@ -1,0 +1,78 @@
+{
+  "chapter_id": "02-transformer/11-ssm-and-alternatives",
+  "one_liner": "Analyze and choose sub-quadratic attention alternatives (SSMs, Mamba, RWKV, RetNet, hybrids) for long-context LLMs.",
+  "key_terms": [
+    {
+      "term": "quadratic attention bottleneck",
+      "definition": "The O(N^2) FLOPs and memory cost of the QK^T softmax product in standard attention, which dominates total compute at long sequence lengths."
+    },
+    {
+      "term": "linear attention",
+      "definition": "Attention reformulated via a kernel feature map φ so φ(K)^T V is computed once, giving O(N) parallel training and O(1) per-step recurrent inference."
+    },
+    {
+      "term": "structured state space model (SSM)",
+      "definition": "A sequence model (e.g., S4) mapping input to output through a linear hidden-state recurrence, computable as an O(N log N) convolution in training or an O(1)-per-step recurrence at inference."
+    },
+    {
+      "term": "Mamba (selective state space model)",
+      "definition": "An SSM whose transition parameters B_t, C_t, and step size Δ_t are input-dependent, letting the model selectively retain or discard information per token."
+    },
+    {
+      "term": "selective scan",
+      "definition": "Mamba's core recurrence computation, made GPU-efficient via a hardware-aware parallel prefix scan or chunkwise (intra-chunk matmul, inter-chunk recurrent) algorithm."
+    },
+    {
+      "term": "RWKV (WKV attention)",
+      "definition": "A recurrent architecture expressing attention as an exponentially time-decayed weighted sum of past key-value pairs, trainable in parallel yet O(1) per inference step."
+    },
+    {
+      "term": "Retention (RetNet)",
+      "definition": "A recurrence-free mechanism computing QK^T masked by a fixed per-head exponential decay matrix, with equivalent parallel, recurrent, and chunkwise computation forms."
+    },
+    {
+      "term": "State Space Duality (SSD)",
+      "definition": "Mamba-2's result that a scalar-decay selective SSM is mathematically equivalent to linear attention with a data-dependent, multiplicative causal decay mask."
+    },
+    {
+      "term": "sliding-window (local) attention",
+      "definition": "Restricting each query to attend only to the last W keys, reducing cost to O(N·W) and bounding the KV cache to a rolling buffer of size W."
+    },
+    {
+      "term": "Gated Linear Attention (GLA)",
+      "definition": "A unifying recurrence S_t = G_t ⊙ S_{t-1} + k_t^T v_t whose gate matrix G_t choice recovers RetNet, RWKV, Mamba, or plain linear attention as special cases."
+    },
+    {
+      "term": "hybrid architecture (attention + SSM)",
+      "definition": "A language model interleaving a small fraction of full-attention layers with many SSM/linear-attention layers to combine exact retrieval with cheap long-context memory, e.g. Jamba, Nemotron-H."
+    },
+    {
+      "term": "HiPPO matrix",
+      "definition": "The structured initialization of an SSM's state matrix A (used in S4) that projects input history onto orthogonal polynomials for near-optimal long-range memory compression."
+    }
+  ],
+  "introduces": [
+    "quadratic attention bottleneck",
+    "linear attention",
+    "structured state space model (SSM)",
+    "Mamba (selective state space model)",
+    "selective scan",
+    "RWKV (WKV attention)",
+    "Retention (RetNet)",
+    "State Space Duality (SSD)",
+    "sliding-window (local) attention",
+    "Gated Linear Attention (GLA)",
+    "hybrid architecture (attention + SSM)",
+    "HiPPO matrix"
+  ],
+  "prerequisites": [
+    "the softmax attention mechanism (QK^T/sqrt(d) softmax V)",
+    "KV cache",
+    "recurrent neural networks (RNNs)",
+    "Big-O complexity analysis for compute and memory",
+    "FlashAttention / IO-aware kernels",
+    "the transformer block (residuals, normalization, MLP)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["architecture", "systems", "inference", "math", "optimization"]
+}

@@ -1,0 +1,73 @@
+{
+  "chapter_id": "04-kernels-efficiency/02-flash-attention-1",
+  "one_liner": "Derive, implement, and IO-analyze exact FlashAttention via the online softmax and tiling.",
+  "key_terms": [
+    {
+      "term": "IO-awareness",
+      "definition": "Design principle that treats HBM data movement, not FLOP count, as the dominant cost for memory-bound kernels like attention, and optimizes to minimize it."
+    },
+    {
+      "term": "online softmax",
+      "definition": "Algorithm computing a numerically-stable softmax-weighted sum in one streaming pass using a running max, running denominator, and a rescale factor, needing no full-row materialization."
+    },
+    {
+      "term": "correction factor",
+      "definition": "The multiplier alpha = e^(m_old - m_new) that retroactively rescales previously accumulated softmax statistics onto a newly discovered, larger running max."
+    },
+    {
+      "term": "FlashAttention",
+      "definition": "An exact attention algorithm that fuses QK^T, softmax, and the value multiply into one tiled kernel, never materializing the full N x N score matrix in HBM."
+    },
+    {
+      "term": "HBM (high-bandwidth memory)",
+      "definition": "The GPU's large, off-chip main memory (tens of GB, a few TB/s bandwidth) that is an order of magnitude slower per byte than on-chip SRAM."
+    },
+    {
+      "term": "SRAM (static RAM)",
+      "definition": "The GPU's small, extremely fast on-chip memory (shared memory/L1 per streaming multiprocessor) where FlashAttention keeps its score tiles instead of writing them to HBM."
+    },
+    {
+      "term": "arithmetic intensity",
+      "definition": "The ratio of FLOPs performed to bytes moved from HBM; low and roughly constant in sequence length for attention, which places it on the memory-bound side of the roofline."
+    },
+    {
+      "term": "memory-bound (bandwidth-limited)",
+      "definition": "A kernel regime where runtime is set by data movement to/from HBM rather than by compute throughput, as is the case for naive attention."
+    },
+    {
+      "term": "logsumexp statistic",
+      "definition": "The per-row value L_i = m_i + log(l_i) saved from the forward pass, letting the backward pass reconstruct softmax probabilities exactly without storing the N x N matrix P."
+    },
+    {
+      "term": "recomputation (activation checkpointing)",
+      "definition": "Trading extra FLOPs for memory by recomputing intermediate values (here, probability tiles) during the backward pass instead of storing them from the forward pass."
+    },
+    {
+      "term": "tiling",
+      "definition": "Splitting Q, K, V into blocks (B_r query rows x B_c key/value rows) small enough to fit in SRAM, so each attention subproblem is computed on-chip without touching HBM for intermediates."
+    },
+    {
+      "term": "IO complexity",
+      "definition": "A formal count of HBM read/write accesses as a function of sequence length N, head dimension d, and SRAM size M, used to prove FlashAttention's traffic reduction over naive attention."
+    }
+  ],
+  "introduces": [
+    "IO-awareness",
+    "online softmax",
+    "correction factor",
+    "FlashAttention",
+    "logsumexp statistic",
+    "recomputation (activation checkpointing)",
+    "IO complexity"
+  ],
+  "prerequisites": [
+    "the attention mechanism (Q, K, V and softmax)",
+    "matrix multiplication and its FLOP cost",
+    "numerically-stable softmax (max-subtraction trick)",
+    "GPU memory hierarchy (HBM vs SRAM)",
+    "the roofline model / arithmetic intensity",
+    "backpropagation and the chain rule"
+  ],
+  "difficulty": "advanced",
+  "tags": ["gpu", "systems", "optimization", "inference", "math"]
+}

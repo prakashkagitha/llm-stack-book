@@ -1,0 +1,77 @@
+{
+  "chapter_id": "06-rl-infra/11-scaling-rl-tricks",
+  "one_liner": "Diagnose RL generation bubbles and apply oversubscription, partial rollout, and DAPO/Dr. GRPO tricks to fix them.",
+  "key_terms": [
+    {
+      "term": "Continuous batching (in-flight / iteration-level batching)",
+      "definition": "Inference scheduling where a finished sequence's slot is freed and a queued prompt admitted mid-step, avoiding padding all sequences to the batch max length."
+    },
+    {
+      "term": "Generation efficiency (η_gen)",
+      "definition": "Mean sequence length over max sequence length in a generation batch; the fraction of fleet token-time that is useful work rather than tail-waiting."
+    },
+    {
+      "term": "Oversubscription",
+      "definition": "Feeding an inference engine more prompts than it has concurrent slots so freed slots are immediately refilled from a deep queue, shrinking idle-tail bubbles."
+    },
+    {
+      "term": "Partial rollout",
+      "definition": "Truncating an unfinished long generation mid-phase, saving its KV cache and partial text as a checkpoint, and resuming it in a later rollout phase."
+    },
+    {
+      "term": "Zero-gradient (vanishing-advantage) problem",
+      "definition": "In GRPO, when all G samples for a prompt receive the same reward, the group-relative advantage is zero for every sample, wasting that generation's compute."
+    },
+    {
+      "term": "Dynamic sampling (DAPO)",
+      "definition": "Discarding prompt-groups whose rewards are all identical (zero gradient) and oversampling new prompts until a full batch of informative, non-degenerate groups is collected."
+    },
+    {
+      "term": "Over-long filtering",
+      "definition": "DAPO technique that masks the loss on sequences truncated by the generation length cap so an unfinished trajectory neither rewards nor penalizes the policy."
+    },
+    {
+      "term": "Clip-higher (decoupled clipping)",
+      "definition": "DAPO's asymmetric PPO/GRPO clip bounds (ε_low < ε_high) that let rare, promising tokens be upweighted more aggressively, preventing entropy collapse from symmetric clipping."
+    },
+    {
+      "term": "Dr. GRPO",
+      "definition": "A corrected GRPO that removes per-sequence length normalization and std-normalization of the advantage, eliminating gradient incentives toward longer wrong answers and difficulty bias."
+    },
+    {
+      "term": "VAPO (Value-model-based Augmented PPO)",
+      "definition": "A critic-based RL recipe using length-adaptive GAE and value-model warmup to make a learned value function outperform critic-free group baselines on long chain-of-thought."
+    },
+    {
+      "term": "GSPO (Group Sequence Policy Optimization)",
+      "definition": "An RL objective that computes the importance ratio and clipping at the length-normalized sequence level rather than per-token, stabilizing large-scale and MoE RL training."
+    },
+    {
+      "term": "One-step off-policy overlap",
+      "definition": "Pipelining generation and training so rollout engines produce batch t+1 while the trainer consumes batch t, at the cost of training on weights one update stale."
+    }
+  ],
+  "introduces": [
+    "Generation efficiency (η_gen)",
+    "Oversubscription",
+    "Partial rollout",
+    "Zero-gradient (vanishing-advantage) problem",
+    "Dynamic sampling (DAPO)",
+    "Over-long filtering",
+    "Clip-higher (decoupled clipping)",
+    "Dr. GRPO",
+    "VAPO (Value-model-based Augmented PPO)",
+    "GSPO (Group Sequence Policy Optimization)",
+    "One-step off-policy overlap"
+  ],
+  "prerequisites": [
+    "GRPO and group-relative advantage estimation",
+    "RL with verifiable rewards (RLVR)",
+    "continuous batching in LLM serving",
+    "KV cache and PagedAttention memory management",
+    "PPO's clipped importance-sampling surrogate objective",
+    "generalized advantage estimation (GAE)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "systems", "scaling", "inference", "optimization"]
+}

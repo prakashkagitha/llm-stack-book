@@ -1,0 +1,69 @@
+{
+  "chapter_id": "04-kernels-efficiency/06-paged-attention-kv",
+  "one_liner": "Compute KV-cache memory, diagnose fragmentation, and implement block-table paging with copy-on-write sharing.",
+  "key_terms": [
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Per-layer stored key and value vectors of all previously generated tokens, reused each decode step to avoid recomputing them from scratch."
+    },
+    {
+      "term": "PagedAttention",
+      "definition": "Attention scheme that stores a sequence's KV cache in fixed-size, non-contiguous physical blocks and gathers them via a per-sequence block table, borrowed from OS virtual memory paging."
+    },
+    {
+      "term": "internal fragmentation",
+      "definition": "Wasted memory inside a reserved allocation, caused by reserving space for the worst-case `max_seq_len` when the actual sequence is much shorter."
+    },
+    {
+      "term": "external fragmentation",
+      "definition": "Free GPU memory that is unusable because it is split into scattered holes, none individually large enough to satisfy a new contiguous request."
+    },
+    {
+      "term": "KV block",
+      "definition": "A fixed-size chunk (e.g. 16 tokens) of KV cache storage — the unit of allocation in PagedAttention, analogous to an OS page frame."
+    },
+    {
+      "term": "block table",
+      "definition": "Per-sequence data structure mapping logical token-block indices to physical KV block IDs in the global pool, the paged analogue of an OS page table."
+    },
+    {
+      "term": "copy-on-write (COW)",
+      "definition": "Technique letting multiple sequences share a physical KV block until one must write a diverging token, at which point only that block is copied."
+    },
+    {
+      "term": "GQA/MQA (grouped-query attention / multi-query attention)",
+      "definition": "Attention variants where multiple query heads share fewer key/value heads, shrinking the per-token KV cache footprint independent of query-head count."
+    },
+    {
+      "term": "continuous batching (in-flight batching)",
+      "definition": "Serving scheduler technique that admits and evicts sequences from the running batch at per-token granularity rather than waiting for a whole batch to finish."
+    },
+    {
+      "term": "prefix caching",
+      "definition": "Reusing the KV cache of an identical shared prompt prefix (system prompt, few-shot template) across multiple requests instead of recomputing or duplicating it."
+    },
+    {
+      "term": "preemption",
+      "definition": "When the KV block pool is exhausted, the serving engine evicts a running sequence (via recompute later or swap to CPU RAM) to free blocks, the paged analogue of OS swapping."
+    }
+  ],
+  "introduces": [
+    "PagedAttention",
+    "internal fragmentation",
+    "external fragmentation",
+    "KV block",
+    "block table",
+    "copy-on-write (COW)",
+    "preemption"
+  ],
+  "prerequisites": [
+    "the attention mechanism",
+    "autoregressive decoding (prefill and decode phases)",
+    "KV cache",
+    "GQA/MQA",
+    "virtual memory and paging (operating systems)",
+    "FlashAttention and online softmax"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "gpu", "inference", "serving", "optimization"]
+}

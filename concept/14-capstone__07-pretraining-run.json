@@ -1,0 +1,75 @@
+{
+  "chapter_id": "14-capstone/07-pretraining-run",
+  "one_liner": "Write and run a complete, resumable single-GPU pretraining loop with real throughput monitoring.",
+  "key_terms": [
+    {
+      "term": "Model FLOPs Utilization (MFU)",
+      "definition": "Achieved FLOPs/s divided by the accelerator's peak FLOPs/s; the metric that measures true compute efficiency, unlike misleading GPU-Util percentages."
+    },
+    {
+      "term": "gradient accumulation",
+      "definition": "Summing gradients over several micro-batches before one optimizer step, so the effective batch size (micro-batch × seq_len × accum steps) exceeds what fits in memory at once."
+    },
+    {
+      "term": "bf16 autocast",
+      "definition": "Training with bfloat16's 8-bit exponent (fp32's dynamic range, fewer mantissa bits) inside a torch.autocast region, avoiding fp16's overflow risk and need for loss scaling."
+    },
+    {
+      "term": "6ND rule",
+      "definition": "Approximation that one forward-plus-backward training pass costs about 6 FLOPs per parameter per token, used to convert measured tokens/sec into achieved FLOPs/s for MFU."
+    },
+    {
+      "term": "activation checkpointing",
+      "definition": "Memory-saving technique that discards intermediate activations during the forward pass and recomputes them during backward, trading ~30% more compute for a large reduction in activation memory."
+    },
+    {
+      "term": "global gradient norm clipping",
+      "definition": "Rescaling the gradient vector across all parameters jointly (not per-tensor) so its L2 norm does not exceed a threshold, catching model-wide gradient explosions before the optimizer step."
+    },
+    {
+      "term": "checkpoint/resume",
+      "definition": "Saving model weights, optimizer state, step counter, data-loader cursor, and RNG states atomically so a training run can be exactly resumed after an interruption."
+    },
+    {
+      "term": "z-loss",
+      "definition": "A PaLM-style auxiliary penalty on the squared log-sum-exp of the logits, added to cross-entropy loss to stabilize training by discouraging unbounded logit growth."
+    },
+    {
+      "term": "Warmup-Stable-Decay (WSD) schedule",
+      "definition": "A learning-rate schedule with a short linear warmup, a long constant plateau, and a short final decay phase, used here to set the per-step learning rate during training."
+    },
+    {
+      "term": "TrainConfig",
+      "definition": "A single dataclass fixing every run-mechanics number (batch sizes, optimizer hyperparameters, logging/checkpoint cadence) for a pretraining run, itself checkpointed to prevent config drift on resume."
+    },
+    {
+      "term": "distributed data parallel (DDP)",
+      "definition": "A multi-GPU scale-out technique that replicates the model on every GPU, runs independent micro-batches, and all-reduces gradients before each optimizer step, reducing wall-clock but not total compute."
+    },
+    {
+      "term": "Fully Sharded Data Parallel (FSDP)",
+      "definition": "A multi-GPU technique that shards parameters, gradients, and optimizer state across GPUs (à la ZeRO) instead of replicating them, trading communication for reduced per-GPU memory footprint."
+    }
+  ],
+  "introduces": [
+    "Model FLOPs Utilization (MFU)",
+    "gradient accumulation",
+    "bf16 autocast",
+    "6ND rule",
+    "activation checkpointing",
+    "global gradient norm clipping",
+    "checkpoint/resume",
+    "z-loss",
+    "TrainConfig"
+  ],
+  "prerequisites": [
+    "transformer forward/backward pass",
+    "the optimizer and WSD learning-rate schedule (Muon+AdamW)",
+    "packed dataset and doc-aware masking",
+    "floating-point precision (fp32/fp16/bf16)",
+    "cross-entropy loss",
+    "scaling laws and compute-optimal training"
+  ],
+  "difficulty": "advanced",
+  "tags": ["training", "systems", "gpu", "optimization"]
+}

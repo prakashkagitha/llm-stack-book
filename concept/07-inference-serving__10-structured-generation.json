@@ -1,0 +1,69 @@
+{
+  "chapter_id": "07-inference-serving/10-structured-generation",
+  "one_liner": "Implement and reason about FSM/PDA-based logit masking to guarantee LLM output matches a grammar or schema.",
+  "key_terms": [
+    {
+      "term": "constrained (structured) generation",
+      "definition": "Enforcing that generated text satisfies a formal grammar (regex, JSON Schema, EBNF) by restricting decoding itself, not by prompting."
+    },
+    {
+      "term": "finite-state machine (FSM)",
+      "definition": "A 5-tuple (states, alphabet, transition function, start state, accepting states) that recognizes regular languages; used to enforce regex-like constraints."
+    },
+    {
+      "term": "logit masking",
+      "definition": "Setting the logits of grammatically-invalid tokens to -infinity before softmax, so the sampler can only choose valid tokens."
+    },
+    {
+      "term": "token-level FSM index",
+      "definition": "A pre-computed mapping from FSM state to the set of vocabulary tokens valid in that state, avoiding per-step character simulation; introduced by Outlines."
+    },
+    {
+      "term": "pushdown automaton (PDA)",
+      "definition": "An FSM augmented with a stack, needed to recognize context-free languages like arbitrarily-nested JSON that an FSM alone cannot track."
+    },
+    {
+      "term": "context-independent token",
+      "definition": "In XGrammar, a vocabulary token whose validity depends only on the current shallow grammar rule, not the full PDA stack, allowing cheap pre-computed masks."
+    },
+    {
+      "term": "context-dependent token",
+      "definition": "In XGrammar, a token (e.g., closing brace) whose validity depends on the full stack state and must be evaluated per-step rather than pre-computed."
+    },
+    {
+      "term": "Earley parser",
+      "definition": "An incremental parsing algorithm used by llguidance to compute valid next tokens on the fly, avoiding DFA state explosion for complex grammars."
+    },
+    {
+      "term": "XGrammar",
+      "definition": "A production structured-generation engine that splits tokens into context-independent/dependent classes and overlaps mask computation with the GPU forward pass for near-zero overhead."
+    },
+    {
+      "term": "Outlines",
+      "definition": "The foundational library that converts a regex or CFG into a token-level FSM index for constrained LLM generation."
+    },
+    {
+      "term": "tool-call (function-calling) grammar",
+      "definition": "A JSON Schema built at request time from available tool definitions, activated after a trigger token so the model's tool call matches a registered name and argument schema exactly."
+    }
+  ],
+  "introduces": [
+    "constrained (structured) generation",
+    "token-level FSM index",
+    "context-independent token",
+    "context-dependent token",
+    "XGrammar",
+    "Outlines",
+    "tool-call (function-calling) grammar"
+  ],
+  "prerequisites": [
+    "the decoding loop / autoregressive generation",
+    "token logits and softmax",
+    "temperature scaling and top-k/top-p sampling",
+    "tokenization (BPE, multi-character tokens)",
+    "regular expressions and context-free grammars",
+    "batched/continuous inference serving"
+  ],
+  "difficulty": "core",
+  "tags": ["inference", "serving", "systems", "agents"]
+}

@@ -1,0 +1,72 @@
+{
+  "chapter_id": "03-pretraining/05-distributed-data-parallel",
+  "one_liner": "Implement DDP's bucketed gradient sync and choose/apply ZeRO-1/2/3 or FSDP sharding to fit large models.",
+  "key_terms": [
+    {
+      "term": "Data parallelism (DP)",
+      "definition": "Replicating the full model on every worker, splitting the mini-batch across workers, and averaging per-worker gradients (via all-reduce) so replicas stay in sync."
+    },
+    {
+      "term": "Distributed Data Parallel (DDP)",
+      "definition": "PyTorch's data-parallel wrapper that makes DP fast via gradient bucketing and autograd-hook-driven overlap of communication with backward compute."
+    },
+    {
+      "term": "Gradient bucketing",
+      "definition": "Grouping many parameters' gradients into ~25MB contiguous buffers so one all-reduce communicates a bucket, amortizing per-message latency over thousands of small tensors."
+    },
+    {
+      "term": "All-reduce",
+      "definition": "A collective operation that combines (e.g. sums) values across all workers and gives every worker the identical result; used to average gradients in DP."
+    },
+    {
+      "term": "ZeRO (Zero Redundancy Optimizer)",
+      "definition": "A family of techniques (DeepSpeed) that shard the redundant per-GPU copies of optimizer states, gradients, and/or parameters across the data-parallel group instead of replicating them."
+    },
+    {
+      "term": "ZeRO-3",
+      "definition": "The ZeRO stage that shards parameters themselves, so each GPU permanently stores only 1/N of the model and reconstructs each layer's full parameters via just-in-time all-gather."
+    },
+    {
+      "term": "FSDP (Fully Sharded Data Parallel)",
+      "definition": "PyTorch-native implementation of the ZeRO-3 idea, sharding a per-unit FlatParameter across ranks and all-gathering/freeing it just-in-time for forward and backward."
+    },
+    {
+      "term": "FlatParameter",
+      "definition": "FSDP's data structure: all parameters within an FSDP unit (e.g. one transformer block) flattened into a single 1-D buffer, then sharded evenly across ranks."
+    },
+    {
+      "term": "16-bytes-per-parameter memory model",
+      "definition": "The mixed-precision AdamW accounting: 2 bytes bf16 params + 2 bytes bf16 grads + 4 bytes fp32 master weights + 4+4 bytes Adam moments m,v, per parameter."
+    },
+    {
+      "term": "no_sync()",
+      "definition": "A DDP context manager that suppresses gradient all-reduce during gradient-accumulation micro-batches, letting .grad accumulate locally until the last micro-batch."
+    },
+    {
+      "term": "HYBRID_SHARD",
+      "definition": "An FSDP sharding strategy that shards parameters within a node (fast NVLink) but replicates the sharded model across nodes, avoiding slow inter-node all-gathers."
+    }
+  ],
+  "introduces": [
+    "Data parallelism (DP)",
+    "Distributed Data Parallel (DDP)",
+    "Gradient bucketing",
+    "ZeRO (Zero Redundancy Optimizer)",
+    "ZeRO-3",
+    "FSDP (Fully Sharded Data Parallel)",
+    "FlatParameter",
+    "16-bytes-per-parameter memory model",
+    "no_sync()",
+    "HYBRID_SHARD"
+  ],
+  "prerequisites": [
+    "collective communication primitives (all-reduce, reduce-scatter, all-gather)",
+    "the alpha-beta communication cost model",
+    "backpropagation and autograd",
+    "mixed-precision (bf16/fp32) training",
+    "the Adam/AdamW optimizer",
+    "GPU memory basics"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "training", "scaling", "optimization", "gpu"]
+}

@@ -1,0 +1,61 @@
+{
+  "chapter_id": "14-capstone/06-optimizer-and-schedule",
+  "one_liner": "Implement a Muon+AdamW hybrid optimizer with MuonClip/QK-clip and a WSD schedule.",
+  "key_terms": [
+    {
+      "term": "Muon",
+      "definition": "Optimizer that orthogonalizes the momentum update of 2D weight matrices via Newton-Schulz iterations, pushing equally along every singular direction."
+    },
+    {
+      "term": "Newton-Schulz iteration",
+      "definition": "Matmul-only matrix polynomial recurrence that approximates a matrix's orthogonal polar factor UV^T, avoiding an explicit SVD each step."
+    },
+    {
+      "term": "AdamW",
+      "definition": "Adaptive optimizer with decoupled weight decay; here it handles the tied embedding, RMSNorm gains, and all 1D parameters instead of Muon."
+    },
+    {
+      "term": "MuonClip / QK-clip",
+      "definition": "Post-step rescaling of a head's query and key weights that caps the maximum pre-softmax attention logit at a threshold tau, preventing blow-ups."
+    },
+    {
+      "term": "Warmup-Stable-Decay (WSD) schedule",
+      "definition": "Three-phase learning-rate schedule (linear warmup, constant peak, 1-sqrt decay) with no baked-in total step count, unlike cosine annealing."
+    },
+    {
+      "term": "RMS-matching scale",
+      "definition": "Factor 0.2*sqrt(max(m,n)) multiplying Muon's orthogonalized update so its magnitude matches AdamW's, letting one learning rate govern both optimizers."
+    },
+    {
+      "term": "Grouped-query attention (GQA)",
+      "definition": "Attention variant where multiple query heads share fewer key/value heads, requiring QK-clip to scale each shared key slice only once per group."
+    },
+    {
+      "term": "Critical batch size",
+      "definition": "Token-budget threshold beyond which enlarging the batch yields diminishing returns per step, used to justify the ~0.5M-token effective batch."
+    },
+    {
+      "term": "Gradient accumulation",
+      "definition": "Summing gradients over several micro-batches before one optimizer step, used to reach a large effective batch without exceeding GPU memory."
+    },
+    {
+      "term": "Shampoo",
+      "definition": "Full matrix-preconditioner optimizer that Muon cheaply approximates via orthogonalization, without forming or inverting the preconditioner."
+    }
+  ],
+  "introduces": [
+    "MuonClip / QK-clip",
+    "Warmup-Stable-Decay (WSD) schedule",
+    "RMS-matching scale"
+  ],
+  "prerequisites": [
+    "the Adam/AdamW optimizer",
+    "singular value decomposition",
+    "the attention mechanism and grouped-query attention",
+    "learning-rate warmup and cosine schedules",
+    "bf16 mixed-precision training",
+    "gradient accumulation"
+  ],
+  "difficulty": "advanced",
+  "tags": ["optimization", "training", "math", "systems"]
+}

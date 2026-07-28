@@ -1,0 +1,69 @@
+{
+  "chapter_id": "07-inference-serving/13-serving-moe",
+  "one_liner": "Design and diagnose large-EP MoE inference: overlap all-to-all, balance hot experts, size dense-equivalent throughput.",
+  "key_terms": [
+    {
+      "term": "Expert parallelism (EP)",
+      "definition": "Parallelism strategy that shards a Mixture-of-Experts model's experts across GPUs, requiring an all-to-all dispatch/combine each layer to route tokens to their chosen experts."
+    },
+    {
+      "term": "All-to-all (dispatch/combine)",
+      "definition": "Two-phase collective in each MoE layer: dispatch sends tokens to the GPUs holding their chosen experts, combine sends weighted expert outputs back; cost is set by the slowest rank."
+    },
+    {
+      "term": "DeepEP",
+      "definition": "DeepSeek's open-sourced expert-parallel communication library providing high-throughput (NVLink+RDMA forwarding) kernels for prefill and low-latency (pure RDMA, hook-overlap) kernels for decode."
+    },
+    {
+      "term": "Hot-expert skew / imbalance factor (IF)",
+      "definition": "Uneven routing load across GPUs, quantified as max per-rank token load over mean load; since the all-to-all is a barrier, effective compute time scales with IF."
+    },
+    {
+      "term": "Attention-DP + expert-EP hybrid layout",
+      "definition": "Serving layout where attention runs data-parallel (each GPU keeps its own requests' full KV cache, no collective) while the MoE FFN sublayer runs expert-parallel across the same GPUs."
+    },
+    {
+      "term": "Dense-equivalent throughput efficiency (η)",
+      "definition": "Ratio of an MoE deployment's achieved tokens/s to the tokens/s of a dense model with the same active parameter count on the same GPUs; measures how much of MoE's FLOP advantage survives serving overhead."
+    },
+    {
+      "term": "Redundant experts (expert replication)",
+      "definition": "Placing extra copies of the busiest experts on under-loaded GPUs so dispatch can spread their tokens across replicas, reducing the imbalance factor without dropping tokens."
+    },
+    {
+      "term": "Shared expert",
+      "definition": "An always-on dense FFN path that every token passes through in addition to routed experts; runs locally with no all-to-all, providing free overlap work to hide dispatch latency."
+    },
+    {
+      "term": "Expert offloading",
+      "definition": "Keeping hot/shared parameters resident in HBM while streaming cold routed experts from CPU RAM or NVMe on demand, trading latency for memory capacity."
+    },
+    {
+      "term": "Grouped GEMM",
+      "definition": "A single fused kernel that runs each local expert's matmul over its assigned (ragged) group of tokens in one launch, the compute step of EP after dispatch."
+    },
+    {
+      "term": "Capacity factor / token dropping",
+      "definition": "A cap on tokens routed to an expert per step; overflow tokens are dropped (skip that expert) to bound worst-case all-to-all cost, at the price of degraded quality."
+    }
+  ],
+  "introduces": [
+    "Expert parallelism (EP)",
+    "DeepEP",
+    "Hot-expert skew / imbalance factor (IF)",
+    "Attention-DP + expert-EP hybrid layout",
+    "Dense-equivalent throughput efficiency (η)",
+    "Redundant experts (expert replication)",
+    "Expert offloading"
+  ],
+  "prerequisites": [
+    "Mixture-of-Experts (MoE) architectures and top-k routing",
+    "prefill vs. decode and the KV cache",
+    "collective communication (all-reduce, all-to-all)",
+    "tensor parallelism",
+    "Multi-head Latent Attention (MLA)",
+    "continuous batching and request scheduling"
+  ],
+  "difficulty": "advanced",
+  "tags": ["inference", "serving", "systems", "gpu", "scaling"]
+}

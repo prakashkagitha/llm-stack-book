@@ -1,0 +1,71 @@
+{
+  "chapter_id": "06-rl-infra/07-colocated-vs-disaggregated",
+  "one_liner": "Decide GPU placement (colocated vs disaggregated) and design/reason about RL weight-sync latency.",
+  "key_terms": [
+    {
+      "term": "colocated RL",
+      "definition": "Placement strategy where trainer and rollout engine share the same physical GPUs, time-slicing between phases or offloading state to fit both."
+    },
+    {
+      "term": "disaggregated RL",
+      "definition": "Placement strategy using separate GPU pools for training and rollout, sized independently and connected by a network and weight-sync channel."
+    },
+    {
+      "term": "hybrid engine",
+      "definition": "veRL's colocated pattern where a single set of workers flips between a training role (FSDP/Megatron) and a generation role (vLLM/SGLang) via sleep/wake."
+    },
+    {
+      "term": "weight synchronization",
+      "definition": "The process of pushing freshly updated trainer weights into the rollout engine's parameter buffers so the next rollout uses the current policy."
+    },
+    {
+      "term": "resharding problem",
+      "definition": "The mismatch between how the trainer shards/fuses/stores parameters (e.g., FSDP, bf16) and how the inference engine stores them (TP, fused QKV, quantized), which sync must reconcile."
+    },
+    {
+      "term": "NCCL broadcast",
+      "definition": "Fast GPU-to-GPU weight-sync mechanism using NCCL collectives over a process group spanning trainer and inference ranks, moving weights via NVLink/InfiniBand without touching disk."
+    },
+    {
+      "term": "CUDA IPC (Inter-Process Communication)",
+      "definition": "Zero-copy weight-sync mechanism where one process exports a handle to GPU memory and another process maps that same device memory, avoiding any data transfer; same-node only."
+    },
+    {
+      "term": "checkpoint reload",
+      "definition": "The slowest, most robust weight-sync mechanism: the trainer writes a full state_dict to shared storage and the inference engine reloads and reshards it independently."
+    },
+    {
+      "term": "staleness (RL)",
+      "definition": "The lag k between the policy version used to generate rollouts and the trainer's current policy in asynchronous disaggregated RL, corrected via importance sampling."
+    },
+    {
+      "term": "offloading (optimizer-state offload)",
+      "definition": "Moving tensors not needed in the current RL phase (e.g., Adam optimizer state) to host CPU RAM to free GPU memory during colocated time-slicing."
+    },
+    {
+      "term": "GPU utilization (training-capable)",
+      "definition": "The fraction of iteration wall-clock time training GPUs spend on compute-bound work versus idling or doing memory-bound decode, a key metric for comparing placement strategies."
+    }
+  ],
+  "introduces": [
+    "colocated RL",
+    "disaggregated RL",
+    "hybrid engine",
+    "weight synchronization",
+    "resharding problem",
+    "NCCL broadcast",
+    "CUDA IPC (Inter-Process Communication)",
+    "checkpoint reload",
+    "staleness (RL)"
+  ],
+  "prerequisites": [
+    "anatomy of an RL system / generation-training loop",
+    "GRPO and PPO for language models",
+    "FSDP/ZeRO and tensor/pipeline parallelism",
+    "KV cache and prefill vs decode in LLM inference",
+    "roofline model (compute-bound vs memory-bandwidth-bound)",
+    "NCCL collective communication basics"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "systems", "gpu", "inference", "serving"]
+}

@@ -1,0 +1,76 @@
+{
+  "chapter_id": "07-inference-serving/06-speculative-decoding",
+  "one_liner": "Derive, implement, and analyze speculative decoding (Medusa, EAGLE, lookahead) to speed up lossless LLM decoding.",
+  "key_terms": [
+    {
+      "term": "speculative decoding",
+      "definition": "Technique where a cheap drafter proposes several tokens and an expensive target model verifies them in one parallel pass, emitting multiple tokens per target forward pass."
+    },
+    {
+      "term": "draft model (drafter)",
+      "definition": "A small, cheap model that proposes candidate continuation tokens for the target model to verify; only affects speed, never correctness."
+    },
+    {
+      "term": "modified rejection sampling",
+      "definition": "The accept/reject rule (accept with probability min(1, p(x)/q(x)), else resample from the residual) that makes drafted tokens exactly distributed as the target."
+    },
+    {
+      "term": "residual distribution",
+      "definition": "The distribution p_res(x) proportional to (p(x)-q(x))_+ used to resample a replacement token whenever a drafted token is rejected."
+    },
+    {
+      "term": "acceptance rate",
+      "definition": "The expected probability alpha = sum_x min(p(x),q(x)) = 1 - TV(p,q) that a drafted token is accepted; the main driver of speculative speedup."
+    },
+    {
+      "term": "bonus token",
+      "definition": "The extra token sampled directly from the target's distribution at the position after the last draft token, free when all gamma draft tokens are accepted."
+    },
+    {
+      "term": "Medusa",
+      "definition": "A speculative decoding method that bolts several extra prediction heads onto a frozen target's final hidden state, each predicting a token several positions ahead independently."
+    },
+    {
+      "term": "EAGLE",
+      "definition": "A self-drafting method that autoregresses in the target's continuous feature space (penultimate-layer hidden states) rather than token space, giving much higher acceptance than Medusa."
+    },
+    {
+      "term": "tree attention",
+      "definition": "An attention-masking scheme that flattens a tree of candidate continuations into one sequence, letting each node attend only to its ancestors so all branches are verified in a single forward pass."
+    },
+    {
+      "term": "lookahead decoding",
+      "definition": "A drafter-free speculative method that uses Jacobi iteration on the target's own forward passes to simultaneously generate and verify n-grams, losslessly for greedy decoding."
+    },
+    {
+      "term": "Jacobi decoding",
+      "definition": "Viewing autoregressive decoding as solving fixed-point equations in parallel (rather than one token at a time), refining all guessed positions simultaneously across forward passes."
+    },
+    {
+      "term": "memory-bandwidth bound",
+      "definition": "The property of LLM decode where wall-clock time is set by moving weights from HBM rather than by FLOPs, so verifying multiple tokens costs about the same as one."
+    }
+  ],
+  "introduces": [
+    "speculative decoding",
+    "draft model (drafter)",
+    "modified rejection sampling",
+    "residual distribution",
+    "acceptance rate",
+    "bonus token",
+    "Medusa",
+    "EAGLE",
+    "tree attention",
+    "lookahead decoding",
+    "Jacobi decoding"
+  ],
+  "prerequisites": [
+    "autoregressive decoding",
+    "KV cache and the decode phase",
+    "memory-bandwidth-bound vs. compute-bound execution (roofline model)",
+    "sampling temperature and softmax over a vocabulary",
+    "the transformer attention mechanism and position encodings"
+  ],
+  "difficulty": "advanced",
+  "tags": ["inference", "serving", "systems", "optimization"]
+}

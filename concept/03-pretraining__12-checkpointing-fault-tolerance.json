@@ -1,0 +1,75 @@
+{
+  "chapter_id": "03-pretraining/12-checkpointing-fault-tolerance",
+  "one_liner": "Design and implement fault-tolerant, resumable checkpointing for large-scale distributed LLM training.",
+  "key_terms": [
+    {
+      "term": "training checkpoint",
+      "definition": "Saved state enabling resume: model parameters, optimizer state (moments), per-rank RNG state, and training metadata (step, scheduler, data cursor)."
+    },
+    {
+      "term": "Fully Sharded Data Parallel (FSDP)",
+      "definition": "Distributed training strategy where each rank holds only a disjoint shard of every parameter, complicating naive whole-model checkpoint save/load."
+    },
+    {
+      "term": "PyTorch Distributed Checkpoint (DCP)",
+      "definition": "PyTorch API (`torch.distributed.checkpoint`) that saves sharded state in a topology-agnostic layout so checkpoints can be reloaded onto a different GPU count."
+    },
+    {
+      "term": "sharded checkpoint",
+      "definition": "Checkpoint strategy where each rank writes its own parameter shard in parallel, rather than gathering all state to one rank before saving."
+    },
+    {
+      "term": "asynchronous checkpointing",
+      "definition": "Checkpointing pattern that copies GPU tensors to pinned CPU memory (the only blocking step), then writes to disk in a background thread/process while training continues."
+    },
+    {
+      "term": "in-memory checkpointing",
+      "definition": "Fault-tolerance technique keeping the most recent checkpoint in CPU DRAM across nodes for near-instant recovery, falling back to disk only for full node failures."
+    },
+    {
+      "term": "elastic training",
+      "definition": "Resuming or continuing a distributed training job on a different number of nodes/GPUs than it was running on when it crashed or paused."
+    },
+    {
+      "term": "exact resumability",
+      "definition": "Property that a training run interrupted and resumed from checkpoint produces (bit-for-bit or statistically) the same weight trajectory as an uninterrupted run."
+    },
+    {
+      "term": "Daly's formula (optimal checkpoint interval)",
+      "definition": "Formula T* ≈ sqrt(2 · T_save · T_MTBF) giving the checkpoint interval that minimizes expected wasted compute from hardware failures."
+    },
+    {
+      "term": "mean time between failures (MTBF)",
+      "definition": "Expected time between hardware failures in a cluster, computed as 1/(N·λ) for N nodes each failing at hourly rate λ; shrinks as cluster size grows."
+    },
+    {
+      "term": "COMPLETE sentinel file",
+      "definition": "An empty marker file written atomically only after all checkpoint shards and metadata finish writing, so a partially written checkpoint is never mistakenly loaded."
+    },
+    {
+      "term": "RNG (random-number generator) state",
+      "definition": "The combined Python, NumPy, and per-device torch/CUDA random states, saved per rank so resumed training reproduces the same stochastic behavior."
+    }
+  ],
+  "introduces": [
+    "training checkpoint",
+    "PyTorch Distributed Checkpoint (DCP)",
+    "sharded checkpoint",
+    "asynchronous checkpointing",
+    "in-memory checkpointing",
+    "elastic training",
+    "exact resumability",
+    "Daly's formula (optimal checkpoint interval)",
+    "mean time between failures (MTBF)",
+    "COMPLETE sentinel file"
+  ],
+  "prerequisites": [
+    "Fully Sharded Data Parallel (FSDP) / ZeRO parameter sharding",
+    "Adam optimizer and its moment estimates",
+    "mixed-precision training (bf16/fp16)",
+    "basic distributed training concepts (ranks, world size, process groups)",
+    "PyTorch training loop fundamentals"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "training", "scaling", "production"]
+}

@@ -1,0 +1,76 @@
+{
+  "chapter_id": "04-kernels-efficiency/07-quantization-ptq",
+  "one_liner": "Quantize a trained LLM's weights (and activations) to INT4/INT8 post-hoc using GPTQ, AWQ, or SmoothQuant.",
+  "key_terms": [
+    {
+      "term": "quantization",
+      "definition": "Mapping continuous/high-precision values to a small finite integer grid via a scale (and optional zero-point) to shrink memory and speed up compute."
+    },
+    {
+      "term": "scale and zero-point",
+      "definition": "The two affine-quantization parameters: scale s is the size of one quantization step; zero-point z is the integer code representing real value 0."
+    },
+    {
+      "term": "symmetric quantization",
+      "definition": "Zero-point-free quantization scheme (grid centered on 0) fit from max absolute value, used for weight matrices, which are roughly symmetric about zero."
+    },
+    {
+      "term": "per-group quantization",
+      "definition": "Splitting each weight row into contiguous groups (typically 128) with its own scale, the default granularity for 4-bit LLM weights in GPTQ/AWQ/GGUF."
+    },
+    {
+      "term": "activation outliers",
+      "definition": "A small set of feature dimensions in activations of models beyond ~6-7B params that take on 10-100x larger magnitudes than typical, wrecking per-tensor quantization scales."
+    },
+    {
+      "term": "GPTQ",
+      "definition": "A post-training weight-quantization algorithm that minimizes layer output error using the input Hessian, quantizing columns one at a time and compensating remaining weights via H^{-1} (Cholesky-stabilized)."
+    },
+    {
+      "term": "AWQ (Activation-aware Weight Quantization)",
+      "definition": "A weight-only PTQ method that identifies salient weight channels via activation magnitude and protects them with a per-channel rescaling trick, without a Hessian."
+    },
+    {
+      "term": "SmoothQuant",
+      "definition": "A technique that migrates quantization difficulty from hard-to-quantize activations into easy-to-quantize weights via a per-channel diagonal scale, enabling INT8 weight+activation (W8A8) matmuls."
+    },
+    {
+      "term": "LLM.int8()",
+      "definition": "A mixed-precision matmul decomposition that runs the rare outlier feature dimensions in FP16 and the rest in INT8, requiring no calibration or tuning."
+    },
+    {
+      "term": "Hessian (in GPTQ)",
+      "definition": "The matrix H = 2XX^T of calibration-input correlations used by GPTQ to compute the optimal compensating update to not-yet-quantized weights after each rounding step."
+    },
+    {
+      "term": "round-to-nearest (RTN)",
+      "definition": "The simplest weight quantization baseline: independently round each weight to its nearest grid point, ignoring interactions between weights."
+    },
+    {
+      "term": "W4A16 / W8A8",
+      "definition": "Shorthand for quantization configurations: 4-bit weights with 16-bit activations (GPTQ/AWQ, memory-bound decoding) versus 8-bit weights and activations (SmoothQuant, compute-bound throughput serving)."
+    }
+  ],
+  "introduces": [
+    "quantization",
+    "scale and zero-point",
+    "symmetric quantization",
+    "per-group quantization",
+    "activation outliers",
+    "GPTQ",
+    "AWQ (Activation-aware Weight Quantization)",
+    "SmoothQuant",
+    "LLM.int8()",
+    "round-to-nearest (RTN)",
+    "W4A16 / W8A8"
+  ],
+  "prerequisites": [
+    "floating-point number representation",
+    "matrix multiplication / linear layers",
+    "KV cache",
+    "memory-bandwidth-bound vs compute-bound performance (roofline model)",
+    "LayerNorm / RMSNorm affine parameters"
+  ],
+  "difficulty": "advanced",
+  "tags": ["quantization", "inference", "optimization", "systems"]
+}

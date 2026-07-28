@@ -1,0 +1,75 @@
+{
+  "chapter_id": "07-inference-serving/02-continuous-batching",
+  "one_liner": "Design and implement an iteration-level scheduler that keeps LLM-serving batches pinned near capacity.",
+  "key_terms": [
+    {
+      "term": "continuous batching (iteration-level scheduling / in-flight batching)",
+      "definition": "Orca's scheduling discipline that re-derives the running batch every single decode iteration, retiring finished requests and admitting new ones immediately."
+    },
+    {
+      "term": "static batching",
+      "definition": "Request-level batching that fixes a batch's membership until every request in it has finished, causing tail idling and head-of-line blocking."
+    },
+    {
+      "term": "dynamic batching",
+      "definition": "Waits a short window to accumulate arriving requests before dispatching one frozen batch; bounds queueing delay but still freezes membership for the whole generation."
+    },
+    {
+      "term": "head-of-line (HOL) blocking",
+      "definition": "A newly arrived request must wait for an entire in-flight batch to drain before being admitted, inflating time-to-first-token under request-level batching."
+    },
+    {
+      "term": "selective batching",
+      "definition": "Orca's technique of flattening tokens from heterogeneous requests into one matrix for position-independent GEMMs (QKV, MLP) while running attention per-request over each one's own KV cache."
+    },
+    {
+      "term": "chunked prefill",
+      "definition": "Splitting a long prompt's prefill into token-budget-sized chunks spread across several iterations, co-scheduled with ongoing decodes so inter-token latency stays smooth."
+    },
+    {
+      "term": "PagedAttention",
+      "definition": "KV-cache memory management scheme allocating cache in fixed-size blocks/pages, letting the scheduler admit or evict requests as a block-allocation problem."
+    },
+    {
+      "term": "time-to-first-token (TTFT)",
+      "definition": "The latency from a request's arrival until its first generated token is produced; bounded below by the remaining decode length of the currently running batch under static scheduling."
+    },
+    {
+      "term": "inter-token latency (ITL)",
+      "definition": "The time between successive generated tokens for a decoding request; spikes when a large prefill is admitted into the same iteration as ongoing decodes."
+    },
+    {
+      "term": "preemption",
+      "definition": "Evicting a running request's KV cache (via recomputation or swap to host memory) to free resources for a higher-priority or memory-starved request, returning the victim to WAITING."
+    },
+    {
+      "term": "thrashing (memory)",
+      "definition": "A failure mode where admitting requests up to the last free KV block triggers repeated preemption-then-readmission cycles, wasting time on recompute/swap instead of generation."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Per-request stored keys and values from prior tokens that attention reads at each decode step; its memory footprint is the scheduler's main binding constraint."
+    }
+  ],
+  "introduces": [
+    "continuous batching (iteration-level scheduling / in-flight batching)",
+    "static batching",
+    "dynamic batching",
+    "head-of-line (HOL) blocking",
+    "selective batching",
+    "chunked prefill",
+    "time-to-first-token (TTFT)",
+    "inter-token latency (ITL)",
+    "preemption",
+    "thrashing (memory)"
+  ],
+  "prerequisites": [
+    "autoregressive decoding",
+    "KV cache",
+    "memory-bound vs. compute-bound operations (roofline model)",
+    "the attention mechanism",
+    "GPU high-bandwidth memory (HBM) and weight streaming"
+  ],
+  "difficulty": "core",
+  "tags": ["serving", "inference", "systems", "optimization"]
+}

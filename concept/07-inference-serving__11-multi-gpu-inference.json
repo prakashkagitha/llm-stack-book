@@ -1,0 +1,68 @@
+{
+  "chapter_id": "07-inference-serving/11-multi-gpu-inference",
+  "one_liner": "Size and configure multi-GPU/multi-node LLM serving using tensor, pipeline, expert, and data parallelism.",
+  "key_terms": [
+    {
+      "term": "Tensor parallelism (TP)",
+      "definition": "Splits weight matrices column/row-wise across GPUs within a layer, needing an all-reduce per split; lowers per-GPU memory and can reduce latency."
+    },
+    {
+      "term": "Pipeline parallelism (PP)",
+      "definition": "Splits a model's layers into sequential stages across devices linked by peer-to-peer activation transfers; mainly a memory-capacity and throughput tool, latency-neutral for decode."
+    },
+    {
+      "term": "Expert parallelism (EP)",
+      "definition": "Spreads Mixture-of-Experts weights across devices so each GPU hosts a subset of experts, requiring all-to-all dispatch and gather collectives per MoE layer."
+    },
+    {
+      "term": "Wide expert parallelism (wide-EP)",
+      "definition": "Extends expert parallelism across multiple nodes over InfiniBand rather than confining it to one NVLink node, enabling much larger EP degrees for huge MoE models."
+    },
+    {
+      "term": "Data parallel (DP) replicas",
+      "definition": "Independent, identical (possibly TP/PP-sharded) copies of the model each serving separate requests; scales throughput linearly with replica count and adds no communication overhead."
+    },
+    {
+      "term": "All-reduce",
+      "definition": "A blocking collective that sums partial tensor results across ranks and returns the total to every rank; recombines row-parallel TP outputs each layer."
+    },
+    {
+      "term": "All-to-all",
+      "definition": "A collective where each rank exchanges distinct data with every other rank; used in EP to dispatch tokens to expert-holding GPUs and gather outputs back."
+    },
+    {
+      "term": "Prefill",
+      "definition": "The inference phase that processes the entire input prompt in one compute-bound forward pass before token generation begins."
+    },
+    {
+      "term": "Decode",
+      "definition": "The inference phase generating one token per step; memory-bandwidth-bound and uniquely sensitive to per-step communication latency from parallelism strategies."
+    },
+    {
+      "term": "Time per output token (TPOT)",
+      "definition": "The latency to produce each subsequent decode-step token; the metric against which TP, PP, EP, and DP are judged for interactive latency-critical serving."
+    },
+    {
+      "term": "Model FLOP utilization (MFU)",
+      "definition": "The fraction of a GPU's peak FLOPs actually achieved; high (40-60%) during compute-bound prefill, low (5-15%) during memory-bandwidth-bound small-batch decode."
+    },
+    {
+      "term": "EP small-batch trap",
+      "definition": "The failure mode where a small decode batch under expert parallelism leaves most expert GPUs idle while the all-to-all cost is still paid, wasting the cluster."
+    }
+  ],
+  "introduces": [
+    "Wide expert parallelism (wide-EP)",
+    "EP small-batch trap"
+  ],
+  "prerequisites": [
+    "GPU architecture and interconnects (NVLink, PCIe, InfiniBand)",
+    "collective communication primitives (all-reduce, all-to-all)",
+    "prefill and decode phases of inference and the KV cache",
+    "Mixture-of-Experts architecture and top-k routing",
+    "Grouped-Query Attention (GQA)",
+    "tensor and pipeline parallelism fundamentals from distributed training"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "gpu", "inference", "serving", "scaling"]
+}

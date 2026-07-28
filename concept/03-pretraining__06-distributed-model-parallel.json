@@ -1,0 +1,71 @@
+{
+  "chapter_id": "03-pretraining/06-distributed-model-parallel",
+  "one_liner": "Partition huge transformer models via tensor, pipeline, sequence/context, and expert parallelism to train beyond single-GPU memory.",
+  "key_terms": [
+    {
+      "term": "Tensor parallelism (TP)",
+      "definition": "Splits a single layer's matrix multiplications across GPUs (column- then row-parallel), needing one all-reduce per region; must stay inside the NVLink domain."
+    },
+    {
+      "term": "Pipeline parallelism (PP)",
+      "definition": "Splits a model's layers into contiguous stages placed on different GPUs, communicating only via point-to-point activation send/recv at stage boundaries."
+    },
+    {
+      "term": "Pipeline bubble",
+      "definition": "The idle-GPU fraction caused by pipeline fill/drain time; equals (p-1)/(m+p-1) and is reduced by microbatching, interleaving, or zero-bubble scheduling."
+    },
+    {
+      "term": "1F1B (one-forward-one-backward) schedule",
+      "definition": "Steady-state pipeline schedule alternating one forward and one backward per stage, bounding in-flight activation memory to ~p microbatches independent of total microbatch count m."
+    },
+    {
+      "term": "Sequence parallelism (SP)",
+      "definition": "Megatron technique that splits the otherwise-replicated LayerNorm/dropout/residual regions between TP matmul blocks along the sequence dimension, cutting activation memory at no extra communication cost."
+    },
+    {
+      "term": "Context parallelism (CP) / Ring Attention",
+      "definition": "Shards the token sequence itself across devices and rotates K/V blocks around a communication ring, using FlashAttention's online softmax to compute exact attention over remote blocks."
+    },
+    {
+      "term": "Expert parallelism (EP)",
+      "definition": "Places different experts of a Mixture-of-Experts layer on different devices, routing tokens to their chosen experts via dispatch and combine all-to-all collectives."
+    },
+    {
+      "term": "Column-parallel / row-parallel linear layer",
+      "definition": "Two ways to shard a weight matrix across TP ranks (by output columns vs. input rows); chaining column-then-row avoids any collective between the two matmuls."
+    },
+    {
+      "term": "All-to-all collective",
+      "definition": "Communication primitive where each device sends distinct data to every other device; expert parallelism uses it to dispatch tokens to their assigned experts and combine outputs back."
+    },
+    {
+      "term": "Mixture-of-Experts (MoE) layer",
+      "definition": "Replaces a single FFN with many expert FFNs plus a router that sends each token to its top-k experts, decoupling parameter count from per-token compute."
+    },
+    {
+      "term": "3D/4D/5D parallelism",
+      "definition": "Composing data, tensor, pipeline, context, and expert parallelism multiplicatively across a GPU cluster, placing each axis's collectives onto network links matching its communication intensity."
+    }
+  ],
+  "introduces": [
+    "Tensor parallelism (TP)",
+    "Pipeline parallelism (PP)",
+    "Pipeline bubble",
+    "1F1B (one-forward-one-backward) schedule",
+    "Sequence parallelism (SP)",
+    "Context parallelism (CP) / Ring Attention",
+    "Expert parallelism (EP)",
+    "Column-parallel / row-parallel linear layer",
+    "3D/4D/5D parallelism"
+  ],
+  "prerequisites": [
+    "data parallelism and ZeRO/FSDP sharding",
+    "GPU memory hierarchy and NVLink/interconnect bandwidth",
+    "collective communication primitives (all-reduce, reduce-scatter, all-gather)",
+    "the transformer block (attention and MLP sublayers)",
+    "FlashAttention and the online-softmax trick",
+    "Mixture-of-Experts architecture and routing"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "gpu", "training", "scaling", "architecture"]
+}

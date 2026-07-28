@@ -1,0 +1,67 @@
+{
+  "chapter_id": "06-rl-infra/05-openrlhf-nemo-ray",
+  "one_liner": "Design and choose a Ray/Megatron-based RLHF system, laying out actors and weight sync for a given cluster.",
+  "key_terms": [
+    {
+      "term": "Ray",
+      "definition": "UC Berkeley/Anyscale distributed computing framework offering remote functions, stateful actors, and a shared-memory object store; the orchestration substrate under OpenRLHF."
+    },
+    {
+      "term": "Ray actor",
+      "definition": "A stateful process (from an @ray.remote-decorated class) owning its own GPU/CPU/memory, addressable by handle; RLHF roles like policy, critic, RM each map to one."
+    },
+    {
+      "term": "placement group",
+      "definition": "A Ray mechanism that atomically reserves a co-located bundle of resources (e.g., 8 GPUs) so a multi-GPU actor group launches together, avoiding partial-allocation deadlock."
+    },
+    {
+      "term": "object store (Plasma)",
+      "definition": "Ray's shared-memory store (backed by Apache Plasma) enabling zero-copy reads of tensors/arrays by any process on the same node, key to fast experience-batch transfer."
+    },
+    {
+      "term": "weight synchronization",
+      "definition": "The step where a training actor pushes updated policy parameters to the rollout engine (e.g., vLLM) after a gradient update, since the two hold separate weight copies."
+    },
+    {
+      "term": "OpenRLHF",
+      "definition": "An open-source RLHF framework built on Ray actors, using vLLM for rollout and DeepSpeed ZeRO for gradient updates, prized for flexible per-role GPU/model configuration."
+    },
+    {
+      "term": "NeMo-Aligner",
+      "definition": "NVIDIA's Megatron-LM-based RLHF toolkit using static NCCL communication and TensorRT-LLM rollouts instead of Ray; archived in 2025 in favor of NeMo-RL."
+    },
+    {
+      "term": "TensorRT-LLM (TRT-LLM)",
+      "definition": "NVIDIA's compiled, quantized inference engine used as NeMo-Aligner's rollout backend, offering high throughput but costlier engine reloads after weight updates than vLLM."
+    },
+    {
+      "term": "gang scheduling",
+      "definition": "Launching all resource bundles of a multi-GPU actor group atomically and simultaneously (e.g., via Ray's STRICT_PACK placement group) rather than acquiring them incrementally."
+    },
+    {
+      "term": "async rollout pipeline",
+      "definition": "An optimization decoupling generation from training so the rollout engine generates the next batch while the current batch trains, trading policy staleness for higher throughput."
+    }
+  ],
+  "introduces": [
+    "Ray",
+    "Ray actor",
+    "placement group",
+    "object store (Plasma)",
+    "weight synchronization",
+    "OpenRLHF",
+    "NeMo-Aligner",
+    "TensorRT-LLM (TRT-LLM)",
+    "gang scheduling",
+    "async rollout pipeline"
+  ],
+  "prerequisites": [
+    "the PPO objective",
+    "vLLM's PagedAttention engine",
+    "the four-role decomposition of an RL-for-LLM system (policy, critic, reward model, reference model)",
+    "DeepSpeed ZeRO / distributed data parallelism",
+    "Megatron-LM tensor/pipeline/data parallelism"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "systems", "gpu", "alignment", "scaling"]
+}

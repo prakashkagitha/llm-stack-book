@@ -1,0 +1,72 @@
+{
+  "chapter_id": "04-kernels-efficiency/09-compilers-fusion",
+  "one_liner": "Fuse kernels, capture CUDA graphs, and use torch.compile to speed up PyTorch models.",
+  "key_terms": [
+    {
+      "term": "kernel fusion",
+      "definition": "Merging multiple GPU kernels into one so intermediate values stay in registers/shared memory instead of round-tripping through DRAM, cutting memory traffic."
+    },
+    {
+      "term": "CUDA graphs",
+      "definition": "A captured, opaque sequence of GPU operations replayed with a single CPU call (cudaGraphLaunch), eliminating per-kernel CPU launch overhead for fixed-shape workloads."
+    },
+    {
+      "term": "torch.compile",
+      "definition": "PyTorch 2.0's JIT compilation pipeline that layers TorchDynamo, AOTAutograd, and TorchInductor to transform eager Python code into fused, optimized kernels."
+    },
+    {
+      "term": "TorchDynamo",
+      "definition": "The graph-capture layer of torch.compile that installs a CPython frame-evaluation hook to speculatively trace Python bytecode into an FX graph."
+    },
+    {
+      "term": "graph break",
+      "definition": "A point where TorchDynamo cannot trace further (e.g., print, data-dependent control flow, tensor.item()) and falls back to eager execution, fragmenting compilation."
+    },
+    {
+      "term": "AOTAutograd (Ahead-Of-Time Autograd)",
+      "definition": "The torch.compile component that traces through the autograd engine at compile time to build one joint forward+backward FX graph, enabling cross-boundary fusion."
+    },
+    {
+      "term": "TorchInductor",
+      "definition": "torch.compile's default lowering backend, which takes the fused FX graph and generates Triton code (GPU) or C++ (CPU) via loop, pointwise, and epilogue fusion."
+    },
+    {
+      "term": "FX graph",
+      "definition": "PyTorch's traced intermediate representation of tensor operations, built by TorchDynamo as it walks Python bytecode and encounters PyTorch ops."
+    },
+    {
+      "term": "shape guard",
+      "definition": "An assumption (e.g., a tensor's shape or dtype) recorded during TorchDynamo tracing; if violated on a later call, it triggers an expensive recompilation."
+    },
+    {
+      "term": "XLA (Accelerated Linear Algebra)",
+      "definition": "Google's compiler for TPUs and the foundation of JAX; fuses ops and optimizes layout over an HLO graph using lazy, batched compilation."
+    },
+    {
+      "term": "TVM",
+      "definition": "An end-to-end ML compiler that uses search-based optimization (AutoTVM/Ansor) to generate portable, near-optimal kernels across diverse hardware backends."
+    }
+  ],
+  "introduces": [
+    "kernel fusion",
+    "CUDA graphs",
+    "torch.compile",
+    "TorchDynamo",
+    "graph break",
+    "AOTAutograd (Ahead-Of-Time Autograd)",
+    "TorchInductor",
+    "FX graph",
+    "shape guard",
+    "XLA (Accelerated Linear Algebra)",
+    "TVM"
+  ],
+  "prerequisites": [
+    "GPU memory hierarchy (DRAM, shared memory, registers)",
+    "roofline model of compute-bound vs. memory-bound performance",
+    "PyTorch eager execution model",
+    "backpropagation and autograd",
+    "matrix multiplication / GEMM basics"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "gpu", "optimization", "training", "inference"]
+}

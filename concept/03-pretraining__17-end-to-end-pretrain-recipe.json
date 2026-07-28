@@ -1,0 +1,68 @@
+{
+  "chapter_id": "03-pretraining/17-end-to-end-pretrain-recipe",
+  "one_liner": "Run a full pretrain pipeline end-to-end, raw corpus to sampled checkpoint, at four hardware scales.",
+  "key_terms": [
+    {
+      "term": "uint16 token shard format",
+      "definition": "The on-disk contract: tokenized corpora are written as raw uint16 integers in fixed-size .bin shards, which the training loader memory-maps directly; writer and loader dtypes must match exactly."
+    },
+    {
+      "term": "vocab padding (to a multiple of 64)",
+      "definition": "Rounding GPT-2's 50257-token vocabulary up to 50304 so the embedding/lm_head matmul and softmax align to GPU tensor-core tile sizes, at zero cost to model quality."
+    },
+    {
+      "term": "ShardedTokenLoader",
+      "definition": "The training-loop component (built in chapter 3.5) that memmaps uint16 .bin shards and slices out fixed-length (ctx+1)-token windows for each training batch."
+    },
+    {
+      "term": "AdamW (decoupled weight decay)",
+      "definition": "The optimizer used throughout (betas 0.9/0.95, weight_decay 0.1), which decays only 2-D weight matrices and excludes 1-D biases/norm gains from decay."
+    },
+    {
+      "term": "linear warmup + cosine decay schedule",
+      "definition": "The learning-rate schedule (`lr_at`) that ramps linearly from 0 to a peak LR over a warmup window, then decays it following a cosine curve down to a floor min_lr."
+    },
+    {
+      "term": "gradient accumulation",
+      "definition": "Running several forward/backward micro-batches (scaled by 1/grad_accum) before a single optimizer step, letting an effective batch size exceed what fits in memory on one GPU."
+    },
+    {
+      "term": "FSDP FULL_SHARD (ZeRO-3)",
+      "definition": "A Fully Sharded Data Parallel strategy that shards model parameters, gradients, and optimizer state across all ranks, used for the 8-GPU and multi-node scales in this chapter."
+    },
+    {
+      "term": "HYBRID_SHARD",
+      "definition": "An FSDP variant that fully shards parameters within a fast-NVLink node but replicates the model across nodes, trading some memory for cheaper cross-node communication."
+    },
+    {
+      "term": "Model FLOPs Utilization (MFU)",
+      "definition": "The fraction of a GPU's peak FLOP/s actually delivered during training, computed from the 6N-per-token FLOP rule and tokens/sec; ~40-55% is the healthy range at GPU scale."
+    },
+    {
+      "term": "perplexity",
+      "definition": "exp of the mean cross-entropy loss on held-out data, interpreted as the effective branching factor of the model's next-token distribution; lower is better."
+    },
+    {
+      "term": "pre-clip gradient norm",
+      "definition": "The global gradient norm measured before clipping is applied; logged (not the post-clip value, which is artificially bounded) as the signal that reveals instability spikes."
+    },
+    {
+      "term": "bf16 mixed precision",
+      "definition": "Training in the bfloat16 numeric format rather than fp16, chosen because its wider dynamic range avoids the silent overflow-to-NaN failure mode fp16 exhibits during training."
+    }
+  ],
+  "introduces": [
+    "uint16 token shard format",
+    "vocab padding (to a multiple of 64)"
+  ],
+  "prerequisites": [
+    "GPT / transformer architecture",
+    "BPE tokenization",
+    "AdamW and gradient-based optimization",
+    "cross-entropy loss",
+    "distributed data-parallel training (DDP/FSDP)",
+    "learning rate scheduling"
+  ],
+  "difficulty": "core",
+  "tags": ["training", "systems", "scaling", "optimization", "evaluation"]
+}

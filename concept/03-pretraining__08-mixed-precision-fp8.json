@@ -1,0 +1,77 @@
+{
+  "chapter_id": "03-pretraining/08-mixed-precision-fp8",
+  "one_liner": "Implement correct bf16/fp16 AMP training loops and scale FP8 GEMMs for production LLM training.",
+  "key_terms": [
+    {
+      "term": "mixed precision (training)",
+      "definition": "Keeping numerically sensitive values (softmax, norms, loss, master weights) in a wide format while running matmuls in a narrow format for speed and memory savings."
+    },
+    {
+      "term": "bf16 (bfloat16)",
+      "definition": "16-bit float with 8 exponent bits (fp32's range) and 7 mantissa bits; never underflows/overflows where fp32 wouldn't, so it needs no loss scaling."
+    },
+    {
+      "term": "fp16 (IEEE half precision)",
+      "definition": "16-bit float with 5 exponent bits and 10 mantissa bits; higher precision than bf16 but max value 65504 and smallest normal ~6e-5, causing overflow and gradient underflow in training."
+    },
+    {
+      "term": "FP8 (8-bit floating point)",
+      "definition": "8-bit format with two variants, E4M3 (more mantissa, used for forward-pass weights/activations) and E5M2 (more range, used for backward-pass gradients), doubling tensor-core throughput over bf16."
+    },
+    {
+      "term": "loss scaling",
+      "definition": "Multiplying the loss by a large constant S before backward so all gradients scale up by S, lifting them out of fp16's underflow zone; gradients are unscaled before the optimizer step."
+    },
+    {
+      "term": "GradScaler (dynamic loss scaling)",
+      "definition": "PyTorch's AIMD controller that adapts the loss-scale constant: halves it and skips the optimizer step on detected inf/NaN gradients, doubles it after many clean steps."
+    },
+    {
+      "term": "master weights (fp32 master weights)",
+      "definition": "An authoritative fp32 copy of each weight that the optimizer updates precisely, avoiding the 'swamping' problem where tiny low-precision updates round away to nothing."
+    },
+    {
+      "term": "AMP (Automatic Mixed Precision)",
+      "definition": "A framework (e.g. torch.autocast plus GradScaler) that automatically runs matmuls in low precision and range-sensitive reductions in fp32 via an internal op allow/deny list."
+    },
+    {
+      "term": "tensor core fp32 accumulation",
+      "definition": "Hardware behavior where tensor cores multiply low-precision (bf16/fp16/fp8) input pairs but sum the partial products in fp32, making low-precision matmuls numerically survivable."
+    },
+    {
+      "term": "delayed scaling",
+      "definition": "NVIDIA Transformer Engine technique that picks each step's FP8 scale factor from a rolling history of past tensor amax values, avoiding a stalling reduction on the current tensor before casting."
+    },
+    {
+      "term": "blockwise (fine-grained) scaling",
+      "definition": "Assigning a separate scale factor per tile/block of a tensor (e.g. DeepSeek-V3's 1x128 activation tiles and 128x128 weight blocks) instead of one scale per tensor, so outliers in one block don't crush precision elsewhere."
+    },
+    {
+      "term": "stochastic rounding",
+      "definition": "A rounding scheme that rounds up or down with probability proportional to distance from each grid point, making sub-ulp increments unbiased in expectation and letting some bf16-only optimizers skip fp32 master weights."
+    }
+  ],
+  "introduces": [
+    "mixed precision (training)",
+    "bf16 (bfloat16)",
+    "fp16 (IEEE half precision)",
+    "FP8 (8-bit floating point)",
+    "loss scaling",
+    "GradScaler (dynamic loss scaling)",
+    "master weights (fp32 master weights)",
+    "AMP (Automatic Mixed Precision)",
+    "tensor core fp32 accumulation",
+    "delayed scaling",
+    "blockwise (fine-grained) scaling",
+    "stochastic rounding"
+  ],
+  "prerequisites": [
+    "floating-point representation (exponent/mantissa, dynamic range vs precision)",
+    "matrix multiplication and GEMMs",
+    "backpropagation and gradient computation",
+    "gradient-based optimizers (e.g. AdamW)",
+    "GPU tensor cores / accelerator throughput basics"
+  ],
+  "difficulty": "core",
+  "tags": ["training", "systems", "gpu", "quantization", "optimization"]
+}

@@ -1,0 +1,76 @@
+{
+  "chapter_id": "04-kernels-efficiency/01-roofline-performance",
+  "one_liner": "Classify any GPU kernel as compute- or memory-bound and pick the matching optimization.",
+  "key_terms": [
+    {
+      "term": "arithmetic intensity",
+      "definition": "FLOPs performed per byte moved between HBM and on-chip memory; the property of a kernel compared against the machine's ridge point."
+    },
+    {
+      "term": "roofline model",
+      "definition": "A log-log plot of achievable FLOP/s vs. arithmetic intensity, capped by min(compute roof, bandwidth roof), used to diagnose a kernel's bottleneck."
+    },
+    {
+      "term": "ridge point",
+      "definition": "The arithmetic intensity π/β where a machine's flat compute roof meets its sloped memory roof; separates memory-bound from compute-bound regimes."
+    },
+    {
+      "term": "memory-bound",
+      "definition": "A kernel whose intensity is below the machine's ridge point, so its performance ceiling is bandwidth times intensity, not peak FLOP/s."
+    },
+    {
+      "term": "compute-bound",
+      "definition": "A kernel whose intensity exceeds the ridge point, so its performance ceiling is the hardware's peak FLOP/s rather than bandwidth."
+    },
+    {
+      "term": "HBM (high-bandwidth memory)",
+      "definition": "The GPU's large, stacked DRAM off the compute die; roofline 'bytes moved' counts traffic between HBM and on-chip registers/SRAM."
+    },
+    {
+      "term": "MFU (Model FLOPs Utilization)",
+      "definition": "Ratio of useful model FLOP/s (via the 6N rule) actually achieved during training to the hardware's peak FLOP/s; a north-star efficiency metric."
+    },
+    {
+      "term": "HFU (Hardware FLOPs Utilization)",
+      "definition": "Like MFU but also counts activation-recomputation FLOPs, so HFU is always at least MFU; the gap reveals checkpointing overhead."
+    },
+    {
+      "term": "prefill",
+      "definition": "The inference phase that processes an entire prompt at once, reusing weights across many tokens, making it compute-bound."
+    },
+    {
+      "term": "decode",
+      "definition": "The inference phase generating one token at a time; a matrix-vector product with almost no weight reuse, making it memory-bound."
+    },
+    {
+      "term": "GEMV (general matrix-vector multiply)",
+      "definition": "Multiplying a weight matrix by a single activation vector, streaming the whole matrix from HBM for one output; intensity ≈1 FLOP/B, as in single-stream decode."
+    },
+    {
+      "term": "6N rule",
+      "definition": "The approximation that training costs about 6 FLOPs per parameter per token (2N forward + 4N backward); inference costs about 2N FLOPs/token."
+    }
+  ],
+  "introduces": [
+    "arithmetic intensity",
+    "roofline model",
+    "ridge point",
+    "memory-bound",
+    "compute-bound",
+    "MFU (Model FLOPs Utilization)",
+    "HFU (Hardware FLOPs Utilization)",
+    "prefill",
+    "decode",
+    "GEMV (general matrix-vector multiply)",
+    "6N rule"
+  ],
+  "prerequisites": [
+    "GPU architecture and memory hierarchy (HBM, SM, L2)",
+    "the transformer block (attention and FFN)",
+    "matrix multiplication and its FLOP cost",
+    "floating-point number formats (fp32, bf16, fp8)",
+    "basic big-O style counting of operations"
+  ],
+  "difficulty": "core",
+  "tags": ["gpu", "systems", "optimization", "inference", "training"]
+}

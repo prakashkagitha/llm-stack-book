@@ -1,0 +1,76 @@
+{
+  "chapter_id": "03-pretraining/01-pretraining-data",
+  "one_liner": "Build a pretraining data pipeline: source, extract, weight, and shard trillions of tokens.",
+  "key_terms": [
+    {
+      "term": "Common Crawl",
+      "definition": "Nonprofit that publishes monthly open web-crawl snapshots; the primary raw source material for nearly every large open LLM pretraining dataset."
+    },
+    {
+      "term": "WARC (Web ARChive)",
+      "definition": "Format holding full HTTP responses (headers plus raw HTML) from a crawl; modern pipelines re-extract text from it instead of using WET."
+    },
+    {
+      "term": "WET (WARC Encapsulated Text)",
+      "definition": "Common Crawl's own built-in plain-text extraction of a crawl; convenient but keeps boilerplate that hurts quality versus re-extraction from WARC."
+    },
+    {
+      "term": "main-content extraction (e.g., trafilatura)",
+      "definition": "Parsing raw HTML to keep only article-body text, stripping navigation, footers, and cookie banners that Common Crawl's WET extractor leaves in."
+    },
+    {
+      "term": "data mixture (data recipe)",
+      "definition": "The set of per-domain sampling weights w_i, summing to 1, that determine what fraction of training tokens come from each source corpus."
+    },
+    {
+      "term": "epoch count",
+      "definition": "Number of times a domain's corpus is repeated during training, computed as N·w_i / |D_i|; repetition beyond ~4 epochs degrades generalization."
+    },
+    {
+      "term": "Gopher-style quality heuristics",
+      "definition": "Document-level filters (length, terminal-punctuation lines, word-repetition ratio, symbol density) used to strip low-quality or spam text from web crawls."
+    },
+    {
+      "term": "embarrassingly parallel processing",
+      "definition": "Pipeline architecture in which each WARC/WET file is an independent unit a worker can process alone, needing no cross-worker coordination until dedup."
+    },
+    {
+      "term": "token packing (shard)",
+      "definition": "Concatenating tokenized documents with EOS separators into fixed-length (context_len + 1) rows, written as memory-mappable int32 binary shard files."
+    },
+    {
+      "term": "FineWeb / FineWeb-Edu",
+      "definition": "15-trillion-token Common Crawl-derived dataset showing aggressive quality filtering alone rivals curated mixes; the Edu subset filters for educational value."
+    },
+    {
+      "term": "RefinedWeb (MacroData Refinement pipeline)",
+      "definition": "Web-only corpus and pipeline (URL filter, WARC extraction, quality filter, dedup) that first showed filtered web data alone can beat curated multi-source mixes."
+    },
+    {
+      "term": "Dolma",
+      "definition": "AI2's 3-trillion-token, extensively documented open pretraining corpus with per-document license tags and un-removed quality-signal taggers, used to train OLMo."
+    }
+  ],
+  "introduces": [
+    "Common Crawl",
+    "WARC (Web ARChive)",
+    "WET (WARC Encapsulated Text)",
+    "main-content extraction (e.g., trafilatura)",
+    "data mixture (data recipe)",
+    "epoch count",
+    "Gopher-style quality heuristics",
+    "embarrassingly parallel processing",
+    "token packing (shard)",
+    "FineWeb / FineWeb-Edu",
+    "RefinedWeb (MacroData Refinement pipeline)",
+    "Dolma"
+  ],
+  "prerequisites": [
+    "BPE tokenization",
+    "next-token prediction training objective",
+    "basic HTTP/HTML concepts",
+    "distributed/streaming systems basics (object storage, worker pools)"
+  ],
+  "difficulty": "core",
+  "tags": ["data", "systems", "scaling", "production"]
+}

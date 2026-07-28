@@ -1,0 +1,73 @@
+{
+  "chapter_id": "06-rl-infra/03-trl",
+  "one_liner": "Configure and debug TRL's SFT/Reward/DPO/PPO/GRPO trainers, including PEFT and vLLM integration, for real alignment runs.",
+  "key_terms": [
+    {
+      "term": "TRL (Transformer Reinforcement Learning)",
+      "definition": "HuggingFace's open-source library that packages each alignment pipeline stage as a standalone Trainer subclass built on transformers and accelerate."
+    },
+    {
+      "term": "SFTTrainer",
+      "definition": "TRL trainer for supervised fine-tuning; adds automatic sequence packing, chat-template formatting, PEFT integration, and prompt-loss masking."
+    },
+    {
+      "term": "RewardTrainer",
+      "definition": "TRL trainer that fits a scalar reward model from (chosen, rejected) comparison pairs using the Bradley-Terry pairwise-preference loss."
+    },
+    {
+      "term": "DPOTrainer",
+      "definition": "TRL trainer implementing Direct Preference Optimization, which reparameterizes reward as a policy/reference log-probability ratio, avoiding a separate reward model."
+    },
+    {
+      "term": "PPOTrainer",
+      "definition": "TRL trainer implementing the classic actor-critic Proximal Policy Optimization loop: rollout generation, reward scoring, KL penalty, GAE advantage estimation, and clipped policy updates."
+    },
+    {
+      "term": "GRPOTrainer",
+      "definition": "TRL trainer implementing Group Relative Policy Optimization, which drops the value-head critic and computes advantages from the mean reward of a sampled group of completions per prompt."
+    },
+    {
+      "term": "reference model",
+      "definition": "A frozen copy of the policy used to compute the KL penalty in DPO/PPO/GRPO; TRL can derive it nearly memory-free from a LoRA-wrapped policy by disabling adapters."
+    },
+    {
+      "term": "KL penalty (KL divergence regularization)",
+      "definition": "A term (weighted by beta) that penalizes the trained policy for diverging from the reference model's output distribution, guarding against reward hacking."
+    },
+    {
+      "term": "group-relative advantage",
+      "definition": "In GRPO, the advantage for each sampled completion computed as its reward minus the mean reward of its sampling group, replacing a learned value function."
+    },
+    {
+      "term": "PEFT (Parameter-Efficient Fine-Tuning) / LoRA",
+      "definition": "Adapter-based fine-tuning (e.g., LoRA, QLoRA) that TRL trainers integrate transparently, training only low-rank adapter weights atop a frozen base model."
+    },
+    {
+      "term": "accelerate",
+      "definition": "HuggingFace's distributed-training launcher that TRL trainers rely on for GPU/multi-node execution (DDP, FSDP, DeepSpeed) without trainer-level code changes."
+    },
+    {
+      "term": "vLLM colocated generation",
+      "definition": "TRL's optional backend that offloads rollout generation to a vLLM server and overlaps it with training-GPU gradient computation to relieve the generate-then-train bottleneck."
+    }
+  ],
+  "introduces": [
+    "TRL (Transformer Reinforcement Learning)",
+    "SFTTrainer",
+    "RewardTrainer",
+    "DPOTrainer",
+    "PPOTrainer",
+    "GRPOTrainer",
+    "vLLM colocated generation"
+  ],
+  "prerequisites": [
+    "policy gradient methods and PPO",
+    "Direct Preference Optimization theory",
+    "LoRA / PEFT adapter fine-tuning",
+    "KL divergence",
+    "distributed training (FSDP/DeepSpeed/DDP)",
+    "reward models for RLHF"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "alignment", "training", "systems", "gpu"]
+}

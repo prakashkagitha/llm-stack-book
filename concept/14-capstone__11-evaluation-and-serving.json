@@ -1,0 +1,57 @@
+{
+  "chapter_id": "14-capstone/11-evaluation-and-serving",
+  "one_liner": "Build an honest small-model eval harness, then quantize and serve the model on a laptop CPU.",
+  "key_terms": [
+    {
+      "term": "perplexity",
+      "definition": "Exponentiated average negative log-likelihood a model assigns to held-out text; here the single most trustworthy, ungameable eval number."
+    },
+    {
+      "term": "post-training quantization (PTQ)",
+      "definition": "Converting a trained model's fp32/bf16 weights to low-bit integers after training completes, with no gradient updates required."
+    },
+    {
+      "term": "round-to-nearest (RTN) quantization",
+      "definition": "Baseline PTQ scheme: pick a per-group scale (and optional zero-point) from weight min/max, then round each weight independently to the nearest integer level."
+    },
+    {
+      "term": "GPTQ",
+      "definition": "Reconstruction-aware PTQ that quantizes a weight matrix column by column, using the layer's Hessian to push each column's rounding error onto not-yet-quantized columns."
+    },
+    {
+      "term": "AWQ (Activation-aware Weight Quantization)",
+      "definition": "PTQ method that rescales weight columns feeding high-activation-magnitude ('salient') channels before quantizing, protecting them from rounding error instead of correcting for it afterward."
+    },
+    {
+      "term": "cloze scoring",
+      "definition": "Multiple-choice evaluation technique that ranks answer options by the model's summed log-probability of each full continuation, rather than asking it to emit a letter choice."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Stored per-layer key/value tensors from prior tokens, reused during autoregressive decoding so each new token attends without recomputing earlier positions."
+    },
+    {
+      "term": "grouped-query attention (GQA)",
+      "definition": "Attention variant where several query heads share a smaller number of key/value heads, shrinking the KV cache relative to plain multi-head attention."
+    },
+    {
+      "term": "alignment tax",
+      "definition": "The failure mode where post-training (SFT/DPO/RLVR) quietly degrades a model's core language-modeling ability, detectable by comparing base vs. post-trained perplexity."
+    },
+    {
+      "term": "group-size quantization",
+      "definition": "A quantization layout that assigns one shared scale (and zero-point) to each contiguous block of a fixed number of weights, trading finer granularity for more overhead as the group shrinks."
+    }
+  ],
+  "introduces": [],
+  "prerequisites": [
+    "cross-entropy loss and training-time perplexity",
+    "autoregressive decoding and the KV cache",
+    "grouped-query attention (GQA)",
+    "SFT/DPO/RLVR post-training",
+    "floating-point vs. integer number formats (fp32/bf16/int8/int4)",
+    "held-out validation data and train/test contamination"
+  ],
+  "difficulty": "advanced",
+  "tags": ["evaluation", "quantization", "inference", "serving", "systems"]
+}

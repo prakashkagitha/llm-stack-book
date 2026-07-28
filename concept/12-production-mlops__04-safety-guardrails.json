@@ -1,0 +1,71 @@
+{
+  "chapter_id": "12-production-mlops/04-safety-guardrails",
+  "one_liner": "Design, tune, and deploy a layered guardrail stack (input/output classifiers, PII redaction, shield models) around a production LLM.",
+  "key_terms": [
+    {
+      "term": "guardrail",
+      "definition": "A classifier, heuristic, or policy layer that inspects requests before the LLM sees them or responses before the user sees them, independent of the model's own alignment."
+    },
+    {
+      "term": "defense-in-depth",
+      "definition": "A safety design where model alignment, input guardrails, output guardrails, and PII redaction operate as independent layers so no single bypassed layer causes a catastrophic failure."
+    },
+    {
+      "term": "PII (personally identifiable information) redaction",
+      "definition": "Detecting and replacing sensitive spans (names, SSNs, emails) in prompts and outputs using regex rules, NER models (e.g. Presidio), or LLM-based judges, to meet privacy obligations."
+    },
+    {
+      "term": "Llama Guard",
+      "definition": "Meta's family of decoder-based LLMs fine-tuned for safety classification, taking an in-context harm taxonomy and jointly classifying prompt+response conversations with a natural-language rationale."
+    },
+    {
+      "term": "shield model",
+      "definition": "A dedicated model (Llama Guard, ShieldLM, Aegis, Granite Guardian) deployed as a sidecar microservice to classify conversations for harm, separate from the main serving LLM."
+    },
+    {
+      "term": "Constitutional AI (inference-time revision)",
+      "definition": "A serving-time draft-critique-revise pipeline where a written constitution of principles is used to critique and rewrite a model's draft response for high-stakes, low-volume applications."
+    },
+    {
+      "term": "instruction hierarchy",
+      "definition": "A training-level (and reinforceable prompt-level) defense that makes the model treat system-prompt instructions as higher priority than user-turn instructions, resisting override attempts."
+    },
+    {
+      "term": "canary token",
+      "definition": "A unique string embedded in a system prompt whose appearance (verbatim or via fuzzy match) in model output signals that the system prompt has leaked, enabling detection and logging of extraction attacks."
+    },
+    {
+      "term": "jailbreak",
+      "definition": "An adversarially crafted prompt (role-play framing, escalation, encoded payloads) designed to bypass a model's learned refusal behavior or a guardrail classifier."
+    },
+    {
+      "term": "circuit breaker (fail-safe fallback)",
+      "definition": "A pattern that routes traffic to a fast heuristic guardrail when a primary neural safety classifier is unavailable, defaulting to fail-closed (block) rather than fail-open (unsafe passthrough)."
+    },
+    {
+      "term": "cascade architecture (guardrail routing)",
+      "definition": "A tiered safety design where a cheap, high-recall classifier resolves most traffic instantly and only escalates uncertain 'gray zone' cases to a slower, more accurate shield model."
+    }
+  ],
+  "introduces": [
+    "guardrail",
+    "defense-in-depth",
+    "PII (personally identifiable information) redaction",
+    "Llama Guard",
+    "shield model",
+    "instruction hierarchy",
+    "canary token",
+    "circuit breaker (fail-safe fallback)",
+    "cascade architecture (guardrail routing)"
+  ],
+  "prerequisites": [
+    "RLHF/DPO-based alignment",
+    "precision, recall, and F-scores",
+    "fine-tuning encoder classifiers (e.g. BERT-scale models)",
+    "system prompts and chat templates",
+    "retrieval-augmented generation (RAG)",
+    "basic LLM serving/inference pipeline (prefill, time-to-first-token)"
+  ],
+  "difficulty": "core",
+  "tags": ["safety", "production", "serving", "evaluation"]
+}

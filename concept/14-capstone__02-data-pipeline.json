@@ -1,0 +1,67 @@
+{
+  "chapter_id": "14-capstone/02-data-pipeline",
+  "one_liner": "Source, filter, deduplicate, tokenize, and pack a 20B-token corpus for a 100M-parameter model.",
+  "key_terms": [
+    {
+      "term": "Chinchilla scaling law",
+      "definition": "Empirical result that training-compute-optimal loss requires parameters N and tokens D scaled together, with D*≈20N; used here to compute the 2B-token compute-optimal baseline."
+    },
+    {
+      "term": "over-training (deployment-compute efficiency)",
+      "definition": "Deliberately training past the Chinchilla-optimal token budget (here ~200 tok/param, 10x optimal) to shrink N and cut permanent per-query inference cost at a one-time training-compute expense."
+    },
+    {
+      "term": "Stack-100M data mix",
+      "definition": "The chapter's fixed 20B-token blend: 70% FineWeb-Edu, 15% Cosmopedia v2, 10% StarCoder, 5% FineMath/OpenWebMath, following the SmolLM-style web+synthetic+code+math recipe."
+    },
+    {
+      "term": "domain-routed quality filtering",
+      "definition": "Applying a different heuristic filter per source domain (prose vs. code vs. math) rather than one generic filter, since code/math have character distributions the generic prose filter would wrongly reject."
+    },
+    {
+      "term": "exact deduplication",
+      "definition": "Hashing each document's normalized text and dropping any repeat, catching verbatim mirrors and copy-pasted boilerplate cheaply in O(1) memory per unique document."
+    },
+    {
+      "term": "MinHash",
+      "definition": "A signature technique that hashes a document's character shingles with many independent hash functions and keeps each function's minimum, so agreement between two signatures unbiasedly estimates Jaccard similarity."
+    },
+    {
+      "term": "locality-sensitive hashing (LSH) banding",
+      "definition": "Splitting a MinHash signature into bands of rows and bucketing documents by band; any shared band flags a near-duplicate candidate, turning all-pairs comparison into near-linear lookups governed by an (1/bands)^(1/rows) threshold curve."
+    },
+    {
+      "term": "sequence packing",
+      "definition": "Concatenating many short tokenized documents into fixed-length (SEQ_LEN=2048) training windows so no compute is wasted on padding tokens for documents shorter than the context length."
+    },
+    {
+      "term": "document-aware attention masking",
+      "definition": "A causal mask that also forbids attention across packed-document boundaries, so a token in one packed document can never attend into another document sharing its training window."
+    },
+    {
+      "term": "position-id reset",
+      "definition": "Restarting each document's position ids at 0 when it is packed into a window, so RoPE's relative-position machinery isn't fed positions that falsely continue a preceding, unrelated document."
+    },
+    {
+      "term": "uint16 memmap sharding",
+      "definition": "Storing packed token ids and position ids as 2-byte uint16 arrays in flat binary shard files, memory-mapped at train time so no shard is fully loaded into RAM."
+    },
+    {
+      "term": "model FLOP utilization (MFU)",
+      "definition": "The fraction of a GPU's peak FLOP/s actually sustained during training; used here to sanity-check that the 20B-token budget's 15-25 GPU-hour target is achievable on an A100."
+    }
+  ],
+  "introduces": [
+    "Stack-100M data mix",
+    "domain-routed quality filtering"
+  ],
+  "prerequisites": [
+    "Chinchilla scaling law",
+    "byte-pair encoding (BPE) tokenization",
+    "RoPE (rotary positional encoding)",
+    "causal self-attention masking",
+    "training compute estimation (C≈6ND)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["data", "systems", "training", "scaling"]
+}

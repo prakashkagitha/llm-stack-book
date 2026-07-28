@@ -1,0 +1,78 @@
+{
+  "chapter_id": "06-rl-infra/04-verl",
+  "one_liner": "Explain and implement veRL's HybridFlow dispatch and 3D-HybridEngine resharding to scale RL-for-LLM training.",
+  "key_terms": [
+    {
+      "term": "single controller",
+      "definition": "One driver process runs the RL algorithm's control flow as ordinary Python, issuing each stage as a single remote call to worker groups."
+    },
+    {
+      "term": "multi-controller (SPMD)",
+      "definition": "Every GPU runs the same program in lockstep (single-program-multiple-data), used inside each RL stage for efficient parallel computation."
+    },
+    {
+      "term": "HybridFlow",
+      "definition": "The programming model (from Sheng et al., 2024) combining single-controller dataflow between RL stages with multi-controller SPMD computation within each stage."
+    },
+    {
+      "term": "WorkerGroup",
+      "definition": "A veRL abstraction binding a Worker class to a ResourcePool, spinning up one Ray actor per GPU rank and initializing torch.distributed for SPMD execution."
+    },
+    {
+      "term": "ResourcePool",
+      "definition": "A veRL reservation of GPUs (e.g. one node of 8) that a WorkerGroup is bound to; multiple worker groups can share one pool for colocation."
+    },
+    {
+      "term": "dispatch decorator (@register(dispatch=...))",
+      "definition": "veRL decorator on worker methods declaring how driver-call arguments are split across ranks and how per-rank outputs are recombined, e.g. DP_COMPUTE_PROTO."
+    },
+    {
+      "term": "DataProto",
+      "definition": "veRL's typed batch container (named tensors plus metadata) that crosses the single-/multi-controller boundary, supporting chunk, concat, and union operations."
+    },
+    {
+      "term": "3D-HybridEngine",
+      "definition": "veRL's in-GPU-memory mechanism that reshards actor weights between the trainer's FSDP/Megatron parallel layout and the rollout engine's tensor-parallel layout without disk round-trips."
+    },
+    {
+      "term": "resharding",
+      "definition": "Re-partitioning a tensor-parallel-sharded weight matrix from one shard count to another (e.g. training TP degree p to rollout TP degree q) via gather-then-resplit."
+    },
+    {
+      "term": "colocation",
+      "definition": "Placing the actor, critic, reference, and rollout engine worker groups on the same physical GPUs via a shared Ray placement group, time-sliced across stages."
+    },
+    {
+      "term": "placement group (Ray)",
+      "definition": "A Ray reservation of resource bundles with a packing strategy (PACK/SPREAD) used by veRL to pin worker-group ranks to specific GPUs deterministically."
+    },
+    {
+      "term": "train/inference numerical mismatch",
+      "definition": "The discrepancy between log-probs computed by vLLM's generation kernels versus the trainer's forward pass, requiring old_log_prob to be recomputed under the training engine."
+    }
+  ],
+  "introduces": [
+    "single controller",
+    "multi-controller (SPMD)",
+    "HybridFlow",
+    "WorkerGroup",
+    "ResourcePool",
+    "dispatch decorator (@register(dispatch=...))",
+    "DataProto",
+    "3D-HybridEngine",
+    "resharding",
+    "colocation",
+    "placement group (Ray)",
+    "train/inference numerical mismatch"
+  ],
+  "prerequisites": [
+    "the RL-for-LLM training loop (policy, rollout, reward, trainer)",
+    "PPO/GRPO and advantage estimation",
+    "distributed training (FSDP, Megatron tensor/pipeline parallelism)",
+    "vLLM/SGLang inference engines and PagedAttention",
+    "Ray actors and remote calls",
+    "GPU memory budgeting for weights, gradients, and optimizer state"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "systems", "gpu", "scaling", "training"]
+}

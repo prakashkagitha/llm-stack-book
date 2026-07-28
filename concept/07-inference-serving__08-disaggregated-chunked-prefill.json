@@ -1,0 +1,73 @@
+{
+  "chapter_id": "07-inference-serving/08-disaggregated-chunked-prefill",
+  "one_liner": "Diagnose prefill/decode interference and design chunked or disaggregated serving to fix P99 latency.",
+  "key_terms": [
+    {
+      "term": "prefill phase",
+      "definition": "The compute-bound stage of autoregressive generation that processes an entire prompt in one parallel forward pass, producing the KV cache."
+    },
+    {
+      "term": "decode phase",
+      "definition": "The memory-bandwidth-bound stage that generates one token at a time via vector-matrix multiplies, streaming model weights from HBM each step."
+    },
+    {
+      "term": "prefill-decode interference",
+      "definition": "The problem where a long prefill running in a mixed continuous-batching iteration stalls in-flight decode sequences, spiking P99 inter-token latency."
+    },
+    {
+      "term": "disaggregated prefill/decode",
+      "definition": "An architecture that runs prefill and decode on separate GPU pools, transferring the KV cache between them to eliminate phase interference."
+    },
+    {
+      "term": "chunked prefill",
+      "definition": "A technique that splits a long prompt's prefill into fixed-size chunks (e.g. 512 tokens) interleaved with decode steps on the same GPU pool, bounding ITL inflation."
+    },
+    {
+      "term": "KV cache transfer",
+      "definition": "Sending the key-value cache tensor produced by a prefill worker over an interconnect (NVLink, InfiniBand, PCIe) to the decode worker that will continue generation."
+    },
+    {
+      "term": "time-to-first-token (TTFT)",
+      "definition": "Latency from request arrival until the first generated token is returned, dominated by prefill duration."
+    },
+    {
+      "term": "inter-token latency (ITL)",
+      "definition": "The delay between successive generated tokens during decode, the metric most disrupted by prefill-decode interference."
+    },
+    {
+      "term": "DistServe",
+      "definition": "The landmark 2024 paper/system that formally quantified prefill-decode interference and posed prefill/decode replica allocation as a goodput-optimization problem."
+    },
+    {
+      "term": "Splitwise",
+      "definition": "A 2023 Microsoft Research system extending disaggregation to heterogeneous hardware, using different GPU types for compute-bound prefill ('prompt phase') and bandwidth-bound decode ('token phase')."
+    },
+    {
+      "term": "layer-wise KV pipelining",
+      "definition": "Streaming each transformer layer's KV cache to the decode worker as soon as it is computed during prefill, overlapping transfer with later layers' compute."
+    },
+    {
+      "term": "arithmetic intensity",
+      "definition": "The ratio of FLOPs performed to bytes moved from memory, used here to explain why prefill is compute-bound and decode is bandwidth-bound."
+    }
+  ],
+  "introduces": [
+    "prefill-decode interference",
+    "disaggregated prefill/decode",
+    "chunked prefill",
+    "KV cache transfer",
+    "DistServe",
+    "Splitwise",
+    "layer-wise KV pipelining"
+  ],
+  "prerequisites": [
+    "continuous batching and request scheduling",
+    "KV cache (key-value cache)",
+    "PagedAttention",
+    "the roofline model (compute-bound vs. memory-bandwidth-bound)",
+    "GPU memory hierarchy and interconnects (NVLink, InfiniBand)",
+    "grouped-query attention (GQA)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["inference", "serving", "systems", "gpu"]
+}

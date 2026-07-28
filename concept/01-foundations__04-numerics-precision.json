@@ -1,0 +1,73 @@
+{
+  "chapter_id": "01-foundations/04-numerics-precision",
+  "one_liner": "Reason about floating-point formats and apply stable-arithmetic tricks to keep LLM training numerically sound.",
+  "key_terms": [
+    {
+      "term": "IEEE 754",
+      "definition": "Standard defining how floating-point numbers are encoded (sign, exponent, mantissa) and rounded; nearly all ML accelerators implement it."
+    },
+    {
+      "term": "bf16 (bfloat16)",
+      "definition": "16-bit float with fp32's 8-bit exponent and a 7-bit mantissa; matches fp32's dynamic range, making it the LLM training workhorse."
+    },
+    {
+      "term": "fp16 (half precision)",
+      "definition": "16-bit float with a 5-bit exponent and 10-bit mantissa; overflows above ~65504, which forces loss scaling during training."
+    },
+    {
+      "term": "TF32 (TensorFloat-32)",
+      "definition": "NVIDIA Ampere+ tensor-core compute format: fp32 inputs are rounded to a 10-bit mantissa internally and accumulated in fp32 for faster matmuls."
+    },
+    {
+      "term": "FP8 (8-bit floating point)",
+      "definition": "8-bit format (E4M3 for activations/weights, E5M2 for gradients) needing per-tensor or per-block dynamic scaling due to only 2-3 mantissa bits."
+    },
+    {
+      "term": "machine epsilon",
+      "definition": "Smallest value ε such that 1+ε ≠ 1 in a given format; equals 2^-p, where p is the number of mantissa bits."
+    },
+    {
+      "term": "catastrophic cancellation",
+      "definition": "Precision loss that occurs when subtracting two nearly-equal floating-point numbers, amplifying the relative rounding error in the result."
+    },
+    {
+      "term": "logsumexp identity (stable softmax)",
+      "definition": "Rewriting softmax/logsumexp by subtracting the maximum logit before exponentiating, so every exponent argument is ≤0 and overflow is impossible."
+    },
+    {
+      "term": "Kahan summation",
+      "definition": "Compensated summation algorithm that tracks the rounding error lost at each step and re-adds it, cutting total error from O(Nε) to O(ε)."
+    },
+    {
+      "term": "loss scaling",
+      "definition": "Multiplying the loss by a large constant before the backward pass (then dividing gradients after) to prevent fp16 gradient underflow to zero."
+    },
+    {
+      "term": "subnormal numbers (denormals)",
+      "definition": "Numbers below the minimum normal magnitude, represented with a leading 0.-mantissa instead of 1.; often flushed to zero (FTZ) on GPUs."
+    }
+  ],
+  "introduces": [
+    "IEEE 754",
+    "bf16 (bfloat16)",
+    "fp16 (half precision)",
+    "TF32 (TensorFloat-32)",
+    "FP8 (8-bit floating point)",
+    "machine epsilon",
+    "catastrophic cancellation",
+    "logsumexp identity (stable softmax)",
+    "Kahan summation",
+    "loss scaling",
+    "subnormal numbers (denormals)"
+  ],
+  "prerequisites": [
+    "binary representation of numbers",
+    "basic calculus (exponentials and logarithms)",
+    "the softmax function",
+    "gradients and backpropagation basics",
+    "matrix multiplication",
+    "basic Python/PyTorch tensor operations"
+  ],
+  "difficulty": "intro",
+  "tags": ["math", "systems", "gpu", "quantization", "training", "optimization"]
+}

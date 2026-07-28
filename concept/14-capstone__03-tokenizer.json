@@ -1,0 +1,67 @@
+{
+  "chapter_id": "14-capstone/03-tokenizer",
+  "one_liner": "Build a fast from-scratch byte-level BPE trainer and choose vocab size as a 100M-parameter budget tradeoff.",
+  "key_terms": [
+    {
+      "term": "byte-level BPE (byte pair encoding) tokenizer",
+      "definition": "Subword tokenizer that repeatedly merges the most frequent adjacent symbol pair, falling back to raw UTF-8 bytes so no input is ever unrepresentable."
+    },
+    {
+      "term": "vocabulary size (vocab_size)",
+      "definition": "The total token-id count (bytes + merges + specials); at 100M parameters it directly competes with depth/width for a fixed parameter budget."
+    },
+    {
+      "term": "special tokens",
+      "definition": "Reserved ids (e.g. <|bos|>, <|assistant|>, <|tool_result|>) occupying the top of the vocab range, fixed in order before training so their ids never move."
+    },
+    {
+      "term": "tied embeddings",
+      "definition": "Sharing one V×d_model weight matrix between the input embedding lookup and the output (lm_head) projection, saving a full embedding table's worth of parameters."
+    },
+    {
+      "term": "inverted index (pair-to-words index)",
+      "definition": "A pair -> word-indices mapping used by the BPE trainer so each merge updates only the words actually containing that pair, not the whole corpus."
+    },
+    {
+      "term": "lazy-deleted max-heap",
+      "definition": "A heap of negated pair counts used to find the current most-frequent pair in O(log n); stale entries are left in place and discarded on pop instead of removed eagerly."
+    },
+    {
+      "term": "embedding table",
+      "definition": "The V×d_model parameter matrix mapping token ids to vectors; its size scales linearly with vocab_size and, when tied, is also the output projection."
+    },
+    {
+      "term": "compression ratio (bytes per token)",
+      "definition": "UTF-8 bytes divided by resulting token count, measuring how efficiently a tokenizer packs text; higher means fewer tokens per document."
+    },
+    {
+      "term": "special-token injection",
+      "definition": "A tokenizer-level attack where untrusted text containing a special-token string (e.g. literal <|assistant|>) gets encoded as the real reserved id, forging role or tool boundaries."
+    },
+    {
+      "term": "softmax bottleneck",
+      "definition": "The result that a softmax classifier's output distribution is rank-limited by hidden dimension, so a narrow tied model's d_model must serve both input identity and output discrimination."
+    },
+    {
+      "term": "pre-tokenizer regex (GPT-2 regex)",
+      "definition": "The splitting pattern applied before any BPE merge runs, ensuring merges never cross word, whitespace, or punctuation boundaries."
+    }
+  ],
+  "introduces": [
+    "vocabulary size (vocab_size)",
+    "special tokens",
+    "inverted index (pair-to-words index)",
+    "lazy-deleted max-heap",
+    "special-token injection",
+    "softmax bottleneck"
+  ],
+  "prerequisites": [
+    "byte-level BPE algorithm basics (merge-most-frequent-pair)",
+    "grouped-query attention and SwiGLU parameter accounting",
+    "weight tying between input embedding and lm_head",
+    "heaps and inverted indexes (data structures)",
+    "UTF-8 byte encoding"
+  ],
+  "difficulty": "advanced",
+  "tags": ["architecture", "systems", "data", "scaling"]
+}

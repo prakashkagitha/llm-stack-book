@@ -1,0 +1,67 @@
+{
+  "chapter_id": "14-capstone/12-retrospective-and-scaleup",
+  "one_liner": "Itemize the ~$100 training bill, make a run bit-reproducible, and plan the 100M-to-1B scale-up.",
+  "key_terms": [
+    {
+      "term": "Model FLOPs Utilization (MFU)",
+      "definition": "Fraction of a GPU's theoretical peak FLOP/s a training loop actually sustains after memory movement and overhead; used to convert FLOPs into real GPU-hours."
+    },
+    {
+      "term": "6ND rule",
+      "definition": "Dense-transformer training-compute estimate: total FLOPs ≈ 6 × parameters (N) × tokens (D), from 2 FLOPs/param/token forward plus 4 backward."
+    },
+    {
+      "term": "Deliberate over-training",
+      "definition": "Training far past the Chinchilla-optimal token count (here ~200 tokens/param, ~10x optimal) to shrink a served model's inference cost at the price of extra training compute."
+    },
+    {
+      "term": "Config hash",
+      "definition": "A short SHA-256-derived fingerprint of a run's full frozen configuration (architecture, optimizer, schedule, data mix), stamped on checkpoints and logs so identical hashes prove identical experiments."
+    },
+    {
+      "term": "Data manifest",
+      "definition": "A content-addressed record listing the SHA-256, byte size, and token count of every tokenized data shard, plus a corpus-level hash, proving the training data is byte-identical across reruns."
+    },
+    {
+      "term": "Environment fingerprint",
+      "definition": "A captured snapshot of Python/PyTorch/CUDA/cuDNN versions, GPU model, and git commit/dirty status, recorded so non-code sources of divergence (library or hardware changes) can be ruled out."
+    },
+    {
+      "term": "Checkpoint hygiene",
+      "definition": "Practices making a checkpoint self-describing and safely resumable: atomic tmp-file-then-rename writes, saving optimizer and RNG state alongside weights, and pruning old checkpoints under a retention policy."
+    },
+    {
+      "term": "Re-run reality tax",
+      "definition": "A budgeted percentage (here ~25% of GPU spend) added to a cost estimate to cover OOMs, loss spikes, corrupted shards, and restarts that a first real training run inevitably hits."
+    },
+    {
+      "term": "Critical batch size",
+      "definition": "The batch size beyond which adding more data-parallel workers stops improving per-step training progress; it grows as model size increases, allowing larger global batches at 1B than at 100M."
+    },
+    {
+      "term": "μP (Maximal Update Parametrization)",
+      "definition": "A parametrization scheme that lets a learning rate tuned on a small proxy model transfer unchanged to a much wider model via width-dependent scaling rules."
+    },
+    {
+      "term": "Mixture-of-Experts (MoE) with fine-grained and shared experts",
+      "definition": "An architecture (DeepSeekMoE-style) routing each token to a few of many small specialized experts plus always-on shared experts, decoupling total model capacity from per-token active compute."
+    }
+  ],
+  "introduces": [
+    "Config hash",
+    "Data manifest",
+    "Environment fingerprint",
+    "Checkpoint hygiene",
+    "Re-run reality tax"
+  ],
+  "prerequisites": [
+    "scaling laws (Chinchilla-optimal compute allocation)",
+    "distributed training (DDP, FSDP/ZeRO, tensor and pipeline parallelism)",
+    "checkpointing and fault-tolerant training loops",
+    "mixed-precision (bf16/fp8) training and optimizer memory footprint",
+    "optimizers (AdamW, Muon) and learning-rate/batch-size scheduling",
+    "the full Stack-100M pipeline (tokenizer, pretraining, alignment, quantization)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["training", "scaling", "systems", "production", "gpu"]
+}

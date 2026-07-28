@@ -1,0 +1,72 @@
+{
+  "chapter_id": "07-inference-serving/14-multi-tenant-lora-serving",
+  "one_liner": "Design and build a system serving thousands of LoRA adapters over one shared base model.",
+  "key_terms": [
+    {
+      "term": "Low-Rank Adaptation (LoRA)",
+      "definition": "Reparameterizes a fine-tune as a frozen base weight plus a small low-rank update BA, letting many tiny tenant adapters share one base model."
+    },
+    {
+      "term": "SGMV (Segmented Gather Matrix-multiply)",
+      "definition": "Punica's fused kernel that, per batch segment, gathers each adapter's A/B weights and computes its low-rank correction in one launch; used in prefill."
+    },
+    {
+      "term": "BGMV (Batched Gather Matrix-Vector multiply)",
+      "definition": "Decode-time counterpart of SGMV: one token per request, so it is a memory-bandwidth-bound batched gather-and-multiply against many adapters' weights."
+    },
+    {
+      "term": "Adapter merging",
+      "definition": "Folding an adapter's BA into the base weights once (peft's merge_and_unload); optimal for a single tenant but breaks multi-tenant batching since one merged weight embodies only one adapter."
+    },
+    {
+      "term": "Unified Paging",
+      "definition": "S-LoRA's design of storing adapter weight tensors in the same paged GPU DRAM pool used for the KV cache, letting memory shift fluidly between requests and resident adapters."
+    },
+    {
+      "term": "Tiered adapter storage",
+      "definition": "A GPU to CPU DRAM to SSD/object-store residency hierarchy for adapters, with only active adapters kept GPU-resident and async prefetch loading the rest."
+    },
+    {
+      "term": "Adapter registry",
+      "definition": "The control-plane component mapping a tenant's adapter name to its weights, residency tier, reference count, and eviction metadata (LRU/LFU signals)."
+    },
+    {
+      "term": "Cold-adapter SLO cliff",
+      "definition": "The latency spike when a request's adapter is not GPU-resident and must be fetched (possibly from an object store), adding tens to hundreds of milliseconds to time-to-first-token."
+    },
+    {
+      "term": "Cross-model prefix-cache reuse",
+      "definition": "Sharing cached KV blocks for a common prompt prefix across different tenants' adapters, possible only when the adapter leaves the k and v projections unmodified."
+    },
+    {
+      "term": "Adapter cardinality cap (max_loras)",
+      "definition": "A scheduler limit on the number of distinct adapters allowed in one batch/step, keeping SGMV segments few and large instead of many tiny, inefficient ones."
+    },
+    {
+      "term": "Disaggregated base/adapter execution",
+      "definition": "An architecture separating shared base-model compute from per-adapter LoRA correction across different machines or pools, used only at extreme adapter counts or memory pressure."
+    }
+  ],
+  "introduces": [
+    "SGMV (Segmented Gather Matrix-multiply)",
+    "BGMV (Batched Gather Matrix-Vector multiply)",
+    "Adapter merging",
+    "Unified Paging",
+    "Tiered adapter storage",
+    "Adapter registry",
+    "Cold-adapter SLO cliff",
+    "Cross-model prefix-cache reuse",
+    "Adapter cardinality cap (max_loras)",
+    "Disaggregated base/adapter execution"
+  ],
+  "prerequisites": [
+    "LoRA math (low-rank decomposition A, B, rank, scaling)",
+    "prefill vs. decode phases of inference",
+    "KV cache",
+    "continuous batching and request scheduling",
+    "PagedAttention / paged KV-cache memory management",
+    "prefix caching and cache reuse"
+  ],
+  "difficulty": "advanced",
+  "tags": ["serving", "inference", "systems", "optimization", "scaling"]
+}

@@ -1,0 +1,76 @@
+{
+  "chapter_id": "02-transformer/09-mixture-of-experts",
+  "one_liner": "Build a sparse MoE layer with routing, load balancing, and capacity, and reason about its systems cost.",
+  "key_terms": [
+    {
+      "term": "Mixture-of-Experts (MoE) layer",
+      "definition": "A Transformer FFN sublayer replaced by a bank of E expert FFNs plus a router that combines outputs of only the tokens' selected experts."
+    },
+    {
+      "term": "Router (gate)",
+      "definition": "A small linear layer mapping a token to one logit per expert, used to select which experts process it and to weight their outputs."
+    },
+    {
+      "term": "Top-k routing",
+      "definition": "Selecting the k experts with the largest router logits per token; the discrete, non-differentiable step at the core of sparse MoE."
+    },
+    {
+      "term": "Conditional computation",
+      "definition": "Sparse activation where the network decides, per input, which sub-networks (experts) to run, decoupling parameter count from per-token compute."
+    },
+    {
+      "term": "Total parameters vs active parameters",
+      "definition": "Total counts every expert's weights (model capacity); active counts only the experts one token actually uses (drives FLOPs/latency); their ratio is the sparsity dial."
+    },
+    {
+      "term": "Auxiliary load-balancing loss",
+      "definition": "A differentiable penalty, alpha*E*sum(f_e*P_e), multiplying hard dispatch fractions by soft router probabilities to push routing toward uniform and prevent collapse."
+    },
+    {
+      "term": "Router z-loss",
+      "definition": "A penalty on the squared log-sum-exp of router logits (from ST-MoE) that keeps routing decisions from saturating near one-hot, improving low-precision training stability."
+    },
+    {
+      "term": "Capacity factor / token dropping",
+      "definition": "A multiplier C_f setting each expert's fixed token buffer size (capacity = ceil(C_f*Nk/E)); tokens beyond it are dropped (skip the FFN) since GPUs need rectangular tensors."
+    },
+    {
+      "term": "Expert-choice routing",
+      "definition": "A routing scheme where each expert picks its top-C tokens rather than tokens picking experts, guaranteeing perfect load balance but breaking causal autoregressive decoding."
+    },
+    {
+      "term": "Expert parallelism (EP)",
+      "definition": "Sharding experts across devices, requiring all-to-all communication to send tokens to their chosen experts' devices and results back, making MoE a communication-bound system."
+    },
+    {
+      "term": "Fine-grained and shared experts",
+      "definition": "DeepSeek-MoE refinements: splitting experts into many smaller ones (more combinable specialization at fixed active cost) plus always-on shared experts absorbing common knowledge."
+    },
+    {
+      "term": "Auxiliary-loss-free balancing",
+      "definition": "DeepSeek-V3's technique of adding a per-expert bias to routing logits (selection only, not gate weights) that is nudged each step to equalize load without a gradient-interfering loss term."
+    }
+  ],
+  "introduces": [
+    "Mixture-of-Experts (MoE) layer",
+    "Router (gate)",
+    "Top-k routing",
+    "Conditional computation",
+    "Total parameters vs active parameters",
+    "Auxiliary load-balancing loss",
+    "Router z-loss",
+    "Capacity factor / token dropping",
+    "Expert-choice routing",
+    "Fine-grained and shared experts",
+    "Auxiliary-loss-free balancing"
+  ],
+  "prerequisites": [
+    "the Transformer block (attention plus position-wise FFN)",
+    "the FFN as two linear layers with a nonlinearity (GELU/SwiGLU)",
+    "softmax",
+    "gradient descent and backpropagation",
+    "basic distributed/parallel computing concepts (optional, for the expert-parallelism preview)"
+  ],
+  "difficulty": "core",
+  "tags": ["architecture", "systems", "training", "scaling"]
+}

@@ -1,0 +1,71 @@
+{
+  "chapter_id": "02-transformer/04-mha-gqa-mla",
+  "one_liner": "Derive KV-cache size for MHA/MQA/GQA/MLA and implement the MHA-to-GQA conversion in PyTorch.",
+  "key_terms": [
+    {
+      "term": "Multi-head attention (MHA)",
+      "definition": "Splits d_model into h subspaces, runs independent scaled dot-product attention per head with its own Q/K/V projections, then concatenates and mixes via W_O."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Stored keys and values for all past tokens during autoregressive decoding, avoiding recomputation; its size, not FLOPs, becomes the inference memory bottleneck."
+    },
+    {
+      "term": "Multi-Query Attention (MQA)",
+      "definition": "Attention variant keeping h query heads but sharing a single key head and single value head across all of them, shrinking the KV cache by a factor of h at a quality cost."
+    },
+    {
+      "term": "Grouped-Query Attention (GQA)",
+      "definition": "Interpolation between MHA and MQA where h query heads are partitioned into g KV groups, each group sharing one key/value head; cache scales with g instead of h."
+    },
+    {
+      "term": "Multi-head Latent Attention (MLA)",
+      "definition": "DeepSeek's attention variant that caches a low-rank compressed latent vector per token instead of per-head keys/values, reconstructing all heads via up-projections."
+    },
+    {
+      "term": "Head dimension",
+      "definition": "The width d_h = d_model / h of each attention head's Q/K/V subspace; the KV cache and MHA/GQA/MQA formulas are all expressed in terms of it."
+    },
+    {
+      "term": "Weight absorption",
+      "definition": "MLA optimization folding the fixed, position-independent up-projection matrices (W^UK, W^UV) into the query and output projections so attention runs directly on the cached latent without materializing full K/V."
+    },
+    {
+      "term": "Decoupled RoPE (rotary position embedding)",
+      "definition": "MLA's fix for RoPE's incompatibility with weight absorption: splitting each key into an absorbable content part (no RoPE) and a small separately cached positional part that carries RoPE."
+    },
+    {
+      "term": "Uptraining",
+      "definition": "Converting a pretrained MHA checkpoint into a GQA model by mean-pooling each group's key/value projection weights, then fine-tuning with a small fraction of pretraining compute."
+    },
+    {
+      "term": "repeat_kv broadcast",
+      "definition": "The GQA implementation step that expands each shared KV head to align with its group of query heads at compute time, without copying the smaller cached KV tensors."
+    },
+    {
+      "term": "Latent dimension (d_c)",
+      "definition": "The small compressed dimension d_c << d_model that MLA caches per token instead of full per-head keys and values, from which keys and values are later up-projected."
+    }
+  ],
+  "introduces": [
+    "Multi-head attention (MHA)",
+    "KV cache (key-value cache)",
+    "Multi-Query Attention (MQA)",
+    "Grouped-Query Attention (GQA)",
+    "Multi-head Latent Attention (MLA)",
+    "Weight absorption",
+    "Decoupled RoPE (rotary position embedding)",
+    "Uptraining",
+    "repeat_kv broadcast",
+    "Latent dimension (d_c)"
+  ],
+  "prerequisites": [
+    "single-head scaled dot-product attention",
+    "softmax",
+    "matrix multiplication and matrix reshaping",
+    "autoregressive decoding",
+    "GPU memory hierarchy and HBM bandwidth"
+  ],
+  "difficulty": "core",
+  "tags": ["architecture", "inference", "serving", "systems", "math"]
+}

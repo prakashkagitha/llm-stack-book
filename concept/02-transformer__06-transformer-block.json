@@ -1,0 +1,76 @@
+{
+  "chapter_id": "02-transformer/06-transformer-block",
+  "one_liner": "Assemble and implement a full pre-norm transformer block: norms, residuals, gated FFN, activations.",
+  "key_terms": [
+    {
+      "term": "residual connection (skip connection)",
+      "definition": "Adding a sublayer's output back to its input, x' = x + F(x), so gradients flow through an unimpeded identity path."
+    },
+    {
+      "term": "residual stream",
+      "definition": "The running vector of dimension d that flows through every block; each sublayer reads it and writes a small update back."
+    },
+    {
+      "term": "Layer Normalization (LayerNorm)",
+      "definition": "Normalizes each token's feature vector to zero mean and unit variance, then applies learnable scale γ and shift β."
+    },
+    {
+      "term": "Root Mean Square Layer Normalization (RMSNorm)",
+      "definition": "Normalizes by RMS(x) only (no mean-centering, no shift term), used in Llama, Mistral, Gemma, and most modern models."
+    },
+    {
+      "term": "pre-norm",
+      "definition": "Block layout applying normalization before the sublayer, x' = x + F(Norm(x)), which stabilizes gradients without warmup."
+    },
+    {
+      "term": "post-norm",
+      "definition": "Block layout applying normalization after the residual addition, x' = Norm(x + F(x)); the original transformer's design, unstable without warmup."
+    },
+    {
+      "term": "feed-forward network (FFN) / MLP sublayer",
+      "definition": "The per-token, position-independent nonlinear sublayer of a transformer block, typically the largest parameter block (~2/3 of total)."
+    },
+    {
+      "term": "GELU (Gaussian Error Linear Unit)",
+      "definition": "Smooth activation x·Φ(x) using the standard normal CDF; used in BERT, GPT-2, and GPT-3 in place of ReLU."
+    },
+    {
+      "term": "SwiGLU",
+      "definition": "Gated FFN activation Swish(xW)⊙(xV) using three weight matrices; reduces inner dimension to ~8d/3 to match FLOPs of a 4d FFN."
+    },
+    {
+      "term": "GeGLU",
+      "definition": "Gated activation identical to SwiGLU but using GELU instead of Swish as the gate function; used in Gemma 2."
+    },
+    {
+      "term": "gradient highway",
+      "definition": "The identity term I in the backward-pass product (I + ∂F/∂x) contributed by residual connections, preventing vanishing gradients in deep stacks."
+    },
+    {
+      "term": "final norm",
+      "definition": "An extra normalization layer (e.g. ln_f, norm) after the last block in pre-norm architectures, needed since pre-norm never normalizes the final block's output."
+    }
+  ],
+  "introduces": [
+    "residual connection (skip connection)",
+    "residual stream",
+    "Layer Normalization (LayerNorm)",
+    "Root Mean Square Layer Normalization (RMSNorm)",
+    "pre-norm",
+    "post-norm",
+    "feed-forward network (FFN) / MLP sublayer",
+    "SwiGLU",
+    "GeGLU",
+    "gradient highway",
+    "final norm"
+  ],
+  "prerequisites": [
+    "the attention mechanism",
+    "multi-head attention",
+    "matrix multiplication",
+    "basic backpropagation / gradients",
+    "sigmoid function"
+  ],
+  "difficulty": "core",
+  "tags": ["architecture", "math", "training"]
+}

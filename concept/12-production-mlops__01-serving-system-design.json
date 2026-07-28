@@ -1,0 +1,76 @@
+{
+  "chapter_id": "12-production-mlops/01-serving-system-design",
+  "one_liner": "Design and size a multi-replica LLM serving fleet: routing, SLOs, queueing, memory, batching, autoscaling.",
+  "key_terms": [
+    {
+      "term": "TTFT (time to first token)",
+      "definition": "Latency from request enqueue to the first streamed output token; dominated by queue wait plus prefill compute."
+    },
+    {
+      "term": "TPOT (time per output token) / ITL (inter-token latency)",
+      "definition": "Mean time between successive streamed output tokens; dominated by decode step time and batch size."
+    },
+    {
+      "term": "SLO (service-level objective)",
+      "definition": "A latency or throughput target stated as a percentile and number (e.g. p99 TTFT ≤ 1 s) that a serving system is designed to meet."
+    },
+    {
+      "term": "Little's Law",
+      "definition": "Queueing identity L = λW relating mean requests in system, arrival rate, and mean time in system; holds for any stable queue."
+    },
+    {
+      "term": "utilization (ρ)",
+      "definition": "Fraction of service capacity in use, ρ = λ/(cμ); as ρ→1, mean wait time grows like 1/(1-ρ), causing a queueing 'cliff'."
+    },
+    {
+      "term": "power-of-two-choices",
+      "definition": "Load-balancing scheme that samples two random candidate replicas and picks the less-loaded one, exponentially reducing max load versus pure random assignment."
+    },
+    {
+      "term": "prefix-cache affinity",
+      "definition": "Routing policy that sends a request to the replica already holding its shared prompt prefix's KV cache, turning prefill into a cache hit."
+    },
+    {
+      "term": "admission control",
+      "definition": "Policy that predicts whether a newly arriving request can meet its latency SLO given current queue state, rejecting (shedding) it with a 429 if not."
+    },
+    {
+      "term": "continuous (in-flight) batching",
+      "definition": "Scheduling scheme that adds and evicts sequences every decode step rather than waiting for a fixed batch, eliminating idle time from short-sequence completions."
+    },
+    {
+      "term": "chunked prefill",
+      "definition": "Splitting a long prompt's prefill into token-sized chunks interleaved with ongoing decode steps, so it does not stall other requests' TPOT."
+    },
+    {
+      "term": "prefill/decode disaggregation",
+      "definition": "Running prefill (compute-bound) and decode (memory-bandwidth-bound) on separate replica pools with hardware suited to each, streaming KV cache between them."
+    },
+    {
+      "term": "reserve-then-reconcile",
+      "definition": "Rate-limiting/accounting pattern that charges a pessimistic token estimate up front and refunds the difference once the true completion length is known."
+    },
+    {
+      "term": "multi-LoRA multiplexing",
+      "definition": "Serving many LoRA fine-tunes of one base model by loading base weights once and swapping small adapter matrices per request, even within one batch."
+    }
+  ],
+  "introduces": [
+    "SLO (service-level objective)",
+    "power-of-two-choices",
+    "prefix-cache affinity",
+    "admission control",
+    "reserve-then-reconcile",
+    "multi-LoRA multiplexing"
+  ],
+  "prerequisites": [
+    "prefill and decode phases of inference",
+    "KV cache",
+    "continuous batching basics",
+    "grouped-query attention (GQA)",
+    "PagedAttention",
+    "basic queueing/probability intuition"
+  ],
+  "difficulty": "core",
+  "tags": ["serving", "systems", "inference", "production", "scaling"]
+}

@@ -1,0 +1,76 @@
+{
+  "chapter_id": "02-transformer/07-build-gpt-from-scratch",
+  "one_liner": "Implement, initialize, train, and sample from a complete decoder-only GPT in PyTorch from scratch.",
+  "key_terms": [
+    {
+      "term": "residual stream",
+      "definition": "The width-n_embd vector at each token position that every block reads from and additively writes to, accumulating attention and MLP contributions across layers."
+    },
+    {
+      "term": "pre-norm (pre-normalization)",
+      "definition": "Placing LayerNorm/RMSNorm before each sublayer rather than after, leaving the residual path an unnormalized identity so gradients flow undamped through deep stacks."
+    },
+    {
+      "term": "weight tying",
+      "definition": "Sharing a single V×n_embd matrix between the token embedding (wte) and the output head (lm_head), saving parameters and regularizing perplexity."
+    },
+    {
+      "term": "scaled residual init",
+      "definition": "Initializing each sublayer's output projection (c_proj) with std reduced by 1/sqrt(2*n_layer) so the residual stream's variance does not grow linearly with depth."
+    },
+    {
+      "term": "causal self-attention",
+      "definition": "Multi-head attention computed with a mask (or is_causal=True) that prevents position t from attending to tokens after t, enforcing autoregressive next-token prediction."
+    },
+    {
+      "term": "GPTConfig",
+      "definition": "A dataclass naming every architectural hyperparameter (block_size, vocab_size, n_layer, n_head, n_embd, dropout, bias) used to construct and serialize a GPT model."
+    },
+    {
+      "term": "temperature (sampling)",
+      "definition": "A scalar dividing logits before softmax; low temperature sharpens the next-token distribution toward greedy, high temperature flattens it toward uniform."
+    },
+    {
+      "term": "top-k sampling",
+      "definition": "A decoding filter that keeps only the k highest-probability tokens and renormalizes before sampling, truncating the long low-probability tail."
+    },
+    {
+      "term": "top-p (nucleus) sampling",
+      "definition": "A decoding filter that keeps the smallest set of highest-probability tokens whose cumulative probability exceeds p, adapting the cutoff to local distribution entropy."
+    },
+    {
+      "term": "weight-decay split",
+      "definition": "Partitioning optimizer parameters into a decayed group (2D+ matmul/embedding weights) and a non-decayed group (1D biases and norm gains) when configuring AdamW."
+    },
+    {
+      "term": "exposure bias",
+      "definition": "The training/inference mismatch where a model conditions on ground-truth prefixes during teacher-forced training but on its own generated tokens at inference, letting small errors compound into degenerate repetition."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "An inference optimization that stores each position's computed keys and values once so new tokens cost O(T) instead of recomputing O(T^2) attention over the growing prefix."
+    }
+  ],
+  "introduces": [
+    "residual stream",
+    "pre-norm (pre-normalization)",
+    "weight tying",
+    "scaled residual init",
+    "GPTConfig",
+    "temperature (sampling)",
+    "top-k sampling",
+    "top-p (nucleus) sampling",
+    "weight-decay split",
+    "exposure bias"
+  ],
+  "prerequisites": [
+    "scaled dot-product attention and the causal mask",
+    "multi-head attention (Q/K/V projections)",
+    "PyTorch modules and autograd",
+    "LayerNorm / normalization",
+    "softmax and cross-entropy loss",
+    "the pre-norm Transformer block (attention + MLP + residuals)"
+  ],
+  "difficulty": "core",
+  "tags": ["architecture", "training", "inference", "systems"]
+}

@@ -1,0 +1,72 @@
+{
+  "chapter_id": "06-rl-infra/12-rl-data-curriculum-replay",
+  "one_liner": "Select, curriculum-order, and replay RL prompts so every rollout carries gradient signal.",
+  "key_terms": [
+    {
+      "term": "pass rate (empirical pass rate, p̂)",
+      "definition": "Fraction of G rollouts on a prompt that score reward 1 under the current policy; its distance from 0.5 sets GRPO's gradient variance p(1-p)."
+    },
+    {
+      "term": "zero-variance group",
+      "definition": "A rollout group whose G completions all get the same reward (all-correct or all-wrong), so GRPO's centered advantage is zero for every sample."
+    },
+    {
+      "term": "dynamic sampling",
+      "definition": "DAPO-style filter that drops zero-variance groups after generation and oversamples additional prompts until the training batch is fully informative."
+    },
+    {
+      "term": "difficulty-targeted selection",
+      "definition": "Choosing, before generation, which prompts to roll out based on their estimated pass rate landing near a target band (e.g. [0.2, 0.8]) to raise survival under dynamic sampling."
+    },
+    {
+      "term": "Thompson sampling",
+      "definition": "Bandit selection rule that draws a pass-rate sample from each task's Beta posterior and picks tasks whose sampled value is closest to the target, exploring uncertain estimates automatically."
+    },
+    {
+      "term": "Beta-Bernoulli posterior",
+      "definition": "Per-task Bayesian pass-rate estimate kept as decayed success/failure counts (s, f); posterior is Beta(s+1, f+1) with mean (s+1)/(s+f+2) and a usable credible interval."
+    },
+    {
+      "term": "exponential moving average (EMA) difficulty",
+      "definition": "Online running estimate p̄ ← (1-α)p̄ + α·p̂_t updated after each rollout group, tracking a task's pass rate as the policy improves (non-stationary difficulty)."
+    },
+    {
+      "term": "prompt-level replay (prioritized prompt buffer)",
+      "definition": "Replay of which tasks to attempt again, weighted by informativeness, with completions always freshly generated under the current policy — on-policy and cost-free."
+    },
+    {
+      "term": "trajectory-level replay (staleness buffer)",
+      "definition": "Storing actual past completions and log-probs for reuse over a few extra gradient steps, requiring PPO-style importance-ratio correction and clipping because the generating policy is stale."
+    },
+    {
+      "term": "emergent curriculum",
+      "definition": "The training band's contents drifting automatically from easy to hard prompts as online difficulty tracking follows the improving policy, rather than a hand-authored stage schedule."
+    },
+    {
+      "term": "survival fraction (ρ)",
+      "definition": "Proportion of generated rollout groups that pass the zero-variance filter under dynamic sampling; determines the oversampling tax needed to fill a target batch."
+    }
+  ],
+  "introduces": [
+    "pass rate (empirical pass rate, p̂)",
+    "zero-variance group",
+    "dynamic sampling",
+    "difficulty-targeted selection",
+    "Thompson sampling",
+    "Beta-Bernoulli posterior",
+    "exponential moving average (EMA) difficulty",
+    "prompt-level replay (prioritized prompt buffer)",
+    "trajectory-level replay (staleness buffer)",
+    "emergent curriculum",
+    "survival fraction (ρ)"
+  ],
+  "prerequisites": [
+    "GRPO group-relative advantage estimation",
+    "RL with verifiable rewards (RLVR) recipe",
+    "PPO clipped objective and importance sampling",
+    "reward verifiers and sandboxed checkers",
+    "RL rollout generation throughput and cost"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "data", "training", "optimization", "systems"]
+}

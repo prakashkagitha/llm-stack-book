@@ -1,0 +1,73 @@
+{
+  "chapter_id": "06-rl-infra/09-advantage-kl-tricks",
+  "one_liner": "Implement and debug production-grade advantage estimators, KL control, and PPO clipping tricks for LLM RL.",
+  "key_terms": [
+    {
+      "term": "advantage (A_t)",
+      "definition": "Per-token learning signal A_t = Q(s_t,a_t) - V(s_t) telling the optimizer which tokens to reinforce; choosing it well is the core RL-infra problem."
+    },
+    {
+      "term": "GAE (Generalized Advantage Estimation)",
+      "definition": "Exponentially-weighted sum of TD residuals from a learned critic, computed by a backward recurrence; the gamma-lambda knob trades bias against variance."
+    },
+    {
+      "term": "RLOO (REINFORCE Leave-One-Out)",
+      "definition": "Critic-free baseline equal to the mean reward of the other K-1 samples drawn for the same prompt, giving an unbiased per-prompt baseline."
+    },
+    {
+      "term": "GRPO (Group Relative Policy Optimization)",
+      "definition": "Critic-free method that standardizes rewards within a sampled group of completions per prompt (subtract mean, divide by std) to form the advantage."
+    },
+    {
+      "term": "advantage whitening",
+      "definition": "Normalizing advantages to zero mean and unit variance over real, non-padding tokens (in fp32) before feeding them into the policy loss."
+    },
+    {
+      "term": "KL estimator k3",
+      "definition": "Monte-Carlo KL estimate e^r - 1 - r (r = log pi_ref/pi_theta) that is both unbiased and always non-negative; the modern default per-token KL penalty."
+    },
+    {
+      "term": "KL-in-reward vs KL-in-loss",
+      "definition": "Two non-equivalent placements of the KL penalty: folded into the reward before advantage computation (bootstrapped by GAE) or added as an explicit differentiable loss term."
+    },
+    {
+      "term": "adaptive KL control",
+      "definition": "Proportional controller that grows or shrinks the KL coefficient beta each update to steer the realized KL toward a target value."
+    },
+    {
+      "term": "importance ratio / PPO clipping",
+      "definition": "Ratio rho_t of current to old policy probability on a token, clamped by PPO's clipped surrogate so a single update cannot move too far from the rollout policy."
+    },
+    {
+      "term": "clip-higher",
+      "definition": "Decoupling PPO's clip bounds so only the upper bound (epsilon_high) is raised, giving low-probability exploratory tokens more room to grow (from DAPO)."
+    },
+    {
+      "term": "dual-clip PPO",
+      "definition": "Adds a lower floor c*A_t on the surrogate objective for negative-advantage tokens with large ratios, preventing exploding negative gradients from drifted policies."
+    },
+    {
+      "term": "loss aggregation (token-mean vs sequence-mean)",
+      "definition": "Choice of how per-token losses are reduced to a scalar; token-mean lets long sequences dominate the gradient, sequence-mean weights every response equally."
+    }
+  ],
+  "introduces": [
+    "GAE (Generalized Advantage Estimation)",
+    "advantage whitening",
+    "KL estimator k3",
+    "KL-in-reward vs KL-in-loss",
+    "adaptive KL control",
+    "clip-higher",
+    "dual-clip PPO",
+    "loss aggregation (token-mean vs sequence-mean)"
+  ],
+  "prerequisites": [
+    "policy gradient theorem",
+    "PPO's clipped surrogate objective",
+    "GRPO and group-relative advantages",
+    "value functions / critics in RL",
+    "log-probabilities over a token vocabulary"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "training", "optimization", "alignment"]
+}

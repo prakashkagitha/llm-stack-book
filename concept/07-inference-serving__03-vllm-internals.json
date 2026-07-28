@@ -1,0 +1,73 @@
+{
+  "chapter_id": "07-inference-serving/03-vllm-internals",
+  "one_liner": "Explain and tune vLLM's PagedAttention block manager, scheduler, prefix caching, and multi-LoRA internals.",
+  "key_terms": [
+    {
+      "term": "PagedAttention",
+      "definition": "System and kernel that pages the KV cache into fixed-size blocks mapped via per-sequence block tables, eliminating fragmentation and enabling sharing."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Stored per-layer key and value vectors for every generated token, read on each decode step instead of being recomputed."
+    },
+    {
+      "term": "Block (KV block)",
+      "definition": "Fixed-size chunk of KV-cache token-slots (commonly 16 tokens) that is the unit of allocation and sharing in PagedAttention."
+    },
+    {
+      "term": "Block table",
+      "definition": "Per-sequence ordered mapping from logical block index to physical block ID, letting a sequence's KV cache live in non-contiguous memory."
+    },
+    {
+      "term": "Block manager (KVCacheManager)",
+      "definition": "vLLM's refcounted allocator that owns the pool of physical KV blocks, handing them to sequences and reclaiming them on release."
+    },
+    {
+      "term": "Continuous batching",
+      "definition": "Iteration-level scheduling where requests join or leave the running batch at token granularity instead of waiting for a whole batch to finish."
+    },
+    {
+      "term": "Chunked prefill",
+      "definition": "Splitting a long prompt's prefill into token-budget-sized chunks interleaved with other requests' decode steps within the same forward pass."
+    },
+    {
+      "term": "Copy-on-write (COW)",
+      "definition": "When a shared KV block needs to be written, allocate a fresh block and copy contents into it rather than clobbering the shared original."
+    },
+    {
+      "term": "Automatic prefix caching (APC)",
+      "definition": "Reusing previously computed KV blocks of a matching prompt prefix, identified via rolling block hashes, instead of recomputing them."
+    },
+    {
+      "term": "Speculative decoding",
+      "definition": "A cheap drafter proposes several future tokens, verified in one target-model forward pass via rejection sampling that preserves the exact output distribution."
+    },
+    {
+      "term": "Multi-LoRA serving",
+      "definition": "Serving many low-rank adapters on one shared base model by computing each request's adapter contribution as a batched, gathered low-rank matmul."
+    },
+    {
+      "term": "CUDA graph",
+      "definition": "A recorded, replayable sequence of GPU kernel launches captured for a fixed batch shape, cutting per-step CPU launch overhead during decode."
+    }
+  ],
+  "introduces": [
+    "Block (KV block)",
+    "Block table",
+    "Block manager (KVCacheManager)",
+    "Chunked prefill",
+    "Copy-on-write (COW)",
+    "Multi-LoRA serving",
+    "CUDA graph"
+  ],
+  "prerequisites": [
+    "prefill and decode in autoregressive inference",
+    "the KV cache",
+    "continuous batching basics",
+    "grouped-query / multi-query attention (GQA/MQA)",
+    "LoRA (low-rank adaptation)",
+    "GPU memory hierarchy and kernel launch overhead"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "inference", "serving", "gpu", "optimization"]
+}

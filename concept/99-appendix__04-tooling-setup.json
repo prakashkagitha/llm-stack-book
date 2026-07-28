@@ -1,0 +1,65 @@
+{
+  "chapter_id": "99-appendix/04-tooling-setup",
+  "one_liner": "Set up, pin, debug, and profile the CUDA/PyTorch/HF/DeepSpeed/vLLM stack for real LLM work.",
+  "key_terms": [
+    {
+      "term": "CUDA/driver version compatibility",
+      "definition": "The rule that a GPU driver supports CUDA runtimes only up to a max version; PyTorch bundles its own CUDA but flash-attn/bitsandbytes compile against the system CUDA toolkit."
+    },
+    {
+      "term": "NCCL (NVIDIA Collective Communications Library)",
+      "definition": "The backend used for multi-GPU/multi-node collective operations (all-reduce, etc.); its timeouts and debug logs are the primary diagnostic for distributed hangs and network failures."
+    },
+    {
+      "term": "torch.compile",
+      "definition": "PyTorch API that JIT-compiles a model's forward pass via TorchInductor, giving 20-40% speedups; modes 'reduce-overhead' (inference) and 'max-autotune' (training) trade compile time for runtime speed."
+    },
+    {
+      "term": "accelerate (HuggingFace)",
+      "definition": "A multi-GPU abstraction library that auto-detects the environment and wraps training code for DDP, FSDP, or DeepSpeed with a single `accelerate launch` entry point and config file."
+    },
+    {
+      "term": "ZeRO (Zero Redundancy Optimizer)",
+      "definition": "DeepSpeed's memory-sharding scheme with stages that progressively shard optimizer states (stage 1), gradients (stage 2), and model parameters (stage 3) across GPUs, optionally offloading to CPU."
+    },
+    {
+      "term": "flash-attn (FlashAttention library)",
+      "definition": "A pip package implementing FlashAttention's tiled, IO-aware attention kernel that avoids materializing the full N×N attention matrix; must be installed with --no-build-isolation after torch."
+    },
+    {
+      "term": "bitsandbytes",
+      "definition": "A library enabling 8-bit optimizers (e.g., Adam8bit) and 4-bit weight quantization (NF4/INT4) for fine-tuning and inference on memory-constrained GPUs."
+    },
+    {
+      "term": "vLLM",
+      "definition": "A high-throughput LLM inference server built on PagedAttention that exposes an OpenAI-compatible API and supports tensor parallelism and prefix caching."
+    },
+    {
+      "term": "SGLang",
+      "definition": "An inference server and structured-generation framework built on RadixAttention (prefix caching via a radix tree), supporting constrained/schema-based generation."
+    },
+    {
+      "term": "TRL (Transformer Reinforcement Learning)",
+      "definition": "HuggingFace's library providing trainers (SFTTrainer, GRPOTrainer, etc.) for supervised fine-tuning and RL-based post-training of language models."
+    },
+    {
+      "term": "Weights & Biases (W&B / wandb)",
+      "definition": "An experiment-tracking tool for logging training metrics, qualitative sample tables, and versioned artifacts (datasets, checkpoints) tied to each run."
+    },
+    {
+      "term": "gradient checkpointing",
+      "definition": "A memory-saving technique (enabled via `model.gradient_checkpointing_enable()`) that recomputes activations during backward pass instead of storing them, reducing GPU memory at the cost of extra compute."
+    }
+  ],
+  "introduces": [],
+  "prerequisites": [
+    "GPU architecture and memory hierarchy",
+    "PyTorch autodiff basics",
+    "distributed data parallelism (DDP/FSDP)",
+    "mixed-precision training (bf16/fp16/fp8)",
+    "quantization concepts (INT4/INT8)",
+    "the attention mechanism and KV cache"
+  ],
+  "difficulty": "core",
+  "tags": ["systems", "gpu", "training", "inference", "serving"]
+}

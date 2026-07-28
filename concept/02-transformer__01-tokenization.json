@@ -1,0 +1,78 @@
+{
+  "chapter_id": "02-transformer/01-tokenization",
+  "one_liner": "Implement and choose a subword tokenizer (BPE, WordPiece, Unigram, byte-level) and reason about its cost/arithmetic tradeoffs.",
+  "key_terms": [
+    {
+      "term": "tokenizer",
+      "definition": "The frozen, non-gradient preprocessing component that maps raw text to a fixed vocabulary of integer IDs before any model computation runs."
+    },
+    {
+      "term": "Byte-Pair Encoding (BPE)",
+      "definition": "A greedy subword algorithm that starts from characters/bytes and repeatedly merges the most frequent adjacent symbol pair into a new vocabulary entry."
+    },
+    {
+      "term": "byte-level BPE",
+      "definition": "BPE run over the 256 raw byte values (via a reversible bytes-to-unicode map) instead of characters, guaranteeing every string is representable with no out-of-vocabulary token."
+    },
+    {
+      "term": "WordPiece",
+      "definition": "BERT's subword algorithm that merges the pair maximizing count(ab)/(count(a)*count(b)), preferring pieces that are individually rare but co-occur; continuations marked with '##'."
+    },
+    {
+      "term": "Unigram (SentencePiece)",
+      "definition": "A top-down subword algorithm that prunes a large seed vocabulary via EM to maximize corpus likelihood under a unigram language model, encoding via Viterbi and marking spaces with '▁'."
+    },
+    {
+      "term": "out-of-vocabulary (OOV)",
+      "definition": "A word or symbol not present in a tokenizer's fixed vocabulary, forced to collapse to an <unk> token and lose information; impossible under byte-level tokenization."
+    },
+    {
+      "term": "pre-tokenization",
+      "definition": "A regex-based splitting step run before BPE merges, isolating words, leading spaces, digit runs, and punctuation into chunks so merges never cross those boundaries."
+    },
+    {
+      "term": "special tokens",
+      "definition": "Reserved vocabulary entries with structural (not textual) meaning, e.g. EOS, BOS, pad, chat/role markers, that must be inserted only by trusted code, never parsed from user text."
+    },
+    {
+      "term": "vocabulary size (V)",
+      "definition": "The number of entries a tokenizer's vocabulary contains; trades off sequence-length compression against embedding/output matrix size and undertrained rare tokens."
+    },
+    {
+      "term": "bytes-per-token",
+      "definition": "A compression metric (bytes of raw text divided by number of tokens produced) used to compare tokenizers and vocabulary sizes; higher means cheaper inference and more effective context."
+    },
+    {
+      "term": "glitch token",
+      "definition": "A vocabulary entry so rare in pretraining data that its embedding stays near random initialization, causing bizarre model behavior when invoked (e.g. SolidGoldMagikarp in GPT-2/3)."
+    },
+    {
+      "term": "digit tokenization / place-value scrambling",
+      "definition": "The problem where a tokenizer chunks multi-digit numbers inconsistently across similar numbers, obscuring positional place value and impairing arithmetic; fixed by per-digit or fixed-size digit grouping."
+    }
+  ],
+  "introduces": [
+    "tokenizer",
+    "Byte-Pair Encoding (BPE)",
+    "byte-level BPE",
+    "WordPiece",
+    "Unigram (SentencePiece)",
+    "out-of-vocabulary (OOV)",
+    "pre-tokenization",
+    "special tokens",
+    "vocabulary size (V)",
+    "bytes-per-token",
+    "glitch token",
+    "digit tokenization / place-value scrambling"
+  ],
+  "prerequisites": [
+    "basic Python programming",
+    "UTF-8 and character encoding basics",
+    "regular expressions",
+    "the idea of an embedding table",
+    "big-O complexity",
+    "basic probability (likelihood, EM at an intuitive level)"
+  ],
+  "difficulty": "core",
+  "tags": ["architecture", "data", "systems", "optimization"]
+}

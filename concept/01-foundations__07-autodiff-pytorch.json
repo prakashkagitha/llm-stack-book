@@ -1,0 +1,76 @@
+{
+  "chapter_id": "01-foundations/07-autodiff-pytorch",
+  "one_liner": "Trace PyTorch's autograd tape, write custom Function backwards, and debug memory/precision bugs from strides to NaNs.",
+  "key_terms": [
+    {
+      "term": "automatic differentiation (autodiff)",
+      "definition": "Mechanically computes exact gradients of code expressed as composed differentiable operations, without finite differences or symbolic expression swell."
+    },
+    {
+      "term": "reverse-mode autodiff",
+      "definition": "Autodiff strategy that traverses the computation tape backward from output to inputs, computing gradients in O(1) forward passes regardless of parameter count."
+    },
+    {
+      "term": "vector-Jacobian product (VJP)",
+      "definition": "The quantity y-bar^T J computed at each node during backward traversal, combining the upstream gradient with a node's local Jacobian without ever forming J explicitly."
+    },
+    {
+      "term": "tape (Wengert list)",
+      "definition": "The directed acyclic graph of Function nodes recorded during the forward pass, traversed in reverse topological order to compute gradients."
+    },
+    {
+      "term": "leaf tensor",
+      "definition": "A tensor created directly by user code (e.g., with requires_grad=True or as nn.Parameter) rather than produced by a tracked op; only leaves accumulate .grad after backward()."
+    },
+    {
+      "term": "grad_fn / computation graph",
+      "definition": "The attribute on a non-leaf tensor pointing to the Function node that produced it; PyTorch builds this graph dynamically (define-by-run) during the forward pass."
+    },
+    {
+      "term": "torch.no_grad / inference_mode",
+      "definition": "Context managers that suppress graph construction; inference_mode is a stricter, faster variant that marks outputs as unusable in any future gradient computation."
+    },
+    {
+      "term": "custom autograd.Function",
+      "definition": "A user-defined class with static forward/backward methods and a ctx object for stashing tensors, letting arbitrary operations plug into the autograd engine."
+    },
+    {
+      "term": "dispatcher",
+      "definition": "PyTorch's routing table that sends each operation to the correct backend implementation based on dispatch keys (device, dtype, layout); torch.compile and vmap hook in at this layer."
+    },
+    {
+      "term": "contiguity",
+      "definition": "Property of a tensor whose elements are laid out in row-major order matching its strides; most GPU/CPU kernels require it or silently trigger a copy otherwise."
+    },
+    {
+      "term": "broadcasting (backward semantics)",
+      "definition": "NumPy-style shape stretching implemented via zero strides with no data copy; the backward pass must sum gradients over broadcast dimensions to restore the original shape."
+    },
+    {
+      "term": "gradient checkpointing",
+      "definition": "Technique that recomputes activations during backward instead of storing them, trading one extra forward pass for roughly halved activation memory."
+    }
+  ],
+  "introduces": [
+    "automatic differentiation (autodiff)",
+    "reverse-mode autodiff",
+    "vector-Jacobian product (VJP)",
+    "tape (Wengert list)",
+    "leaf tensor",
+    "grad_fn / computation graph",
+    "torch.no_grad / inference_mode",
+    "custom autograd.Function",
+    "dispatcher",
+    "contiguity",
+    "broadcasting (backward semantics)"
+  ],
+  "prerequisites": [
+    "chain rule",
+    "Jacobian matrix",
+    "MLP forward and backward pass (backpropagation)",
+    "ReLU activation function",
+    "gradient descent basics"
+  ],
+  "difficulty": "core",
+  "tags": ["systems", "math", "training", "gpu"]
+}

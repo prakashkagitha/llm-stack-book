@@ -1,0 +1,75 @@
+{
+  "chapter_id": "04-kernels-efficiency/05-cuda-essentials",
+  "one_liner": "Write, profile, and optimize custom CUDA kernels (tiled matmul, fused ops) for LLM workloads.",
+  "key_terms": [
+    {
+      "term": "CUDA (Compute Unified Device Architecture)",
+      "definition": "NVIDIA's parallel programming framework in which host code on the CPU launches device code (kernels) that run on thousands of GPU threads."
+    },
+    {
+      "term": "warp",
+      "definition": "A group of 32 threads that execute the same instruction in lockstep on a GPU's functional units (the SIMT model); the basic scheduling unit."
+    },
+    {
+      "term": "warp divergence",
+      "definition": "When threads in the same warp take different branch paths, forcing the hardware to execute both paths sequentially with inactive threads masked, halving throughput."
+    },
+    {
+      "term": "Streaming Multiprocessor (SM)",
+      "definition": "The physical GPU core that executes a thread block, holding many concurrent warps and hiding memory-load latency by switching to a ready warp."
+    },
+    {
+      "term": "occupancy",
+      "definition": "The ratio of active warps per SM to the SM's maximum warp capacity; a proxy for how well memory latency is hidden, though not the only performance factor."
+    },
+    {
+      "term": "global memory coalescing",
+      "definition": "The hardware's combining of a warp's global-memory accesses into as few 128-byte transactions as possible, achieved when threads read consecutive addresses."
+    },
+    {
+      "term": "shared-memory bank conflict",
+      "definition": "Serialized (slowed) memory access that occurs when multiple threads in a warp read different addresses that map to the same one of shared memory's 32 banks; fixed by padding array rows."
+    },
+    {
+      "term": "warp shuffle intrinsics",
+      "definition": "CUDA primitives (`__shfl_sync`, `__shfl_down_sync`, `__shfl_xor_sync`) that let threads within a warp exchange register values directly, without shared memory or `__syncthreads()`."
+    },
+    {
+      "term": "tiled matrix multiplication",
+      "definition": "A matmul strategy where each thread block cooperatively loads T×T sub-tiles of A and B into shared memory and reuses them, cutting global memory reads by a factor of T versus the naive kernel."
+    },
+    {
+      "term": "arithmetic intensity",
+      "definition": "The ratio of FLOPs performed to bytes read from memory, used with the roofline model to determine whether a kernel is compute-bound or memory-bound."
+    },
+    {
+      "term": "Tensor Core",
+      "definition": "Specialized GPU hardware that executes fused mixed-precision matrix-multiply-accumulate operations (via `wmma`/`mma` instructions) at much higher throughput than standard FMA units."
+    },
+    {
+      "term": "__syncthreads() (block-level barrier)",
+      "definition": "A CUDA synchronization primitive that blocks every thread in a block from proceeding until all threads have reached it, preventing read/write hazards on shared memory."
+    }
+  ],
+  "introduces": [
+    "CUDA (Compute Unified Device Architecture)",
+    "warp",
+    "warp divergence",
+    "Streaming Multiprocessor (SM)",
+    "occupancy",
+    "global memory coalescing",
+    "shared-memory bank conflict",
+    "warp shuffle intrinsics",
+    "tiled matrix multiplication",
+    "__syncthreads() (block-level barrier)"
+  ],
+  "prerequisites": [
+    "GPU memory hierarchy",
+    "roofline model and arithmetic intensity",
+    "matrix multiplication",
+    "basic C/C++ programming",
+    "PyTorch tensor operations"
+  ],
+  "difficulty": "core",
+  "tags": ["gpu", "systems", "optimization", "architecture"]
+}

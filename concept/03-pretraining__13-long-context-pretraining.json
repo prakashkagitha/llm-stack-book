@@ -1,0 +1,69 @@
+{
+  "chapter_id": "03-pretraining/13-long-context-pretraining",
+  "one_liner": "Extend a pretrained model's context window via RoPE scaling, continued pretraining, and ring attention.",
+  "key_terms": [
+    {
+      "term": "RoPE (Rotary Position Embedding)",
+      "definition": "Applies a position-dependent rotation to query/key vectors so their dot product depends only on relative position; extrapolates poorly past the trained length."
+    },
+    {
+      "term": "Position Interpolation (PI)",
+      "definition": "Rescales input positions by T_train/T_target before RoPE so all rotation angles stay within the trained range, at the cost of blurred local resolution."
+    },
+    {
+      "term": "NTK-aware interpolation",
+      "definition": "Rescales the RoPE base (not positions) to stretch low-frequency dimensions for long range while preserving high-frequency short-range resolution, often zero-shot."
+    },
+    {
+      "term": "YaRN",
+      "definition": "Context-extension method combining per-frequency ramped RoPE interpolation with an attention-temperature correction; needs only hundreds of continued-pretraining steps."
+    },
+    {
+      "term": "Ring Attention",
+      "definition": "Sequence-parallel attention algorithm that shards K/V chunks across GPUs arranged in a ring, overlapping chunk rotation with tiled online-softmax attention compute."
+    },
+    {
+      "term": "Context parallelism",
+      "definition": "Sharding the sequence dimension itself across GPUs (distinct from data/tensor/pipeline parallelism) so activation memory for very long sequences fits per device."
+    },
+    {
+      "term": "Document attention mask (packing)",
+      "definition": "Block-diagonal causal mask (or FlashAttention's varlen/cu_seqlens API) ensuring tokens in a packed training sequence attend only within their own document."
+    },
+    {
+      "term": "Needle in a Haystack (NIAH)",
+      "definition": "Evaluation that inserts a unique fact at a controlled depth inside a long context and checks whether the model retrieves it, plotted as a length-vs-depth heatmap."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Stored keys and values for all previously generated tokens during inference; its size grows linearly with context length and dominates memory at long contexts."
+    },
+    {
+      "term": "Continued pretraining (for context extension)",
+      "definition": "Additional training on long documents at reduced learning rate after RoPE scaling, teaching attention heads genuine long-range patterns positional scaling alone can't provide."
+    },
+    {
+      "term": "Grouped-query attention (GQA)",
+      "definition": "Attention variant using fewer key-value heads than query heads, shrinking the KV cache footprint and acting as a prerequisite for serving long contexts at scale."
+    }
+  ],
+  "introduces": [
+    "Position Interpolation (PI)",
+    "NTK-aware interpolation",
+    "YaRN",
+    "Ring Attention",
+    "Context parallelism",
+    "Document attention mask (packing)",
+    "Needle in a Haystack (NIAH)"
+  ],
+  "prerequisites": [
+    "the attention mechanism and softmax",
+    "RoPE (rotary position embedding) basics",
+    "FlashAttention's tiled/online-softmax computation",
+    "KV cache",
+    "grouped-query attention (GQA)",
+    "data/tensor/pipeline parallelism"
+  ],
+  "difficulty": "advanced",
+  "tags": ["training", "architecture", "systems", "scaling", "inference"]
+}

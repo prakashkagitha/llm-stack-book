@@ -546,6 +546,8 @@ def write_index(coll, total_words, nch):
         # main book: link to interview companion + first chapter
         first = coll.flat_chapters[0]["url"] if coll.flat_chapters else "#"
         cta = (f'<p class="hero-cta"><a class="btn-primary" href="{first}">Start reading →</a>'
+               f'<a class="btn-ghost" href="map/index.html">Learning map</a>'
+               f'<a class="btn-ghost" href="glossary/index.html">Glossary</a>'
                f'<a class="btn-ghost" href="tools/index.html">Tools &amp; calculators</a>'
                f'<a class="btn-ghost" href="interview/index.html">Interview companion</a></p>')
 
@@ -624,6 +626,213 @@ def write_tools_hub(book):
     return len(tool_files)
 
 
+_CONCEPT_DIR = os.path.join(ROOT, "concept")
+
+
+def _load_concept(name):
+    p = os.path.join(_CONCEPT_DIR, name)
+    try:
+        return json.load(open(p))
+    except (OSError, ValueError):
+        return None
+
+
+def _diff_badge(d):
+    cls = {"intro": "good", "core": "accent", "advanced": "warn"}.get(d, "accent")
+    return f'<span class="lm-diff lm-{cls}">{html.escape(d)}</span>'
+
+
+def write_learning_map(book):
+    """Render /map: guided reading tracks, a browse-by-topic index, and the per-chapter
+    prerequisite map — all built from concept/{graph,tags,tracks}.json."""
+    graph = _load_concept("graph.json")
+    if not graph:
+        return 0
+    tags = _load_concept("tags.json") or {}
+    tracks = _load_concept("tracks.json") or []
+    by_id = {g["id"]: g for g in graph}
+
+    def chip(url, label):
+        return f'<a class="lm-chip" href="../{url}">{html.escape(label)}</a>'
+
+    css = """
+<style>
+#lm{max-width:920px}
+#lm h2{margin:2.2rem 0 .6rem;font-size:1.3rem}
+#lm .lm-intro{color:var(--ink-soft,#556)}
+.lm-track{border:1px solid var(--border-2,#e5e7eb);border-radius:12px;padding:1rem 1.15rem;margin:.9rem 0;background:var(--surface,#fff)}
+.lm-track h3{margin:.1rem 0 .3rem;font-size:1.1rem}
+.lm-aud{display:inline-block;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent,#4f46e5);font-weight:700;margin-bottom:.3rem}
+.lm-track ol{margin:.5rem 0 0;padding-left:1.2rem}
+.lm-track ol li{margin:.16rem 0}
+.lm-chip{display:inline-block;font-size:.8rem;padding:.12rem .5rem;margin:.12rem .2rem .12rem 0;border:1px solid var(--border-2,#e5e7eb);border-radius:999px;text-decoration:none;color:var(--ink-soft,#556)}
+.lm-chip:hover{border-color:var(--accent,#4f46e5);color:var(--accent,#4f46e5)}
+.lm-diff{display:inline-block;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.05rem .4rem;border-radius:4px;margin-left:.4rem;vertical-align:middle}
+.lm-good{background:color-mix(in srgb,var(--good,#2f9e6e) 16%,transparent);color:var(--good,#2f9e6e)}
+.lm-accent{background:color-mix(in srgb,var(--accent,#4f46e5) 14%,transparent);color:var(--accent,#4f46e5)}
+.lm-warn{background:color-mix(in srgb,var(--warn,#e0a106) 20%,transparent);color:var(--warn,#b8860b)}
+.lm-row{padding:.55rem 0;border-bottom:1px solid var(--border-2,#eee)}
+.lm-row .lm-h{font-weight:600}
+.lm-row .lm-ol{color:var(--ink-soft,#556);font-size:.92rem;margin:.15rem 0}
+.lm-row .lm-pre{font-size:.82rem;color:var(--muted,#889)}
+.lm-part{margin-top:1.6rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#889);font-weight:700}
+.lm-tagbar a{margin:.15rem .3rem .15rem 0}
+</style>
+"""
+    parts = ['<div class="chapter-eyebrow">Navigate the book</div><h1>Learning map</h1>',
+             '<p class="lm-intro">Guided reading tracks for specific goals, a topic index, and the '
+             'prerequisite map for every chapter — so you can chart a path instead of reading front to back.</p>',
+             css, '<div id="lm">']
+
+    # --- reading tracks ---
+    if tracks:
+        parts.append('<h2>Guided reading tracks</h2>')
+        for t in tracks:
+            items = []
+            for cid in t.get("chapters", []):
+                g = by_id.get(cid)
+                if g:
+                    items.append(f'<li><a href="../{g["url"]}">{html.escape((g["num"]+" ") if g["num"] else "")}'
+                                 f'{html.escape(g["title"])}</a></li>')
+            parts.append(
+                f'<div class="lm-track"><span class="lm-aud">{html.escape(t.get("audience",""))}</span>'
+                f'<h3>{html.escape(t.get("title",""))}</h3>'
+                f'<p class="lm-ol">{html.escape(t.get("blurb",""))}</p>'
+                f'<ol>{"".join(items)}</ol></div>')
+
+    # --- browse by topic ---
+    if tags:
+        parts.append('<h2>Browse by topic</h2><div class="lm-tagbar">')
+        for tag in sorted(tags):
+            chs = tags[tag]
+            links = " ".join(chip(c["url"], (c["num"] + " " if c["num"] else "") + c["title"]) for c in chs)
+            parts.append(f'<div class="lm-row"><div class="lm-h">{html.escape(tag)} '
+                         f'<span class="lm-pre">({len(chs)})</span></div>{links}</div>')
+        parts.append('</div>')
+
+    # --- prerequisite map, grouped by part ---
+    parts.append('<h2>Prerequisite map</h2>'
+                 '<p class="lm-ol">Each chapter with what it lets you do and the concepts to know first '
+                 '(linked to where they are taught).</p>')
+    cur_part = None
+    for g in graph:
+        if g["part"] != cur_part:
+            cur_part = g["part"]
+            parts.append(f'<div class="lm-part">{html.escape(cur_part)}</div>')
+        pre = " ".join(
+            (f'<a class="lm-chip" href="../{p["url"]}">{html.escape(p["text"])}</a>' if p.get("url")
+             else f'<span class="lm-chip">{html.escape(p["text"])}</span>')
+            for p in g.get("prereqs", []))
+        parts.append(
+            f'<div class="lm-row"><div class="lm-h"><a href="../{g["url"]}">'
+            f'{html.escape((g["num"]+" ") if g["num"] else "")}{html.escape(g["title"])}</a>'
+            f'{_diff_badge(g["difficulty"])}</div>'
+            f'<div class="lm-ol">{html.escape(g["one_liner"])}</div>'
+            + (f'<div class="lm-pre">Prereqs: {pre}</div>' if pre else "") + '</div>')
+    parts.append('</div>')
+
+    body = "\n".join(parts)
+    page = PAGE_TMPL.format(
+        title="Learning map", brand=html.escape(book.m["title"]),
+        brand_sub=html.escape(book.m.get("subtitle", "")),
+        desc="Guided reading tracks, topic index, and the prerequisite map for the whole book.",
+        base="../", home="../index.html", search_name="search-index.json",
+        canonical=SITE_BASE + "map/", og_image=OG_IMAGE, repo_url=REPO_URL,
+        sidebar=render_sidebar(book, "index.html"),
+        breadcrumb="", chapter_meta="", body=body, page_nav="", toc_side="")
+    os.makedirs(os.path.join(SITE, "map"), exist_ok=True)
+    open(os.path.join(SITE, "map", "index.html"), "w").write(page)
+    return len(graph)
+
+
+def write_glossary(book):
+    """Render /glossary: a deduped, filterable A-Z glossary linked to the chapter that defines
+    each term. Built from concept/glossary.json."""
+    gloss = _load_concept("glossary.json")
+    if not gloss:
+        return 0
+    # group by first letter
+    groups = {}
+    for g in gloss:
+        c = g["term"][:1].upper()
+        c = c if c.isalpha() else "#"
+        groups.setdefault(c, []).append(g)
+    letters = sorted(groups)
+
+    css = """
+<style>
+#gl{max-width:820px}
+#gl .gl-intro{color:var(--ink-soft,#556)}
+#gl-filter{width:100%;padding:.6rem .8rem;font-size:1rem;border:1px solid var(--border-2,#e5e7eb);
+  border-radius:10px;margin:.8rem 0 .2rem;background:var(--surface,#fff);color:inherit}
+.gl-az{position:sticky;top:0;background:var(--surface,#fff);padding:.4rem 0;border-bottom:1px solid var(--border-2,#eee);
+  font-size:.85rem;z-index:2}
+.gl-az a{margin-right:.45rem;text-decoration:none;color:var(--accent,#4f46e5);font-weight:600}
+.gl-letter{font-size:1.4rem;margin:1.4rem 0 .3rem;color:var(--muted,#889)}
+.gl-item{padding:.5rem 0;border-bottom:1px solid var(--border-2,#f0f0f2)}
+.gl-term{font-weight:700}
+.gl-def{color:var(--ink-soft,#556);margin:.12rem 0}
+.gl-src{font-size:.82rem;color:var(--muted,#889)}
+.gl-src a{color:var(--accent,#4f46e5);text-decoration:none}
+.gl-none{color:var(--muted,#889);padding:1rem 0;display:none}
+</style>
+"""
+    parts = ['<div class="chapter-eyebrow">Reference</div><h1>Glossary</h1>',
+             f'<p class="gl-intro">{len(gloss):,} terms from across the book, each linked to the chapter that '
+             'defines it. Type to filter.</p>', css,
+             '<input id="gl-filter" type="search" placeholder="Filter terms… (e.g. KV cache, LoRA, MFU)" '
+             'aria-label="Filter glossary terms" autocomplete="off">',
+             '<div id="gl">']
+    az = " ".join(f'<a href="#gl-{l}">{l}</a>' for l in letters)
+    parts.append(f'<div class="gl-az">{az}</div>')
+    for l in letters:
+        parts.append(f'<h2 class="gl-letter" id="gl-{l}">{l}</h2>')
+        for g in sorted(groups[l], key=lambda x: x["key"]):
+            src = (f'<a href="../{g["home_url"]}">{html.escape((g["home_num"]+" ") if g["home_num"] else "")}'
+                   f'{html.escape(g["home_title"])}</a>')
+            extra = f' · used in {g["used_count"]} chapters' if g["used_count"] > 1 else ""
+            parts.append(
+                f'<div class="gl-item"><div class="gl-term">{html.escape(g["term"])}</div>'
+                f'<div class="gl-def">{html.escape(g["definition"])}</div>'
+                f'<div class="gl-src">Defined in {src}{extra}</div></div>')
+    parts.append('<div class="gl-none">No terms match your filter.</div></div>')
+    parts.append("""
+<script>
+(function(){
+  var f=document.getElementById('gl-filter'), items=document.querySelectorAll('#gl .gl-item'),
+      letters=document.querySelectorAll('#gl .gl-letter'), az=document.querySelector('#gl .gl-az'),
+      none=document.querySelector('#gl .gl-none');
+  function apply(){
+    var q=f.value.trim().toLowerCase(), shown=0;
+    items.forEach(function(it){
+      var m=it.textContent.toLowerCase().indexOf(q)>=0; it.style.display=m?'':'none'; if(m)shown++;
+    });
+    letters.forEach(function(h){
+      var n=h.nextElementSibling, any=false;
+      while(n && !n.classList.contains('gl-letter')){ if(n.classList.contains('gl-item')&&n.style.display!=='none')any=true; n=n.nextElementSibling; }
+      h.style.display=any?'':'none';
+    });
+    if(az)az.style.display=q?'none':'';
+    none.style.display=shown?'none':'block';
+  }
+  f.addEventListener('input',apply);
+})();
+</script>
+""")
+    body = "\n".join(parts)
+    page = PAGE_TMPL.format(
+        title="Glossary", brand=html.escape(book.m["title"]),
+        brand_sub=html.escape(book.m.get("subtitle", "")),
+        desc="A filterable glossary of LLM-stack terms, each linked to the chapter that defines it.",
+        base="../", home="../index.html", search_name="search-index.json",
+        canonical=SITE_BASE + "glossary/", og_image=OG_IMAGE, repo_url=REPO_URL,
+        sidebar=render_sidebar(book, "index.html"),
+        breadcrumb="", chapter_meta="", body=body, page_nav="", toc_side="")
+    os.makedirs(os.path.join(SITE, "glossary"), exist_ok=True)
+    open(os.path.join(SITE, "glossary", "index.html"), "w").write(page)
+    return len(gloss)
+
+
 def write_sitemap(entries):
     """entries: list of (path_relative_to_SITE_BASE, lastmod_date). Emits sitemap.xml + robots.txt."""
     items = []
@@ -683,10 +892,21 @@ def main():
     if nt:
         print(f"  tools hub: {nt} interactive tools -> site/tools/")
 
+    n_map = write_learning_map(book)
+    if n_map:
+        print(f"  learning map: {n_map} chapters (tracks + prereqs) -> site/map/")
+    n_gloss = write_glossary(book)
+    if n_gloss:
+        print(f"  glossary: {n_gloss} terms -> site/glossary/")
+
     # sitemap.xml + robots.txt (git_last_date is cached from the render pass, so this is cheap)
     entries = [("", BUILD_DATE)]
     if nt:
         entries.append(("tools/", BUILD_DATE))
+    if n_map:
+        entries.append(("map/", BUILD_DATE))
+    if n_gloss:
+        entries.append(("glossary/", BUILD_DATE))
     entries += [(c["url"], git_last_date(c["md_path"])) for c in book.flat_chapters]
     entries.append(("interview/", BUILD_DATE))
     entries += [("interview/" + c["url"], git_last_date(c["md_path"])) for c in interview.flat_chapters]

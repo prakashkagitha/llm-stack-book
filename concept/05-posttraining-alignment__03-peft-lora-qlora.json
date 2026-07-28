@@ -1,0 +1,78 @@
+{
+  "chapter_id": "05-posttraining-alignment/03-peft-lora-qlora",
+  "one_liner": "Fine-tune giant LLMs cheaply with LoRA/QLoRA adapters and serve thousands of them per GPU.",
+  "key_terms": [
+    {
+      "term": "Parameter-Efficient Fine-Tuning (PEFT)",
+      "definition": "Family of fine-tuning methods that freeze the pretrained backbone and train a tiny fraction (often <1%) of new parameters while recovering most of full fine-tuning's quality."
+    },
+    {
+      "term": "LoRA (Low-Rank Adaptation)",
+      "definition": "PEFT method that freezes weight matrix $W_0$ and learns a low-rank update $\\Delta W = \\frac{\\alpha}{r}BA$ added in parallel, training only the thin factors $A$ and $B$."
+    },
+    {
+      "term": "QLoRA",
+      "definition": "LoRA variant that stores the frozen base model in 4-bit NF4 precision while training a bf16 adapter on top, enabling fine-tuning of 65B-class models on a single GPU."
+    },
+    {
+      "term": "NF4 (4-bit NormalFloat)",
+      "definition": "A 4-bit quantization data type whose 16 codebook levels sit at the quantiles of a standard normal distribution, matching the Gaussian shape of neural network weights better than uniform INT4."
+    },
+    {
+      "term": "Double quantization",
+      "definition": "QLoRA technique that quantizes the per-block fp32 absmax scaling constants themselves (to 8-bit, grouped), cutting scale-storage overhead from ~0.5 to ~0.13 bits per parameter."
+    },
+    {
+      "term": "Paged optimizer",
+      "definition": "QLoRA mechanism that stores optimizer state in CPU-backed unified memory, automatically evicting/reloading pages to survive transient GPU memory spikes during training instead of OOM-crashing."
+    },
+    {
+      "term": "DoRA (Weight-Decomposed Low-Rank Adaptation)",
+      "definition": "LoRA refinement that decomposes each weight matrix into a magnitude vector and a direction matrix, training magnitude directly while adapting direction with a low-rank update, matching full fine-tuning more closely."
+    },
+    {
+      "term": "rsLoRA (rank-stabilized LoRA)",
+      "definition": "Scaling fix that replaces LoRA's $\\alpha/r$ factor with $\\alpha/\\sqrt{r}$ so the adapter's magnitude and gradient stay stable as rank grows, letting high ranks deliver their extra capacity."
+    },
+    {
+      "term": "LoRA+",
+      "definition": "Optimizer-grouping technique that gives the $B$ matrix a learning rate $\\lambda$ times larger than $A$'s (since $B$ starts at zero and must grow), improving convergence at no extra parameter cost."
+    },
+    {
+      "term": "VeRA (Vector-based Random Matrix Adaptation)",
+      "definition": "Extreme PEFT variant that freezes a single shared pair of random $A,B$ matrices across all layers and trains only two small per-layer scaling vectors, shrinking adapter size 10-100x versus LoRA."
+    },
+    {
+      "term": "Adapter merging",
+      "definition": "Folding a trained LoRA/DoRA update $\\frac{\\alpha}{r}BA$ into the frozen base weight after training, producing an ordinary linear layer with zero extra inference latency or memory."
+    },
+    {
+      "term": "Multi-LoRA serving",
+      "definition": "Systems technique (S-LoRA/Punica-style) that runs one shared base-model matmul per batch and applies each request's own small adapter via a batched/segmented gather-matmul kernel, serving thousands of adapters on one GPU."
+    }
+  ],
+  "introduces": [
+    "Parameter-Efficient Fine-Tuning (PEFT)",
+    "LoRA (Low-Rank Adaptation)",
+    "QLoRA",
+    "NF4 (4-bit NormalFloat)",
+    "Double quantization",
+    "Paged optimizer",
+    "DoRA (Weight-Decomposed Low-Rank Adaptation)",
+    "rsLoRA (rank-stabilized LoRA)",
+    "LoRA+",
+    "VeRA (Vector-based Random Matrix Adaptation)",
+    "Adapter merging",
+    "Multi-LoRA serving"
+  ],
+  "prerequisites": [
+    "full fine-tuning and backpropagation",
+    "the Adam optimizer and its per-parameter memory cost",
+    "matrix rank and low-rank factorization",
+    "mixed-precision training (bf16/fp32)",
+    "the transformer block (attention and MLP linear projections)",
+    "basic weight quantization (INT4/INT8)"
+  ],
+  "difficulty": "core",
+  "tags": ["training", "optimization", "quantization", "systems", "serving"]
+}

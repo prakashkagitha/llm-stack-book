@@ -1,0 +1,70 @@
+{
+  "chapter_id": "14-capstone/01-overview-and-landscape",
+  "one_liner": "Plan and budget a from-scratch 101M-parameter LLM build using 2026 small-model best practices.",
+  "key_terms": [
+    {
+      "term": "Stack-100M",
+      "definition": "The ~101M-parameter deep-and-thin decoder-only transformer this capstone builds end-to-end, from tokenizer through a tool-using agent, under a single fixed spec."
+    },
+    {
+      "term": "Chinchilla-optimal token budget",
+      "definition": "The compute-optimal ratio of roughly 20 training tokens per parameter that minimizes loss per unit of training FLOPs spent."
+    },
+    {
+      "term": "over-training (past Chinchilla)",
+      "definition": "Training on far more tokens than compute-optimal (Stack-100M uses ~200/parameter) to lower loss at a fixed, cheap-to-serve parameter count, trading one-time training FLOPs for lower recurring inference cost."
+    },
+    {
+      "term": "deep-and-thin architecture",
+      "definition": "At a fixed parameter budget, using many narrow layers (Stack-100M: 30 layers, d_model=512) rather than fewer wide ones, following MobileLLM's finding that depth beats width."
+    },
+    {
+      "term": "GQA (grouped-query attention)",
+      "definition": "An attention variant where a small number of key/value heads are shared across many query heads to shrink the KV cache (Stack-100M: 2 KV heads for 8 query heads)."
+    },
+    {
+      "term": "RoPE (rotary position embeddings) with NoPE",
+      "definition": "Rotating queries and keys by position-dependent angles on most layers, while omitting positional encoding entirely on interleaved layers (every 4th) to improve length generalization."
+    },
+    {
+      "term": "QK-norm",
+      "definition": "RMSNorm applied to queries and keys before the attention dot product, keeping attention logits well-scaled and stabilizing training at higher learning rates."
+    },
+    {
+      "term": "SwiGLU",
+      "definition": "A gated MLP variant using three weight matrices (gate, up, down projections) instead of the two matrices in a plain ReLU/GELU feed-forward block."
+    },
+    {
+      "term": "Muon optimizer",
+      "definition": "An optimizer that orthogonalizes updates to 2D weight matrices for better-conditioned steps, used in a hybrid with AdamW for non-2D parameters."
+    },
+    {
+      "term": "WSD (Warmup-Stable-Decay) schedule",
+      "definition": "A learning-rate schedule with a long constant-LR 'stable' phase followed by a decay phase, decoupling total training length from when annealing/decay happens."
+    },
+    {
+      "term": "MFU (Model FLOPs Utilization)",
+      "definition": "The fraction of a GPU's peak FLOP/s actually achieved during training, used with the 6ND FLOP rule to convert a training run's FLOPs into wall-clock hours and dollar cost."
+    },
+    {
+      "term": "MLA (Multi-head Latent Attention)",
+      "definition": "An attention variant, from DeepSeek-V2, that compresses the KV cache into a low-rank latent representation, a further reduction beyond what GQA achieves."
+    }
+  ],
+  "introduces": [
+    "Stack-100M",
+    "deep-and-thin architecture",
+    "over-training (past Chinchilla)",
+    "QK-norm"
+  ],
+  "prerequisites": [
+    "the transformer architecture and attention mechanism",
+    "KV cache",
+    "Chinchilla scaling laws",
+    "byte-level BPE tokenization",
+    "mixed-precision (bf16) training basics",
+    "GPU FLOP throughput and training compute (the 6ND rule)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["architecture", "scaling", "training", "systems", "optimization"]
+}

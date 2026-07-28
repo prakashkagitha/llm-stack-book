@@ -1,0 +1,77 @@
+{
+  "chapter_id": "04-kernels-efficiency/03-flash-attention-2-3",
+  "one_liner": "Analyze FlashAttention-2/3's work partitioning, warp specialization, and FP8 incoherent-processing tricks.",
+  "key_terms": [
+    {
+      "term": "work partitioning",
+      "definition": "Deciding which thread, warp, or thread-block computes which piece of the attention tile; FA2's central lever for raising GPU compute utilization without changing memory traffic."
+    },
+    {
+      "term": "warp specialization",
+      "definition": "Assigning different warps distinct roles (data-movement producer vs. compute consumer) instead of identical work, so the roles can run concurrently as a pipeline."
+    },
+    {
+      "term": "split-Q warp partitioning",
+      "definition": "FA2 layout where each warp owns a slice of query rows and computes the full output for those rows, eliminating the inter-warp shared-memory reduction that FA1's split-K layout required."
+    },
+    {
+      "term": "Tensor Memory Accelerator (TMA)",
+      "definition": "A Hopper hardware unit that performs bulk asynchronous copies between global and shared memory with address generation done in hardware, freeing warps from load address arithmetic."
+    },
+    {
+      "term": "WGMMA (warpgroup matrix multiply-accumulate)",
+      "definition": "Hopper's asynchronous matmul instruction, issued by a warpgroup of 4 warps, that lets the tensor cores compute while the issuing warps continue other work, unlike Ampere's synchronous mma."
+    },
+    {
+      "term": "producer/consumer pipeline",
+      "definition": "FA3's software pipeline in which producer warps issue TMA loads of upcoming KV tiles into a shared-memory ring buffer while consumer warpgroups run wgmma and softmax on already-loaded tiles."
+    },
+    {
+      "term": "FP8 (8-bit floating point)",
+      "definition": "An 8-bit format (e.g., e4m3) with ~3-4 bits of precision that Hopper tensor cores use to roughly double matmul throughput over bf16, at the cost of coarse dynamic range."
+    },
+    {
+      "term": "incoherent processing",
+      "definition": "Multiplying Q and K by a random orthogonal matrix before FP8 quantization so QK^T is unchanged but outliers are spread across coordinates, keeping the FP8 scale tight."
+    },
+    {
+      "term": "Hadamard transform",
+      "definition": "A structured orthogonal matrix (random-sign Hadamard, computed in O(d log d)) used as the practical, cheap rotation that implements incoherent processing in FA3."
+    },
+    {
+      "term": "deferred rescaling (deferred normalization)",
+      "definition": "FA2's technique of keeping the output accumulator unnormalized during the inner loop and dividing by the running softmax denominator only once at the end, cutting per-iteration division work."
+    },
+    {
+      "term": "FlashDecoding",
+      "definition": "An attention kernel strategy for single-token decode that parallelizes over the KV sequence (split-KV) rather than queries, keeping SMs busy when the query-parallel axis has no width."
+    },
+    {
+      "term": "ping-pong scheduling",
+      "definition": "FA3 technique staggering two consumer warpgroups so one runs softmax on special-function units while the other runs wgmma on tensor cores, keeping both unit types busy simultaneously."
+    }
+  ],
+  "introduces": [
+    "work partitioning",
+    "warp specialization",
+    "split-Q warp partitioning",
+    "Tensor Memory Accelerator (TMA)",
+    "WGMMA (warpgroup matrix multiply-accumulate)",
+    "producer/consumer pipeline",
+    "incoherent processing",
+    "Hadamard transform",
+    "deferred rescaling (deferred normalization)",
+    "FlashDecoding",
+    "ping-pong scheduling"
+  ],
+  "prerequisites": [
+    "the online-softmax recurrence for attention",
+    "FlashAttention-1's IO-aware tiling",
+    "GPU architecture (SMs, warps, shared memory, register pressure)",
+    "the roofline model and arithmetic intensity",
+    "the attention mechanism and softmax",
+    "matrix multiplication / GEMM basics"
+  ],
+  "difficulty": "advanced",
+  "tags": ["gpu", "systems", "optimization", "quantization"]
+}

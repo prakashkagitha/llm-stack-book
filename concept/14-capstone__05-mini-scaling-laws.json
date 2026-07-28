@@ -1,0 +1,69 @@
+{
+  "chapter_id": "14-capstone/05-mini-scaling-laws",
+  "one_liner": "Fit and validate your own scaling law from a cheap model ladder before committing training budget.",
+  "key_terms": [
+    {
+      "term": "scaling ladder",
+      "definition": "A sequence of tiny models (here 4M-44M params) trained under one frozen recipe at varied N and D, used to fit a scaling law cheaply before the flagship run."
+    },
+    {
+      "term": "Chinchilla parametric form L(N, D)",
+      "definition": "The loss model L = E + A/N^alpha + B/D^beta, with E the irreducible floor and the other terms the finite-capacity and finite-data penalties, fit to the ladder's measured losses."
+    },
+    {
+      "term": "non-embedding parameters",
+      "definition": "Parameter count excluding the (often tied) token embedding table; used for fitting N and the 6ND FLOP rule because the embedding's per-token work does not scale with depth."
+    },
+    {
+      "term": "6ND FLOP rule",
+      "definition": "The dense-transformer compute estimate C ≈ 6ND (2 FLOPs/param/token forward, 4 backward), used to convert each ladder run's (N, D) into training FLOPs and dollar cost."
+    },
+    {
+      "term": "IsoFLOP profile",
+      "definition": "Chinchilla's second fitting method: at a fixed compute budget C, loss vs log N traces a U-shaped valley whose vertex (fit via a parabola) gives the compute-optimal N* for that budget."
+    },
+    {
+      "term": "allocation exponent",
+      "definition": "The exponent a in N* ∝ C^a (equivalently beta/(alpha+beta)) describing how compute-optimal parameters and tokens should each grow with total compute; here recovered near 0.5."
+    },
+    {
+      "term": "Huber loss",
+      "definition": "A loss function that is quadratic near zero and linear for large residuals, used here on log-space fit residuals so a few noisy ladder runs cannot dominate the scaling-law fit."
+    },
+    {
+      "term": "logsumexp",
+      "definition": "A numerically stable way to compute log(E + A·N^-alpha + B·D^-beta) by combining the three log-terms, avoiding overflow/underflow across the orders of magnitude the terms span."
+    },
+    {
+      "term": "compute-optimal allocation",
+      "definition": "The (N, D) that minimizes training loss for a fixed FLOP budget C=6ND (Chinchilla's headline result); for the flagship budget it is ~190M params at ~7.5B tokens (~40 tok/param)."
+    },
+    {
+      "term": "tokens per parameter (tok/param)",
+      "definition": "The ratio D/N used to describe a training run's data allocation relative to model size; compute-optimal is ~20 tok/param here, the plan's over-trained choice is ~200."
+    },
+    {
+      "term": "lifetime compute",
+      "definition": "Total FLOPs across a deployed model's life, C_lifetime = 6·N·D_train (train once) + 2·N·D_infer (serve forever); minimizing this, not just training FLOPs, motivates over-training."
+    },
+    {
+      "term": "over-training (deployment-optimal training)",
+      "definition": "Deliberately training a smaller model on far more tokens than compute-optimal (here ~200 vs ~20 tok/param) to shrink per-token inference cost at a small, well-pinned loss penalty."
+    }
+  ],
+  "introduces": [
+    "scaling ladder",
+    "lifetime compute",
+    "over-training (deployment-optimal training)"
+  ],
+  "prerequisites": [
+    "Kaplan/Chinchilla scaling laws for loss vs. parameters and tokens",
+    "the 6ND FLOP-counting rule for transformers",
+    "transformer architecture components (GQA, RoPE, SwiGLU, RMSNorm)",
+    "learning rate schedules (WSD/cosine decay)",
+    "tokenization and vocabulary size trade-offs",
+    "nonlinear curve fitting / non-convex optimization"
+  ],
+  "difficulty": "advanced",
+  "tags": ["scaling", "training", "math", "optimization", "inference"]
+}

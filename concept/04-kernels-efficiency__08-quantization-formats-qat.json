@@ -1,0 +1,78 @@
+{
+  "chapter_id": "04-kernels-efficiency/08-quantization-formats-qat",
+  "one_liner": "Choose and implement INT4/INT8/FP8/GGUF quantization formats, plus QAT and QLoRA, for efficient deployment.",
+  "key_terms": [
+    {
+      "term": "Weight-only quantization (W-only)",
+      "definition": "Storing weights in low precision while activations remain FP16/BF16; the kernel dequantizes weights on-the-fly before running the FP16 GEMM."
+    },
+    {
+      "term": "Weight+activation quantization (W+A)",
+      "definition": "Quantizing both weights and activations (usually to INT8) so the entire GEMM runs in low-precision integer arithmetic for higher throughput."
+    },
+    {
+      "term": "LLM.int8() (mixed-precision decomposition)",
+      "definition": "bitsandbytes' INT8 weight-only scheme that keeps rare outlier activation channels in FP16 and quantizes the rest per-column, preserving accuracy at scale."
+    },
+    {
+      "term": "NF4 (Normal Float 4)",
+      "definition": "A 4-bit data type whose 16 code points sit at quantiles of a standard normal distribution, minimizing error for normally-distributed weights; QLoRA's base-model format."
+    },
+    {
+      "term": "Double quantization",
+      "definition": "Quantizing the per-group scale factors themselves (e.g., FP32 to FP8 with a second-level meta-scale) to shave further overhead off the compressed model's memory."
+    },
+    {
+      "term": "FP8 (E4M3/E5M2)",
+      "definition": "8-bit floating-point formats with native Hopper/Blackwell Tensor Core support; E4M3 (4 exponent, 3 mantissa bits) suits weights, E5M2 suits gradients' wider dynamic range."
+    },
+    {
+      "term": "GGUF (GPT-Generated Unified Format)",
+      "definition": "The self-describing binary container format used by llama.cpp, bundling quantized weights with tokenizer and architecture metadata in a single portable file."
+    },
+    {
+      "term": "K-quants (e.g., Q4_K_M)",
+      "definition": "llama.cpp's family of block-level mixed-precision quantization schemes using super-block and sub-block scales to trade file size against quality on CPU/edge devices."
+    },
+    {
+      "term": "bitsandbytes",
+      "definition": "The PyTorch-native library providing drop-in INT8/NF4 quantized linear layers and paged optimizers; the primary quantization backend for Transformers and PEFT/QLoRA."
+    },
+    {
+      "term": "Straight-through estimator (STE)",
+      "definition": "A backward-pass trick that passes gradients through the zero-gradient rounding operation unchanged, letting quantization-aware training update weights despite non-differentiable rounding."
+    },
+    {
+      "term": "QLoRA",
+      "definition": "A fine-tuning recipe that freezes the base model in NF4 (with double quantization) and trains only added BF16 LoRA adapters, using paged optimizers to avoid OOM."
+    },
+    {
+      "term": "KV-cache quantization",
+      "definition": "Compressing the key-value cache (e.g., to INT8 or INT4, typically per-token) to cut its memory footprint during long-context autoregressive decoding."
+    }
+  ],
+  "introduces": [
+    "Weight-only quantization (W-only)",
+    "Weight+activation quantization (W+A)",
+    "LLM.int8() (mixed-precision decomposition)",
+    "NF4 (Normal Float 4)",
+    "Double quantization",
+    "FP8 (E4M3/E5M2)",
+    "GGUF (GPT-Generated Unified Format)",
+    "K-quants (e.g., Q4_K_M)",
+    "bitsandbytes",
+    "Straight-through estimator (STE)",
+    "QLoRA",
+    "KV-cache quantization"
+  ],
+  "prerequisites": [
+    "floating-point number formats (FP16/BF16)",
+    "matrix multiplication / GEMM",
+    "KV cache (key-value cache)",
+    "the roofline model and memory-bandwidth-bound reasoning",
+    "post-training quantization calibration algorithms (GPTQ, AWQ, SmoothQuant)",
+    "LoRA (low-rank adaptation)"
+  ],
+  "difficulty": "core",
+  "tags": ["quantization", "inference", "systems", "optimization", "training"]
+}

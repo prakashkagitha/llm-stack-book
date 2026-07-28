@@ -1,0 +1,77 @@
+{
+  "chapter_id": "08-agents-harness/03-harness-coding-agent",
+  "one_liner": "Build a coding-agent harness: tools, context assembly, loop, permissions, and verification.",
+  "key_terms": [
+    {
+      "term": "harness",
+      "definition": "The deterministic program (prompt, tools, context assembly, control loop, permissions, verification) wrapping a model to turn it into a working coding agent."
+    },
+    {
+      "term": "project memory file (CLAUDE.md / AGENTS.md)",
+      "definition": "A repo-root file whose contents are injected into the system prompt to encode team-specific, verifiable instructions like build and lint commands."
+    },
+    {
+      "term": "constrained edit (edit_file tool)",
+      "definition": "An edit API requiring an old_string that matches exactly once in the file before replacement, failing loudly on zero or multiple matches instead of silently corrupting content."
+    },
+    {
+      "term": "context assembly",
+      "definition": "The per-turn process by which the harness builds the exact list of messages (preamble, transcript, tool results) sent to the model, since the model never sees the repo directly."
+    },
+    {
+      "term": "context pollution",
+      "definition": "Degradation of agent quality caused by oversized or irrelevant tool outputs crowding out the task-relevant signal in the context window."
+    },
+    {
+      "term": "structural termination",
+      "definition": "Ending the agent loop exactly when the assistant emits no tool calls, rather than by detecting phrases like 'done' in its text output."
+    },
+    {
+      "term": "error-as-observation",
+      "definition": "The design pattern of feeding tool failures back into the context as normal (is_error=True) tool results so the model can self-correct, instead of crashing the loop."
+    },
+    {
+      "term": "permission gate",
+      "definition": "The policy layer that classifies each side-effecting tool call as allow, deny, or ask-a-human before execution, based on allowlist/denylist command patterns."
+    },
+    {
+      "term": "sandbox (execution sandbox)",
+      "definition": "The mechanistic isolation layer (restricted cwd, OS sandboxing, containers, disabled network egress) that bounds harm even if a dangerous command slips past the permission gate."
+    },
+    {
+      "term": "sub-agent",
+      "definition": "A spawned agent with its own fresh, isolated context window and narrow instruction that performs exploratory work and returns only a distilled answer to the parent agent."
+    },
+    {
+      "term": "verification-in-the-loop",
+      "definition": "Wiring a ground-truth check (tests, build, linter) into the agent loop so the agent cannot declare success until the check passes, rather than trusting its own self-assessment."
+    },
+    {
+      "term": "prompt injection",
+      "definition": "A malicious instruction embedded in content the agent reads (e.g., a file) that attempts to hijack its behavior, mitigated here by sandboxing and lack of network/credentials."
+    }
+  ],
+  "introduces": [
+    "harness",
+    "project memory file (CLAUDE.md / AGENTS.md)",
+    "constrained edit (edit_file tool)",
+    "context assembly",
+    "context pollution",
+    "structural termination",
+    "error-as-observation",
+    "permission gate",
+    "sandbox (execution sandbox)",
+    "sub-agent",
+    "verification-in-the-loop"
+  ],
+  "prerequisites": [
+    "tool use and function calling",
+    "the ReAct agentic loop (reason, act, observe)",
+    "system prompts",
+    "prefix caching / KV-cache reuse",
+    "running shell commands and reading tracebacks",
+    "unit testing basics"
+  ],
+  "difficulty": "core",
+  "tags": ["agents", "systems", "safety", "production", "evaluation"]
+}

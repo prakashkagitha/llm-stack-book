@@ -1,0 +1,73 @@
+{
+  "chapter_id": "07-inference-serving/04-sglang-radixattention",
+  "one_liner": "Explain and implement radix-tree KV-cache reuse and write branching SGLang programs with constrained decoding.",
+  "key_terms": [
+    {
+      "term": "RadixAttention",
+      "definition": "SGLang's runtime technique that keeps a radix tree of token prefixes and automatically reuses KV cache for any shared prompt prefix across requests."
+    },
+    {
+      "term": "radix tree (compressed trie)",
+      "definition": "A prefix tree where chains of single-child nodes collapse into one edge holding a whole token subsequence; here each node also owns KV-cache slot indices."
+    },
+    {
+      "term": "prefix caching",
+      "definition": "Reusing already-computed KV cache for a token sequence instead of recomputing it, whenever a new request's prompt begins with that same sequence."
+    },
+    {
+      "term": "prefill and decode",
+      "definition": "The two inference phases: prefill processes the prompt once (compute-bound, O(L) in prompt length), decode generates tokens one at a time (memory-bandwidth-bound)."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Stored per-layer, per-token key and value vectors from attention, read at every decode step; its per-token memory cost drives caching and eviction decisions."
+    },
+    {
+      "term": "PagedAttention",
+      "definition": "Memory management scheme storing KV cache in fixed-size, non-contiguous blocks (pages) referenced by index, which RadixAttention's tree indexes into rather than replaces."
+    },
+    {
+      "term": "LRU eviction (least-recently-used) over radix-tree leaves",
+      "definition": "SGLang's default eviction policy: reclaim KV slots from the oldest-accessed, unlocked leaf nodes first, peeling cold prefixes from the tree's tips inward."
+    },
+    {
+      "term": "lock_ref (reference counting)",
+      "definition": "A per-node counter incremented while an in-flight request reads that node's KV, preventing eviction from reclaiming memory a running kernel still depends on."
+    },
+    {
+      "term": "zero-overhead (overlap) scheduler",
+      "definition": "SGLang's scheduler design that prepares the CPU-side batch for the next decode step while the GPU executes the current step's forward pass, removing scheduling bubbles."
+    },
+    {
+      "term": "constrained decoding (FSM logit masking)",
+      "definition": "Restricting sampled tokens to those valid in a finite-state machine compiled from a regex or JSON schema, by setting disallowed tokens' logits to -infinity."
+    },
+    {
+      "term": "jump-forward decoding",
+      "definition": "An optimization where, when a grammar forces a run of tokens, the engine emits that whole forced substring in one step instead of sampling it token by token."
+    },
+    {
+      "term": "fork/join (SGLang frontend primitives)",
+      "definition": "DSL operations that split a program's state into k branches sharing the parent's KV prefix (fork), running in parallel, then recombine their results (join)."
+    }
+  ],
+  "introduces": [
+    "RadixAttention",
+    "radix tree (compressed trie)",
+    "LRU eviction (least-recently-used) over radix-tree leaves",
+    "lock_ref (reference counting)",
+    "zero-overhead (overlap) scheduler",
+    "jump-forward decoding",
+    "fork/join (SGLang frontend primitives)"
+  ],
+  "prerequisites": [
+    "KV cache and the attention mechanism",
+    "PagedAttention / paged KV-cache memory management",
+    "prefill and decode phases of LLM inference",
+    "continuous batching and request scheduling",
+    "prefix trees / tries",
+    "chat templates for role-tagged prompts"
+  ],
+  "difficulty": "core",
+  "tags": ["inference", "serving", "systems", "optimization", "gpu"]
+}

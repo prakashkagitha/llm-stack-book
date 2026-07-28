@@ -1,0 +1,75 @@
+{
+  "chapter_id": "07-inference-serving/01-anatomy-inference",
+  "one_liner": "Estimate LLM serving speed from model size and GPU bandwidth using prefill/decode physics.",
+  "key_terms": [
+    {
+      "term": "prefill",
+      "definition": "The phase that ingests all prompt tokens at once in a single parallel forward pass, producing the first output token; compute-bound."
+    },
+    {
+      "term": "decode",
+      "definition": "The phase that generates one new token per step conditioned on all prior tokens, run sequentially; memory-bandwidth-bound."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Stored keys and values for all past tokens, per layer and head, reused across decode steps so they need not be recomputed; trades memory for compute."
+    },
+    {
+      "term": "arithmetic intensity",
+      "definition": "Ratio of FLOPs performed to bytes moved from memory (FLOP/byte); determines whether a kernel is compute-bound or memory-bound."
+    },
+    {
+      "term": "ridge point",
+      "definition": "The arithmetic-intensity value (FLOP/s divided by bytes/s) at which a GPU's compute and memory-bandwidth limits cross, separating compute-bound from memory-bound regimes."
+    },
+    {
+      "term": "TTFT (time to first token)",
+      "definition": "Latency from request arrival to the first streamed output token; dominated by prefill compute and queueing delay."
+    },
+    {
+      "term": "TPOT (time per output token)",
+      "definition": "Average time between successive output tokens during decode; dominated by memory-bandwidth-bound decode speed."
+    },
+    {
+      "term": "ITL (inter-token latency)",
+      "definition": "The per-step gap between consecutive tokens; the instantaneous value whose average is TPOT."
+    },
+    {
+      "term": "decode speed ceiling",
+      "definition": "Upper bound on single-stream tokens/sec, equal to memory bandwidth divided by (model parameter count times bytes per parameter)."
+    },
+    {
+      "term": "Little's law",
+      "definition": "Queueing-theory result that average concurrent requests equal arrival rate times average time in system (L = λW); used to size serving throughput from KV-cache capacity and decode latency."
+    },
+    {
+      "term": "continuous batching",
+      "definition": "Serving technique that groups multiple sequences' decode steps together so one weight read is amortized across many tokens, raising throughput nearly for free."
+    },
+    {
+      "term": "GQA (grouped-query attention)",
+      "definition": "Attention variant using fewer key/value heads than query heads, shrinking KV-cache size since cache cost depends only on KV heads, not query heads."
+    }
+  ],
+  "introduces": [
+    "prefill",
+    "decode",
+    "KV cache (key-value cache)",
+    "arithmetic intensity",
+    "ridge point",
+    "TTFT (time to first token)",
+    "TPOT (time per output token)",
+    "ITL (inter-token latency)",
+    "decode speed ceiling",
+    "Little's law"
+  ],
+  "prerequisites": [
+    "the transformer forward pass",
+    "causal self-attention mechanism",
+    "the roofline performance model",
+    "GPU memory hierarchy and HBM bandwidth",
+    "softmax and matrix multiplication"
+  ],
+  "difficulty": "core",
+  "tags": ["inference", "serving", "systems", "gpu", "optimization"]
+}

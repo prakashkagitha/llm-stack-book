@@ -1,0 +1,65 @@
+{
+  "chapter_id": "03-pretraining/07-megatron-deepspeed",
+  "one_liner": "Configure Megatron-LM + DeepSpeed parallelism degrees for a multi-hundred-GPU run and measure hardware efficiency via MFU/HFU.",
+  "key_terms": [
+    {
+      "term": "Megatron-Core (megatron.core)",
+      "definition": "NVIDIA's library of parallelism-aware transformer building blocks (column/row-parallel GEMMs, MoE layers, parallel_state topology) importable by other training frameworks."
+    },
+    {
+      "term": "ZeRO (Zero Redundancy Optimizer)",
+      "definition": "DeepSpeed's sharding scheme across three stages (optimizer states, +gradients, +parameters) that removes redundant per-GPU copies of training state kept by vanilla DDP."
+    },
+    {
+      "term": "ZeRO-Offload / ZeRO-Infinity",
+      "definition": "ZeRO variants that move optimizer states and parameters off the GPU to CPU RAM (Offload) or NVMe storage (Infinity) when host memory exceeds GPU memory."
+    },
+    {
+      "term": "Model FLOP Utilization (MFU)",
+      "definition": "Fraction of a cluster's peak FLOP/s spent on useful forward+backward model arithmetic, computed as (FLOPs/token x tokens/s) / peak FLOP/s; 35-55% is healthy for dense models."
+    },
+    {
+      "term": "Hardware FLOP Utilization (HFU)",
+      "definition": "Fraction of peak FLOP/s spent on all FLOPs actually issued to the GPU, including wasted recomputation from activation checkpointing; always HFU >= MFU."
+    },
+    {
+      "term": "1F1B (one-forward-one-backward) schedule",
+      "definition": "The pipeline-parallel execution schedule whose idle-time (bubble) fraction is approximately (PP-1)/(PP-1+m), m being the in-flight micro-batch count."
+    },
+    {
+      "term": "Pipeline bubble",
+      "definition": "Idle GPU time in pipeline parallelism caused by stage dependencies at the start/end of each step, quantified by the 1F1B bubble-fraction formula and reduced via more micro-batches or interleaving."
+    },
+    {
+      "term": "Virtual pipeline parallelism (interleaved schedule)",
+      "definition": "Megatron scheme assigning each GPU multiple non-contiguous chunks of layers (v chunks), cutting the pipeline bubble by roughly a factor of v at the cost of more inter-stage messages."
+    },
+    {
+      "term": "Expert parallelism (EP)",
+      "definition": "Parallelism dimension that shards Mixture-of-Experts experts across ranks and dispatches token activations between them via all-to-all collectives, forming a fourth axis N = DP x TP x PP x EP."
+    },
+    {
+      "term": "Sequence parallelism",
+      "definition": "Megatron technique that shards activations along the sequence dimension outside TP-sharded GEMM blocks, replacing an all-reduce with all-gather + reduce-scatter to cut activation memory by a factor of TP."
+    }
+  ],
+  "introduces": [
+    "Megatron-Core (megatron.core)",
+    "Model FLOP Utilization (MFU)",
+    "Hardware FLOP Utilization (HFU)",
+    "1F1B (one-forward-one-backward) schedule",
+    "Pipeline bubble",
+    "Virtual pipeline parallelism (interleaved schedule)",
+    "ZeRO-Offload / ZeRO-Infinity"
+  ],
+  "prerequisites": [
+    "tensor parallelism",
+    "pipeline parallelism",
+    "data parallelism / DDP",
+    "ZeRO optimizer state sharding",
+    "mixed-precision (bf16/fp16) training",
+    "NVLink vs InfiniBand networking bandwidth"
+  ],
+  "difficulty": "advanced",
+  "tags": ["systems", "gpu", "training", "optimization", "scaling"]
+}

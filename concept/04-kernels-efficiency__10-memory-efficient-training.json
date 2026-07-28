@@ -1,0 +1,76 @@
+{
+  "chapter_id": "04-kernels-efficiency/10-memory-efficient-training",
+  "one_liner": "Compute a transformer's full training memory budget and apply checkpointing, offloading, and LoRA/QLoRA to fit it on smaller GPUs.",
+  "key_terms": [
+    {
+      "term": "Activation checkpointing (gradient checkpointing)",
+      "definition": "Discarding intermediate forward-pass activations and recomputing them during backward, trading ~33% extra compute for O(sqrt(L)) activation memory."
+    },
+    {
+      "term": "Optimizer states",
+      "definition": "Per-parameter Adam moments (m_t, v_t) plus the fp32 master weight copy; typically the single largest static memory cost (8P bytes) in mixed-precision training."
+    },
+    {
+      "term": "CPU/NVMe offloading",
+      "definition": "Spilling parameters, gradients, or optimizer states from GPU HBM to slower CPU DRAM or NVMe storage once GPU memory is exhausted."
+    },
+    {
+      "term": "ZeRO-Offload / ZeRO-Infinity",
+      "definition": "DeepSpeed techniques that move optimizer states (and parameters) to CPU or NVMe memory, exploiting that Adam updates touch each state once per step so PCIe latency is tolerable."
+    },
+    {
+      "term": "Parameter-efficient fine-tuning (PEFT)",
+      "definition": "Family of methods that freeze most pretrained weights and train only a small added set of parameters, eliminating gradient and optimizer-state memory for frozen layers."
+    },
+    {
+      "term": "LoRA (Low-Rank Adaptation)",
+      "definition": "PEFT method representing a weight update as the product of two low-rank matrices, ΔW = BA with rank r ≪ d, training only B and A while the original weight stays frozen."
+    },
+    {
+      "term": "QLoRA",
+      "definition": "Combines a frozen 4-bit (NF4) quantized base model with trainable bf16 LoRA adapters and a paged optimizer, enabling large-model fine-tuning on small GPUs."
+    },
+    {
+      "term": "NF4 (NormalFloat4)",
+      "definition": "A 4-bit data type used in QLoRA that places quantization levels at equal-probability points of a standard normal distribution to minimize error on normally-distributed weights."
+    },
+    {
+      "term": "Paged optimizer",
+      "definition": "QLoRA component that uses NVIDIA unified memory to page optimizer states out to CPU DRAM on demand, preventing OOM crashes from transient memory spikes."
+    },
+    {
+      "term": "Adafactor",
+      "definition": "Optimizer that replaces Adam's full second-moment matrix with a rank-1 factored approximation, cutting optimizer state from O(dk) to O(d+k) per weight matrix."
+    },
+    {
+      "term": "8-bit Adam",
+      "definition": "Adam variant that stores the m_t and v_t moments as block-wise-quantized 8-bit integers, cutting optimizer-state memory about 4x versus fp32 Adam with little accuracy loss."
+    },
+    {
+      "term": "Muon optimizer",
+      "definition": "An orthogonalized-momentum optimizer (via Newton-Schulz iteration) needing only one momentum buffer instead of Adam's two, roughly halving optimizer-state memory for 2D weights."
+    }
+  ],
+  "introduces": [
+    "Activation checkpointing (gradient checkpointing)",
+    "CPU/NVMe offloading",
+    "ZeRO-Offload / ZeRO-Infinity",
+    "Parameter-efficient fine-tuning (PEFT)",
+    "LoRA (Low-Rank Adaptation)",
+    "QLoRA",
+    "NF4 (NormalFloat4)",
+    "Paged optimizer",
+    "Adafactor",
+    "8-bit Adam",
+    "Muon optimizer"
+  ],
+  "prerequisites": [
+    "GPU memory hierarchy (HBM, PCIe bandwidth)",
+    "mixed-precision training (bf16/fp32)",
+    "the Adam optimizer",
+    "transformer architecture (attention, FFN, layer norm)",
+    "ZeRO/FSDP distributed training basics"
+  ],
+  "difficulty": "advanced",
+  "tags": ["training", "optimization", "systems", "quantization", "gpu"]
+}

@@ -1,0 +1,64 @@
+{
+  "chapter_id": "07-inference-serving/07-prefix-caching",
+  "one_liner": "Reuse cached KV blocks across requests via content hashing/radix tries to cut TTFT and prefill compute.",
+  "key_terms": [
+    {
+      "term": "Prefix caching (KV-cache reuse)",
+      "definition": "Storing and reusing already-computed key-value tensors for a shared token prefix across multiple requests, skipping recomputation for repeated content."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "The stored key and value tensors from prior tokens' attention computation, reused during decoding; in this chapter shown to be a deterministic, cacheable function of tokens and weights."
+    },
+    {
+      "term": "Content-based block hashing (chained hash)",
+      "definition": "Hashing fixed-size blocks of token IDs, each chained to the hash of the preceding block, so identical prefixes anywhere produce identical hashes but positional context is preserved."
+    },
+    {
+      "term": "RadixAttention",
+      "definition": "SGLang's prefix-cache design that organizes cached KV tensors as a radix tree (trie) over token sequences, enabling automatic longest-prefix matching and partial-prefix sharing."
+    },
+    {
+      "term": "vLLM Automatic Prefix Caching (APC)",
+      "definition": "vLLM's prefix-cache implementation layered on the PagedAttention block allocator: a flat hash table mapping block hashes to physical GPU blocks, with LRU eviction; on by default in the V1 engine."
+    },
+    {
+      "term": "LRU (Least-Recently-Used) eviction",
+      "definition": "The policy both RadixAttention and vLLM APC use to reclaim cached KV blocks under memory pressure, evicting the least-recently-accessed unreferenced block first."
+    },
+    {
+      "term": "Reference counting (ref_count)",
+      "definition": "A per-block counter tracking how many active requests are reading a cached KV block; blocks with ref_count > 0 are protected from eviction."
+    },
+    {
+      "term": "Copy-on-write semantics (for KV blocks)",
+      "definition": "The pattern where a shared cached prefix's KV blocks are read-only and shared across requests, while each request's diverging suffix tokens are written into fresh, unshared blocks."
+    },
+    {
+      "term": "Time-to-first-token (TTFT)",
+      "definition": "The latency from request arrival to the first generated output token, dominated by prefill cost; the chapter's primary metric for quantifying prefix-caching gains."
+    },
+    {
+      "term": "Prefix cache hit rate",
+      "definition": "The fraction of incoming prompt tokens/blocks served from the cache rather than recomputed; a production metric used to diagnose caching misconfiguration (e.g., dynamic content polluting a shared prefix)."
+    }
+  ],
+  "introduces": [
+    "Prefix caching (KV-cache reuse)",
+    "Content-based block hashing (chained hash)",
+    "RadixAttention",
+    "vLLM Automatic Prefix Caching (APC)",
+    "Copy-on-write semantics (for KV blocks)",
+    "Prefix cache hit rate"
+  ],
+  "prerequisites": [
+    "KV cache",
+    "PagedAttention and paged KV memory allocation",
+    "prefill and decode phases of inference",
+    "the attention mechanism",
+    "rotary positional encoding (RoPE)",
+    "hash tables"
+  ],
+  "difficulty": "core",
+  "tags": ["serving", "inference", "systems", "optimization", "production"]
+}

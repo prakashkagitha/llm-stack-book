@@ -1,0 +1,71 @@
+{
+  "chapter_id": "03-pretraining/10-lr-schedules-hparams",
+  "one_liner": "Choose, implement, and debug LR schedules, warmup, batch-size scaling, and muP hyperparameter transfer for pretraining.",
+  "key_terms": [
+    {
+      "term": "warmup",
+      "definition": "Linearly ramping the learning rate from near-zero to its target value over the first steps so Adam's zero-initialized moment estimates can calibrate before full-size updates hit."
+    },
+    {
+      "term": "cosine annealing schedule",
+      "definition": "The dominant pretraining LR schedule: after warmup, LR follows the right half of a cosine curve down to a floor, staying near-peak for most of training."
+    },
+    {
+      "term": "Warmup-Stable-Decay (WSD)",
+      "definition": "A three-phase schedule (warmup, constant peak LR, then decay) that decouples total training length from the schedule shape, popularized by MiniCPM."
+    },
+    {
+      "term": "critical batch size",
+      "definition": "The batch size $B^*$, defined via the gradient noise scale, beyond which increasing batch size no longer proportionally reduces the steps needed to converge."
+    },
+    {
+      "term": "gradient noise scale",
+      "definition": "The ratio tr(Σ)/‖G‖² of per-sample gradient covariance to squared mean gradient, used to locate the critical batch size boundary between noise-limited and saturated training regimes."
+    },
+    {
+      "term": "linear scaling rule",
+      "definition": "The heuristic that learning rate should scale linearly with batch size (η' = k·η) to preserve training dynamics when batch size increases by factor k, valid for moderate scaling."
+    },
+    {
+      "term": "gradient accumulation",
+      "definition": "Simulating a larger effective batch by summing (loss-averaged) gradients over several micro-batches before calling optimizer.step(), used when the target batch doesn't fit in memory."
+    },
+    {
+      "term": "decoupled weight decay (AdamW)",
+      "definition": "A regularization scheme that applies weight decay directly to parameter values rather than folding it into the gradient, preventing Adam's adaptive scaling from distorting the penalty."
+    },
+    {
+      "term": "gradient clipping (global-norm clip)",
+      "definition": "Rescaling all gradients by min(1, c/‖g‖₂), computed from one global L2 norm across all parameters, to bound update magnitude without changing gradient direction."
+    },
+    {
+      "term": "muP (maximal-update parameterization)",
+      "definition": "A reparameterization of initialization scale and per-layer learning rate that makes optimal hyperparameters width-invariant, enabling HP transfer from a small proxy model to a large one."
+    },
+    {
+      "term": "coordinate check",
+      "definition": "A diagnostic that plots per-layer activation or update scale against model width; under correct muP these curves stay flat, while under standard parameterization they drift with width."
+    }
+  ],
+  "introduces": [
+    "warmup",
+    "cosine annealing schedule",
+    "Warmup-Stable-Decay (WSD)",
+    "critical batch size",
+    "gradient noise scale",
+    "linear scaling rule",
+    "gradient accumulation",
+    "gradient clipping (global-norm clip)",
+    "muP (maximal-update parameterization)",
+    "coordinate check"
+  ],
+  "prerequisites": [
+    "the Adam optimizer and its moment estimates",
+    "gradient descent and backpropagation",
+    "weight initialization schemes",
+    "hidden dimension / model width",
+    "distributed data parallelism (DDP)"
+  ],
+  "difficulty": "core",
+  "tags": ["training", "optimization", "scaling", "systems"]
+}

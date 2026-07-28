@@ -1,0 +1,71 @@
+{
+  "chapter_id": "03-pretraining/11-training-stability",
+  "one_liner": "Diagnose, mitigate, and prevent loss spikes and divergence in large-scale LLM pretraining runs.",
+  "key_terms": [
+    {
+      "term": "loss spike",
+      "definition": "A sudden increase in training loss, usually resolved by the optimizer over tens to hundreds of steps, caused by a bad batch or bad model state."
+    },
+    {
+      "term": "gradient norm clipping",
+      "definition": "Rescaling all gradients by min(1, τ/‖g‖₂) so updates never exceed a threshold τ, preserving gradient direction while capping spike-driven update size."
+    },
+    {
+      "term": "QK-Norm",
+      "definition": "Applying RMSNorm to query and key projections before the attention dot product, bounding logit magnitude to O(√d_k) regardless of raw activation scale."
+    },
+    {
+      "term": "z-loss",
+      "definition": "An auxiliary penalty on the squared log-partition function of pre-softmax logits that discourages unbounded logit growth, used for LM heads and MoE routers."
+    },
+    {
+      "term": "Adam second-moment amplification",
+      "definition": "The mechanism by which a stale (slowly-updating) √v̂ denominator lets a sudden large gradient produce a disproportionately large parameter update, driving spikes."
+    },
+    {
+      "term": "skip-batch logic",
+      "definition": "Running the forward/backward pass but skipping the optimizer step (and Adam moment update) when a batch's gradient norm or anomaly score exceeds a threshold."
+    },
+    {
+      "term": "attention logit overflow",
+      "definition": "A failure mode where unnormalized Q·Kᵀ dot products grow large enough that softmax exponentials overflow or underflow, producing NaN/Inf in the backward pass."
+    },
+    {
+      "term": "embedding norm clipping",
+      "definition": "Projecting embedding row vectors back to a bounded norm ball after each optimizer step, preventing rare-token embeddings from drifting unboundedly."
+    },
+    {
+      "term": "softmax logit soft-capping",
+      "definition": "Passing pre-softmax attention logits through c·tanh(logit/c) to smoothly saturate extreme values into (−c, c) while leaving small logits nearly unchanged."
+    },
+    {
+      "term": "Model FLOP Utilization (MFU)",
+      "definition": "The fraction of a cluster's theoretical peak FLOPs actually achieved during training; sudden drops signal hardware or scheduling problems."
+    },
+    {
+      "term": "maximal update parametrization (μP)",
+      "definition": "A theoretical framework (Yang et al.) justifying learning rate scaling α ∝ 1/√d_model so that feature-learning dynamics stay consistent across model widths."
+    }
+  ],
+  "introduces": [
+    "loss spike",
+    "gradient norm clipping",
+    "QK-Norm",
+    "z-loss",
+    "Adam second-moment amplification",
+    "skip-batch logic",
+    "attention logit overflow",
+    "embedding norm clipping",
+    "softmax logit soft-capping"
+  ],
+  "prerequisites": [
+    "Adam/AdamW optimizer dynamics",
+    "mixed-precision (bf16/fp16) training",
+    "learning rate warmup and schedules",
+    "the attention mechanism",
+    "RMSNorm normalization",
+    "distributed data parallelism (DDP, ZeRO, FSDP)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["training", "optimization", "systems", "scaling"]
+}

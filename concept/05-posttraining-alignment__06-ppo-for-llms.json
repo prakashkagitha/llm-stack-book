@@ -1,0 +1,72 @@
+{
+  "chapter_id": "05-posttraining-alignment/06-ppo-for-llms",
+  "one_liner": "Derive REINFORCE, GAE, and PPO's clipped objective, then implement the RLHF training loop.",
+  "key_terms": [
+    {
+      "term": "Markov decision process (MDP)",
+      "definition": "Tuple (states, actions, transitions, reward, discount) used to frame autoregressive generation: states are partial sequences, actions are tokens, transitions are deterministic."
+    },
+    {
+      "term": "Policy",
+      "definition": "A distribution over actions given a state; this chapter's key identification is that the language model's next-token softmax IS the policy π_θ."
+    },
+    {
+      "term": "REINFORCE (score-function estimator)",
+      "definition": "Policy-gradient identity ∇J = E[R(τ)∇log π_θ(τ)] derived via the log-derivative trick, letting you optimize expected reward without differentiating through sampling or the reward itself."
+    },
+    {
+      "term": "Baseline",
+      "definition": "Any action-independent quantity b(s_t) subtracted from the reward before scaling the log-prob gradient; provably unbiased and used to cut REINFORCE's variance."
+    },
+    {
+      "term": "Value function",
+      "definition": "V^π(s_t), the expected future return from state s_t under the current policy; in RLHF, the critic's estimate of the reward-model score a partial response will earn."
+    },
+    {
+      "term": "Advantage",
+      "definition": "A(s,a) = Q(s,a) - V(s), measuring whether an action was better than the policy's average behavior at that state; the signal multiplied by ∇log π_θ in the actor-critic gradient."
+    },
+    {
+      "term": "Generalized Advantage Estimation (GAE)",
+      "definition": "A (γ,λ)-weighted sum of TD residuals δ_t, computed by a single backward recursion, that interpolates between low-variance one-step TD and unbiased Monte Carlo advantage estimates."
+    },
+    {
+      "term": "Importance sampling (importance ratio)",
+      "definition": "Reweighting rollouts from an old behavior policy by r_t(θ)=π_θ/π_old so gradients computed on stale data remain valid estimates for the current policy, enabling multiple update epochs per batch."
+    },
+    {
+      "term": "PPO clipped surrogate objective",
+      "definition": "min(r_t·Â_t, clip(r_t,1-ε,1+ε)·Â_t): a pessimistic bound that zeroes the gradient once the importance ratio moves too far, forming a cheap first-order trust region."
+    },
+    {
+      "term": "KL penalty (to reference policy)",
+      "definition": "Term β·D_KL[π_θ‖π_ref] (usually folded into the per-token reward before GAE) that keeps the trained policy near the frozen SFT reference to guard against reward hacking."
+    },
+    {
+      "term": "Actor-critic",
+      "definition": "RL architecture pairing a trained policy (actor, π_θ) with a learned value estimator (critic, V_φ) whose baseline produces the advantage used in the policy gradient."
+    }
+  ],
+  "introduces": [
+    "Markov decision process (MDP)",
+    "Policy",
+    "REINFORCE (score-function estimator)",
+    "Baseline",
+    "Value function",
+    "Advantage",
+    "Generalized Advantage Estimation (GAE)",
+    "Importance sampling (importance ratio)",
+    "PPO clipped surrogate objective",
+    "KL penalty (to reference policy)",
+    "Actor-critic"
+  ],
+  "prerequisites": [
+    "the transformer forward pass / next-token softmax",
+    "automatic differentiation and backpropagation",
+    "probability, expectation, and KL divergence",
+    "supervised fine-tuning (SFT) of a base model",
+    "reward models trained from human preferences"
+  ],
+  "difficulty": "advanced",
+  "tags": ["alignment", "rl", "training", "optimization", "math"]
+}

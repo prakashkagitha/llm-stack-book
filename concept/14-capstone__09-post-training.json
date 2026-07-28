@@ -1,0 +1,64 @@
+{
+  "chapter_id": "14-capstone/09-post-training",
+  "one_liner": "Post-train a 100M base model with SFT, DPO, and narrow GRPO/RLVR into a stopping, preference-tuned, arithmetic-capable assistant.",
+  "key_terms": [
+    {
+      "term": "SFT (supervised fine-tuning)",
+      "definition": "Cross-entropy training on rendered chat conversations, with loss masked to assistant tokens only, that teaches a base model to take turns and stop."
+    },
+    {
+      "term": "chat template",
+      "definition": "The fixed rendering of role turns (system/user/assistant) into token sequences using reserved special tokens like <|user|>, <|assistant|>, and <|end|>."
+    },
+    {
+      "term": "assistant-only loss masking",
+      "definition": "Setting the label to an ignore index (-100) on every non-assistant token so cross-entropy gradients flow only through assistant content and its closing <|end|>."
+    },
+    {
+      "term": "DPO (Direct Preference Optimization)",
+      "definition": "A logistic loss over preference pairs (chosen, rejected) that raises the policy's log-probability of the winner relative to a frozen reference, with no reward model or rollouts."
+    },
+    {
+      "term": "reference policy (π_ref)",
+      "definition": "The frozen SFT model used as the baseline in DPO's and GRPO's log-ratio/KL terms; log-probs under it can be precomputed and cached since it never changes."
+    },
+    {
+      "term": "RLVR (RL with verifiable rewards)",
+      "definition": "Reinforcement learning where a program (e.g., an exact-match checker) grades model samples for correctness, replacing a learned, hackable reward model."
+    },
+    {
+      "term": "GRPO (Group Relative Policy Optimization)",
+      "definition": "A critic-free RL algorithm that samples a group of G completions per prompt and uses the group's own reward mean/std as the advantage baseline, optimized with a PPO-style clipped surrogate."
+    },
+    {
+      "term": "group-relative advantage",
+      "definition": "The standardized reward within a sampled group, Â_i = (R_i - mean(R))/(std(R)+ε), broadcast to every token of that response as its training signal."
+    },
+    {
+      "term": "cold-start problem",
+      "definition": "The failure mode where RL yields zero gradient because every sampled response in a group gets the same reward (all-correct or all-wrong), so advantages vanish."
+    },
+    {
+      "term": "catastrophic forgetting",
+      "definition": "Erasure of pretrained knowledge/fluency caused by using too large a learning rate during post-training, which is why SFT/DPO/GRPO use small LRs on a converged model."
+    },
+    {
+      "term": "reward hacking",
+      "definition": "A policy exploiting a proxy reward (e.g., emitting the answer-format marker without correct reasoning) to score well without achieving the intended goal, mitigated by KL leashes and small format penalties."
+    },
+    {
+      "term": "k3 KL estimator",
+      "definition": "An unbiased, low-variance, always-non-negative estimator of KL divergence, exp(logr) - logr - 1, used as the KL penalty term in the GRPO loss."
+    }
+  ],
+  "introduces": [],
+  "prerequisites": [
+    "causal language model pretraining and cross-entropy loss",
+    "tokenization with reserved special tokens",
+    "the attention mechanism and document-aware/packed attention masking",
+    "policy gradients and PPO's clipped surrogate objective",
+    "KL divergence and Bradley-Terry preference modeling"
+  ],
+  "difficulty": "advanced",
+  "tags": ["alignment", "rl", "training", "math"]
+}

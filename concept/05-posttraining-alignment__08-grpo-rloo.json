@@ -1,0 +1,74 @@
+{
+  "chapter_id": "05-posttraining-alignment/08-grpo-rloo",
+  "one_liner": "Derive and implement critic-free RL (RLOO, GRPO) and apply the 2025 Dr. GRPO/DAPO fixes.",
+  "key_terms": [
+    {
+      "term": "critic (value network)",
+      "definition": "A second learned model predicting expected future reward, used by PPO to compute low-variance advantages; GRPO/RLOO eliminate it."
+    },
+    {
+      "term": "baseline",
+      "definition": "A quantity subtracted from the reward in a policy gradient that doesn't depend on the sampled action; reduces variance without introducing bias."
+    },
+    {
+      "term": "advantage",
+      "definition": "Reward minus baseline, indicating how much better a sampled response was than the group/expected typical response; the signal weighting the policy-gradient update."
+    },
+    {
+      "term": "RLOO (REINFORCE Leave-One-Out)",
+      "definition": "Critic-free policy gradient method whose per-sample baseline is the mean reward of the other G-1 group samples, giving an unbiased, single-step, clip-free estimator."
+    },
+    {
+      "term": "GRPO (Group Relative Policy Optimization)",
+      "definition": "Critic-free RL method that assigns every token the group-standardized (mean-subtracted, std-divided) reward as advantage, optimized via PPO's clipped surrogate for multi-epoch updates."
+    },
+    {
+      "term": "group-relative advantage / z-score",
+      "definition": "GRPO's advantage: (reward − group mean) / (group std + epsilon), computed per prompt across G sampled responses and applied uniformly to all their tokens."
+    },
+    {
+      "term": "clipped surrogate objective",
+      "definition": "PPO-style loss that clips the importance ratio between new and old policy to a trust region [1-eps,1+eps], making multi-epoch updates on reused rollouts safe."
+    },
+    {
+      "term": "k3 KL estimator",
+      "definition": "Schulman's unbiased, always-nonnegative, low-variance KL approximation rho - log(rho) - 1 computed from a single sampled-token log-prob ratio, used as GRPO's KL penalty."
+    },
+    {
+      "term": "Dr. GRPO",
+      "definition": "2025 fix removing GRPO's two length/scale biases: switches to token-level loss aggregation and drops the std-normalization, leaving a mean-only group baseline."
+    },
+    {
+      "term": "clip-higher (DAPO)",
+      "definition": "Decoupling PPO's symmetric clip into separate lower/upper bounds (eps_high > eps_low) so rare-but-good tokens can be boosted more, preventing entropy collapse."
+    },
+    {
+      "term": "dead group",
+      "definition": "A sampled group where all responses receive equal reward, making every advantage zero and contributing no gradient signal; a key GRPO training pathology to monitor."
+    },
+    {
+      "term": "GSPO (Group Sequence Policy Optimization)",
+      "definition": "Sequence-level variant of GRPO that clips whole-sequence rather than per-token importance ratios, used for extra stability on MoE policies (e.g., Qwen3)."
+    }
+  ],
+  "introduces": [
+    "RLOO (REINFORCE Leave-One-Out)",
+    "GRPO (Group Relative Policy Optimization)",
+    "group-relative advantage / z-score",
+    "k3 KL estimator",
+    "Dr. GRPO",
+    "clip-higher (DAPO)",
+    "dead group",
+    "GSPO (Group Sequence Policy Optimization)"
+  ],
+  "prerequisites": [
+    "policy gradients / REINFORCE",
+    "PPO and the clipped surrogate objective",
+    "reward models and KL penalties in RLHF",
+    "generalized advantage estimation (GAE)",
+    "autoregressive language model sampling",
+    "basic variance/bias tradeoffs in estimators"
+  ],
+  "difficulty": "advanced",
+  "tags": ["rl", "alignment", "training", "optimization"]
+}

@@ -1,0 +1,71 @@
+{
+  "chapter_id": "03-pretraining/03-pretraining-objective",
+  "one_liner": "Compute, mask, and debug the causal-LM cross-entropy loss, including packing and tokenizer-agnostic BPB scoring.",
+  "key_terms": [
+    {
+      "term": "cross-entropy loss",
+      "definition": "The pretraining objective: negative log-probability the model assigns the true next token, averaged over positions; minimizing it minimizes KL divergence to the data distribution."
+    },
+    {
+      "term": "negative log-likelihood (NLL)",
+      "definition": "The per-token loss -log p(x_t | x_<t); numerically identical to cross-entropy against a one-hot target, since the inner sum collapses to the true class."
+    },
+    {
+      "term": "teacher forcing",
+      "definition": "Training technique that feeds the ground-truth previous token as input rather than the model's own prediction, enabling all positions to be computed in one parallel forward pass."
+    },
+    {
+      "term": "causal mask",
+      "definition": "The lower-triangular attention mask (0 for j<=i, -infinity for j>i) that prevents position i from attending to future tokens, making teacher forcing valid."
+    },
+    {
+      "term": "label shifting",
+      "definition": "The alignment convention where model inputs are tokens x_0..x_{T-1} and targets are x_1..x_T, so each position's logit is scored against the next token."
+    },
+    {
+      "term": "loss masking",
+      "definition": "Setting target tokens to ignore_index (-100) at padding, SFT prompt, or cross-document boundary positions so they contribute zero gradient to the loss."
+    },
+    {
+      "term": "document packing",
+      "definition": "Concatenating multiple short documents end-to-end (separated by a SEP token) up to the context length to eliminate padding waste in pretraining batches."
+    },
+    {
+      "term": "perplexity",
+      "definition": "The exponentiated average NLL loss, interpretable as the model's effective branching factor (uncertainty measured as an equivalent uniform vocabulary size)."
+    },
+    {
+      "term": "bits-per-byte (BPB)",
+      "definition": "A tokenizer-agnostic loss metric that normalizes NLL (converted to bits) by the average UTF-8 bytes per token, enabling fair cross-tokenizer/cross-model comparison."
+    },
+    {
+      "term": "UL2 (span corruption denoising mixture)",
+      "definition": "A pretraining scheme mixing R-denoising (short masked spans), X-denoising (long masked spans), and S-denoising (causal prefix LM) in one model to gain versatility."
+    },
+    {
+      "term": "z-loss",
+      "definition": "A regularizer, alpha*log^2(sum_v e^{z_v}), added to cross-entropy to penalize large pre-softmax logit norms and prevent softmax overflow and training loss spikes."
+    }
+  ],
+  "introduces": [
+    "cross-entropy loss",
+    "negative log-likelihood (NLL)",
+    "teacher forcing",
+    "label shifting",
+    "loss masking",
+    "document packing",
+    "perplexity",
+    "bits-per-byte (BPB)",
+    "UL2 (span corruption denoising mixture)",
+    "z-loss"
+  ],
+  "prerequisites": [
+    "the attention mechanism and causal masking",
+    "softmax function",
+    "chain rule of probability",
+    "KL divergence / entropy",
+    "tokenization and vocabulary (BPE)"
+  ],
+  "difficulty": "core",
+  "tags": ["training", "math", "data", "optimization"]
+}

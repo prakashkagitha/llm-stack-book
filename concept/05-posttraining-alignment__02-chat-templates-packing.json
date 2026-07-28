@@ -1,0 +1,76 @@
+{
+  "chapter_id": "05-posttraining-alignment/02-chat-templates-packing",
+  "one_liner": "Build chat templates, loss masks, and packed batches for training conversational models.",
+  "key_terms": [
+    {
+      "term": "chat template",
+      "definition": "A deterministic function mapping role-content message pairs to a single token sequence, identical between training and inference."
+    },
+    {
+      "term": "ChatML",
+      "definition": "OpenAI's turn format using <|im_start|>role\\ncontent<|im_end|> special tokens; widely adopted by Qwen and other open models."
+    },
+    {
+      "term": "loss masking",
+      "definition": "Setting labels to -100 on prompt/role tokens so cross-entropy loss is computed only on assistant-turn content, not the full sequence."
+    },
+    {
+      "term": "generation prompt",
+      "definition": "The template suffix (e.g. <|im_start|>assistant\\n) appended after the last user turn to signal the model should generate next."
+    },
+    {
+      "term": "sequence packing",
+      "definition": "Concatenating multiple variable-length training examples into one fixed-length row via bin packing to eliminate padding waste."
+    },
+    {
+      "term": "first-fit-decreasing bin packing",
+      "definition": "A packing algorithm that sorts examples longest-first and greedily places each into the first bin with enough remaining room."
+    },
+    {
+      "term": "cross-document attention leakage",
+      "definition": "The bug where, in a naively packed sequence, tokens of one document can attend to tokens of a different document sharing the same row."
+    },
+    {
+      "term": "block-diagonal attention mask",
+      "definition": "An additive attention mask restricting each packed document to attend only within its own causal span, preventing cross-document leakage."
+    },
+    {
+      "term": "cu_seqlens (cumulative sequence lengths)",
+      "definition": "Flash Attention's varlen-API argument giving per-document offsets into a packed batch, enforcing document-boundary attention without materialising a mask."
+    },
+    {
+      "term": "position_ids reset",
+      "definition": "Resetting position indices to 0 at the start of each document within a packed row, required so RoPE/ALiBi apply correctly per-document."
+    },
+    {
+      "term": "tool call",
+      "definition": "A structured assistant message invoking an external function, encoded in the chat template (e.g. via a tool role or <tool_call> tokens) and partially masked during training."
+    },
+    {
+      "term": "special tokens",
+      "definition": "Vocabulary entries (like <|im_start|>, <|eot_id|>) reserved for template structure, immune to BPE splitting, that receive their own trainable embeddings."
+    }
+  ],
+  "introduces": [
+    "chat template",
+    "ChatML",
+    "loss masking",
+    "generation prompt",
+    "sequence packing",
+    "first-fit-decreasing bin packing",
+    "cross-document attention leakage",
+    "block-diagonal attention mask",
+    "cu_seqlens (cumulative sequence lengths)",
+    "position_ids reset"
+  ],
+  "prerequisites": [
+    "causal language modelling loss",
+    "tokenization and special tokens (BPE)",
+    "the attention mechanism / causal mask",
+    "RoPE positional encoding",
+    "supervised fine-tuning basics",
+    "Flash Attention"
+  ],
+  "difficulty": "core",
+  "tags": ["data", "training", "systems", "inference"]
+}

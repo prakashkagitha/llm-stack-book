@@ -1,0 +1,70 @@
+{
+  "chapter_id": "02-transformer/10-modern-arch-improvements",
+  "one_liner": "Explain and implement the modern transformer recipe (RMSNorm, SwiGLU, RoPE, GQA, QK-norm) used in production LLMs.",
+  "key_terms": [
+    {
+      "term": "RMSNorm (Root Mean Square Normalization)",
+      "definition": "Normalization that divides by the root-mean-square of a feature vector and applies a learned scale, dropping LayerNorm's mean subtraction and shift for equal stability at lower cost."
+    },
+    {
+      "term": "SwiGLU",
+      "definition": "A gated MLP activation multiplying a SiLU-activated gate projection by a separate content projection, giving multiplicative gating that outperforms ReLU/GELU at equal parameter count."
+    },
+    {
+      "term": "RoPE (Rotary Position Embedding)",
+      "definition": "Positional encoding that rotates query/key vectors in 2D subspaces by angles proportional to position, so attention dot products depend only on relative offset between tokens."
+    },
+    {
+      "term": "rope_theta",
+      "definition": "The base hyperparameter in RoPE's frequency formula; raising it (e.g. 10000 to 500000) spreads rotation frequencies to improve long-context extrapolation."
+    },
+    {
+      "term": "GQA (Grouped Query Attention)",
+      "definition": "An attention variant where multiple query heads share a smaller number of key/value heads, shrinking KV cache memory by the grouping ratio with minimal quality loss."
+    },
+    {
+      "term": "QK-norm",
+      "definition": "Applying RMSNorm to query and key vectors before computing attention scores, bounding dot-product magnitude to prevent softmax-saturating logit explosion in large or long-trained models."
+    },
+    {
+      "term": "logit soft-capping",
+      "definition": "A differentiable squashing function z -> c*tanh(z/c) applied to final vocabulary logits or attention logits to prevent extreme values while preserving sign and ordering, used in Gemma 2."
+    },
+    {
+      "term": "attention sink",
+      "definition": "A token (often BOS or the first few positions) that receives disproportionately high attention weight as a place for softmax to 'dump' unneeded probability mass, critical to preserve during KV cache eviction."
+    },
+    {
+      "term": "tied vs untied embeddings",
+      "definition": "Whether the input token embedding matrix and output (LM head) unembedding matrix share the same weights (tied, saves V*d parameters) or are learned separately (untied, more expressive)."
+    },
+    {
+      "term": "scaled residual initialization",
+      "definition": "Scaling down residual-path output projections (attention output, MLP down-projection) by 1/sqrt(2L) at initialization to keep residual-stream variance controlled in deep models."
+    },
+    {
+      "term": "pre-norm vs post-norm",
+      "definition": "Placement of normalization relative to a sublayer and residual add: pre-norm (norm before sublayer) gives cleaner gradient flow through the residual path than GPT-2's post-norm."
+    }
+  ],
+  "introduces": [
+    "RMSNorm (Root Mean Square Normalization)",
+    "SwiGLU",
+    "rope_theta",
+    "QK-norm",
+    "logit soft-capping",
+    "attention sink",
+    "scaled residual initialization",
+    "pre-norm vs post-norm"
+  ],
+  "prerequisites": [
+    "the attention mechanism and scaled dot-product attention",
+    "multi-head attention, MQA, GQA, MLA basics",
+    "LayerNorm and residual connections",
+    "positional encodings (sinusoidal, learned, RoPE basics)",
+    "KV cache concept",
+    "basic floating-point precision (bf16) considerations"
+  ],
+  "difficulty": "core",
+  "tags": ["architecture", "systems", "inference", "training"]
+}

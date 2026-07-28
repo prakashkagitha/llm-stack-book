@@ -1,0 +1,70 @@
+{
+  "chapter_id": "12-production-mlops/03-caching-routing-cost",
+  "one_liner": "Design a layered cache-route-batch-spot stack that cuts LLM production API spend 50-90%.",
+  "key_terms": [
+    {
+      "term": "exact caching",
+      "definition": "Storing a response keyed by a hash of the full request (model, messages, sampling params) and returning it verbatim on a byte-identical repeat request."
+    },
+    {
+      "term": "semantic caching",
+      "definition": "Caching by embedding the query and returning a stored response when a new query's embedding cosine-similarity exceeds a calibrated threshold, catching near-duplicates exact caching misses."
+    },
+    {
+      "term": "prompt-prefix caching",
+      "definition": "Provider-side reuse of KV-cache tensors for a repeated prompt prefix (e.g., system prompt) across calls, billed at a fraction of normal input price on hits."
+    },
+    {
+      "term": "model routing cascade",
+      "definition": "A system that sends each query to the cheapest model tier first, escalating to costlier models only when a quality gate rejects the cheap tier's output."
+    },
+    {
+      "term": "quality gate",
+      "definition": "A cheap, fast check (e.g., confidence/logprob threshold, finish-reason check) used to decide whether a cascade tier's output is good enough to return without escalating."
+    },
+    {
+      "term": "speculative routing",
+      "definition": "Firing cheap and expensive models concurrently and cancelling the expensive one if the cheap model's output passes the quality gate, trading extra cost for lower latency."
+    },
+    {
+      "term": "quantised fallback",
+      "definition": "A locally hosted, weight-quantised (e.g., INT4 via GPTQ/AWQ) copy of a model used as a cheaper/faster serving tier or as a fallback when a frontier API times out or rate-limits."
+    },
+    {
+      "term": "continuous batching",
+      "definition": "An inference-server scheduling technique (also called iteration-level batching) that packs requests of varying lengths together at each decoding step to keep the GPU fully utilised and lower cost per token."
+    },
+    {
+      "term": "offline/batch inference API",
+      "definition": "A provider endpoint (e.g., Anthropic Batches API, OpenAI Batch API) that processes non-latency-sensitive request batches at roughly 50% discount with turnaround up to 24 hours."
+    },
+    {
+      "term": "spot/preemptible GPU",
+      "definition": "A heavily discounted (60-80% cheaper) cloud GPU instance that the provider can reclaim with 30-120 seconds notice, requiring stateless, drain-capable serving workers."
+    },
+    {
+      "term": "routing classifier",
+      "definition": "A small offline-trained model (e.g., embedding + logistic regression) that predicts which model tier a query needs before any LLM call, avoiding sequential-cascade latency."
+    }
+  ],
+  "introduces": [
+    "exact caching",
+    "semantic caching",
+    "prompt-prefix caching",
+    "model routing cascade",
+    "quality gate",
+    "speculative routing",
+    "quantised fallback",
+    "routing classifier"
+  ],
+  "prerequisites": [
+    "KV cache",
+    "token-based API pricing (input/output tokens)",
+    "quantization (PTQ, INT4/INT8)",
+    "continuous batching / request scheduling basics",
+    "embeddings and cosine similarity",
+    "basic distributed-systems concepts (load balancers, retries, TTL)"
+  ],
+  "difficulty": "core",
+  "tags": ["production", "serving", "inference", "optimization", "systems"]
+}

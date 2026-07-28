@@ -1,0 +1,66 @@
+{
+  "chapter_id": "07-inference-serving/12-inference-economics",
+  "one_liner": "Derive $/1M-token costs, size GPU clusters, and pick batching/quantization tradeoffs against latency SLOs.",
+  "key_terms": [
+    {
+      "term": "arithmetic intensity",
+      "definition": "FLOPs performed per byte moved to/from HBM; determines whether a workload is bandwidth-bound or compute-bound on a given GPU."
+    },
+    {
+      "term": "arithmetic intensity breakeven (B*)",
+      "definition": "Batch size FLOP/s ÷ bandwidth where decode transitions from bandwidth-bound to compute-bound; ~295 for a 70B BF16 model on H100."
+    },
+    {
+      "term": "TTFT (time-to-first-token)",
+      "definition": "Latency until the first output token appears; dominated by prefill compute time and largely independent of decode batch size."
+    },
+    {
+      "term": "TBT (time-between-tokens)",
+      "definition": "Per-token latency during decode streaming; dominated by decode bandwidth and rises once batch size passes the arithmetic-intensity breakeven."
+    },
+    {
+      "term": "$/1M tokens (cost per million output tokens)",
+      "definition": "Cost formula (GPU rental rate x 10^6) / (sustained tokens/s x 3600); the primary metric for inference cost efficiency."
+    },
+    {
+      "term": "tensor parallelism (TP)",
+      "definition": "Splitting a model's weights and compute across N GPUs, reducing per-GPU memory, FLOPs, and bandwidth by roughly 1/N at the cost of an all-reduce per step."
+    },
+    {
+      "term": "KV cache (key-value cache)",
+      "definition": "Per-sequence memory storing past attention keys/values, growing with context length, layers, and heads; often the binding limit on concurrent batch size at long context."
+    },
+    {
+      "term": "quantization (FP8/INT8/INT4)",
+      "definition": "Reducing weight or KV-cache numeric precision to cut bytes streamed from HBM per decode step, directly speeding up bandwidth-bound serving."
+    },
+    {
+      "term": "chain-of-thought tax",
+      "definition": "The extra dollar cost incurred when a reasoning model emits many internal reasoning tokens before its final answer, since each thinking token is billed like any output token."
+    },
+    {
+      "term": "capacity planning formula",
+      "definition": "N_GPUs = ceil(peak requests/s x avg output tokens / (per-GPU decode throughput x target utilization)); converts traffic projections into required GPU count."
+    },
+    {
+      "term": "goodput",
+      "definition": "The rate of requests served while meeting latency SLOs, as opposed to raw throughput that ignores whether responses arrive fast enough."
+    }
+  ],
+  "introduces": [
+    "arithmetic intensity breakeven (B*)",
+    "$/1M tokens (cost per million output tokens)",
+    "chain-of-thought tax",
+    "capacity planning formula"
+  ],
+  "prerequisites": [
+    "prefill and decode mechanics",
+    "continuous batching",
+    "KV cache memory management (PagedAttention)",
+    "the roofline model (FLOPs vs. bandwidth)",
+    "GPU architecture basics (HBM bandwidth, tensor cores)",
+    "basic quantization concepts"
+  ],
+  "difficulty": "advanced",
+  "tags": ["inference", "serving", "systems", "optimization", "gpu", "quantization"]
+}

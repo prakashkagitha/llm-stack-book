@@ -1,0 +1,80 @@
+{
+  "chapter_id": "01-foundations/08-gpu-architecture",
+  "one_liner": "Classify any GPU kernel as compute- or memory-bound and reason about occupancy and hardware fit.",
+  "key_terms": [
+    {
+      "term": "warp",
+      "definition": "A group of exactly 32 threads that execute the same instruction in lockstep (SIMT); the real unit of GPU execution."
+    },
+    {
+      "term": "streaming multiprocessor (SM)",
+      "definition": "The GPU's core compute building block; hosts warp schedulers, registers, CUDA cores, Tensor Cores, and shared memory/L1 for its resident blocks."
+    },
+    {
+      "term": "SIMT (single instruction, multiple threads)",
+      "definition": "NVIDIA's execution model where all 32 lanes of a warp execute the same instruction on different data per cycle; warp divergence occurs when lanes take different branches."
+    },
+    {
+      "term": "Tensor Core",
+      "definition": "A dedicated matrix-multiply-accumulate unit that computes whole small-tile matmuls in reduced precision (BF16/FP16/FP8/FP4), roughly 16x faster than CUDA cores for matmul."
+    },
+    {
+      "term": "shared memory (SMEM)",
+      "definition": "Fast, programmer-managed on-chip SRAM private to a thread block, used to stage and reuse data (e.g. matrix tiles) to avoid repeated slow HBM reads."
+    },
+    {
+      "term": "high-bandwidth memory (HBM)",
+      "definition": "The GPU's off-chip stacked DRAM (e.g. 80 GB on H100) holding weights, activations, and KV cache; its capacity and bandwidth bound model size and decode speed."
+    },
+    {
+      "term": "occupancy",
+      "definition": "The ratio of resident warps to the SM's maximum warp capacity, bounded by registers, shared memory, and block/warp slot limits; buys latency-hiding headroom but is not itself the performance goal."
+    },
+    {
+      "term": "arithmetic intensity",
+      "definition": "The ratio of FLOPs performed to bytes moved to/from HBM (FLOP/byte); the single number that determines whether a kernel is compute- or memory-bound."
+    },
+    {
+      "term": "ridge point (machine balance)",
+      "definition": "The ratio of a GPU's peak compute to peak bandwidth (FLOP/byte); kernels with arithmetic intensity below it are memory-bound, above it are compute-bound."
+    },
+    {
+      "term": "memory-bound",
+      "definition": "Describes a kernel whose runtime is limited by HBM bandwidth rather than arithmetic throughput, because its arithmetic intensity falls below the ridge point (e.g. single-token decode)."
+    },
+    {
+      "term": "compute-bound",
+      "definition": "Describes a kernel whose runtime is limited by arithmetic unit throughput because its arithmetic intensity exceeds the ridge point (e.g. large matrix multiplies)."
+    },
+    {
+      "term": "warp divergence",
+      "definition": "Performance penalty when threads within a warp take different branch paths, forcing the hardware to serially execute both paths while masking inactive lanes."
+    },
+    {
+      "term": "NVLink",
+      "definition": "A high-bandwidth, low-latency intra-node interconnect between GPUs, far faster than PCIe, that makes per-layer all-reduce for tensor parallelism practical."
+    }
+  ],
+  "introduces": [
+    "warp",
+    "streaming multiprocessor (SM)",
+    "SIMT (single instruction, multiple threads)",
+    "Tensor Core",
+    "shared memory (SMEM)",
+    "high-bandwidth memory (HBM)",
+    "occupancy",
+    "arithmetic intensity",
+    "ridge point (machine balance)",
+    "warp divergence",
+    "NVLink"
+  ],
+  "prerequisites": [
+    "matrix multiplication",
+    "basic linear algebra",
+    "floating-point number formats (FP16/BF16/FP32)",
+    "Python programming",
+    "basic notion of parallel computing"
+  ],
+  "difficulty": "core",
+  "tags": ["gpu", "architecture", "systems", "optimization"]
+}

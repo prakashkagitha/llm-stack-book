@@ -1,0 +1,76 @@
+{
+  "chapter_id": "04-kernels-efficiency/04-triton-kernels",
+  "one_liner": "Write, tile, autotune, and debug fused GPU kernels (softmax, matmul, FlashAttention) in Triton.",
+  "key_terms": [
+    {
+      "term": "Triton",
+      "definition": "A Python-embedded language and compiler for writing GPU kernels at block granularity, compiling to PTX near hand-tuned CUDA speed."
+    },
+    {
+      "term": "block/tile programming model",
+      "definition": "Triton's core abstraction: a kernel program operates on a block (tile) of data at once, not scalars; the compiler handles thread mapping."
+    },
+    {
+      "term": "program_id",
+      "definition": "The Triton function `tl.program_id(axis)` returning which instance of the launch grid the current kernel invocation is, analogous to CUDA's blockIdx."
+    },
+    {
+      "term": "masking (Triton)",
+      "definition": "Passing a boolean mask to `tl.load`/`tl.store` so out-of-bounds or padded lanes are skipped or filled, keeping ragged tensor edges correct."
+    },
+    {
+      "term": "pointer-block arithmetic",
+      "definition": "Computing a vector/tensor of memory addresses by adding index offsets (via `tl.arange` and strides) to a base pointer, then loading/storing the whole block at once."
+    },
+    {
+      "term": "tiling (matmul)",
+      "definition": "Decomposing a matrix multiply into BLOCK_M x BLOCK_N output tiles, walking the K dimension in BLOCK_K steps and accumulating, to maximize on-chip data reuse."
+    },
+    {
+      "term": "L2-cache swizzle",
+      "definition": "Reordering which output tiles concurrently-running programs compute (grouping by GROUP_M) so nearby programs reuse the same A rows / B columns in L2 cache."
+    },
+    {
+      "term": "software pipelining (num_stages)",
+      "definition": "A Triton/GPU technique that overlaps loading the next loop iteration's data with compute on the current iteration to hide memory latency; deeper pipelines use more shared memory."
+    },
+    {
+      "term": "online softmax",
+      "definition": "A streaming softmax recurrence that maintains a running max (m), running sum (l), and running output (O), rescaling prior accumulations by a correction factor when the max updates, so a full row never needs to fit in memory at once."
+    },
+    {
+      "term": "correction factor (alpha)",
+      "definition": "In the online softmax recurrence, `alpha = exp(m_old - m_new)`, the rescaling factor applied to previously accumulated sum and output whenever a new block raises the running max."
+    },
+    {
+      "term": "autotuning (@triton.autotune)",
+      "definition": "A Triton decorator that benchmarks a list of kernel configs (tile sizes, num_warps, num_stages) on first launch for a given problem shape and caches the fastest one."
+    },
+    {
+      "term": "tl.atomic_add",
+      "definition": "A Triton primitive performing a race-safe read-modify-write, needed when multiple programs accumulate into the same memory address, e.g. scattering dQ contributions in FlashAttention backward."
+    }
+  ],
+  "introduces": [
+    "Triton",
+    "block/tile programming model",
+    "program_id",
+    "masking (Triton)",
+    "pointer-block arithmetic",
+    "L2-cache swizzle",
+    "software pipelining (num_stages)",
+    "correction factor (alpha)",
+    "autotuning (@triton.autotune)",
+    "tl.atomic_add"
+  ],
+  "prerequisites": [
+    "GPU architecture and memory hierarchy (SMs, warps, shared memory, HBM vs SRAM)",
+    "the roofline model (arithmetic intensity, memory- vs compute-bound)",
+    "the online softmax / FlashAttention IO-awareness idea",
+    "basic NumPy-style array broadcasting",
+    "matrix multiplication and softmax",
+    "mixed-precision (fp16/bf16 with fp32 accumulation)"
+  ],
+  "difficulty": "advanced",
+  "tags": ["gpu", "systems", "optimization", "inference"]
+}

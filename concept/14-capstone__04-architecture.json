@@ -1,0 +1,73 @@
+{
+  "chapter_id": "14-capstone/04-architecture",
+  "one_liner": "Assemble and parameter-count a from-scratch 100M-parameter transformer from named, cited 2024-2026 SOTA components.",
+  "key_terms": [
+    {
+      "term": "deep-and-thin aspect ratio",
+      "definition": "Trading network width (d_model) for depth (n_layers) at a fixed parameter budget; sub-billion models favor many narrow layers over few wide ones (MobileLLM, 2024)."
+    },
+    {
+      "term": "grouped-query attention (GQA)",
+      "definition": "Attention variant where multiple query heads share fewer key-value heads, shrinking the KV cache (here 4x) with minimal quality loss versus full multi-head attention."
+    },
+    {
+      "term": "QK-norm (query-key normalization)",
+      "definition": "RMSNorm applied to query and key vectors per head before the dot product, bounding attention-logit magnitude by construction and preventing softmax-saturation blowups at high learning rates."
+    },
+    {
+      "term": "RMSNorm (root mean square normalization)",
+      "definition": "A normalization layer that scales activations by the inverse root-mean-square (no mean-subtraction or bias), cheaper than LayerNorm and computed in fp32 for stability."
+    },
+    {
+      "term": "RoPE (rotary position embedding)",
+      "definition": "Positional encoding that rotates 2D slices of query/key vectors by an angle proportional to position, making attention scores depend only on relative offset."
+    },
+    {
+      "term": "NoPE (no positional encoding)",
+      "definition": "Omitting explicit positional encoding on certain layers, relying on the causal mask alone to convey position; interleaved every 4th layer here to aid length generalization."
+    },
+    {
+      "term": "SwiGLU",
+      "definition": "A gated MLP variant using three weight matrices (gate, up, down) with a SiLU-activated gate multiplying a linear path, replacing the vanilla two-matrix FFN."
+    },
+    {
+      "term": "z-loss",
+      "definition": "An auxiliary training penalty on the squared log-sum-exp of the output logits that keeps the softmax's log-partition function near zero, improving numerical conditioning."
+    },
+    {
+      "term": "logit soft-cap",
+      "definition": "A Gemma-2-style tanh squashing of logits, z <- c*tanh(z/c), that hard-bounds them to (-c, c); used optionally on attention or final logits for extra stability."
+    },
+    {
+      "term": "tied embeddings",
+      "definition": "Sharing a single weight matrix between the input token embedding and the output (lm_head) projection, saving parameters and improving small-model quality (Press & Wolf, 2017)."
+    },
+    {
+      "term": "multi-head latent attention (MLA)",
+      "definition": "DeepSeek-V2's attention variant that compresses K/V into a small cached latent vector, up-projecting to per-head K/V on the fly, with a decoupled RoPE key to preserve positional compatibility."
+    },
+    {
+      "term": "multi-token prediction (MTP)",
+      "definition": "An auxiliary training head (DeepSeek-V3) that predicts a token further ahead (e.g. t+2) alongside the main next-token objective, densifying the training signal and enabling self-speculative decoding."
+    }
+  ],
+  "introduces": [
+    "deep-and-thin aspect ratio",
+    "QK-norm (query-key normalization)",
+    "NoPE (no positional encoding)",
+    "z-loss",
+    "logit soft-cap",
+    "multi-head latent attention (MLA)",
+    "multi-token prediction (MTP)"
+  ],
+  "prerequisites": [
+    "the transformer block (residuals, norms, MLP)",
+    "multi-head attention and GQA/MLA basics",
+    "RoPE and positional encodings",
+    "parameter counting for linear layers",
+    "scaling laws (6ND FLOPs rule)",
+    "PyTorch nn.Module basics"
+  ],
+  "difficulty": "advanced",
+  "tags": ["architecture", "scaling", "training", "inference"]
+}
