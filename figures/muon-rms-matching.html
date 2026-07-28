@@ -1,0 +1,71 @@
+<figure class="viz" id="fig-muon-rms-matching">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 350" role="img" aria-label="Bar comparison of per-element update RMS: Muon's raw orthogonalized update has a tiny RMS around one over the square root of max dimension, a transform multiplies it by 0.2 times the square root of max dimension to lift it to RMS about 0.2, landing in the same ballpark as AdamW's per-coordinate step RMS of about 1, which is why a single learning rate can govern both optimizers.">
+<style>
+  #fig-muon-rms-matching text      { fill: var(--ink-soft,#45413a); }
+  #fig-muon-rms-matching .ttl      { font: 700 15px var(--sans,sans-serif); fill: currentColor; }
+  #fig-muon-rms-matching .lbl      { font: 700 10.5px var(--sans,sans-serif); fill: currentColor; }
+  #fig-muon-rms-matching .small    { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-muon-rms-matching .mono     { font: 600 10.5px var(--mono,monospace); }
+  #fig-muon-rms-matching .box      { fill: var(--surface-3,#ece7da); fill-opacity: 0.35; stroke: var(--border-2,#d8d1c0); stroke-width: 1.2; }
+</style>
+
+<text x="20" y="24" class="ttl">Why one learning rate governs both optimizers</text>
+<text x="20" y="42" class="small">Per-element update RMS, one shared axis (illustrative, not linear -- tiny and order-1 values shown together).</text>
+
+<!-- Bar 1: Muon raw -->
+<g data-anim="1">
+  <text x="20" y="80" class="lbl">Muon raw (UV^T)</text>
+  <rect x="170" y="70" width="6" height="18" fill="var(--accent,#c15b39)" fill-opacity="0.6"/>
+  <text x="170" y="104" class="small">RMS ~ 1/sqrt(max(m,n)) -- tiny for a 1408x512 matrix; at a normal LR</text>
+  <text x="170" y="116" class="small">the weights barely move ("dead").</text>
+</g>
+
+<!-- transform arrow -->
+<g data-anim="2">
+  <line x1="173" y1="130" x2="173" y2="170" stroke="var(--ink-soft,#45413a)" stroke-width="2" marker-end="url(#rmsArrow)"/>
+  <text x="188" y="146" class="lbl">x 0.2 * sqrt(max(m,n))</text>
+  <text x="188" y="160" class="small">lifts the raw update up to the scaled bar below</text>
+</g>
+
+<defs>
+  <marker id="rmsArrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+    <path d="M0,0 L7,4 L0,8 Z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+
+<!-- Bar 2: Muon scaled -->
+<g data-anim="3">
+  <text x="20" y="196" class="lbl">Muon scaled</text>
+  <rect x="170" y="182" width="130" height="18" fill="var(--accent,#c15b39)"/>
+  <text x="308" y="196" class="mono" fill="var(--accent,#c15b39)">RMS ~ 0.2</text>
+</g>
+
+<!-- Bar 3: AdamW reference -->
+<g data-anim="3">
+  <text x="20" y="230" class="lbl">AdamW step</text>
+  <text x="20" y="242" class="small">(per-coordinate)</text>
+  <rect x="170" y="216" width="380" height="18" fill="var(--surface-3,#ece7da)" stroke="var(--muted,#6d675d)" stroke-width="1.2"/>
+  <text x="558" y="230" class="mono" fill="var(--ink-soft,#45413a)">RMS ~ 1</text>
+</g>
+
+<!-- brace spanning bars 2 and 3 -->
+<g data-anim="4">
+  <path d="M618,182 Q 636,182 636,196 Q 636,210 652,210 Q 636,210 636,224 Q 636,234 618,234"
+        fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+  <text x="664" y="204" class="small" fill="var(--good,#2f9e6e)">same</text>
+  <text x="664" y="216" class="small" fill="var(--good,#2f9e6e)">ballpark</text>
+  <text x="20" y="266" class="small" fill="var(--good,#2f9e6e)">=&gt; one conceptual LR governs both (Muon ~0.02, AdamW ~3e-3).</text>
+</g>
+
+<!-- derivation note -->
+<g data-anim="5">
+  <rect x="20" y="280" width="740" height="58" rx="6" class="box"/>
+  <text x="34" y="298" class="small">Derivation: a semi-orthogonal m x n matrix has min(m,n) unit singular values =&gt; Frobenius norm</text>
+  <text x="34" y="312" class="small">sqrt(min(m,n)), spread over m*n entries =&gt; RMS = sqrt(min(m,n)/(m*n)) = 1/sqrt(max(m,n)).</text>
+  <text x="34" y="330" class="small" fill="var(--muted,#6d675d)">Forget the 0.2*sqrt(max(m,n)) scale and the run looks stalled -- check this first.</text>
+</g>
+
+</svg>
+<figcaption><b>Muon's raw orthogonalized update has RMS ~ 1/sqrt(max(m,n)) -- tiny -- so the 0.2*sqrt(max(m,n)) rescale is what lifts it into AdamW's ballpark.</b> A semi-orthogonal update spreads a Frobenius norm of sqrt(min(m,n)) over m*n entries; multiplying by 0.2*sqrt(max(m,n)) brings the per-element RMS to ~0.2, next to AdamW's per-coordinate RMS of ~1, which is exactly what lets a single conceptual learning rate govern both optimizers.</figcaption>
+</figure>

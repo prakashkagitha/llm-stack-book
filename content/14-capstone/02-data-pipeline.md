@@ -38,6 +38,8 @@ That is roughly $10\times$ the compute of the Chinchilla-optimal 2B-token run fo
 
     **A:** It's training-compute-inefficient but can be deployment-compute-efficient, and those are different objectives. Chinchilla optimizes $\min_{N,D} L(N,D)$ subject to $C=6ND$ fixed — it never sees an inference cost term. If the model will be served many times, the relevant objective is closer to $\min_N \big[L(N, D) + \lambda \cdot (\text{inference cost as a function of } N)\big]$ for whatever token budget $D$ you're willing to spend once. Since inference cost scales with $N$ (roughly linearly in FLOPs/token, and directly in memory footprint), shrinking $N$ and over-training on more $D$ trades a one-time training cost for a permanent inference-cost reduction. This is exactly the reasoning behind Llama 3 8B's ~15T-token run and small models like SmolLM2 — and it's why "Chinchilla-optimal" and "the model you should actually ship" are frequently different points on the loss curve.
 
+{{fig:overtrain-deployment-economics}}
+
 ## The Stack-100M Data Mix
 
 We follow the recipe popularized by HuggingFace's SmolLM series: a large base of filtered educational web text, topped up with synthetic textbooks and a slice of code and math, rather than raw, undifferentiated Common Crawl. The mix, fixed in `capstone/PLAN.md` §2:
@@ -171,6 +173,8 @@ def synthetic_corpus(entry: DataMixEntry, n_docs: int = 2000) -> Iterator[dict]:
         doc_id = hashlib.sha1(f"{entry.name}-{i}".encode()).hexdigest()[:12]
         yield {"text": text, "source": entry.name, "domain": entry.domain, "doc_id": doc_id}
 ```
+
+{{fig:data-pipeline-funnel}}
 
 ## Quality Filtering and Deduplication
 
@@ -395,6 +399,8 @@ Run in sequence — `near_dedup(list(exact_dedup(stream_source(entry))))` — th
 
     The `(bands, rows)` split determines the near-duplicate detection threshold, not just a performance knob. With `num_perm=128` and `bands=16` (so `rows=8`), the probability two documents at true Jaccard similarity $J$ are flagged as candidates is approximately $1-(1-J^{8})^{16}$ — an S-curve whose steep transition sits near the classic LSH threshold approximation $(1/\text{bands})^{1/\text{rows}} = (1/16)^{1/8}\approx 0.71$ (numerically the curve climbs from $\approx0.06$ at $J=0.5$ to $\approx0.62$ at $J=0.7$ to $\approx0.95$ at $J=0.8$). Fewer, fatter bands (say `bands=8`, `rows=16`) push that threshold higher — to $(1/8)^{1/16}\approx 0.88$ — and catch fewer near-duplicates; more, thinner bands lower it, catching more but also more false positives that then need the `estimate_jaccard` re-check to filter out. Note that candidate generation and the final decision are deliberately decoupled: the band structure is tuned to over-generate candidates around $J\approx0.7$, and `near_dedup`'s explicit `threshold=0.8` re-check on the full signature is what actually decides a drop. Always plot or sanity-check this curve for your chosen `(bands, rows)` before trusting the dedup rate — a silently wrong threshold either wastes token budget on undetected duplicates or discards genuinely distinct documents that happen to share common phrasing.
 
+{{fig:minhash-lsh-band-scurve}}
+
 ## Tokenizing and Packing to 2048 with Document-Aware Attention
 
 Two things happen at once in this stage: text becomes token IDs, and token IDs from many short documents get concatenated into fixed-length windows of `SEQ_LEN=2048` (`Stack-100M`'s pretraining context, per `capstone/PLAN.md` §1) — because training on ragged, individually-padded sequences wastes enormous compute on pad tokens when the median FineWeb-Edu document is far shorter than 2048 tokens. Packing multiple documents into one window recovers that compute, but naively concatenating documents lets attention flow *across* document boundaries: token 40 of document B would attend to token 2000 of unrelated document A, and RoPE's relative-position machinery ([Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)) would treat B's tokens as continuing A's position sequence. Both are wrong, and both need fixing at pack time:
@@ -520,6 +526,8 @@ def build_intra_doc_causal_mask(position_ids: np.ndarray) -> np.ndarray:
     - Window 2: tokens `[eos bos c1 c2 c3 c4 c5 eos]`, positions `[3 0 1 2 3 4 5 6]`
 
     In window 1, `doc_id = cumsum(position==0) = [1 1 1 1 1 2 2 2]` — token 5 (`bos` of B) starts segment 2. Token 7 (`b2`, position 2) may attend to tokens 5 and 6 (B's own `bos`/`b1`) but **not** to tokens 0–4 (all of document A), even though they sit earlier in the same physical window. That is the entire mechanism: one `cumsum` over a boolean array recovers exact document boundaries from position ids alone.
+
+{{fig:doc-aware-packing-mask}}
 
 ## Sharding to uint16 memmap Files and a Streaming Dataset
 

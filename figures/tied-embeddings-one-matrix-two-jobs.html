@@ -1,0 +1,103 @@
+<figure class="viz" id="fig-tied-embeddings-one-matrix-two-jobs">
+<svg viewBox="0 0 760 560" role="img" aria-label="A single 32,768 by 512 embedding matrix E serves two jobs: on the input side a token id selects one row to become that token's 512-dimensional vector, and on the output side a 512-dimensional hidden state is multiplied by E transpose to produce 32,768 logits. Tying the two saves 16.78 million parameters, worth about six transformer layers of depth, for one line of code.">
+<defs>
+  <marker id="temj-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <marker id="temj-arrow-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+  </marker>
+  <style>
+    #fig-tied-embeddings-one-matrix-two-jobs text { fill: var(--ink-soft,#333); }
+    #fig-tied-embeddings-one-matrix-two-jobs .chip-txt { font: 700 11.5px var(--sans,sans-serif); }
+    #fig-tied-embeddings-one-matrix-two-jobs .chip-txt-sm { font: 500 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-tied-embeddings-one-matrix-two-jobs .arrow-lbl { font: 600 10.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tied-embeddings-one-matrix-two-jobs .arrow-lbl-m { font: 600 10.5px var(--sans,sans-serif); fill: var(--muted,#888); }
+    #fig-tied-embeddings-one-matrix-two-jobs .mat-lbl { font: 700 12.5px var(--mono,monospace); }
+    #fig-tied-embeddings-one-matrix-two-jobs .mat-big { font: 700 20px var(--mono,monospace); fill: var(--accent,#c15b39); }
+    #fig-tied-embeddings-one-matrix-two-jobs .caption-mid { font: 600 12.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); font-style: italic; }
+    #fig-tied-embeddings-one-matrix-two-jobs .grp-title { font: 700 12px var(--sans,sans-serif); }
+    #fig-tied-embeddings-one-matrix-two-jobs .bar-txt { font: 600 11px var(--sans,sans-serif); fill: #fff; }
+    #fig-tied-embeddings-one-matrix-two-jobs .save-txt { font: 700 12.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-tied-embeddings-one-matrix-two-jobs .save-code { font: 600 11px var(--mono,monospace); fill: var(--accent,#c15b39); }
+    #fig-tied-embeddings-one-matrix-two-jobs .footnote { font: 400 10.5px var(--sans,sans-serif); fill: var(--muted,#777); font-style: italic; }
+    #fig-tied-embeddings-one-matrix-two-jobs .untied-seg { fill: var(--muted,#888); fill-opacity: 0.55; }
+    #fig-tied-embeddings-one-matrix-two-jobs .tied-seg { fill: var(--accent,#c15b39); fill-opacity: 0.7; }
+  </style>
+</defs>
+
+<!-- ============ MATRIX E ============ -->
+<g data-anim="1">
+  <rect x="330" y="90" width="100" height="180" rx="6" fill="var(--surface-3,#eee)" stroke="var(--v-stroke,#888)" stroke-width="1.4"/>
+  <text x="380" y="185" text-anchor="middle" class="mat-big">E</text>
+  <text x="380" y="286" text-anchor="middle" class="mat-lbl">E : 32,768 x 512 (16.8M params)</text>
+</g>
+
+<!-- input row highlight -->
+<g data-anim="2">
+  <rect x="330" y="150" width="100" height="10" fill="var(--accent,#c15b39)" fill-opacity="0.5"/>
+  <circle cx="330" cy="155" r="4" fill="var(--accent,#c15b39)"/>
+</g>
+
+<!-- INPUT path (left) -->
+<g data-anim="2">
+  <rect x="30" y="110" width="140" height="38" rx="6" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="1.2"/>
+  <text x="100" y="133.5" text-anchor="middle" class="chip-txt">token id</text>
+
+  <path d="M 170 129 L 322 154" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#temj-arrow)"/>
+  <text x="245" y="122" text-anchor="middle" class="arrow-lbl">row lookup</text>
+
+  <path d="M 330 160 L 172 245" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.8" marker-end="url(#temj-arrow)"/>
+  <text x="245" y="204" text-anchor="middle" class="arrow-lbl">= 512-dim vector</text>
+
+  <rect x="30" y="248" width="140" height="38" rx="6" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="1.2"/>
+  <text x="100" y="268" text-anchor="middle" class="chip-txt">512-dim vector</text>
+  <text x="100" y="281" text-anchor="middle" class="chip-txt-sm">token's input embedding</text>
+</g>
+
+<!-- OUTPUT path (right) -->
+<g data-anim="3">
+  <rect x="590" y="110" width="140" height="38" rx="6" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="1.2"/>
+  <text x="660" y="133.5" text-anchor="middle" class="chip-txt">hidden state</text>
+
+  <path d="M 590 129 L 438 154" fill="none" stroke="var(--v-stroke,#888)" stroke-width="1.8" marker-end="url(#temj-arrow-m)"/>
+  <text x="515" y="122" text-anchor="middle" class="arrow-lbl-m">x E^T</text>
+
+  <path d="M 430 172 L 588 249" fill="none" stroke="var(--v-stroke,#888)" stroke-width="1.8" marker-end="url(#temj-arrow-m)"/>
+  <text x="515" y="204" text-anchor="middle" class="arrow-lbl-m">32,768 logits</text>
+
+  <rect x="590" y="248" width="150" height="46" rx="6" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="1.2"/>
+  <text x="665" y="267" text-anchor="middle" class="chip-txt">32,768 logits</text>
+  <text x="665" y="280" text-anchor="middle" class="chip-txt-sm">distribution over next token</text>
+</g>
+
+<text x="380" y="322" text-anchor="middle" class="caption-mid">same weights, two jobs (Press &amp; Wolf, 2017)</text>
+
+<line x1="40" y1="344" x2="720" y2="344" stroke="var(--v-grid,#ccc)" stroke-width="1"/>
+
+<!-- ============ UNTIED vs TIED bars ============ -->
+<g data-anim="4">
+  <text x="110" y="368" class="grp-title">UNTIED: 2 x 16.78M = 33.55M params</text>
+  <rect x="110" y="376" width="500" height="30" rx="4" class="untied-seg" stroke="var(--v-stroke,#888)" stroke-width="1"/>
+  <line x1="360" y1="376" x2="360" y2="406" stroke="var(--surface,#fff)" stroke-width="1.5"/>
+  <text x="235" y="395.5" text-anchor="middle" class="bar-txt">input embed 16.78M</text>
+  <text x="485" y="395.5" text-anchor="middle" class="bar-txt">output embed 16.78M</text>
+</g>
+
+<g data-anim="5">
+  <text x="110" y="436" class="grp-title">TIED (Stack-100M): 16.78M params</text>
+  <rect x="110" y="444" width="250" height="30" rx="4" class="tied-seg" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="235" y="463.5" text-anchor="middle" class="bar-txt">E (input + output) 16.78M</text>
+</g>
+
+<g data-anim="5">
+  <rect x="60" y="490" width="640" height="40" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.08" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="380" y="507" text-anchor="middle" class="save-txt">saved 16.78M params ~= 6 transformer layers of depth</text>
+  <text x="380" y="522" text-anchor="middle" class="save-code">for one line: lm_head.weight = embed.weight</text>
+</g>
+
+<text x="380" y="546" text-anchor="middle" class="footnote">the catch: one 512-dim space now does double duty (softmax bottleneck)</text>
+
+</svg>
+<figcaption><b>Weight tying: one <code>V x d_model</code> matrix does the job of two.</b> The same embedding matrix <code>E</code> serves as a row-lookup table on the input side and, transposed, as the logit projection on the output side -- so its 16.78M parameters are paid once instead of twice. At Stack-100M's scale that saving is worth roughly six transformer layers of additional depth, for a one-line change.</figcaption>
+</figure>

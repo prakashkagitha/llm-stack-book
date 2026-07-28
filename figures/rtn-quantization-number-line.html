@@ -1,0 +1,146 @@
+<figure class="viz" id="fig-rtn-quantization-number-line">
+<button class="viz-replay" type="button">replay</button>
+<svg viewBox="0 0 760 430" role="img" aria-label="Round-to-nearest quantization contrasted: symmetric scheme centers the integer grid on zero and wastes codes on a skewed group, while asymmetric scheme uses the full min-to-max range with an explicit zero-point.">
+  <defs>
+    <marker id="rtn-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rtn-quantization-number-line text{ fill:var(--ink-soft); }
+    #fig-rtn-quantization-number-line .hdr{ font:700 13px var(--sans,sans-serif); }
+    #fig-rtn-quantization-number-line .lbl{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-rtn-quantization-number-line .mono{ font:600 11px var(--mono,monospace); }
+    #fig-rtn-quantization-number-line .small{ font:500 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-rtn-quantization-number-line .cap{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rtn-quantization-number-line .err{ fill:var(--warn,#e0a106); }
+    #fig-rtn-quantization-number-line .snap{ stroke:var(--accent2,#3b82f6); }
+  </style>
+
+  <!-- ============ TOP: SYMMETRIC ============ -->
+  <g data-anim="1">
+    <text x="16" y="24" class="hdr" fill="var(--accent)">SYMMETRIC round-to-nearest (3-bit shown for legibility)</text>
+    <text x="700" y="24" text-anchor="end" class="cap">grid: -(2^(b-1)-1) .. +(2^(b-1)-1)</text>
+
+    <!-- integer grid ticks (7 levels: -3..+3) -->
+    <g class="v-grid" stroke="currentColor" stroke-width="1" opacity="0.6">
+      <line x1="60"  y1="52" x2="60"  y2="70"/>
+      <line x1="153" y1="52" x2="153" y2="70"/>
+      <line x1="247" y1="52" x2="247" y2="70"/>
+      <line x1="340" y1="52" x2="340" y2="70"/>
+      <line x1="433" y1="52" x2="433" y2="70"/>
+      <line x1="527" y1="52" x2="527" y2="70"/>
+      <line x1="620" y1="52" x2="620" y2="70"/>
+    </g>
+    <text x="60"  y="46" text-anchor="middle" class="mono">-3</text>
+    <text x="153" y="46" text-anchor="middle" class="mono">-2</text>
+    <text x="247" y="46" text-anchor="middle" class="mono">-1</text>
+    <text x="340" y="46" text-anchor="middle" class="mono">0</text>
+    <text x="433" y="46" text-anchor="middle" class="mono">1</text>
+    <text x="527" y="46" text-anchor="middle" class="mono">2</text>
+    <text x="620" y="46" text-anchor="middle" class="mono">3</text>
+
+    <!-- real number line centered on 0, -max|w| .. +max|w| -->
+    <line x1="60" y1="90" x2="620" y2="90" class="v-stroke" stroke="currentColor" stroke-width="1.3"/>
+    <line x1="60" y1="84" x2="60" y2="96" class="v-stroke" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="620" y1="84" x2="620" y2="96" class="v-stroke" stroke="currentColor" stroke-width="1.2"/>
+    <text x="60" y="112" text-anchor="middle" class="mono">-max|w|</text>
+    <text x="620" y="112" text-anchor="end" class="mono">+max|w|</text>
+    <text x="340" y="112" text-anchor="middle" class="mono">0</text>
+
+    <!-- 7 scattered real weight dots: a few near zero, one near positive extreme (outlier) -->
+    <!-- positions chosen to look irregular, mapped near grid ticks for the snap arrows -->
+    <circle cx="322" cy="90" r="4" fill="var(--accent)"/>
+    <circle cx="355" cy="90" r="4" fill="var(--accent)"/>
+    <circle cx="268" cy="90" r="4" fill="var(--accent)"/>
+    <circle cx="415" cy="90" r="4" fill="var(--accent)"/>
+    <circle cx="175" cy="90" r="4" fill="var(--accent)"/>
+    <circle cx="490" cy="90" r="4" fill="var(--accent)"/>
+    <circle cx="602" cy="90" r="5" class="err" fill="var(--warn,#e0a106)"/>
+    <text x="602" y="128" text-anchor="middle" class="small err">outlier sets the scale</text>
+
+    <!-- snap arrows from each dot up to nearest grid tick -->
+    <path d="M322 86 Q330 76 340 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M355 86 Q347 76 340 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M268 86 Q258 76 247 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M415 86 Q424 76 433 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M175 86 Q164 76 153 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M490 86 Q509 76 527 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M602 86 Q611 76 620 72" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+
+    <!-- residual gap shaded for one representative dot (322 -> 340) -->
+    <rect x="322" y="98" width="18" height="6" fill="var(--warn,#e0a106)" fill-opacity="0.35"/>
+    <text x="331" y="118" text-anchor="middle" class="small err">quantization error</text>
+
+    <!-- clip marker at extreme -->
+    <line x1="620" y1="80" x2="620" y2="100" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="3 2"/>
+    <text x="628" y="90" text-anchor="start" class="small err">clip</text>
+
+    <rect x="16" y="140" width="704" height="24" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="368" y="156" text-anchor="middle" class="mono" fill="var(--accent)">s = max|w| / (2^(b-1)-1)</text>
+  </g>
+
+  <!-- divider -->
+  <line x1="16" y1="182" x2="720" y2="182" class="v-grid" stroke="currentColor" stroke-width="1" opacity="0.4" stroke-dasharray="3 3"/>
+
+  <!-- ============ BOTTOM: ASYMMETRIC ============ -->
+  <g data-anim="2">
+    <text x="16" y="206" class="hdr" fill="var(--accent)">ASYMMETRIC round-to-nearest</text>
+    <text x="700" y="206" text-anchor="end" class="cap">grid: 0 .. 2^b-1, full unsigned range</text>
+
+    <!-- integer grid 0..7 (3-bit unsigned, 2^b-1=7) -->
+    <g class="v-grid" stroke="currentColor" stroke-width="1" opacity="0.6">
+      <line x1="180" y1="234" x2="180" y2="252"/>
+      <line x1="257" y1="234" x2="257" y2="252"/>
+      <line x1="335" y1="234" x2="335" y2="252"/>
+      <line x1="412" y1="234" x2="412" y2="252"/>
+      <line x1="490" y1="234" x2="490" y2="252"/>
+      <line x1="567" y1="234" x2="567" y2="252"/>
+      <line x1="645" y1="234" x2="645" y2="252"/>
+    </g>
+    <text x="180" y="228" text-anchor="middle" class="mono">0</text>
+    <text x="257" y="228" text-anchor="middle" class="mono">1</text>
+    <text x="335" y="228" text-anchor="middle" class="mono">2</text>
+    <text x="412" y="228" text-anchor="middle" class="mono">3</text>
+    <text x="490" y="228" text-anchor="middle" class="mono">4</text>
+    <text x="567" y="228" text-anchor="middle" class="mono">5</text>
+    <text x="645" y="228" text-anchor="middle" class="mono">6/7</text>
+
+    <!-- real number line, min(w)..max(w), skewed positive -->
+    <line x1="180" y1="272" x2="645" y2="272" class="v-stroke" stroke="currentColor" stroke-width="1.3"/>
+    <line x1="180" y1="266" x2="180" y2="278" class="v-stroke" stroke="currentColor" stroke-width="1.2"/>
+    <line x1="645" y1="266" x2="645" y2="278" class="v-stroke" stroke="currentColor" stroke-width="1.2"/>
+    <text x="180" y="294" text-anchor="middle" class="mono">min(w)</text>
+    <text x="645" y="294" text-anchor="end" class="mono">max(w)</text>
+
+    <!-- weights skewed positive: cluster toward the right half of the line -->
+    <circle cx="205" cy="272" r="4" fill="var(--accent)"/>
+    <circle cx="420" cy="272" r="4" fill="var(--accent)"/>
+    <circle cx="470" cy="272" r="4" fill="var(--accent)"/>
+    <circle cx="510" cy="272" r="4" fill="var(--accent)"/>
+    <circle cx="555" cy="272" r="4" fill="var(--accent)"/>
+    <circle cx="595" cy="272" r="4" fill="var(--accent)"/>
+    <circle cx="630" cy="272" r="4" fill="var(--accent)"/>
+    <text x="410" y="310" text-anchor="middle" class="small cap">weights skewed positive -&gt; symmetric grid above would waste its negative half</text>
+
+    <!-- snap arrows for a couple of representative points -->
+    <path d="M205 268 Q192 252 180 250" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+    <path d="M630 268 Q638 252 645 250" fill="none" class="snap" stroke-width="1.3" marker-end="url(#rtn-arr)"/>
+
+    <!-- zero-point marker: integer grid index z maps back to real value 0 -->
+    <circle cx="180" cy="272" r="5" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <line x1="180" y1="252" x2="180" y2="234" stroke="var(--good,#2f9e6e)" stroke-width="1.4" stroke-dasharray="2 2"/>
+    <text x="150" y="325" text-anchor="middle" class="small" fill="var(--good,#2f9e6e)">q = z is the</text>
+    <text x="150" y="337" text-anchor="middle" class="small" fill="var(--good,#2f9e6e)">grid index</text>
+    <text x="150" y="349" text-anchor="middle" class="small" fill="var(--good,#2f9e6e)">for real 0</text>
+
+    <rect x="16" y="366" width="704" height="24" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="368" y="382" text-anchor="middle" class="mono" fill="var(--accent)">s = (max(w) - min(w)) / (2^b - 1),  z = round(-min(w) / s)</text>
+  </g>
+
+  <g data-anim="3">
+    <text x="368" y="412" text-anchor="middle" class="cap">symmetric wastes half the codes on a skewed group; asymmetric uses the full 0..2^b-1 range</text>
+  </g>
+</svg>
+<figcaption><b>Round-to-nearest snaps each real weight to its closest point on an evenly spaced integer grid, then dequantizes with a leftover residual.</b> Symmetric quantization centers the grid on zero and sizes it from <code>max|w|</code> — simple, but a skewed group of weights (all positive, say) leaves half the codes unused. Asymmetric quantization instead spans <code>[min(w), max(w)]</code> with an explicit zero-point <code>z</code> marking which integer code decodes back to real 0, using every code in <code>0..2^b-1</code>.</figcaption>
+</figure>

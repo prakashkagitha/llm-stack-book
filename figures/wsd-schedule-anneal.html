@@ -1,0 +1,112 @@
+<figure class="viz" id="fig-wsd-schedule-anneal">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 500" role="img" aria-label="Three stacked lanes sharing a training-step axis: the learning rate ramps linearly through warmup, holds flat through an extendable stable phase, then decays with a one minus square root curve to near zero, contrasted with a dashed cosine curve that decays immediately after warmup and floors above zero; the data mix shifts from bulk FineWeb-Edu during the stable phase to premium Cosmopedia, math, and code during decay; and the loss drifts down gently then drops sharply once decay begins.">
+<style>
+  #fig-wsd-schedule-anneal text      { fill: var(--ink-soft,#45413a); }
+  #fig-wsd-schedule-anneal .ttl      { font: 700 15px var(--sans,sans-serif); fill: currentColor; }
+  #fig-wsd-schedule-anneal .hdr      { font: 700 12px var(--sans,sans-serif); fill: currentColor; }
+  #fig-wsd-schedule-anneal .lbl      { font: 600 10px var(--sans,sans-serif); }
+  #fig-wsd-schedule-anneal .small    { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-wsd-schedule-anneal .mono     { font: 600 10px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-wsd-schedule-anneal .axis     { stroke: var(--border-2,#d8d1c0); stroke-width: 1.3; }
+  #fig-wsd-schedule-anneal .bandline { stroke: var(--border-2,#d8d1c0); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.8; }
+</style>
+
+<text x="20" y="24" class="ttl">Warmup-Stable-Decay vs. cosine: one shared step axis, three lanes</text>
+
+<!-- shared x geometry: x0=100 (step 0), Tw=190, Ts=530, T=740 -->
+
+<g data-anim="1">
+  <rect x="100" y="46" width="90"  height="418" fill="var(--surface-3,#ece7da)" fill-opacity="0.35"/>
+  <rect x="190" y="46" width="340" height="418" fill="var(--accent,#c15b39)" fill-opacity="0.06"/>
+  <rect x="530" y="46" width="210" height="418" fill="var(--warn,#e0a106)" fill-opacity="0.10"/>
+  <line class="bandline" x1="190" y1="46" x2="190" y2="464"/>
+  <line class="bandline" x1="530" y1="46" x2="530" y2="464"/>
+  <line class="bandline" x1="740" y1="46" x2="740" y2="464"/>
+
+  <text x="145" y="58" text-anchor="middle" class="small">Warmup</text>
+  <text x="360" y="58" text-anchor="middle" class="small">Stable</text>
+  <text x="635" y="58" text-anchor="middle" class="small">Decay</text>
+  <text x="635" y="70" text-anchor="middle" class="small">= mid-training annealing, Ch 14.8</text>
+</g>
+
+<!-- LANE 1: learning rate -->
+<g data-anim="2">
+  <text x="20" y="90" class="hdr">learning rate eta(t)</text>
+  <line class="axis" x1="100" y1="196" x2="740" y2="196"/>
+
+  <!-- cosine dashed comparison (drawn first, underneath): decays right after warmup, floors above 0 -->
+  <path d="M190,94 C 230,120 270,160 300,165 L 740,165"
+        fill="none" stroke="var(--muted,#6d675d)" stroke-width="2" stroke-dasharray="5 4"/>
+
+  <!-- WSD curve: linear warmup, flat stable, 1-sqrt decay -->
+  <path d="M100,196 L190,94 L530,94
+           C 580,94 610,100 650,124
+           C 685,146 710,172 740,196"
+        fill="none" stroke="var(--accent,#c15b39)" stroke-width="2.6"/>
+
+  <text x="200" y="86" class="lbl" fill="var(--accent,#c15b39)">eta_max</text>
+
+  <!-- inline "extend at will" annotation on the plateau, away from other labels -->
+  <line x1="345" y1="82" x2="420" y2="82" stroke="var(--ink-soft,#45413a)" stroke-width="1.6" marker-end="url(#wsdArrow)"/>
+  <text x="382" y="112" text-anchor="middle" class="small">extend at will -&gt;</text>
+
+  <!-- axis tick labels -->
+  <text x="100" y="212" text-anchor="middle" class="mono">0</text>
+  <text x="190" y="212" text-anchor="middle" class="mono">T_w</text>
+  <text x="530" y="212" text-anchor="middle" class="mono">T_s</text>
+  <text x="740" y="212" text-anchor="middle" class="mono">T</text>
+
+  <!-- legend -->
+  <line x1="110" y1="228" x2="140" y2="228" stroke="var(--accent,#c15b39)" stroke-width="2.6"/>
+  <text x="148" y="232" class="small">WSD: extend the stable plateau at will; decay (1-sqrt) runs all the way to ~0.</text>
+  <line x1="110" y1="246" x2="140" y2="246" stroke="var(--muted,#6d675d)" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="148" y="250" class="small">cosine: decays right after warmup and floors above 0 -- no extend option, no clean annealing hook.</text>
+</g>
+
+<defs>
+  <marker id="wsdArrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+    <path d="M0,0 L8,4 L0,8 Z" fill="var(--ink-soft,#45413a)"/>
+  </marker>
+</defs>
+
+<!-- LANE 2: data mix -->
+<g data-anim="3">
+  <text x="20" y="284" class="hdr">data mix</text>
+  <rect x="100" y="296" width="430" height="34" rx="4" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="315" y="318" text-anchor="middle" class="small">bulk FineWeb-Edu</text>
+
+  <defs>
+    <linearGradient id="wsdMixGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="var(--surface-3,#ece7da)"/>
+      <stop offset="100%" stop-color="var(--warn,#e0a106)" stop-opacity="0.35"/>
+    </linearGradient>
+  </defs>
+  <rect x="530" y="296" width="210" height="34" rx="4" fill="url(#wsdMixGrad)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2"/>
+  <text x="635" y="318" text-anchor="middle" class="small">Cosmopedia / math / code</text>
+</g>
+
+<!-- LANE 3: loss -->
+<g data-anim="4">
+  <text x="20" y="360" class="hdr">loss</text>
+  <line class="axis" x1="100" y1="440" x2="740" y2="440"/>
+  <path d="M100,376 C 250,384 400,394 530,400
+           C 570,414 600,422 630,432
+           C 665,440 700,443 740,444"
+        fill="none" stroke="var(--accent2,#3b82f6)" stroke-width="2.4"/>
+  <circle cx="530" cy="400" r="3.4" fill="var(--accent2,#3b82f6)"/>
+  <text x="545" y="404" class="small" text-anchor="start">low LR + high-quality data = polish</text>
+  <text x="612" y="424" class="small" fill="var(--accent2,#3b82f6)" text-anchor="start">sharp drop</text>
+
+  <text x="100" y="456" text-anchor="middle" class="mono">0</text>
+  <text x="190" y="456" text-anchor="middle" class="mono">T_w</text>
+  <text x="530" y="456" text-anchor="middle" class="mono">T_s</text>
+  <text x="740" y="456" text-anchor="middle" class="mono">T</text>
+</g>
+
+<text x="20" y="474" class="small">Axis labels are symbolic (T_w = warmup end, T_s = stable end, T = final step); the stable plateau has no fixed length --</text>
+<text x="20" y="486" class="small">extend it, or branch multiple decay runs off the same stable checkpoint.</text>
+
+</svg>
+<figcaption><b>WSD trades cosine's baked-in endpoint for an extendable flat plateau and a decay phase that doubles as the data-annealing window.</b> The learning rate ramps up through warmup, holds flat through a stable phase you can extend at will (no total-step commitment), then follows a 1-sqrt decay to ~0 -- unlike cosine, which starts decaying right after warmup and typically floors above zero. That decay phase is exactly where the data mix shifts from bulk FineWeb-Edu to premium Cosmopedia/math/code, producing WSD's characteristic sharp loss drop.</figcaption>
+</figure>

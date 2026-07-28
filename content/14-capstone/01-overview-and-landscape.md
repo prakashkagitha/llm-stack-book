@@ -59,6 +59,8 @@ The finished artifact has a name — **Stack-100M** — and it lives in a reposi
 
 Each of those chapters cross-links back to the relevant deep-dive chapter elsewhere in the book — the capstone teaches *integration*, the main chapters teach *mechanism*. Where this chapter references a mechanism in passing, you will find the full treatment linked.
 
+{{fig:capstone-lifecycle-arc}}
+
 ### Narrow but real: setting honest expectations
 
 We use the phrase "narrow but real" throughout Part XIV, so it is worth defining precisely, because it is the single most important expectation-setting sentence in this capstone.
@@ -97,6 +99,8 @@ Stack-100M trains on **~20B tokens** — roughly **200 tokens per parameter**, a
 
 Chinchilla's calculation only accounts for the cost of *training*. It says nothing about what happens after you ship the model — every one of the millions or billions of inference calls a deployed model serves. Training compute is a one-time cost; inference compute recurs forever. If over-training a smaller model past its Chinchilla-optimal point buys you a meaningfully lower loss *at a fixed, cheap-to-serve parameter count*, that trade is almost always worth it for anything you intend to actually deploy, because you pay the extra training FLOPs once and save the larger model's extra inference FLOPs on every single call thereafter. This is exactly the logic Meta used to justify Llama's ratios and that essentially every subsequent open small-model release (SmolLM2/3, Qwen3, MobileLLM) has followed. The data-scaling term $B/D^\beta$ in the Chinchilla loss curve keeps paying off well past the "optimal" point — it just pays off *less per FLOP* than growing $N$ would, which is precisely the trade you are willing to make when parameter count (and therefore serving cost) is the constraint you actually care about, not training FLOPs.
 
+{{fig:compute-vs-deployment-optimal}}
+
 ### Force 2 — data quality over raw quantity
 
 GPT-2's WebText was scraped, filtered for outbound Reddit links with a minimum karma, and deduplicated — a reasonable 2019 pipeline, but crude by 2026 standards. The modern pretraining data stack (built out fully in [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) and [Synthetic Data for Pre- and Post-Training](../03-pretraining/15-synthetic-data.html)) does two things GPT-2's data did not:
@@ -111,6 +115,8 @@ At fixed token count, cleaner and denser data means every one of your 20B traini
 The third force is the collection of small, individually modest architectural and optimization changes since the original Transformer that compound into a large improvement when stacked together: RMSNorm instead of LayerNorm (cheaper, and empirically as stable — see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html)), SwiGLU instead of a plain ReLU/GELU MLP, RoPE instead of learned absolute positions (see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)), GQA to shrink the KV cache (see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)), and — newer still — optimizers like Muon that condition the update geometry of 2D weight matrices far better than plain AdamW (see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html)), paired with schedules like WSD that decouple "how long do I train" from "when do I decay," making mid-run data-mix changes cheap.
 
 None of these changes individually is worth more than a few percent of loss. Stacked, and combined with over-training and data quality, they are the difference between a 2019-quality 100M model and a 2026-quality one.
+
+{{fig:three-forces-2019-to-2026}}
 
 ---
 
@@ -263,6 +269,8 @@ Running this prints an embedding of 16,777,216 (16.78M), an attention block of 6
     **Q:** You are given a fixed parameter budget and told to train the best model you can, to be deployed and served many times. Explain why you would deliberately train past the Chinchilla-optimal token count, and quantify what you are trading away.
 
     **A:** Chinchilla-optimal minimizes loss *per unit of training compute* — it answers "how do I get the best model for a fixed training FLOP budget," treating training as the only cost. But a deployed model's cost is dominated by *inference*, which recurs on every call, while training is a one-time cost. Given a fixed parameter count (which determines serving cost and latency), you want to minimize loss *for that fixed size*, and the data-scaling term of the loss curve, $B/D^\beta$, keeps improving well past the Chinchilla ratio — it just costs more training FLOPs per unit of improvement than it would to instead grow $N$. You are trading extra, one-time training compute (in Stack-100M's case, roughly 10× the Chinchilla-optimal token count) for a lower loss at a serving cost you have already fixed. The trade only makes sense if you actually plan to serve the model enough times that the one-time training cost is amortized — which is the deployment case, not the "just want the lowest-loss model for this FLOP budget" case Chinchilla itself answers.
+
+{{fig:stack100m-param-budget}}
 
 ---
 

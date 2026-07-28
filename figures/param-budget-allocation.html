@@ -1,0 +1,91 @@
+<figure class="viz" id="fig-param-budget-allocation">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 520" role="img" aria-label="Stacked bar showing the 101.3 million Stack-100M parameters split into a 16.78 million tied embedding and an 84.5 million 30-layer body, with a zoom into one block showing SwiGLU at 2.163 million dominating attention at 0.655 million, plus a ledger of small-model levers that free budget for extra layers.">
+<style>
+  #fig-param-budget-allocation text     { fill: var(--ink-soft,#45413a); }
+  #fig-param-budget-allocation .ttl     { font: 700 15.5px var(--sans,sans-serif); fill: currentColor; }
+  #fig-param-budget-allocation .sub     { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-param-budget-allocation .hdr     { font: 700 12px var(--sans,sans-serif); }
+  #fig-param-budget-allocation .lbl     { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-param-budget-allocation .small   { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-param-budget-allocation .mono    { font: 600 10px var(--mono,monospace); }
+  #fig-param-budget-allocation .tag     { font: 700 10px var(--sans,sans-serif); }
+</style>
+
+<text x="20" y="24" class="ttl">Where the ~101.3M parameters go</text>
+<text x="20" y="41" class="sub">83% body (30 layers) vs 17% tied embedding; within a block, SwiGLU dominates attention.</text>
+
+<g data-anim="1">
+  <rect x="140" y="60" width="380" height="30" rx="6" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)" stroke-width="1.4"/>
+  <text x="330" y="80" text-anchor="middle" class="tag">total ~101.3M params</text>
+</g>
+
+<g data-anim="2">
+  <text x="20" y="112" class="hdr">whole model, stacked to scale</text>
+
+
+  <rect x="20" y="126" width="120" height="66" fill="var(--v-muted,#6d675d)" fill-opacity="0.55" stroke="var(--v-muted,#6d675d)" stroke-width="1.3"/>
+  <text x="80" y="154" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">tied</text>
+  <text x="80" y="167" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">embedding</text>
+
+
+  <rect x="140" y="126" width="580" height="66" fill="var(--accent,#c15b39)" fill-opacity="0.85" stroke="var(--accent,#c15b39)" stroke-width="1.3"/>
+  <text x="430" y="154" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">30-layer body</text>
+  <text x="430" y="167" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">84.5M (~83%)</text>
+
+  <text x="80" y="205" text-anchor="middle" class="small">32768x512 = 16.78M</text>
+  <text x="80" y="217" text-anchor="middle" class="small">(~17%)</text>
+
+  <text x="20" y="238" class="small">counted ONCE (tied); untied would double it -- +1/6 of the model.</text>
+</g>
+
+<g data-anim="3">
+  <line x1="200" y1="192" x2="200" y2="270" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <line x1="200" y1="270" x2="440" y2="270" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <line x1="440" y1="270" x2="440" y2="284" stroke="var(--border-2,#d8d1c0)" stroke-width="1.2" stroke-dasharray="3 3"/>
+
+  <text x="20" y="270" class="hdr">zoom: one representative block (~2.82M)</text>
+
+  <rect x="20" y="286" width="720" height="46" rx="4" class="v-fill" stroke="var(--v-muted,#6d675d)" stroke-width="1.2"/>
+
+  <rect x="20" y="286" width="551" height="46" fill="var(--accent,#c15b39)" fill-opacity="0.85"/>
+  <text x="295" y="313" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">SwiGLU (gate+up+down) 2.163M</text>
+
+  <rect x="571" y="286" width="167" height="46" fill="var(--accent2,#3b82f6)" fill-opacity="0.75"/>
+  <text x="654" y="308" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">Attention</text>
+  <text x="654" y="320" text-anchor="middle" class="lbl" fill="var(--surface,#fff)">0.655M</text>
+
+  <line x1="20" y1="332" x2="20" y2="340" stroke="var(--v-muted,#6d675d)" stroke-width="1"/>
+  <text x="20" y="352" class="small">+ RMSNorms ~0.001M (negligible hairline, not visible to scale)</text>
+</g>
+
+<g data-anim="4">
+  <rect x="571" y="366" width="209" height="72" rx="5" fill="var(--surface-3,#ece7da)" fill-opacity="0.5" stroke="var(--accent2,#3b82f6)" stroke-width="1.1"/>
+  <text x="581" y="382" class="small" font-weight="700">GQA saving inside attention</text>
+  <text x="581" y="397" class="small">Wk,Wv: 512x128 each (2 KV heads)</text>
+  <text x="581" y="410" class="small">full MHA (8 KV) would add ~0.39M/layer</text>
+  <text x="581" y="423" class="small">~= 12M over 30 layers ~= 2+ extra layers</text>
+</g>
+
+<g data-anim="5">
+  <text x="20" y="380" class="hdr">levers -&gt; layers (small-model budget choices)</text>
+
+  <rect x="20" y="392" width="530" height="26" rx="4" fill="var(--surface-3,#ece7da)" fill-opacity="0.4" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="30" y="409" class="mono">tie embeddings</text>
+  <text x="180" y="409" class="small">-&gt;</text>
+  <text x="200" y="409" class="lbl" fill="var(--good,#2f9e6e)">save 16.8M</text>
+
+  <rect x="20" y="422" width="530" height="26" rx="4" fill="var(--surface-3,#ece7da)" fill-opacity="0.4" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="30" y="439" class="mono">32k vocab (vs 50k)</text>
+  <text x="180" y="439" class="small">-&gt;</text>
+  <text x="200" y="439" class="lbl" fill="var(--good,#2f9e6e)">free ~9M ~= 3 layers</text>
+
+  <rect x="20" y="452" width="530" height="26" rx="4" fill="var(--surface-3,#ece7da)" fill-opacity="0.4" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="30" y="469" class="mono">GQA 2 KV heads</text>
+  <text x="180" y="469" class="small">-&gt;</text>
+  <text x="200" y="469" class="lbl" fill="var(--good,#2f9e6e)">4x smaller Wk,Wv &amp; KV cache</text>
+</g>
+
+</svg>
+<figcaption><b>The 101.3M-parameter budget is 83% body (30 layers) and 17% tied embedding, and within a block SwiGLU (2.163M) dwarfs GQA attention (0.655M).</b> Three small-model levers -- tying embeddings, a lean 32k vocab, and 2-head GQA -- each free up parameters that get reinvested as extra depth rather than sitting idle in a redundant lookup table or an oversized KV cache.</figcaption>
+</figure>

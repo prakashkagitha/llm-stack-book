@@ -1,0 +1,207 @@
+<figure class="viz" id="fig-bpe-trainer-incremental-merge">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 480" role="img" aria-label="Diagram of one merge step in the efficient BPE trainer: a max-heap pops the best pair in O(log n) after discarding a stale entry, an inverted index maps that pair to the three word indices that contain it, and only those three words in the corpus are re-tokenized while the rest stay untouched.">
+<defs>
+  <marker id="bti-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted,#888)"/>
+  </marker>
+  <marker id="bti-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent,#c15b39)"/>
+  </marker>
+  <style>
+    #fig-bpe-trainer-incremental-merge text { fill: var(--ink-soft,#333); }
+    #fig-bpe-trainer-incremental-merge .headline { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-bpe-trainer-incremental-merge .headline-muted { font: 600 12px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-bpe-trainer-incremental-merge .panel-title { font: 700 12.5px var(--sans,sans-serif); }
+    #fig-bpe-trainer-incremental-merge .entry-txt { font: 700 12px var(--mono,monospace); }
+    #fig-bpe-trainer-incremental-merge .entry-txt-stale { font: 700 12px var(--mono,monospace); fill: var(--muted,#888); text-decoration: line-through; }
+    #fig-bpe-trainer-incremental-merge .tag { font: 700 8.5px var(--sans,sans-serif); letter-spacing: 0.3px; }
+    #fig-bpe-trainer-incremental-merge .ann { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-bpe-trainer-incremental-merge .ann-accent { font: 600 9.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+    #fig-bpe-trainer-incremental-merge .cell-txt { font: 700 11px var(--mono,monospace); }
+    #fig-bpe-trainer-incremental-merge .cell-txt-muted { font: 600 11px var(--mono,monospace); fill: var(--muted,#888); }
+    #fig-bpe-trainer-incremental-merge .row-lbl { font: 600 10px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-bpe-trainer-incremental-merge .table-hdr { font: 700 10.5px var(--sans,sans-serif); fill: var(--muted,#777); }
+    #fig-bpe-trainer-incremental-merge .table-cell { font: 500 11px var(--mono,monospace); }
+    #fig-bpe-trainer-incremental-merge .legend-txt { font: 500 10px var(--sans,sans-serif); }
+    #fig-bpe-trainer-incremental-merge .panel-box { fill: none; stroke: var(--border-2,#ccc); stroke-width: 1.2; }
+  </style>
+</defs>
+
+<text x="400" y="18" text-anchor="middle" class="headline-muted">Naive: rescan ALL words every merge = O(merges x corpus).</text>
+<text x="400" y="34" text-anchor="middle" class="headline">Here: pop best pair in O(log n), touch only the words that contain it.</text>
+
+<!-- ============ PANEL 1: HEAP  (x: 20-200) ============ -->
+<g data-anim="1">
+  <text x="20" y="60" class="panel-title">1. Max-heap: (count, pair)</text>
+  <rect x="20" y="68" width="180" height="280" rx="8" class="panel-box"/>
+
+  <!-- e1: best -->
+  <rect x="138" y="72" width="58" height="14" rx="7" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="1"/>
+  <text x="167" y="82.5" text-anchor="middle" class="tag" fill="var(--accent,#c15b39)">TOP OF HEAP</text>
+  <rect x="34" y="82" width="152" height="28" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+  <text x="110" y="101" text-anchor="middle" class="entry-txt">(9, t+h)</text>
+  <text x="34" y="122" class="ann-accent">verified: heap count ==</text>
+  <text x="34" y="134" class="ann-accent">live count (not stale)</text>
+
+  <!-- e2: stale -->
+  <rect x="34" y="146" width="52" height="13" rx="6.5" fill="var(--muted,#888)" fill-opacity="0.16"/>
+  <text x="60" y="155.5" text-anchor="middle" class="tag" fill="var(--muted,#888)">STALE</text>
+  <rect x="34" y="156" width="152" height="28" rx="5" fill="var(--muted,#888)" fill-opacity="0.06" stroke="var(--muted,#888)" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="110" y="175" text-anchor="middle" class="entry-txt-stale">(6, e+r)</text>
+  <text x="34" y="198" class="ann">count no longer matches</text>
+  <text x="34" y="210" class="ann">pair_counts -- discarded on</text>
+  <text x="34" y="222" class="ann">pop (lazy deletion, no</text>
+  <text x="34" y="234" class="ann">decrease-key)</text>
+
+  <!-- e3, e4: ordinary entries -->
+  <rect x="34" y="248" width="152" height="26" rx="5" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="1"/>
+  <text x="110" y="265" text-anchor="middle" class="entry-txt">(5, h+e)</text>
+  <rect x="34" y="282" width="152" height="26" rx="5" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="1"/>
+  <text x="110" y="299" text-anchor="middle" class="entry-txt">(2, o+u)</text>
+
+  <text x="34" y="322" class="ann">fresh (count, pair) entries</text>
+  <text x="34" y="334" class="ann">pushed back after the merge</text>
+</g>
+
+<!-- arrow heap -> index -->
+<g data-anim="2">
+  <path d="M 200 96 C 206 96, 210 96, 216 96" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2"
+        marker-end="url(#bti-arrow-accent)" class="viz-draw" style="--len:20"/>
+  <text x="208" y="88" text-anchor="middle" class="ann-accent">pop</text>
+</g>
+
+<!-- ============ PANEL 2: INVERTED INDEX (x: 216-406) ============ -->
+<g data-anim="2">
+  <text x="216" y="60" class="panel-title">2. Inverted index: pair -&gt; word ids</text>
+  <rect x="216" y="68" width="190" height="176" rx="8" class="panel-box"/>
+
+  <text x="227" y="88" class="table-hdr">pair</text>
+  <text x="290" y="88" class="table-hdr">word ids</text>
+  <line x1="227" y1="96" x2="396" y2="96" stroke="var(--v-grid,#ccc)" stroke-width="1"/>
+
+  <text x="227" y="114" class="table-cell">(e, r)</text>
+  <text x="290" y="114" class="table-cell">{0, 3}</text>
+
+  <text x="227" y="138" class="table-cell">(h, e)</text>
+  <text x="290" y="138" class="table-cell">{1, 6}</text>
+
+  <!-- highlighted row: (t,h) -->
+  <rect x="222" y="152" width="174" height="26" rx="4" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+  <text x="227" y="169" class="table-cell" font-weight="700">(t, h)</text>
+  <text x="290" y="169" class="table-cell" font-weight="700">{1, 4, 6}</text>
+
+  <text x="227" y="200" class="table-cell">(o, u)</text>
+  <text x="290" y="200" class="table-cell">{2, 5}</text>
+</g>
+
+<!-- label + arrows index -> corpus  (gap 406-486) -->
+<g data-anim="3">
+  <text x="446" y="140" text-anchor="middle" class="ann-accent">only these</text>
+  <text x="446" y="152" text-anchor="middle" class="ann-accent">word ids</text>
+  <path d="M 406 160 C 430 148, 460 118, 486 114" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6"
+        marker-end="url(#bti-arrow-accent)" class="viz-draw" style="--len:100"/>
+  <path d="M 406 165 C 430 200, 460 250, 486 257" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6"
+        marker-end="url(#bti-arrow-accent)" class="viz-draw" style="--len:150"/>
+  <path d="M 406 170 C 430 250, 460 340, 486 349" fill="none" stroke="var(--accent,#c15b39)" stroke-width="1.6"
+        marker-end="url(#bti-arrow-accent)" class="viz-draw" style="--len:230"/>
+</g>
+
+<!-- ============ PANEL 3: CORPUS (x: 486-780) ============ -->
+<g data-anim="4">
+  <text x="486" y="60" class="panel-title">3. Corpus: only touched words are re-tokenized</text>
+  <rect x="486" y="68" width="294" height="360" rx="8" class="panel-box"/>
+</g>
+
+<!-- word rows -->
+<!-- row 0: cat (untouched) -->
+<g data-anim="4" opacity="0.5">
+  <text x="498" y="94" class="row-lbl">word 0 (untouched)</text>
+  <rect x="498" y="98" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="509" y="113.5" text-anchor="middle" class="cell-txt-muted">c</text>
+  <rect x="523" y="98" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="534" y="113.5" text-anchor="middle" class="cell-txt-muted">a</text>
+  <rect x="548" y="98" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="559" y="113.5" text-anchor="middle" class="cell-txt-muted">t</text>
+</g>
+
+<!-- row 1: the -> [th] e  (TOUCHED) -->
+<g data-anim="5">
+  <rect x="492" y="132" width="282" height="30" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.08" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="498" y="130" class="row-lbl" fill="var(--accent,#c15b39)" font-weight="700">word 1 -- touched this merge</text>
+  <rect x="498" y="138" width="40" height="18" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="1.3" class="viz-pulse"/>
+  <text x="518" y="151.5" text-anchor="middle" class="cell-txt" fill="var(--accent,#c15b39)">th</text>
+  <rect x="542" y="138" width="22" height="18" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="553" y="151.5" text-anchor="middle" class="cell-txt">e</text>
+  <text x="572" y="151.5" class="ann-accent">t+h -&gt; id 256+i</text>
+</g>
+
+<!-- row 2: dog (untouched) -->
+<g data-anim="4" opacity="0.5">
+  <text x="498" y="184" class="row-lbl">word 2 (untouched)</text>
+  <rect x="498" y="188" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="509" y="203.5" text-anchor="middle" class="cell-txt-muted">d</text>
+  <rect x="523" y="188" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="534" y="203.5" text-anchor="middle" class="cell-txt-muted">o</text>
+  <rect x="548" y="188" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="559" y="203.5" text-anchor="middle" class="cell-txt-muted">g</text>
+</g>
+
+<!-- row 3: run (untouched) -->
+<g data-anim="4" opacity="0.5">
+  <text x="498" y="230" class="row-lbl">word 3 (untouched)</text>
+  <rect x="498" y="234" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="509" y="249.5" text-anchor="middle" class="cell-txt-muted">r</text>
+  <rect x="523" y="234" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="534" y="249.5" text-anchor="middle" class="cell-txt-muted">u</text>
+  <rect x="548" y="234" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="559" y="249.5" text-anchor="middle" class="cell-txt-muted">n</text>
+</g>
+
+<!-- row 4: that -> [th] a t (TOUCHED) -->
+<g data-anim="5">
+  <rect x="492" y="270" width="282" height="30" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.08" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="498" y="268" class="row-lbl" fill="var(--accent,#c15b39)" font-weight="700">word 4 -- touched this merge</text>
+  <rect x="498" y="276" width="40" height="18" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="1.3" class="viz-pulse"/>
+  <text x="518" y="289.5" text-anchor="middle" class="cell-txt" fill="var(--accent,#c15b39)">th</text>
+  <rect x="542" y="276" width="22" height="18" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="553" y="289.5" text-anchor="middle" class="cell-txt">a</text>
+  <rect x="568" y="276" width="22" height="18" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="579" y="289.5" text-anchor="middle" class="cell-txt">t</text>
+  <text x="600" y="289.5" class="ann-accent">t+h -&gt; id 256+i</text>
+</g>
+
+<!-- row 5: sun (untouched) -->
+<g data-anim="4" opacity="0.5">
+  <text x="498" y="322" class="row-lbl">word 5 (untouched)</text>
+  <rect x="498" y="326" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="509" y="341.5" text-anchor="middle" class="cell-txt-muted">s</text>
+  <rect x="523" y="326" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="534" y="341.5" text-anchor="middle" class="cell-txt-muted">u</text>
+  <rect x="548" y="326" width="22" height="22" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="559" y="341.5" text-anchor="middle" class="cell-txt-muted">n</text>
+</g>
+
+<!-- row 6: with -> w i [th] (TOUCHED) -->
+<g data-anim="5">
+  <rect x="492" y="360" width="282" height="30" rx="5" fill="var(--accent,#c15b39)" fill-opacity="0.08" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+  <text x="498" y="358" class="row-lbl" fill="var(--accent,#c15b39)" font-weight="700">word 6 -- touched this merge</text>
+  <rect x="498" y="366" width="22" height="18" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="509" y="379.5" text-anchor="middle" class="cell-txt">w</text>
+  <rect x="522" y="366" width="22" height="18" rx="3" class="v-fill" stroke="var(--v-stroke,#888)" stroke-width="0.8"/>
+  <text x="533" y="379.5" text-anchor="middle" class="cell-txt">i</text>
+  <rect x="546" y="366" width="40" height="18" rx="3" fill="var(--accent,#c15b39)" fill-opacity="0.25" stroke="var(--accent,#c15b39)" stroke-width="1.3" class="viz-pulse"/>
+  <text x="566" y="379.5" text-anchor="middle" class="cell-txt" fill="var(--accent,#c15b39)">th</text>
+  <text x="598" y="379.5" class="ann-accent">t+h -&gt; id 256+i</text>
+</g>
+
+<!-- legend -->
+<g data-anim="4">
+  <rect x="498" y="398" width="16" height="12" rx="2" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.2"/>
+  <text x="520" y="408" class="legend-txt">touched this merge (words 1, 4, 6)</text>
+  <text x="498" y="424" class="legend-txt" fill="var(--muted,#888)" font-style="italic">grey rows (0, 2, 3, 5): untouched -- never rescanned</text>
+</g>
+
+</svg>
+<figcaption><b>One merge step in the efficient trainer: pop the best pair in O(log n), then touch only the words that contain it.</b> The heap's top entry is verified against a stale entry that lazy deletion discards on pop; the inverted index turns the popped pair (t, h) directly into the three word indices that contain it; and only those three words in the corpus -- not the whole corpus -- get re-tokenized this merge, which is what turns an O(merges &times; corpus) naive trainer into one that finishes 32,503 merges in seconds.</figcaption>
+</figure>

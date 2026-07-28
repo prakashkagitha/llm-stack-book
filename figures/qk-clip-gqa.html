@@ -1,0 +1,143 @@
+<figure class="viz" id="fig-qk-clip-gqa">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 470" role="img" aria-label="Three-part diagram of GQA-aware QK-clip: a bilinear logit cap that scales both W_Q and W_K by the square root of tau over S_max to pull the worst logit back to tau; a grouping diagram of eight query heads sharing two KV heads in groups of four, with tripped query heads Q1 and Q2 each scaled by their own factor while the shared key head is scaled once by the group's worst logit, avoiding a four-times over-shrink; and a caption explaining QK-norm bounds most logits while QK-clip is the rare backstop.">
+<style>
+  #fig-qk-clip-gqa text      { fill: var(--ink-soft,#45413a); }
+  #fig-qk-clip-gqa .ttl      { font: 700 15px var(--sans,sans-serif); fill: currentColor; }
+  #fig-qk-clip-gqa .hdr      { font: 700 12.5px var(--sans,sans-serif); fill: currentColor; }
+  #fig-qk-clip-gqa .lbl      { font: 600 10px var(--sans,sans-serif); }
+  #fig-qk-clip-gqa .small    { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-qk-clip-gqa .mono     { font: 600 10.5px var(--mono,monospace); }
+  #fig-qk-clip-gqa .monoSm   { font: 600 9px var(--mono,monospace); fill: var(--muted,#6d675d); }
+  #fig-qk-clip-gqa .box      { fill: var(--surface-3,#ece7da); fill-opacity: 0.35; stroke: var(--border-2,#d8d1c0); stroke-width: 1.2; }
+  #fig-qk-clip-gqa .qhead    { fill: var(--surface-3,#ece7da); stroke: var(--muted,#6d675d); stroke-width: 1.2; }
+  #fig-qk-clip-gqa .qtripped { fill: var(--warn,#e0a106); fill-opacity: 0.28; stroke: var(--warn,#e0a106); stroke-width: 1.8; }
+  #fig-qk-clip-gqa .khead    { fill: var(--surface-3,#ece7da); stroke: var(--muted,#6d675d); stroke-width: 1.4; }
+  #fig-qk-clip-gqa .kaffect  { fill: var(--warn,#e0a106); fill-opacity: 0.20; stroke: var(--warn,#e0a106); stroke-width: 1.8; }
+  #fig-qk-clip-gqa .conn     { stroke: var(--border-2,#d8d1c0); stroke-width: 1.1; }
+  #fig-qk-clip-gqa .divider  { stroke: var(--border-2,#d8d1c0); stroke-width: 1; }
+</style>
+
+<text x="20" y="24" class="ttl">GQA-aware QK-clip: per-query-head, but per-shared-key-head only once</text>
+
+<!-- PART A: the bilinear cap -->
+<g data-anim="1">
+  <text x="20" y="50" class="hdr">A. The bilinear cap</text>
+  <rect x="20" y="60" width="430" height="66" rx="6" class="box"/>
+  <text x="36" y="84" class="mono">logit s ~ (W_Q . W_K^T) / sqrt(d_h)</text>
+  <text x="36" y="104" class="small">if S_max &gt; tau: scale W_Q AND W_K each by sqrt(tau / S_max)</text>
+  <text x="36" y="116" class="small">=&gt; logit x (tau / S_max)  =&gt;  lands at tau</text>
+
+  <!-- gauge/needle graphic -->
+  <g transform="translate(510,60)">
+    <rect x="0" y="0" width="250" height="66" rx="6" class="box"/>
+    <text x="125" y="18" text-anchor="middle" class="small">max logit S_max, before / after</text>
+    <line x1="20" y1="50" x2="230" y2="50" class="conn" stroke-width="1.6"/>
+    <line x1="150" y1="34" x2="150" y2="58" stroke="var(--warn,#e0a106)" stroke-width="1.6" stroke-dasharray="3 2"/>
+    <text x="150" y="28" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">tau</text>
+    <!-- needle pushed past tau -->
+    <line x1="60" y1="50" x2="205" y2="18" stroke="var(--muted,#6d675d)" stroke-width="2" opacity="0.55"/>
+    <circle cx="205" cy="18" r="2.6" fill="var(--muted,#6d675d)" opacity="0.55"/>
+    <!-- curved pull-back arrow to tau -->
+    <path d="M205,18 Q 185,10 150,34" fill="none" stroke="var(--accent,#c15b39)" stroke-width="2" marker-end="url(#qkArrow)"/>
+    <!-- corrected needle landing exactly at tau -->
+    <line x1="60" y1="50" x2="150" y2="34" stroke="var(--accent,#c15b39)" stroke-width="2.2"/>
+    <circle cx="150" cy="34" r="3" fill="var(--accent,#c15b39)"/>
+  </g>
+</g>
+
+<defs>
+  <marker id="qkArrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+    <path d="M0,0 L7,4 L0,8 Z" fill="var(--accent,#c15b39)"/>
+  </marker>
+</defs>
+
+<line class="divider" x1="20" y1="146" x2="760" y2="146"/>
+
+<!-- PART B: GQA mapping -->
+<g data-anim="2">
+  <text x="20" y="172" class="hdr">B. GQA grouping: scale W_Q per query head, W_K once per shared KV head</text>
+  <text x="760" y="172" text-anchor="end" class="small">group = n_heads / n_kv_heads = 4</text>
+
+  <!-- 8 query head squares -->
+  <g class="mono">
+    <!-- indices 0..7 -->
+  </g>
+  <!-- positions: start x=60, spacing 82, y=196, size 46 -->
+  <g>
+    <rect x="60"  y="196" width="46" height="46" rx="5" class="qhead"/>
+    <text x="83"  y="223" text-anchor="middle" class="mono">Q0</text>
+    <rect x="142" y="196" width="46" height="46" rx="5" class="qtripped"/>
+    <text x="165" y="223" text-anchor="middle" class="mono">Q1</text>
+    <rect x="224" y="196" width="46" height="46" rx="5" class="qtripped"/>
+    <text x="247" y="223" text-anchor="middle" class="mono">Q2</text>
+    <rect x="306" y="196" width="46" height="46" rx="5" class="qhead"/>
+    <text x="329" y="223" text-anchor="middle" class="mono">Q3</text>
+
+    <rect x="428" y="196" width="46" height="46" rx="5" class="qhead"/>
+    <text x="451" y="223" text-anchor="middle" class="mono">Q4</text>
+    <rect x="510" y="196" width="46" height="46" rx="5" class="qhead"/>
+    <text x="533" y="223" text-anchor="middle" class="mono">Q5</text>
+    <rect x="592" y="196" width="46" height="46" rx="5" class="qhead"/>
+    <text x="615" y="223" text-anchor="middle" class="mono">Q6</text>
+    <rect x="674" y="196" width="46" height="46" rx="5" class="qhead"/>
+    <text x="697" y="223" text-anchor="middle" class="mono">Q7</text>
+  </g>
+
+  <text x="205" y="188" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">tripped (S_max &gt; tau)</text>
+
+  <!-- group brace / connectors down to shared K blocks -->
+  <!-- group 0: Q0-Q3 -> K0 centered at x=205 -->
+  <line class="conn" x1="83" y1="242" x2="205" y2="278"/>
+  <line class="conn" x1="165" y1="242" x2="205" y2="278"/>
+  <line class="conn" x1="247" y1="242" x2="205" y2="278"/>
+  <line class="conn" x1="329" y1="242" x2="205" y2="278"/>
+  <!-- group 1: Q4-Q7 -> K1 centered at x=575 -->
+  <line class="conn" x1="451" y1="242" x2="575" y2="278"/>
+  <line class="conn" x1="533" y1="242" x2="575" y2="278"/>
+  <line class="conn" x1="615" y1="242" x2="575" y2="278"/>
+  <line class="conn" x1="697" y1="242" x2="575" y2="278"/>
+
+  <!-- 2 KV head blocks -->
+  <rect x="115" y="278" width="180" height="50" rx="6" class="kaffect"/>
+  <text x="205" y="308" text-anchor="middle" class="mono">K0 (shared)</text>
+  <rect x="485" y="278" width="180" height="50" rx="6" class="khead"/>
+  <text x="575" y="308" text-anchor="middle" class="mono">K1 (shared)</text>
+
+  <!-- Loop A label + arrows onto each tripped Qh -->
+  <text x="20" y="356" class="lbl" fill="var(--warn,#e0a106)">Loop A -- per query head:</text>
+  <text x="20" y="370" class="small">each tripped Qh gets its OWN sqrt(tau/S_h) applied to that W_Q slice.</text>
+  <line x1="165" y1="248" x2="165" y2="270" stroke="var(--warn,#e0a106)" stroke-width="2" marker-end="url(#qkArrowW)"/>
+  <line x1="247" y1="248" x2="247" y2="270" stroke="var(--warn,#e0a106)" stroke-width="2" marker-end="url(#qkArrowW)"/>
+
+  <defs>
+    <marker id="qkArrowW" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L7,4 L0,8 Z" fill="var(--warn,#e0a106)"/>
+    </marker>
+  </defs>
+
+  <!-- Loop B label + single arrow onto K0 -->
+  <text x="420" y="356" class="lbl" fill="var(--warn,#e0a106)">Loop B -- per shared KV head, ONCE:</text>
+  <text x="420" y="370" class="small">K0 scaled by sqrt(tau / S_group_max), the worst logit among Q0..Q3.</text>
+  <line x1="205" y1="328" x2="205" y2="344" stroke="var(--warn,#e0a106)" stroke-width="2.4" marker-end="url(#qkArrowW)"/>
+  <text x="205" y="345" text-anchor="middle" class="small" fill="var(--warn,#e0a106)"></text>
+
+  <!-- crossed-out ghost NOT x4 -->
+  <g transform="translate(320,318)">
+    <text x="0" y="12" class="small" text-anchor="start" fill="var(--muted,#6d675d)" opacity="0.75">(NOT x4)</text>
+    <line x1="-2" y1="6" x2="52" y2="6" stroke="var(--muted,#6d675d)" stroke-width="1.4" opacity="0.75"/>
+  </g>
+</g>
+
+<line class="divider" x1="20" y1="392" x2="760" y2="392"/>
+
+<!-- PART C: caption strip -->
+<g data-anim="3">
+  <text x="20" y="416" class="hdr">C. Why this is safe</text>
+  <text x="20" y="438" class="small">The head that set the group max lands exactly at tau; its groupmates get their shared key pulled slightly</text>
+  <text x="20" y="452" class="small">below tau -- conservative and safe. QK-norm already bounds most logits; QK-clip is the rare backstop.</text>
+</g>
+
+</svg>
+<figcaption><b>QK-clip scales each tripped query head's W_Q individually, but scales a shared W_K only once per KV group, using that group's worst logit.</b> Under GQA, four query heads read the same key slice; scaling W_K once (Loop B) instead of once per tripping query head (which would over-shrink it up to 4x) keeps the correction conservative -- the head that set the group max lands exactly at tau, and its groupmates end up slightly below it.</figcaption>
+</figure>

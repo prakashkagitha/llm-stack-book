@@ -1,0 +1,132 @@
+<figure class="viz" id="fig-stack100m-param-budget">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 620" role="img" aria-label="Stack-100M's 101 million parameters break down into a 16.8 million tied embedding table and 84.6 million across 30 deep, thin transformer blocks; each block is dominated by a 2.163 million SwiGLU MLP and a 0.655 million GQA attention block, where the attention's K and V projections are visibly narrower than the full-width Q and O projections.">
+  <style>
+    #fig-stack100m-param-budget .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-stack100m-param-budget .lvl-ttl{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-stack100m-param-budget .lbl{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-stack100m-param-budget .sub{ font:500 9.5px var(--sans,sans-serif); }
+    #fig-stack100m-param-budget .mono{ font:500 9.5px var(--mono,monospace); }
+    #fig-stack100m-param-budget .callout{ font:500 9.5px var(--sans,sans-serif); }
+    #fig-stack100m-param-budget .take{ font:600 11px var(--sans,sans-serif); }
+    #fig-stack100m-param-budget text{ fill: var(--ink-soft); }
+    #fig-stack100m-param-budget .dim{ fill: var(--muted); }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Stack-100M's ~101M parameters, broken down by hand</text>
+
+  <!-- LEVEL 1: whole-model stacked bar -->
+  <g data-anim="1">
+    <text x="30" y="44" class="lvl-ttl">Level 1 -- whole model (~101.35M)</text>
+    <rect x="30" y="52" width="720" height="34" rx="4" class="v-fill" stroke="var(--v-stroke)" stroke-width="1"/>
+    <!-- embedding segment: 16.8/101.35 = 16.6% -->
+    <rect x="30" y="52" width="119" height="34" fill="var(--accent)" fill-opacity="0.5" stroke="var(--accent)" stroke-width="1"/>
+    <text x="88" y="74" text-anchor="middle" class="mono" fill="var(--accent)">embed 16.8M</text>
+    <!-- 30 blocks segment: 84.6/101.35 = 83.5% -->
+    <rect x="149" y="52" width="600" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.28" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+    <text x="449" y="74" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">30 transformer blocks ~84.6M</text>
+    <!-- final norm hairline -->
+    <rect x="749" y="52" width="1" height="34" fill="var(--ink-soft)"/>
+
+    <text x="88" y="100" text-anchor="middle" class="callout">tied embedding: 16.8M (~16.6%)</text>
+    <text x="88" y="112" text-anchor="middle" class="sub dim">saves 16.8M -- a sixth of the model</text>
+    <text x="660" y="100" text-anchor="middle" class="callout dim">final norm ~0.0005M (hairline, far right edge)</text>
+  </g>
+
+  <!-- LEVEL 2: expand the 30 blocks into thin slabs + pull one out -->
+  <g data-anim="2">
+    <text x="30" y="140" class="lvl-ttl">Level 2 -- 30 deep, thin blocks (not 12 wide ones)</text>
+
+    <!-- 30 thin slabs, drawn as a compact stack of ~12 representative bars with a "x30" note -->
+    <g>
+      <text x="30" y="158" class="sub dim">deep-and-thin: 30 layers at d=512, not 12 at d=1024</text>
+      <!-- draw a stack of thin horizontal slabs -->
+      <g>
+        <rect x="30" y="166" width="330" height="8" rx="1.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="0.8"/>
+        <rect x="30" y="177" width="330" height="8" rx="1.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="0.8"/>
+        <rect x="30" y="188" width="330" height="8" rx="1.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="0.8"/>
+        <rect x="30" y="199" width="330" height="8" rx="1.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="0.8"/>
+        <rect x="30" y="210" width="330" height="8" rx="1.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="0.8"/>
+        <rect x="30" y="221" width="330" height="8" rx="1.5" class="v-fill" stroke="var(--accent2,#3b82f6)" stroke-width="0.8"/>
+        <text x="195" y="240" text-anchor="middle" class="sub dim">... x30 identical narrow blocks (d_model = 512 throughout) ...</text>
+      </g>
+    </g>
+
+    <!-- pulled-out single block, exploded to its own breakdown -->
+    <text x="470" y="158" class="sub dim">one block, exploded (~2.82M):</text>
+    <path d="M360 188 L 430 188" fill="none" stroke="var(--v-stroke)" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#pb-arrow)"/>
+    <rect x="430" y="166" width="320" height="90" rx="5" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.2"/>
+
+    <!-- SwiGLU MLP bar (largest, 2.163M) -->
+    <rect x="445" y="176" width="290" height="18" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.5" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+    <text x="455" y="189" class="mono" fill="var(--accent2,#3b82f6)">SwiGLU MLP  2.163M</text>
+
+    <!-- GQA attention bar (0.655M, ~30% width of MLP bar) -->
+    <rect x="445" y="200" width="88" height="18" rx="3" fill="var(--accent)" fill-opacity="0.5" stroke="var(--accent)" stroke-width="1"/>
+    <text x="540" y="213" class="mono" fill="var(--accent)">GQA attention  0.655M</text>
+
+    <!-- norms hairline -->
+    <rect x="445" y="224" width="4" height="14" fill="var(--ink-soft)"/>
+    <text x="455" y="235" class="mono dim">norms ~0.001M</text>
+  </g>
+
+  <!-- LEVEL 3: expand GQA attention into 4 projections, width-scaled -->
+  <g data-anim="3">
+    <text x="30" y="284" class="lvl-ttl">Level 3 -- GQA attention projections, drawn to width-scale</text>
+    <rect x="30" y="294" width="720" height="150" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+
+    <!-- Q: full width d x d -->
+    <text x="115" y="316" text-anchor="middle" class="lbl">Q</text>
+    <rect x="60" y="322" width="110" height="46" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="115" y="349" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">d x d</text>
+    <text x="115" y="386" text-anchor="middle" class="sub dim">512x512</text>
+    <text x="115" y="398" text-anchor="middle" class="sub dim">full width</text>
+
+    <!-- K: thin, d x d_kv -->
+    <text x="235" y="316" text-anchor="middle" class="lbl">K</text>
+    <rect x="207" y="322" width="27" height="46" rx="3" fill="var(--accent)" fill-opacity="0.35" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="235" y="386" text-anchor="middle" class="sub dim">512x128</text>
+    <text x="235" y="398" text-anchor="middle" class="sub dim">thin (GQA)</text>
+
+    <!-- V: thin, d x d_kv -->
+    <text x="300" y="316" text-anchor="middle" class="lbl">V</text>
+    <rect x="287" y="322" width="27" height="46" rx="3" fill="var(--accent)" fill-opacity="0.35" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="300" y="386" text-anchor="middle" class="sub dim">512x128</text>
+    <text x="300" y="398" text-anchor="middle" class="sub dim">thin (GQA)</text>
+
+    <!-- O: full width d x d -->
+    <text x="415" y="316" text-anchor="middle" class="lbl">O</text>
+    <rect x="360" y="322" width="110" height="46" rx="3" fill="var(--accent2,#3b82f6)" fill-opacity="0.30" stroke="var(--accent2,#3b82f6)" stroke-width="1.4"/>
+    <text x="415" y="349" text-anchor="middle" class="mono" fill="var(--accent2,#3b82f6)">d x d</text>
+    <text x="415" y="386" text-anchor="middle" class="sub dim">512x512</text>
+    <text x="415" y="398" text-anchor="middle" class="sub dim">full width</text>
+
+    <!-- formula box -->
+    <rect x="500" y="316" width="230" height="106" rx="5" fill="var(--v-fill)" stroke="var(--accent)" stroke-width="1.2"/>
+    <text x="615" y="336" text-anchor="middle" class="lbl" fill="var(--accent)">GQA: K, V only</text>
+    <text x="615" y="350" text-anchor="middle" class="mono">n_kv * head_dim = 128 wide</text>
+    <text x="615" y="372" text-anchor="middle" class="mono">attn = 2d^2 + 2*d*d_kv</text>
+    <text x="615" y="390" text-anchor="middle" class="mono dim">NOT 4d^2</text>
+    <text x="615" y="410" text-anchor="middle" class="sub dim">(full MHA would be 4d^2)</text>
+  </g>
+
+  <defs>
+    <marker id="pb-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke)"/>
+    </marker>
+  </defs>
+
+  <!-- side note: vocab comparison -->
+  <g data-anim="4">
+    <rect x="30" y="458" width="720" height="52" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="45" y="478" class="callout">Vocab choice moves the embedding slice: <tspan class="mono" fill="var(--accent)">32768</tspan> table = ~16.6% of the model;</text>
+    <text x="45" y="496" class="callout">a <tspan class="mono">50000</tspan> table = ~25% of the model -- a quarter spent on lookup before any compute happens.</text>
+  </g>
+
+  <g data-anim="5">
+    <rect x="30" y="524" width="720" height="34" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <text x="390" y="546" text-anchor="middle" class="take">16.78M embed + 30 x 2.819M blocks + 0.0005M final norm = ~101.35M -- verified, not asserted.</text>
+  </g>
+</svg>
+<figcaption><b>Every one of Stack-100M's ~101M parameters is accounted for by hand.</b> The tied embedding table takes a sixth of the budget, 30 identical thin blocks carry the rest (dominated by the SwiGLU MLP, not attention), and GQA's K/V projections are visibly narrower than the full-width Q/O projections — which is why attention costs 2d² + 2·d·d_kv, not the 4d² of full multi-head attention.</figcaption>
+</figure>

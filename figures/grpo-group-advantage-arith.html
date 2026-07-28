@@ -1,0 +1,282 @@
+<figure class="viz" id="fig-grpo-group-advantage-arith">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 800 760" role="img" aria-label="A four-step GRPO pipeline on an arithmetic prompt: sample a group of 8 completions, grade each with the exact-match verifier, standardize rewards into z-score advantages, and broadcast the single scalar advantage to every token of a response. A cold-start band below shows that all-wrong and all-right groups give zero gradient and only mixed-outcome groups teach anything.">
+<defs>
+  <marker id="ga-up" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M5,0 L10,9 L0,9 Z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="ga-down" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L10,1 L5,10 Z" fill="var(--warn,#e0a106)"/>
+  </marker>
+  <marker id="ga-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="var(--muted,#6d675d)"/>
+  </marker>
+</defs>
+<style>
+  #fig-grpo-group-advantage-arith text { fill: currentColor; }
+  #fig-grpo-group-advantage-arith .hdr  { font: 700 12.5px var(--sans,sans-serif); fill: var(--ink); }
+  #fig-grpo-group-advantage-arith .stepn { font: 700 10.5px var(--sans,sans-serif); fill: var(--accent,#c15b39); }
+  #fig-grpo-group-advantage-arith .mono { font: 600 9.5px var(--mono,monospace); }
+  #fig-grpo-group-advantage-arith .lab  { font: 400 9px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-grpo-group-advantage-arith .cap  { font: 400 9.8px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-grpo-group-advantage-arith .capb { font: 700 9.8px var(--sans,sans-serif); fill: var(--ink); }
+  #fig-grpo-group-advantage-arith .num  { font: 700 10px var(--mono,monospace); }
+  #fig-grpo-group-advantage-arith .bandttl { font: 700 10.5px var(--sans,sans-serif); }
+
+  @keyframes ga-fi { from{opacity:0} to{opacity:1} }
+  #fig-grpo-group-advantage-arith [data-anim="1"] { animation: ga-fi .4s ease .1s both; }
+  #fig-grpo-group-advantage-arith [data-anim="2"] { animation: ga-fi .4s ease .8s both; }
+  #fig-grpo-group-advantage-arith [data-anim="3"] { animation: ga-fi .4s ease 1.5s both; }
+  #fig-grpo-group-advantage-arith [data-anim="4"] { animation: ga-fi .4s ease 2.2s both; }
+  #fig-grpo-group-advantage-arith [data-anim="5"] { animation: ga-fi .4s ease 2.9s both; }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-grpo-group-advantage-arith * { animation: none !important; opacity: 1 !important; }
+  }
+</style>
+
+<!-- STEP 1: PROMPT -->
+<g data-anim="1">
+  <text x="20" y="24" class="stepn">STEP 1 -- PROMPT</text>
+  <rect x="20" y="32" width="150" height="64" rx="6" fill="var(--surface,#fff)" stroke="var(--v-stroke,#45413a)" stroke-width="1.4"/>
+  <text x="30" y="50" class="mono">Compute 17 * 4.</text>
+  <text x="30" y="64" class="mono">Give the final</text>
+  <text x="30" y="78" class="mono">integer after</text>
+  <text x="30" y="92" class="mono">'####'</text>
+  <rect x="20" y="100" width="150" height="16" rx="4" fill="var(--surface-3,#ece7da)" stroke="var(--border-2,#d8d1c0)"/>
+  <text x="95" y="112" text-anchor="middle" class="mono">gold = 68</text>
+</g>
+
+<!-- arrow step1 -> step2 -->
+<line data-anim="2" x1="170" y1="64" x2="196" y2="64" stroke="var(--muted,#6d675d)" stroke-width="1.8" marker-end="url(#ga-arr)"/>
+
+<!-- STEP 2: GROUP OF G=8 -->
+<g data-anim="2">
+  <text x="200" y="24" class="stepn">STEP 2 -- GROUP OF G=8 SAMPLES, GRADED</text>
+</g>
+
+<!-- 8 rows, each: response chip + verdict mark. R = [1,0,1,0,0,1,0,0] -->
+<g data-anim="2">
+  <!-- row template: x=200 chip w=230 h=20, rows spaced 26px starting y=32 -->
+  <!-- i=0 correct -->
+  <rect x="200" y="32" width="220" height="20" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".14" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+  <text x="208" y="46" class="mono">"...answer #### 68"</text>
+  <circle cx="432" cy="42" r="8" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <path d="M428,42 L431,46 L437,38" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+
+  <!-- i=1 wrong -->
+  <rect x="200" y="58" width="220" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".12" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="208" y="72" class="mono">"...answer #### 71"</text>
+  <circle cx="432" cy="68" r="8" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <path d="M428,64 L436,72 M436,64 L428,72" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+
+  <!-- i=2 correct -->
+  <rect x="200" y="84" width="220" height="20" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".14" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+  <text x="208" y="98" class="mono">"...answer #### 68"</text>
+  <circle cx="432" cy="94" r="8" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <path d="M428,94 L431,98 L437,90" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+
+  <!-- i=3 wrong -->
+  <rect x="200" y="110" width="220" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".12" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="208" y="124" class="mono">"...answer #### 65"</text>
+  <circle cx="432" cy="120" r="8" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <path d="M428,116 L436,124 M436,116 L428,124" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+
+  <!-- i=4 wrong -->
+  <rect x="200" y="136" width="220" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".12" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="208" y="150" class="mono">"...answer #### 51"</text>
+  <circle cx="432" cy="146" r="8" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <path d="M428,142 L436,150 M436,142 L428,150" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+
+  <!-- i=5 correct -->
+  <rect x="200" y="162" width="220" height="20" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".14" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+  <text x="208" y="176" class="mono">"...answer #### 68"</text>
+  <circle cx="432" cy="172" r="8" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+  <path d="M428,172 L431,176 L437,168" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+
+  <!-- i=6 wrong -->
+  <rect x="200" y="188" width="220" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".12" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="208" y="202" class="mono">"...answer #### 72"</text>
+  <circle cx="432" cy="198" r="8" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <path d="M428,194 L436,202 M436,194 L428,202" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+
+  <!-- i=7 wrong -->
+  <rect x="200" y="214" width="220" height="20" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".12" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+  <text x="208" y="228" class="mono">"...answer #### 60"</text>
+  <circle cx="432" cy="224" r="8" fill="none" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+  <path d="M428,220 L436,228 M436,220 L428,228" stroke="var(--warn,#e0a106)" stroke-width="2"/>
+
+  <text x="200" y="248" class="cap">R = [1, 0, 1, 0, 0, 1, 0, 0] -- 3 of 8 correct</text>
+  <text x="200" y="261" class="capb">(37.5% -- in the RLVR sweet spot)</text>
+
+  <!-- group mean line across the reward column -->
+  <line x1="200" y1="128" x2="420" y2="128" stroke="var(--accent,#c15b39)" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="454" y="132" class="lab" fill="var(--accent,#c15b39)">mean R-bar = 0.375</text>
+  <text x="454" y="146" class="lab">(std ~ 0.48)</text>
+</g>
+
+<!-- arrow step2 -> step3 -->
+<line data-anim="3" x1="580" y1="130" x2="580" y2="130" stroke="none"/>
+
+<!-- STEP 3: STANDARDIZE, right column top -->
+<g data-anim="3">
+  <text x="470" y="24" class="stepn">STEP 3 -- STANDARDIZE</text>
+  <text x="470" y="40" class="lab">A_hat_i = (R_i - mean)/(std + eps)</text>
+
+  <!-- zero line -->
+  <line x1="470" y1="120" x2="780" y2="120" stroke="var(--muted,#6d675d)" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="785" y="124" class="lab" text-anchor="end">0</text>
+
+  <!-- correct bars up: 3 bars -->
+  <rect x="480" y="72" width="16" height="48" rx="2" fill="var(--good,#2f9e6e)" fill-opacity=".55" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <rect x="504" y="72" width="16" height="48" rx="2" fill="var(--good,#2f9e6e)" fill-opacity=".55" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <rect x="528" y="72" width="16" height="48" rx="2" fill="var(--good,#2f9e6e)" fill-opacity=".55" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="512" y="66" text-anchor="middle" class="num" fill="var(--good,#2f9e6e)">+1.29</text>
+
+  <!-- wrong bars down: 5 bars -->
+  <rect x="556" y="120" width="16" height="30" rx="2" fill="var(--warn,#e0a106)" fill-opacity=".55" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <rect x="580" y="120" width="16" height="30" rx="2" fill="var(--warn,#e0a106)" fill-opacity=".55" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <rect x="604" y="120" width="16" height="30" rx="2" fill="var(--warn,#e0a106)" fill-opacity=".55" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <rect x="628" y="120" width="16" height="30" rx="2" fill="var(--warn,#e0a106)" fill-opacity=".55" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <rect x="652" y="120" width="16" height="30" rx="2" fill="var(--warn,#e0a106)" fill-opacity=".55" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="604" y="164" text-anchor="middle" class="num" fill="var(--warn,#e0a106)">-0.775</text>
+
+  <text x="470" y="188" class="cap">More wrong than right, so each</text>
+  <text x="470" y="201" class="cap">correct sample is pushed up harder</text>
+  <text x="470" y="214" class="cap">than each wrong is pushed down --</text>
+  <text x="470" y="227" class="capb">the group self-balances.</text>
+</g>
+
+<!-- STEP 4: BROADCAST -->
+<g data-anim="4">
+  <line x1="20" y1="270" x2="780" y2="270" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="20" y="292" class="stepn">STEP 4 -- BROADCAST: one scalar advantage stamped on EVERY token</text>
+
+  <!-- correct completion, tokenized, all stamped +1.29 -->
+  <text x="20" y="316" class="lab">correct completion (A_hat = +1.29):</text>
+  <g>
+    <rect x="20" y="322" width="46" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".18" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="43" y="337" text-anchor="middle" class="mono">17</text>
+    <rect x="70" y="322" width="46" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".18" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="93" y="337" text-anchor="middle" class="mono">times</text>
+    <rect x="120" y="322" width="30" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".18" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="135" y="337" text-anchor="middle" class="mono">4</text>
+    <rect x="154" y="322" width="30" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".18" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="169" y="337" text-anchor="middle" class="mono">is</text>
+    <rect x="188" y="322" width="88" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity=".18" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="232" y="337" text-anchor="middle" class="mono">#### 68</text>
+    <!-- up arrows above every cell -->
+    <path d="M43,314 l-4,7 h8 z" fill="var(--good,#2f9e6e)"/>
+    <path d="M93,314 l-4,7 h8 z" fill="var(--good,#2f9e6e)"/>
+    <path d="M135,314 l-4,7 h8 z" fill="var(--good,#2f9e6e)"/>
+    <path d="M169,314 l-4,7 h8 z" fill="var(--good,#2f9e6e)"/>
+    <path d="M232,314 l-4,7 h8 z" fill="var(--good,#2f9e6e)"/>
+  </g>
+  <text x="290" y="337" class="num" fill="var(--good,#2f9e6e)">every token: +1.29</text>
+
+  <!-- wrong completion, tokenized, all stamped -0.775 -->
+  <text x="20" y="372" class="lab">wrong completion (A_hat = -0.775):</text>
+  <g>
+    <rect x="20" y="378" width="46" height="22" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".16" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="43" y="393" text-anchor="middle" class="mono">17</text>
+    <rect x="70" y="378" width="46" height="22" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".16" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="93" y="393" text-anchor="middle" class="mono">times</text>
+    <rect x="120" y="378" width="30" height="22" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".16" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="135" y="393" text-anchor="middle" class="mono">4</text>
+    <rect x="154" y="378" width="30" height="22" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".16" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="169" y="393" text-anchor="middle" class="mono">is</text>
+    <rect x="188" y="378" width="88" height="22" rx="4" fill="var(--warn,#e0a106)" fill-opacity=".16" stroke="var(--warn,#e0a106)" stroke-width="1.3"/>
+    <text x="232" y="393" text-anchor="middle" class="mono">#### 71</text>
+    <!-- down arrows below every cell -->
+    <path d="M43,408 l-4,-7 h8 z" fill="var(--warn,#e0a106)"/>
+    <path d="M93,408 l-4,-7 h8 z" fill="var(--warn,#e0a106)"/>
+    <path d="M135,408 l-4,-7 h8 z" fill="var(--warn,#e0a106)"/>
+    <path d="M169,408 l-4,-7 h8 z" fill="var(--warn,#e0a106)"/>
+    <path d="M232,408 l-4,-7 h8 z" fill="var(--warn,#e0a106)"/>
+  </g>
+  <text x="290" y="393" class="num" fill="var(--warn,#e0a106)">every token: -0.775</text>
+
+  <text x="20" y="432" class="cap">RLVR gives every token the same terminal reward -&gt; one scalar advantage per response, broadcast to</text>
+  <text x="20" y="446" class="capb">all its tokens (no per-token credit assignment).</text>
+</g>
+
+<!-- COLD-START BAND -->
+<g data-anim="5">
+  <rect x="20" y="470" width="760" height="270" rx="8" fill="var(--surface-3,#ece7da)" fill-opacity=".5" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="36" y="494" class="hdr">Cold-start band: RL climbs only from VARIANCE within a group</text>
+
+  <!-- thumbnail (a): all wrong -->
+  <g>
+    <text x="56" y="522" class="lab" text-anchor="middle">(a) all wrong</text>
+    <text x="56" y="535" class="lab" text-anchor="middle">R=[0,0,0,0,...]</text>
+    <circle cx="30" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M27,555 L33,561 M33,555 L27,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <circle cx="48" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M45,555 L51,561 M51,555 L45,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <circle cx="66" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M63,555 L69,561 M69,555 L63,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <circle cx="84" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M81,555 L87,561 M87,555 L81,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="56" y="578" class="lab" text-anchor="middle">mean 0, std 0</text>
+    <text x="56" y="590" class="lab" text-anchor="middle">every A_hat = 0</text>
+    <!-- empty gradient meter -->
+    <rect x="26" y="600" width="60" height="12" rx="3" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.3"/>
+    <text x="56" y="626" class="capb" text-anchor="middle" fill="var(--warn,#e0a106)">too HARD --</text>
+    <text x="56" y="639" class="capb" text-anchor="middle" fill="var(--warn,#e0a106)">no gradient</text>
+  </g>
+
+  <!-- thumbnail (b): mixed (main example) -->
+  <g>
+    <text x="230" y="522" class="lab" text-anchor="middle">(b) mixed (main example)</text>
+    <text x="230" y="535" class="lab" text-anchor="middle">R=[1,0,1,0,0,1,0,0]</text>
+    <circle cx="196" cy="558" r="6" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <path d="M193,558 L195,561 L200,554" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <circle cx="214" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M211,555 L217,561 M217,555 L211,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <circle cx="232" cy="558" r="6" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <path d="M229,558 L231,561 L236,554" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <circle cx="250" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M247,555 L253,561 M253,555 L247,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <circle cx="268" cy="558" r="6" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.8"/>
+    <path d="M265,555 L271,561 M271,555 L265,561" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="230" y="578" class="lab" text-anchor="middle">mean 0.375, std ~0.48</text>
+    <text x="230" y="590" class="lab" text-anchor="middle">A_hat != 0 -&gt; gradient</text>
+    <!-- full gradient meter -->
+    <rect x="200" y="600" width="60" height="12" rx="3" fill="var(--good,#2f9e6e)" fill-opacity=".7" stroke="var(--good,#2f9e6e)" stroke-width="1.3"/>
+    <text x="230" y="626" class="capb" text-anchor="middle" fill="var(--good,#2f9e6e)">sweet spot ~10-40%</text>
+    <text x="230" y="639" class="capb" text-anchor="middle" fill="var(--good,#2f9e6e)">-&gt; LEARNS</text>
+  </g>
+
+  <!-- thumbnail (c): all right -->
+  <g>
+    <text x="404" y="522" class="lab" text-anchor="middle">(c) all right</text>
+    <text x="404" y="535" class="lab" text-anchor="middle">R=[1,1,1,1,...]</text>
+    <circle cx="378" cy="558" r="6" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <path d="M375,558 L377,561 L382,554" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <circle cx="396" cy="558" r="6" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <path d="M393,558 L395,561 L400,554" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <circle cx="414" cy="558" r="6" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <path d="M411,558 L413,561 L418,554" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <circle cx="432" cy="558" r="6" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <path d="M429,558 L431,561 L436,554" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="404" y="578" class="lab" text-anchor="middle">mean 1, std 0</text>
+    <text x="404" y="590" class="lab" text-anchor="middle">every A_hat = 0</text>
+    <!-- empty gradient meter -->
+    <rect x="374" y="600" width="60" height="12" rx="3" fill="none" stroke="var(--muted,#6d675d)" stroke-width="1.3"/>
+    <text x="404" y="626" class="capb" text-anchor="middle" fill="var(--warn,#e0a106)">too EASY --</text>
+    <text x="404" y="639" class="capb" text-anchor="middle" fill="var(--warn,#e0a106)">no gradient</text>
+  </g>
+
+  <!-- band caption -->
+  <line x1="500" y1="510" x2="500" y2="655" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="520" y="522" class="cap">RL climbs only from the</text>
+  <text x="520" y="536" class="cap">VARIANCE within a group: the</text>
+  <text x="520" y="550" class="cap">base+SFT model must already</text>
+  <text x="520" y="564" class="cap">succeed SOMETIMES.</text>
+  <text x="520" y="586" class="capb">This is why the task must be</text>
+  <text x="520" y="600" class="capb">narrow and in-distribution at</text>
+  <text x="520" y="614" class="capb">100M -- the cold-start trap.</text>
+</g>
+
+</svg>
+<figcaption><b>GRPO on the arithmetic task: sample a group of G=8 completions, grade each with the exact-match verifier, standardize rewards into z-score advantages, and broadcast one scalar per response to every one of its tokens.</b> With R = [1,0,1,0,0,1,0,0] (37.5% correct, the RLVR sweet spot), the three correct samples get advantage +1.29 and the five wrong ones get -0.775 -- more wrong than right, so each correct sample is pushed up harder than each wrong one is pushed down. The cold-start band shows why this only works when groups are mixed: all-wrong or all-right groups have zero variance, so every standardized advantage is exactly zero and the prompt contributes no gradient at all.</figcaption>
+</figure>

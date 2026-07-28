@@ -252,6 +252,8 @@ This is the same evaluation ethic developed at length in [The Evaluation Problem
 
     More generally: any number you cannot regenerate from a documented, hashed, versioned eval set is not a number — it is an anecdote. See [Statistical Rigor in Evaluation](../11-evaluation/06-statistical-rigor-eval.html) for how to attach confidence intervals to small-n probes like these (n=50-200 is small enough that a single-digit-percentage-point swing is well within noise — report it).
 
+{{fig:honest-eval-four-probes-asymmetry}}
+
 ## 5. Post-Training Quantization: RTN, GPTQ, and AWQ
 
 With honest numbers in hand, the second half of the chapter is serving. The fp32 checkpoint is ~406MB (101.4M params × 4 bytes — the exact accounting is in [14.4](04-architecture.html)); even at bf16 that is ~203MB, comfortably in RAM on any laptop but wasteful given how little precision a well-trained weight actually needs at inference time. **Post-training quantization (PTQ)** converts the trained fp32/bf16 weights to low-bit integers *after* training, no gradient updates required — the natural complement to the quantization-aware and mixed-precision *training* techniques covered in [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html). This chapter is a hands-on companion to the book's dedicated PTQ chapters — [Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)](../04-kernels-efficiency/07-quantization-ptq.html) and [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html) — read those for the full derivations; here we implement the baseline end to end and *use* it.
@@ -271,6 +273,8 @@ s = \frac{\max(w)-\min(w)}{2^b-1}, \qquad z = \operatorname{round}\!\left(\frac{
 $$
 
 RTN's virtue is that it is a single pass over the weights with no calibration data and no per-layer optimization — you can quantize a checkpoint in seconds. Its vice is that it treats every weight independently: it has no notion that some weights matter more to the model's output than others, so at 4 bits (only 16 representable values per group) it can measurably hurt quality, especially on outlier-heavy channels.
+
+{{fig:rtn-quantization-number-line}}
 
 ### 5.2 GPTQ: reconstruction-aware quantization
 
@@ -355,6 +359,8 @@ def awq_find_channel_scales(W: torch.Tensor, X_calib: torch.Tensor, n_grid: int 
 ```
 
 Stack-100M ships with RTN as the reference, fully-implemented path in §6 (correct, simple, and sufficient at int8; a real quality drop shows up at int4 on the harder tail of the arithmetic and MC probes — measure it yourself with §3's harness). GPTQ and AWQ are the production upgrade path once you notice that gap and want to close it.
+
+{{fig:gptq-vs-awq-two-philosophies}}
 
 ## 6. Implementing int8 and int4 Weight-Only Quantization
 
@@ -514,6 +520,8 @@ def export_quantized(model: nn.Module, path: str, bits: int, config: dict) -> No
     | int4 (group=64) | 101.4M × 0.5 B = 50.7 MB | ~1.58M groups × (fp32 scale + fp32 zp, 8 B) ≈ 12.7 MB | **≈63 MB** | 6.4× |
 
     (Group count for int4: 101.4M params ÷ 64 ≈ 1.58M groups; each group stores one fp32 scale **and** one fp32 zero-point in this reference implementation, i.e. 8 bytes/group ≈ 12.7 MB — a real chunk of the total, and exactly why production formats compress it. A typical export stores the scale at fp16 and the zero-point at int8 (≈5 B/group ≈ 8 MB, dropping int4 to ~59 MB); `GGUF`'s block-quantization formats go further with an int8-with-a-shared-super-scale layout.) The headline: **the whole model, quantized, is smaller than a typical high-resolution JPEG photo folder** — it sits comfortably in RAM alongside a browser and an IDE on any laptop.
+
+{{fig:quant-memory-ladder-and-packing}}
 
 ## 7. Running Stack-100M on a Laptop CPU
 

@@ -1,0 +1,82 @@
+<figure class="viz" id="fig-data-pipeline-funnel">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 834" role="img" aria-label="A narrowing funnel from a large raw streamed corpus, through a weighted four-source mix, quality filtering, exact and near deduplication, tokenizing and packing, and sharding, down to the final packed training tensor of about 20 billion tokens across roughly 200 shards.">
+<defs>
+  <marker id="dpf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-soft)"/>
+  </marker>
+</defs>
+<style>
+  #fig-data-pipeline-funnel text { fill: var(--ink-soft); }
+  #fig-data-pipeline-funnel .hdr { font: 700 14px var(--sans,sans-serif); }
+  #fig-data-pipeline-funnel .stage-title { font: 700 12px var(--sans,sans-serif); }
+  #fig-data-pipeline-funnel .stage-desc { font: 500 10.8px var(--sans,sans-serif); }
+  #fig-data-pipeline-funnel .mix-lbl { font: 600 9.8px var(--sans,sans-serif); }
+  #fig-data-pipeline-funnel .mono-cap { font: 500 9.5px var(--mono,monospace); fill: var(--muted); }
+  #fig-data-pipeline-funnel .mouth-txt { font: 600 11px var(--sans,sans-serif); fill: var(--muted); }
+  #fig-data-pipeline-funnel .stat-num { font: 700 12px var(--sans,sans-serif); }
+  #fig-data-pipeline-funnel .stat-lbl { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted); }
+</style>
+<text x="390.0" y="24" text-anchor="middle" class="hdr">The Stack-100M data pipeline: raw stream to packed training tensor</text>
+<rect x="20.0" y="42" width="740" height="46" rx="8" fill="var(--accent)" fill-opacity="0.05" stroke="var(--border-2)" stroke-width="1.3" stroke-dasharray="5 3"/>
+<text x="390" y="60" text-anchor="middle" class="mouth-txt">raw stream -- a much larger corpus than what survives</text>
+<text x="390" y="75" text-anchor="middle" class="mouth-txt">quality filtering + dedup discard the large majority of it</text>
+<line x1="390" y1="94" x2="390" y2="104" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<text x="390" y="125" text-anchor="middle" class="stage-title">1. SOURCES -- four-way mix, weighted by token budget</text>
+<rect x="40.0" y="134" width="485.8" height="30" rx="5" fill="var(--accent)" fill-opacity="0.55" stroke="var(--accent)" stroke-width="1.1"/>
+<rect x="527.8" y="134" width="104.1" height="30" rx="5" fill="var(--accent)" fill-opacity="0.42" stroke="var(--accent)" stroke-width="1.1"/>
+<rect x="633.9" y="134" width="69.4" height="30" rx="5" fill="var(--accent)" fill-opacity="0.3" stroke="var(--accent)" stroke-width="1.1"/>
+<rect x="705.3" y="134" width="34.7" height="30" rx="5" fill="var(--accent)" fill-opacity="0.2" stroke="var(--accent)" stroke-width="1.1"/>
+<text x="40.0" y="180" class="mix-lbl">FineWeb-Edu 70% (web)</text>
+<text x="390.0" y="180" class="mix-lbl">Cosmopedia v2 15% (synthetic)</text>
+<text x="40.0" y="195" class="mix-lbl">StarCoder 10% (code)</text>
+<text x="390.0" y="195" class="mix-lbl">FineMath/OpenWebMath 5% (math)</text>
+<text x="390" y="215" text-anchor="middle" class="stage-desc">streamed on demand; each source has a deterministic offline synthetic fallback</text>
+<text x="390" y="230" text-anchor="middle" class="mono-cap">sources.py</text>
+<line x1="390" y1="238" x2="390" y2="248" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="70.0" y="256" width="640" height="56" rx="9" fill="var(--accent)" fill-opacity="0.09" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="390" y="273" text-anchor="middle" class="stage-title">2. QUALITY FILTER -- domain-routed</text>
+<text x="390" y="288.0" text-anchor="middle" class="stage-desc">web/synthetic prose -> generic gate; code and math get their own gates</text>
+<text x="390" y="303.0" text-anchor="middle" class="stage-desc">(a generic prose filter would wrongly reject code and math)</text>
+<text x="390" y="325.0" text-anchor="middle" class="mono-cap">filters.py</text>
+<line x1="390" y1="325" x2="390" y2="335" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="100.0" y="343" width="580" height="41" rx="9" fill="var(--accent)" fill-opacity="0.105" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="390" y="360" text-anchor="middle" class="stage-title">3. EXACT DEDUP</text>
+<text x="390" y="375.0" text-anchor="middle" class="stage-desc">hash normalized text, drop repeats</text>
+<text x="390" y="397.0" text-anchor="middle" class="mono-cap">dedup.py</text>
+<line x1="390" y1="397" x2="390" y2="407" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="110.0" y="415" width="560" height="41" rx="9" fill="var(--accent)" fill-opacity="0.12" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="390" y="432" text-anchor="middle" class="stage-title">4. NEAR-DEDUP</text>
+<text x="390" y="447.0" text-anchor="middle" class="stage-desc">MinHash + LSH banding, drop near-duplicates</text>
+<text x="390" y="469.0" text-anchor="middle" class="mono-cap">dedup.py</text>
+<line x1="390" y1="469" x2="390" y2="479" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="130.0" y="487" width="520" height="56" rx="9" fill="var(--accent)" fill-opacity="0.135" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="390" y="504" text-anchor="middle" class="stage-title">5. TOKENIZE + PACK</text>
+<text x="390" y="519.0" text-anchor="middle" class="stage-desc">byte-level BPE, pack to SEQ_LEN=2048,</text>
+<text x="390" y="534.0" text-anchor="middle" class="stage-desc">doc-aware mask + position reset</text>
+<text x="390" y="556.0" text-anchor="middle" class="mono-cap">pack.py</text>
+<line x1="390" y1="556" x2="390" y2="566" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="150.0" y="574" width="480" height="41" rx="9" fill="var(--accent)" fill-opacity="0.15" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="390" y="591" text-anchor="middle" class="stage-title">6. SHARD</text>
+<text x="390" y="606.0" text-anchor="middle" class="stage-desc">uint16 memmap .bin, ~100M tokens/shard</text>
+<text x="390" y="628.0" text-anchor="middle" class="mono-cap">shard.py</text>
+<line x1="390" y1="628" x2="390" y2="638" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="170.0" y="646" width="440" height="41" rx="9" fill="var(--accent)" fill-opacity="0.165" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="390" y="663" text-anchor="middle" class="stage-title">7. DATASET</text>
+<text x="390" y="678.0" text-anchor="middle" class="stage-desc">PackedMemmapDataset -> training tensor</text>
+<text x="390" y="700.0" text-anchor="middle" class="mono-cap">dataset.py</text>
+<line x1="390" y1="700" x2="390" y2="710" stroke="var(--ink-soft)" stroke-width="1.6" marker-end="url(#dpf-arr)"/>
+<rect x="40.0" y="718" width="700" height="96" rx="10" fill="var(--surface-3)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="215.0" y="738.0" text-anchor="middle" class="stat-num" style="fill:var(--accent)">~20B</text>
+<text x="215.0" y="755.0" text-anchor="middle" class="stat-lbl">kept tokens</text>
+<text x="565.0" y="738.0" text-anchor="middle" class="stat-num" style="fill:var(--accent)">~90GB</text>
+<text x="565.0" y="755.0" text-anchor="middle" class="stat-lbl">kept raw text</text>
+<text x="215.0" y="786.0" text-anchor="middle" class="stat-num" style="fill:var(--accent)">~80GB</text>
+<text x="215.0" y="803.0" text-anchor="middle" class="stat-lbl">packed on disk (40GB tokens + 40GB positions)</text>
+<text x="565.0" y="786.0" text-anchor="middle" class="stat-num" style="fill:var(--accent)">~200 shards</text>
+<text x="565.0" y="803.0" text-anchor="middle" class="stat-lbl">~400MB each</text>
+<line x1="390.0" y1="726" x2="390.0" y2="806" stroke="var(--border-2)" stroke-width="1" opacity="0.6"/>
+<line x1="50.0" y1="766.0" x2="730.0" y2="766.0" stroke="var(--border-2)" stroke-width="1" opacity="0.6"/>
+</svg>
+<figcaption><b>The data pipeline is a narrowing funnel: a much larger raw stream is filtered and deduplicated down to a packed training tensor.</b> A weighted four-source mix (70% FineWeb-Edu, 15% Cosmopedia v2, 10% StarCoder, 5% FineMath/OpenWebMath) passes through a domain-routed quality filter, exact and near deduplication, tokenizing and packing with document-aware masking, and sharding, ending as roughly 20B kept tokens packed into ~80GB across ~200 uint16 memmap shards that <code>PackedMemmapDataset</code> reads directly.</figcaption>
+</figure>

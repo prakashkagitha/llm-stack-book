@@ -1,0 +1,102 @@
+<figure class="viz" id="fig-compute-vs-deployment-optimal">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 560" role="img" aria-label="Chinchilla minimizes loss per unit of training compute only. Training is a one-time cost and inference recurs on every call, so at a fixed parameter count a smaller, over-trained model has a higher one-time training cost but a shallower per-call inference cost, and eventually beats a larger compute-optimal model on cumulative cost.">
+  <style>
+    #fig-compute-vs-deployment-optimal .ttl{ font:700 15px var(--sans,sans-serif); }
+    #fig-compute-vs-deployment-optimal .panel-ttl{ font:700 12.5px var(--sans,sans-serif); }
+    #fig-compute-vs-deployment-optimal .lbl{ font:600 11px var(--sans,sans-serif); }
+    #fig-compute-vs-deployment-optimal .sub{ font:500 10px var(--sans,sans-serif); }
+    #fig-compute-vs-deployment-optimal .tick{ font:500 9.5px var(--mono,monospace); }
+    #fig-compute-vs-deployment-optimal .cap{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-compute-vs-deployment-optimal .take{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-compute-vs-deployment-optimal text{ fill: var(--ink-soft); }
+    #fig-compute-vs-deployment-optimal .dim{ fill: var(--muted); }
+  </style>
+
+  <text x="390" y="22" text-anchor="middle" class="ttl">Compute-optimal vs. deployment-optimal: why over-train past Chinchilla</text>
+
+  <!-- TOP PANEL: loss vs tokens -->
+  <g data-anim="1">
+    <text x="40" y="46" class="panel-ttl">Loss vs. training tokens (fixed parameter count)</text>
+    <rect x="40" y="54" width="700" height="150" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+
+    <!-- axes -->
+    <line x1="75" y1="180" x2="710" y2="180" class="v-grid" stroke-width="1.2"/>
+    <line x1="75" y1="70" x2="75" y2="180" class="v-grid" stroke-width="1.2"/>
+    <text x="392" y="198" text-anchor="middle" class="sub dim">training tokens -&gt;</text>
+    <text x="82" y="68" class="sub dim">loss</text>
+
+    <!-- decreasing, flattening loss curve -->
+    <path d="M85 76 C 160 100, 220 140, 300 158 C 400 172, 520 178, 700 180"
+          fill="none" class="v-accent-s viz-draw" style="--len:820" stroke-width="2.6"/>
+
+    <!-- Chinchilla-optimal point -->
+    <circle cx="230" cy="150" r="5" class="v-accent"/>
+    <line x1="230" y1="150" x2="230" y2="180" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="230" y="132" text-anchor="middle" class="sub" fill="var(--accent)">Chinchilla-optimal</text>
+    <text x="230" y="144" text-anchor="middle" class="sub" fill="var(--accent)">(~20 tok/param, ~2B)</text>
+
+    <!-- Stack-100M point -->
+    <circle cx="470" cy="170" r="5" fill="var(--good,#2f9e6e)"/>
+    <line x1="470" y1="170" x2="470" y2="180" class="v-grid" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="470" y="126" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">Stack-100M</text>
+    <text x="470" y="138" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">(~200 tok/param, ~20B)</text>
+
+    <!-- arrow between the two points -->
+    <path d="M240 158 Q 350 108 460 165" fill="none" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#cvd-arrow-mid)"/>
+    <text x="350" y="98" text-anchor="middle" class="sub dim">keep training: loss still drops --</text>
+    <text x="350" y="110" text-anchor="middle" class="sub dim">just less per training FLOP</text>
+
+    <text x="392" y="216" text-anchor="middle" class="cap">Chinchilla minimizes loss per unit of TRAINING compute only.</text>
+  </g>
+
+  <!-- BOTTOM PANEL: cumulative cost economics -->
+  <g data-anim="2">
+    <text x="40" y="252" class="panel-ttl">Cumulative compute cost over the deployment lifetime</text>
+    <rect x="40" y="260" width="700" height="248" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+
+    <!-- axes -->
+    <line x1="90" y1="470" x2="710" y2="470" class="v-grid" stroke-width="1.2"/>
+    <line x1="90" y1="280" x2="90" y2="470" class="v-grid" stroke-width="1.2"/>
+    <text x="400" y="490" text-anchor="middle" class="sub dim">number of inference calls served (deployment lifetime) -&gt;</text>
+    <text x="96" y="292" class="sub dim">cumulative cost</text>
+
+    <!-- crossover shading -->
+    <rect x="430" y="280" width="280" height="190" fill="var(--good,#2f9e6e)" fill-opacity="0.08"/>
+
+    <!-- larger compute-optimal model: low start, steep slope -->
+    <path d="M90 452 L 700 300" fill="none" class="v-accent-s viz-draw" style="--len:700" stroke-width="2.6"/>
+    <text x="640" y="292" text-anchor="middle" class="sub" fill="var(--accent)">Larger compute-optimal model</text>
+    <text x="640" y="304" text-anchor="middle" class="sub dim">cheap to train, steep to serve</text>
+
+    <!-- smaller over-trained model: higher start, shallow slope -->
+    <path d="M90 400 L 700 355" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2.6" class="viz-draw" style="--len:620"/>
+    <text x="640" y="368" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">Smaller over-trained model</text>
+    <text x="640" y="380" text-anchor="middle" class="sub dim">costly to train, cheap to serve</text>
+
+    <!-- crossover -->
+    <line x1="430" y1="280" x2="430" y2="470" class="v-muted" stroke-width="1.4" stroke-dasharray="5 3"/>
+    <circle cx="430" cy="378" r="4.5" fill="var(--ink-soft)"/>
+    <text x="430" y="440" text-anchor="middle" class="lbl">amortization point</text>
+
+    <rect x="440" y="450" width="260" height="18" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.14"/>
+    <text x="570" y="463" text-anchor="middle" class="sub" fill="var(--good,#2f9e6e)">over-trained small model wins here -- the deployment regime</text>
+
+    <text x="120" y="306" class="sub dim">training = one-time;</text>
+    <text x="120" y="318" class="sub dim">inference = recurs on</text>
+    <text x="120" y="330" class="sub dim">every call, forever</text>
+  </g>
+
+  <defs>
+    <marker id="cvd-arrow-mid" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+    </marker>
+  </defs>
+
+  <g data-anim="3">
+    <rect x="40" y="516" width="700" height="32" rx="6" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.1"/>
+    <text x="390" y="537" text-anchor="middle" class="take">Fixed serving cost, many calls: pay extra training FLOPs once, save inference FLOPs on every call after.</text>
+  </g>
+</svg>
+<figcaption><b>Chinchilla optimizes training compute, not deployment cost.</b> Training is a one-time expense but inference recurs on every call, so at a fixed, cheap-to-serve parameter count, a smaller model over-trained well past Chinchilla-optimal costs more up front but wins over its deployment lifetime — exactly the trade Stack-100M makes.</figcaption>
+</figure>

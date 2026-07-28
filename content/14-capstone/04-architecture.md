@@ -16,6 +16,8 @@ At large scale (billions of parameters) they trade roughly evenly and width tend
 
 So we fix an aggressive aspect ratio: **`d_model = 512`, `n_layers = 30`** — 30 sequential blocks of a narrow 512-wide stream. The conventional shape metric is *width-per-layer*, $d_{\text{model}}/n_{\text{layers}}$: for Stack-100M that is $512/30 \approx 17$, versus $\approx 64$ for GPT-2-small ($768/12$). Stack-100M is nearly **4× thinner per layer** than a classic GPT-2 of comparable size — a deliberately extreme point on the deep-thin axis, chosen because the sub-billion evidence rewards it. We do pay for the depth: 30 layers is 30 sequential kernel launches per token in the decode path, a latency cost we accept because (a) at 100M the matrices are tiny and launch overhead dominates anyway, and (b) `torch.compile` / CUDA-graph capture (see [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)) folds the launches into a single replayable graph. Depth is where a small model's quality lives.
 
+{{fig:deep-thin-budget-trade}}
+
 !!! note "Aside: the other small-model lever is vocabulary"
 
     A second small-model insight, fixed in Ch. 14.3, interacts with this one. With tied embeddings a vocabulary of $V$ tokens costs $V \times d$ parameters. At $V=50{,}257$ (GPT-2) and $d=512$ that is 25.7M parameters — on the order of **a quarter of the whole model** spent on the lookup table. We choose $V = 32768$, costing 16.78M. Vocabulary size is a first-class architectural knob at 100M in a way it simply is not at 100B. The two levers compound: deep-thin keeps the body cheap, a lean vocab keeps the embedding cheap, and the freed budget buys layers.
@@ -103,6 +105,8 @@ $$
 
 matching the spec's "$\approx 101$M." Roughly 83% of the parameters live in the 30-layer body and 17% in the embedding — exactly the balance the deep-thin + lean-vocab choices were designed to produce. (The `num_params()` sanity check at the end of the chapter reports the exact integer including every norm vector; the hand arithmetic above rounds the norms into the noise, which is why they differ by a few thousand.)
 
+{{fig:param-budget-allocation}}
+
 !!! example "Worked example: where do the FLOPs and the KV cache go?"
 
     Two magnitudes a practitioner should be able to estimate on the spot.
@@ -170,6 +174,8 @@ This trick (query-key normalization, Henry et al., *Query-Key Normalization for 
 
     **With QK-norm**, each $q$ and $k$ is RMS-normalized before the dot product, so $\|q\|,\|k\|\approx\sqrt{d_h}=8$ regardless of how large the raw projections grow, and by Cauchy–Schwarz $|q\cdot k|\le \|q\|\,\|k\| = 64$; after $1/\sqrt{d_h}$ scaling the logit is bounded by $\pm 8$ by construction, with a *learned* temperature reintroduced through the RMSNorm $\gamma$. The blow-up is structurally impossible. This is why QK-norm, not merely a lower learning rate, is the right fix: it removes the failure mode instead of tiptoeing around it.
 
+{{fig:qk-norm-logit-bound}}
+
 ### z-loss and logit soft-cap
 
 Two more cheap stabilizers guard the *output* logits. The **z-loss** (introduced in the PaLM / T5X training recipes) adds a small penalty on the log-partition function of the softmax:
@@ -227,11 +233,15 @@ Concretely, with `nope_every = 4`, layer index $\ell$ (0-based) uses NoPE iff $(
 
 ---
 
+{{fig:rope-nope-layer-stack}}
+
 ## Attention: grouped-query attention with QK-norm
 
 Now we assemble the attention module: **GQA with 2 KV heads** (Ainslie et al., *GQA*, 2023), **QK-norm** on the per-head queries and keys, RoPE (or NoPE) applied conditionally, and a causal mask via PyTorch's fused scaled-dot-product attention (which dispatches to a FlashAttention kernel when available — see [FlashAttention I](../04-kernels-efficiency/02-flash-attention-1.html)).
 
 GQA is the middle ground between full multi-head attention (one KV head per query head — maximal quality, maximal KV cache) and multi-query attention (one KV head total — minimal cache, some quality loss). With 8 query heads sharing 2 KV heads (a 4:1 group), we cut the KV cache 4× versus MHA while retaining nearly all the quality; the mechanism and quality tradeoff are dissected in [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).
+
+{{fig:gqa-head-sharing-kv-cache}}
 
 ```python
 class Attention(nn.Module):

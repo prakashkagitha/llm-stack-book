@@ -1,0 +1,134 @@
+<figure class="viz" id="fig-gptq-vs-awq-two-philosophies">
+<button class="viz-replay" type="button">replay</button>
+<svg viewBox="0 0 780 460" role="img" aria-label="GPTQ corrects quantization error after the fact by spreading it onto not-yet-quantized columns weighted by the Hessian inverse, while AWQ protects salient high-activation channels before quantizing by rescaling weights up and activations down, leaving the output unchanged.">
+  <defs>
+    <marker id="gaq-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-gptq-vs-awq-two-philosophies text{ fill:var(--ink-soft); }
+    #fig-gptq-vs-awq-two-philosophies .hdr{ font:700 14px var(--sans,sans-serif); }
+    #fig-gptq-vs-awq-two-philosophies .sub{ font:700 12px var(--sans,sans-serif); }
+    #fig-gptq-vs-awq-two-philosophies .lbl{ font:600 11px var(--sans,sans-serif); }
+    #fig-gptq-vs-awq-two-philosophies .mono{ font:600 10.5px var(--mono,monospace); }
+    #fig-gptq-vs-awq-two-philosophies .small{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-gptq-vs-awq-two-philosophies .cap{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+  </style>
+
+  <!-- Title + premise -->
+  <g data-anim="1">
+    <text x="390" y="22" text-anchor="middle" class="hdr" fill="var(--accent)">Two ways to beat RTN</text>
+    <text x="390" y="40" text-anchor="middle" class="cap">RTN treats every weight as equally important; these do not.</text>
+  </g>
+
+  <!-- divider -->
+  <line x1="390" y1="54" x2="390" y2="410" class="v-grid" stroke="currentColor" stroke-width="1" opacity="0.4" stroke-dasharray="3 3"/>
+
+  <!-- ============ LEFT PANEL: GPTQ ============ -->
+  <g data-anim="2">
+    <text x="20" y="70" class="sub" fill="var(--accent)">GPTQ -- correct after</text>
+
+    <!-- weight matrix as columns -->
+    <g>
+      <!-- quantized (locked), columns 1-4 -->
+      <rect x="20"  y="86" width="26" height="130" fill="var(--muted)" fill-opacity="0.30" stroke="var(--muted)" stroke-width="0.8"/>
+      <rect x="48"  y="86" width="26" height="130" fill="var(--muted)" fill-opacity="0.30" stroke="var(--muted)" stroke-width="0.8"/>
+      <rect x="76"  y="86" width="26" height="130" fill="var(--muted)" fill-opacity="0.30" stroke="var(--muted)" stroke-width="0.8"/>
+      <rect x="104" y="86" width="26" height="130" fill="var(--muted)" fill-opacity="0.30" stroke="var(--muted)" stroke-width="0.8"/>
+      <!-- current column, highlighted -->
+      <rect x="132" y="86" width="26" height="130" fill="var(--warn,#e0a106)" fill-opacity="0.30" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+      <!-- not-yet-quantized, columns 6-9 -->
+      <rect x="160" y="86" width="26" height="130" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="0.8"/>
+      <rect x="188" y="86" width="26" height="130" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="0.8"/>
+      <rect x="216" y="86" width="26" height="130" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="0.8"/>
+      <rect x="244" y="86" width="26" height="130" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="0.8"/>
+      <rect x="272" y="86" width="26" height="130" fill="var(--accent)" fill-opacity="0.14" stroke="var(--accent)" stroke-width="0.8"/>
+    </g>
+
+    <text x="33" y="80" text-anchor="middle" class="small">1..4</text>
+    <text x="145" y="80" text-anchor="middle" class="mono" fill="var(--warn,#e0a106)">q</text>
+    <text x="235" y="80" text-anchor="middle" class="small">q+1..</text>
+
+    <text x="75" y="230" text-anchor="middle" class="small">already quantized</text>
+    <text x="75" y="242" text-anchor="middle" class="small">(locked to the grid)</text>
+
+    <text x="145" y="230" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">quantizing</text>
+    <text x="145" y="242" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">now</text>
+
+    <text x="229" y="230" text-anchor="middle" class="small" fill="var(--accent)">not yet quantized</text>
+    <text x="229" y="242" text-anchor="middle" class="small" fill="var(--accent)">(still full precision)</text>
+
+    <!-- error arrows fanning rightward from current col onto future cols -->
+    <path d="M158 110 L182 104" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" marker-end="url(#gaq-arr)"/>
+    <path d="M158 130 L210 122" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" marker-end="url(#gaq-arr)"/>
+    <path d="M158 150 L238 142" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" marker-end="url(#gaq-arr)"/>
+    <path d="M158 170 L266 160" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" marker-end="url(#gaq-arr)"/>
+    <path d="M158 190 L292 178" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.3" marker-end="url(#gaq-arr)"/>
+
+    <rect x="16" y="262" width="358" height="60" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="26" y="278" class="small">spread this column's rounding error onto future</text>
+    <text x="26" y="291" class="small">columns, weighted by the Hessian H^-1 so the</text>
+    <text x="26" y="304" class="small">layer's OUTPUT reconstruction stays accurate.</text>
+    <text x="26" y="317" class="small">error = (w - quant(w)) / [H^-1]_qq</text>
+
+    <text x="16" y="342" class="cap">needs calibration activations + a Hessian</text>
+    <text x="16" y="356" class="cap">inverse per layer -- accurate but heavier.</text>
+  </g>
+
+  <!-- ============ RIGHT PANEL: AWQ ============ -->
+  <g data-anim="3">
+    <text x="410" y="70" class="sub" fill="var(--accent)">AWQ -- protect before</text>
+
+    <!-- input channels feeding weight columns: ~10 shown, 1 salient -->
+    <text x="410" y="86" class="small">input channels</text>
+    <g>
+      <rect x="410" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="434" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="458" y="94" width="20" height="16" fill="var(--warn,#e0a106)" fill-opacity="0.35" stroke="var(--warn,#e0a106)" stroke-width="1.4"/>
+      <rect x="482" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="506" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="530" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="554" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="578" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="602" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+      <rect x="626" y="94" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+    </g>
+    <text x="468" y="126" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">salient: systematically</text>
+    <text x="468" y="137" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">large activation (~1 of 10)</text>
+
+    <!-- before / after rescale -->
+    <text x="410" y="160" class="small">BEFORE</text>
+    <rect x="410" y="166" width="20" height="16" class="v-fill v-stroke" stroke-width="0.8"/>
+    <text x="420" y="178" text-anchor="middle" class="mono" font-size="9">w</text>
+    <text x="440" y="177" class="mono" font-size="10">x</text>
+
+    <text x="410" y="204" class="small">AFTER: multiply salient weight col by s&gt;1,</text>
+    <text x="410" y="216" class="small">divide its matching activation by s</text>
+
+    <text x="425" y="228" text-anchor="middle" class="small" fill="var(--warn,#e0a106)">bigger</text>
+    <rect x="410" y="232" width="30" height="24" fill="var(--warn,#e0a106)" fill-opacity="0.35" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="425" y="248" text-anchor="middle" class="mono" font-size="10" fill="var(--warn,#e0a106)">W*s</text>
+
+    <text x="461" y="228" text-anchor="middle" class="small" fill="var(--accent2,#3b82f6)">smaller</text>
+    <rect x="452" y="238" width="18" height="12" fill="var(--accent2,#3b82f6)" fill-opacity="0.25" stroke="var(--accent2,#3b82f6)" stroke-width="1"/>
+    <text x="461" y="247" text-anchor="middle" class="mono" font-size="8.5" fill="var(--accent2,#3b82f6)">x/s</text>
+
+    <rect x="410" y="270" width="364" height="52" rx="5" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="420" y="287" class="mono" font-size="10">y = W^T x = (W diag(s))^T (x/s)</text>
+    <text x="420" y="303" class="small">output unchanged -- rounding now hurts</text>
+    <text x="420" y="315" class="small">the salient channels less.</text>
+
+    <text x="410" y="342" class="cap">found by a cheap grid search --</text>
+    <text x="410" y="356" class="cap">no backprop, no Hessian.</text>
+  </g>
+
+  <!-- shared bottom strip -->
+  <g data-anim="4">
+    <rect x="16" y="376" width="748" height="60" rx="6" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="390" y="398" text-anchor="middle" class="lbl">both preserve the high-leverage precision a position-blind metric</text>
+    <text x="390" y="414" text-anchor="middle" class="lbl">like perplexity would never flag.</text>
+  </g>
+</svg>
+<figcaption><b>GPTQ and AWQ both beat round-to-nearest by admitting some weights matter more than others -- they just act at different times.</b> GPTQ quantizes column by column and spreads each column's rounding error onto not-yet-quantized columns, weighted by the Hessian inverse, so the layer's output reconstruction stays accurate. AWQ instead rescales <i>before</i> quantizing: it multiplies salient (high-activation) weight columns up and divides the matching activations down, an identity that shifts rounding error away from the channels that matter most -- cheaper, since it needs only a small grid search rather than a Hessian inverse.</figcaption>
+</figure>

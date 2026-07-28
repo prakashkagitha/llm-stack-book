@@ -1,0 +1,187 @@
+<figure class="viz" id="fig-distill-rejection-funnel">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 820 980" role="img" aria-label="A six-stage top-to-bottom pipeline: a task pool of narrow questions with gold answers, a teacher that rolls out eight diverse trajectories per task at temperature above zero, a filter that keeps only the trajectories whose answer exactly matches gold and collapses eight strands to three survivors, a format-and-mask stage that reuses the supervised versus masked coloring, an SFT stage where Stack-100M imitates the surviving traces, and an optional dashed RLVR polish stage.">
+<defs>
+  <marker id="drf-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+  </marker>
+  <marker id="drf-arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+  </marker>
+</defs>
+<style>
+  #fig-distill-rejection-funnel text{ fill:var(--ink-soft); font:400 11px var(--sans,sans-serif); }
+  #fig-distill-rejection-funnel .h1{ font:700 15px var(--sans,sans-serif); }
+  #fig-distill-rejection-funnel .sub{ font:400 11px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-distill-rejection-funnel .badge{ font:700 11px var(--sans,sans-serif); fill:var(--surface); }
+  #fig-distill-rejection-funnel .stage-lbl{ font:700 12.5px var(--sans,sans-serif); letter-spacing:.02em; }
+  #fig-distill-rejection-funnel .card-t{ font:600 10.5px var(--mono,monospace); }
+  #fig-distill-rejection-funnel .card-s{ font:400 10px var(--mono,monospace); fill:var(--muted); }
+  #fig-distill-rejection-funnel .blk-t{ font:700 12px var(--sans,sans-serif); fill:var(--surface); }
+  #fig-distill-rejection-funnel .blk-s{ font:400 10px var(--sans,sans-serif); fill:var(--surface); opacity:.92; }
+  #fig-distill-rejection-funnel .note{ font:400 italic 10px var(--sans,sans-serif); fill:var(--muted); }
+  #fig-distill-rejection-funnel .tiny{ font:600 9px var(--sans,sans-serif); }
+  #fig-distill-rejection-funnel .pill-lbl{ font:700 9px var(--sans,sans-serif); }
+  #fig-distill-rejection-funnel .foot-hd{ font:700 10.5px var(--sans,sans-serif); }
+  #fig-distill-rejection-funnel .foot{ font:400 10.5px var(--sans,sans-serif); fill:var(--ink-soft); }
+  #fig-distill-rejection-funnel .caption-band{ font:700 13px var(--sans,sans-serif); fill:var(--surface); }
+</style>
+
+<!-- TITLE -->
+<text x="16" y="24" class="h1">Distillation as rejection sampling: wide in, narrow out</text>
+<text x="16" y="41" class="sub">teacher rollouts -&gt; verifiable-reward filter -&gt; format + mask -&gt; SFT groove -&gt; optional RLVR polish</text>
+
+<!-- ============ STAGE 1: TASK POOL ============ -->
+<g data-anim="1">
+<circle cx="30" cy="70" r="12" class="v-accent"/>
+<text x="30" y="74" text-anchor="middle" class="badge">1</text>
+<text x="50" y="74" class="stage-lbl">TASK POOL</text>
+<text x="180" y="74" class="note">narrow auto-research questions, each with a gold (verifiable) answer</text>
+
+<rect x="170" y="90" width="200" height="46" rx="6" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.6"/>
+<text x="270" y="108" text-anchor="middle" class="card-t">Q: RoPE intro year x2?</text>
+<text x="270" y="124" text-anchor="middle" class="card-s">gold: 4042</text>
+
+<rect x="410" y="90" width="200" height="46" rx="6" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.2"/>
+<text x="510" y="108" text-anchor="middle" class="card-t">Q: ...</text>
+<text x="510" y="124" text-anchor="middle" class="card-s">gold: ...</text>
+
+<text x="624" y="118" class="sub">+ ~198 more (pool)</text>
+</g>
+
+<line x1="270" y1="136" x2="270" y2="182" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#drf-arrow-accent)"/>
+<text x="282" y="164" class="tiny" fill="var(--accent)">this one task -&gt;</text>
+
+<!-- ============ STAGE 2: TEACHER ROLLOUT ============ -->
+<g data-anim="2">
+<rect x="300" y="192" width="180" height="70" rx="8" class="v-accent"/>
+<text x="390" y="214" text-anchor="middle" class="blk-t">TEACHER</text>
+<text x="390" y="230" text-anchor="middle" class="blk-s">large model rollout, temp &gt; 0</text>
+<text x="390" y="247" text-anchor="middle" class="blk-s">-&gt; 8 diverse rollouts (illustrative)</text>
+
+<!-- 8 diverging strands -->
+<path d="M 390,262 C 390,320 40,350 40,400" fill="none" stroke="var(--muted)" stroke-width="1.4" opacity="0.7"/>
+<path d="M 390,262 C 390,320 140,350 140,400" fill="none" stroke="var(--muted)" stroke-width="1.4" opacity="0.7"/>
+<path d="M 390,262 C 390,330 240,360 240,400" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.7"/>
+<path d="M 390,262 C 390,330 340,360 340,400" fill="none" stroke="var(--muted)" stroke-width="1.4" opacity="0.7"/>
+<path d="M 390,262 C 390,330 440,360 440,400" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.7"/>
+<path d="M 390,262 C 390,330 540,360 540,400" fill="none" stroke="var(--muted)" stroke-width="1.4" opacity="0.7"/>
+<path d="M 390,262 C 390,320 640,350 640,400" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="1.7"/>
+<path d="M 390,262 C 390,320 740,350 740,400" fill="none" stroke="var(--muted)" stroke-width="1.4" opacity="0.7"/>
+
+<!-- endpoint markers: cross = wrong/malformed, check = solved -->
+<g stroke="var(--muted)" stroke-width="1.8" stroke-linecap="round">
+  <line x1="35" y1="395" x2="45" y2="405"/><line x1="45" y1="395" x2="35" y2="405"/>
+  <line x1="135" y1="395" x2="145" y2="405"/><line x1="145" y1="395" x2="135" y2="405"/>
+  <line x1="335" y1="395" x2="345" y2="405"/><line x1="345" y1="395" x2="335" y2="405"/>
+  <line x1="535" y1="395" x2="545" y2="405"/><line x1="545" y1="395" x2="535" y2="405"/>
+  <line x1="735" y1="395" x2="745" y2="405"/><line x1="745" y1="395" x2="735" y2="405"/>
+</g>
+<g fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M 234,401 L 238,406 L 247,394"/>
+  <path d="M 434,401 L 438,406 L 447,394"/>
+  <path d="M 634,401 L 638,406 L 647,394"/>
+</g>
+<text x="40" y="420" text-anchor="middle" class="tiny" fill="var(--muted)">wrong</text>
+<text x="140" y="420" text-anchor="middle" class="tiny" fill="var(--muted)">malformed</text>
+<text x="240" y="420" text-anchor="middle" class="tiny" fill="var(--good,#2f9e6e)">solved</text>
+<text x="340" y="420" text-anchor="middle" class="tiny" fill="var(--muted)">wrong</text>
+<text x="440" y="420" text-anchor="middle" class="tiny" fill="var(--good,#2f9e6e)">solved</text>
+<text x="540" y="420" text-anchor="middle" class="tiny" fill="var(--muted)">looped</text>
+<text x="640" y="420" text-anchor="middle" class="tiny" fill="var(--good,#2f9e6e)">solved</text>
+<text x="740" y="420" text-anchor="middle" class="tiny" fill="var(--muted)">wrong</text>
+
+<circle cx="30" cy="196" r="12" class="v-accent"/>
+<text x="30" y="200" text-anchor="middle" class="badge">2</text>
+<text x="50" y="200" class="stage-lbl">TEACHER ROLLOUT</text>
+<circle cx="182" cy="196" r="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+<text x="182" y="200" text-anchor="middle" class="tiny" fill="var(--muted)">1</text>
+<text x="605" y="200" class="note">(in CI: a hermetic stub teacher)</text>
+</g>
+
+<!-- ============ STAGE 3: FILTER (funnel) ============ -->
+<g data-anim="3">
+<path d="M 20,430 L 760,430 L 470,576 L 310,576 Z" class="v-fill" stroke="var(--border-2)" stroke-width="1.3" opacity="0.9"/>
+
+<!-- 3 surviving strands narrow into the neck (drawn above the funnel fill) -->
+<path d="M 240,430 C 260,488 350,540 385,576" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+<path d="M 440,430 C 430,488 400,540 392,576" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+<path d="M 640,430 C 600,488 440,540 398,576" fill="none" stroke="var(--good,#2f9e6e)" stroke-width="2"/>
+
+<text x="390" y="488" text-anchor="middle" class="sub" font-weight="600">keep only answer == gold</text>
+<text x="390" y="504" text-anchor="middle" class="sub" font-weight="600">(verifiable reward)</text>
+
+<rect x="330" y="584" width="120" height="22" rx="4" fill="var(--good,#2f9e6e)" fill-opacity="0.15" stroke="var(--good,#2f9e6e)" stroke-width="1.1"/>
+<text x="390" y="599" text-anchor="middle" class="tiny" fill="var(--good,#2f9e6e)">8 rollouts -&gt; 3 survivors</text>
+
+<circle cx="30" cy="440" r="12" class="v-accent"/>
+<text x="30" y="444" text-anchor="middle" class="badge">3</text>
+<text x="50" y="444" class="stage-lbl">FILTER</text>
+<circle cx="112" cy="440" r="8" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+<text x="112" y="444" text-anchor="middle" class="tiny" fill="var(--muted)">1</text>
+</g>
+
+<line x1="390" y1="606" x2="390" y2="628" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#drf-arrow)"/>
+
+<!-- ============ STAGE 4: FORMAT + MASK ============ -->
+<g data-anim="4">
+<circle cx="30" cy="644" r="12" class="v-accent"/>
+<text x="30" y="648" text-anchor="middle" class="badge">4</text>
+<text x="50" y="648" class="stage-lbl">FORMAT + MASK</text>
+<text x="230" y="648" class="sub">one surviving trace, re-rendered with tool tokens + loss mask</text>
+
+<g transform="translate(60,658)">
+  <rect x="0" y="0" width="120" height="30" rx="4" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="60" y="19" text-anchor="middle" class="pill-lbl" fill="var(--muted)">system (masked)</text>
+  <rect x="128" y="0" width="100" height="30" rx="4" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="178" y="19" text-anchor="middle" class="pill-lbl" fill="var(--muted)">user (masked)</text>
+  <rect x="236" y="0" width="150" height="30" rx="4" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.4"/>
+  <text x="311" y="19" text-anchor="middle" class="pill-lbl" fill="var(--accent)">thought+call (SUPERVISED)</text>
+  <rect x="394" y="0" width="150" height="30" rx="4" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+  <text x="469" y="19" text-anchor="middle" class="pill-lbl" fill="var(--muted)">tool_result (masked)</text>
+  <rect x="552" y="0" width="128" height="30" rx="4" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="1.4"/>
+  <text x="616" y="19" text-anchor="middle" class="pill-lbl" fill="var(--accent)">answer (SUPERVISED)</text>
+</g>
+</g>
+
+<line x1="390" y1="688" x2="390" y2="710" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#drf-arrow)"/>
+
+<!-- ============ STAGE 5: SFT STACK-100M ============ -->
+<g data-anim="5">
+<circle cx="30" cy="726" r="12" class="v-accent"/>
+<text x="30" y="730" text-anchor="middle" class="badge">5</text>
+<text x="50" y="730" class="stage-lbl">SFT STACK-100M</text>
+
+<rect x="270" y="710" width="240" height="56" rx="8" class="v-accent"/>
+<text x="390" y="734" text-anchor="middle" class="blk-t">Stack-100M</text>
+<text x="390" y="750" text-anchor="middle" class="blk-s">imitate the groove (Ch. 14.9 loop reused)</text>
+</g>
+
+<line x1="390" y1="766" x2="390" y2="790" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#drf-arrow)"/>
+<text x="404" y="782" class="tiny" fill="var(--muted)">optional</text>
+
+<!-- ============ STAGE 6: RLVR (GRPO) — dashed, optional ============ -->
+<g data-anim="5">
+<circle cx="30" cy="806" r="12" class="v-accent"/>
+<text x="30" y="810" text-anchor="middle" class="badge">6</text>
+<text x="50" y="810" class="stage-lbl">RLVR (GRPO)</text>
+
+<rect x="270" y="790" width="240" height="52" rx="8" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="6,4"/>
+<text x="390" y="812" text-anchor="middle" class="sub" font-weight="700">reward = final-answer match</text>
+<text x="390" y="828" text-anchor="middle" class="sub">optional polish, not a capability creator</text>
+</g>
+
+<!-- caption band -->
+<rect x="16" y="858" width="788" height="40" rx="6" class="v-accent"/>
+<text x="410" y="883" text-anchor="middle" class="caption-band">wide in, narrow out: the scarce resource is winning traces, not compute</text>
+
+<!-- footnote -->
+<line x1="16" y1="912" x2="804" y2="912" stroke="var(--border-2)" stroke-width="1"/>
+<circle cx="30" cy="930" r="9" fill="var(--surface-3)" stroke="var(--border-2)" stroke-width="1"/>
+<text x="30" y="934" text-anchor="middle" class="tiny" fill="var(--muted)">1</text>
+<text x="46" y="930" class="foot">Stages 2-3 ARE rejection sampling against a verifiable reward -- the SAME reward</text>
+<text x="46" y="946" class="foot">RLVR (stage 6) uses online, just applied offline to filter demonstrations instead of estimating advantages.</text>
+
+</svg>
+<figcaption><b>Distillation is rejection sampling, drawn as a funnel: many diverse teacher rollouts pour in, a verifiable-reward filter keeps only the exact-match winners, and the survivors are formatted, masked, and SFT-imitated into the Stack-100M groove.</b> Diversity comes from teacher temperature; the funnel neck is the sharpest cut in the whole pipeline; the optional RLVR pass at the end only polishes a groove the SFT stage already reached.</figcaption>
+</figure>

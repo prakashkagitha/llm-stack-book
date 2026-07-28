@@ -1,0 +1,99 @@
+<figure class="viz" id="fig-long-context-loss-vs-position-validation">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 516" role="img" aria-label="Loss binned by position within the 8192-token window reveals whether long-context extension actually worked: a healthy model keeps predicting better past the old 2048-token pretrain length, while a broken one rises past that boundary even though its scalar average loss can still look fine. A needle-in-a-haystack probe confirms it directly: a fact planted deep in the context is recovered only if the extension took.">
+  <defs>
+    <marker id="lclp-tip" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-long-context-loss-vs-position-validation text{ fill:var(--ink-soft); }
+    #fig-long-context-loss-vs-position-validation .ttl{ font:600 13px var(--sans,sans-serif); }
+    #fig-long-context-loss-vs-position-validation .sub{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-long-context-loss-vs-position-validation .lbl{ font:600 9.5px var(--sans,sans-serif); }
+    #fig-long-context-loss-vs-position-validation .sm{ font:500 8.8px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-long-context-loss-vs-position-validation .mono{ font:500 9px var(--mono,monospace); fill:var(--muted); }
+    #fig-long-context-loss-vs-position-validation .good{ color:var(--good,#2f9e6e); }
+    #fig-long-context-loss-vs-position-validation .warnc{ color:var(--warn,#e0a106); }
+  </style>
+
+  <text x="12" y="20" class="ttl">Two cheap probes that catch a broken context extension</text>
+
+  <!-- ============ TOP PANEL: loss vs position ============ -->
+  <g data-anim="1">
+    <text x="12" y="42" class="lbl">Loss vs. position in the 8192-token window</text>
+
+    <!-- axes -->
+    <line x1="60" y1="230" x2="720" y2="230" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#lclp-tip)"/>
+    <line x1="60" y1="230" x2="60" y2="58" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#lclp-tip)"/>
+    <text x="716" y="234" text-anchor="end" class="sm">token position</text>
+    <text x="40" y="54" class="sm">avg per-token loss</text>
+    <text x="30" y="64" text-anchor="end" class="sm">higher</text>
+    <text x="30" y="224" text-anchor="end" class="sm">lower</text>
+    <text x="60" y="244" text-anchor="middle" class="mono">0</text>
+    <text x="720" y="244" text-anchor="middle" class="mono">8192</text>
+
+    <!-- pretrain-length boundary -->
+    <line x1="225" y1="58" x2="225" y2="230" class="v-grid" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <text x="225" y="50" text-anchor="middle" class="sm">pretrain length 2048</text>
+
+    <!-- healthy curve: starts a bit high, gently decreases/flattens -->
+    <path d="M60,110 C 120,108 170,120 225,126 C 320,138 420,148 500,152 C 580,155 660,157 720,158"
+      fill="none" class="good" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+    <text x="600" y="140" class="lbl good" fill="currentColor">healthy: model uses MORE</text>
+    <text x="600" y="151" class="lbl good" fill="currentColor">context to predict better</text>
+
+    <!-- broken curve: tracks healthy to 2048, then rises -->
+    <path d="M60,110 C 120,108 170,120 225,126 C 300,132 360,140 420,116 C 480,92 560,64 640,54 L720,50"
+      fill="none" class="warnc" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="6 4"/>
+    <text x="430" y="88" class="lbl warnc" fill="currentColor">broken: far positions are</text>
+    <text x="430" y="99" class="lbl warnc" fill="currentColor">still noise -&gt; rescale+training</text>
+    <text x="430" y="110" class="lbl warnc" fill="currentColor">has not taken</text>
+
+    <text x="60" y="266" class="sm" style="font-size:8.4px">the SCALAR average of either curve can look fine &#8211; only the shape past 2048 reveals the truth</text>
+  </g>
+
+  <line x1="12" y1="290" x2="768" y2="290" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+
+  <!-- ============ BOTTOM PANEL: needle in haystack ============ -->
+  <g data-anim="2">
+    <text x="12" y="312" class="lbl">Needle-in-a-haystack probe</text>
+    <text x="12" y="324" class="sm">8192-token filler document; ask the model to complete "the passcode is"</text>
+
+    <!-- filler doc bar -->
+    <rect x="60" y="374" width="660" height="30" rx="4" class="v-stroke" fill="var(--surface-3)" stroke="currentColor" stroke-width="1"/>
+    <line x1="285" y1="374" x2="285" y2="404" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="285" y="418" text-anchor="middle" class="sm">2048</text>
+    <text x="60" y="418" class="sm">0</text>
+    <text x="720" y="418" text-anchor="end" class="sm">8192</text>
+
+    <!-- shallow needle (recovered) -->
+    <g>
+      <text x="180" y="338" text-anchor="middle" class="sm" style="font-size:8px">needle: "passcode is 4713"</text>
+      <text x="180" y="350" text-anchor="middle" class="sm" style="font-size:8px">planted at depth &lt; 2048</text>
+      <line x1="180" y1="364" x2="180" y2="374" class="good" stroke="currentColor" stroke-width="2"/>
+      <circle cx="180" cy="389" r="4" class="good" fill="currentColor"/>
+      <circle cx="180" cy="444" r="10" class="good" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M175,444 l4,4 l7,-8" fill="none" class="good" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="180" y="466" text-anchor="middle" class="lbl good" fill="currentColor">recovered</text>
+      <text x="180" y="477" text-anchor="middle" class="sm">"...is 4713"</text>
+    </g>
+
+    <!-- deep needle (lost) -->
+    <g>
+      <text x="560" y="338" text-anchor="middle" class="sm" style="font-size:8px">needle: "passcode is 4713"</text>
+      <text x="560" y="350" text-anchor="middle" class="sm" style="font-size:8px">planted at depth &gt; 2048 (deep)</text>
+      <line x1="560" y1="364" x2="560" y2="374" class="warnc" stroke="currentColor" stroke-width="2"/>
+      <circle cx="560" cy="389" r="4" class="warnc" fill="currentColor"/>
+      <circle cx="560" cy="444" r="10" class="warnc" fill="none" stroke="currentColor" stroke-width="2"/>
+      <line x1="555" y1="439" x2="565" y2="449" class="warnc" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <line x1="565" y1="439" x2="555" y2="449" class="warnc" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <text x="560" y="466" text-anchor="middle" class="lbl warnc" fill="currentColor">lost</text>
+      <text x="560" y="477" text-anchor="middle" class="sm">geometry without capability</text>
+    </g>
+
+    <text x="400" y="500" text-anchor="middle" class="sm" style="font-size:8.6px">a needle lost only at depth -&gt; train sub-phase B longer, or on longer documents</text>
+  </g>
+</svg>
+<figcaption><b>A falling average loss can hide a context extension that never took.</b> Bin per-token loss by position inside the 8192 window — a healthy extension keeps easing down (or flattens) past the old 2048 pretrain boundary, while a broken one turns upward there — and confirm directly with a needle-in-a-haystack probe: a fact recovered only when planted before position 2048 means geometry without capability.</figcaption>
+</figure>

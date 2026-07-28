@@ -1,0 +1,146 @@
+<figure class="viz" id="fig-rope-base-rescale-frequency-ladder">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 660" role="img" aria-label="Raising the RoPE base slows every rotation frequency except the fastest pair: the slow pair that only reached 0.27 radians by position 2048 would swing to 1.09 radians at a naive position 8192, an angle the model never saw, but after rescaling the base to about 42000 that same pair reaches only 0.27 radians at position 8192, landing back inside the range the model already learned.">
+  <defs>
+    <marker id="rbrl-tip" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-rope-base-rescale-frequency-ladder text{ fill:var(--ink-soft); }
+    #fig-rope-base-rescale-frequency-ladder .ttl{ font:600 13.5px var(--sans,sans-serif); }
+    #fig-rope-base-rescale-frequency-ladder .sub{ font:500 9.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rope-base-rescale-frequency-ladder .panel{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-rope-base-rescale-frequency-ladder .panelsm{ font:500 9px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rope-base-rescale-frequency-ladder .lbl{ font:600 9.3px var(--sans,sans-serif); }
+    #fig-rope-base-rescale-frequency-ladder .sm{ font:500 8.6px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-rope-base-rescale-frequency-ladder .mono{ font:500 8.6px var(--mono,monospace); fill:var(--muted); }
+    #fig-rope-base-rescale-frequency-ladder .good{ color:var(--good,#2f9e6e); }
+    #fig-rope-base-rescale-frequency-ladder .warnc{ color:var(--warn,#e0a106); }
+  </style>
+
+  <text x="12" y="20" class="ttl">RoPE base rescaling: stretching the frequency ladder so 8192 lands back where the model has been</text>
+  <text x="12" y="34" class="sub">head dim d=64 -&gt; 32 frequency pairs k=0..31; pretrained only up to position 2048</text>
+
+  <line x1="400" y1="46" x2="400" y2="600" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <!-- panel headers -->
+  <g data-anim="1">
+    <text x="200" y="58" text-anchor="middle" class="panel">Pretrain base, theta = 10000</text>
+    <text x="200" y="70" text-anchor="middle" class="panelsm">trained only up to position 2048</text>
+    <text x="600" y="58" text-anchor="middle" class="panel">Rescaled base, theta' ~ 42000 (s=4)</text>
+    <text x="600" y="70" text-anchor="middle" class="panelsm">d/(d-2) exponent = 64/62 ~ 1.03</text>
+  </g>
+  <line x1="20" y1="78" x2="780" y2="78" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+
+  <!-- ============ ROW 1: k=0 fastest pair (identical both panels) ============ -->
+  <g data-anim="2">
+    <circle cx="120" cy="150" r="30" fill="none" class="v-grid" stroke-width="1.1"/>
+    <path d="M108 122 A 26 26 0 0 1 148 128" fill="none" class="v-muted" stroke="currentColor" stroke-width="0.9" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="120" y1="150" x2="142.98" y2="169.29" class="v-accent-s" stroke="var(--accent)" stroke-width="2.2" marker-end="url(#rbrl-tip)"/>
+    <circle cx="120" cy="150" r="2.4" class="v-stroke" fill="currentColor"/>
+    <text x="164" y="140" class="lbl">k=0 (fastest / local)</text>
+    <text x="164" y="152" class="mono">theta_0 = 1 rad/token</text>
+    <text x="164" y="163" class="sm">~326 full rotations by position 2048</text>
+
+    <circle cx="515" cy="150" r="30" fill="none" class="v-grid" stroke-width="1.1"/>
+    <path d="M503 122 A 26 26 0 0 1 543 128" fill="none" class="v-muted" stroke="currentColor" stroke-width="0.9" stroke-dasharray="2 2" opacity="0.6"/>
+    <line x1="515" y1="150" x2="537.98" y2="169.29" class="v-accent-s" stroke="var(--accent)" stroke-width="2.2" marker-end="url(#rbrl-tip)"/>
+    <circle cx="515" cy="150" r="2.4" class="v-stroke" fill="currentColor"/>
+    <text x="559" y="140" class="lbl">k=0 (fastest / local)</text>
+    <text x="559" y="152" class="mono">theta_0 = 1 rad/token, always</text>
+    <text x="559" y="163" class="sm">identical to the left panel</text>
+  </g>
+  <text x="400" y="196" text-anchor="middle" class="lbl good" fill="currentColor">k=0 unchanged by any base -&gt; local resolution preserved (that is what the d/(d-2) exponent buys)</text>
+
+  <line x1="20" y1="208" x2="780" y2="208" class="v-grid" stroke="currentColor" stroke-width="0.6" stroke-dasharray="2 3"/>
+
+  <!-- ============ ROW 2: middle pair ============ -->
+  <g data-anim="3">
+    <circle cx="120" cy="268" r="26" fill="none" class="v-grid" stroke-width="1.1"/>
+    <line x1="120" y1="268" x2="95.56" y2="276.89" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#rbrl-tip)"/>
+    <circle cx="120" cy="268" r="2.2" class="v-stroke" fill="currentColor"/>
+    <text x="156" y="256" class="lbl">middle pair (k ~ 15)</text>
+    <text x="156" y="268" class="sm">moderate theta_k -&gt; a few</text>
+    <text x="156" y="278" class="sm">rotations by position 2048</text>
+
+    <circle cx="515" cy="268" r="26" fill="none" class="v-grid" stroke-width="1.1"/>
+    <line x1="515" y1="268" x2="540.61" y2="263.48" class="v-accent-s" stroke="var(--accent)" stroke-width="2" marker-end="url(#rbrl-tip)"/>
+    <circle cx="515" cy="268" r="2.2" class="v-stroke" fill="currentColor"/>
+    <text x="551" y="256" class="lbl">middle pair, same k</text>
+    <text x="551" y="268" class="sm">smaller theta_k' -&gt; turns</text>
+    <text x="551" y="278" class="sm">more slowly after rescale</text>
+  </g>
+
+  <line x1="20" y1="300" x2="780" y2="300" class="v-grid" stroke="currentColor" stroke-width="0.6" stroke-dasharray="2 3"/>
+
+  <!-- ============ ROW 3: k=31 slowest pair ============ -->
+  <g data-anim="4">
+    <text x="20" y="322" class="lbl">k=31 (slowest / long-range)</text>
+
+    <!-- LEFT: naive dial with SEEN + UNSEEN overlay -->
+    <path d="M140,430 L140,384 A46,46 0 0,1 152.27,385.67 Z" class="good" fill="currentColor" opacity="0.32" stroke="currentColor" stroke-width="1"/>
+    <path d="M140,430 L152.27,385.67 A46,46 0 0,1 180.77,408.70 Z" class="warnc" fill="currentColor" opacity="0.30" stroke="currentColor" stroke-width="1" stroke-dasharray="2 2"/>
+    <circle cx="140" cy="430" r="46" fill="none" class="v-grid" stroke-width="1.1"/>
+    <line x1="140" y1="430" x2="152.27" y2="385.67" class="good" stroke="currentColor" stroke-width="2.4" marker-end="url(#rbrl-tip)"/>
+    <line x1="140" y1="430" x2="180.77" y2="408.70" class="warnc" stroke="currentColor" stroke-width="2.4" stroke-dasharray="3 2" marker-end="url(#rbrl-tip)"/>
+    <circle cx="140" cy="430" r="2.6" class="v-stroke" fill="currentColor"/>
+
+    <text x="20" y="345" class="mono">theta_31 ~ 1.33e-4 rad/tok</text>
+    <text x="20" y="386" class="lbl good" fill="currentColor">SEEN</text>
+    <text x="20" y="397" class="sm">0 .. 0.27 rad</text>
+    <text x="20" y="410" class="sm">(positions 0..2048)</text>
+
+    <text x="190" y="392" class="lbl good" fill="currentColor">position 2048</text>
+    <text x="190" y="403" class="sm">~0.27 rad</text>
+
+    <text x="190" y="422" class="lbl warnc" fill="currentColor">naive position 8192</text>
+    <text x="190" y="433" class="sm">~1.09 rad &#8211; 4x past SEEN</text>
+
+    <text x="80" y="500" class="sm" style="font-size:8.3px">naive 8192: slow dims enter unseen angles</text>
+    <text x="80" y="510" class="sm" style="font-size:8.3px">-&gt; attention goes pathological</text>
+
+    <!-- RIGHT: rescaled dial -->
+    <path d="M545,430 L545,384 A46,46 0 0,1 557.27,385.67 Z" class="good" fill="currentColor" opacity="0.32" stroke="currentColor" stroke-width="1"/>
+    <circle cx="545" cy="430" r="46" fill="none" class="v-grid" stroke-width="1.1"/>
+    <line x1="545" y1="430" x2="548.10" y2="384.11" class="v-muted" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2 2" marker-end="url(#rbrl-tip)"/>
+    <line x1="545" y1="430" x2="557.27" y2="385.67" class="good" stroke="currentColor" stroke-width="2.4" marker-end="url(#rbrl-tip)"/>
+    <circle cx="545" cy="430" r="2.6" class="v-stroke" fill="currentColor"/>
+
+    <text x="415" y="345" class="mono">theta_31' ~ 3.3e-5 rad/tok (~4x slower)</text>
+    <text x="415" y="386" class="lbl good" fill="currentColor">SEEN</text>
+    <text x="415" y="397" class="sm">same 0 .. 0.27 rad wedge</text>
+
+    <text x="595" y="392" class="lbl good" fill="currentColor">position 8192 (rescaled)</text>
+    <text x="595" y="403" class="sm">~0.27 rad &#8211; back inside SEEN</text>
+    <text x="551" y="380" class="sm" style="font-size:7.6px">(pos 2048 now ~0.07 rad)</text>
+
+    <text x="440" y="500" class="sm" style="font-size:8.3px">rescale slows the whole ladder, so 8192</text>
+    <text x="440" y="510" class="sm" style="font-size:8.3px">new positions land in the learned range</text>
+  </g>
+
+  <!-- ============ phase-matching equality ============ -->
+  <g data-anim="5">
+    <line x1="20" y1="530" x2="780" y2="530" class="v-grid" stroke="currentColor" stroke-width="0.8"/>
+    <text x="400" y="548" text-anchor="middle" class="lbl">Phase matching: same wedge angle, 4x more positions covered</text>
+
+    <circle cx="270" cy="590" r="22" fill="none" class="v-grid" stroke-width="1"/>
+    <path d="M270,590 L270,568 A22,22 0 0,1 275.87,568.80 Z" class="good" fill="currentColor" opacity="0.35"/>
+    <line x1="270" y1="590" x2="275.87" y2="568.80" class="good" stroke="currentColor" stroke-width="2" marker-end="url(#rbrl-tip)"/>
+    <text x="270" y="622" text-anchor="middle" class="sm">position 2048, base 10000</text>
+    <text x="270" y="632" text-anchor="middle" class="sm">~0.27 rad</text>
+
+    <text x="400" y="596" text-anchor="middle" class="lbl" style="font-size:15px">=</text>
+
+    <circle cx="530" cy="590" r="22" fill="none" class="v-grid" stroke-width="1"/>
+    <path d="M530,590 L530,568 A22,22 0 0,1 535.87,568.80 Z" class="good" fill="currentColor" opacity="0.35"/>
+    <line x1="530" y1="590" x2="535.87" y2="568.80" class="good" stroke="currentColor" stroke-width="2" marker-end="url(#rbrl-tip)"/>
+    <text x="530" y="622" text-anchor="middle" class="sm">position 8192, base ~42000</text>
+    <text x="530" y="632" text-anchor="middle" class="sm">~0.27 rad</text>
+  </g>
+
+  <text x="400" y="649" text-anchor="middle" class="lbl" style="font-size:9.3px">positions up to 8192 now fall in the angular range the model learned for positions up to 2048</text>
+
+</svg>
+<figcaption><b>Raising the RoPE base slows every pair except the fastest, buying long-range positions the same angular range short positions used to occupy.</b> At the pretrained length, the slow pair k=31 barely turns (~0.27 rad by position 2048); a naive run at position 8192 swings that pair 4x further into angles the model never trained on, while rescaling the base to ~42000 stretches the ladder so position 8192 lands back at ~0.27 rad — the fastest pair k=0 is untouched either way, which is exactly what the d/(d-2) exponent is designed to preserve.</figcaption>
+</figure>

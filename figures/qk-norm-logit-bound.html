@@ -1,0 +1,124 @@
+<figure class="viz" id="fig-qk-norm-logit-bound">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 780 620" role="img" aria-label="Side by side comparison: without QK-norm the attention logit grows unbounded to over 100, softmax collapses to a hard one-hot spike, and the gradient to losing logits vanishes causing NaN; with QK-norm Cauchy-Schwarz bounds the logit to plus or minus 8, softmax stays soft, and gradient keeps flowing.">
+<style>
+  #fig-qk-norm-logit-bound text     { fill: var(--ink-soft,#45413a); }
+  #fig-qk-norm-logit-bound .ttl     { font: 700 15.5px var(--sans,sans-serif); fill: currentColor; }
+  #fig-qk-norm-logit-bound .sub     { font: 500 11px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-qk-norm-logit-bound .hdr     { font: 700 12px var(--sans,sans-serif); }
+  #fig-qk-norm-logit-bound .lbl     { font: 600 10.5px var(--sans,sans-serif); }
+  #fig-qk-norm-logit-bound .small   { font: 500 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-qk-norm-logit-bound .mono    { font: 600 9.5px var(--mono,monospace); }
+  #fig-qk-norm-logit-bound .tag     { font: 700 10px var(--sans,sans-serif); }
+  #fig-qk-norm-logit-bound .bad     { fill: var(--warn,#e0a106); }
+  #fig-qk-norm-logit-bound .good    { fill: var(--good,#2f9e6e); }
+</style>
+
+<text x="20" y="24" class="ttl">The attention-logit blowup, and the QK-norm fix</text>
+<text x="20" y="41" class="sub">pre-softmax logit = (q.k) / sqrt(d_h), d_h = 64</text>
+
+<line x1="390" y1="52" x2="390" y2="596" stroke="var(--border-2,#d8d1c0)" stroke-width="1" stroke-dasharray="3 3"/>
+
+<g data-anim="1">
+  <text x="20" y="70" class="hdr bad">WITHOUT QK-norm (blows up)</text>
+
+  <text x="20" y="94" class="small">1. Wq,Wk drift up -&gt; per-component std sigma grows (say sigma -&gt; 6)</text>
+
+  <text x="20" y="118" class="small">2. q.k std ~= sigma^2 sqrt(d_h) = 8 sigma^2, after /8 scaling ~= sigma^2</text>
+  <text x="20" y="130" class="small">   -&gt; ~36; max over 2048 tokens can exceed 100</text>
+
+
+  <g>
+    <rect x="20"  y="212" width="16" height="8"  class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="42"  y="208" width="16" height="12" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="64"  y="204" width="16" height="16" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="86"  y="198" width="16" height="22" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="108" y="150" width="16" height="70" class="bad" stroke="var(--warn,#e0a106)"/>
+    <rect x="130" y="202" width="16" height="18" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="152" y="206" width="16" height="14" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <line x1="16" y1="220" x2="172" y2="220" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+    <text x="116" y="144" text-anchor="middle" class="small bad" font-weight="700">&gt;100</text>
+  </g>
+  <text x="94" y="236" text-anchor="middle" class="small">one towering logit dwarfs the rest</text>
+
+  <text x="20" y="264" class="small">3. softmax:</text>
+
+  <g>
+    <line x1="60" y1="304" x2="360" y2="304" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+    <rect x="200" y="270" width="10" height="34" class="bad"/>
+    <rect x="70"  y="302" width="6" height="2" fill="var(--v-muted,#6d675d)"/>
+    <rect x="90"  y="302" width="6" height="2" fill="var(--v-muted,#6d675d)"/>
+    <rect x="330" y="302" width="6" height="2" fill="var(--v-muted,#6d675d)"/>
+    <rect x="350" y="302" width="6" height="2" fill="var(--v-muted,#6d675d)"/>
+  </g>
+  <text x="205" y="320" text-anchor="middle" class="small bad" font-weight="700">hard argmax (near one-hot)</text>
+
+  <rect x="20" y="336" width="340" height="42" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.2"/>
+  <text x="30" y="353" class="small bad" font-weight="700">4. grad to losing logits ~ e^-100 ~ 0</text>
+  <text x="30" y="368" class="small bad" font-weight="700">-&gt; attention frozen -&gt; loss NaN</text>
+</g>
+
+<g data-anim="2">
+  <text x="410" y="70" class="hdr good">WITH QK-norm (bounded by construction)</text>
+
+  <text x="410" y="94" class="small">1. RMSNorm q,k over head_dim -&gt; ||q||,||k|| ~= sqrt(d_h) = 8</text>
+  <text x="410" y="106" class="small">   regardless of projection growth</text>
+
+  <text x="410" y="130" class="small">2. Cauchy-Schwarz: |q.k| &lt;= ||q|| ||k|| = 64,</text>
+  <text x="410" y="142" class="small">   after /8 scaling logit bounded by +-8</text>
+
+
+  <g>
+    <rect x="410" y="184" width="16" height="36" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="432" y="190" width="16" height="30" class="good" stroke="var(--good,#2f9e6e)"/>
+    <rect x="454" y="180" width="16" height="40" class="good" stroke="var(--good,#2f9e6e)"/>
+    <rect x="476" y="188" width="16" height="32" class="good" stroke="var(--good,#2f9e6e)"/>
+    <rect x="498" y="176" width="16" height="44" class="good" stroke="var(--good,#2f9e6e)"/>
+    <rect x="520" y="192" width="16" height="28" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <rect x="542" y="198" width="16" height="22" class="v-fill" stroke="var(--v-muted,#6d675d)"/>
+    <line x1="406" y1="220" x2="562" y2="220" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+    <text x="484" y="170" text-anchor="middle" class="small good" font-weight="700">bounded +-8</text>
+  </g>
+  <text x="484" y="236" text-anchor="middle" class="small">comparable logits, no runaway bar</text>
+
+  <text x="410" y="264" class="small">3. softmax:</text>
+
+  <g>
+    <line x1="450" y1="304" x2="750" y2="304" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+    <rect x="460" y="286" width="10" height="18" class="good"/>
+    <rect x="490" y="290" width="10" height="14" class="good"/>
+    <rect x="520" y="278" width="10" height="26" class="good"/>
+    <rect x="550" y="284" width="10" height="20" class="good"/>
+    <rect x="580" y="292" width="10" height="12" class="good"/>
+    <rect x="610" y="282" width="10" height="22" class="good"/>
+    <rect x="640" y="288" width="10" height="16" class="good"/>
+    <rect x="670" y="294" width="10" height="10" class="good"/>
+  </g>
+  <text x="595" y="320" text-anchor="middle" class="small good" font-weight="700">stays soft -&gt; gradient flows</text>
+
+  <rect x="410" y="336" width="340" height="42" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.12" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+  <text x="420" y="353" class="small good" font-weight="700">4. blow-up structurally impossible;</text>
+  <text x="420" y="368" class="small good" font-weight="700">   learned temperature via RMSNorm gamma</text>
+</g>
+
+<g data-anim="3">
+  <rect x="20" y="396" width="740" height="34" rx="6" fill="var(--surface-3,#ece7da)" fill-opacity="0.5" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="390" y="418" text-anchor="middle" class="lbl">removes the failure mode, not tiptoes around it (why QK-norm &gt; merely a lower LR)</text>
+</g>
+
+<g data-anim="4">
+  <line x1="20" y1="446" x2="760" y2="446" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="20" y="466" class="hdr">the causal chain, restated</text>
+
+  <text x="20" y="488" class="mono bad">no QK-norm:</text>
+  <text x="20" y="502" class="mono">sigma grows -&gt; logit ~36, max &gt;100</text>
+  <text x="20" y="516" class="mono">-&gt; hard argmax -&gt; grad~0 -&gt; NaN</text>
+
+  <text x="410" y="488" class="mono good">with QK-norm:</text>
+  <text x="410" y="502" class="mono">||q||,||k||=8 fixed -&gt; |logit| &lt;= 8</text>
+  <text x="410" y="516" class="mono">-&gt; soft softmax -&gt; grad flows</text>
+</g>
+
+</svg>
+<figcaption><b>Without QK-norm the attention logit can drift past 100, collapsing softmax to a hard argmax with vanishing gradient and a NaN run; with QK-norm, Cauchy-Schwarz caps the logit at +-8 by construction, so the blow-up is structurally impossible rather than merely unlikely at a lower learning rate.</b> That structural guarantee -- not just a smaller step size -- is what lets Stack-100M train with Muon at a high learning rate.</figcaption>
+</figure>

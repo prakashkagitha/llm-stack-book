@@ -38,6 +38,8 @@ We slice a ~2B-token window off the ~20B-token budget for all three moves combin
 
 The LR decays *monotonically across all three* sub-phases — mid-training is one continuous WSD decay, just with the data mix and sequence length changing underneath it.
 
+{{fig:midtrain-continuous-decay-spine}}
+
 ## Move 1 — WSD Decay-Phase Annealing
 
 ### The annealing mix
@@ -164,6 +166,8 @@ $$
 
 A larger base makes every $\theta_k$ *smaller*, so each dimension rotates more slowly — exactly compensating for the longer positions. The $d/(d-2)$ exponent is the NTK correction that leaves the highest-frequency pair essentially untouched (preserving local resolution) while stretching the low-frequency pairs (which needed the range). YaRN (Peng et al., 2023) refines this per-wavelength and adds an attention-temperature ("length scaling") correction that divides the pre-softmax logits by a factor $\propto \log$ of the scale, compensating for the entropy growth of attention over longer contexts; we cross-link its full treatment in [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html) and use the simpler base rescale here, because **we are going to continue-train** — a small amount of training at 8192 repairs any residual mismatch far more cheaply than getting the zero-shot formula perfect.
 
+{{fig:rope-base-rescale-frequency-ladder}}
+
 !!! example "Worked example — rescaling Stack-100M's RoPE base for 4× context"
 
     Stack-100M: head dimension $d = 64$, pretrain length $L_{\text{old}} = 2048$, target $L_{\text{new}} = 8192$, original base $\theta = 10000$.
@@ -235,9 +239,13 @@ Two practical notes that matter more than the formula:
 
     Attention memory and compute are quadratic in sequence length. Going 2048 → 8192 is 4× longer, so the attention score matrix is **16×** larger and activation memory jumps. On the single A100 (80GB) flagship tier this is fine only if you *also* cut the micro-batch by ~4× and lean harder on gradient accumulation to keep the ~0.5M-token global batch (Ch. 14.6), plus [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) (which never materializes the full score matrix) and optional [activation checkpointing](../04-kernels-efficiency/10-memory-efficient-training.html). GQA with 2 KV heads (Ch. 14.1) already shrinks the KV cache 4×, which is a large part of why 8192 fits at all. Do the arithmetic *before* you launch, not after the OOM.
 
+{{fig:seqlen-quadratic-attention-budget}}
+
 ### Validating that the long-context actually works
 
 Perplexity averaged over a sequence can *fall* even when the model still cannot use position 8000 — a couple of well-predicted local tokens hide a broken tail. Two cheap probes catch this. First, **loss-versus-position**: bin the per-token loss by its position within the 8192-window and plot the curve. A healthy extension shows loss that keeps *decreasing* (or at worst flattening) as position grows — the model is using more context to predict better. A curve that *rises* past ~2048 means the rescale-plus-training has not taken and the far positions are still noise. Second, a tiny **needle-in-a-haystack** check: plant a short unique fact ("the passcode is 4713") at a random depth in a long filler document and ask the model, via next-token prediction, to complete "the passcode is". If it recovers the needle only when it sits in the first 2048 tokens, you have geometry without capability — train sub-phase B longer or on longer documents. The honest, full evaluation belongs in [Chapter 14.11](../14-capstone/11-evaluation-and-serving.html); these are the two you run *during* mid-training to know the elbow is real.
+
+{{fig:long-context-loss-vs-position-validation}}
 
 !!! tip "Practitioner tip: rescale once, at the boundary — not per step"
 

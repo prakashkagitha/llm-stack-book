@@ -1,0 +1,113 @@
+<figure class="viz" id="fig-quant-memory-ladder-and-packing">
+<button class="viz-replay" type="button">replay</button>
+<svg viewBox="0 0 780 400" role="img" aria-label="Storage of Stack-100M shrinks from 406MB at fp32 to 203MB at bf16 to 102MB at int8 to 63MB at int4, with a packing inset showing two 4-bit values folded into one byte, and a caveat that this is a memory shrink, not automatically a compute speedup.">
+  <style>
+    #fig-quant-memory-ladder-and-packing text{ fill:var(--ink-soft); }
+    #fig-quant-memory-ladder-and-packing .hdr{ font:700 13px var(--sans,sans-serif); }
+    #fig-quant-memory-ladder-and-packing .lbl{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-quant-memory-ladder-and-packing .mono{ font:600 11px var(--mono,monospace); }
+    #fig-quant-memory-ladder-and-packing .small{ font:500 10px var(--mono,monospace); fill:var(--muted); }
+    #fig-quant-memory-ladder-and-packing .cap{ font:500 10.5px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-quant-memory-ladder-and-packing .warn{ fill:var(--warn,#e0a106); }
+  </style>
+
+  <!-- ============ LEFT: memory ladder bars ============ -->
+  <g data-anim="1">
+    <text x="10" y="22" class="hdr" fill="var(--accent)">Stack-100M storage (101.4M params)</text>
+
+    <!-- fp32: full width 460px baseline -->
+    <text x="10" y="50" class="lbl">fp32</text>
+    <rect x="70" y="38" width="460" height="22" rx="3" fill="var(--accent)" fill-opacity="0.75" stroke="var(--accent)" stroke-width="1"/>
+    <text x="536" y="53" class="mono">406 MB</text>
+    <text x="70" y="35" class="small">1.0x</text>
+
+    <!-- bf16: half width 230 -->
+    <text x="10" y="90" class="lbl">bf16</text>
+    <rect x="70" y="78" width="230" height="22" rx="3" fill="var(--accent)" fill-opacity="0.75" stroke="var(--accent)" stroke-width="1"/>
+    <text x="306" y="93" class="mono">203 MB</text>
+    <text x="70" y="75" class="small">2.0x</text>
+
+    <!-- int8: weight bytes + tiny overhead. total width ~115 -->
+    <text x="10" y="130" class="lbl">int8</text>
+    <rect x="70" y="118" width="114" height="22" rx="3" fill="var(--accent)" fill-opacity="0.75" stroke="var(--accent)" stroke-width="1"/>
+    <rect x="184" y="118" width="1.5" height="22" fill="var(--warn,#e0a106)"/>
+    <text x="190" y="133" class="mono">102 MB</text>
+    <text x="70" y="115" class="small">4.0x, row-wise scales</text>
+
+    <!-- int4: weight bytes + visible overhead segment. total width ~71 -->
+    <text x="10" y="170" class="lbl">int4</text>
+    <rect x="70" y="158" width="57" height="22" rx="3" fill="var(--accent)" fill-opacity="0.75" stroke="var(--accent)" stroke-width="1"/>
+    <rect x="127" y="158" width="14" height="22" fill="var(--warn,#e0a106)" fill-opacity="0.85" stroke="var(--warn,#e0a106)" stroke-width="0.8"/>
+    <text x="147" y="173" class="mono">63 MB</text>
+    <text x="70" y="155" class="small">6.4x, group=64</text>
+
+    <!-- overhead callout -->
+    <path d="M134 182 L134 205" fill="none" stroke="var(--warn,#e0a106)" stroke-width="1.2" stroke-dasharray="3 2"/>
+    <text x="10" y="222" class="cap warn">~12.7 MB of the 63 MB is fp32 scale + zero-point per group (1.58M groups x 8B) --</text>
+    <text x="10" y="236" class="cap warn">the part production formats compress (fp16 scale + int8 zp gets this to ~59 MB).</text>
+
+    <!-- legend -->
+    <rect x="10" y="256" width="12" height="12" fill="var(--accent)" fill-opacity="0.75" stroke="var(--accent)" stroke-width="1"/>
+    <text x="28" y="266" class="cap">packed weight bytes</text>
+    <rect x="170" y="256" width="12" height="12" fill="var(--warn,#e0a106)" fill-opacity="0.85" stroke="var(--warn,#e0a106)" stroke-width="0.8"/>
+    <text x="188" y="266" class="cap">scale / zero-point overhead</text>
+
+    <!-- caveat banner spanning left column -->
+    <rect x="10" y="290" width="546" height="60" rx="6" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="24" y="310" class="lbl" fill="var(--warn,#e0a106)">smaller in RAM, NOT automatically faster:</text>
+    <text x="24" y="328" class="cap">the reference path dequantizes to fp32 before matmul; integer-native</text>
+    <text x="24" y="342" class="cap">kernels (FBGEMM/QNNPACK, GGUF) are what actually buy speed.</text>
+  </g>
+
+  <!-- ============ RIGHT: packing inset ============ -->
+  <g data-anim="2">
+    <text x="586" y="22" class="hdr" fill="var(--accent)">packing two int4s per byte</text>
+    <text x="586" y="40" class="small">int4 values 0..15 (one row):</text>
+
+    <!-- row of int4 quantized value cells 0..15, color-coded even/odd -->
+    <g>
+      <rect x="586" y="48" width="42" height="26" class="v-stroke" stroke-width="1" fill="var(--accent)" fill-opacity="0.20"/>
+      <text x="607" y="66" text-anchor="middle" class="mono">05</text>
+      <rect x="632" y="48" width="42" height="26" class="v-stroke" stroke-width="1" fill="var(--accent2,#3b82f6)" fill-opacity="0.20"/>
+      <text x="653" y="66" text-anchor="middle" class="mono">11</text>
+      <rect x="678" y="48" width="42" height="26" class="v-stroke" stroke-width="1" fill="var(--accent)" fill-opacity="0.20"/>
+      <text x="699" y="66" text-anchor="middle" class="mono">02</text>
+      <rect x="724" y="48" width="42" height="26" class="v-stroke" stroke-width="1" fill="var(--accent2,#3b82f6)" fill-opacity="0.20"/>
+      <text x="745" y="66" text-anchor="middle" class="mono">14</text>
+    </g>
+    <text x="607" y="88" text-anchor="middle" class="small" fill="var(--accent)">c0 even</text>
+    <text x="653" y="88" text-anchor="middle" class="small" fill="var(--accent2,#3b82f6)">c1 odd</text>
+    <text x="699" y="88" text-anchor="middle" class="small" fill="var(--accent)">c2 even</text>
+    <text x="745" y="88" text-anchor="middle" class="small" fill="var(--accent2,#3b82f6)">c3 odd</text>
+
+    <!-- fold arrows: c0+c1 -> one byte -->
+    <path d="M607 74 L607 118 L620 132" fill="none" class="v-stroke" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 2"/>
+    <path d="M653 74 L653 118 L680 132" fill="none" class="v-stroke" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 2"/>
+    <text x="586" y="106" class="small">fold c0 (even) + c1 (odd)</text>
+    <text x="586" y="120" class="small">into one byte:</text>
+
+    <!-- one byte: two nibble halves, low = even col, high = odd col -->
+    <rect x="600" y="136" width="120" height="34" rx="3" class="v-stroke" stroke-width="1.4" fill="none"/>
+    <line x1="660" y1="136" x2="660" y2="170" class="v-stroke" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 2"/>
+    <rect x="660" y="136" width="60" height="34" fill="var(--accent2,#3b82f6)" fill-opacity="0.22"/>
+    <rect x="600" y="136" width="60" height="34" fill="var(--accent)" fill-opacity="0.22"/>
+    <text x="630" y="158" text-anchor="middle" class="mono" font-size="11">0101</text>
+    <text x="690" y="158" text-anchor="middle" class="mono" font-size="11">1011</text>
+    <text x="586" y="188" class="small" fill="var(--accent)">low nibble = even (c0 = 05)</text>
+    <text x="586" y="202" class="small" fill="var(--accent2,#3b82f6)">high nibble = odd (c1 = 11)</text>
+
+    <rect x="586" y="216" width="184" height="40" rx="6" class="v-fill v-stroke" stroke-width="1"/>
+    <text x="596" y="233" class="mono" font-size="10.5">packed =</text>
+    <text x="596" y="248" class="mono" font-size="10.5">q_even | (q_odd &lt;&lt; 4)</text>
+
+    <text x="586" y="274" class="cap">one row of d_in values packs into</text>
+    <text x="586" y="288" class="cap">d_in / 2 bytes -- 50% of int8's size.</text>
+  </g>
+
+  <g data-anim="3">
+    <line x1="10" y1="365" x2="774" y2="365" class="v-grid" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+    <text x="10" y="385" class="cap">Bars are width-proportional to total size; only the chapter's stated numbers are used (406 / 203 / 102 / 63 MB for 101.4M params).</text>
+  </g>
+</svg>
+<figcaption><b>Each step down the precision ladder roughly compounds the last: fp32 (406MB) to bf16 (203MB, 2.0x) to int8 (102MB, 4.0x) to int4 (63MB, 6.4x).</b> The int4 packing inset shows how two 4-bit codes fold into a single byte (<code>q_even | (q_odd &lt;&lt; 4)</code>); at that bit-width the per-group fp32 scale and zero-point stop being negligible (~12.7MB of the 63MB) and become worth compressing themselves. None of this is a compute speedup by itself — the reference path still dequantizes to fp32 before every matmul.</figcaption>
+</figure>

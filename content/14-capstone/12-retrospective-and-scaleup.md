@@ -130,6 +130,8 @@ Three things this table teaches that a bare "\$100" hides:
 
     The plan quotes **\$40–\$100**, and both ends are honest. The low end assumes an owned or deeply-discounted GPU and a clean first run: ~22 GPU-hours near the ~\$1/GPU-hr floor of spot A100 pricing is ~\$22 of compute plus a few dollars of API and storage. The high end is the fully-loaded invoice above: on-demand-class spot at ~\$1.80/GPU-hr, the teacher API, storage, and a realistic re-run tax. Same recipe, same tokens — the roughly 2.5× spread is *entirely* GPU market price and how many times you fat-finger a launch. Quote the number with its assumptions attached: a dollar figure without a price-per-GPU-hour *and* an MFU is not reproducible, because someone else's \$/GPU-hr and someone else's kernels move it by 2×.
 
+{{fig:capstone-cost-anatomy}}
+
 !!! example "Worked example: does over-training actually pay off?"
 
     Suppose you will serve Stack-100M for one billion inference requests, each generating 256 tokens. Inference FLOPs are $\approx 2ND$, so total serving compute is
@@ -139,6 +141,8 @@ Three things this table teaches that a bare "\$100" hides:
     $$
 
     That is ~4× the *entire* 20B-token pretraining budget ($1.21\times10^{19}$). Now imagine over-training let you hit your target quality at 100M instead of needing a 200M model (roughly 2× the serving FLOPs). The extra ~\$36 you spent over-training saves you ~$5.2\times10^{19}$ FLOPs — on the order of one full pretrain-budget's worth of compute — *per billion requests*. The over-training pays for itself many times over the moment you deploy at scale. This is exactly the "inference-aware over-training" of Sardana et al. (*Beyond Chinchilla-Optimal*, 2024), and it only sharpens as you scale.
+
+{{fig:capstone-pay-once-save-forever}}
 
 ---
 
@@ -388,6 +392,8 @@ So **1B still fits a single 80 GB A100** for weights+optimizer (~16 GB), leaving
 
 The single-controller message: at 1B, **DDP is enough**; FSDP is a convenience; pipeline parallelism is premature. The complexity ladder is something you climb only as far as the model forces you.
 
+{{fig:capstone-scaleup-ladder}}
+
 ### Learning rate and batch size: what to rescale
 
 You cannot copy Stack-100M's hyperparameters to 1B unchanged; width and batch both grew. Two rules, both from [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html):
@@ -432,7 +438,7 @@ class DeepSeekMoEFFN(nn.Module):
     - `n_routed` many small experts; top-`k` are activated per token.
     - `n_shared` experts run for EVERY token (capture common structure).
     Active params/token = shared + k*routed, far below the total capacity of
-    (n_shared + n_routed) experts. Here: active 3 of 18 experts resident.
+    (n_shared + n_routed) experts. Here: active 3 of 17 experts resident.
     """
     def __init__(self, d_model=512, d_ff=352, n_routed=16, n_shared=1, k=2):
         super().__init__()
@@ -459,7 +465,7 @@ class DeepSeekMoEFFN(nn.Module):
         return out.reshape(B, T, D)
 ```
 
-With those numbers, active compute per token is `n_shared + k = 1 + 2 = 3` experts (`3 × 352 ≈ 1056` FFN width, *below* the dense `1408`), while total resident capacity is `n_shared + n_routed = 18` experts — roughly 6× the parameters for less-than-dense compute. That is the whole pitch of MoE in one line.
+With those numbers, active compute per token is `n_shared + k = 1 + 2 = 3` experts (`3 × 352 ≈ 1056` FFN width, *below* the dense `1408`), while total resident capacity is `n_shared + n_routed = 17` experts — roughly 6× the capacity per active expert for less-than-dense compute. That is the whole pitch of MoE in one line.
 
 The catch — and why MoE is a *fork*, not a free lunch: MoE trades compute for **memory and communication**. All experts must live in memory even though each token uses few, and multi-GPU MoE needs **all-to-all** communication to route tokens to the GPUs holding their experts (expert parallelism, in [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html)). At 1B on one GPU, dense is simpler and probably right. MoE is the lever you pull when you want 7B-worth of *capacity* at ~1–2B-worth of *inference cost* — the DeepSeek/Qwen3 playbook.
 
@@ -468,6 +474,8 @@ The catch — and why MoE is a *fork*, not a free lunch: MoE trades compute for 
     **Q:** You trained a great 1B dense model. A product team wants "much smarter" but the inference-latency budget per token is fixed. Do you go to a larger dense model or to MoE, and what breaks in each case?
 
     **A:** A larger dense model raises *active* params, so FLOPs/token and thus latency rise — it violates the fixed latency budget. MoE raises *total* capacity (quality) while holding *active* params (and therefore per-token FLOPs and latency) roughly fixed, which is exactly what the constraint demands — this is the DeepSeekMoE/Qwen3-MoE trade. What breaks with MoE is *serving*, not FLOPs: every expert must be resident in memory, so device memory and cost-per-GPU jump, and multi-GPU deployment needs all-to-all routing (expert parallelism) that adds communication and complicates batching. So: MoE for more quality at fixed latency, but budget for more memory and a harder serving stack; dense if you are memory- or ops-constrained and can afford the latency. The honest answer names the trade explicitly rather than treating MoE as free capacity.
+
+{{fig:capstone-moe-capacity-vs-compute}}
 
 ---
 

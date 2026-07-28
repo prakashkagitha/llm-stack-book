@@ -1,0 +1,86 @@
+<figure class="viz" id="fig-seqlen-quadratic-attention-budget">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 780 420" role="img" aria-label="Going from sequence length 2048 to 8192 is 4x longer but makes the attention score matrix 16x larger in area because attention cost is quadratic, so the micro-batch shrinks about 4x while gradient accumulation rises to hold the same half-million-token global batch.">
+  <defs>
+    <marker id="sqab-tip" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-seqlen-quadratic-attention-budget text{ fill:var(--ink-soft); }
+    #fig-seqlen-quadratic-attention-budget .ttl{ font:600 12.5px var(--sans,sans-serif); }
+    #fig-seqlen-quadratic-attention-budget .lbl{ font:600 9.5px var(--sans,sans-serif); }
+    #fig-seqlen-quadratic-attention-budget .sm{ font:500 8.8px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-seqlen-quadratic-attention-budget .mono{ font:500 9px var(--mono,monospace); fill:var(--muted); }
+    #fig-seqlen-quadratic-attention-budget .big{ font:700 13px var(--sans,sans-serif); }
+    #fig-seqlen-quadratic-attention-budget .warnc{ color:var(--warn,#e0a106); }
+  </style>
+
+  <line x1="378" y1="16" x2="378" y2="404" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+
+  <!-- ============ LEFT: the quadratic ============ -->
+  <g data-anim="1">
+    <text x="16" y="26" class="ttl">The quadratic: 4x sequence -&gt; 16x score matrix</text>
+
+    <!-- 2048x2048 small square -->
+    <rect x="40" y="60" width="44" height="44" class="v-accent-s" fill="var(--accent)" opacity="0.28" stroke="var(--accent)" stroke-width="1.4"/>
+    <text x="62" y="118" text-anchor="middle" class="mono">2048 x 2048</text>
+    <text x="62" y="130" text-anchor="middle" class="sm">score matrix</text>
+
+    <!-- 8192x8192 large square, 4x side -->
+    <rect x="150" y="36" width="176" height="176" class="warnc" fill="currentColor" opacity="0.22" stroke="currentColor" stroke-width="1.6"/>
+    <text x="238" y="224" text-anchor="middle" class="mono">8192 x 8192</text>
+    <text x="238" y="236" text-anchor="middle" class="sm">score matrix</text>
+
+    <text x="16" y="250" class="lbl">sequence 4x longer -&gt; score matrix</text>
+    <text x="16" y="263" class="lbl">16x larger (quadratic), NOT 4x</text>
+
+    <rect x="16" y="278" width="346" height="56" rx="5" fill="var(--surface-3)" opacity="0.6" class="v-stroke" stroke="currentColor" stroke-width="0.7"/>
+    <text x="26" y="294" class="sm">FlashAttention never materializes this full</text>
+    <text x="26" y="306" class="sm">matrix; GQA with 2 KV heads shrinks the KV</text>
+    <text x="26" y="318" class="sm">cache 4x &#8211; a big part of why 8192 fits at all.</text>
+
+    <text x="16" y="352" class="sm" style="font-size:8.4px">head_dim d=64, GQA 2 KV heads (Ch. 14.1)</text>
+    <text x="16" y="364" class="sm" style="font-size:8.4px">FlashAttention (Ch. 4.2), activation checkpointing (Ch. 4.10)</text>
+  </g>
+
+  <!-- ============ RIGHT: holding the global batch ============ -->
+  <g data-anim="2">
+    <text x="404" y="26" class="ttl">Holding the global batch fixed</text>
+
+    <!-- Row 1: seq_len 2048 -->
+    <text x="404" y="52" class="lbl">seq_len 2048</text>
+    <g transform="translate(404,62)">
+      <rect x="0" y="0" width="230" height="26" rx="4" class="v-accent-s" fill="var(--accent)" opacity="0.24" stroke="var(--accent)" stroke-width="1"/>
+      <text x="115" y="17" text-anchor="middle" class="mono">micro_bs 32</text>
+      <text x="248" y="17" class="sm">x accum 7</text>
+    </g>
+    <text x="404" y="106" class="sm">-&gt; global batch ~0.5M tokens</text>
+
+    <line x1="404" y1="122" x2="404" y2="150" class="v-muted" stroke="currentColor" stroke-width="1.2" marker-end="url(#sqab-tip)"/>
+    <text x="414" y="140" class="sm" style="font-size:8.4px">shrink micro-batch ~4x,</text>
+    <text x="414" y="151" class="sm" style="font-size:8.4px">grad-accum stays 7</text>
+
+    <!-- Row 2: seq_len 8192 -->
+    <text x="404" y="180" class="lbl">seq_len 8192</text>
+    <g transform="translate(404,190)">
+      <rect x="0" y="0" width="60" height="26" rx="4" class="warnc" fill="currentColor" opacity="0.22" stroke="currentColor" stroke-width="1"/>
+      <text x="30" y="17" text-anchor="middle" class="mono" style="font-size:8.6px">micro_bs 8</text>
+      <text x="78" y="17" class="sm">x accum 7 (same accum: 4x</text>
+      <text x="78" y="29" class="sm">longer seq offsets 4x smaller bs)</text>
+    </g>
+    <text x="404" y="240" class="sm">-&gt; global batch ~0.5M tokens (unchanged)</text>
+
+    <rect x="404" y="256" width="360" height="62" rx="5" fill="var(--surface-3)" opacity="0.6" class="v-stroke" stroke="currentColor" stroke-width="0.7"/>
+    <text x="414" y="272" class="sm">Same ~0.5M-token global batch both rows &#8211;</text>
+    <text x="414" y="284" class="sm">only the micro_bs / grad-accum split changes,</text>
+    <text x="414" y="296" class="sm">so the LR/batch relationship (Ch. 3.10) stays</text>
+    <text x="414" y="308" class="sm">unchanged across the sequence-length jump.</text>
+
+    <text x="404" y="342" class="sm" style="font-size:8.4px">global batch ~0.5M tokens = 512,000 (Ch. 14.6)</text>
+  </g>
+
+  <text x="16" y="404" class="big">4x longer sequence, ~4x smaller micro-batch, same global batch and LR</text>
+</svg>
+<figcaption><b>Attention cost is quadratic, so the fix has to be too.</b> Going from 2048 to 8192 tokens makes the attention score matrix 16x larger, not 4x, which is why the micro-batch shrinks roughly 4x while gradient accumulation stays put — the 4x-longer sequence exactly offsets the 4x-smaller micro-batch, holding the ~0.5M-token global batch — with FlashAttention and 2-head GQA doing the heavy lifting to keep it on one A100.</figcaption>
+</figure>

@@ -28,18 +28,7 @@ Two structural facts drive this. First, post-training touches a *tiny* number of
 
 The classical alternative to DPO+GRPO is the full **PPO-RLHF pipeline** — train a reward model on preferences, then run PPO with a policy, a frozen reference, *and* a value-network critic (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) and [Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html)). At 100M this is technically possible but strategically wrong: the reward model would be *another* ~100M network to train and tune, the critic *another* one, and the whole online feedback loop is the most fragile machinery in ML. DPO deletes the reward model and the rollouts; GRPO deletes the critic. What remains is exactly what our budget can afford and our task actually needs.
 
-```text
-  base model (Ch. 14.8)
-        │
-        ▼  SFT: imitate good assistant turns  (cross-entropy, assistant-masked)
-   chat model
-        │
-        ▼  DPO: prefer chosen over rejected   (Bradley–Terry on implicit reward)
-  aligned chat model
-        │
-        ▼  GRPO: reinforce verifiably-correct  (group-relative advantage, clipped)
-  narrow-skill model  ──►  agent (Ch. 14.10) / eval + serve (Ch. 14.11)
-```
+{{fig:posttraining-ladder-100m}}
 
 ## SFT: chat template, packing, and assistant-only loss masking
 
@@ -124,6 +113,8 @@ Two design decisions deserve emphasis. First, **we supervise the closing `<|end|
     We are not writing 50k conversations by hand. The modern practice — and the one behind the small models we are emulating — is to assemble a compact, *high-quality* SFT mix from public instruction datasets and light synthetic generation. Concretely: **SmolTalk** (HuggingFace, 2024), the ~1M-conversation mix curated for **SmolLM2**, is a near-drop-in source; it blends **UltraChat**-style multi-turn dialogues (Ding et al., 2023), rewriting/summarization tasks, and a slice of math/code so the assistant is well-rounded. At 100M, *less is more*: a few tens of thousands of clean, on-format conversations beat a noisy million, because a small model spends its scarce capacity memorizing whatever regularities dominate the set. We deliberately seed the mix with a handful of arithmetic exemplars in the exact `####` answer format the RLVR stage will grade (below) — this is how the verifier later finds an answer to check. Filter aggressively for turns that *stop*, that respect the format, and that a 100M model can plausibly imitate; drop anything requiring long chains of reasoning it cannot represent.
 
 ### Assistant-only loss masking and why it matters
+
+{{fig:sft-assistant-mask-stackml}}
 
 The SFT objective is the ordinary causal-LM cross-entropy from [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html), with one change: we zero the loss on every non-assistant token. Formally, for a rendered sequence of tokens $t_1,\dots,t_L$ with supervision mask $m_i\in\{0,1\}$,
 
@@ -252,6 +243,8 @@ $$
 $$
 
 Read it as: push the winner's log-probability *up relative to the reference* and the loser's *down relative to the reference*, with $\beta$ (typically 0.1) controlling how far we let the policy drift from $\pi_{\text{ref}}$. The reference $\pi_{\text{ref}}$ is our frozen SFT model. Crucially there is **no reward model and no generation** — DPO consumes a static dataset of pairs, so at 100M it costs about the same as another epoch of SFT.
+
+{{fig:dpo-relative-reshaping}}
 
 ### Implementation: per-sequence log-probs and the loss
 
@@ -411,6 +404,8 @@ $$
 $$
 
 where $\rho_{i,t} = \dfrac{\pi_\theta(o_{i,t}\mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,<t})}$ is the per-token importance ratio between the current policy and the policy that generated the rollouts. When $\hat A_i>0$ (this sample beat its group) the objective pushes $\rho$ up (make these tokens more likely); when $\hat A_i<0$ it pushes them down; the clip prevents any single update from moving too far. Notice a group where *all* rewards are equal has zero std and thus zero advantage — those prompts contribute no gradient, which is both a feature (no noise) and the cold-start trap (too-hard or too-easy prompts are wasted).
+
+{{fig:grpo-group-advantage-arith}}
 
 ### A minimal GRPO loop
 

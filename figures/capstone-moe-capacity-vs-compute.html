@@ -1,0 +1,119 @@
+<figure class="viz" id="fig-capstone-moe-capacity-vs-compute">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 470" role="img" aria-label="One token enters a DeepSeekMoE-style block with 16 routed experts and 1 shared expert, 17 total resident, setting total capacity and quality. The router activates the top 2 routed experts plus the always-on shared expert, 3 of 17 active per token, setting FLOPs and latency at a combined FFN width of about 1056, below the dense block's 1408. The catch: every expert must stay resident in memory, and multi-GPU routing needs all-to-all communication.">
+  <style>
+    #fig-capstone-moe-capacity-vs-compute .ttl{ font:700 14.5px var(--sans,sans-serif); }
+    #fig-capstone-moe-capacity-vs-compute .sec{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-capstone-moe-capacity-vs-compute .lbl{ font:600 10px var(--sans,sans-serif); }
+    #fig-capstone-moe-capacity-vs-compute .sub{ font:500 9.3px var(--sans,sans-serif); }
+    #fig-capstone-moe-capacity-vs-compute .mono{ font:600 9.5px var(--mono,monospace); }
+    #fig-capstone-moe-capacity-vs-compute .badge{ font:700 10.5px var(--sans,sans-serif); }
+    #fig-capstone-moe-capacity-vs-compute .take{ font:600 11.5px var(--sans,sans-serif); }
+    #fig-capstone-moe-capacity-vs-compute text{ fill: var(--ink-soft); }
+    #fig-capstone-moe-capacity-vs-compute .dim{ fill: var(--muted); }
+    #fig-capstone-moe-capacity-vs-compute .rex{ fill: var(--muted); fill-opacity: 0.18; stroke: var(--v-grid); stroke-width: 1; }
+    #fig-capstone-moe-capacity-vs-compute .rex.active{ fill: var(--accent,#c15b39); fill-opacity: 0.55; stroke: var(--accent,#c15b39); stroke-width: 1.8; }
+  </style>
+
+  <text x="400" y="20" text-anchor="middle" class="ttl">MoE decouples total capacity from compute per token</text>
+
+  <!-- token in -->
+  <g data-anim="1">
+    <circle cx="60" cy="120" r="16" class="v-fill" stroke="var(--v-stroke)" stroke-width="1.6"/>
+    <text x="60" y="124" text-anchor="middle" class="mono">x</text>
+    <text x="60" y="146" text-anchor="middle" class="sub dim">token</text>
+    <line x1="76" y1="120" x2="112" y2="120" stroke="var(--v-stroke)" stroke-width="1.6" marker-end="url(#moe-arrow)"/>
+  </g>
+
+  <!-- router -->
+  <g data-anim="2">
+    <rect x="112" y="96" width="70" height="48" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.18" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="147" y="117" text-anchor="middle" class="lbl" fill="var(--accent,#c15b39)">router</text>
+    <text x="147" y="130" text-anchor="middle" class="sub dim">top-k affinities</text>
+    <line x1="182" y1="120" x2="212" y2="120" stroke="var(--v-stroke)" stroke-width="1.6" marker-end="url(#moe-arrow)"/>
+  </g>
+
+  <!-- total capacity panel: 16 routed + 1 shared -->
+  <g data-anim="3">
+    <rect x="212" y="56" width="500" height="150" rx="10" fill="none" stroke="var(--border-2)" stroke-width="1.4"/>
+    <text x="230" y="74" class="sec">TOTAL CAPACITY = n_shared + n_routed = 17 experts resident</text>
+    <text x="230" y="88" class="sub dim">sets QUALITY</text>
+
+    <!-- 16 routed experts, grid 8x2 -->
+    <g>
+      <!-- row 1: 8 boxes -->
+      <rect x="230" y="98" width="34" height="26" rx="4" class="rex" data-id="0"/>
+      <rect x="270" y="98" width="34" height="26" rx="4" class="rex" data-id="1"/>
+      <rect x="310" y="98" width="34" height="26" rx="4" class="rex" data-id="2"/>
+      <rect x="350" y="98" width="34" height="26" rx="4" class="rex active" data-id="3"/>
+      <rect x="390" y="98" width="34" height="26" rx="4" class="rex" data-id="4"/>
+      <rect x="430" y="98" width="34" height="26" rx="4" class="rex" data-id="5"/>
+      <rect x="470" y="98" width="34" height="26" rx="4" class="rex" data-id="6"/>
+      <rect x="510" y="98" width="34" height="26" rx="4" class="rex" data-id="7"/>
+      <!-- row 2: 8 boxes -->
+      <rect x="230" y="130" width="34" height="26" rx="4" class="rex" data-id="8"/>
+      <rect x="270" y="130" width="34" height="26" rx="4" class="rex" data-id="9"/>
+      <rect x="310" y="130" width="34" height="26" rx="4" class="rex active" data-id="10"/>
+      <rect x="350" y="130" width="34" height="26" rx="4" class="rex" data-id="11"/>
+      <rect x="390" y="130" width="34" height="26" rx="4" class="rex" data-id="12"/>
+      <rect x="430" y="130" width="34" height="26" rx="4" class="rex" data-id="13"/>
+      <rect x="470" y="130" width="34" height="26" rx="4" class="rex" data-id="14"/>
+      <rect x="510" y="130" width="34" height="26" rx="4" class="rex" data-id="15"/>
+    </g>
+    <text x="387" y="168" text-anchor="middle" class="sub dim">16 routed experts (FFN width 352 each) -- top-k=2 lit for this token</text>
+
+    <!-- shared expert -->
+    <rect x="580" y="106" width="100" height="48" rx="8" fill="var(--accent,#c15b39)" fill-opacity="0.55" stroke="var(--accent,#c15b39)" stroke-width="1.8"/>
+    <text x="630" y="126" text-anchor="middle" class="lbl" fill="var(--ink)">1 shared</text>
+    <text x="630" y="140" text-anchor="middle" class="sub" fill="var(--ink)">always-on</text>
+    <text x="630" y="185" text-anchor="middle" class="sub dim">every token</text>
+  </g>
+
+  <!-- active/token summary -->
+  <g data-anim="4">
+    <rect x="212" y="222" width="500" height="60" rx="10" fill="var(--accent,#c15b39)" fill-opacity="0.14" stroke="var(--accent,#c15b39)" stroke-width="1.6"/>
+    <text x="230" y="240" class="sec" fill="var(--accent,#c15b39)">ACTIVE/token = shared + k = 1 + 2 = 3 experts</text>
+    <text x="230" y="254" class="sub">FFN width 3 x 352 ~= 1056, BELOW the dense block's 1408</text>
+    <text x="230" y="268" class="sub dim">sets FLOPs &amp; LATENCY</text>
+  </g>
+
+  <!-- balance punchline -->
+  <g data-anim="5">
+    <rect x="212" y="292" width="240" height="40" rx="8" class="v-fill" stroke="var(--accent,#c15b39)" stroke-width="1.4"/>
+    <text x="332" y="309" text-anchor="middle" class="badge" fill="var(--accent,#c15b39)">capacity ~6x the params</text>
+    <text x="332" y="323" text-anchor="middle" class="sub dim">of the dense block</text>
+
+    <text x="470" y="317" text-anchor="middle" class="lbl dim">vs.</text>
+
+    <rect x="490" y="292" width="222" height="40" rx="8" class="v-fill" stroke="var(--good,#2f9e6e)" stroke-width="1.4"/>
+    <text x="601" y="309" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">compute/token BELOW dense</text>
+    <text x="601" y="323" text-anchor="middle" class="sub dim">3 of 17 experts fire</text>
+  </g>
+
+  <text x="400" y="356" text-anchor="middle" class="take">MoE decouples capacity from compute/token.</text>
+
+  <!-- the catch: memory + communication -->
+  <g data-anim="6">
+    <rect x="60" y="372" width="340" height="82" rx="10" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="78" y="392" class="lbl" fill="var(--warn,#e0a106)">MEMORY</text>
+    <text x="78" y="408" class="sub">Every expert must be resident even</text>
+    <text x="78" y="421" class="sub">though each token uses few of them.</text>
+    <text x="78" y="440" class="sub dim">17 experts held in memory; 3 fire.</text>
+
+    <rect x="400" y="372" width="340" height="82" rx="10" fill="var(--warn,#e0a106)" fill-opacity="0.12" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="418" y="392" class="lbl" fill="var(--warn,#e0a106)">COMMUNICATION</text>
+    <text x="418" y="408" class="sub">Multi-GPU needs ALL-TO-ALL to route</text>
+    <text x="418" y="421" class="sub">tokens to the GPU holding their expert</text>
+    <text x="418" y="440" class="sub dim">(expert parallelism).</text>
+  </g>
+
+  <text x="400" y="466" text-anchor="middle" class="sub dim">A serving decision, not a free lunch: 7B-worth of capacity at ~1-2B-worth of inference cost.</text>
+
+  <defs>
+    <marker id="moe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--v-stroke)"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption><b>Fine-grained routed experts plus an always-on shared expert let total capacity dwarf the compute spent per token.</b> All 17 experts (16 routed + 1 shared) stay resident and set quality, but only 3 fire for any given token -- a combined FFN width below the dense block's -- so MoE buys roughly 6x the capacity per active expert at less-than-dense compute, at the cost of full-capacity memory residency and all-to-all routing across GPUs.</figcaption>
+</figure>

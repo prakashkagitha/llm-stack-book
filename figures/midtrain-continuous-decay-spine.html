@@ -1,0 +1,177 @@
+<figure class="viz" id="fig-midtrain-continuous-decay-spine">
+<button class="viz-replay" type="button">↻ replay</button>
+<svg viewBox="0 0 800 650" role="img" aria-label="One continuous WSD learning-rate decay runs across all of mid-training while sub-phase, sequence length, and data mixture change underneath it: anneal at 2048 tokens, then long-context extension to 8192, then capability injection, with held-out loss bending down at the elbow and ticking up slightly at the 8192 boundary.">
+  <defs>
+    <marker id="mcds-tip" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <style>
+    #fig-midtrain-continuous-decay-spine text{ fill:var(--ink-soft); }
+    #fig-midtrain-continuous-decay-spine .ttl{ font:600 14px var(--sans,sans-serif); }
+    #fig-midtrain-continuous-decay-spine .sub{ font:500 10px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-midtrain-continuous-decay-spine .trk{ font:600 10.5px var(--sans,sans-serif); }
+    #fig-midtrain-continuous-decay-spine .bandname{ font:700 10.5px var(--sans,sans-serif); }
+    #fig-midtrain-continuous-decay-spine .bandsm{ font:500 8.6px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-midtrain-continuous-decay-spine .lbl{ font:600 9px var(--sans,sans-serif); }
+    #fig-midtrain-continuous-decay-spine .sm{ font:500 8.6px var(--sans,sans-serif); fill:var(--muted); }
+    #fig-midtrain-continuous-decay-spine .mono{ font:500 9px var(--mono,monospace); fill:var(--muted); }
+    #fig-midtrain-continuous-decay-spine .lr{ color:var(--accent); }
+    #fig-midtrain-continuous-decay-spine .loss{ color:var(--accent2,#3b82f6); }
+    #fig-midtrain-continuous-decay-spine .warnc{ color:var(--warn,#e0a106); }
+  </style>
+
+  <text x="12" y="20" class="ttl">Mid-training: one continuous WSD decay across three sub-phases</text>
+  <text x="12" y="34" class="sub">x-axis: mid-training progress, 0 -&gt; ~2B tokens (~10% of the 20B pretrain budget)</text>
+
+  <!-- band backgrounds spanning all tracks -->
+  <g data-anim="1">
+    <rect x="60" y="52" width="426" height="510" fill="var(--surface-3)" opacity="0.30"/>
+    <rect x="486" y="52" width="213" height="510" fill="var(--surface-3)" opacity="0.48"/>
+    <rect x="699" y="52" width="71" height="510" fill="var(--surface-3)" opacity="0.66"/>
+    <line x1="486" y1="52" x2="486" y2="562" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="699" y1="52" x2="699" y2="562" class="v-grid" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <!-- band A header -->
+    <text x="273" y="64" text-anchor="middle" class="bandname">A. Anneal</text>
+    <text x="273" y="76" text-anchor="middle" class="bandsm">~1.2B tok  ·  seq_len 2048</text>
+    <text x="273" y="87" text-anchor="middle" class="bandsm">purpose: quality jump</text>
+
+    <!-- band B header -->
+    <text x="592.5" y="64" text-anchor="middle" class="bandname">B. Long-context extend</text>
+    <text x="592.5" y="76" text-anchor="middle" class="bandsm">~0.6B tok  ·  seq_len 8192</text>
+    <text x="592.5" y="87" text-anchor="middle" class="bandsm">purpose: RoPE rescale + attend @8192</text>
+
+    <!-- band C header -->
+    <text x="734.5" y="64" text-anchor="middle" class="bandname">C. Capability</text>
+    <text x="734.5" y="76" text-anchor="middle" class="bandsm">~0.2B tok</text>
+    <text x="734.5" y="87" text-anchor="middle" class="bandsm">math+code</text>
+  </g>
+
+  <line x1="60" y1="96" x2="770" y2="96" class="v-grid" stroke="currentColor" stroke-width="1"/>
+
+  <!-- ============ TRACK 1: learning rate ============ -->
+  <g data-anim="2">
+    <text x="64" y="110" class="trk">Learning rate (peak -&gt; floor, one decay)</text>
+    <line x1="60" y1="205" x2="770" y2="205" class="v-grid" stroke="currentColor" stroke-width="0.8" stroke-dasharray="2 3"/>
+    <text x="762" y="200" class="sm" text-anchor="end" style="font-size:8px">floor</text>
+
+    <path d="M60,118 L95.5,137.45 L131,145.51 L166.5,151.70 L202,156.91 L237.5,161.5 L273,165.65 L308.5,169.47 L344,173.03 L379.5,176.36 L415,179.5 L450.5,182.52 L486,185.39 L521.5,188.14 L557,190.79 L592.5,193.34 L628,195.81 L663.5,198.21 L699,200.54 L734.5,202.80 L770,205"
+      fill="none" class="lr" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="60" cy="118" r="3" class="lr" fill="currentColor"/>
+
+    <text x="64" y="131" class="lbl lr" fill="currentColor" style="font-size:8.6px">resume at PEAK LR,</text>
+    <text x="64" y="141" class="lbl lr" fill="currentColor" style="font-size:8.6px">pre-decay ckpt_stable</text>
+
+    <line x1="160" y1="148" x2="210" y2="132" class="v-muted" stroke="currentColor" stroke-width="0.8"/>
+    <text x="212" y="129" class="sm">half the LR gone by ~25%</text>
+
+    <text x="560" y="158" class="sm" text-anchor="middle">long low-LR tail:</text>
+    <text x="560" y="168" class="sm" text-anchor="middle">premium tokens COMMIT here</text>
+
+    <rect x="330" y="209" width="240" height="14" rx="3" fill="var(--surface)" class="v-stroke" stroke="currentColor" stroke-width="0.7"/>
+    <text x="450" y="219" text-anchor="middle" class="sm" style="font-size:8px">one decay across all three &#8211; no reset, no cliffs</text>
+  </g>
+
+  <!-- ============ TRACK 2: held-out loss ============ -->
+  <g data-anim="3">
+    <text x="64" y="238" class="trk">Held-out loss (frozen pretrain-distribution val set)</text>
+
+    <text x="66" y="252" class="sm">stable-phase</text>
+    <text x="66" y="261" class="sm">plateau</text>
+
+    <path d="M60,238 L95.5,238 L131,240 L166.5,252 L202,268 L237.5,284 L273,296 L308.5,304 L344,310 L379.5,314 L415,317 L450.5,319 L486,321"
+      fill="none" class="loss" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M486,313 L521.5,315 L557,317 L592.5,318 L628,319 L663.5,320 L699,321 L734.5,322 L770,323"
+      fill="none" class="loss" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="486" y1="321" x2="486" y2="313" class="warnc" stroke="currentColor" stroke-width="1.4" stroke-dasharray="1.5 1.5"/>
+
+    <line x1="222" y1="264" x2="205" y2="272" class="v-muted" stroke="currentColor" stroke-width="0.7" stroke-dasharray="1.5 1.5"/>
+    <text x="230" y="254" class="lbl loss" fill="currentColor" style="font-size:8.8px">the elbow: loss</text>
+    <text x="230" y="264" class="lbl loss" fill="currentColor" style="font-size:8.8px">commits as LR falls</text>
+
+    <line x1="490" y1="298" x2="486" y2="312" class="v-muted" stroke="currentColor" stroke-width="0.7" stroke-dasharray="1.5 1.5"/>
+    <text x="500" y="276" class="lbl warnc" fill="currentColor" style="font-size:8.2px">8192 prediction is genuinely</text>
+    <text x="500" y="285" class="lbl warnc" fill="currentColor" style="font-size:8.2px">harder -&gt; avg loss rises a hair,</text>
+    <text x="500" y="294" class="lbl warnc" fill="currentColor" style="font-size:8.2px">expected NOT a regression</text>
+  </g>
+
+  <!-- ============ TRACK 3: seq_len ============ -->
+  <g data-anim="4">
+    <text x="64" y="345" class="trk">seq_len</text>
+    <line x1="60" y1="395" x2="486" y2="395" class="v-accent-s" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+    <line x1="486" y1="395" x2="486" y2="365" class="v-accent-s" stroke="currentColor" stroke-width="2.6"/>
+    <line x1="486" y1="365" x2="770" y2="365" class="v-accent-s" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+    <text x="270" y="388" text-anchor="middle" class="mono">2048</text>
+    <text x="600" y="358" text-anchor="middle" class="mono">8192</text>
+    <circle cx="486" cy="380" r="3.4" class="warnc" fill="currentColor"/>
+    <text x="500" y="412" class="sm" style="font-size:8.2px">extend_context(): RoPE base 10000 -&gt; ~42000,</text>
+    <text x="500" y="421" class="sm" style="font-size:8.2px">called ONCE at the boundary</text>
+    <line x1="486" y1="383" x2="498" y2="412" class="v-muted" stroke="currentColor" stroke-width="0.7" stroke-dasharray="1.5 1.5"/>
+  </g>
+
+  <!-- ============ TRACK 4: data mixture ============ -->
+  <g data-anim="5">
+    <text x="64" y="444" class="trk">Data mixture (relative weights, illustrative)</text>
+    <text x="273" y="458" text-anchor="middle" class="sm">FineWeb-Edu largest, broad mix</text>
+    <text x="592.5" y="458" text-anchor="middle" class="sm">up-weight LONG documents</text>
+    <text x="734.5" y="458" text-anchor="middle" class="sm" style="font-size:7.6px">STEM-concentrated</text>
+
+    <!-- Band A bar (translate top-left; local y=0 top .. y=90 bottom baseline) -->
+    <g transform="translate(243,466)">
+      <rect x="0" y="54" width="60" height="36" fill="var(--muted)"/>
+      <rect x="0" y="27" width="60" height="27" fill="var(--accent)"/>
+      <rect x="0" y="13.5" width="60" height="13.5" fill="var(--accent2,#3b82f6)"/>
+      <rect x="0" y="4.5" width="60" height="9" fill="var(--good,#2f9e6e)"/>
+      <rect x="0" y="0" width="60" height="4.5" fill="var(--warn,#e0a106)"/>
+      <rect x="0" y="0" width="60" height="90" fill="none" class="v-stroke" stroke="currentColor" stroke-width="0.7"/>
+    </g>
+
+    <!-- Band B bar -->
+    <g transform="translate(565,466)">
+      <rect x="0" y="67.5" width="55" height="22.5" fill="var(--muted)"/>
+      <rect x="0" y="36" width="55" height="31.5" fill="var(--accent)"/>
+      <rect x="0" y="9" width="55" height="27" fill="var(--accent2,#3b82f6)"/>
+      <rect x="0" y="0" width="55" height="9" fill="var(--good,#2f9e6e)"/>
+      <rect x="0" y="0" width="55" height="90" fill="none" class="v-stroke" stroke="currentColor" stroke-width="0.7"/>
+    </g>
+
+    <!-- Band C bar -->
+    <g transform="translate(719.5,466)">
+      <rect x="0" y="76.5" width="30" height="13.5" fill="var(--muted)"/>
+      <rect x="0" y="54" width="30" height="22.5" fill="var(--accent)"/>
+      <rect x="0" y="27" width="30" height="27" fill="var(--accent2,#3b82f6)"/>
+      <rect x="0" y="0" width="30" height="27" fill="var(--good,#2f9e6e)"/>
+      <rect x="0" y="0" width="30" height="90" fill="none" class="v-stroke" stroke="currentColor" stroke-width="0.7"/>
+    </g>
+  </g>
+
+  <!-- x axis -->
+  <line x1="60" y1="574" x2="770" y2="574" class="v-muted" stroke="currentColor" stroke-width="1" marker-end="url(#mcds-tip)"/>
+  <text x="60" y="587" class="sm">0</text>
+  <text x="770" y="587" text-anchor="end" class="sm">mid-training tokens (~2B total)</text>
+
+  <!-- legend -->
+  <g data-anim="5">
+    <g transform="translate(60,608)">
+      <rect x="0" y="-8" width="10" height="10" fill="var(--muted)"/>
+      <text x="14" y="1" class="sm">FineWeb-Edu</text>
+      <rect x="112" y="-8" width="10" height="10" fill="var(--accent)"/>
+      <text x="126" y="1" class="sm">Cosmopedia v2</text>
+      <rect x="238" y="-8" width="10" height="10" fill="var(--accent2,#3b82f6)"/>
+      <text x="252" y="1" class="sm">StarCoder (code)</text>
+      <rect x="360" y="-8" width="10" height="10" fill="var(--good,#2f9e6e)"/>
+      <text x="374" y="1" class="sm">FineMath</text>
+      <rect x="450" y="-8" width="10" height="10" fill="var(--warn,#e0a106)"/>
+      <text x="464" y="1" class="sm">Instruct-flavored (A only)</text>
+    </g>
+  </g>
+
+  <!-- bottom spanning label -->
+  <g data-anim="5">
+    <line x1="120" y1="628" x2="710" y2="628" class="v-accent-s" stroke="currentColor" stroke-width="1.2" marker-end="url(#mcds-tip)"/>
+    <text x="400" y="642" text-anchor="middle" class="lbl" style="font-size:10px">broad -&gt; long -&gt; narrow, riding one decreasing LR down</text>
+  </g>
+</svg>
+<figcaption><b>Mid-training is a single continuous WSD decay, not three separate runs.</b> The learning rate falls smoothly from peak to floor through all three sub-phases while the data mixture narrows from broad to premium to STEM-concentrated and the sequence length steps once from 2048 to 8192 — the held-out loss bends into the WSD "elbow" as decay begins, dips through the low-LR tail, and ticks up only a hair at the 8192 boundary because longer-context prediction is genuinely harder, not because anything regressed.</figcaption>
+</figure>

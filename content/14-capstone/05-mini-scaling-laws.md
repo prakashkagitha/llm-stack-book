@@ -32,6 +32,8 @@ Here is a trap that is unique to *small* models and that the frontier-scale lite
 
 The standard fix, used by Kaplan and Chinchilla alike, is to fit on **non-embedding parameters**: the parameters in the transformer blocks that actually do the sequence-mixing and feature-transformation work whose FLOPs the $6ND$ rule counts. Every $N$ in this chapter is a non-embedding count. (The embedding still costs memory and its own small forward FLOPs — but it does not participate in the depth-driven capacity scaling the law describes.)
 
+{{fig:nonembed-vs-embedding-trap}}
+
 ```python
 # stacklm/scaling/ladder.py  -- ladder configs + non-embedding parameter accounting.
 # The nonembed_params() arithmetic mirrors stacklm.model.StackConfig (Ch. 14.4).
@@ -117,6 +119,8 @@ Two forces pull against each other. To **identify** the law you want spread in *
 
 - **An IsoFLOP backbone.** Pick four compute budgets $C \in \{6\times10^{15},\,1.5\times10^{16},\,4\times10^{16},\,10^{17}\}$. Inside each budget, run every ladder rung whose implied $D=C/(6N)$ lands at a sane tokens/param (roughly 6–700). Because every run in a slice costs the *same* $C$, these slices give the IsoFLOP method its raw material — the compute-optimal $N$ at each budget — though with only four rungs each slice is thinly populated (we return to that limitation below).
 - **A few off-diagonal fixed-model points.** IsoFLOP slices all lie on lines of constant $6ND$ — a degenerate direction that cannot separate $\alpha$ from $\beta$ in the additive form. Adding a handful of extra runs (the cheap rungs pushed to very low and very high token counts) breaks that degeneracy and lets the parametric fit pin the exponents.
+
+{{fig:ladder-sweep-nd-plane}}
 
 ```python
 # stacklm/scaling/sweep.py -- design the ladder sweep and cost it out.
@@ -317,6 +321,8 @@ for tpp in (20, 200):
 
 Across noise seeds the extrapolation stays **within about 0.1 nats** of the truth, with no consistent bias — some seeds land a little high, some a little low (the constrained fit trades a sliver of absolute accuracy for stability). That is exactly the resolution you should expect from a four-rung ladder — and exactly enough. The lesson, straight from the theory chapter: *validate a scaling-law fit by extrapolation, never by admiring the raw constants.* Report the predicted loss with an honest ±0.1-nat band, not five decimal places of $A$. A ±0.1-nat band is useless for splitting hairs between two good runs but perfect for its real job: **a broken run misses by 0.3+ nats**, and that you will catch on hour two.
 
+{{fig:loss-extrapolates-constants-dont}}
+
 ### IsoFLOP Profiles: Chinchilla's Second Method
 
 The parametric fit is Chinchilla's Approach 3 (fit the whole surface, differentiate). Its independent cross-check is **Approach 2, the IsoFLOP method**, which never commits to the parametric form and is therefore robust to its misspecification. The idea: at each fixed compute budget $C$, the loss as a function of $\log N$ (with $D=C/6N$ forced) is a **U-shaped valley** — too-small models are param-limited, too-large models are data-starved. Fit a **parabola in $\log N$**, read off the vertex, and you have the compute-optimal $N^\star(C)$ for that budget without ever assuming a power law. Do it for several budgets and fit a line through the valleys: its slope is the allocation exponent $a$ in $N^\star \propto C^{a}$.
@@ -401,6 +407,8 @@ Here is the decision made concrete with the ladder's own numbers:
     Same training budget. The over-trained 84.5M model is **only ~0.01 nats/token worse** in loss — a difference you would struggle to detect in generated text — yet it is **less than half the size**: every future forward pass costs $84.5/190 \approx 0.45\times$ as much, a **~55% permanent cut** to inference FLOPs, latency, memory, and KV-cache footprint. You pay the extra training tokens **once**; you collect the inference savings on **every request for the life of the model**. For a model destined to run on a laptop, that trade is not close. (The absolute loss *levels* here carry the fit's ±0.1-nat uncertainty; the **~0.01-nat penalty and the 0.45× size ratio do not** — they are set by the well-identified exponents and the fixed FLOP constraint, so they hold whether the true floor is 2.9 or 3.0.)
 
     Put differently: compute-optimal is the right target if you will train a model and (nearly) never run it. The instant you plan to *serve* it at any scale, you should slide down the size axis and over-train — which is precisely the ~200 tok/param, ~20B-token budget fixed in the [capstone overview](../14-capstone/01-overview-and-landscape.html).
+
+{{fig:overtrain-vs-compute-optimal-headtohead}}
 
 ```python
 import numpy as np

@@ -67,12 +67,16 @@ $$
 M = V - 256 - S = 32{,}768 - 256 - 9 = 32{,}503
 $$
 
+{{fig:vocab-id-layout-frozen}}
+
 !!! tip "Practitioner tip: reserved slots for the future"
     Some production tokenizers (Meta's Llama 3, for instance) pad their special-token block with dozens of unused `<|reserved_special_token_N|>` placeholders, so a future fine-tune can add a role or a tool format without touching `vocab_size` or reshuffling ids. We don't do that here — Stack-100M's special-token needs are fully enumerated by this table, and every one of the 32,768 rows should either be a real byte/merge or a token we know we will use, so none of the tight 100M-parameter budget is spent on speculative slots. If you extend this project past the capstone's scope, budgeting 8–16 reserved slots is cheap insurance.
 
 ## A From-Scratch, Efficient Byte-Level BPE Trainer
 
 The algorithm is unchanged from [Chapter 2.1](../02-transformer/01-tokenization.html): pre-tokenize with the GPT-2 regex so merges never cross word or whitespace boundaries, then repeatedly merge the most frequent adjacent pair of symbols. What changes here is engineering. The naive trainer from the from-scratch chapter recomputes every pair count from scratch after every merge — `O(merges × corpus size)`. At `M = 32{,}503` merges over even a modest multi-megabyte sample, that quickly becomes a multi-hour job. We fix this with two standard data-structure tricks: an **inverted index** from each pair to the word indices that contain it (so a merge only touches the words it actually affects, not the whole corpus), and a **lazy-deleted max-heap** (so "which pair is most frequent right now" is an `O(log n)` heap pop instead of an `O(n)` linear scan).
+
+{{fig:bpe-trainer-incremental-merge}}
 
 ```python
 # capstone/stacklm/tokenizer.py
@@ -475,6 +479,8 @@ Stack-100M **ties** the input embedding and output (unembedding / `lm_head`) wei
     $$
     of additional depth at fixed total parameter count. Put differently: tying the embeddings is worth roughly a fifth more depth than Stack-100M's 30 layers, for free. This is exactly the kind of trade this chapter is about, and it is why every capstone chapter after this one treats "tied embeddings" as non-negotiable, not a minor implementation detail.
 
+{{fig:tied-embeddings-one-matrix-two-jobs}}
+
 ### The tradeoff table
 
 Now hold the block architecture fixed (30 layers × 2.82M/layer, i.e. everything [Chapter 14.4](../14-capstone/04-architecture.html) fixes) and ask: against a nominal 100M-parameter budget, how much does the tied embedding table cost at different vocabulary sizes, and how many transformer layers could that difference buy instead?
@@ -491,6 +497,8 @@ Now hold the block architecture fixed (30 layers × 2.82M/layer, i.e. everything
 *(Methodology: `layers affordable` = `(100M − V·512) / 2.82M`, rounded — i.e., holding total parameters at a nominal 100M and letting depth absorb whatever the embedding table doesn't consume. Stack-100M's actual total lands at ≈101.4M, not exactly 100M, which is why the 32,768 row reads "~30" rather than exactly 30 — ordinary engineering rounding, not an error.)*
 
 This is the number that motivates PLAN's headline claim: **a 50,257-entry vocabulary — GPT-2's, the "obvious" default — would eat about a quarter of a 100M-parameter budget**, on par with four entire transformer layers. That is not a subtle effect at this scale; it is the difference between a 26-layer and a 30-layer model, and depth is exactly the axis the "deep-and-thin" philosophy behind Stack-100M's architecture (MobileLLM, [Liu et al., 2024](../14-capstone/04-architecture.html); see also [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) for why depth interacts with a model's effective capacity) is trying to protect.
+
+{{fig:vocab-vs-depth-budget-lever}}
 
 ### Why 32,768 and not smaller
 

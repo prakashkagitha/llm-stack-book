@@ -1,0 +1,124 @@
+<figure class="viz" id="fig-dpo-relative-reshaping">
+<button class="viz-replay" type="button">&#x21BB; replay</button>
+<svg viewBox="0 0 800 550" role="img" aria-label="Two panels showing response log-probability relative to the frozen reference. Panel A: correct DPO behavior, winner moves up and loser moves down, opening a margin. Panel B: the notorious failure mode, both winner and loser fall but the winner falls less, so the loss still drops even though the model gets worse. A note strip explains that both start at zero margin with loss 0.693 nats, and that the intractable partition term cancels in the difference.">
+<defs>
+  <marker id="dp-up" viewBox="0 0 10 10" refX="5" refY="9" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M5,0 L10,9 L0,9 Z" fill="var(--good,#2f9e6e)"/>
+  </marker>
+  <marker id="dp-down" viewBox="0 0 10 10" refX="5" refY="1" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M0,1 L10,1 L5,10 Z" fill="var(--warn,#e0a106)"/>
+  </marker>
+</defs>
+<style>
+  #fig-dpo-relative-reshaping text { fill: currentColor; }
+  #fig-dpo-relative-reshaping .ptitle { font: 700 12.5px var(--sans,sans-serif); }
+  #fig-dpo-relative-reshaping .axl   { font: 400 9.5px var(--sans,sans-serif); fill: var(--muted,#6d675d); }
+  #fig-dpo-relative-reshaping .lbl   { font: 600 10px var(--sans,sans-serif); }
+  #fig-dpo-relative-reshaping .sub   { font: 400 9.3px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-dpo-relative-reshaping .note  { font: 400 9.5px var(--sans,sans-serif); fill: var(--ink-soft,#45413a); }
+  #fig-dpo-relative-reshaping .noteb { font: 700 9.5px var(--sans,sans-serif); fill: var(--ink); }
+  #fig-dpo-relative-reshaping .faint { opacity: .45; }
+
+  @keyframes dp-fi { from{opacity:0} to{opacity:1} }
+  #fig-dpo-relative-reshaping [data-anim="1"] { animation: dp-fi .4s ease .1s both; }
+  #fig-dpo-relative-reshaping [data-anim="2"] { animation: dp-fi .4s ease .8s both; }
+  #fig-dpo-relative-reshaping [data-anim="3"] { animation: dp-fi .4s ease 1.5s both; }
+  @media (prefers-reduced-motion: reduce) {
+    #fig-dpo-relative-reshaping * { animation: none !important; opacity: 1 !important; }
+  }
+</style>
+
+<text x="20" y="22" class="axl">response log-prob relative to the FROZEN reference (= implicit reward / beta)</text>
+
+<!-- Shared baseline label -->
+<!-- PANEL A: x = 40-390, PANEL B: x = 420-770. baseline y=230 for both -->
+
+<!-- PANEL A -->
+<g data-anim="1">
+  <text x="215" y="46" text-anchor="middle" class="ptitle" fill="var(--good,#2f9e6e)">Panel A -- what DPO should do (correct)</text>
+  <line x1="60" y1="230" x2="390" y2="230" stroke="var(--muted,#6d675d)" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="395" y="234" class="axl">pi_ref = 0</text>
+
+  <!-- starting faint markers on baseline -->
+  <circle class="faint" cx="150" cy="230" r="5" fill="var(--ink-soft,#45413a)"/>
+  <circle class="faint" cx="260" cy="230" r="5" fill="var(--ink-soft,#45413a)"/>
+  <text class="faint sub" x="150" y="252" text-anchor="middle">y_w start</text>
+  <text class="faint sub" x="260" y="252" text-anchor="middle">y_l start</text>
+</g>
+
+<g data-anim="2">
+  <!-- winner arrow up -->
+  <line x1="150" y1="228" x2="150" y2="120" stroke="var(--good,#2f9e6e)" stroke-width="3" marker-end="url(#dp-up)"/>
+  <circle cx="150" cy="118" r="5.5" fill="var(--good,#2f9e6e)"/>
+  <text x="150" y="102" text-anchor="middle" class="lbl" fill="var(--good,#2f9e6e)">y_w (winner)</text>
+  <text x="150" y="88" text-anchor="middle" class="sub">+3 nats</text>
+
+  <!-- loser arrow down -->
+  <line x1="260" y1="232" x2="260" y2="300" stroke="var(--warn,#e0a106)" stroke-width="3" marker-end="url(#dp-down)"/>
+  <circle cx="260" cy="302" r="5.5" fill="var(--warn,#e0a106)"/>
+  <text x="260" y="322" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">y_l (loser)</text>
+  <text x="260" y="336" text-anchor="middle" class="sub">-1 nat</text>
+
+  <!-- margin bracket -->
+  <path d="M 175 118 H 185 V 302 H 175" fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+  <text x="192" y="215" class="sub" transform="rotate(-90 192 215)" text-anchor="middle">margin</text>
+</g>
+
+<g data-anim="3">
+  <text x="215" y="368" text-anchor="middle" class="noteb">margin = beta*(w - l) = 0.1*(3-(-1)) = 0.40</text>
+  <text x="215" y="384" text-anchor="middle" class="note">sigma(0.40) ~ 0.60 -&gt; chosen reward UP,</text>
+  <text x="215" y="398" text-anchor="middle" class="note">rejected reward DOWN.</text>
+</g>
+
+<!-- divider -->
+<line x1="405" y1="30" x2="405" y2="410" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+
+<!-- PANEL B -->
+<g data-anim="1">
+  <text x="580" y="46" text-anchor="middle" class="ptitle" fill="var(--warn,#e0a106)">Panel B -- the notorious failure</text>
+  <line x1="430" y1="230" x2="770" y2="230" stroke="var(--muted,#6d675d)" stroke-width="1.3" stroke-dasharray="5 3"/>
+  <text x="655" y="234" class="axl">pi_ref = 0</text>
+
+  <circle class="faint" cx="520" cy="230" r="5" fill="var(--ink-soft,#45413a)"/>
+  <circle class="faint" cx="630" cy="230" r="5" fill="var(--ink-soft,#45413a)"/>
+  <text class="faint sub" x="520" y="252" text-anchor="middle">y_w start</text>
+  <text class="faint sub" x="630" y="252" text-anchor="middle">y_l start</text>
+</g>
+
+<g data-anim="2">
+  <!-- winner falls a little -->
+  <line x1="520" y1="232" x2="520" y2="272" stroke="var(--warn,#e0a106)" stroke-width="3" marker-end="url(#dp-down)"/>
+  <circle cx="520" cy="274" r="5.5" fill="var(--warn,#e0a106)"/>
+  <text x="520" y="294" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">y_w falls LESS</text>
+
+  <!-- loser falls a lot -->
+  <line x1="630" y1="232" x2="630" y2="330" stroke="var(--warn,#e0a106)" stroke-width="3" marker-end="url(#dp-down)"/>
+  <circle cx="630" cy="332" r="5.5" fill="var(--warn,#e0a106)"/>
+  <text x="630" y="352" text-anchor="middle" class="lbl" fill="var(--warn,#e0a106)">y_l falls MORE</text>
+
+  <!-- margin bracket still opens (difference grows) -->
+  <path d="M 545 274 H 555 V 332 H 545" fill="none" stroke="var(--ink-soft,#45413a)" stroke-width="1.2"/>
+  <text x="562" y="308" class="sub" text-anchor="middle">diff still</text>
+  <text x="562" y="320" class="sub" text-anchor="middle">grows</text>
+</g>
+
+<g data-anim="3">
+  <text x="600" y="368" text-anchor="middle" class="noteb">loss only sees the DIFFERENCE -- it drops</text>
+  <text x="600" y="384" text-anchor="middle" class="note">while BOTH rewards collapse and the model</text>
+  <text x="600" y="398" text-anchor="middle" class="note">gets worse.</text>
+  <text x="600" y="414" text-anchor="middle" class="noteb">Diagnostic: chosen_reward must trend</text>
+  <text x="600" y="428" text-anchor="middle" class="noteb">UP, not just the margin.</text>
+</g>
+
+<!-- bottom-spanning note strip -->
+<g data-anim="3">
+  <rect x="20" y="438" width="760" height="94" rx="8" fill="var(--surface-3,#ece7da)" fill-opacity=".55" stroke="var(--border-2,#d8d1c0)" stroke-width="1"/>
+  <text x="400" y="460" text-anchor="middle" class="noteb">Both start at the frozen reference: log-ratios ~ 0, margin = 0, loss = -log(0.5) = 0.693 nats, accuracy = coin flip.</text>
+  <text x="400" y="480" text-anchor="middle" class="note">The intractable partition term beta*logZ(x) appears in BOTH winner and loser reward and CANCELS in the</text>
+  <text x="400" y="497" text-anchor="middle" class="note">difference -&gt; no reward model, no rollouts, just a static set of pairs.</text>
+  <text x="400" y="518" text-anchor="middle" class="noteb">beta ~ 0.1 is the KL leash: even a 4-nat separation is only a 0.4-logit margin -&gt; small, deliberate steps.</text>
+</g>
+
+</svg>
+<figcaption><b>DPO reshapes response log-probabilities relative to a frozen reference -- but the loss sees only the winner-minus-loser difference, not either term alone.</b> In the healthy case (Panel A) the winner's log-prob rises and the loser's falls, opening a margin (illustrative: +3 nats vs -1 nat, beta=0.1 gives a 0.40-logit margin, sigma(0.40)~0.60). In the notorious failure (Panel B), both rewards fall together -- the winner just falls less -- so the margin still widens and the loss still drops even as the policy degrades; the fix is to watch chosen_reward directly, not just the loss. The intractable partition term beta*logZ(x) appears in both terms and cancels in the difference, which is why DPO needs no reward model or rollouts, only a static set of pairs; beta~0.1 acts as a KL leash keeping steps small.</figcaption>
+</figure>

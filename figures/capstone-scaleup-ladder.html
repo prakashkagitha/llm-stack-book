@@ -1,0 +1,116 @@
+<figure class="viz" id="fig-capstone-scaleup-ladder">
+<button class="viz-replay" type="button">/replay</button>
+<svg viewBox="0 0 800 630" role="img" aria-label="Top strip: three gates in the order the 1B recipe hits them -- a data wall hit first because 20B tokens is 10 to 50 times too small, a time wall because 1B over 200B tokens is about 100 times the capstone pretrain compute, and a memory wall that is NOT actually hit at 1B because 16 gigabytes still fits an 80 gigabyte A100. Bottom: a three-rung parallelism ladder, DDP used at 1B, FSDP needed only around 7B or more, tensor and pipeline parallelism needed only at tens of billions or more, climbed only as far as the model forces you.">
+  <style>
+    #fig-capstone-scaleup-ladder .ttl{ font:700 14.5px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder .sec{ font:700 12px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder .gate-ttl{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder .sub{ font:500 9.8px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder .mono{ font:600 9.3px var(--mono,monospace); }
+    #fig-capstone-scaleup-ladder .rung-ttl{ font:700 11.5px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder .badge{ font:700 9.8px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder .take{ font:600 11px var(--sans,sans-serif); }
+    #fig-capstone-scaleup-ladder text{ fill: var(--ink-soft); }
+    #fig-capstone-scaleup-ladder .dim{ fill: var(--muted); }
+  </style>
+
+  <text x="400" y="20" text-anchor="middle" class="ttl">What breaks at 1B, in the order you hit it -- and the ladder you climb</text>
+
+  <!-- TOP: three gates -->
+  <text x="20" y="42" class="sec">What breaks, in order</text>
+
+  <g data-anim="1">
+    <!-- Gate 1: DATA WALL -->
+    <rect x="20" y="52" width="235" height="128" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.14" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="137.5" y="72" text-anchor="middle" class="gate-ttl" fill="var(--warn,#e0a106)">GATE 1 -- DATA WALL</text>
+    <text x="35" y="90" class="sub">~20B tokens is 10-50x too small;</text>
+    <text x="35" y="103" class="sub">1B wants 200B-1T tokens.</text>
+    <text x="35" y="119" class="sub">Repetition helps only to ~4</text>
+    <text x="35" y="132" class="sub">epochs, collapses by ~16.</text>
+    <rect x="32" y="144" width="211" height="28" rx="5" class="v-fill" stroke="var(--v-stroke)" stroke-width="1"/>
+    <text x="137.5" y="157" text-anchor="middle" class="mono">fix: full FineWeb + real</text>
+    <text x="137.5" y="169" text-anchor="middle" class="mono">dedup/quality/mix</text>
+  </g>
+
+  <g data-anim="2">
+    <!-- Gate 2: TIME WALL -->
+    <rect x="280" y="52" width="235" height="128" rx="8" fill="var(--warn,#e0a106)" fill-opacity="0.14" stroke="var(--warn,#e0a106)" stroke-width="1.6"/>
+    <text x="397.5" y="72" text-anchor="middle" class="gate-ttl" fill="var(--warn,#e0a106)">GATE 2 -- TIME WALL</text>
+    <text x="295" y="90" class="sub">1B over 200B tokens ~=</text>
+    <text x="295" y="103" class="sub">1.2e21 FLOPs ~= 100x the</text>
+    <text x="295" y="116" class="sub">capstone pretrain.</text>
+    <text x="295" y="132" class="sub">= thousands of GPU-hr</text>
+    <text x="295" y="145" class="sub">on ONE card.</text>
+    <rect x="292" y="153" width="211" height="18" rx="5" fill="var(--warn,#e0a106)" fill-opacity="0.28"/>
+    <text x="397.5" y="166" text-anchor="middle" class="badge" fill="var(--warn,#e0a106)">this is the real blocker</text>
+  </g>
+
+  <g data-anim="3" opacity="0.55">
+    <!-- Gate 3: MEMORY (crossed out / not the blocker) -->
+    <rect x="540" y="52" width="240" height="128" rx="8" fill="none" stroke="var(--v-grid)" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="660" y="72" text-anchor="middle" class="gate-ttl dim">GATE 3 -- MEMORY</text>
+    <text x="555" y="90" class="sub dim">at 16 B/param, 1B model =</text>
+    <text x="555" y="103" class="sub dim">~16 GB weights+optimizer.</text>
+    <rect x="552" y="112" width="216" height="20" rx="5" fill="var(--good,#2f9e6e)" fill-opacity="0.16" stroke="var(--good,#2f9e6e)" stroke-width="1.2"/>
+    <text x="660" y="126" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">STILL FITS one 80GB A100</text>
+    <text x="660" y="148" text-anchor="middle" class="sub dim">memory is NOT the 1B blocker</text>
+    <text x="660" y="161" text-anchor="middle" class="sub dim">you don't hit this gate</text>
+  </g>
+
+  <text x="400" y="200" text-anchor="middle" class="take">The recipe breaks on TIME, not memory, at 1B.</text>
+
+  <!-- inset: memory-fits mini table -->
+  <g data-anim="4">
+    <rect x="560" y="212" width="220" height="108" rx="6" class="v-fill" stroke="var(--border-2)" stroke-width="1"/>
+    <text x="670" y="228" text-anchor="middle" class="sub" style="font-weight:700">memory fits (16 B/param)</text>
+    <text x="574" y="244" class="mono dim">0.1B  -&gt;   1.6 GB   fits</text>
+    <text x="574" y="258" class="mono" fill="var(--good,#2f9e6e)">1.0B  -&gt;  16.0 GB   fits</text>
+    <text x="574" y="272" class="mono dim">7.0B  -&gt; 112.0 GB   no</text>
+    <text x="574" y="286" class="mono dim">70.0B -&gt;1120.0 GB   cluster</text>
+    <text x="670" y="305" text-anchor="middle" class="sub dim" style="font-size:8.4px">bf16 w+g + fp32 master + Adam m,v</text>
+  </g>
+
+  <!-- BOTTOM: parallelism ladder -->
+  <text x="20" y="240" class="sec">The parallelism ladder -- climb only as far as the model forces you</text>
+
+  <line x1="60" y1="568" x2="60" y2="324" stroke="var(--v-grid)" stroke-width="2"/>
+
+  <!-- Rung 1: DDP -->
+  <g data-anim="5">
+    <rect x="80" y="508" width="460" height="66" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.14" stroke="var(--good,#2f9e6e)" stroke-width="1.8"/>
+    <text x="96" y="527" class="rung-ttl" fill="var(--good,#2f9e6e)">RUNG 1 -- DDP / data parallelism</text>
+    <text x="96" y="542" class="sub">Replicate model, split batch, all-reduce grads. Near-linear</text>
+    <text x="96" y="555" class="sub">while the model FITS per GPU.</text>
+    <text x="96" y="568" class="badge" fill="var(--good,#2f9e6e)">USE THIS AT 1B: 8xA100 -&gt; thousands of GPU-hr become hundreds</text>
+    <rect x="548" y="508" width="90" height="66" rx="8" fill="var(--good,#2f9e6e)" fill-opacity="0.22" stroke="var(--good,#2f9e6e)" stroke-width="1.6"/>
+    <text x="593" y="536" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">YOU ARE</text>
+    <text x="593" y="550" text-anchor="middle" class="badge" fill="var(--good,#2f9e6e)">HERE</text>
+    <text x="593" y="565" text-anchor="middle" class="sub dim">at 1B</text>
+  </g>
+
+  <!-- Rung 2: FSDP -->
+  <g data-anim="6" opacity="0.55">
+    <rect x="80" y="420" width="460" height="66" rx="8" fill="none" stroke="var(--v-grid)" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="96" y="439" class="rung-ttl dim">RUNG 2 -- FSDP / ZeRO</text>
+    <text x="96" y="454" class="sub dim">Shard params+grads+opt (1/g of 16 B/param); needed when it</text>
+    <text x="96" y="467" class="sub dim">stops fitting (~7B+).</text>
+    <text x="96" y="480" class="badge dim">at 1B: only a convenience for bigger batch</text>
+    <rect x="548" y="420" width="90" height="66" rx="8" fill="none" stroke="var(--v-grid)" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="593" y="457" text-anchor="middle" class="sub dim">not yet</text>
+  </g>
+
+  <!-- Rung 3: Tensor + Pipeline -->
+  <g data-anim="7" opacity="0.55">
+    <rect x="80" y="332" width="460" height="66" rx="8" fill="none" stroke="var(--v-grid)" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="96" y="351" class="rung-ttl dim">RUNG 3 -- Tensor + Pipeline parallelism</text>
+    <text x="96" y="366" class="sub dim">Split matmuls / stage layers across GPUs. Pure comm+bubble</text>
+    <text x="96" y="379" class="sub dim">overhead; only pays off at tens of B+.</text>
+    <text x="96" y="392" class="badge dim">DO NOT reach for this at 1B</text>
+    <rect x="548" y="332" width="90" height="66" rx="8" fill="none" stroke="var(--v-grid)" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="593" y="369" text-anchor="middle" class="sub dim">not yet</text>
+  </g>
+
+  <text x="400" y="600" text-anchor="middle" class="take">Climb the ladder only as far as the model forces you.</text>
+</svg>
+<figcaption><b>At 1B the recipe breaks on time, not memory -- and only the first rung of the parallelism ladder is needed.</b> Data is 10-50x too small and hits first; the compute wall follows at ~100x the capstone's pretrain FLOPs; memory is a red herring since 1B still fits one 80GB A100. The fix for the time wall is DDP alone -- FSDP and tensor/pipeline parallelism stay unused until 7B and tens-of-B, respectively.</figcaption>
+</figure>

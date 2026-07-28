@@ -10,6 +10,8 @@ Start with the memory arithmetic, because at 100M parameters it is not the bindi
 
 The core idea, developed carefully in [Chapter 3.9](../03-pretraining/09-optimizers.html), is **orthogonalization of the momentum update**. Adam rescales each coordinate independently by its running gradient magnitude; it never looks at the *matrix structure* of a weight tensor. Muon does. It takes the momentum buffer $B_t$ for a weight matrix $W \in \mathbb{R}^{m\times n}$ and replaces it with the nearest **semi-orthogonal** matrix — the $UV^\top$ from its singular value decomposition $B_t = U\Sigma V^\top$, which is exactly the orthogonal factor in the polar decomposition. Intuitively, the raw momentum update is often dominated by a few large singular directions; the network learns fast along those and starves the rest. Orthogonalizing sets **every singular value to 1**, so the update pushes equally hard along all directions of the matrix. This is a spectral condition-number fix, and it is why Muon behaves like a cheap approximation to a full matrix preconditioner (Shampoo, Gupta et al., 2018) without the cost of forming and inverting the preconditioner.
 
+{{fig:muon-orthogonalization-spectrum}}
+
 Computing an SVD every step of every layer would be far too slow. Muon's key engineering move is to approximate the orthogonal factor with a fixed number (typically 5) of **Newton–Schulz iterations** — a matrix polynomial recurrence that converges to $(B B^\top)^{-1/2} B \approx U V^\top$ using only matrix multiplies, which are exactly what GPUs are fastest at. We implement it below.
 
 ### Why not Muon on everything?
@@ -83,6 +85,8 @@ Note the `transposed` trick: the Gram matrix $XX^\top$ has size $\min(m,n)^2$, s
 
 Two scale factors turn the orthogonal direction into a usable update. First, the orthogonalized update has a root-mean-square element magnitude of roughly $1/\sqrt{\max(m,n)}$: a semi-orthogonal $m\times n$ matrix has $\min(m,n)$ singular values equal to 1, hence Frobenius norm $\sqrt{\min(m,n)}$, spread over $mn$ entries, so RMS $=\sqrt{\min(m,n)/(mn)} = 1/\sqrt{\max(m,n)}$. Second, to let the **same learning rate** govern both Muon and AdamW parameters — AdamW's per-element update has RMS $\approx 1$ — the Moonshot "Muon is Scalable" report (Liu et al., 2025) multiplies the Muon update by $0.2\cdot\sqrt{\max(m,n)}$, which brings its RMS to $\approx 0.2$, the same ballpark as a well-behaved AdamW step. That single trick is what lets us tune *one* peak LR for the whole run.
 
+{{fig:muon-rms-matching}}
+
 ```python
 # stacklm/optim/muon.py  (continued)
 from torch.optim.optimizer import Optimizer
@@ -140,6 +144,8 @@ Muon's aggressiveness has a failure mode that AdamW largely hides: because it pu
 The mechanism is simple and surgical. After the optimizer step, for each attention head $h$ we track the largest attention logit magnitude $S^{(h)}_{\max}$ observed in the just-completed forward pass. If it exceeds a threshold $\tau$ (Kimi K2 used $\tau=100$), we scale that head's query and key weights so the logit would have landed at $\tau$. Because the logit is bilinear in $W_Q$ and $W_K$ ($s \propto W_Q W_K^\top$), scaling **each** of them by $\sqrt{\tau / S_{\max}}$ multiplies the logit by exactly $\tau / S_{\max}$, pulling the worst case back to the cap. Heads below $\tau$ are untouched, so the clip is a rare, targeted intervention rather than a constant drag.
 
 The one wrinkle is **GQA**: in `Stack-100M`, `n_heads = 8` query heads share `n_kv_heads = 2` key/value heads (a 4:1 ratio, [Chapter 14.4](../14-capstone/04-architecture.html) and [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)), so four query heads read the *same* $W_K$ slice. That means we must scale each $W_Q$ slice **per query head**, but each shared $W_K$ slice only **once** — otherwise a KV slice read by four tripping heads would be multiplied four times over, badly over-shrinking it. The clean fix is two separate loops: scale $W_Q$ per query head by its own $\sqrt{\tau/S_{\max}}$, then scale each $W_K$ group once using the **worst logit among the query heads that share it**.
+
+{{fig:qk-clip-gqa}}
 
 ```python
 # stacklm/optim/qk_clip.py
@@ -203,6 +209,8 @@ $$
 \eta_{\max}\cdot f\!\left(\dfrac{t - T_s}{T - T_s}\right) & T_s \le t \le T \quad(\textbf{decay})
 \end{cases}
 $$
+
+{{fig:wsd-schedule-anneal}}
 
 where $f$ decays from 1 to (near) 0 over the final phase. MiniCPM found a **$1-\sqrt{\cdot}$** or exponential-style decay works better than linear; we use a simple but effective form below. Two properties make WSD ideal for the capstone:
 

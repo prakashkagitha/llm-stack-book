@@ -14,6 +14,8 @@ Multi-step tool use is a *compositional* skill. To answer "In what year was the 
 
 Large models absorb this pattern from a handful of in-context examples because their pretraining already contains millions of implicit "act, observe, revise" structures (code with REPL sessions, forum threads, worked solutions). A 100M model pretrained on ~20B tokens of FineWeb-Edu and Cosmopedia (Ch. 14.2) has seen far less of this and has far less capacity to generalize it. If you few-shot-prompt Stack-100M with three ReAct exemplars, you will observe the classic small-model failure modes: it emits a plausible-looking `Thought:` and then an **answer with no tool call at all** (it "hallucinates the observation"), or it emits a tool call and then **ignores the returned observation**, or it loops forever re-issuing the same search.
 
+{{fig:distilled-groove-vs-skill}}
+
 The fix is to make the *behavior* itself the training signal. This is knowledge distillation in the behavioral sense (see [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html)): rather than matching the teacher's soft logits token-for-token, we match the teacher's *trajectories* — its sequence of thoughts, actions, and the resulting observations — as ordinary SFT targets. This is often called **trajectory distillation** or **rejection-sampling fine-tuning** (the same family as STaR, Zelikman et al., 2022, and the "distill from a stronger model" recipes behind essentially every small open instruction model, including the SmolLM series from HuggingFace, 2024–2025). The distinction matters at 100M: logit distillation needs the teacher and student to share a tokenizer and be queried in lockstep, which is expensive and brittle across model families; trajectory distillation only needs the teacher's *text output*, so any strong model can be the teacher and the student trains with the plain cross-entropy loop it already has.
 
 ### The pipeline in one diagram
@@ -52,6 +54,8 @@ The fix is to make the *behavior* itself the training signal. This is knowledge 
    │ 6. RLVR (GRPO)       reward = final-answer exact match; sharpen  │
    └─────────────────────────────────────────────────────────────────┘
 ```
+
+{{fig:distill-rejection-funnel}}
 
 Steps 2–3 are exactly **rejection sampling against a verifiable reward** — the same reward we use in RLVR (Ch. 14.9), just applied offline to *filter demonstrations* instead of online to *estimate advantages*. That symmetry is deliberate and we will exploit it in the final section.
 
@@ -297,6 +301,8 @@ def render_call(tool: str, args: dict) -> str:
     body = json.dumps({"tool": tool, "args": args}, separators=(", ", ": "))
     return f"{TOOL_CALL}{body}{END}"
 ```
+
+{{fig:react-wire-format-loss-mask}}
 
 ## Distilling Trajectories From the Teacher
 
@@ -684,6 +690,8 @@ It is time to state, without hedging, what you have and have not built.
     $$
 
     With on-the-order-of values after distillation — $0.95 \times 0.75 \times 0.90 \times 0.98 \times 0.90 \approx 0.57$ — you land near **57%** end-to-end, dominated by the **0.75 query term**. The arithmetic (0.98) and format (0.95) terms are nearly solved *because we offloaded them to a tool and regularized the format*. The bottleneck is the one genuinely cognitive step — writing a good query — which is precisely the thing a 100M model is worst at. This is why the honest headline is: **tool-use offloads the parts small models fail at; the residual failure is the reasoning we could not offload.** Push the corpus to be small and keyword-rich, and $p_{\text{good query}}$ rises — narrowing the domain is the highest-leverage knob you have.
+
+{{fig:acc-decomposition-query-bottleneck}}
 
 This is the frontier of what 100M can honestly do, and it is a genuinely satisfying place to end: not a chatbot oracle, but a *narrow, grounded, tool-using research assistant* that you trained end-to-end for the cost of a nice dinner. Ch. 14.11 evaluates it honestly (retrieval-QA exact-match, arithmetic accuracy) and Ch. 14.12 lays out exactly what to change — more data shapes, a bigger model for query formulation, longer context — to break through this ceiling on the road to 1B.
 

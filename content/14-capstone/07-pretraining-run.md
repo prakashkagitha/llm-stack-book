@@ -186,6 +186,8 @@ with autocast_ctx:
 
 ### Gradient accumulation: micro-batch × accum = effective batch
 
+{{fig:grad-accum-effective-batch}}
+
 An 80GB A100 could fit a much larger micro-batch than 32 sequences of length 2048 for a 101M
 model, but the *effective* batch size — the number of tokens averaged into one optimizer step —
 is what the schedule and optimizer in Ch. 14.6 were tuned around (≈0.5M tokens, in the same
@@ -303,6 +305,8 @@ into an unstable range — it is complementary to, not a replacement for, the gl
 here.
 
 ## Memory: Optional Activation Checkpointing
+
+{{fig:training-memory-budget}}
 
 At 101M parameters with `micro_batch_size=32`, `seq_len=2048`, Stack-100M's activation memory
 comfortably fits in an A100's 80GB without checkpointing — the worked example below does the
@@ -456,6 +460,8 @@ or was written during a loss spike you would rather roll back past.
     almost always the data cursor or the optimizer state for the Muon parameter group.
 
 ## Measuring Throughput and Model FLOPs Utilization
+
+{{fig:mfu-vs-gpu-util}}
 
 `nvidia-smi`'s "GPU-Util" percentage tells you the GPU was doing *something* during a sampling
 window — it is 100% just as happily whether you're running at 90% of peak matmul throughput or
