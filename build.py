@@ -32,6 +32,13 @@ REPO_URL = "https://github.com/prakashkagitha/llm-stack-book"
 BUILD_DATE = datetime.date.today().isoformat()
 YEAR = datetime.date.today().year
 
+# chapter-id -> {path, hw, title} for the GPU-tier notebooks (1xH100 / 2xA100), if present.
+try:
+    with open(os.path.join(ROOT, "notebooks-gpu", "manifest.json")) as _f:
+        GPU_NOTEBOOKS = json.load(_f)
+except (OSError, ValueError):
+    GPU_NOTEBOOKS = {}
+
 _GIT_DATE_CACHE = {}
 
 
@@ -381,10 +388,18 @@ def build_collection(coll):
                      f'<a class="cm-colab" target="_blank" rel="noopener" '
                      f'href="https://colab.research.google.com/github/prakashkagitha/llm-stack-book/blob/main/notebooks/{nb_rel}">'
                      '&#9654; Run the code (Colab)</a>')
+        # Optional GPU-tier notebook (1xH100 / 2xA100) for compute-heavy chapters.
+        gpu = ""
+        gnb = GPU_NOTEBOOKS.get(f'{c["part_dir"]}/{c["file"]}')
+        if gnb:
+            gpu = ('<span class="cm-dot">·</span>'
+                   f'<a class="cm-colab" target="_blank" rel="noopener" '
+                   f'href="https://colab.research.google.com/github/prakashkagitha/llm-stack-book/blob/main/notebooks-gpu/{gnb["path"]}">'
+                   f'&#9889; Run on GPU ({html.escape(gnb["hw"])})</a>')
         chapter_meta = (f'<div class="chapter-meta"><span>{reading} min read</span>'
                         f'<span class="cm-dot">·</span>'
                         f'<span>Updated <time datetime="{updated}">{updated}</time></span>'
-                        f'{colab}</div>')
+                        f'{colab}{gpu}</div>')
         canonical = SITE_BASE + (f'{coll.out_subdir}/' if coll.out_subdir else "") + c["url"]
 
         prev_c = flat[idx - 1] if idx > 0 else None
