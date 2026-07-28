@@ -585,3 +585,149 @@ The design point (LFM2's own recipe): use *mostly* conv blocks with a *few* atte
 - DeepSeek-AI, *DeepSeek-V2* (2024, MLA) and *DeepSeek-V3* (2024, MTP); Gloeckle et al., *Better & Faster Large Language Models via Multi-token Prediction*, 2024.
 - Liquid AI, *LFM2* technical report, 2025 — gated short-convolution hybrid blocks.
 - Gemma Team, *Gemma 2*, 2024 — logit soft-capping (final 30.0, attention 50.0) and small-model design choices.
+
+---
+
+## Exercises
+
+**1.** The chapter fixes `d_model = 512`, `n_layers = 30`, giving a width-per-layer of $d/L \approx 17$, versus $\approx 64$ for GPT-2-small ($768/12$). Suppose a colleague proposes instead a *shallow-and-wide* 100M model with `d_model = 1024`, `n_layers ~= 8`. State its width-per-layer, and explain — using the chapter's argument — why this is expected to be *worse* at 100M even though it has the same parameter budget. What single quantity does depth buy that width does not?
+
+??? note "Solution"
+    Width-per-layer for the proposal is $d/L = 1024/8 = 128$ — about 7.5x wider per layer than Stack-100M's $\approx 17$, and even wider than GPT-2-small's $\approx 64$. It sits at the extreme *shallow-wide* end of the aspect-ratio axis.
+
+    The chapter's argument (Liu et al., *MobileLLM*, 2024) is that **at sub-billion scale the evidence flips decisively toward depth**: at fixed parameters, deeper-and-thinner models are consistently more accurate. The mechanism is that capability at small scale is bottlenecked by the number of *sequential nonlinear transformations* the residual stream can undergo — the model's "reasoning depth" — not by the dimensionality of each transformation. A wide-but-shallow model can store a lot per token but can only compose a few steps of computation before emitting; a deep-but-narrow model composes many. So the shallow-wide 8-layer model can only compose $\approx 8$ steps of computation, while Stack-100M composes $\approx 30$, and at fixed budget the latter wins on tasks like commonsense reasoning.
+
+    What depth buys is **sequential composition** (reasoning steps); width only buys per-step representational capacity, which the chapter argues is not the binding constraint at 100M. (At billions of parameters the two trade roughly evenly and width starts to win on hardware efficiency — but that regime is not ours.)
+
+**2.** With `nope_every = 4`, the rule is that layer index $\ell$ (0-based) uses NoPE iff $(\ell + 1) \bmod 4 = 0$. (a) List the NoPE layers and count them; how many of the 30 layers keep RoPE? (b) Why can a decoder-only model afford to drop the positional encoding on some layers at all, and what property does the NoPE mixture buy that pure-RoPE does not? (c) Why not go all the way to a *pure*-NoPE model?
+
+??? note "Solution"
+    (a) NoPE layers are those with $(\ell+1)\bmod 4 = 0$, i.e. $\ell = 3, 7, 11, 15, 19, 23, 27$ — **7 layers**. The remaining $30 - 7 = 23$ layers keep RoPE.
+
+    (b) A decoder-only model with a **causal mask** can *infer* absolute position from the mask alone: the number of tokens a position is allowed to attend to is itself a positional signal. So the model does not strictly need an injected encoding on every layer. Layers freed from RoPE are not tied to the specific rotation frequencies seen during training, and empirically the RoPE/NoPE mixture **generalizes to longer sequences than seen in training** — exactly the length-robustness the chapter wants for the 2048 -> 8192 context extension in mid-training (Ch. 14.8).
+
+    (c) A pure-NoPE model tends to underperform on *short* context: the causal-mask position signal is weak and diffuse compared to RoPE's sharp relative encoding. So the design interleaves rather than removes — RoPE on the majority of layers for local positional precision and sample-efficient short-context modeling, a minority (1-in-4) of NoPE layers for length extrapolation. The 1-in-4 ratio is SmolLM3's tuned constant, not a law.
+
+**3.** Reproduce the parameter arithmetic by hand for two variants.
+(a) Count the parameters of **one** Stack-100M transformer block (attention + SwiGLU + norms), using $d = 512$, $n_h = 8$, $n_{kv} = 2$, $d_h = 64$, $d_{\text{ff}} = 1408$.
+(b) Now suppose the block used **full multi-head attention** ($n_{kv} = 8$) instead of GQA. How many extra parameters per layer, and how many over all 30 layers? Relate the total to "layers' worth" of budget.
+
+??? note "Solution"
+    (a) **Attention** has four projections. With $d = 512$, $n_h d_h = 512$, $n_{kv} d_h = 128$:
+
+    $$
+    \begin{aligned}
+    W_Q &: 512 \times 512 = 262{,}144,\\
+    W_K &: 512 \times 128 = 65{,}536,\\
+    W_V &: 512 \times 128 = 65{,}536,\\
+    W_O &: 512 \times 512 = 262{,}144.
+    \end{aligned}
+    $$
+
+    Attention subtotal $= 262{,}144 + 65{,}536 + 65{,}536 + 262{,}144 = 655{,}360$.
+
+    **SwiGLU** has three matrices (gate, up, down), each $512 \times 1408$:
+
+    $$
+    3 \times 512 \times 1408 = 2{,}162{,}688.
+    $$
+
+    **Norms**: two RMSNorm weight vectors of length $d=512$ (pre-attn, pre-MLP) plus two QK-norm vectors of length $d_h=64$: $2\times512 + 2\times64 = 1152$.
+
+    Block total $= 655{,}360 + 2{,}162{,}688 + 1152 = \mathbf{2{,}819{,}200} \approx 2.82\text{M}$ (the chapter's headline arithmetic rounds the 1152 norm params into the noise, giving $2{,}818{,}048$).
+
+    (b) Under full MHA, $n_{kv} = 8$, so $W_K$ and $W_V$ each become $512 \times (8 \times 64) = 512 \times 512 = 262{,}144$ instead of $65{,}536$. Extra per matrix $= 262{,}144 - 65{,}536 = 196{,}608$; for the two matrices, $2 \times 196{,}608 = 393{,}216 \approx 0.39\text{M}$ per layer. Over 30 layers:
+
+    $$
+    30 \times 393{,}216 = 11{,}796{,}480 \approx 11.8\text{M}.
+    $$
+
+    That is $11.8\text{M} / 2.82\text{M} \approx 4.2$ **blocks' worth** of parameters — "more than two extra layers' worth," as the chapter puts it (and comfortably more) — spent for a quality gain the chapter calls negligible at this width. GQA shrinks $W_K, W_V$ by 4x (128 vs 512 columns) precisely to reclaim that budget.
+
+**4.** The chapter states GQA costs $\approx 30$ KB/token of KV cache and that mid-training (Ch. 14.8) extends the context from 2048 to 8192. (a) Compute the full KV-cache footprint of a single 8192-token sequence under GQA. (b) What would the same sequence cost under full multi-head attention (8 KV heads)? (c) One sentence: why does the chapter nonetheless say MLA's *memory* win "is not the reason to reach for it here"?
+
+??? note "Solution"
+    (a) At $\approx 30$ KB/token, a full 8192-token context is
+
+    $$
+    30\ \text{KB} \times 8192 = 245{,}760\ \text{KB} = 240\ \text{MB}.
+    $$
+
+    (b) MHA uses 8 KV heads instead of GQA's 2 — a 4x larger cache per token ($\approx 120$ KB/token). So the same 8192-token sequence costs
+
+    $$
+    4 \times 240\ \text{MB} = 960\ \text{MB} \approx 0.94\ \text{GB},
+    $$
+
+    which is why GQA's 4x cut is the win that makes the model cheap to *serve* at long context.
+
+    (c) At 100M the KV cache is already tiny (GQA is $\approx 60$ MB even at the 2048 pretrain context), so MLA's compression buys almost nothing in absolute memory here; the reason to teach MLA is that it is the KV strategy of the strongest current open models and a one-line drop-in for study, not a memory necessity at this scale.
+
+**5.** QK-norm bounds the attention logits "by construction." Take $d_h = 64$ and assume the RMSNorm scale $\gamma \approx 1$. (a) After RMS-normalizing a query vector $q$ over its 64 dimensions, what is $\|q\|$ (approximately)? (b) Use the Cauchy-Schwarz inequality to bound the *scaled* pre-softmax logit $\tfrac{1}{\sqrt{d_h}}\,q\cdot k$. (c) Contrast with the un-normalized case where the per-component std $\sigma$ drifts up to $6$: what is the scaled-logit std then, and why does that NaN the run? (d) Why is QK-norm applied *before* RoPE, and why does the ordering not change the magnitude bound?
+
+??? note "Solution"
+    (a) RMSNorm divides $q$ by $\sqrt{\tfrac{1}{d_h}\sum_i q_i^2 + \epsilon}$, which forces the mean square of the output to $\approx 1$ (with $\gamma \approx 1$). Then $\sum_i q_i^2 \approx d_h$, so
+
+    $$
+    \|q\| = \sqrt{\textstyle\sum_i q_i^2} \approx \sqrt{d_h} = \sqrt{64} = 8,
+    $$
+
+    and likewise $\|k\| \approx 8$.
+
+    (b) By Cauchy-Schwarz, $|q\cdot k| \le \|q\|\,\|k\| = 8 \times 8 = 64$. After the $1/\sqrt{d_h} = 1/8$ scaling,
+
+    $$
+    \Big|\tfrac{1}{8}\, q\cdot k\Big| \le \tfrac{64}{8} = 8.
+    $$
+
+    The scaled logit is bounded to $\pm 8$ by construction, regardless of how large the raw projections $W_Q, W_K$ grow. A learned temperature can still be reintroduced through the RMSNorm $\gamma$.
+
+    (c) Without QK-norm, each product $q_i k_i$ has variance $\sigma^4$, so $q\cdot k$ over 64 dims has std $\approx \sigma^2\sqrt{d_h} = 8\sigma^2$; after $1/8$ scaling the std is $\approx \sigma^2$. At $\sigma = 6$ that is $\approx 36$, and the *max* logit over a long context (a few std out) can exceed 100. A softmax with a $\sim$100 gap between the top logit and the rest is numerically a hard argmax: its gradient w.r.t. the losing logits is $\approx e^{-100} \approx 0$, so the attention pattern freezes, learning stalls, and one bad step NaNs the run. QK-norm removes this failure mode structurally rather than tiptoeing around it with a lower LR — which is what buys the high Muon learning rate that makes the run cheap.
+
+    (d) QK-norm is applied first so the learned per-dimension scale $\gamma$ acts in the *unrotated content frame* (the standard OLMo 2 / SmolLM3 order): we normalize the content geometry of $q, k$, then inject position. The ordering does **not** change the magnitude bound because RoPE is a rotation and rotations are norm-preserving ($\|q\|$ is unchanged by RoPE); it only changes how $\gamma$ interacts with the rotation, not the Cauchy-Schwarz bound of $\pm 8$.
+
+**6.** Implement the "one model, config-selected mixers" pattern from the chapter's practitioner tip. Add a `mixer` field to `StackConfig` and rewrite `Block` so it constructs `Attention` (GQA), `MLAttention`, or `GatedShortConv` from `cfg.mixer` and calls it with the correct signature — remember that `Attention`/`MLAttention` take `(x, cos, sin)` while `GatedShortConv` takes `(x)` only. The rest of the training loop (Ch. 14.7) must run unchanged.
+
+??? note "Solution"
+    Add the field to the frozen config and route through a small factory; `Block` records whether its mixer needs positional tables and dispatches accordingly, preserving the `(x, cos, sin) -> x` block contract:
+
+    ```python
+    from dataclasses import dataclass
+
+    @dataclass
+    class StackConfig:
+        # ... all existing fields unchanged ...
+        mixer: str = "gqa"          # {"gqa", "mla", "conv"} -- selects the sequence mixer
+
+    def make_mixer(cfg: StackConfig, layer_idx: int) -> nn.Module:
+        if cfg.mixer == "gqa":
+            return Attention(cfg, layer_idx)
+        if cfg.mixer == "mla":
+            return MLAttention(cfg)
+        if cfg.mixer == "conv":
+            return GatedShortConv(cfg)
+        raise ValueError(f"unknown mixer: {cfg.mixer!r}")
+
+    class Block(nn.Module):
+        def __init__(self, cfg: StackConfig, layer_idx: int):
+            super().__init__()
+            self.attn_norm = RMSNorm(cfg.d_model, cfg.norm_eps)
+            self.mixer = make_mixer(cfg, layer_idx)
+            # GQA and MLA consume the RoPE cos/sin tables; the conv mixer does not
+            self.needs_pos = cfg.mixer in ("gqa", "mla")
+            self.mlp_norm = RMSNorm(cfg.d_model, cfg.norm_eps)
+            self.mlp = SwiGLU(cfg)
+
+        def forward(self, x, cos, sin):
+            h = self.attn_norm(x)
+            h = self.mixer(h, cos, sin) if self.needs_pos else self.mixer(h)
+            x = x + h                                   # pre-norm mixer residual
+            x = x + self.mlp(self.mlp_norm(x))          # pre-norm MLP residual
+            return x
+    ```
+
+    Key points that keep the training loop unchanged:
+
+    - `Block.forward` still has the exact `(x, cos, sin) -> x` signature `Stack100M` already calls in its layer loop, so `Stack100M` needs no edits — it keeps passing the RoPE tables to every block, and conv blocks simply ignore them via the `needs_pos` branch.
+    - Ablating architectures is now a **one-field change**: `StackConfig(mixer="mla")` or `StackConfig(mixer="conv")` re-runs the *same* Ch. 14.7 training loop and Ch. 14.5 scaling ladder, exactly the "never fork `model.py`" discipline the chapter argues for.
+    - For a true LFM2-style *hybrid* (mostly conv, a few attention), `make_mixer` can branch on `layer_idx` (e.g. attention every k-th layer, conv otherwise) instead of on a single global `cfg.mixer` string — the same factory, one extra condition.

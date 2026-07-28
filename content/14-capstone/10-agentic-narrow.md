@@ -724,3 +724,122 @@ This is the frontier of what 100M can honestly do, and it is a genuinely satisfy
 - Lewis, Perez, Piktus et al., *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*, 2020 — the RAG foundation the retriever tool sits on.
 - Allal, Lozhkov, Bakouch et al., *SmolLM* (HuggingFace), 2024–2025 — the small-model recipe (data + distillation) whose spirit this capstone follows.
 - Karpathy, *nanoGPT* / *llm.c*, 2024 — the "reproduce a real model on a budget" spirit this whole capstone updates.
+
+## Exercises
+
+**1.** In the loss-mask design, the `<|end|>` token that closes an *assistant* turn is supervised, but the `<|end|>` that closes a `<|tool_result|>` span is masked. Explain the reasoning behind this asymmetry, and describe the concrete failure you would observe at inference time if you accidentally masked *both* kinds of `<|end|>`.
+
+??? note "Solution"
+    The two `<|end|>` tokens are written by different actors and therefore have different learning requirements.
+
+    - The `<|end|>` closing an assistant turn is *emitted by the model*. At serve time the runtime loop generates one assistant step and stops at `<|end|>` (`stop_id=tok.id(END)` in `run_agent`), then hands control back to the harness to run a tool or return the answer. If the model never learned to *produce* this token, it will not know when to stop; it will run past its answer or past its tool call into garbage, and the harness will never regain control at the right boundary. So this token must be *in the loss*.
+    - The `<|end|>` closing a `<|tool_result|>` is *written by the environment*, not the model. The model must learn to *read* observations (to condition on them) but must never be trained to *produce* them, or it will start hallucinating observations the environment never returned. The entire `<|tool_result|> ... <|end|>` span, including its closing `<|end|>`, is therefore masked with `IGNORE = -100`.
+
+    This is exactly what `_segment` encodes: `END` is appended with `supervised` equal to whatever the current span's supervision flag is (`out.append((m, supervised))`), so an `<|end|>` inside an assistant span is supervised and one inside a masked tool-result span is not.
+
+    If you masked *both* kinds of `<|end|>`, the model would never be supervised to emit its own stop token. At inference, greedy decoding would not reliably produce `<|end|>` after the answer or tool call, so `generate` would keep decoding until it hit `max_new`, spilling the answer into trailing garbage and breaking the "stop at `<|end|>` after each step" contract the loop depends on. The symptom is a model that "worked in training" but at serve time never cleanly terminates a step.
+
+**2.** The chapter insists that few-shot prompting a 100M base model with ReAct exemplars fails, while distillation-then-SFT works. Name the three canonical small-model failure modes the chapter lists for few-shot ReAct, and explain in one or two sentences *why distillation changes the learning problem* so those modes stop dominating.
+
+??? note "Solution"
+    The three canonical failure modes (from the "capability gap" section and the Interview Corner):
+
+    1. **Hallucinating the observation** — it emits a plausible `Thought:` and then an answer with *no tool call at all*, inventing the tool's output instead of calling it.
+    2. **Ignoring the returned observation** — it emits a tool call but then does not condition on what came back.
+    3. **Looping forever** — it re-issues the same search over and over without progressing.
+
+    Why distillation fixes the framing: few-shot ReAct asks the model to *induce* the act-observe-revise procedure from a couple of in-context examples and *generalize* it to a new question, holding the whole multi-turn loop in working memory. A 100M model has neither the in-context-learning strength nor the reasoning depth for that. Distillation changes the task from "induce and generalize a procedure at inference time" to "reproduce a demonstrated behavior seen thousands of times during training." The model imitates a narrow, well-worn groove seen as ordinary SFT targets rather than reasoning from scratch, so the failure modes above (which are failures of *induction/generalization*) no longer dominate inside the distilled distribution. The catch: it learns the distribution of demonstrated trajectory shapes, not a general skill, so it stays brittle one step outside that groove.
+
+**3.** (Quantitative.) You run the distillation pipeline with a task pool of **150 questions**, **`samples_per_task = 6`** teacher rollouts each, and a per-rollout success probability of **0.5**. Assume that after dedup, successful traces collapse to about **2 distinct shapes per task**. Using the chapter's per-trace figures (~255 tokens/trace, of which ~95 are loss-bearing assistant tokens), estimate: (a) the expected number of raw solved trajectories, (b) the number of unique traces kept, (c) the total and supervised token counts of the SFT set, and (d) at a teacher cost of \$1-3 per thousand rollouts, the dollar cost of teacher rollouts. State the one-line lesson the numbers reinforce.
+
+??? note "Solution"
+    (a) Expected raw successes: $150 \times 6 \times 0.5 = 450$ solved trajectories.
+
+    (b) Unique traces after dedup: $150 \times 2 = 300$ traces.
+
+    (c) Token counts, using the chapter's per-trace figures:
+    - Total: $300 \times 255 = 76{,}500$ tokens.
+    - Supervised (loss-bearing): $300 \times 95 = 28{,}500$ tokens.
+
+    (d) Rollout count: $150 \times 6 = 900$ rollouts. At \$1-3 per thousand rollouts, that is $0.9 \times (\$1\text{ to }\$3) \approx \$0.90\text{ to }\$2.70$ — a couple of dollars.
+
+    Lesson: the SFT set is tiny (tens of thousands of supervised tokens = a few minutes of fine-tuning), so at 100M the scarce resource is not compute but **diverse successful trajectories**. Spend the budget on the teacher (more distinct winning traces), not on gradient steps.
+
+**4.** (Quantitative.) Using the chapter's per-stage decomposition
+$$
+\text{Acc}_{\text{e2e}} \approx p_{\text{well-formed call}} \cdot p_{\text{good query}} \cdot p_{\text{reads obs}} \cdot p_{\text{correct calc}} \cdot p_{\text{clean synth}},
+$$
+suppose after distillation you measure $p_{\text{well-formed call}} = 0.95$, $p_{\text{good query}} = 0.60$, $p_{\text{reads obs}} = 0.90$, $p_{\text{correct calc}} = 0.98$, $p_{\text{clean synth}} = 0.90$. (a) Compute the end-to-end accuracy. (b) Identify the bottleneck stage. (c) You can either narrow the corpus to raise $p_{\text{good query}}$ to $0.85$, or spend the same effort raising $p_{\text{well-formed call}}$ to a perfect $1.00$. Compute the resulting accuracy for each option and say which is the higher-leverage knob and why this matches the chapter's thesis.
+
+??? note "Solution"
+    (a) End-to-end accuracy:
+    $$
+    0.95 \times 0.60 \times 0.90 \times 0.98 \times 0.90.
+    $$
+    Step by step: $0.95 \times 0.60 = 0.570$; $0.570 \times 0.90 = 0.513$; $0.513 \times 0.98 = 0.50274$; $0.50274 \times 0.90 \approx 0.4525$. So $\text{Acc}_{\text{e2e}} \approx \mathbf{45\%}$.
+
+    (b) The bottleneck is $p_{\text{good query}} = 0.60$ — by far the smallest factor, the one dragging the product down.
+
+    (c) Option A (narrow corpus, query $0.60 \to 0.85$):
+    $$
+    0.95 \times 0.85 \times 0.90 \times 0.98 \times 0.90.
+    $$
+    $0.95 \times 0.85 = 0.8075$; $\times 0.90 = 0.72675$; $\times 0.98 = 0.712215$; $\times 0.90 \approx 0.6410$, i.e. **~64%**.
+
+    Option B (perfect format, $0.95 \to 1.00$): this multiplies the original 45% by $1.00/0.95 \approx 1.053$, giving $0.4525 \times 1.0526 \approx 0.4763$, i.e. **~48%**.
+
+    Narrowing the corpus to fix the query stage (+19 points) dwarfs perfecting the format stage (+3 points). This matches the chapter's thesis: tool use and format regularization already push the arithmetic and format terms near 1.0 — they are *offloaded* and nearly solved — so the residual failure lives in the one genuinely cognitive step we cannot offload, query formulation. Narrowing the domain (small, keyword-rich corpus) is the highest-leverage knob.
+
+**5.** (Implementation.) The practitioner tip argues that the production retrieval move is a *hybrid* — union the BM25 and hashed-embedding candidate sets and rerank. Implement a `HybridRetriever` in the style of `stacklm/agent/tools.py` that wraps a `BM25Retriever` and a `HashEmbedRetriever`, exposes the same `search(query, k) -> list[tuple[Passage, float]]` interface, and fuses the two candidate lists. Use **Reciprocal Rank Fusion (RRF)** so you do not have to reconcile BM25's and cosine's incompatible score scales. Then state one reason we still default to a *single* backend per run for the 100M agent.
+
+??? note "Solution"
+    RRF assigns each document a score $\sum_{\text{backends}} \frac{1}{c + \text{rank}}$ (rank 0-indexed), which depends only on *rank position*, not on the raw score magnitude — so BM25's unbounded scores and cosine's $[-1, 1]$ scores combine cleanly. A document that appears high in either list, or moderately in both, floats to the top.
+
+    ```python
+    # stacklm/agent/tools.py  (append)
+    class HybridRetriever:
+        """Union BM25 + hashed-embedding candidates and rerank with Reciprocal
+        Rank Fusion (RRF). RRF is scale-free -- it uses only rank position, so
+        there is no need to reconcile BM25's and cosine's incompatible score
+        magnitudes. See Ch. 9.4 (Chunking, Reranking & Hybrid Search)."""
+
+        def __init__(self, passages: list[Passage], dim: int = 512,
+                     k1: float = 1.5, b: float = 0.75, c: int = 60):
+            self.passages = passages
+            self.bm25 = BM25Retriever(passages, k1, b)
+            self.embed = HashEmbedRetriever(passages, dim)
+            self.c = c                      # RRF damping constant (Cormack 2009)
+
+        def search(self, query: str, k: int = 3) -> list[tuple[Passage, float]]:
+            # Pull a slightly wider candidate pool from each backend so fusion
+            # can promote a doc that is mid-ranked in both lists.
+            pool = max(k, 2 * k)
+            fused: dict[str, list] = {}     # doc_id -> [Passage, rrf_score]
+            for retr in (self.bm25, self.embed):
+                for rank, (p, _) in enumerate(retr.search(query, pool)):
+                    slot = fused.setdefault(p.doc_id, [p, 0.0])
+                    slot[1] += 1.0 / (self.c + rank)
+            ranked = sorted(fused.values(), key=lambda x: x[1], reverse=True)
+            return [(p, sc) for p, sc in ranked[:k]]
+    ```
+
+    A quick sanity check: if a passage is ranked 0 by BM25 and rank 1 by the embedder with $c = 60$, its fused score is $\frac{1}{60} + \frac{1}{61} \approx 0.0330$, beating a passage that is only rank 0 in BM25 and absent from the embedder list ($\frac{1}{60} \approx 0.0167$). Documents both backends like win.
+
+    Why still default to a single backend for the 100M agent: fusing two backends produces observations with more *format variety* (different passage sets, orders, and phrasings), and the whole distillation strategy relies on keeping the observation format brutally regular so the tiny model memorizes one grammar rather than many. We expose both backends so you can *ablate* which one distills better, but keep a single one per run at 100M to minimize the surface the model must memorize.
+
+**6.** (Conceptual + quantitative.) The chapter warns that RLVR "dies from zero-signal groups if SFT does not already solve the task sometimes." Consider a GRPO group of $G = 8$ trajectories for a single task where the SFT policy currently solves this task essentially never, so all 8 rollouts return the wrong answer, each using the full `max_steps`. Using the reward $R(\tau) = \mathbf{1}[\text{correct}] - \lambda \cdot \frac{\text{steps}}{\text{max\_steps}}$ with $\lambda = 0.05$ and the `grpo_advantages` function, compute the reward of each trajectory and the resulting advantages, and explain why no learning happens. Then state the chapter's ordering rule and why it is not reversible.
+
+??? note "Solution"
+    Each trajectory is wrong, so $\mathbf{1}[\text{correct}] = 0$, and each uses the full `max_steps`, so $\frac{\text{steps}}{\text{max\_steps}} = 1$. Thus every trajectory has the same reward:
+    $$
+    R(\tau) = 0 - 0.05 \times 1 = -0.05.
+    $$
+
+    All 8 rewards are identical: $r = [-0.05, -0.05, \dots, -0.05]$. In `grpo_advantages`, the group mean is $-0.05$ and the standard deviation is $0$, so each advantage is
+    $$
+    \frac{-0.05 - (-0.05)}{0 + 10^{-6}} = \frac{0}{10^{-6}} = 0.
+    $$
+
+    Every advantage is $0$. GRPO's policy-gradient update scales the log-prob gradient of each trajectory by its advantage, so a group of all-zero advantages contributes **no gradient signal** — there is nothing to push the policy toward, because no trajectory in the group did any better or worse than its peers. This is the zero-reward (here zero-*variance*) problem: group-relative advantages require *within-group spread*, which requires the policy to *sometimes* succeed and sometimes fail on the same task.
+
+    The chapter's ordering rule: **distill first, RL second — never the reverse.** It is not reversible because RLVR can only *sharpen* behavior the SFT groove already reaches sometimes; it cannot *create* a capability that is absent. If SFT never solves the task, every GRPO group is degenerate (uniform reward, zero advantage, no gradient), so RL has no foothold. You must first get the model onto the groove with distillation so that some fraction of rollouts land on the answer, producing the reward variance GRPO needs.

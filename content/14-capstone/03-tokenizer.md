@@ -598,3 +598,119 @@ Get this chapter wrong and every one of those three commitments has to be redone
 - Kudo & Richardson, *SentencePiece: A Simple and Language Independent Subword Tokenizer and Detokenizer for Neural Text Processing*, 2018 — the language-agnostic, whitespace-as-symbol framing many production tokenizers (including byte-level BPE variants) build on.
 - HuggingFace `tokenizers` — the Rust-backed library referenced in the "training at scale" timing comparison; the production-speed counterpart to the from-scratch trainer in this chapter.
 - Liu et al., *MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases*, 2024 — the deep-and-thin small-model philosophy this chapter's depth-vs-vocabulary tradeoff protects; developed further in [Chapter 14.4](../14-capstone/04-architecture.html).
+
+## Exercises
+
+**1.** By default, `StackTokenizer.encode` is called with `allowed_special=frozenset()`, so a literal `<|assistant|>` typed into a user message is byte-encoded like ordinary text instead of mapping to id 32764. Explain concretely what could go wrong if `encode` instead recognized special-token strings everywhere by default, and name the one place in the pipeline where this invariant is what makes a downstream guarantee trustworthy.
+
+??? note "Solution"
+    If `encode` recognized special-token *strings* everywhere, then any untrusted content — a user's chat message, or a tool's returned observation — that happened to contain the literal text `<|assistant|>` would tokenize to the real role-boundary id 32764. That lets an attacker forge turns: they could close the user turn early and open a fake assistant turn, or inject a fake `<|tool_result|>` (id 32767) to smuggle in an "observation" the model never actually retrieved. This is the tokenizer-level analogue of prompt injection.
+
+    The fix is exactly the default: untrusted text is encoded with `allowed_special=frozenset()`, so special-token *ids* can only ever enter a sequence through code you control (the chat-template formatter, the packing code), never through content a user or tool supplied.
+
+    The place this matters most is the **SFT loss mask** in [Chapter 14.9](../14-capstone/09-post-training.html). That loop computes loss only on tokens after `<|assistant|>` (id 32764). The mask is trustworthy only because the default guarantees that every id 32764 in a training example is a real assistant boundary the formatter placed — not a string that some example's user turn happened to contain.
+
+**2.** The chapter fixes `vocab_size = 32768` with `256` reserved byte ids and `9` special tokens, giving `M = 32{,}503` merges. Suppose instead you targeted `vocab_size = 16384` with the *same* `9` special tokens in the *same* order. (a) How many merges `M` does the trainer learn? (b) What id does `<|bos|>` get? (c) What id does `<|user|>` get?
+
+??? note "Solution"
+    The layout is always bytes (ids $0..255$), then $M$ learned merges (ids $256..256+M-1$), then the $S$ specials at the top of the range in fixed order.
+
+    (a) Number of merges:
+    $$
+    M = V - 256 - S = 16{,}384 - 256 - 9 = 16{,}119
+    $$
+
+    (b) The specials occupy the top $S = 9$ ids, so the first special `<|bos|>` sits at $V - S = 16{,}384 - 9 = 16{,}375$. (Equivalently $256 + M = 256 + 16{,}119 = 16{,}375$.)
+
+    (c) In `SPECIAL_TOKENS` order, `<|bos|>` is index 0, `<|eos|>` 1, `<|pad|>` 2, `<|system|>` 3, `<|user|>` 4. So
+    $$
+    \text{id}(\texttt{<|user|>}) = 16{,}375 + 4 = 16{,}379.
+    $$
+
+    Note that unlike in the real `vocab_size = 32768` layout (where `<|user|>` is 32763), the id is *different* — which is exactly why the chapter insists the vocabulary is frozen: change `vocab_size` and every special-token id moves.
+
+**3.** Using the chapter's parameter accounting (`d_model = 512`, one transformer block $\approx 2.82$M params), consider raising the vocabulary to `V = 65{,}536`. (a) What does the **tied** embedding table cost? (b) What would it cost **untied**? (c) Using the chapter's methodology `layers affordable = (100\text{M} - V\cdot 512)/2.82\text{M}`, how many layers can a nominal 100M-parameter budget afford, and how does that compare to Stack-100M's 30?
+
+??? note "Solution"
+    (a) Tied embedding is a single $V \times d_\text{model}$ matrix:
+    $$
+    P_\text{embed} = 65{,}536 \times 512 = 33{,}554{,}432 \approx 33.55\text{M params}.
+    $$
+
+    (b) Untied spends that matrix twice (input embedding + output `lm_head`):
+    $$
+    2 \times 33.55\text{M} = 67.11\text{M params}.
+    $$
+
+    (c) Layers affordable at a fixed 100M budget:
+    $$
+    \frac{100{,}000{,}000 - 65{,}536 \times 512}{2{,}820{,}000} = \frac{100{,}000{,}000 - 33{,}554{,}432}{2{,}820{,}000} = \frac{66{,}445{,}568}{2{,}820{,}000} \approx 23.56 \approx 24 \text{ layers}.
+    $$
+
+    That is $24 - 30 = -6$ layers versus Stack-100M's 30. Doubling the vocabulary from 32,768 to 65,536 costs roughly six transformer layers of depth at a fixed 100M budget — the same tradeoff the chapter's table reports for that row.
+
+**4.** The CI toy path trains on `TOY_CORPUS = "the quick brown fox jumps over the lazy dog. " * 200` but asks for `vocab_size = 281`, not 32,768. Explain why asking for a large `vocab_size` on this corpus would silently "stop short," referring to the specific line in `train_bpe` that halts it.
+
+??? note "Solution"
+    The pre-tokenizer (the GPT-2 regex) splits text into chunks that never cross word or whitespace boundaries, and BPE only ever merges *adjacent* symbols *within* a chunk. The toy corpus is one sentence of ~9 distinct words repeated 200 times, so it pre-tokenizes into only a handful of distinct chunk types. Each distinct chunk can be collapsed, merge by merge, down to a single symbol — and once every chunk is a single symbol there are no adjacent pairs left that repeat.
+
+    At that point `train_bpe` hits its early-stop guard:
+
+    ```python
+    if live_count < 2:
+        break   # nothing left that repeats; stop early
+    ```
+
+    The most frequent remaining pair occurs fewer than 2 times (or no pairs remain at all), so the loop breaks before reaching `num_merges`. Asking for `vocab_size = 32768` would return far fewer than 32,503 merges, and `toy_tok.vocab_size` would silently be smaller than requested. The toy path picks 281 precisely because that is a target this tiny, low-diversity corpus can actually fill. The real training corpus, with millions of unique chunks, has no such ceiling anywhere near 32,768.
+
+**5.** Implement a helper `bytes_per_token(tok, text)` that returns the compression ratio (UTF-8 bytes per token) for a trained `StackTokenizer`, encoding `text` as untrusted content. Then, using the chapter's measured numbers, state what ratio you'd expect for clean English prose versus a Python snippet, and why they differ.
+
+??? note "Solution"
+    ```python
+    def bytes_per_token(tok: StackTokenizer, text: str) -> float:
+        """UTF-8 bytes per token: higher == better compression.
+        `text` is treated as untrusted, so no special-token strings are
+        recognized (allowed_special defaults to the empty frozenset)."""
+        n_bytes = len(text.encode("utf-8"))
+        n_tokens = len(tok.encode(text))     # allowed_special=frozenset() by default
+        return n_bytes / n_tokens
+    ```
+
+    The byte count must use `text.encode("utf-8")` (a multi-byte character like an emoji or an accented letter is more than one byte), and we must pass untrusted text through the default `allowed_special=frozenset()` so a stray `<|assistant|>` in the input is not miscounted as a single special id.
+
+    Expected ratios, from the chapter's measured numbers on the 32,768-vocabulary tokenizer:
+
+    - Clean English prose: about $184 / 39 \approx 4.72$ bytes/token — the best case, because prose is exactly the kind of frequent, long, reusable substring (common morphemes, whole words) that BPE dedicates merges to.
+    - A Python snippet: about $234 / 88 \approx 2.66$ bytes/token — markedly worse, because code's dense punctuation, brackets, and multi-level indentation give a prose-heavy vocabulary far fewer long reusable substrings to compress.
+
+    The floor is 1.0 bytes/token (pure byte fallback, no merges apply); byte-level BPE can never do worse than that.
+
+**6.** A colleague wants to add `8` reserved special-token placeholders (like Llama 3's `<|reserved_special_token_N|>`) **but keep `vocab_size` fixed at 32768 and keep the 9 real special-token ids exactly where they are** (`<|bos|> = 32759` ... `<|tool_result|> = 32767`). (a) If they *append* the 8 reserved tokens after `<|tool_result|>`, what happens to the 9 real ids? (b) Show a placement that keeps all 9 real ids unchanged, and state what you pay for it. Back your answer with the id arithmetic.
+
+??? note "Solution"
+    With `vocab_size` fixed at 32768, the number of merges depends on the total number of specials $S$:
+    $$
+    M = V - 256 - S.
+    $$
+    Adding 8 reserved tokens makes $S = 9 + 8 = 17$, so $M = 32{,}768 - 256 - 17 = 32{,}495$ (eight fewer merges than the original 32,503). The special block therefore starts at $256 + M = 32{,}751$ instead of $32{,}759$ — it shifts *down* by 8.
+
+    (a) **Appending** the reserved tokens (order = the 9 real ones, then 8 reserved) puts `<|bos|>` at the start of the block, id $32{,}751$, not $32{,}759$. Every one of the 9 real ids shifts down by 8: `<|tool_result|>` lands at $32{,}751 + 8 = 32{,}759$ instead of $32{,}767$. This breaks the frozen invariant and invalidates every checkpoint's embedding rows.
+
+    (b) **Prepend** the 8 reserved tokens instead (order = 8 reserved, then the 9 real ones). The block still starts at $32{,}751$, but now the reserved tokens absorb ids $32{,}751 .. 32{,}758$, and the first real token `<|bos|>` lands at:
+    $$
+    32{,}751 + 8 = 32{,}759,
+    $$
+    with `<|eos|> = 32760`, ..., `<|tool_result|> = 32767` — all nine ids exactly where they were.
+
+    ```python
+    RESERVED = tuple(f"<|reserved_{i}|>" for i in range(8))
+    SPECIAL_TOKENS_V2 = RESERVED + SPECIAL_TOKENS      # prepend: reserved first
+    # S = 17, so M = 32768 - 256 - 17 = 32495
+    # block starts at 256 + 32495 = 32751:
+    #   reserved_0..reserved_7  -> 32751..32758
+    #   <|bos|>                 -> 32759   (unchanged)
+    #   ...
+    #   <|tool_result|>         -> 32767   (unchanged)
+    ```
+
+    What you pay: 8 fewer learned merges (32,503 -> 32,495), a negligible compression cost. What you avoid: shifting any of the 9 real ids. The deeper lesson is the practitioner tip's point — the only *clean* way to have reserved slots is to have included them in the original `SPECIAL_TOKENS` before the tokenizer was ever trained; retrofitting them safely is possible only because we can control placement, and only prepending preserves the already-frozen ids.

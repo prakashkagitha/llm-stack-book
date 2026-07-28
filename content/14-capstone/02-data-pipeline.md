@@ -704,3 +704,116 @@ class PackedMemmapDataset(Dataset):
 - Lee et al., *Deduplicating Training Data Makes Language Models Better*, 2022 — the empirical case for aggressive corpus deduplication.
 - Karpathy, nanoGPT and llm.c — the flat uint16/uint32 memmap `.bin` sharding convention this chapter's `ShardWriter`/`PackedMemmapDataset` follow.
 - [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) and [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) — the full theory behind the lean, at-scale versions of filtering and dedup used in this chapter.
+
+## Exercises
+
+**1.** (Conceptual) `Stack-100M` trains on ~20B tokens, about $10\times$ the Chinchilla compute-optimal budget for its ~101.4M parameters. Explain in your own words *why* this over-training is a rational choice here, and describe one concrete deployment scenario in which the over-training bet would **not** pay off.
+
+??? note "Solution"
+    Chinchilla's $D^\*\approx 20N$ minimizes loss for a fixed *training* compute budget only — its objective, $\min_{N,D} L(N,D)$ subject to $C=6ND$, contains no inference-cost term. The capstone cares about the *served* model, and inference cost scales with $N$: every parameter is paid for on every forward pass, forever, while every extra training token is paid for exactly once. So shrinking $N$ (cheaper inference) and spending more $D$ (a one-time training cost) trades a permanent per-query saving against a single up-front expense. This only works because $N$ is small: $10\times$ the tokens is still an affordable ~15-25 GPU-hours here, whereas at 70B parameters the same ratio would be ruinous.
+
+    The bet fails when the model is served rarely (or never). If total inference volume is tiny — a one-off research artifact, a model trained only to plot a scaling-law point, or something you evaluate once and discard — then the permanent inference saving never accumulates enough to repay the $\sim 10\times$ extra training FLOPs, and you would have been better off stopping near the Chinchilla-optimal ~2B tokens. The over-training payoff is fundamentally an amortization argument: it needs enough forward passes over the model's lifetime for the compounding inference savings to exceed the one-time training premium.
+
+**2.** (Quantitative) Using $N = 101.4\text{M}$ parameters, verify from scratch that the ~20B-token budget is (a) about 200 tokens/param and (b) about $10\times$ Chinchilla-optimal, then (c) compute the total training FLOPs with the $C\approx 6ND$ rule.
+
+??? note "Solution"
+    (a) Tokens per parameter:
+
+    $$
+    \frac{D}{N} = \frac{20\times10^{9}}{1.014\times10^{8}} \approx 197.2 \approx 200 \text{ tokens/param.}
+    $$
+
+    (b) Chinchilla-optimal budget for this $N$:
+
+    $$
+    D^\* \approx 20N = 20 \times (1.014\times10^{8}) = 2.028\times10^{9} \approx 2.0\text{B tokens,}
+    $$
+
+    so the ratio is $\tfrac{20\times10^{9}}{2.028\times10^{9}} \approx 9.86 \approx 10\times$ Chinchilla-optimal.
+
+    (c) Training FLOPs:
+
+    $$
+    C \approx 6ND = 6 \times (1.014\times10^{8}) \times (2\times10^{10}) = 1.2168\times10^{19} \approx 1.22\times10^{19}\ \text{FLOPs,}
+    $$
+
+    matching the value derived in Section 1. (As a sanity check on the flagship budget: $1.22\times10^{19}$ FLOPs over a 20-hour A100 run implies $1.22\times10^{19}/(20\times3600)\approx1.7\times10^{14}$ FLOP/s $\approx$ 170 TFLOP/s, roughly 55% of the A100's 312 TFLOP/s bf16 peak.)
+
+**3.** (Quantitative) The packed corpus is stored as `uint16`. (a) Confirm that both the token ids (`vocab_size=32768`) and the position ids (`SEQ_LEN=2048`) fit in `uint16`. (b) Compute the total on-disk size of the packed 20B-token corpus (tokens plus positions). (c) How much extra disk would result from storing the `position_ids` array as `int32` instead of `uint16`, and why does the chapter reject that?
+
+??? note "Solution"
+    (a) `uint16` holds $0$ through $2^{16}-1 = 65{,}535$. The largest token id is `vocab_size - 1 = 32767 < 65535`, and the largest position id is `SEQ_LEN - 1 = 2047 < 65535`. Both fit with room to spare, so no information is lost. (`uint8`, max 255, would *not* fit either.)
+
+    (b) Each `uint16` is 2 bytes. There are 20B token ids and 20B position ids (one position id per token):
+
+    $$
+    \text{tokens: } 20\times10^{9}\times 2 = 4.0\times10^{10}\ \text{bytes} = 40\ \text{GB,}
+    $$
+    $$
+    \text{positions: another } 40\ \text{GB} \;\Rightarrow\; \textbf{80 GB total.}
+    $$
+
+    (c) `int32` is 4 bytes, so the positions array would double from 40 GB to 80 GB — an extra **40 GB**, pushing the corpus to 120 GB. The chapter rejects this because it buys nothing: position ids never exceed 2047, so the top 16 bits of an `int32` would always be zero. `uint16` halves both disk footprint and page-cache/read bandwidth for zero loss of information — the same reason nanoGPT/llm.c use it for token ids.
+
+**4.** (Quantitative) The near-dedup LSH candidate probability for two documents at true Jaccard similarity $J$ is $P(J) = 1 - (1 - J^{\text{rows}})^{\text{bands}}$. Compare two configurations of a 128-permutation signature: **A** = (`bands=16, rows=8`) and **B** = (`bands=8, rows=16`). Compute $P(0.9)$ for each, and briefly explain what the difference means for near-duplicate recall.
+
+??? note "Solution"
+    Config A (`rows=8, bands=16`) at $J=0.9$:
+
+    $$
+    J^{8} = 0.9^{8} = 0.43047,\quad P_A = 1-(1-0.43047)^{16} = 1-(0.56953)^{16}.
+    $$
+
+    $(0.56953)^{16} = e^{16\ln 0.56953} = e^{-9.01} \approx 1.2\times10^{-4}$, so $P_A \approx 0.99988 \approx 1.0$.
+
+    Config B (`rows=16, bands=8`) at $J=0.9$:
+
+    $$
+    J^{16} = 0.9^{16} = 0.18530,\quad P_B = 1-(1-0.18530)^{8} = 1-(0.81470)^{8}.
+    $$
+
+    $(0.81470)^{8} = e^{8\ln 0.81470} = e^{-1.640} \approx 0.194$, so $P_B \approx 0.806$.
+
+    At a true similarity of $J=0.9$, config A flags the pair as a candidate essentially always ($\approx 100\%$), while config B misses it about 1 time in 5 ($\approx 81\%$). Fewer, fatter bands (B) raise the effective LSH threshold — near $(1/8)^{1/16}\approx0.88$ versus $(1/16)^{1/8}\approx0.71$ for A — so B is *less* sensitive and has lower near-duplicate recall. A catches more (at the cost of generating more spurious candidates at low $J$, which the explicit `threshold=0.8` re-check in `near_dedup` then filters out). This is exactly the "band/row choice silently changes your recall" warning: the split is a threshold decision, not a mere performance knob.
+
+**5.** (Implementation) The chapter runs dedup *within* a source but notes that in production `near_dedup` is ideally also run *across* sources, since Cosmopedia occasionally paraphrases the same facts as FineWeb-Edu. Implement a function `dedup_all_sources(entries, offline=True)` that concatenates the streams from every mix entry, applies exact dedup then cross-source near-dedup over the combined stream, and returns the list of kept documents. Explain why the exact pass must come before the near pass. Assume the chapter's `sources.py`, `dedup.py` functions are importable.
+
+??? note "Solution"
+    ```python
+    """capstone/stacklm/data/dedup_all.py -- cross-source deduplication."""
+    from __future__ import annotations
+    from itertools import chain
+
+    from .sources import STACK100M_MIX, stream_source
+    from .dedup import exact_dedup, near_dedup
+
+
+    def dedup_all_sources(entries=None, offline: bool = True,
+                          num_perm: int = 128, bands: int = 16,
+                          threshold: float = 0.8) -> list:
+        """Concatenate every source's stream and deduplicate globally.
+
+        Exact dedup runs first as a cheap streaming pass (O(1) memory per unique
+        doc, just 16-byte digests); near-dedup then runs over the survivors.
+        Cross-source near-dedup is the *same code* as within-source -- it just
+        sees a concatenated stream, so an identical fact paraphrased in both
+        Cosmopedia and FineWeb-Edu becomes a near-duplicate candidate.
+        """
+        entries = entries if entries is not None else STACK100M_MIX
+        combined = chain.from_iterable(
+            stream_source(entry, offline=offline) for entry in entries
+        )
+        # 1. Exact dedup first: cheap, streaming, catches verbatim mirrors.
+        deduped_exact = exact_dedup(combined)
+        # 2. Near-dedup over the survivors (needs a materialized list to index
+        #    already-kept signatures in the LSH buckets).
+        return near_dedup(list(deduped_exact), num_perm=num_perm,
+                          bands=bands, threshold=threshold)
+
+
+    if __name__ == "__main__":
+        kept = dedup_all_sources(offline=True)
+        print(f"kept {len(kept)} documents after cross-source dedup")
+    ```
+
+    **Why exact before near.** Exact dedup is far cheaper — a single `blake2b` hash and set membership per document, streaming, with O(1) memory per *unique* document (it stores 16-byte digests, not text). Near-dedup is heavier: it computes a 128-element MinHash signature per document, inserts it into the LSH index, and re-checks estimated Jaccard against every candidate. Running exact dedup first strips out all the verbatim repeats — mirrored pages, copy-pasted boilerplate, and the exact-repeat documents `synthetic_corpus` injects every 97th doc — so the expensive near-dedup pass processes a smaller, already-thinned stream. It is strictly wasteful to pay for a MinHash signature on a document an exact hash would have removed for a tiny fraction of the cost. The near pass then catches only what exact dedup cannot: the ~5%-edited near-duplicates (injected every 53rd doc) and cross-source paraphrases, whose normalized text differs and so hash to distinct keys.

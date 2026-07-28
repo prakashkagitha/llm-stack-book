@@ -420,3 +420,140 @@ It is worth stating plainly why each alternative was rejected, because an interv
 - **McCandlish, Kaplan, Amodei et al.**, *An Empirical Model of Large-Batch Training* (2018) — the critical batch size that justifies the ~0.5M-token effective batch.
 - **Kingma & Ba**, *Adam: A Method for Stochastic Optimization* (2015) and **Loshchilov & Hutter**, *Decoupled Weight Decay Regularization (AdamW)* (2019) — the baseline this whole stack extends.
 - **Gupta, Roy & Anandkumar**, *Shampoo: Preconditioned Stochastic Tensor Optimization* (2018) — the full-preconditioner method Muon cheaply approximates.
+
+## Exercises
+
+**1.** In `build_optimizers()` the tied token embedding (`32768 x 512`) is routed to AdamW even though it is a 2D tensor and would pass a naive `p.ndim == 2` test. Explain why orthogonalizing this matrix with Muon is both *wrong* and *wasteful*, and name the property of embedding gradients that makes AdamW the right choice.
+
+??? note "Solution"
+    Muon's orthogonalization only makes sense when both axes of a matrix are "feature" axes that mix together, because setting every singular value to 1 spreads the update equally across all directions of the matrix. The embedding's row axis is the **token axis** (32,768 entries), not a feature axis. In any given batch only a tiny fraction of the 32,768 rows are touched at all — most tokens do not appear — so the gradient is **extremely sparse per row**. Orthogonalizing across the token axis mixes an untouched row's (zero) gradient direction with the handful of active rows, which is semantically meaningless: there is no shared low-dimensional structure across arbitrary vocabulary rows to precondition.
+
+    It is also wasteful: the Newton-Schulz iteration would run on a `32768 x 512` matrix (iterating on the 512 side, its Gram matrix is still fed a huge outer dimension), spending real FLOPs to produce a bad direction.
+
+    What the embedding actually wants is a **per-row adaptive learning rate** so that a rarely-seen token's row is not swamped by the scale of frequent tokens. That is exactly what AdamW's per-coordinate second-moment rescaling gives. Hence the hybrid: 2D *hidden* feature-mixing matrices to Muon, embedding/norms/1D to AdamW.
+
+**2.** The RMS-matching scale is $0.2\sqrt{\max(m,n)}$. Take the SwiGLU gate weight `w_gate` of shape `1408 x 512`. (a) What is the root-mean-square element magnitude of the raw orthogonalized update $O = UV^\top$ *before* scaling? (b) Compute the scale factor. (c) Confirm the post-scale RMS. (d) In one sentence, why does this matter for choosing the learning rate?
+
+??? note "Solution"
+    Let $m = 1408$, $n = 512$, so $\min(m,n) = 512$ and $\max(m,n) = 1408$.
+
+    **(a)** A semi-orthogonal $m\times n$ matrix has $\min(m,n) = 512$ singular values equal to 1, so its Frobenius norm is $\sqrt{512}$. That energy is spread over $mn = 1408 \times 512 = 720{,}896$ entries, so
+    $$
+    \text{RMS}(O) = \sqrt{\frac{\min(m,n)}{mn}} = \sqrt{\frac{512}{720{,}896}} = \frac{1}{\sqrt{1408}} \approx 0.02665.
+    $$
+
+    **(b)** The scale is
+    $$
+    0.2\sqrt{\max(m,n)} = 0.2\sqrt{1408} = 0.2 \times 37.523 \approx 7.505.
+    $$
+
+    **(c)** Post-scale RMS $= 0.02665 \times 7.505 \approx 0.200$. (Cleanly: $\tfrac{1}{\sqrt{1408}} \cdot 0.2\sqrt{1408} = 0.2$ exactly.)
+
+    **(d)** A well-behaved AdamW step has per-element RMS $\approx 1$; scaling Muon's update to RMS $\approx 0.2$ puts the two optimizers' effective step magnitudes in the same regime, so a **single conceptual learning rate** (peaks Muon $\approx 0.02$, AdamW $\approx 3\text{e-}3$) governs the whole run. Forget the scale and Muon's raw update has RMS $\sim 1/\sqrt{1408} \approx 0.027$ -- tiny -- so a normal LR barely moves the weights and training looks dead.
+
+**3.** Suppose you re-budget the run to **30B tokens** at the same **0.5M-token** effective batch, use a **2% warmup**, and keep `decay_frac = 0.2`. (a) How many total optimizer steps? (b) Give the warmup / stable / decay step counts. (c) Using the $1-\sqrt{\cdot}$ decay, what Muon LR (peak `0.02`) is in effect at **one quarter** of the way through the decay phase?
+
+??? note "Solution"
+    **(a)** Total steps:
+    $$
+    T = \frac{30\times10^{9}}{0.5\times10^{6}} = 60{,}000 \text{ steps.}
+    $$
+
+    **(b)** Warmup $= 0.02 \times 60{,}000 = 1{,}200$ steps. Decay $= 0.2 \times 60{,}000 = 12{,}000$ steps. Stable $= 60{,}000 - 1{,}200 - 12{,}000 = 46{,}800$ steps.
+
+    **(c)** At progress $= 0.25$ through decay:
+    $$
+    \text{decay\_mult} = 1 - \sqrt{0.25} = 1 - 0.5 = 0.5,
+    $$
+    so (with `final_frac = 0`) $\eta = 0.02 \times 0.5 = 0.01$. Note the LR is already halved only a quarter of the way in -- the $1-\sqrt{\cdot}$ shape drops fast early, which is what produces WSD's characteristic sharp loss drop right as decay (and premium-data annealing) begins.
+
+**4.** A block has `n_heads = 8` query heads and `n_kv_heads = 2` (GQA group size 4), with $\tau = 100$. The per-head max pre-softmax logits recorded this step are
+
+    s_max = [120, 90, 100, 80, 150, 60, 70, 200]   # heads 0..7
+
+    (a) Which query heads get their $W_Q$ slice scaled, and by what factor? (b) What single factor scales each shared $W_K$ group? (c) Verify that the head that *set* group 1's maximum lands exactly at $\tau$, and show that head 4 (also in group 1) ends up *below* $\tau$.
+
+??? note "Solution"
+    Group 0 = heads 0-3, group 1 = heads 4-7. The per-weight scale is $\eta = \sqrt{\tau / S_{\max}}$ (the square root, because the logit is bilinear in $W_Q$ and $W_K$, so scaling *both* multiplies the logit by the full ratio $\tau/S_{\max}$).
+
+    **(a) $W_Q$, per query head** (only heads with $S_{\max} > \tau$; head 2 at exactly 100 is *not* $> 100$, so it is untouched):
+    - head 0: $\sqrt{100/120} = 0.9129$
+    - head 4: $\sqrt{100/150} = 0.8165$
+    - head 7: $\sqrt{100/200} = 0.7071$
+    - heads 1, 2, 3, 5, 6: untouched.
+
+    **(b) $W_K$, once per group, using the group's worst logit:**
+    - group 0: $\max(120,90,100,80) = 120 \Rightarrow \eta = \sqrt{100/120} = 0.9129$
+    - group 1: $\max(150,60,70,200) = 200 \Rightarrow \eta = \sqrt{100/200} = 0.7071$
+
+    **(c)** Head 7 set group 1's max. Its logit is scaled by $\eta_{W_Q} \cdot \eta_{W_K} = 0.7071 \times 0.7071 = 0.5$, giving $200 \times 0.5 = 100 = \tau$ exactly. Head 4 shares group 1's $W_K$ ($0.7071$) but keeps its own $W_Q$ scale ($0.8165$): its logit becomes $150 \times 0.8165 \times 0.7071 = 150 \times 0.5774 \approx 86.6 < \tau$. So the group-setting head lands on the cap and the other members are pulled conservatively below it -- a safe outcome, and the reason $W_K$ is scaled once per group rather than once per query head (which would over-shrink a shared KV slice).
+
+**5.** The chapter stresses WSD's *continuable* property: you branch multiple decay runs off the same **stable** checkpoint, and the decay length is not tied to any pre-committed total. But `wsd_lr()` derives `decay_steps` from `total_steps` via `decay_frac`, so its decay length is coupled to a fixed horizon. Implement `wsd_lr_branch()` that takes `stable_steps` and `decay_steps` **directly**, so you can spawn a decay of any length from a checkpoint saved at the end of the stable phase. Keep the linear warmup, the constant stable phase, and the $1-\sqrt{\cdot}$ decay to `final_frac * peak_lr`.
+
+??? note "Solution"
+    The fix is to stop computing the decay length from a global `total_steps` and instead pass the three phase lengths independently. This makes the stable checkpoint a genuine fork point: save at `warmup_steps + stable_steps`, then launch any number of decay runs, each with its own `decay_steps`, all reading the same weights.
+
+    ```python
+    # stacklm/optim/schedule.py  (continued)
+    import math
+
+    def wsd_lr_branch(step: int, *, peak_lr: float, warmup_steps: int,
+                      stable_steps: int, decay_steps: int,
+                      final_frac: float = 0.0) -> float:
+        """WSD LR with phase lengths given DIRECTLY (no baked-in total horizon).
+
+        Decouples the decay from any pre-committed step count, so multiple decay
+        runs of different lengths can branch off one stable-phase checkpoint
+        (MiniCPM's continuable-pretraining property).
+        """
+        stable_end = warmup_steps + stable_steps          # first decay step
+        if step < warmup_steps:                           # --- warmup ---
+            return peak_lr * (step + 1) / warmup_steps
+        if step < stable_end:                             # --- stable ---
+            return peak_lr
+        # --- decay: 1 - sqrt(progress), clamped to [0, 1] ---
+        progress = (step - stable_end) / max(1, decay_steps)
+        progress = min(progress, 1.0)                     # stay flat at floor past end
+        decay_mult = 1.0 - math.sqrt(progress)            # 1 -> 0
+        floor = final_frac * peak_lr
+        return floor + (peak_lr - floor) * decay_mult
+    ```
+
+    Two things to notice. First, `total_steps` never appears -- the schedule is fully determined by the three phase lengths, so extending the stable phase or trying a longer/shorter decay is a config change, not a re-derivation. Second, the `min(progress, 1.0)` clamp means that if you ask for a step past the end of the decay, the LR sits at the floor rather than going negative (since $\sqrt{\text{progress}} > 1$ would make `decay_mult` negative). To reproduce the original 40k-step recipe you would call it with `stable_steps = 30000`, `decay_steps = 8000`, `warmup_steps = 2000`.
+
+**6.** You want a sanity check that `zeropower_via_newtonschulz5` really conditions the update. Write a short script that builds an ill-conditioned random `256 x 128` matrix (singular values spanning a couple orders of magnitude, condition number $\sim100$), runs the orthogonalizer, and prints the singular-value spread of the result. Explain what you expect to see and why the chapter says we do *not* need machine-precision orthogonality.
+
+??? note "Solution"
+    Build a matrix with a deliberately bad spectrum via an SVD with geometrically spaced singular values, orthogonalize, then read back the singular values of the output with `torch.linalg.svdvals`.
+
+    ```python
+    import torch
+    from stacklm.optim.muon import zeropower_via_newtonschulz5
+
+    torch.manual_seed(0)
+    m, n = 256, 128
+    # Random orthonormal U, V and a bad spectrum from 1e-1 to 1e1 (cond ~1e2).
+    U, _ = torch.linalg.qr(torch.randn(m, m))
+    V, _ = torch.linalg.qr(torch.randn(n, n))
+    s = torch.logspace(-1, 1, n)                      # 1e-1 ... 1e1, span 1e2
+    G = (U[:, :n] * s) @ V.T                          # ill-conditioned (m x n)
+
+    print("input  sigma: min %.3e  max %.3e  cond %.3e"
+          % (s.min(), s.max(), s.max() / s.min()))
+
+    O = zeropower_via_newtonschulz5(G, steps=5).float()
+    sv = torch.linalg.svdvals(O)
+    print("output sigma: min %.4f  max %.4f  cond %.4f"
+          % (sv.min(), sv.max(), sv.max() / sv.min()))
+    ```
+
+    **Expected output (approximately):**
+
+    ```text
+    input  sigma: min 1.000e-01  max 1.000e+01  cond 1.000e+02
+    output sigma: min 0.68..     max 1.20..     cond ~1.8
+    ```
+
+    The input condition number is $\sim 10^2$; after 5 Newton-Schulz steps every singular value has been pulled toward 1, so the output's spread collapses to roughly $[0.68, 1.20]$ and its condition number drops from $\sim100$ to under 2. That is the whole point of orthogonalization -- turn a spectrum dominated by a few large directions into a nearly isotropic one so the update pushes equally along all directions of the matrix. Notice the largest singular values slightly **overshoot** 1 (to $\approx1.2$): the tuned quintic is designed to converge *fast*, not monotonically, so it rings a little around 1 rather than approaching it from below.
+
+    Why not more steps for exact orthogonality? Because we only need a **well-conditioned direction**, not $\sigma = 1$ to machine precision. The optimizer immediately scales the result by $0.2\sqrt{\max(m,n)}$ and the learning rate and applies it as a step; the residual $\pm20\%$ deviation from perfect orthogonality is utterly washed out by that. Five matmul-only iterations in bf16 are far cheaper than an exact SVD and give a direction that is already as good as the optimization needs -- which is exactly why Muon's per-step overhead stays at a fraction of a percent of the transformer's own FLOPs. (Push the input condition number to $10^5$ instead and 5 steps would *not* fully recover the tiniest singular values -- Newton-Schulz converges only linearly near 0 -- but real momentum buffers are nowhere near that ill-conditioned.)

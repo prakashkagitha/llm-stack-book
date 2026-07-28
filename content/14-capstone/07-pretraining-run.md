@@ -884,3 +884,211 @@ passes per optimizer step, hence the PLAN's stated ~2–4× wall-clock versus th
 - Chowdhery et al., *PaLM: Scaling Language Modeling with Pathways* (2022) — popularized Model FLOPs Utilization as a training-efficiency metric; source of the z-loss coefficient used here.
 - Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020) — the sharding idea FSDP implements.
 - Karpathy, *nanoGPT* and *llm.c* (open-source GPT-2 reproduction projects) — the direct lineage this capstone's single-GPU, cost-conscious training loop updates for 2025–2026.
+
+## Exercises
+
+**1.** The chapter trains in bf16 autocast and states this needs no `GradScaler`, while the
+free-tier Colab T4 path must switch to `torch.autocast(dtype=torch.float16)` *with* a
+`GradScaler`. Explain (a) what problem `GradScaler` solves for fp16, and (b) why bf16 makes it
+unnecessary. What does bf16 give up in exchange, and why does the chapter argue that trade-off is
+acceptable here?
+
+??? note "Solution"
+    **(a) What `GradScaler` solves for fp16.** fp16 has only a 5-bit exponent, giving it a narrow
+    dynamic range. Small gradients underflow to zero and large activations/gradients overflow to
+    `inf`, either of which corrupts the update. `GradScaler` multiplies the loss by a large scale
+    factor before `.backward()` so that small gradients are pushed up into fp16's representable
+    range, then unscales the gradients before the optimizer step, dynamically backing the scale
+    factor off whenever an `inf`/`nan` is detected. It is exactly the machinery the chapter
+    describes as "the classic source of `loss is nan`, script has silently rescaled to zero and
+    stalled."
+
+    **(b) Why bf16 removes the need.** bf16 keeps fp32's full **8-bit exponent** (same dynamic
+    range as fp32) and trims only the mantissa to 7 bits. Because the exponent range is identical
+    to fp32, there is no realistic overflow/underflow risk on activations or gradients, so there is
+    nothing for dynamic loss scaling to guard against — you can call `.backward()` and
+    `optimizer.step()` directly.
+
+    **The trade-off.** bf16 gives up mantissa precision: 7 explicit mantissa bits vs fp16's 10, so
+    each individual value is represented more coarsely. The chapter accepts this because (i) the
+    model's *master* parameters are kept in fp32 and gradients accumulate in fp32, so tiny per-step
+    updates at small learning rates are not rounded away; autocast uses bf16 only inside the
+    forward/loss region; and (ii) the cross-entropy loss itself is computed on logits explicitly
+    upcast with `.float()`, protecting the numerically sensitive step. Range matters more than the
+    last few mantissa bits for training stability, which is precisely what bf16 optimizes for.
+
+**2.** In `train_step`, the per-micro-batch loss is divided by `cfg.grad_accum_steps` *before*
+`.backward()`. Suppose a teammate deletes that `/ cfg.grad_accum_steps` (leaving everything else,
+including the single `zero_grad` per optimizer step, correct). With the chapter's config
+(`grad_accum_steps = 8`), what happens to the gradient that reaches `optimizer.step()`, and what is
+the practical effect on the run? Contrast this with the *other* pitfall the chapter warns about —
+calling `zero_grad()` inside the accumulation loop.
+
+??? note "Solution"
+    **Effect of dropping `/ grad_accum_steps`.** Gradients from successive `.backward()` calls are
+    *summed* into `.grad` (that is why we zero only once per optimizer step). With the division in
+    place, each micro-batch contributes $\frac{1}{8}$ of its gradient, so the accumulated gradient
+    equals the **mean** gradient over the full 524,288-token batch — exactly what a single giant
+    batch would produce. Delete the division and the accumulated gradient is the **sum** of 8
+    micro-batch gradients, i.e. $8\times$ too large. Since $\nabla$ is $8\times$ larger, the update
+    is effectively at $8\times$ the intended learning rate.
+
+    **Practical effect.** The run no longer matches the Muon/WSD hyperparameters tuned in Ch. 14.6.
+    Global grad-norm clipping to $c=1.0$ partly masks it — the clip rescales the inflated norm back
+    toward 1 — but the *direction* is preserved and the effective step size is distorted whenever
+    the norm is below the clip threshold, so early/late-training behavior (small gradients) is most
+    affected. Expect instability or a mis-scaled loss curve.
+
+    **Contrast with the `zero_grad`-inside-the-loop pitfall.** That bug goes the *opposite*
+    direction: zeroing on every micro-batch throws away the previous 7 gradients, so
+    `optimizer.step()` sees only the *last* micro-batch — one independent 65,536-token step at
+    $\frac{1}{8}$ the intended effective batch, not the 524,288-token step you designed. Both bugs
+    leave the loss curve going down (so both are easy to miss), but one inflates the effective LR by
+    $8\times$ while the other shrinks the effective batch by $8\times$; the chapter's rule "zero
+    once, accumulate $N$, then step, and scale the loss by $1/N$ before backward" is what makes the
+    accumulated gradient equal the true batch mean.
+
+**3.** You are configuring a scaled-down on-ramp tier with a smaller model. You choose
+`micro_batch_size = 4` and `seq_len = 1024`, and you want a **reduced** effective batch of exactly
+262,144 tokens per optimizer step with a total token budget of $2\times10^9$ tokens. Compute (a)
+the `grad_accum_steps` you must set, and (b) `total_steps`. Show the arithmetic.
+
+??? note "Solution"
+    **(a) `grad_accum_steps`.** Effective batch
+    $= \texttt{micro\_batch\_size} \times \texttt{seq\_len} \times \texttt{grad\_accum\_steps}$, so
+    $$
+    \texttt{grad\_accum\_steps} = \frac{262{,}144}{4 \times 1024}
+    = \frac{262{,}144}{4{,}096} = 64.
+    $$
+    Check: $4 \times 1024 \times 64 = 262{,}144$ tokens/step — exactly the target.
+
+    **(b) `total_steps`.** As in the chapter, take the ceiling of budget over tokens-per-step:
+    $$
+    \texttt{total\_steps} = \left\lceil \frac{2\times10^9}{262{,}144} \right\rceil
+    = \lceil 7629.39\ldots \rceil = 7630.
+    $$
+    So `grad_accum_steps = 64` and `total_steps = 7630`. (For comparison, the flagship values are
+    the same computation with a 524,288-token batch and a 20B-token budget, giving 38,147 steps.)
+
+**4.** During a flagship A100 run you measure a full-optimizer-step time of `dt = 1.8s` (the 8
+accumulated micro-batches plus clip and Muon+AdamW update). Using the chapter's constants
+($N \approx 101.4\times10^6$ parameters, effective batch 524,288 tokens, A100 bf16 peak
+$312\text{ TFLOP/s}$, the **6ND** rule), compute (a) tokens/sec, (b) achieved FLOP/s and MFU, and
+(c) the projected wall-clock GPU-hours for the full $20\times10^9$-token run. Is this a plausible
+figure for a well-optimized loop?
+
+??? note "Solution"
+    **(a) Tokens/sec.**
+    $$
+    \frac{524{,}288 \text{ tokens}}{1.8\text{ s}} \approx 291{,}271 \text{ tokens/s}.
+    $$
+
+    **(b) Achieved FLOP/s and MFU.** By 6ND, forward+backward costs $\approx 6N$ FLOPs per token:
+    $$
+    6 \times 101.4\times10^6 \times 291{,}271 \approx 1.772\times10^{14}\text{ FLOP/s}
+    = 177.2\text{ TFLOP/s}.
+    $$
+    $$
+    \text{MFU} = \frac{177.2}{312} \approx 0.568 = 56.8\%.
+    $$
+
+    **(c) Projected GPU-hours.**
+    $$
+    \frac{20\times10^9}{291{,}271 \text{ tokens/s}} \approx 68{,}665\text{ s}
+    \approx 19.1 \text{ GPU-hours}.
+    $$
+
+    **Plausibility.** Yes: ~57% MFU sits near the top of the chapter's "well-tuned setups can push
+    higher" range (it cites 55–65% as the target with `torch.compile`, fused optimizer kernels, and
+    FlashAttention-backed SDPA), and 19.1 GPU-hours lands at the *lower* end of the ~15–25 GPU-hour
+    envelope — consistent with a faster step time (1.8s vs. the un-optimized worked example's 2.3s /
+    44.5% MFU / 24.4 GPU-hours).
+
+**5.** The chapter argues for keeping several rolling checkpoints rather than overwriting a single
+`latest.pt`, "in case the most recent one turns out to be corrupted or was written during a loss
+spike you would rather roll back past." Implement `save_rolling_checkpoint(...)` that writes a
+step-stamped checkpoint (reusing the chapter's `save_checkpoint`), then prunes so that only the
+`keep_last` most recent step checkpoints survive. Preserve the chapter's atomicity guarantee and do
+not let the prune delete a `final.pt`.
+
+??? note "Solution"
+    Reuse `save_checkpoint` (which already writes to a `.tmp` file and `os.replace`s it atomically),
+    add a step-stamped name so checkpoints sort chronologically, then delete all but the newest
+    `keep_last`. Globbing only `step_*.pt` naturally excludes `final.pt` from the prune.
+
+    ```python
+    import os, glob
+
+    def save_rolling_checkpoint(model, optimizer, step, tokens_seen,
+                                train_loader, cfg, keep_last=5):
+        # Zero-padded step so lexical sort == chronological sort.
+        path = f"{cfg.ckpt_dir}/step_{step:07d}.pt"
+        save_checkpoint(path, model, optimizer, step, tokens_seen, train_loader, cfg)
+
+        # Prune: keep only the newest `keep_last` step checkpoints. The glob pattern
+        # matches only step_*.pt, so final.pt (and latest.pt) are never candidates.
+        ckpts = sorted(glob.glob(f"{cfg.ckpt_dir}/step_*.pt"))
+        for old in ckpts[:-keep_last]:
+            os.remove(old)
+        return path
+    ```
+
+    Notes on correctness: (1) atomicity is inherited unchanged from `save_checkpoint`'s
+    temp-file-plus-`os.replace`, so an interrupted write never leaves a corrupt `step_*.pt` on disk;
+    (2) `ckpts[:-keep_last]` is empty while fewer than `keep_last` checkpoints exist, so nothing is
+    deleted early in the run; (3) the seven-digit zero pad (`{step:07d}`) makes lexical sort agree
+    with numeric order up to 9,999,999 steps — well past the ~38,147 this run needs. With
+    `keep_last=5` plus a separate `final.pt`, total checkpoint disk is ~6 GB at the chapter's
+    ~0.9 GB per checkpoint.
+
+**6.** Scale-out (implementation). The DDP snippet in the chapter wraps only the *last* micro-batch
+in the accumulation window in a synchronizing context and the earlier ones in `model.no_sync()`.
+Rewrite the flagship accumulation loop from `train_step` into a `ddp_train_step` that (i) skips the
+gradient all-reduce on every micro-batch except the last, and (ii) still produces the correct
+**mean** gradient over the effective batch. Then explain in one or two sentences why the
+`no_sync()` optimization changes wall-clock but not the resulting gradient.
+
+??? note "Solution"
+    DDP triggers a gradient all-reduce as each `.backward()` completes. During accumulation we only
+    want *one* all-reduce per optimizer step — after the final micro-batch — so we wrap the earlier
+    backward passes in `model.no_sync()`, which suppresses the collective. The loss is still divided
+    by `grad_accum_steps` before every `.backward()` so the local accumulated gradient is the mean;
+    the single all-reduce on the last step then averages those per-rank means across ranks.
+
+    ```python
+    import contextlib
+
+    def ddp_train_step(model, optimizer, micro_batches, cfg):
+        """One optimizer step under DDP: all-reduce gradients exactly once,
+        after the final accumulated micro-batch, and still average correctly."""
+        assert len(micro_batches) == cfg.grad_accum_steps
+        optimizer.zero_grad(set_to_none=True)
+        total_loss = 0.0
+        last = len(micro_batches) - 1
+        for i, (x, y, doc_mask) in enumerate(micro_batches):
+            x, y, doc_mask = x.to(cfg.device, non_blocking=True), \
+                             y.to(cfg.device, non_blocking=True), \
+                             doc_mask.to(cfg.device, non_blocking=True)
+            # Suppress the DDP all-reduce on every micro-batch except the last.
+            sync_ctx = contextlib.nullcontext() if i == last else model.no_sync()
+            with sync_ctx:
+                with autocast_ctx:
+                    logits = model(x, doc_mask=doc_mask)
+                    ce = torch.nn.functional.cross_entropy(
+                        logits.view(-1, logits.size(-1)).float(),
+                        y.view(-1), ignore_index=-1)
+                    z_loss = (torch.logsumexp(logits.float(), dim=-1) ** 2).mean()
+                    loss = (ce + cfg.z_loss_coef * z_loss) / cfg.grad_accum_steps
+                loss.backward()
+            total_loss += loss.item()
+        return total_loss
+    ```
+
+    **Why it changes wall-clock but not the gradient.** Suppressing the all-reduce on the first
+    `grad_accum_steps - 1` backward passes only defers *communication*; the local `.grad` buffers
+    still accumulate every micro-batch's contribution locally. Because gradients add linearly and
+    all-reduce (sum/mean) is linear, reducing once over the summed local gradients is
+    mathematically identical to reducing after each micro-batch — you just do it once instead of
+    `grad_accum_steps` times, saving `grad_accum_steps - 1` collectives per optimizer step (the
+    chapter's stated motivation: DDP would "otherwise synchronize grad_accum_steps times per
+    optimizer step for no benefit").

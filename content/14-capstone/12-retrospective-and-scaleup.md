@@ -534,3 +534,174 @@ Every technique in Stack-100M traces to a real, load-bearing paper. This is the 
 - Rajbhandari et al. *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2019); Shoeybi et al. *Megatron-LM* (2019) — the DP → FSDP → tensor/pipeline progression referenced above.
 
 For the annotated, book-wide version of this list see [Key Papers: An Annotated Reading List](../99-appendix/03-papers-reading-list.html).
+
+---
+
+## Exercises
+
+**1.** (Conceptual) The chapter calls training Stack-100M on ~20B tokens (~200 tokens/param) instead of the Chinchilla-optimal ~2B "economically irrational for a model you train and throw away, and completely rational for a model you will *serve*." Explain the asymmetry that makes both halves of that sentence true, and name where in the cost table the over-training decision shows up.
+
+??? note "Solution"
+
+    The asymmetry is between *when you pay* training compute and *when you pay* inference compute. Training compute is paid **once**, up front: the 6ND FLOPs to fit the weights. Inference compute is paid **every request, forever**: ~2ND FLOPs per generated token for as long as you serve the model.
+
+    - If you train the model and then throw it away (a research probe, a one-off experiment), you get zero inference back, so any tokens beyond Chinchilla-optimal are pure waste — you spent ~10x the compute for a marginal loss improvement you will never amortize. Irrational.
+    - If you will *serve* the model to many requests, over-training buys a permanently smaller/cheaper model at your target quality. A better 100M can replace a 200M that would have cost ~2x the FLOPs on *every* one of billions of future requests. You pay the extra training compute once and harvest the inference saving forever. Rational.
+
+    In the cost table this decision is the **pretrain line**: ~22 GPU-hours / ~\$39.60, which is ~40% of the whole bill. Chinchilla-optimal (2B tokens) would be ~one-tenth of that (~\$4), so roughly \$36 of the \$40 pretrain line — about 90% of it — is the over-training premium, spent deliberately to lower serving cost. This is the "inference-aware over-training" of Sardana et al. (2024).
+
+**2.** (Quantitative) The `cost.py` example assumes the pretrain loop sustained 252,000 tokens/sec, which the chapter says gives 22.0 GPU-hours at MFU 49.1%. Suppose instead your kernels are less well tuned and the loop sustains only **200,000 tokens/sec** on the same 20B-token run. Using the chapter's formulas and constants ($N = 1.014\times10^8$, A100 bf16 peak $= 3.12\times10^{14}$ FLOP/s, \$1.80/GPU-hr), compute (a) the pretrain GPU-hours, (b) the MFU, and (c) the pretrain dollar cost. By what fraction does the slower run raise the pretrain bill?
+
+??? note "Solution"
+
+    (a) GPU-hours from measured throughput, `gpu_hours_from_throughput`:
+
+    $$
+    t = \frac{2.0\times10^{10}}{200{,}000 \times 3600} = \frac{100{,}000\ \text{s}}{3600} \approx 27.8\ \text{GPU-hours.}
+    $$
+
+    (b) MFU is achieved / peak, with achieved $= 6N \times$ tokens/sec:
+
+    $$
+    \text{MFU} = \frac{6 \times (1.014\times10^{8}) \times 200{,}000}{3.12\times10^{14}}
+    = \frac{1.217\times10^{14}}{3.12\times10^{14}} \approx 0.390 = 39.0\%.
+    $$
+
+    (c) Dollars $= 27.8 \times \$1.80 \approx \$50.0$.
+
+    Relative to the tuned run (22.0 GPU-hr, \$39.6), the slower kernels raise the pretrain bill by $50.0/39.6 - 1 \approx 0.26$, i.e. **~26% more**. Note the ratio is exactly the throughput ratio $252{,}000/200{,}000 = 1.26$: GPU-hours and dollars scale inversely with tokens/sec, which is why the chapter insists a dollar figure is meaningless without a stated MFU.
+
+**3.** (Quantitative) Take the `DeepSeekMoEFFN` config from the chapter: `d_model=512`, `d_ff=352`, `n_routed=16`, `n_shared=1`, `k=2`. Each `SwiGLUExpert` has three bias-free linear layers (`w_gate`, `w_up`: $d_{\text{model}}\times d_{\text{ff}}$ each; `w_down`: $d_{\text{ff}}\times d_{\text{model}}$). Compute (a) parameters per expert, (b) total resident expert parameters, (c) active expert parameters per token, and (d) compare (c) against the dense Stack-100M SwiGLU MLP (`intermediate=1408`). Does the MoE block use less compute per token than the dense block?
+
+??? note "Solution"
+
+    (a) Per expert, three matmuls each of size $d_{\text{model}}\times d_{\text{ff}}$:
+
+    $$
+    3 \times 512 \times 352 = 540{,}672 \approx 0.54\text{M params.}
+    $$
+
+    (b) Total resident = all routed + shared experts must live in memory:
+
+    $$
+    (n_{\text{routed}} + n_{\text{shared}}) \times 540{,}672 = 17 \times 540{,}672 = 9{,}191{,}424 \approx 9.19\text{M params.}
+    $$
+
+    (c) Active per token = shared (always on) + top-$k$ routed:
+
+    $$
+    (n_{\text{shared}} + k) \times 540{,}672 = 3 \times 540{,}672 = 1{,}622{,}016 \approx 1.62\text{M params.}
+    $$
+
+    (d) Dense SwiGLU with intermediate 1408:
+
+    $$
+    3 \times 512 \times 1408 = 2{,}162{,}688 \approx 2.16\text{M params.}
+    $$
+
+    Yes: the active MoE compute (1.62M, effective FFN width $3\times352 = 1056$) is **below** the dense block (2.16M, width 1408) — about $1.62/2.16 \approx 0.75\times$ the compute per token — while resident capacity is $9.19/2.16 \approx 4.3\times$ larger (equivalently $17/3 \approx 5.7\times$ the experts). That is the MoE pitch: more capacity than dense at less-than-dense compute/token, paid for in memory.
+
+**4.** (Quantitative) The chapter claims 1B "still fits a single 80 GB A100 ... it breaks on *time*." Verify both halves. Using 16 bytes/param for weights+optimizer state, compute the weights+optimizer footprint of a 1B and a 7B model, and check each against 80 GB. Then compute the total pretraining FLOPs for 1B over 200B tokens, express it as a multiple of the capstone's $1.21\times10^{19}$, and estimate the single-GPU wall-clock at MFU 0.45.
+
+??? note "Solution"
+
+    Footprint via `optimizer_state_gb` ($16$ bytes/param):
+
+    - 1B: $10^{9} \times 16 = 1.6\times10^{10}$ B $= 16$ GB — well under 80 GB, leaving room for activations. **Fits.**
+    - 7B: $7\times10^{9} \times 16 = 1.12\times10^{11}$ B $= 112$ GB $> 80$ GB. **Does not fit** one GPU (hence FSDP/ZeRO at ~7B+).
+
+    Pretraining FLOPs for 1B over 200B tokens (6ND):
+
+    $$
+    C = 6 \times 10^{9} \times 2\times10^{11} = 1.2\times10^{21}\ \text{FLOPs.}
+    $$
+
+    As a multiple of the capstone: $1.2\times10^{21} / 1.21\times10^{19} \approx 99\times$ — about **100x** the capstone pretrain.
+
+    Single-GPU wall-clock at MFU 0.45:
+
+    $$
+    t = \frac{1.2\times10^{21}}{0.45 \times 3.12\times10^{14}} = \frac{1.2\times10^{21}}{1.404\times10^{14}} \approx 8.5\times10^{6}\ \text{s} \approx 2{,}370\ \text{GPU-hours} \approx 99\ \text{days.}
+    $$
+
+    So 1B does not break on memory — it breaks on *time*: ~2,400 GPU-hours on one card is unacceptable wall-clock, which is exactly why you go multi-GPU with DDP (near-linear speedup while the model still fits per GPU, which it does at 1B).
+
+**5.** (Implementation) Extend `stacklm/cost.py` with an inference-side accounting to make the "worked example" reproducible in code. Implement `serving_flops(n_params, n_requests, tokens_per_request=256)` using the $2ND$ inference rule, verify it reproduces the chapter's $\approx 5.2\times10^{19}$ FLOPs for a billion 256-token requests, and add `breakeven_requests(...)` returning how many 256-token requests it takes for cumulative serving FLOPs to equal the 20B-token pretraining budget. Report that number.
+
+??? note "Solution"
+
+    ```python
+    # stacklm/cost.py  (append)
+    def serving_flops(n_params: int, n_requests: int,
+                      tokens_per_request: int = 256) -> float:
+        """Inference compute via the 2ND rule: 2 FLOPs/param/generated token."""
+        return 2.0 * n_params * n_requests * tokens_per_request
+
+
+    def breakeven_requests(n_params: int = N_PARAMS,
+                           pretrain_tokens: int = 20_000_000_000,
+                           tokens_per_request: int = 256) -> float:
+        """How many requests until cumulative serving FLOPs == pretraining FLOPs."""
+        pretrain = training_flops(n_params, pretrain_tokens)        # 6ND
+        per_request = 2.0 * n_params * tokens_per_request           # 2ND, one request
+        return pretrain / per_request
+
+
+    if __name__ == "__main__":
+        c = serving_flops(N_PARAMS, 1_000_000_000, 256)
+        print(f"serve 1e9 reqs x256 tok: {c:.2e} FLOPs")   # -> 5.19e+19
+        print(f"breakeven: {breakeven_requests():,.0f} requests")
+    ```
+
+    Check on part 1: $2 \times (1.014\times10^{8}) \times 10^{9} \times 256 = 5.19\times10^{19}$ FLOPs — matches the chapter's $\approx 5.2\times10^{19}$ (it is ~4x the entire pretraining budget).
+
+    Break-even: the $N$ cancels, so it is independent of model size:
+
+    $$
+    n = \frac{6ND}{2N \cdot 256} = \frac{6 \times 2\times10^{10}}{2 \times 256} = \frac{1.2\times10^{11}}{512} \approx 2.34\times10^{8}.
+    $$
+
+    **~234 million requests.** After roughly a quarter-billion 256-token requests, cumulative serving compute equals the *entire* 20B-token pretraining budget — which is exactly why serving economics, not training economics, dominate the decision to over-train.
+
+**6.** (Implementation) Footgun #3 in the "Checkpoint hygiene" admonition warns that ~1.6 GB of state written every 500 steps "fills a disk overnight," and prescribes keeping "a rolling window of the last *k* plus milestone checkpoints ... and delete the rest." Implement `prune_checkpoints(ckpt_dir, keep_last=3, milestones=())` consistent with `stacklm/repro.py`: given a directory of files named `ckpt_step{N}.pt`, delete every checkpoint except the `keep_last` highest steps and any step in `milestones`; return the list of deleted filenames.
+
+??? note "Solution"
+
+    ```python
+    # stacklm/repro.py  (part 4: retention policy)
+    import os, re
+
+    _CKPT_RE = re.compile(r"^ckpt_step(\d+)\.pt$")
+
+
+    def prune_checkpoints(ckpt_dir: str, keep_last: int = 3,
+                          milestones=()) -> list[str]:
+        """Enforce checkpoint retention: keep the `keep_last` newest checkpoints
+        plus any `milestones` steps (e.g. end of stable phase, end of decay);
+        delete the rest. Returns the filenames removed.
+
+        Prevents the 'fills a disk overnight' footgun: ~1.6 GB/checkpoint
+        (16 B/param x 101M) every 500 steps is unsustainable without pruning.
+        """
+        milestones = set(milestones)
+        found = []                                   # (step, filename)
+        for name in os.listdir(ckpt_dir):
+            m = _CKPT_RE.match(name)
+            if m:
+                found.append((int(m.group(1)), name))
+        found.sort()                                 # ascending by step
+
+        newest = {step for step, _ in found[-keep_last:]} if keep_last > 0 else set()
+        keep = newest | milestones
+
+        removed = []
+        for step, name in found:
+            if step not in keep:
+                os.remove(os.path.join(ckpt_dir, name))
+                removed.append(name)
+        return removed
+    ```
+
+    Walking through it: we discover checkpoints by the `ckpt_step{N}.pt` pattern (ignoring `.tmp` files from an in-flight atomic write and any unrelated file), sort by *step number* rather than filesystem order or lexicographic name (so `ckpt_step900.pt` is correctly older than `ckpt_step1000.pt`), and form the keep-set as the union of the `keep_last` newest steps and the explicit `milestones`. Everything else is deleted and its name returned for logging.
+
+    Example: with checkpoints at steps `{500, 1000, 1500, 2000, 2500}`, `keep_last=2`, `milestones={500}` keeps `{2500, 2000}` (newest two) plus `{500}` (a milestone), and returns `["ckpt_step1000.pt", "ckpt_step1500.pt"]`. Guarding `keep_last > 0` avoids `found[-0:]` accidentally selecting the whole list when a caller passes `keep_last=0` to retain milestones only.

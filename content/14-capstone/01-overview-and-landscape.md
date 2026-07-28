@@ -435,3 +435,139 @@ assert TOY_CONFIG.n_heads * TOY_CONFIG.head_dim == TOY_CONFIG.d_model
 - Karpathy, `nanoGPT` and `llm.c` repositories — the original small-budget GPT-2 reproduction this capstone updates.
 
 Everything in this chapter is fixed; the next one puts it to work. Chapter 14.2 builds the data pipeline — streaming, filtering, deduplicating, and packing the 20B tokens this model will actually learn from — starting from the pretraining-data mechanics in [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) and [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html).
+
+## Exercises
+
+**1.** A colleague argues that since Chinchilla proved 20 tokens per parameter is *compute-optimal*, training Stack-100M on ~200 tokens per parameter is simply wasteful and you should either stop at ~2B tokens or make the model bigger. In two or three sentences, explain the flaw in this argument, and name the one condition under which your colleague would actually be right.
+
+??? note "Solution"
+    The flaw is that Chinchilla-optimal minimizes loss *per unit of training compute* — it treats training as the only cost. A deployed model's dominant cost is *inference*, which recurs on every one of potentially billions of calls, whereas training is paid once. When parameter count (hence serving cost and latency) is the fixed constraint you care about, you want the lowest loss *at that fixed size*, and the data-scaling term $B/D^{\beta}$ keeps improving well past 20 tokens/param — just less per training FLOP than growing $N$ would. Paying ~10x the Chinchilla-optimal token count once, to lower loss at a cheap-to-serve 101M parameters forever, is the right trade for anything you will actually deploy.
+
+    Your colleague is right only in the case Chinchilla itself answers: you have a fixed *training*-FLOP budget and you are *not* going to serve the model enough times to amortize extra training compute (e.g. a one-off research run whose only goal is the lowest loss for that FLOP budget). Then growing $N$ toward the compute-optimal frontier beats over-training a smaller model.
+
+**2.** Using only the spec table (`d_model=512`, `n_heads=8`, `n_kv_heads=2`, `head_dim=64`), compute the number of parameters in the four attention projection matrices of a single Stack-100M block. Then compute what that block's attention would cost if it used full multi-head attention (all heads keep their own K and V) instead of GQA, and state how many parameters GQA saves across all 30 layers.
+
+??? note "Solution"
+    Query width is $n_{\text{heads}}\cdot d_h = 8\times 64 = 512 = d$, and KV width under GQA is $n_{\text{kv}}\cdot d_h = 2\times 64 = 128$. The four projections are $Q: d\times d$, $K: d\times d_{kv}$, $V: d\times d_{kv}$, $O: d\times d$:
+
+    $$
+    q = 512\times 512 = 262{,}144,\quad k = v = 512\times 128 = 65{,}536,\quad o = 512\times 512 = 262{,}144
+    $$
+
+    $$
+    \text{attn}_{\text{GQA}} = 262{,}144 + 65{,}536 + 65{,}536 + 262{,}144 = 655{,}360 \;(\approx 0.655\text{M}).
+    $$
+
+    Full MHA gives K and V the full query width (512), so all four matrices are $512\times 512$:
+
+    $$
+    \text{attn}_{\text{MHA}} = 4\times 512^2 = 4\times 262{,}144 = 1{,}048{,}576 = 4d^2 \;(\approx 1.049\text{M}).
+    $$
+
+    Per-block saving is $1{,}048{,}576 - 655{,}360 = 393{,}216$. Across all 30 layers:
+
+    $$
+    30 \times 393{,}216 = 11{,}796{,}480 \approx 11.8\text{M parameters}.
+    $$
+
+    That is roughly 11.6% of the whole ~101M model saved on parameters alone — and the KV-cache saving at inference time (2 KV heads instead of 8) is the 4x reduction that actually motivates GQA.
+
+**3.** Reproduce the flagship budget arithmetic, but for a *first, untuned* run that achieves only **35% MFU** instead of the 50% used in the chapter's worked example. Use $N = 101.35\times 10^6$, $D = 20\times 10^9$ tokens, the $6ND$ FLOP rule, and the A100 bf16 peak of $312$ TFLOP/s. Give the wall-clock hours and, at USD 1.75/GPU-hour, the dollar cost of the pretraining pass.
+
+??? note "Solution"
+    Total training compute:
+
+    $$
+    C = 6ND = 6\times(101.35\times 10^6)\times(20\times 10^9) \approx 1.216\times 10^{19}\ \text{FLOPs}.
+    $$
+
+    Achieved throughput at 35% MFU:
+
+    $$
+    0.35 \times 3.12\times 10^{14} = 1.092\times 10^{14}\ \text{FLOP/s}.
+    $$
+
+    Wall-clock:
+
+    $$
+    t = \frac{1.216\times 10^{19}}{1.092\times 10^{14}} \approx 1.114\times 10^{5}\ \text{s} \approx 30.9\ \text{hours}.
+    $$
+
+    Cost: $30.9 \times 1.75 \approx \text{USD } 54$. This matches the chapter's remark that a less-tuned ~35% MFU attempt pushes the pretraining pass alone to roughly 31 hours — comfortably explaining why the documented flagship envelope (USD 40–100) leaves headroom above the ~USD 33–43 tuned/50%-MFU core number for restarts, evaluation, and the data/tokenizer passes.
+
+**4.** The spec chooses `vocab_size=32768`. Suppose you instead reused a 65,536-token vocabulary from a larger model's tokenizer, keeping the 30 transformer blocks and `d_model=512` unchanged and keeping embeddings tied. Compute the new tied-embedding parameter count, the new model total, and the fraction of the model the embedding table now occupies. Comment on why this makes vocabulary a first-class decision at 100M scale.
+
+??? note "Solution"
+    Tied embedding table at the new vocab:
+
+    $$
+    V d = 65{,}536 \times 512 = 33{,}554{,}432 \approx 33.55\text{M}.
+    $$
+
+    The transformer blocks and final norm are unchanged. From the chapter's accounting, all 30 blocks plus the final norm total $101{,}353{,}728 - 16{,}777{,}216 = 84{,}576{,}512$ parameters (i.e. everything except the original 16.78M embedding). New total:
+
+    $$
+    84{,}576{,}512 + 33{,}554{,}432 = 118{,}130{,}944 \approx 118.1\text{M}.
+    $$
+
+    Embedding fraction:
+
+    $$
+    \frac{33{,}554{,}432}{118{,}130{,}944} \approx 0.284 = 28.4\%.
+    $$
+
+    Doubling the vocab from 32,768 to 65,536 added ~16.8M parameters — more than a sixth of the *original* model — all spent on a lookup table before any block computes anything, and pushing the embedding from 16.6% to 28.4% of the total. At 100M scale the embedding is a large, fixed fraction of the budget, so vocabulary size directly trades against how much capacity is left for actual computation (depth/width). It cannot be copied thoughtlessly from a larger model, where the same table is a rounding error against billions of block parameters. Chapter 14.3 develops the full tradeoff curve.
+
+**5.** The `count_params` function assumes tied embeddings. Extend it so it correctly reports the total when `cfg.tie_embeddings` is `False` (an untied model adds a separate $V\times d$ output projection / LM head). Add the branch, and report the untied total for the default Stack-100M shape. Your code should stay consistent with the chapter's style.
+
+??? note "Solution"
+    Only the final assembly needs to change: when embeddings are untied, add one more $V\times d$ matrix for the LM head. A minimal, drop-in edit to the accounting block:
+
+    ```python
+    def count_params(cfg: StackConfig) -> dict:
+        embed = cfg.vocab_size * cfg.d_model
+
+        q_width = cfg.n_heads * cfg.head_dim
+        kv_width = cfg.n_kv_heads * cfg.head_dim
+        attn_per_block = (
+            cfg.d_model * q_width      # Q
+            + cfg.d_model * kv_width   # K
+            + cfg.d_model * kv_width   # V
+            + q_width * cfg.d_model     # O
+        )
+        mlp_per_block = 3 * cfg.d_model * cfg.intermediate_size
+        rmsnorm_per_block = 2 * cfg.d_model
+        qk_norm_per_block = (2 * cfg.head_dim) if cfg.use_qk_norm else 0
+        final_norm = cfg.d_model
+
+        per_block = attn_per_block + mlp_per_block + rmsnorm_per_block + qk_norm_per_block
+        all_blocks = per_block * cfg.n_layers
+
+        # Untied models pay for a separate V x d output projection (LM head);
+        # tied models reuse the input embedding, saving exactly `embed` params.
+        lm_head = 0 if cfg.tie_embeddings else cfg.vocab_size * cfg.d_model
+
+        total = embed + all_blocks + final_norm + lm_head
+        return {
+            "embedding": embed,
+            "lm_head (untied)": lm_head,
+            "all_blocks (x n_layers)": all_blocks,
+            "final_norm": final_norm,
+            "total": total,
+        }
+    ```
+
+    For the default shape with `tie_embeddings=False`, `lm_head = 32768 * 512 = 16,777,216`, so:
+
+    $$
+    N_{\text{untied}} = 101{,}353{,}728 + 16{,}777{,}216 = 118{,}130{,}944 \approx 118.1\text{M}.
+    $$
+
+    Untying costs an extra 16.8M parameters (~16.6% of the tied model) for no change in the transformer's computation — which is exactly the saving the spec's `tie_embeddings=True` default captures. (Note this untied total coincides with Exercise 4's number: adding a second 32,768-row table costs the same 16.78M as widening one shared table to 65,536 rows.)
+
+**6.** The default config sets `nope_every=4`, meaning every 4th layer omits rotary position embeddings entirely (NoPE), following SmolLM3. Conceptually, (a) explain *why* interleaving NoPE layers is expected to help the model generalize to sequences longer than the 2048-token pretraining context, and (b) explain why this is essentially free in parameters — i.e. why omitting RoPE on a layer does not change that layer's parameter count.
+
+??? note "Solution"
+    (a) RoPE encodes position by rotating each query and key by an angle proportional to its absolute position, so an attention score depends on the *relative* offset between tokens — but the rotation frequencies are calibrated to the range of positions seen during training (up to 2048). Past that range, the phases enter a regime the model never saw, hurting extrapolation. A NoPE layer applies *no* positional rotation at all, so its attention is exactly translation-invariant: it depends only on content, not on absolute index, and therefore behaves identically whether the sequence is length 2048 or 8192. Interleaving such layers (every 4th) gives the network a positional-signal-free pathway that generalizes cleanly beyond the training length, while the RoPE layers still supply the fine-grained relative-position information needed for local ordering — the combination extrapolates better than either alone, which is why SmolLM3 adopted it and why Stack-100M's context can be extended to 8192 in mid-training (Ch. 14.8).
+
+    (b) RoPE is a *parameter-free* operation: it rotates Q and K by fixed, precomputed sinusoidal angles that depend only on position and the fixed `rope_theta`, with no learnable weights. Omitting it on a layer simply skips that rotation; the layer's Q/K/V/O projections, MLP, and norms — the only things that carry parameters — are unchanged. So `nope_every` shifts *which* layers rotate their queries and keys, but every layer, RoPE or NoPE, has exactly the same `attn_per_block` count computed in Exercise 2. That is why `count_params` never references `nope_every`.

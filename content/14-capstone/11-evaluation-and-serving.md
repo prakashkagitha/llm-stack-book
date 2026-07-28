@@ -672,3 +672,114 @@ You now have every artifact the capstone promised: a trained, mid-trained, align
 - Kwiatkowski et al., *Natural Questions: A Benchmark for Question Answering Research*, 2019.
 - Gerganov et al., `llama.cpp` and the GGUF format — the production reference for fused, quantized CPU/edge inference.
 - Cross-reference: [Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)](../04-kernels-efficiency/07-quantization-ptq.html), [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html), [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html), [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html), [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html).
+
+## Exercises
+
+**1.** Your `compute_perplexity` run on the held-out shard reports a mean loss of **3.1 nats/token**. (a) Convert this to perplexity. (b) The function returns *both* `loss_nats_per_token` and `perplexity`. Give the specific reason §2 offers for reporting the nats/token number rather than perplexity alone. (c) A random-guessing model over Stack-100M's vocabulary would sit at what perplexity, and what does the gap between that and your number tell you?
+
+??? note "Solution"
+    (a) $\text{PPL} = \exp(3.1)$. Since $e^{3} \approx 20.09$ and $e^{0.1} \approx 1.105$, $\text{PPL} \approx 20.09 \times 1.105 \approx 22.2$. The model's predictive distribution has an effective branching factor of about 22 tokens per position on this held-out text.
+
+    (b) §2 gives two reasons: loss in nats/token **composes linearly** (perplexity does not — it is an exponential), and it is **exactly the quantity the training curve in [14.7] already plots**. So you can drop an "eval loss" point directly onto the same chart as the training loss and read off the generalization gap by eye. Perplexity is the human-facing summary; nats/token is the composable, chart-compatible one.
+
+    (c) A model that assigns uniform probability $1/V$ to every token over the $V = 32768$-vocabulary has $\text{PPL} = V = 32768$. Your $\approx 22.2$ is roughly three orders of magnitude below that, which is the concrete evidence that the model learned real predictive structure in the training-mix text (and, per §2, *nothing more than that* — it says nothing about arithmetic or factual accuracy).
+
+**2.** Using the exact memory accounting in §6 (101.4M total parameters, quantized end to end), compute the int4 on-disk size and compression-vs-fp32 ratio for **`group_size = 128`** instead of the default 64. The reference int4 layout stores one fp32 scale plus one fp32 zero-point per group. Compare against the default (group=64) numbers in the §6 table and state the tradeoff you are making by widening the group.
+
+??? note "Solution"
+    Packed 4-bit weights are independent of group size: $101.4\text{M} \times 0.5\ \text{B} = 50.7\ \text{MB}$.
+
+    Group count at `group_size = 128`: $101.4\text{M} \div 128 \approx 792{,}000$ groups (half as many as the $\approx 1.58\text{M}$ groups at group=64). Each group stores one fp32 scale + one fp32 zero-point $= 8\ \text{B}$:
+
+    $$792{,}000 \times 8\ \text{B} \approx 6.34\ \text{MB}.$$
+
+    Total $\approx 50.7 + 6.34 \approx 57.0\ \text{MB}$. Compression vs. fp32: $406 \div 57.0 \approx 7.1\times$ (versus $\approx 63\ \text{MB}$ / $6.4\times$ at group=64).
+
+    Tradeoff: doubling the group size **halves the scale/zero-point overhead** ($\approx 12.7\ \text{MB} \to \approx 6.3\ \text{MB}$), but each scale/zero-point now has to cover 128 weights with a single min/max instead of 64, so the quantization grid is **coarser** and the reconstruction error grows — exactly the "not enough precision to avoid a visible quality hit" concern §6 raises for 4-bit. You would confirm the quality cost empirically with the §3 probe harness before shipping the wider group.
+
+**3.** Work RTN by hand. Take a single group of four weights $w = [\,0.90,\ -0.40,\ 0.10,\ -0.85\,]$ and apply the **$b=4$ symmetric** scheme from §5.1 (so $2^{b-1}-1 = 7$). (a) Compute the scale $s$. (b) Compute the integer codes $q$ and the dequantized weights $\hat w$. (c) Report the maximum absolute reconstruction error.
+
+??? note "Solution"
+    (a) Symmetric scale: $s = \dfrac{\max(|w|)}{2^{b-1}-1} = \dfrac{0.90}{7} \approx 0.12857$.
+
+    (b) $q_i = \operatorname{clip}(\operatorname{round}(w_i/s),\,-7,\,7)$:
+
+    - $0.90/0.12857 = 7.00 \to 7$
+    - $-0.40/0.12857 = -3.11 \to -3$
+    - $0.10/0.12857 = 0.78 \to 1$
+    - $-0.85/0.12857 = -6.61 \to -7$
+
+    So $q = [\,7,\ -3,\ 1,\ -7\,]$. Dequantize $\hat w_i = s\,q_i$:
+
+    - $7 \times 0.12857 = 0.9000$
+    - $-3 \times 0.12857 = -0.3857$
+    - $1 \times 0.12857 = 0.1286$
+    - $-7 \times 0.12857 = -0.9000$
+
+    So $\hat w = [\,0.900,\ -0.386,\ 0.129,\ -0.900\,]$.
+
+    (c) Per-element errors $w_i - \hat w_i$: $0.000,\ -0.0143,\ -0.0286,\ +0.0500$. The **maximum absolute error is $0.050$** (on the $-0.85$ weight). Note the largest error falls on $-0.85$, whose scaled value $-6.61$ lands nearest a rounding boundary (a $\approx 0.39$-step residual), not on the largest-magnitude weight $0.90$, which sits exactly on the grid endpoint with zero error — a small illustration of RTN's blind spot from §5.1: it rounds every weight independently by grid proximity alone, with no notion of which one matters more to the layer's output.
+
+**4.** `_sequence_logprob` in §3.2 scores a candidate answer by the **sum** of its per-token log-probabilities, and `eval_mc_probe` picks the choice with the highest score. Suppose one item's choices tokenize to very different lengths — e.g. one option is 1 token and another is 5 tokens. (a) Explain the systematic bias this introduces. (b) Why is it not a problem for the `TINY_MC_SET` items actually shown in the chapter? (c) Name one thing you would check or change before adding a longer free-form option.
+
+??? note "Solution"
+    (a) Every token contributes a $\log p \le 0$ term, so each additional continuation token can only push the summed score **downward** (more negative). Longer candidate strings therefore accumulate more negative mass purely by being longer, independent of correctness. With the raw-sum scoring shown, `max(scores)` is biased toward the **shorter** option — a 1-token choice can win over a correct-but-longer 5-token choice just because it stops accumulating penalty sooner.
+
+    (b) The chapter's `TINY_MC_SET` choices are deliberately near-uniform in length (`" H2O"`, `" CO2"`, `" NaCl"`, `" O2"`; `" Paris"`, `" Berlin"`, `" Madrid"`, `" Rome"`) — all short and comparable — so the length bias is roughly constant across options and cancels out of the arg-max. The construction ("small enough to eyeball every item") keeps this invariant by hand.
+
+    (c) You would either (i) verify the choices tokenize to comparable lengths, or (ii) switch from the raw sum to a **length-normalized** score, e.g. dividing the summed log-prob by the number of continuation tokens (mean log-prob per token), so that a longer correct answer is not penalized for its length. Either keeps the arg-max honest once options differ in length.
+
+**5.** Compute the KV-cache budget the way §7's worked example does, using the same GQA config (`n_kv_heads = 2`, `head_dim = 64`, 30 layers, bf16 = 2 bytes/element). (a) Bytes per token per layer, and per token across all layers. (b) Total cache for a **512-token** context. (c) The chapter says GQA gives a "4x smaller KV cache than plain multi-head attention." What would the same 512-token cache cost under plain MHA, and what does that imply about the number of query heads?
+
+??? note "Solution"
+    (a) Per token per layer, we store both K and V, each of shape `n_kv_heads x head_dim`:
+
+    $$2\ (\text{K and V}) \times 2\ (\text{kv heads}) \times 64\ (\text{head dim}) = 256\ \text{elements} \times 2\ \text{B} = 512\ \text{B}.$$
+
+    Across 30 layers: $512 \times 30 = 15{,}360\ \text{B} \approx 15\ \text{KB per token}$.
+
+    (b) At 512 tokens: $15{,}360 \times 512 = 7{,}864{,}320\ \text{B} \approx 7.86\ \text{MB}$.
+
+    (c) "4x smaller" means plain MHA would cost $4 \times 7.86 \approx 31.5\ \text{MB}$ for the same context, because MHA stores K and V for every query head rather than sharing 2 KV heads. A 4x-larger cache with `head_dim` fixed means MHA uses $4 \times 2 = 8$ KV heads — i.e. the model has **8 query heads**, and GQA collapses them onto 2 shared KV heads (a 4:1 grouping). This is the compounding win §7 highlights: the smaller cache is what keeps "model + full 2048-token conversation" near 100 MB.
+
+**6.** Implement a **symmetric** per-group int4 variant of `quantize_int4_grouped` / `dequantize_int4_grouped` (call them `..._symmetric`), following §5.1's symmetric scheme and reusing §6's two-nibbles-per-byte packing. Then answer: (a) how much on-disk memory does dropping the zero-point save for the full 101.4M-parameter Stack-100M at `group_size = 64`, and (b) why did §6 nonetheless choose *asymmetric* int4 as the reference path?
+
+??? note "Solution"
+    Symmetric int4 uses codes in $[-7, 7]$ with $s = \max(|w|)/7$ and no zero-point. The signed range spans 15 levels, which still fits a 4-bit nibble; we shift by $+7$ to $[0, 14]$ only for packing, and undo it on dequantize.
+
+    ```python
+    def quantize_int4_grouped_symmetric(weight: torch.Tensor, group_size: int = 64):
+        """Symmetric per-group int4, packed two values per uint8 byte.
+        Returns (packed uint8 (d_out, d_in//2), scales (d_out, d_in//group_size))."""
+        d_out, d_in = weight.shape
+        assert d_in % group_size == 0, f"d_in={d_in} not divisible by {group_size}"
+        n_groups = d_in // group_size
+
+        w = weight.float().view(d_out, n_groups, group_size)
+        scale = (w.abs().amax(dim=2) / 7.0).clamp(min=1e-8)        # (d_out, n_groups)
+        q = torch.round(w / scale.unsqueeze(2)).clamp(-7, 7)        # codes in [-7, 7]
+        q = (q + 7).to(torch.uint8).view(d_out, d_in)              # shift to [0, 14] for packing
+
+        q_even, q_odd = q[:, 0::2], q[:, 1::2]
+        packed = (q_even | (q_odd << 4)).to(torch.uint8)           # (d_out, d_in // 2)
+        return packed, scale
+
+
+    def dequantize_int4_grouped_symmetric(packed: torch.Tensor, scale: torch.Tensor,
+                                          d_in: int, group_size: int = 64) -> torch.Tensor:
+        d_out = packed.shape[0]
+        n_groups = d_in // group_size
+        q_even = (packed & 0x0F).to(torch.float32)
+        q_odd = ((packed >> 4) & 0x0F).to(torch.float32)
+        q = torch.empty(d_out, d_in, device=packed.device)
+        q[:, 0::2], q[:, 1::2] = q_even, q_odd
+        q = (q - 7.0).view(d_out, n_groups, group_size)            # undo the +7 shift
+        w = q * scale.unsqueeze(2)                                 # no zero-point term
+        return w.view(d_out, d_in)
+    ```
+
+    (This drops straight into `QuantizedLinear.from_float`/`forward`: for `bits == 4` you would register `q_weight` and `scale` only, with no `zero_point` buffer.)
+
+    (a) The reference asymmetric layout stores an fp32 scale **and** an fp32 zero-point (8 B) per group; symmetric stores only the fp32 scale (4 B). At $\approx 1.58\text{M}$ groups that saves $1.58\text{M} \times 4\ \text{B} \approx 6.3\ \text{MB}$ — the int4 total drops from $\approx 63\ \text{MB}$ to $\approx 57\ \text{MB}$ (about $7.1\times$ vs. fp32).
+
+    (b) §6 chose asymmetric because at only 4 bits the extra precision matters more than the 6 MB. A symmetric scheme forces the grid to be centered at 0 and cover $[-\max|w|,\ +\max|w|]$; for a **skewed** group (per §5.1, "better for skewed distributions") this wastes codes on a range the weights never occupy. Asymmetric fits the actual $[\min(w),\ \max(w)]$ with a learned zero-point, giving finer effective resolution exactly where 4-bit RTN is most fragile. The memory saving is real but small relative to that quality risk, so the reference path keeps the zero-point.

@@ -587,3 +587,154 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 - Cui et al. — *UltraFeedback: Boosting Language Models with High-quality Feedback* (2023). A standard open source of DPO preference pairs.
 - Cobbe et al. — *Training Verifiers to Solve Math Word Problems* (GSM8K, 2021). Source of the `####` final-answer convention our verifier parses.
 - Schulman et al. — *Proximal Policy Optimization Algorithms* (2017), and Schulman's note on KL estimators (the k3 estimator used in the GRPO loop).
+
+## Exercises
+
+**1.** In `render_conversation`, the closing `<|end|>` of an *assistant* turn is emitted with `supervised=True`, but the `<|assistant|>` role marker is emitted with `supervised=False`. Explain, in behavioral terms, what would go wrong at inference time if you flipped *each* of these two choices: (a) masking the assistant `<|end|>`, and (b) supervising the `<|assistant|>` marker.
+
+??? note "Solution"
+    Both choices are about *which* tokens receive gradient, and each controls a distinct behavior the chapter identifies.
+
+    (a) **Masking the assistant `<|end|>`** removes the only gradient that teaches the model to *stop*. The closing `<|end|>` is the token that terminates the assistant turn; if the model never receives loss on producing it, it is never trained to emit it after finishing an answer. At inference the server decodes until it sees `<|end|>` (or `<|eos|>`), so a model that never learned to emit that token "runs past the end of its answer into hallucinated user turns" — the *never shuts up* failure. This is why the chapter supervises the closing `<|end|>`.
+
+    (b) **Supervising the `<|assistant|>` marker** teaches the model to *emit the role marker itself*. But the harness is responsible for emitting `<|assistant|>` to cue generation; the model's job is to learn what comes *after* it. If we put gradient on the marker, the model learns to spontaneously produce `<|assistant|>` mid-turn, corrupting the turn structure the template exists to enforce. So the marker is context the model conditions on but is not trained to generate.
+
+    In short: supervise the token that ends a turn (so the model stops), mask the token that starts the assistant turn (so the model does not impersonate the harness).
+
+**2.** DPO with $\beta = 0.1$ on a single preference pair. The frozen reference assigns response log-likelihoods $\log\pi_{\text{ref}}(y_w) = -26.0$ and $\log\pi_{\text{ref}}(y_l) = -28.0$. After some training the policy assigns $\log\pi_\theta(y_w) = -25.0$ and $\log\pi_\theta(y_l) = -31.0$.
+(a) Compute the winner and loser log-ratios, the DPO margin, and the loss $-\log\sigma(\text{margin})$.
+(b) Compute the implicit `chosen_reward` and `rejected_reward` diagnostics ($\beta \times$ log-ratio). Is the implicit-reward accuracy 0 or 1 for this pair?
+(c) Now suppose instead the policy had drifted to $\log\pi_\theta(y_w) = -35.0$ and $\log\pi_\theta(y_l) = -40.0$. Recompute the margin and both rewards. What failure mode does this illustrate?
+
+??? note "Solution"
+    (a) Log-ratios are $\log\frac{\pi_\theta}{\pi_{\text{ref}}}$ for each response:
+
+    - winner: $-25.0 - (-26.0) = +1.0$
+    - loser: $-31.0 - (-28.0) = -3.0$
+
+    Margin $= \beta(\text{winner} - \text{loser}) = 0.1 \times (1.0 - (-3.0)) = 0.1 \times 4.0 = 0.40$.
+
+    Loss $= -\log\sigma(0.40)$. With $\sigma(0.40) = 1/(1 + e^{-0.40}) = 1/(1 + 0.6703) = 0.5987$, the loss is $-\log(0.5987) = 0.513$ nats.
+
+    (b) `chosen_reward` $= \beta \times (+1.0) = +0.10$; `rejected_reward` $= \beta \times (-3.0) = -0.30$. The chosen reward is up and the rejected reward is down — exactly the healthy trend. Since the margin $0.40 > 0$, the implicit-reward accuracy for this pair is $1$.
+
+    (c) New log-ratios: winner $-35.0 - (-26.0) = -9.0$; loser $-40.0 - (-28.0) = -12.0$. Margin $= 0.1 \times (-9.0 - (-12.0)) = 0.1 \times 3.0 = 0.30 > 0$, so the *loss still decreases* and accuracy is still $1$. But now `chosen_reward` $= 0.1 \times (-9.0) = -0.90$ and `rejected_reward` $= 0.1 \times (-12.0) = -1.20$: **both rewards have fallen**. This is the notorious DPO failure mode — the logistic loss only cares about the *difference*, so it is perfectly happy to push the winner's absolute log-probability down as long as it pushes the loser's down faster. The model is degrading (it is making the good answer *less* likely) while the loss and accuracy look fine, which is why the chapter says to watch that chosen-reward *rises* rather than merely that the margin is positive, and to use a tiny LR.
+
+**3.** A single GRPO group on one prompt, $G = 5$, exact-match reward. The graded rewards come back as $R = [1, 0, 0, 1, 0]$.
+(a) Compute the group mean and the *population* standard deviation, then the standardized advantage assigned to a correct sample and to an incorrect sample. Verify the advantages sum to zero.
+(b) The code uses `torch.std` (Bessel-corrected, divides by $G-1$). Recompute the std and the two advantages under that convention.
+(c) If the same prompt had instead returned $R = [1,1,1,1,1]$, what advantage does every token receive, and how much does this prompt contribute to the gradient?
+
+??? note "Solution"
+    (a) Mean $\bar R = 2/5 = 0.40$. Population variance $= \bar R(1 - \bar R) = 0.40 \times 0.60 = 0.24$ (valid because the rewards are 0/1), so population std $= \sqrt{0.24} = 0.4899$.
+
+    - correct sample: $\hat A = (1 - 0.40)/0.4899 = 0.60/0.4899 = +1.225$
+    - incorrect sample: $\hat A = (0 - 0.40)/0.4899 = -0.40/0.4899 = -0.8165$
+
+    Sum: $2(+1.225) + 3(-0.8165) = 2.449 - 2.449 = 0$. Advantages sum to zero, as standardization guarantees.
+
+    (b) Bessel-corrected variance $= \frac{1}{G-1}\sum (R_i - \bar R)^2 = \frac{1}{4}\big[2(0.6)^2 + 3(0.4)^2\big] = \frac{1}{4}(0.72 + 0.48) = \frac{1.20}{4} = 0.30$, so std $= \sqrt{0.30} = 0.5477$.
+
+    - correct: $\hat A = 0.60/0.5477 = +1.095$
+    - incorrect: $\hat A = -0.40/0.5477 = -0.730$
+
+    Same signs and ranking; only the magnitude shifts. As the chapter notes, with $\varepsilon = 10^{-6}$ the choice of convention is immaterial to the sign and near-magnitude — the point is the ranking, not the third decimal.
+
+    (c) With $R = [1,1,1,1,1]$: $\bar R = 1$, std $= 0$. Every advantage is $(1 - 1)/(0 + \varepsilon) = 0$. Every token gets advantage $0$, so the surrogate is zero and this prompt contributes **no gradient**. This is the all-correct degenerate case (mirror image of all-wrong): with no reward variance in the group there is nothing to reinforce or suppress. Only *mixed* groups teach anything.
+
+**4.** The chapter's "one free lunch" tip says to cache the reference log-probs once, since $\pi_{\text{ref}}$ is frozen and the preference set is static. Implement a `precompute_ref_logprobs` pass and a cache-consuming `dpo_loss_cached`, consistent with `stacklm/posttrain/dpo.py`. State the one constraint the data loader must satisfy for the cache to be valid, and say how many *policy* forward passes per step this saves.
+
+??? note "Solution"
+    ```python
+    # stacklm/posttrain/dpo.py  (continued)
+    import torch, torch.nn.functional as F
+
+    @torch.no_grad()
+    def precompute_ref_logprobs(ref, loader, device="cuda"):
+        """
+        One pass over the STATIC preference set: cache the frozen reference's
+        per-sequence response log-likelihoods for chosen and rejected. After this
+        the reference model can be deleted from GPU memory entirely.
+        Returns two 1-D tensors, indexed by pair in loader-iteration order.
+        """
+        ref.eval()
+        ref_ch_all, ref_rj_all = [], []
+        for batch in loader:
+            ch_ids = batch["chosen_ids"].to(device);  ch_m = batch["chosen_mask"].to(device)
+            rj_ids = batch["rejected_ids"].to(device); rj_m = batch["rejected_mask"].to(device)
+            ref_ch_all.append(sequence_logprob(ref, ch_ids, ch_m).cpu())
+            ref_rj_all.append(sequence_logprob(ref, rj_ids, rj_m).cpu())
+        return torch.cat(ref_ch_all), torch.cat(ref_rj_all)
+
+    def dpo_loss_cached(policy, batch, ref_ch, ref_rj, beta=0.1, device="cuda"):
+        """
+        DPO loss using PRECOMPUTED reference log-probs. Only two forward passes
+        (policy on chosen + rejected); the reference passes are gone.
+        ref_ch, ref_rj : the cached slices for exactly this batch's pairs.
+        """
+        ch_ids = batch["chosen_ids"].to(device);  ch_m = batch["chosen_mask"].to(device)
+        rj_ids = batch["rejected_ids"].to(device); rj_m = batch["rejected_mask"].to(device)
+
+        pi_ch = sequence_logprob(policy, ch_ids, ch_m)          # differentiable
+        pi_rj = sequence_logprob(policy, rj_ids, rj_m)
+        ref_ch = ref_ch.to(device); ref_rj = ref_rj.to(device)  # cached, no grad
+
+        chosen_logratio   = pi_ch - ref_ch
+        rejected_logratio = pi_rj - ref_rj
+        logits = beta * (chosen_logratio - rejected_logratio)
+        return -F.logsigmoid(logits).mean()
+    ```
+
+    **Constraint:** the cache is indexed by pair position, so the loader must present pairs in a *fixed, reproducible order* — i.e. **no shuffling** (or, equivalently, key the cache by a stable pair id and look up by that id each step). If the loader shuffles between the precompute pass and training, `ref_ch[k]` no longer corresponds to the $k$-th pair the training loop sees, and every log-ratio is silently mismatched.
+
+    **Savings:** the original `dpo_loss` does four forwards per step (policy chosen, policy rejected, ref chosen, ref rejected). Caching removes the two reference forwards, leaving **two policy forwards per step** — the reference passes are amortized into a single pre-pass — and frees ~100M parameters of VRAM once `ref` is deleted.
+
+**5.** The cold-start trap, quantitatively. Model a group of $G$ i.i.d. samples where each succeeds independently with probability $p$. A group produces *zero gradient* exactly when it is degenerate — all correct or all wrong.
+(a) Write the probability that a group is degenerate as a function of $p$ and $G$.
+(b) Evaluate it for $G = 8$ at a "sweet spot" success rate $p = 0.30$ and at a cold-start rate $p = 0.05$.
+(c) Interpret: what fraction of prompts is "wasted" in each regime, and why does this make the SFT warm-start non-optional?
+
+??? note "Solution"
+    (a) A group is all-wrong with probability $(1-p)^G$ and all-right with probability $p^G$; these are disjoint, so
+
+    $$P_{\text{degenerate}}(p, G) = (1-p)^G + p^G.$$
+
+    (b) For $G = 8$:
+
+    - $p = 0.30$: $(0.70)^8 + (0.30)^8 = 0.05765 + 0.0000656 \approx 0.0577$, i.e. about **5.8%** of groups are degenerate.
+    - $p = 0.05$: $(0.95)^8 + (0.05)^8 = 0.6634 + (\sim\!4\times10^{-11}) \approx 0.663$, i.e. about **66%** of groups are degenerate.
+
+    (c) At the sweet-spot rate $p = 0.30$, only ~6% of prompts give zero gradient, so ~94% of the compute spent on rollouts actually produces a learning signal — RLVR has plenty to climb. At the cold-start rate $p = 0.05$, two-thirds of all groups are all-wrong (or, negligibly, all-right), so two-thirds of the rollouts are wasted and the effective learning signal is throttled to a trickle; as $p \to 0$ the wasted fraction $\to 1$ and the gradient vanishes entirely. This is why the SFT warm-start is non-optional: SFT (plus math-heavy mid-training and a few `####` format exemplars) lifts the base model's success rate from near-zero into the 10-40% band where groups are *mixed* often enough that the reward signal has variance to exploit. RL can only reinforce behavior the model already sometimes produces; SFT is what puts $p$ into the range where "sometimes" is frequent enough to bootstrap.
+
+**6.** The chapter warns that "format drift and reward hacking creep in" and suggests a small format penalty on top of the exact-match reward. Implement a `shaped_reward(completion_text, gold_answer)` for the GRPO loop that (i) keeps exact-match correctness as the dominant term and (ii) mildly penalizes emitting the wrong number of `####` markers (zero, or more than one). Explain why the *magnitude* of the shaping term must stay small relative to the correctness reward, and why within-group standardization limits how much a constant format bonus can distort learning.
+
+??? note "Solution"
+    ```python
+    # stacklm/posttrain/rlvr_task.py  (continued)
+    import re
+    from stacklm.posttrain.rlvr_task import exact_match_reward
+
+    _MARKER = re.compile(r"####")
+
+    def shaped_reward(completion_text, gold_answer, fmt_weight=0.1):
+        """
+        Exact-match correctness (0/1) plus a SMALL shaping term that rewards
+        emitting exactly one well-formed answer marker and penalizes zero or many.
+        Correctness stays dominant: fmt_weight (0.1) << the 1.0 correctness gap.
+        """
+        r_correct, pred = exact_match_reward(completion_text, gold_answer)
+        n_markers = len(_MARKER.findall(completion_text))
+        fmt = fmt_weight if n_markers == 1 else -fmt_weight
+        return r_correct + fmt, pred
+    ```
+
+    Drop `shaped_reward` in for `exact_match_reward` where the loop grades completions:
+
+    ```python
+    r, _ = shaped_reward(text, gold)     # was exact_match_reward(text, gold)
+    rewards[i] = r
+    ```
+
+    **Why the shaping magnitude must stay small.** GRPO reinforces whatever raises reward. If the format bonus is comparable to (or larger than) the correctness gap of $1.0$, then a completion that has the right format but the *wrong answer* can out-score, or tie, a differently-formatted *correct* one — the model can maximize reward by getting the format right and the arithmetic wrong. That is textbook reward hacking: optimizing the proxy (format) instead of the goal (correctness). Keeping $\text{fmt\_weight} = 0.1 \ll 1.0$ ensures correctness always dominates the ranking within a group, so the format term only breaks ties among equally-correct (or equally-wrong) samples.
+
+    **Why standardization limits the damage.** The advantage is the reward *standardized within the group*, $\hat A_i = (R_i - \bar R)/(\text{std} + \varepsilon)$. Any component of the reward that is *constant across the group* — e.g. if all $G$ samples already emit exactly one marker, every sample gets the same $+0.1$ — shifts the mean by that same amount and *cancels* in $R_i - \bar R$, contributing nothing to the advantage. The format term therefore only produces gradient when samples in the group *differ* in their format (some emit one marker, some do not), which is exactly the drift we want to correct. Combined with the KL leash to the SFT reference ($\text{kl\_beta} \approx 0.02$-$0.05$), this keeps the shaping honest: it nudges the model back toward one-marker format without letting it trade correctness for format.

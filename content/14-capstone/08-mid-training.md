@@ -452,3 +452,140 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 - Chen et al., *Extending Context Window of Large Language Models via Positional Interpolation* (2023): position interpolation, the baseline NTK/YaRN build on.
 - Ibrahim et al., *Simple and Scalable Strategies to Continually Pre-train Large Language Models* (2024): LR re-warming/re-decaying and the cost of resuming a decayed checkpoint.
 - Kazemnejad et al., *The Impact of Positional Encoding on Length Generalization in Transformers* (2023), and the SmolLM3 report (HuggingFace, 2025): NoPE and length generalization.
+
+## Exercises
+
+**1.** In Chapter 14.7 we deliberately saved `ckpt_stable.pt` *before* decaying the learning rate, and mid-training resumes from that pre-decay checkpoint with the LR still at its plateau. Explain why resuming from a *fully-decayed* checkpoint instead would be worse, and connect your answer to the distinction between mid-training and continual pretraining.
+
+??? note "Solution"
+    A WSD schedule holds the LR at its peak through the long stable phase, then decays it sharply over a short final window; most of the *committed* loss reduction happens in that decay window. If we had already decayed the LR to (near) zero, the model would be *finished*: to keep training it we would have to **re-warm** the LR back up and then **re-decay** it. Ibrahim et al. (2024) show that re-warming and re-decaying a fully-decayed checkpoint costs you loss you then have to claw back — the model gets bumped off the low-loss basin it settled into and has to re-descend.
+
+    By saving `ckpt_stable.pt` *pre-decay*, there is nothing to re-warm (the LR is already at its plateau) and little to forget, so mid-training is just the natural continuation of one WSD decay leg — the premium data gets fed into exactly the high-value decay window the schedule was designed around.
+
+    This is precisely what separates **mid-training** from **continual pretraining** (Ch. 3.16). Continual pretraining adapts an *already-finished, fully-decayed* model to a new domain, and its central headache *is* the re-warming/catastrophic-forgetting problem. Mid-training is planned *before* the model is finished: we never fully decayed, so we resume from the high-LR plateau and pay none of that re-warming tax.
+
+**2.** The chapter sequences the three moves as **broad -> long -> narrow**: anneal (general premium mix @2048) first, long-context extension second, capability injection (concentrated math/code) last, all riding one decreasing LR. Give the reason each move sits where it does, and name one concrete failure you would expect if you swapped the order to **narrow -> long -> broad**.
+
+??? note "Solution"
+    - **Anneal first** because the general quality jump wants the *highest* LR of the decay leg (the model still has enough plasticity to re-organize broad representations) and the *largest, most diverse* token budget. You consolidate broad representations before specializing.
+    - **Long-context extension second** because it is a targeted change to one subsystem (the RoPE positional geometry) that benefits from a *settled* model. Rescaling RoPE on a mid-anneal checkpoint whose attention patterns have already sharpened means the long-context tokens teach the heads to *use* the new range rather than fighting a still-shifting representation.
+    - **Capability injection last**, at the LR floor, because it is the narrowest and most over-fitting-prone mix; keeping it in the low-LR tail limits how far it can pull the model off the general manifold while still committing arithmetic/code structure.
+
+    Swapping to **narrow -> broad** would put the concentrated math/code mix into the *highest-LR, high-plasticity* window. With the LR near peak, that narrow mix would pull the model hard off the general manifold and hurt breadth/diversity — you would waste the most valuable, most plastic part of the decay leg on a narrow specialization, and then the later broad phase would have to partially undo it at a *lower* LR where it has less leverage to recover. You would end up with worse general fluency and a weaker (not stronger) net capability floor.
+
+**3.** Use the illustrative budgets from the chapter: sub-phase A = 1.2B tokens, B = 0.6B, C = 0.2B, with `GLOBAL_BATCH_TOKENS = 512_000` and `PEAK_LR = 3e-3`. The LR decays as one continuous `1-sqrt` WSD leg across all three phases (`final_frac = 0`). Compute (a) `total_decay_steps`, and (b) the learning rate at the A->B boundary and at the B->C boundary. Work the arithmetic to final numbers.
+
+??? note "Solution"
+    **(a) Steps per sub-phase** (floor division `tokens // GLOBAL_BATCH_TOKENS`, as in `steps_for`):
+
+    $$
+    \text{A} = \left\lfloor \tfrac{1.2\times10^9}{512000} \right\rfloor = \lfloor 2343.75 \rfloor = 2343,\quad
+    \text{B} = \lfloor 1171.875 \rfloor = 1171,\quad
+    \text{C} = \lfloor 390.625 \rfloor = 390.
+    $$
+
+    $$
+    \text{total\_decay\_steps} = 2343 + 1171 + 390 = \mathbf{3904}.
+    $$
+
+    **(b)** The multiplier is $1 - \sqrt{t}$ with $t = \text{mid\_step}/\text{total\_decay\_steps}$, and $\text{LR} = \text{PEAK\_LR}\cdot(1-\sqrt{t})$.
+
+    A->B boundary: `mid_step` = 2343.
+
+    $$
+    t = \tfrac{2343}{3904} = 0.6002,\quad 1-\sqrt{0.6002} = 1 - 0.7747 = 0.2253,\quad
+    \text{LR} = 3\times10^{-3}\cdot 0.2253 \approx \mathbf{6.76\times10^{-4}}.
+    $$
+
+    B->C boundary: `mid_step` = 2343 + 1171 = 3514.
+
+    $$
+    t = \tfrac{3514}{3904} = 0.9001,\quad 1-\sqrt{0.9001} = 1 - 0.9487 = 0.0513,\quad
+    \text{LR} = 3\times10^{-3}\cdot 0.0513 \approx \mathbf{1.54\times10^{-4}}.
+    $$
+
+    So long-context extension (B) runs at roughly 23% of peak and capability injection (C) starts at roughly 5% of peak — exactly the "narrow, over-fitting-prone mix at the LR floor" the chapter describes.
+
+**4.** Suppose a *different* model, Stack-Big, has head dimension $d = 128$, was pretrained at $L_{\text{old}} = 2048$ with RoPE base $\theta = 10000$, and you want to extend it to $L_{\text{new}} = 16384$. (a) Compute the NTK-rescaled base $\theta'$. (b) The fastest frequency pair ($k=0$) is supposed to be left essentially untouched — show that it is *exactly* unchanged by any base rescale, and say in one sentence why that matters.
+
+??? note "Solution"
+    **(a)** Scale factor $s = L_{\text{new}}/L_{\text{old}} = 16384/2048 = 8$. Exponent $d/(d-2) = 128/126 = 1.01587$.
+
+    $$
+    \theta' = \theta \cdot s^{\,d/(d-2)} = 10000 \cdot 8^{1.01587}
+    = 10000 \cdot e^{1.01587\,\ln 8}
+    = 10000 \cdot e^{1.01587 \times 2.07944}.
+    $$
+
+    $$
+    = 10000 \cdot e^{2.1125} = 10000 \cdot 8.269 \approx \mathbf{82{,}700}.
+    $$
+
+    So bump the base from $10000$ to about $82{,}700$ (an 8x context needs a bigger stretch than Stack-100M's 4x, which only reached ~42000).
+
+    **(b)** The per-pair frequency is $\theta_k = \theta^{-2k/d}$. For $k = 0$ the exponent is $-2\cdot 0/d = 0$, so
+
+    $$
+    \theta_0 = \theta^{0} = 1 \quad\text{and}\quad \theta'_0 = (\theta')^{0} = 1,
+    $$
+
+    identical for *any* base. The fastest pair rotates one radian per token regardless of rescaling. This matters because the highest-frequency pair encodes **local** relative position; leaving it untouched preserves the model's fine-grained local resolution while only the slow, long-range pairs get stretched to cover the new positions.
+
+**5.** The mid-training loop shrinks the micro-batch as the sequence length grows so the *global* batch stays fixed. Using `micro_bs = max(1, 32 * 2048 // seq_len)`, `seqs_per_global = 512_000 // seq_len`, and `accum = seqs_per_global // micro_bs`: (a) compute `micro_bs`, `accum`, and tokens-per-optimizer-step at `seq_len = 2048` and at `seq_len = 8192`, and confirm the global batch is preserved; (b) by what factor does the attention *score matrix* grow from 2048 to 8192, and how does the loop keep that from causing an OOM?
+
+??? note "Solution"
+    **(a)** At `seq_len = 2048`:
+
+    $$
+    \text{micro\_bs} = \lfloor 32\cdot 2048 / 2048 \rfloor = 32,\quad
+    \text{seqs\_per\_global} = \lfloor 512000/2048 \rfloor = 250,\quad
+    \text{accum} = \lfloor 250/32 \rfloor = 7.
+    $$
+
+    Tokens/step $= \text{accum}\times\text{micro\_bs}\times\text{seq\_len} = 7\times 32\times 2048 = \mathbf{458{,}752}$.
+
+    At `seq_len = 8192`:
+
+    $$
+    \text{micro\_bs} = \lfloor 32\cdot 2048 / 8192 \rfloor = \lfloor 65536/8192 \rfloor = 8,\quad
+    \text{seqs\_per\_global} = \lfloor 512000/8192 \rfloor = 62,\quad
+    \text{accum} = \lfloor 62/8 \rfloor = 7.
+    $$
+
+    Tokens/step $= 7\times 8\times 8192 = \mathbf{458{,}752}$.
+
+    Both land at ~0.46M tokens/step, so the LR/batch relationship (Ch. 3.10) is unchanged across the sequence-length jump — the micro-batch dropped ~4x (32 -> 8) exactly as the sequence grew 4x.
+
+    **(b)** Attention score cost is quadratic in sequence length, so the score matrix grows by $(8192/2048)^2 = 4^2 = \mathbf{16\times}$. The loop avoids OOM three ways: it cuts the micro-batch ~4x (fewer sequences resident at once, trading time for memory via grad accumulation), it relies on FlashAttention (which never materializes the full $T\times T$ score matrix), and GQA with 2 KV heads already shrinks the KV cache 4x. Optionally activation checkpointing trades recompute for memory on top.
+
+**6.** Implement the **loss-versus-position** diagnostic the chapter recommends for validating long-context extension. Write `bin_loss_by_position(per_token_loss, num_bins)` that takes a `(B, T)` tensor of per-position next-token losses and returns the mean loss in each of `num_bins` equal-width position bins across the sequence. Then state, in one sentence each, what a *healthy* curve and a *broken* curve look like, and why the scalar average perplexity can hide the breakage.
+
+??? note "Solution"
+    ```python
+    import torch
+
+    def bin_loss_by_position(per_token_loss: torch.Tensor, num_bins: int = 16) -> torch.Tensor:
+        """Mean next-token loss binned by position within the sequence.
+
+        per_token_loss : (B, T) tensor of per-position NLL (targets already shifted),
+                         e.g. F.cross_entropy(logits, y, reduction="none") reshaped to (B, T).
+        Returns         : (num_bins,) tensor; entry j = mean loss over positions in bin j.
+        Bin j spans positions [j*T/num_bins, (j+1)*T/num_bins). Average over the batch
+        first, then scatter-add into bins so every position contributes equally.
+        """
+        B, T = per_token_loss.shape
+        per_pos = per_token_loss.mean(dim=0)                       # (T,) average over batch
+        pos = torch.arange(T, device=per_token_loss.device)
+        bin_idx = (pos * num_bins) // T                            # 0 .. num_bins-1
+        sums = torch.zeros(num_bins, device=per_token_loss.device)
+        counts = torch.zeros(num_bins, device=per_token_loss.device)
+        sums.index_add_(0, bin_idx, per_pos)
+        counts.index_add_(0, bin_idx, torch.ones_like(per_pos))
+        return sums / counts.clamp(min=1)                          # (num_bins,)
+    ```
+
+    Usage during mid-training: run the frozen validation set through the model at `seq_len = 8192`, get per-token losses with `reduction="none"`, and plot `bin_loss_by_position(losses)`.
+
+    - **Healthy curve:** loss keeps *decreasing* (or at worst flattening) as position grows — the model is genuinely using more context to predict better deep in the 8192-window.
+    - **Broken curve:** loss is fine up to ~2048 and then *rises* past it — the RoPE rescale-plus-training has not taken and the far positions are still noise (train sub-phase B longer or on genuinely longer documents).
+    - **Why the scalar average hides it:** a couple of well-predicted local tokens (the early, high-frequency-pair positions the model always handled) pull the *mean* down, so overall perplexity can *fall* even while the tail is broken. Only binning by position — or the needle-in-a-haystack probe — exposes that the far positions never learned to attend.

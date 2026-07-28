@@ -464,3 +464,124 @@ Run it: as expected serving load rises from $10^{10}$ to $10^{14}$ tokens, the l
 - Besiroglu, Erdil, Barnett, et al. *Chinchilla Scaling: A Replication Attempt* (Epoch AI). 2024. — Why the parametric constants are fragile and the extrapolated loss is the thing to trust.
 - Muennighoff, Rush, Barak, et al. *Scaling Data-Constrained Language Models*. NeurIPS 2023. — The repetition/data-wall limit on how far you can over-train.
 - Liu, Chang, et al. *MobileLLM: Optimizing Sub-billion Parameter Language Models*. 2024. — The deep-and-thin small-model result the ladder inherits.
+
+## Exercises
+
+**1.** *(Conceptual.)* The chapter insists that every $N$ in the fit is a **non-embedding** parameter count. Suppose a colleague instead fits $L(N_{\text{total}}, D) = E + A/N_{\text{total}}^{\alpha} + B/D^{\beta}$ using **total** parameters (blocks + the tied $32768 \times d$ embedding). Explain concretely why this corrupts the fitted exponent $\alpha$, and why the problem is *specific to small models* rather than a general flaw of the parametric form.
+
+??? note "Solution"
+    The additive term $A/N^{\alpha}$ is meant to capture the *depth-driven, sequence-mixing capacity* of the transformer blocks — the same work the $6ND$ FLOP rule counts. The embedding table does a fixed amount of lookup work per token that does **not** scale with depth, so folding it into $N$ mixes two quantities that grow at different rates as you climb the ladder.
+
+    Why it hits *small* models specifically: the embedding size is $32768 \cdot d$, which grows only linearly in width $d$, while the block parameters grow like $n_{\text{layers}} \cdot d^2$ (roughly $d^2$ per layer, and depth grows with the ladder too). At the bottom rung the blocks are tiny but the embedding is not:
+
+    - S1 blocks: $3.93\text{M}$; S1 embedding: $32768 \times 192 = 6.29\text{M}$ — the embedding is *larger than the entire rest of the model* ($\approx 62\%$ of total params).
+    - At the target: blocks $84.54\text{M}$, embedding $32768 \times 512 = 16.78\text{M}$ — only $\approx 17\%$ of total.
+
+    So the embedding's *share* of $N_{\text{total}}$ shrinks systematically as you go up the ladder. When you fit a power law to $N_{\text{total}}$, that shrinking near-constant baseline flattens the low-$N$ end of the curve — the small rungs look "less penalized than their block count deserves" — and the fitter compensates by rotating $\alpha$ away from its true value. The extrapolation to $84.5\text{M}$ then rides that corrupted exponent. At frontier scale the embedding is a rounding error at every rung, so the confound largely vanishes — which is exactly why the frontier literature can gloss over it and small-model builders cannot.
+
+**2.** *(Conceptual.)* The warning admonition says every rung must get "its **own** schedule that decays to zero at *its* token budget $D$." Suppose instead you train S4 **once** for its largest sweep budget (~0.88B tokens, its 20 tok/param point) on a single cosine schedule, and to obtain S4's loss at 0.3B and 0.6B tokens you simply read the value off that one curve at those step counts. Why are the 2B and 4B numbers you read off biased, and what is the name of the historical mistake this reproduces?
+
+??? note "Solution"
+    A cosine (or WSD) schedule sized for 0.88B tokens still has a **high learning rate** at the 0.3B and 0.6B marks — its decay is not finished until the very end. A model evaluated mid-schedule, before the LR has annealed, sits at a noisier, higher point on its loss surface: it "evaluates *worse than it truly is*." So the 0.3B and 0.6B losses you read off are **inflated** relative to what a run that *decayed to zero at 0.3B* (respectively 0.6B) would actually reach.
+
+    The damage is that this bias is not uniform across your grid — it corrupts intermediate-budget reads while leaving the properly-decayed endpoint alone — so it silently rotates the whole fitted surface and biases the allocation toward "make the model bigger." This is precisely the **Kaplan confound**: Kaplan et al.'s original scaling study reused schedules that were not matched to each run's token count, which is why their recommended allocation over-weighted parameters relative to tokens. Hoffmann et al. (Chinchilla) fixed it by giving every run a schedule matched to its own $D$ — the one-line discipline (never a shared `total_steps`) this chapter's checklist item 3 calls non-negotiable.
+
+**3.** *(Quantitative.)* Using the exact arithmetic in `LadderConfig.nonembed_params()`, compute rung **S2** ($d_{\text{model}}=256$, $n_{\text{layers}}=13$, `head_dim`$=64$, `n_kv_heads`$=1$) by hand: first its SwiGLU `intermediate` width, then the per-block attention and MLP parameter counts, then the total non-embedding count. Confirm it matches the $9.16\text{M}$ in the ladder table. Then compute S2's tied embedding and state what fraction of S2's *total* parameters the embedding is.
+
+??? note "Solution"
+    **Intermediate width.** $2.75 \times 256 = 704$; $704 / 64 = 11.0$, `round(11.0)`$=11$, so `intermediate` $= 11 \times 64 = 704$.
+
+    **Per-block attention** ($n_{\text{heads}} = 256/64 = 4$, but the count uses $d$ and $kv \cdot hd$ directly):
+    $$
+    \text{attn} = 2 d^2 + 2 d (kv \cdot hd) = 2(256^2) + 2(256)(1 \cdot 64) = 131072 + 32768 = 163840.
+    $$
+
+    **Per-block MLP** (SwiGLU gate + up + down):
+    $$
+    \text{mlp} = 3 \, d \cdot \text{inter} = 3 \times 256 \times 704 = 540672.
+    $$
+
+    **Per block:** $163840 + 540672 = 704512$. **All 13 blocks:**
+    $$
+    N = 13 \times 704512 = 9{,}158{,}656 \approx 9.16\text{M}. \checkmark
+    $$
+
+    **Embedding.** Tied table $= 32768 \times 256 = 8{,}388{,}608 \approx 8.39\text{M}$.
+
+    **Embedding fraction of total.** Total $= 9.16\text{M} + 8.39\text{M} = 17.55\text{M}$, so the embedding is $8.39/17.55 \approx 0.478$, i.e. about **48%** of S2's parameters — a vivid illustration of why fitting on total params (Exercise 1) would let the embedding dominate the small rungs.
+
+**4.** *(Quantitative.)* Use `training_flops` and `gpu_hours` (peak $312\text{ TFLOP/s}$, MFU $0.40$) to cost the **flagship** run: `Stack-100M` at $N = 84.54\text{M}$ non-embedding params, over-trained to $200$ tokens/param. Compute (a) the token count $D$, (b) total FLOPs $C$, (c) single-A100 wall-clock in GPU-hours, and (d) the dollar cost at USD $1.5$/GPU-hour. Check your GPU-hours against the chapter's "15 to 25 A100-hours" claim.
+
+??? note "Solution"
+    **(a) Tokens.** $D = 200 \times 84.54\text{M} = 1.6908 \times 10^{10} \approx 16.9\text{B}$ tokens.
+
+    **(b) FLOPs (the $6ND$ rule).**
+    $$
+    C = 6 N D = 6 \times (8.454\times10^{7}) \times (1.6908\times10^{10}) = 8.58 \times 10^{18}\ \text{FLOPs},
+    $$
+    matching the chapter's $\approx 8.6\times10^{18}$.
+
+    **(c) GPU-hours.** Effective throughput $= 312\times10^{12} \times 0.40 = 1.248\times10^{14}$ FLOP/s.
+    $$
+    t = \frac{8.576\times10^{18}}{1.248\times10^{14}} = 6.87\times10^{4}\ \text{s} = \frac{6.87\times10^{4}}{3600} \approx 19.1\ \text{GPU-hours}.
+    $$
+    This lands squarely inside the stated "15 to 25 A100-hours" band. $\checkmark$
+
+    **(d) Dollars.** $19.1 \times 1.5 \approx \text{USD } 28.6$ — the chapter's "\$30 run." (The intro's wider "USD 40 to 100" band absorbs higher cloud rates and lower realized MFU.)
+
+**5.** *(Implementation.)* The prediction example claims that for the flagship FLOP budget $C = 8.576\times10^{18}$, the *compute-optimal* allocation is $N^\star \approx 190\text{M}$, $D^\star \approx 7.5\text{B}$ (~40 tok/param). Write `compute_optimal_allocation(C, E, A, alpha, B, beta)` that finds this by minimizing $L$ subject to the hard constraint $6ND = C$ (grid over $N$, force $D = C/6N$). Run it with the ground-truth law and confirm the numbers.
+
+??? note "Solution"
+    On an IsoFLOP slice, $D$ is not free: fixing $C$ forces $D = C/(6N)$, so the two-variable law collapses to a one-variable function of $N$ that we minimize directly.
+
+    ```python
+    import numpy as np
+
+    def compute_optimal_allocation(C, E, A, alpha, B, beta):
+        """Minimize L(N, D) = E + A N^-alpha + B D^-beta subject to 6*N*D == C.
+        D is forced by the FLOP constraint, so we grid over N alone."""
+        best = None
+        for N in np.logspace(7, 9, 4000):          # 10M .. 1B non-embed params
+            D = C / (6.0 * N)                       # forced so 6*N*D == C exactly
+            L = E + A * N**(-alpha) + B * D**(-beta)
+            if best is None or L < best["L"]:
+                best = dict(N=N, D=D, L=L, tpp=D / N)
+        return best
+
+    E, A, alpha, B, beta = 2.45, 124.0, 0.33, 234.0, 0.30   # the ground-truth law
+    C = 6 * 84.54e6 * (200 * 84.54e6)                        # flagship budget ~8.576e18
+    r = compute_optimal_allocation(C, E, A, alpha, B, beta)
+    print(f"N*={r['N']/1e6:6.1f}M  D*={r['D']/1e9:5.2f}B  "
+          f"tok/param={r['tpp']:5.1f}  L*={r['L']:.3f}")
+    # -> N*= 189.5M  D*= 7.54B  tok/param= 39.8  L*=2.936
+    ```
+
+    The minimizer sits near $N^\star \approx 190\text{M}$, $D^\star \approx 7.5\text{B}$, i.e. $\approx 40$ tok/param, with $L^\star \approx 2.94$ — exactly the cross-check in the prediction example. A quick sanity check confirms it is a genuine interior minimum: at $N=150\text{M}$, $L\approx2.936$; at $N=190\text{M}$, $L\approx2.9355$; at $N=250\text{M}$, $L\approx2.9365$ — the valley bottoms out around $190\text{M}$. So for this fixed compute the compute-optimal model is $\approx 2.2\times$ larger ($190\text{M}$ vs $84.5\text{M}$) than the one the plan actually builds — the tension the over-training section resolves.
+
+**6.** *(Quantitative, hard.)* From the "Two ways to spend the same $8.6\times10^{18}$ FLOPs" table: compute-optimal is $N=190\text{M}$, $D=7.5\text{B}$; the plan's choice is $N=84.5\text{M}$, $D=16.9\text{B}$. (a) Verify both **training** runs cost essentially the same FLOPs. (b) Using inference cost $\approx 2N$ FLOPs/token, compute the ratio of the two models' per-token inference cost and the percentage cut. (c) Given (a) and the fact that the two models reach nearly the same loss ($\sim 2.94$ vs $\sim 2.95$), argue why the over-trained model is the better deployment choice *for any positive serving load* $D_{\text{infer}}$.
+
+??? note "Solution"
+    **(a) Training FLOPs match.**
+    $$
+    C_{\text{opt}} = 6 (1.90\times10^{8})(7.5\times10^{9}) = 8.55\times10^{18}, \qquad
+    C_{\text{ours}} = 6 (8.45\times10^{7})(1.69\times10^{10}) = 8.57\times10^{18}.
+    $$
+    Both are $\approx 8.6\times10^{18}$ FLOPs — equal to within rounding, by construction (this is a single IsoFLOP slice).
+
+    **(b) Inference cost ratio.** Per-token cost is $2N$, so
+    $$
+    \frac{2 \times 84.5\text{M}}{2 \times 190\text{M}} = \frac{84.5}{190} \approx 0.445,
+    $$
+    i.e. every future forward pass costs $\approx 0.45\times$ as much — a permanent cut of $1 - 0.445 \approx \mathbf{55\%}$ to inference FLOPs (and, correspondingly, to latency, activation memory, and KV-cache footprint, all of which scale with $N$). This is exactly the chapter's "~55% permanent cut."
+
+    **(c) Why over-training wins for any $D_{\text{infer}} > 0$.** Lifetime compute is
+    $$
+    C_{\text{lifetime}} = \underbrace{6ND_{\text{train}}}_{\text{once}} + \underbrace{2N D_{\text{infer}}}_{\text{forever}}.
+    $$
+    The training terms are equal (part a) and the achieved losses are within $\sim 0.01$ nats — imperceptible. So the two options are essentially tied on the training term and on quality, and the *only* remaining difference is the inference term $2N D_{\text{infer}}$, which is strictly smaller for the $84.5\text{M}$ model at every $D_{\text{infer}} > 0$. Formally:
+    $$
+    C_{\text{lifetime}}^{\text{ours}} - C_{\text{lifetime}}^{\text{opt}}
+    \approx \underbrace{(8.57 - 8.55)\times10^{18}}_{\approx 0} + \big(2\cdot84.5\text{M} - 2\cdot190\text{M}\big) D_{\text{infer}}
+    = \text{(tiny)} - (2.11\times10^{8}) D_{\text{infer}} < 0
+    $$
+    for all meaningful $D_{\text{infer}}$. Because the training budgets are matched here, there is effectively no break-even to clear: the over-trained small model is cheaper from the first served token onward, while giving up only $\sim 0.01$ nats. And that $0.01$-nat penalty and the $0.45\times$ size ratio are set by the well-identified exponents and the fixed FLOP constraint, so they survive the fit's $\pm 0.1$-nat uncertainty on the absolute loss level. For a model destined to run quantized on a laptop and served indefinitely, the choice is not close — which is why the plan fixes the budget at $\sim 200$ tok/param.
