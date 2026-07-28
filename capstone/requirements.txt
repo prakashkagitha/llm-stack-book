@@ -1,0 +1,20 @@
+# --- Hermetic smoke-test set (this is ALL the smoke test / CI needs) ---
+# The CI env installs only these; `stacklm` + `smoke_test.py` import nothing else.
+numpy
+torch
+einops            # allowed; used by optional/advanced paths
+scikit-learn      # allowed; used by scaling helpers if you extend them
+
+# --- Extras a REAL full run needs (NOT imported by the smoke test / CI) ---
+# Uncomment for an actual Stack-100M run against real data on a GPU.
+# datasets          # streaming FineWeb-Edu / Cosmopedia / StarCoder / FineMath
+# huggingface_hub   # dataset + checkpoint transfer
+# safetensors       # checkpoint serialization
+# tqdm              # progress bars
+#
+# Notes:
+#  * The from-scratch byte-BPE tokenizer is pure stdlib -- no `tokenizers`.
+#  * The agent teacher is an injected Callable; a real run swaps in an API client
+#    (e.g. `anthropic`) -- deliberately NOT listed here so CI stays offline.
+#  * bf16 autocast + `fused=True` AdamW require a CUDA GPU; the code falls back
+#    to fp32 on CPU automatically.
