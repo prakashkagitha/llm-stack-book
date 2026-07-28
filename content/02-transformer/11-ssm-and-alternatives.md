@@ -911,7 +911,11 @@ The general design space for hybrids can be parameterized by:
 1. **Attention-to-SSM ratio**: how many attention layers vs. SSM layers
 2. **Placement**: interleaved evenly, attention at top/bottom, or clustered
 3. **Attention type**: full attention, sliding window attention, or grouped-query attention (see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html))
-4. **SSM variant**: Mamba-1, Mamba-2, GLA, or RWKV blocks
+4. **SSM variant**: Mamba-1, Mamba-2, GLA, gated DeltaNet, or RWKV blocks
+
+### Production Hybrids (2025-2026)
+
+What was a research demo with Jamba has become the default recipe for a wave of shipped, general-purpose 2025 models. NVIDIA's **Nemotron-H** (2025) replaces the majority of self-attention layers in an 8B/56B transformer with Mamba-2 layers, reporting up to ~3x faster inference at accuracy on par with similarly-sized Qwen-2.5 and Llama-3.1 models. IBM's **Granite 4.0** (October 2025) ships a Mamba-2 + attention + MoE stack (roughly 4 attention to 36 Mamba-2 layers) as a mainstream enterprise model line. On the token-mixer side, the **gated delta rule** (Gated DeltaNet, Yang et al., 2025) augments Mamba-2's gating with the delta update rule — gating erases memory quickly while the delta rule makes targeted edits — and its kernels now underpin several of these production hybrids. The through-line is unchanged from Jamba: a few attention layers for exact retrieval, many recurrent/SSM layers for cheap long-context memory.
 
 ### A Minimal Hybrid Model
 
@@ -1055,7 +1059,7 @@ Other notable entries in this space include:
 
 As of mid-2026, the field has reached some pragmatic conclusions:
 
-**Hybrids win in practice.** Pure SSM models have not displaced transformers in production LLMs. The combination of a small fraction of attention layers with SSM/linear-attention layers appears to offer the best tradeoff: the exact-retrieval capability of attention for a small fraction of total compute, with the memory efficiency of SSMs for the bulk of the sequence processing.
+**Hybrids win in practice.** Pure SSM models have not displaced transformers in production LLMs — but by 2026 hybrids have, at least at the efficiency frontier. Shipped model families like NVIDIA's Nemotron-H and IBM's Granite 4.0 are Mamba-2/attention stacks, not pure transformers. The combination of a small fraction of attention layers with SSM/linear-attention layers offers the best tradeoff: the exact-retrieval capability of attention for a small fraction of total compute, with the memory efficiency of SSMs for the bulk of the sequence processing.
 
 **The long-context use case is where alternatives shine.** For standard (up to 8K token) language modeling, modern transformers with FlashAttention are hard to beat. The advantage of SSM and linear-attention models grows dramatically as context exceeds 32K tokens.
 
@@ -1088,7 +1092,7 @@ As of mid-2026, the field has reached some pragmatic conclusions:
     - RWKV achieves RNN-like inference cost with transformer-like training by expressing attention as an exponentially-decayed weighted sum, trainable in parallel via log-space prefix scans.
     - RetNet uses a fixed decay $\gamma$ per head, enabling three equivalent computation forms: parallel (training), recurrent (inference), and chunkwise (balanced).
     - Mamba-2/SSD and GLA reveal that SSMs, linear attention, and RWKV-style models are instances of the same gated linear recurrence framework, differing only in how the gate $G_t$ is parameterized.
-    - Hybrid architectures (Jamba, Zamba, Griffin) that interleave a small number of attention layers with many SSM layers currently represent the practical state of the art: combining exact-retrieval capability with long-context memory efficiency.
+    - Hybrid architectures that interleave a small number of attention layers with many SSM layers represent the practical state of the art, and by 2026 have moved into shipped production models (Jamba, NVIDIA Nemotron-H, IBM Granite 4.0): combining exact-retrieval capability with long-context memory efficiency.
     - The SSM inference advantage is most pronounced at context lengths exceeding 32K tokens, where the KV cache of a transformer can consume tens of gigabytes of memory while an SSM's state stays constant.
 
 ---
@@ -1106,9 +1110,9 @@ As of mid-2026, the field has reached some pragmatic conclusions:
 
     - [Dao & Gu, *Transformers are SSMs: Structured State Space Duality (Mamba-2)* (2024)](https://arxiv.org/abs/2405.21060) — unified SSMs and linear attention under the SSD framework; enables 2–8× faster training via tiled matmuls.
     - [Yang et al., *Gated Linear Attention Transformers with Hardware-Efficient Training* (2023)](https://arxiv.org/abs/2312.06635) — general GLA framework that subsumes RetNet, RWKV, and Mamba as special cases; ships a CUDA/Triton implementation.
-    - [De et al. (Google DeepMind), *Griffin: Mixing Gated Linear Recurrences with Local Attention* (2024)](https://arxiv.org/abs/2402.19427) — demonstrates that Real Gated Linear Recurrences with sparse local attention match or beat transformers at multi-billion parameter scale.
-    - [Lieber et al. (AI21 Labs), *Jamba: A Hybrid Transformer-Mamba Language Model* (2024)](https://arxiv.org/abs/2403.19887) — first large-scale hybrid Mamba+MoE model; fits in 80 GB while handling 256 K context.
-    - [Peng et al., *RWKV: Reinventing RNNs for the Transformer Era* (2023)](https://arxiv.org/abs/2305.13048) — WKV time-mixing enables transformer-quality LLMs with O(1) constant-size inference state.
+    - [Yang et al., *Gated Delta Networks: Improving Mamba2 with Delta Rule* (ICLR 2025)](https://arxiv.org/abs/2412.06464) — combines fast gated memory erasure with the delta rule's targeted updates; a leading linear-attention token mixer now used in production hybrids.
+    - [NVIDIA, *Nemotron-H: Accurate and Efficient Hybrid Mamba-Transformer Models* (2025)](https://arxiv.org/abs/2504.03624) — 8B/56B hybrids that swap most attention for Mamba-2, reporting up to ~3× faster inference at accuracy on par with Qwen-2.5 and Llama-3.1.
+    - [Peng et al., *RWKV-7 "Goose" with Expressive Dynamic State Evolution* (2025)](https://arxiv.org/abs/2503.14456) — generalized delta rule with vector-valued gating; can track state and recognize all regular languages while staying parallelizable.
 
     **Open-source & tools**
 
@@ -1119,7 +1123,6 @@ As of mid-2026, the field has reached some pragmatic conclusions:
     **Go deeper**
 
     - [Tri Dao, *State Space Duality (Mamba-2) Part I — The Model* (2024)](https://tridao.me/blog/2024/mamba2-part1-model/) — the authors' own blog walkthrough of the SSD theory and how Mamba-2 achieves faster training through the SSM–linear-attention duality.
-    - [Ayonrinde, *Mamba Explained* — The Gradient (2024)](https://thegradient.pub/mamba-explained/) — accessible conceptual overview of Mamba's selective scan and why selectivity is the key innovation over S4.
 
 ## Further Reading
 

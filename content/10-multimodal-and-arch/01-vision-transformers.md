@@ -1,6 +1,6 @@
 # 10.1 Vision Transformers & Image Encoders
 
-Images are not tokens — and yet modern vision models treat them exactly like tokens. The insight that a 224×224 pixel image can be split into a sequence of 196 small patches, each embedded into a vector exactly like a word, and then fed into an unmodified Transformer, turned out to be one of the most generative ideas in the last decade of deep learning. This chapter builds that idea from the ground up: how you patchify an image, why it works, what goes wrong if you do it naively, and how CLIP, SigLIP, DINOv2, and modern multimodal pipelines extend the basic ViT into the powerful image encoders that power GPT-4o, Gemini, and Claude.
+Images are not tokens — and yet modern vision models treat them exactly like tokens. The insight that a 224×224 pixel image can be split into a sequence of 196 small patches, each embedded into a vector exactly like a word, and then fed into an unmodified Transformer, turned out to be one of the most generative ideas in the last decade of deep learning. This chapter builds that idea from the ground up: how you patchify an image, why it works, what goes wrong if you do it naively, and how CLIP, SigLIP, DINOv2/DINOv3, and modern multimodal pipelines extend the basic ViT into the powerful image encoders that power frontier multimodal models like GPT-5, Gemini, and Claude.
 
 Before reading this chapter, make sure you are comfortable with [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html) and [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html). This chapter feeds directly into [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html), where we cover how a trained image encoder is wired into a language model.
 
@@ -492,7 +492,7 @@ where $y_{ij} = 1$ if $i = j$ (positive pair) and $0$ otherwise, and $b$ is a le
 - Better accuracy with smaller batch sizes, because sigmoid loss does not need large $N$ to have a meaningful denominator.
 - A learnable bias $b$ lets the model calibrate the raw similarity threshold.
 
-SigLIP forms the image encoder backbone in several recent vision-language models (for example, the Gemini/PaliGemma family uses SigLIP-So400M-14).
+SigLIP forms the image encoder backbone in several vision-language models (for example, the Gemini/PaliGemma family uses SigLIP-So400M-14). Its 2025 successor, **SigLIP 2** (Tschannen et al., Google), folds captioning and self-supervised objectives into the recipe and adds multilingual training, yielding stronger dense/localization features and beating the original SigLIP at every model scale — it is now the default open contrastive backbone for new multimodal pipelines.
 
 ---
 
@@ -505,7 +505,7 @@ While CLIP and SigLIP rely on paired image-text data, DINOv2 (Oquab et al., Meta
 3. **DINO + iBOT objectives**: DINO aligns the CLS tokens (global features); iBOT (image BERT) masks random patches and predicts the teacher's patch representations, learning local spatial features.
 4. **Register tokens**: Newly introduced learnable tokens appended to the sequence (discussed below).
 
-DINOv2 models (ViT-S, ViT-B, ViT-L, ViT-G/14) produce exceptionally clean spatial features: patch attention maps reveal semantic regions without any dense annotation.
+DINOv2 models (ViT-S, ViT-B, ViT-L, ViT-G/14) produce exceptionally clean spatial features: patch attention maps reveal semantic regions without any dense annotation. In 2025 Meta released **DINOv3** (Siméoni et al.), which scales this self-supervised recipe to a 7B-parameter ViT trained on 1.7B images and adds a *Gram anchoring* technique to keep dense feature maps sharp over long training; it matches or beats specialized supervised systems on segmentation and depth *without fine-tuning*, and ships distilled ViT-B/L and ConvNeXt variants for deployment.
 
 ### Register Tokens
 
@@ -699,7 +699,7 @@ if __name__ == "__main__":
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Vision Transformers are the dominant image encoder architecture across classification, dense prediction, and multimodal systems; the field has shifted from supervised ImageNet training toward large-scale contrastive (CLIP/SigLIP) and self-supervised (DINOv2) pre-training, with encoder scale now reaching 22B parameters.
+    Vision Transformers are the dominant image encoder architecture across classification, dense prediction, and multimodal systems; the field has shifted from supervised ImageNet training toward large-scale contrastive (CLIP → SigLIP → SigLIP 2) and self-supervised (DINOv2 → DINOv3) pre-training, with encoder scale now reaching 7B parameters for self-supervised models (DINOv3) and 22B for supervised ViTs.
 
     **Foundational work**
 
@@ -709,20 +709,21 @@ if __name__ == "__main__":
     **Recent advances (2023–2026)**
 
     - [Zhai et al. (Google), *Sigmoid Loss for Language Image Pre-Training* (2023)](https://arxiv.org/abs/2303.15343) — SigLIP replaces CLIP's softmax with per-pair sigmoid loss, removing the global-gather bottleneck; backbone of PaliGemma and Gemini.
+    - [Tschannen et al. (Google), *SigLIP 2: Multilingual Vision-Language Encoders* (2025)](https://arxiv.org/abs/2502.14786) — adds captioning, self-supervised, and multilingual objectives to the sigmoid recipe; beats SigLIP at every scale with much stronger dense/localization features.
     - [Oquab et al. (Meta AI), *DINOv2: Learning Robust Visual Features without Supervision* (2023)](https://arxiv.org/abs/2304.07193) — self-supervised distillation on 142M curated images yields all-purpose spatial features that outperform weakly-supervised encoders.
+    - [Siméoni et al. (Meta AI), *DINOv3* (2025)](https://arxiv.org/abs/2508.10104) — scales self-supervised pre-training to a 7B ViT on 1.7B images with Gram anchoring for sharp dense features; matches specialized supervised systems on dense tasks without fine-tuning.
     - [Darcet et al. (Meta AI), *Vision Transformers Need Registers* (2023)](https://arxiv.org/abs/2309.16588) — identifies high-norm artifact tokens in ViT attention maps and fixes them with learnable register tokens, improving dense-prediction quality.
     - [Dehghani et al. (Google), *Scaling Vision Transformers to 22 Billion Parameters* (2023)](https://arxiv.org/abs/2302.05442) — ViT-22B shows LLM-like scaling laws in vision with parallel layers and QK-norm for training stability.
-    - [Fang et al. (BAAI), *EVA: Exploring the Limits of Masked Visual Representation Learning at Scale* (2022)](https://arxiv.org/abs/2211.07636) — masked image reconstruction of CLIP features scales ViT to 1B parameters, forming the EVA-CLIP open-source encoder family.
 
     **Open-source & tools**
 
     - [huggingface/pytorch-image-models (timm)](https://github.com/huggingface/pytorch-image-models) — the largest collection of PyTorch vision backbones (ViT, DeiT, SigLIP, EVA-CLIP, DINOv2) with pretrained weights and training scripts.
-    - [facebookresearch/dinov2](https://github.com/facebookresearch/dinov2) — official Meta AI code and pretrained ViT-S/B/L/G DINOv2 models, including register-token variants.
+    - [facebookresearch/dinov3](https://github.com/facebookresearch/dinov3) — official Meta AI code and pretrained DINOv3 models (ViT-7B plus distilled ViT-B/L and ConvNeXt variants); see [facebookresearch/dinov2](https://github.com/facebookresearch/dinov2) for the earlier register-token models.
     - [mlfoundations/open_clip](https://github.com/mlfoundations/open_clip) — open-source CLIP training codebase supporting LAION-2B, DataComp, and custom datasets; includes SigLIP variants.
 
     **Go deeper**
 
-    - [Meta AI Blog: *DINOv2: State-of-the-art computer vision models with self-supervised learning* (2023)](https://ai.meta.com/blog/dino-v2-computer-vision-self-supervised-learning/) — accessible overview of DINOv2's design, capabilities, and real-world applications.
+    - [Meta AI Blog: *DINOv3* (2025)](https://ai.meta.com/blog/dinov3-self-supervised-vision-model/) — accessible overview of the 7B self-supervised encoder, Gram anchoring, and the distilled model family; see also the [DINOv2 blog (2023)](https://ai.meta.com/blog/dino-v2-computer-vision-self-supervised-learning/) for the design lineage.
 
 ## Further Reading
 

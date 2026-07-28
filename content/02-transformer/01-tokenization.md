@@ -606,7 +606,7 @@ Two properties make Unigram special. First, because it has an explicit probabili
 
 ## `tiktoken`, Vocabulary Size & The Cost Math
 
-In practice you rarely train a tokenizer from scratch; you *use* one. For OpenAI models that means **`tiktoken`**, a fast Rust-backed byte-level BPE implementation. The encoding names map to model families: `gpt2`/`r50k_base` (~50k vocab), `cl100k_base` (GPT-3.5/GPT-4, ~100k), and `o200k_base` (GPT-4o, ~200k). Larger encodings pack more text per token.
+In practice you rarely train a tokenizer from scratch; you *use* one. For OpenAI models that means **`tiktoken`**, a fast Rust-backed byte-level BPE implementation. The encoding names map to model families: `gpt2`/`r50k_base` (~50k vocab), `cl100k_base` (GPT-3.5/GPT-4, ~100k), and `o200k_base` (GPT-4o, ~200k); a newer sibling, `o200k_harmony`, ships with OpenAI's open-weight `gpt-oss` models for their structured *harmony* chat format. Larger encodings pack more text per token.
 
 ```python
 import tiktoken
@@ -753,6 +753,7 @@ print(per_digit("6789"))        # ['6', '7', '8', '9']  -- same scheme every tim
     - [google/sentencepiece](https://github.com/google/sentencepiece) — the reference C++/Python library for both BPE and Unigram tokenization used across most non-OpenAI models.
     - [karpathy/minbpe](https://github.com/karpathy/minbpe) — minimal, heavily commented Python BPE implementation built live on YouTube; ideal for understanding every line of the algorithm.
     - [huggingface/tokenizers](https://github.com/huggingface/tokenizers) — Rust-powered tokenizers library supporting BPE, WordPiece, and Unigram; processes a GB of text in under 20 seconds.
+    - [openai/harmony](https://github.com/openai/harmony) — reference renderer for OpenAI's *harmony* chat format and its `o200k_harmony` tokenizer, the encoding shipped with the open-weight `gpt-oss` models.
 
     **Go deeper**
 

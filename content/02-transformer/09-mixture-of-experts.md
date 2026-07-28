@@ -438,7 +438,7 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
     - **Compare MoE to dense by *active* params or by *FLOPs*, never by total params** — total-parameter comparisons are marketing apples-to-oranges.
 
 !!! sota "State of the Art & Resources (2026)"
-    Sparse Mixture-of-Experts is now the dominant architecture for frontier-scale LLMs: virtually every model above ~100B parameters (Gemini, GPT-4, DeepSeek-V3, Grok) uses some form of MoE, with fine-grained expert counts in the hundreds and auxiliary-loss-free load balancing becoming the new standard. The open-source ecosystem has matured around dropless grouped-GEMM kernels and integrated serving stacks.
+    Sparse Mixture-of-Experts is now the default architecture for frontier-scale LLMs. By 2026 the open-weight frontier is almost entirely MoE — DeepSeek-V3/R1 (671B total / 37B active), Qwen3 (up to a 235B-parameter MoE), Llama 4 (Meta's first MoE models, 17B active over 16–128 experts), and Kimi K2 (1T total / 32B active) — and the leading proprietary systems (Gemini, Grok, and the current GPT-class frontier) are widely believed to use MoE as well. Fine-grained expert counts in the hundreds and auxiliary-loss-free load balancing are now standard, and the open-source ecosystem has matured around dropless grouped-GEMM kernels and integrated serving stacks.
 
     **Foundational work**
 
@@ -453,6 +453,7 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
     - [Jiang et al. (Mistral AI), *Mixtral of Experts* (2024)](https://arxiv.org/abs/2401.04088) — open decoder-only MoE with top-k-then-softmax renormalized gating; existence proof for MoE in the open-source stack.
     - [Dai et al. (DeepSeek), *DeepSeekMoE: Towards Ultimate Expert Specialization* (2024)](https://arxiv.org/abs/2401.06066) — fine-grained experts plus always-on shared experts; richer routing combinations at identical active-parameter cost.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — 671B total / 37B active parameters; auxiliary-loss-free bias-adjustment balancing and node-limited routing as communication optimizations.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — a 1T-total / 32B-active open-weight MoE, representative of the 2025 wave (alongside Qwen3 and Llama 4) that made fine-grained, hundreds-of-experts sparsity the open-frontier norm.
 
     **Open-source & tools**
 

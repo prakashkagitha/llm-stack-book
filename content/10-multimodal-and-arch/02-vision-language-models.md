@@ -492,7 +492,7 @@ For multi-page documents, the standard recipe is:
 3. Concatenate all page tokens with separator tokens: `<page_1_tokens> <page_sep> <page_2_tokens> ...`
 4. Truncate to the LLM's max context if the document is very long.
 
-This runs into the context limit quickly. A 10-page document with 4 tiles/page = 40 tiles = $40 \times 576 = 23{,}040$ visual tokens. At LLaMA-3-8B's 8K context window, that fills the context entirely. Qwen-VL2 extends context to 32K tokens partly to handle longer documents.
+This runs into the context limit quickly. A 10-page document with 4 tiles/page = 40 tiles = $40 \times 576 = 23{,}040$ visual tokens. At LLaMA-3-8B's 8K context window, that fills the context entirely. Later Qwen-VL generations extend context far beyond this — Qwen2-VL onward push to tens (and, by Qwen2.5-VL/Qwen3-VL, hundreds) of thousands of tokens, partly to handle long documents and hour-long video.
 
 ```python
 def encode_document_pages(
@@ -570,9 +570,9 @@ This is the same next-token prediction loss used in [The Pretraining Objective &
 
     Also tune learning rates per component: lower LR for the vision encoder (2e-6), higher LR for the projector (1e-4), mid LR for the LLM (2e-5). This prevents catastrophic forgetting of the encoder's pretrained CLIP alignment.
 
-## The Dominant Multimodal Recipe (2024–2025)
+## The Dominant Multimodal Recipe (2024–2026)
 
-Across LLaVA-1.6, InternVL 2, Qwen-VL 2, and similar models, a clear consensus recipe has emerged. If you are building a new VLM today, this is the default starting point:
+Across LLaVA-1.6, InternVL 2 through InternVL3.5, and Qwen2-VL through Qwen3-VL, a clear consensus recipe has emerged. If you are building a new VLM today, this is the default starting point:
 
 {{fig:vlm-dominant-recipe}}
 
@@ -594,7 +594,7 @@ The remaining open questions the field is actively working on:
 !!! key "Key Takeaways"
 
     - VLMs bridge a vision encoder and an LLM via two main strategies: **projector (LLaVA-style)** prepends projected visual tokens into the LLM's sequence; **cross-attention (Flamingo-style)** inserts new cross-attention layers that let LLM hidden states query visual features without consuming context positions.
-    - The **projector approach** dominates in 2024–2025 due to its simplicity: a two-layer MLP maps CLIP ViT patch embeddings into the LLM embedding space. Only ~21M new parameters are needed.
+    - The **projector approach** remains dominant through 2026 due to its simplicity: a two-layer MLP maps ViT patch embeddings into the LLM embedding space. Only ~21M new parameters are needed. (The frontier open families — Qwen3-VL, InternVL3.5 — increasingly blend this with *native multimodal pretraining*, training vision and text jointly from the start rather than bolting a projector onto a frozen text LLM.)
     - The **visual token explosion** is the central engineering constraint: a 336px image generates 576 tokens, and any-resolution tiling multiplies this by the number of tiles. KV-cache memory and prefill FLOPS scale accordingly.
     - **Any-resolution (AnyRes) tiling** — dividing an image into multiple 336×336 tiles and encoding each independently — is the standard solution for high-resolution and OCR tasks. LLaVA-1.6, InternVL 2, and Qwen-VL all use this approach.
     - **Training is staged:** first align the projector with frozen encoder + LLM; then co-train the projector and LLM (and optionally the encoder at a lower LR) on diverse instruction-following data.
@@ -604,7 +604,7 @@ The remaining open questions the field is actively working on:
     - **Token compression** (Q-Former, average pooling, token merging) trades resolution fidelity for context efficiency — essential in high-throughput serving scenarios.
 
 !!! sota "State of the Art & Resources (2026)"
-    Vision-language models have converged on a projector-based recipe (ViT encoder + MLP connector + LLM) as the dominant open-source paradigm, with InternVL 2.5, Qwen2-VL, and LLaVA-NeXT variants matching or exceeding GPT-4V on standard benchmarks. Active frontiers include native-resolution dynamic tokenization, video VLMs, and efficient token compression for high-throughput serving.
+    Vision-language models have converged on a projector-based recipe (ViT encoder + MLP connector + LLM) as the dominant open-source paradigm. By 2026 the open frontier is set by Qwen3-VL (2B–235B, dense and MoE, Instruct/Thinking editions) and InternVL3.5 (up to 241B-A28B), which narrow the gap with closed frontier models (GPT-5-class); Qwen2.5-VL-72B and InternVL3-78B already reached GPT-4o/Claude-3.5-Sonnet parity on standard benchmarks. Active frontiers include native multimodal pretraining (training vision+text jointly rather than bolting a projector onto a frozen LLM), native-resolution dynamic tokenization, dynamic visual-token routing for efficiency, video VLMs, and reasoning ("Thinking") VLMs.
 
     **Foundational work**
 
@@ -618,11 +618,13 @@ The remaining open questions the field is actively working on:
     - [Bai et al., *Qwen-VL: A Versatile Vision-Language Model for Understanding, Localization, Text Reading, and Beyond* (2023)](https://arxiv.org/abs/2308.12966) — Adds visual grounding and OCR-specific pretraining tasks to the standard VLM recipe.
     - [Chen et al., *InternVL: Scaling up Vision Foundation Models and Aligning for Generic Visual-Linguistic Tasks* (2023)](https://arxiv.org/abs/2312.14238) — Scales the vision encoder to 6B parameters (InternViT-6B), dramatically improving OCR and chart understanding (CVPR 2024 Oral).
     - [Wang et al., *Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution* (2024)](https://arxiv.org/abs/2409.12191) — Native dynamic resolution via M-RoPE positional encoding; 72B model matches GPT-4o on multimodal benchmarks.
+    - [Qwen Team, *Qwen2.5-VL Technical Report* (2025)](https://arxiv.org/abs/2502.13923) — Native dynamic-resolution ViT with window attention, hour-long video understanding, and stronger agentic/document parsing; superseded in late 2025 by [Qwen3-VL](https://github.com/QwenLM/Qwen3-VL) (dense + MoE, Instruct/Thinking editions).
+    - [Zhu et al., *InternVL3: Exploring Advanced Training and Test-Time Recipes for Open-Source Multimodal Models* (2025)](https://arxiv.org/abs/2504.10479) — Native joint vision+text pretraining and V2PE; InternVL3-78B reaches 72.2 on MMMU. Extended by [InternVL3.5 (2025)](https://arxiv.org/abs/2508.18265) with Cascade RL and a Visual Resolution Router for a ~4× inference speedup.
 
     **Open-source & tools**
 
     - [haotian-liu/LLaVA](https://github.com/haotian-liu/LLaVA) — Reference implementation of LLaVA through 1.6, including training scripts, LoRA fine-tuning, and SGLang serving integration.
-    - [OpenGVLab/InternVL](https://github.com/OpenGVLab/InternVL) — Full InternVL family (1B–240B), training code, and evaluation scripts; leading open-source alternative to GPT-4o on MMMU.
+    - [OpenGVLab/InternVL](https://github.com/OpenGVLab/InternVL) — Full InternVL family through InternVL3.5 (1B–241B, including MoE variants), with training code (Cascade RL), datasets, and evaluation scripts; a leading open-source alternative to closed frontier VLMs on MMMU.
     - [open-compass/VLMEvalKit](https://github.com/open-compass/VLMEvalKit) — One-command evaluation toolkit supporting 220+ VLMs across 80+ benchmarks (DocVQA, ChartQA, MMBench, etc.).
 
     **Go deeper**

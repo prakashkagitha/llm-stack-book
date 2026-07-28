@@ -649,7 +649,7 @@ Note: this sketch omits the attention mask construction, the transformer impleme
       captures cross-modal coherence and modality-specific quality simultaneously.
 
 !!! sota "State of the Art & Resources (2026)"
-    Unified any-to-any models have moved from proof-of-concept to production-scale systems: models like Chameleon (discrete token fusion), Transfusion (hybrid AR + diffusion), Show-o, and Janus-Pro all emerged between 2024–2025, demonstrating that a single transformer can match or exceed specialist models on both understanding and generation benchmarks across text, images, and video.
+    By 2026, native multimodal generation has moved from research demo to shipped product: frontier proprietary systems (OpenAI's GPT-4o, Google's Gemini) now generate and edit images natively inside the same model that reasons over them, and a wave of open unified models — Chameleon (discrete token fusion), Transfusion (hybrid AR + diffusion), Emu3 (pure next-token prediction), Show-o, Janus-Pro, and BAGEL — plus omni-modal systems like Qwen2.5-Omni that ingest audio and video and stream speech back out, has closed much of the gap with specialist models on both understanding and generation benchmarks.
 
     **Foundational work**
 
@@ -663,6 +663,7 @@ Note: this sketch omits the attention mask construction, the transformer impleme
     - [Zhan et al., *AnyGPT: Unified Multimodal LLM with Discrete Sequence Modeling* (ACL 2024)](https://arxiv.org/abs/2402.12226) — extends the discrete-token paradigm to text, images, audio, and music under one autoregressive model.
     - [Xie et al., *Show-o: One Single Transformer to Unify Multimodal Understanding and Generation* (ICLR 2025)](https://arxiv.org/abs/2408.12528) — mixes causal AR for text with discrete diffusion for images; Show-o2 extends support to video (2025).
     - [Chen et al., *Janus-Pro: Unified Multimodal Understanding and Generation with Data and Model Scaling* (2025)](https://arxiv.org/abs/2501.17811) — decouples visual encoding pathways for understanding vs. generation, closing the quality gap with specialist models at 7B scale.
+    - [Deng et al., *Emerging Properties in Unified Multimodal Pretraining* (BAGEL, 2025)](https://arxiv.org/abs/2505.14683) — open-source decoder-only unified model (7B active / 14B total) trained on interleaved text, image, and video; emergent image editing and world-modeling appear with scale.
     - [Zhang et al., *Unified Multimodal Understanding and Generation Models: Advances, Challenges, and Opportunities* (2025)](https://arxiv.org/abs/2505.02567) — comprehensive survey categorising the field into diffusion-based, autoregressive-based, and hybrid paradigms.
 
     **Open-source & tools**

@@ -1,6 +1,6 @@
 # 9.3 Retrieval-Augmented Generation Architectures
 
-A language model trained six months ago does not know about last week's earnings call. A 7-billion-parameter model that has memorized Wikipedia cannot tell you what is in your company's internal runbook. Even a frontier model with a 128 k-token context window will confidently confabulate a citation if the relevant fact falls outside its training distribution. Retrieval-Augmented Generation (RAG) addresses all three problems with a single architectural shift: rather than forcing the model to answer from parametric memory alone, we first retrieve the most relevant documents from an external store and inject them into the context before the model generates its answer.
+A language model trained six months ago does not know about last week's earnings call. A 7-billion-parameter model that has memorized Wikipedia cannot tell you what is in your company's internal runbook. Even a frontier model with a million-token context window will confidently confabulate a citation if the relevant fact falls outside its training distribution. Retrieval-Augmented Generation (RAG) addresses all three problems with a single architectural shift: rather than forcing the model to answer from parametric memory alone, we first retrieve the most relevant documents from an external store and inject them into the context before the model generates its answer.
 
 This chapter dissects the full RAG pipeline — from corpus ingestion to final generation — explains why each design decision matters, catalogs the most important failure modes, and shows you how to build a minimal but production-faithful implementation from scratch. We also cover how to measure whether your RAG system is actually working with the RAGAS framework of faithfulness, answer relevance, and context precision.
 
@@ -55,7 +55,7 @@ Chapter [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-re
 
 Each chunk is encoded into a dense vector $\mathbf{v} \in \mathbb{R}^d$ by a bi-encoder (also called a dual-encoder). The same encoder maps the query to $\mathbf{q} \in \mathbb{R}^d$. Retrieval is then a nearest-neighbor search in this space. See [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html) for the full treatment of encoder architectures and training.
 
-Popular open-source choices include models from the `sentence-transformers` family, `e5-large-v2`, `bge-m3`, and others. Typical dimensionality $d$ ranges from 384 to 1536.
+Popular open-source choices include models from the `sentence-transformers` family, `e5-large-v2`, and `bge-m3`; as of 2026 the `Qwen3-Embedding` family (0.6B/4B/8B, Apache-2.0, released mid-2025) tops the multilingual MTEB leaderboard and offers Matryoshka-style truncatable dimensions. Typical dimensionality $d$ ranges from 384 to 4096.
 
 ### Stage 3 — Indexing
 
@@ -65,7 +65,7 @@ At query time, the query vector is compared against all indexed vectors, and the
 
 ### Stage 4 — Retrieve (and optionally Rerank)
 
-The ANN index returns approximate top-$k$ results, typically $k = 5$–$20$. A cross-encoder reranker (e.g., `bge-reranker-large`) then scores the query alongside each candidate chunk jointly, producing a more accurate relevance ranking. The top-$k'$ (typically $k' = 3$–$5$) chunks after reranking form the retrieved context.
+The ANN index returns approximate top-$k$ results, typically $k = 5$–$20$. A cross-encoder reranker (e.g., `bge-reranker-v2-m3` or the 2025 `Qwen3-Reranker` series) then scores the query alongside each candidate chunk jointly, producing a more accurate relevance ranking. The top-$k'$ (typically $k' = 3$–$5$) chunks after reranking form the retrieved context.
 
 {{fig:bi-encoder-vs-cross-encoder}}
 
@@ -401,7 +401,7 @@ print(results)
 ```
 
 !!! note "Aside: RAGAS requires an LLM judge"
-    RAGAS calls an LLM (default: GPT-4) to decompose answers into claims and to score them. This means evaluation costs money and is subject to judge bias. For large-scale offline evaluation, cache judge responses or use a cheaper model for preliminary sweeps.
+    RAGAS calls a frontier LLM judge (configurable; GPT-4-class or better) to decompose answers into claims and to score them. This means evaluation costs money and is subject to judge bias. For large-scale offline evaluation, cache judge responses or use a cheaper model for preliminary sweeps.
 
 ## The RAG Design Space
 
@@ -671,7 +671,7 @@ def run_pipeline(
 
 ## Long-Context LLMs vs RAG: The Design Decision
 
-A recurring question for practitioners is: "If the model has a 128 k-token context window, why do I need RAG at all — can't I just stuff the whole knowledge base into the prompt?"
+A recurring question for practitioners is: "If the model has a million-token context window — the norm for frontier models by 2026 — why do I need RAG at all — can't I just stuff the whole knowledge base into the prompt?"
 
 The honest answer is: it depends.
 
@@ -731,11 +731,12 @@ A few operational concerns that come up in every production RAG deployment:
     - [Zhang et al., *RAFT: Adapting Language Model to Domain Specific RAG* (2024)](https://arxiv.org/abs/2403.10131) — fine-tuning recipe that teaches models to cite supporting passages and ignore distractor documents in RAG settings.
     - [Gupta et al., *A Comprehensive Survey of RAG: Evolution, Current Landscape and Future Directions* (2024)](https://arxiv.org/abs/2410.12837) — broad survey covering modular RAG, GraphRAG, agentic retrieval, and evaluation benchmarks up to late 2024.
     - [Singh et al., *Agentic Retrieval-Augmented Generation: A Survey on Agentic RAG* (2025)](https://arxiv.org/abs/2501.09136) — surveys how autonomous agents dynamically decide when and what to retrieve, enabling multi-hop and self-correcting pipelines.
+    - [Zhang et al., *Qwen3 Embedding: Advancing Text Embedding and Reranking Through Foundation Models* (2025)](https://arxiv.org/abs/2506.05176) — the Apache-2.0 Qwen3-Embedding/Reranker series (0.6B/4B/8B) that took the No. 1 spot on the multilingual MTEB leaderboard; a strong open default for both retrieval and reranking as of 2026.
 
     **Open-source & tools**
 
     - [explodinggradients/ragas](https://github.com/explodinggradients/ragas) — the ragas Python library implementing faithfulness, answer relevancy, and context precision; integrates with LangChain and LlamaIndex.
-    - [langchain-ai/langchain](https://github.com/langchain-ai/langchain) — the dominant RAG orchestration framework (138 k GitHub stars); provides document loaders, text splitters, retrievers, and LLM chains with 300+ integrations.
+    - [langchain-ai/langchain](https://github.com/langchain-ai/langchain) — a dominant RAG/agent orchestration framework (now positioned as an "agent engineering platform," ~142 k GitHub stars as of 2026); provides document loaders, text splitters, retrievers, and LLM chains with hundreds of integrations.
     - [run-llama/llama_index](https://github.com/run-llama/llama_index) — LlamaIndex, specialized for advanced indexing patterns (parent-child, summary indexes, knowledge graphs) and agentic retrieval workflows.
 
 ## Further Reading

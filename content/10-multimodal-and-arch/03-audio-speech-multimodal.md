@@ -172,7 +172,7 @@ The delay pattern (used in AudioLM, VALL-E, and related systems) allows the auto
 
 ## Whisper: The Encoder-Only Path to ASR
 
-Whisper (Radford et al., OpenAI, 2022) is the de facto standard for Automatic Speech Recognition (ASR) — recognition of speech as text. It takes a different philosophy from codec-based models: rather than discretizing audio into tokens for generation, it encodes a fixed 30-second window of log-Mel features into continuous hidden states and decodes with a standard text autoregressive decoder.
+Whisper (Radford et al., OpenAI, 2022) remains the de facto open ASR baseline — recognition of speech as text. It takes a different philosophy from codec-based models: rather than discretizing audio into tokens for generation, it encodes a fixed 30-second window of log-Mel features into continuous hidden states and decodes with a standard text autoregressive decoder. OpenAI's 2024 `large-v3-turbo` variant (809 M params) prunes the decoder for substantially faster transcription at near-identical accuracy, and is a common default for latency-sensitive pipelines.
 
 ### Architecture
 
@@ -294,6 +294,8 @@ HuBERT (Hsu et al., Facebook AI Research, 2021) is a BERT-style masked predictio
 {{fig:moshi-temporal-hierarchy}}
 
 The crucial engineering decision in Moshi: **the inner LM runs causally** — it only attends to past codec frames, enabling real-time streaming. The depth transformer runs separately per frame, keeping per-step latency bounded.
+
+By 2025–2026 this native-audio approach scaled into full any-to-any "omni" backbones. Qwen3-Omni (Alibaba, 2025), for instance, ingests text, audio, image, and video and emits text plus streaming speech from a single model — using a Thinker–Talker split and time-aligned position embeddings — reaching open-source SOTA on most audio benchmarks. Speech dialogue is increasingly a capability folded into one multimodal model rather than a standalone speech LM (see [Unified & Any-to-Any Models](../10-multimodal-and-arch/05-unified-any-to-any.html)).
 
 ## Real-Time Streaming and Latency Budgets
 
@@ -608,7 +610,7 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
     - Transfer learning and semi-supervised pretraining (HuBERT, wav2vec 2.0, pseudo-labeling) are essential because high-quality paired audio-text data is scarce relative to the scale of text-only corpora.
 
 !!! sota "State of the Art & Resources (2026)"
-    Audio-language research has converged on a unified paradigm: neural audio codecs (RVQ-based) tokenize sound into discrete sequences that a shared transformer processes alongside text, enabling end-to-end speech-in/speech-out systems with sub-200 ms latency. The field moved rapidly from cascade pipelines (ASR → LLM → TTS) to native audio LLMs like Moshi and VALL-E 2 that operate directly on codec tokens.
+    Audio-language research has converged on a unified paradigm: neural audio codecs (RVQ-based) tokenize sound into discrete sequences that a shared transformer processes alongside text, enabling end-to-end speech-in/speech-out systems with sub-200 ms latency. The field moved rapidly from cascade pipelines (ASR → LLM → TTS) to native audio LLMs like Moshi and VALL-E 2 that operate directly on codec tokens, and by 2026 into any-to-any "omni" backbones (e.g., Qwen3-Omni) that fold speech dialogue into a single text/audio/image/video model.
 
     **Foundational work**
 
@@ -623,12 +625,12 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
     - [Chen et al., *VALL-E 2: Human Parity Zero-Shot TTS* (2024)](https://arxiv.org/abs/2406.05370) — repetition-aware sampling and grouped code modeling push TTS to claimed human parity on LibriSpeech.
     - [Défossez et al., *Moshi: a speech-text foundation model for real-time dialogue* (2024)](https://arxiv.org/abs/2410.00037) — first full-duplex spoken dialogue LLM with ~160 ms theoretical latency via dual audio streams.
     - [Rubenstein et al., *AudioPaLM: A Large Language Model That Can Speak and Listen* (2023)](https://arxiv.org/abs/2306.12925) — interleaves audio and text tokens in a single PaLM-2 backbone for ASR, TTS, and speech translation.
-    - [Gandhi et al., *Distil-Whisper: Robust Knowledge Distillation via Large-Scale Pseudo Labelling* (2023)](https://arxiv.org/abs/2311.00430) — 6× faster, 50% smaller distilled Whisper within 1% WER; practical choice for low-latency pipelines.
+    - [Xu et al., *Qwen3-Omni Technical Report* (2025)](https://arxiv.org/abs/2509.17765) — any-to-any omni model (text/audio/image/video in, text + streaming speech out) reaching open-source SOTA on most audio benchmarks; the 2026 frontier for unified speech dialogue.
 
     **Open-source & tools**
 
     - [facebookresearch/audiocraft](https://github.com/facebookresearch/audiocraft) — Meta's library for MusicGen, AudioGen, and EnCodec; includes training code and pretrained checkpoints.
-    - [openai/whisper](https://github.com/openai/whisper) — official Whisper inference library with all model sizes (tiny → large-v3) under MIT license.
+    - [openai/whisper](https://github.com/openai/whisper) — official Whisper inference library with all model sizes (tiny → large-v3, plus the faster 2024 `large-v3-turbo`) under MIT license.
     - [kyutai-labs/moshi](https://github.com/kyutai-labs/moshi) — full-duplex spoken dialogue framework with the Mimi streaming codec and pretrained Moshi weights.
 
 ## Further Reading

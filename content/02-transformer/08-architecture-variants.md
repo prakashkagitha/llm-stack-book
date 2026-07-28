@@ -643,7 +643,7 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Decoder-only transformers dominate frontier LLMs (GPT-4, Claude, Llama, Mistral, Gemini), while encoder-only models remain the backbone of fast retrieval and classification systems; encoder-decoder architectures are seeing a resurgence for parameter-efficient small models and structured generation tasks.
+    Decoder-only transformers dominate frontier LLMs (GPT-5, Claude, Gemini, Llama 4, DeepSeek), increasingly as sparse mixture-of-experts variants (Llama 4 and DeepSeek-V3 are both MoE decoders); encoder-only models remain the backbone of fast retrieval and classification systems, and encoder-decoder architectures are seeing renewed interest for parameter-efficient small models and structured generation.
 
     **Foundational work**
 
@@ -654,8 +654,9 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     **Recent advances (2023–2026)**
 
     - [Jiang et al., *Mistral 7B* (2023)](https://arxiv.org/abs/2310.06825) — compact decoder-only model introducing grouped-query attention and sliding window attention; a reference design for efficient causal LMs.
-    - [Warner et al., *ModernBERT: Smarter, Better, Faster, Longer* (2024)](https://arxiv.org/abs/2412.13663) — modernized encoder-only model with RoPE, FlashAttention, and 8 192-token context; the current state of the art for bidirectional encoders.
-    - [Weller et al., *Return of the Encoder: Maximizing Parameter Efficiency for SLMs* (2025)](https://arxiv.org/abs/2501.16273) — shows encoder-decoder architectures achieve 47 % lower first-token latency and 4.7× higher throughput than decoder-only models at small parameter budgets.
+    - [Warner et al., *ModernBERT: Smarter, Better, Faster, Longer* (2024)](https://arxiv.org/abs/2412.13663) — modernized encoder-only model with RoPE, FlashAttention, and 8 192-token context; a leading modern bidirectional encoder and a common 2026 default for retrieval and classification.
+    - [Elfeki et al., *Return of the Encoder: Maximizing Parameter Efficiency for SLMs* (2025)](https://arxiv.org/abs/2501.16273) — shows encoder-decoder architectures achieve 47 % lower first-token latency and 4.7× higher throughput than decoder-only models at small (≤1B) parameter budgets.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — a 671B-parameter (37B active) decoder-only mixture-of-experts model with Multi-head Latent Attention; a canonical account of the MoE-decoder design now common at the frontier.
 
     **Open-source & tools**
 

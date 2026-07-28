@@ -379,7 +379,7 @@ print("MLA out:", y.shape)                               # (2, 16, 512)
 # vs MHA's 2 * d_model. Here 128 vs 1024 -> ~8× smaller, full head diversity kept.
 ```
 
-MLA is more complex to implement and to serve (the kernel and the cache layout differ from the GQA path that vLLM/SGLang were originally built around), which is why GQA remains the broad default and MLA is found mainly in models specifically designed for it (the DeepSeek-V2/V3 line). But MLA is the clearest demonstration that the cache, not the head count, is the real object of optimization — and that you can compress it directly.
+MLA is more complex to implement and to serve (the kernel and the cache layout differ from the GQA path that vLLM/SGLang were originally built around), which is why GQA remains the broad default. MLA began in the DeepSeek-V2/V3 line, but by 2026 it had spread to other frontier open-weight models — including Kimi K2 and GLM-5 — as serving stacks like SGLang added first-class MLA support. But MLA is the clearest demonstration that the cache, not the head count, is the real object of optimization — and that you can compress it directly.
 
 ## Memory–Quality Tradeoffs: Choosing a Scheme
 
@@ -390,7 +390,7 @@ Put the four schemes side by side. Let $h$ be the number of query heads, $g$ the
 | MHA   | $h$ | $2\,h\,d_h = 2\,d_\text{model}$ | $1\times$ (baseline) | best | original Transformer, GPT-2/3, Llama-1 |
 | GQA   | $g$ | $2\,g\,d_h$ | $g/h$ | ≈ MHA | Llama-2-70B/3, Mistral, Gemma |
 | MQA   | $1$ | $2\,d_h$ | $1/h$ | noticeable drop, can be unstable | PaLM, Falcon |
-| MLA   | (latent) | $\approx d_c\,(+\text{small RoPE key})$ | small, tunable | ≈ MHA or better | DeepSeek-V2/V3 |
+| MLA   | (latent) | $\approx d_c\,(+\text{small RoPE key})$ | small, tunable | ≈ MHA or better | DeepSeek-V2/V3, Kimi K2, GLM-5 |
 
 How to reason about the choice:
 

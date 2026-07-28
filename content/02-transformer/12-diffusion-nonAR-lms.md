@@ -8,7 +8,7 @@ $$
 
 It is a beautiful, exact factorization — and it is also the source of a stubborn latency wall. Generating a 1000-token response requires **1000 sequential forward passes**, each of which must finish before the next can begin, because $x_t$ is an *input* to the computation of $x_{t+1}$. No amount of GPU parallelism removes that serial dependency. The hardware is busy but starved: at decode time you are matrix-vector limited, reading the entire model's weights from memory to produce a single token (see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html) and [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html)).
 
-This chapter is about a different bet: **non-autoregressive (NAR)** language models, and in particular the **discrete diffusion / masked diffusion** family that has, since roughly 2024–2025, produced the first genuinely competitive non-AR LLMs — LLaDA, Dream, and the commercial Mercury system from Inception Labs. Instead of emitting tokens left-to-right, these models start from a fully masked sequence and **iteratively denoise all positions in parallel**, refining the whole sequence over a small number of steps. The promise is a fundamentally different point on the latency–quality curve: tokens-per-second numbers that can be several times higher than AR models of comparable size, plus the ability to reason *bidirectionally* and fill text in any order.
+This chapter is about a different bet: **non-autoregressive (NAR)** language models, and in particular the **discrete diffusion / masked diffusion** family that has, since roughly 2024–2025, produced the first genuinely competitive non-AR LLMs — LLaDA, Dream, the commercial Mercury system from Inception Labs, and, in a signal that the idea has reached the frontier labs, Google DeepMind's experimental Gemini Diffusion. Instead of emitting tokens left-to-right, these models start from a fully masked sequence and **iteratively denoise all positions in parallel**, refining the whole sequence over a small number of steps. The promise is a fundamentally different point on the latency–quality curve: tokens-per-second numbers that can be several times higher than AR models of comparable size, plus the ability to reason *bidirectionally* and fill text in any order.
 
 We will develop the absorbing-state diffusion objective from first principles, contrast it sharply with next-token prediction (covered in [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html)), implement a tiny masked-diffusion sampler from scratch, and then engineer our way toward the production tricks — semi-autoregressive **block diffusion**, KV-cache reuse, remasking schedules, and flexible-length generation — that make these systems practical. The mathematical machinery overlaps with continuous image diffusion ([Diffusion Models & Generative Modeling (Breadth)](../10-multimodal-and-arch/04-diffusion-generative.html)), but the discrete-token setting has its own elegant simplifications that are worth seeing carefully.
 
@@ -284,7 +284,8 @@ We now have the pieces — masked-diffusion objective, iterative denoising, bloc
 
 - **LLaDA** (Nie et al., 2025) is the proof of concept at scale: an 8B-parameter masked-diffusion LLM trained from scratch with the absorbing objective, with an instruction-tuned chat variant. Its headline result is that a pure (non-block) masked-diffusion model can be *competitive with similarly-sized autoregressive LLaMA-class models* on standard benchmarks — the first time a from-scratch diffusion LLM closed most of that gap. It also concretely demonstrated the bidirectional/reversal advantage (below).
 - **Dream** (2025) is a 7B masked-diffusion LLM that, rather than training from scratch, *initializes from an existing autoregressive checkpoint* and adapts it to the diffusion objective — a clever way to reuse the enormous compute already spent on AR pretraining. It uses context-adaptive token-level noise and confidence-based decoding orders to push quality.
-- **Mercury** (Inception Labs, 2025) is the commercial diffusion-LLM system, marketed around coding (Mercury Coder) and built on a block-diffusion-style architecture for flexible length and KV reuse. Its public pitch is order-of-magnitude higher tokens/sec than comparable autoregressive code models on the same hardware, by exploiting parallel decode. (Treat any specific throughput figure as vendor-reported; the *mechanism* — parallel denoising of blocks with cache reuse — is the durable takeaway.)
+- **Mercury** (Inception Labs, 2025) is the commercial diffusion-LLM system, marketed around coding (Mercury Coder) and built on a block-diffusion-style architecture for flexible length and KV reuse. Its technical report puts Mercury Coder Mini and Small at roughly 1109 and 737 tokens/sec on an NVIDIA H100 — up to about 10× the throughput of comparable speed-optimized autoregressive code models at similar quality — by exploiting parallel decode. (The *mechanism* — parallel denoising of blocks with cache reuse — is the durable takeaway; treat exact numbers as hardware- and configuration-dependent.)
+- **Gemini Diffusion** (Google DeepMind, 2025) and **Seed Diffusion** (ByteDance, 2025) are the clearest signal that the approach has reached the frontier and the speed frontier respectively: the former is an experimental text-diffusion model reported at on the order of 1,400 tokens/sec while matching Google's fast autoregressive models on coding and math benchmarks; the latter is a code-focused discrete-diffusion model reporting above 2,000 tokens/sec on datacenter GPUs. Their existence — more than any single vendor figure — is the evidence that parallel-decode diffusion is now a mainstream research direction rather than an academic curiosity.
 
 ### Where the speed actually comes from — and where it doesn't
 
@@ -380,13 +381,13 @@ Diffusion and non-AR language models are best understood as a third major branch
     - **Block diffusion** interpolates between AR and diffusion: generate blocks left-to-right (autoregressive, with a block-causal mask) but tokens within a block in parallel (diffusion). This unlocks **KV-cache reuse** and **flexible/arbitrary output length**, mapping cleanly onto existing AR serving stacks.
     - The speedup is a **serial-depth (latency) win, not a FLOPs win**: diffusion often does more total compute per token but in fewer, more parallel steps. The advantage is largest at low-to-moderate batch and long single outputs; at very high concurrency, batched AR throughput catches up.
     - **Bidirectionality** is a separate, structural benefit: native infilling/editing, global-constraint satisfaction, and robustness to the **reversal curse** — capabilities AR models must bolt on but diffusion gets for free.
-    - Real systems: **LLaDA** (8B, from scratch) showed diffusion LLMs can rival same-size AR models; **Dream** (7B) adapts an AR checkpoint to the diffusion objective; **Mercury** (Inception Labs) is the commercial block-diffusion system pitched on parallel-decode throughput for coding.
+    - Real systems: **LLaDA** (8B, from scratch) showed diffusion LLMs can rival same-size AR models; **Dream** (7B) adapts an AR checkpoint to the diffusion objective; **Mercury** (Inception Labs) is the commercial block-diffusion system pitched on parallel-decode throughput for coding; and **Gemini Diffusion** (Google DeepMind) and **Seed Diffusion** (ByteDance) brought the approach to a frontier lab and past ~2,000 tokens/sec.
     - Caveats: likelihoods are ELBO bounds (not directly comparable to AR perplexity), length handling and the post-training/RL stack are less mature, and the kernel/serving ecosystem is still AR-centric. Reach for diffusion when single-stream latency, infilling, or reversal-robustness matter most.
 
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Masked-diffusion language models moved from research curiosity to scaled, partly-commercial systems in 2024–2025. The frontier is semi-autoregressive **block diffusion** (for cache reuse and flexible length), AR-to-diffusion adaptation (reusing AR pretraining compute), and the early diffusion-native post-training stack.
+    Masked-diffusion language models moved from research curiosity to scaled, commercial, and frontier-lab systems across 2024–2026. The frontier is semi-autoregressive **block diffusion** (for cache reuse and flexible length), AR-to-diffusion adaptation (reusing AR pretraining compute), fast diffusion code models, and the early diffusion-native post-training stack.
 
     **Foundational work**
 
@@ -405,7 +406,9 @@ Diffusion and non-AR language models are best understood as a third major branch
     - Nie et al., *Large Language Diffusion Models (LLaDA)* (2025) — 8B from-scratch masked-diffusion LLM competitive with same-size AR baselines; demonstrates the reversal-curse advantage.
     - Dream team, *Dream 7B* (2025) — diffusion LLM adapted from an autoregressive checkpoint with context-adaptive noise and confidence-based decoding.
     - Arriola et al., *Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models (BD3-LM)* (2025) — the block-causal hybrid enabling KV-cache reuse and arbitrary-length generation.
-    - Inception Labs, *Mercury* (2025) — commercial diffusion-LLM family (incl. Mercury Coder) built on a block-diffusion architecture for high parallel-decode throughput.
+    - Inception Labs, *Mercury: Ultra-Fast Language Models Based on Diffusion* (2025) — commercial diffusion-LLM family (incl. Mercury Coder) built on a block-diffusion architecture; the technical report measures ~1109 tok/s (Mercury Coder Mini) on an NVIDIA H100.
+    - Google DeepMind, *Gemini Diffusion* (2025) — experimental text-diffusion model from a frontier lab, reported at on the order of 1,400 tokens/sec with competitive coding/math benchmarks.
+    - Song et al., *Seed Diffusion* (ByteDance, 2025) — large-scale discrete-diffusion code model reporting >2,000 tokens/sec, among the fastest reported diffusion LLMs.
 
     **Go deeper**
 
@@ -420,7 +423,9 @@ Diffusion and non-AR language models are best understood as a third major branch
 - Ou, J., et al. (2024). **Your Absorbing Discrete Diffusion Secretly Models the Conditional Distributions of Clean Data (RADD).**
 - Nie, S., et al. (2025). **Large Language Diffusion Models (LLaDA).**
 - Arriola, M., et al. (2025). **Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models (BD3-LM).** ICLR 2025.
-- Inception Labs (2025). **Mercury / Mercury Coder** — commercial diffusion LLM.
+- Inception Labs (2025). **Mercury: Ultra-Fast Language Models Based on Diffusion.** arXiv:2506.17298 — commercial diffusion LLM (incl. Mercury Coder).
+- Google DeepMind (2025). **Gemini Diffusion** — experimental frontier-lab text-diffusion model.
+- Song, Y., et al. (2025). **Seed Diffusion: A Large-Scale Diffusion Language Model with High-Speed Inference.** arXiv:2508.02193.
 - Gong, S., et al. (2025). **Dream 7B** — autoregressive-to-diffusion adaptation.
 
 ---

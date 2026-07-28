@@ -629,7 +629,7 @@ For how these retrievers slot into a generation pipeline — query construction,
     **Recent advances (2019–2026)**
 
     - [Subramanya et al., *DiskANN: Fast Accurate Billion-Point Nearest Neighbor Search on a Single Node* (NeurIPS 2019)](https://proceedings.neurips.cc/paper/2019/hash/09853c7fb1d3f8ee67a61b6bf4a7f8e6-Abstract.html) — graph-based SSD index; 95%+ recall at <3 ms on 1B vectors on commodity hardware.
-    - [Gao & Long, *RaBitQ: Quantizing High-Dimensional Vectors with a Theoretical Error Bound for ANN Search* (SIGMOD 2024)](https://arxiv.org/abs/2405.12497) — 1-bit-per-dimension quantization with provable error bounds; consistently outperforms PQ variants at the same memory budget.
+    - [Gao & Long, *RaBitQ: Quantizing High-Dimensional Vectors with a Theoretical Error Bound for ANN Search* (SIGMOD 2024)](https://arxiv.org/abs/2405.12497) — 1-bit-per-dimension quantization with provable error bounds; consistently outperforms PQ variants at the same memory budget. The follow-up [Extended RaBitQ (2024)](https://arxiv.org/abs/2409.09913) generalizes it to any bit budget with an asymptotically optimal space–error trade-off.
 
     **Open-source & tools**
 

@@ -448,7 +448,7 @@ From here the path forks in three directions, all of which build directly on thi
     - For real workloads use a fused kernel (`F.scaled_dot_product_attention`); use the from-scratch version to understand, debug, and modify the mechanism.
 
 !!! sota "State of the Art & Resources (2026)"
-    Scaled dot-product attention remains the dominant mechanism in frontier LLMs, but the field has moved aggressively on efficiency: IO-aware kernels (FlashAttention) have made the $n^2$ matrix tractable, GQA has cut KV-cache costs in nearly every production model, and differential attention variants are beginning to show quality gains at scale.
+    Scaled dot-product attention remains the dominant mechanism in frontier LLMs, but the field has moved aggressively on efficiency: IO-aware kernels (FlashAttention, now on its fourth generation targeting NVIDIA Blackwell) have made the $n^2$ matrix tractable, KV-cache-reducing attention — GQA and, in DeepSeek-style models, Multi-head Latent Attention (MLA) — is standard in essentially every production decoder, and differential attention variants have started to show quality gains at scale.
 
     **Foundational papers**
 
@@ -458,13 +458,14 @@ From here the path forks in three directions, all of which build directly on thi
     **Pushing the frontier (2024–2026)**
 
     - [Dao, *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning* (2023)](https://arxiv.org/abs/2307.08691) — restructured parallelism to reach ~70% of H100 theoretical FLOPs.
-    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — exploits Hopper GPU warp-specialization and FP8 to reach ~75% H100 utilization (up to 740 TFLOPs/s FP16).
+    - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — exploits Hopper GPU warp-specialization and FP8 to reach ~75% H100 utilization (up to 740 TFLOPs/s FP16, close to 1.2 PFLOPs/s FP8).
+    - [FlashAttention-4 (CuTeDSL)](https://github.com/Dao-AILab/flash-attention) — the current generation, rewritten in CuTeDSL and optimized for both Hopper and NVIDIA Blackwell (B200) GPUs; supersedes FA3 on the newest hardware.
     - [Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints* (2023)](https://arxiv.org/abs/2305.13245) — grouped-query attention, now standard in Llama 2/3, Mistral, and most production decoders.
     - [Ye et al., *Differential Transformer* (2024)](https://arxiv.org/abs/2410.05258) — subtracts two softmax attention maps to cancel noise; ICLR 2025 oral, outperforms standard transformers on long-context and hallucination benchmarks.
 
     **Open-source & tools**
 
-    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the reference implementation of FlashAttention (all versions); supports CUDA, ROCm, and FP8.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the reference implementation of FlashAttention (all generations through FA4); supports CUDA (Hopper and Blackwell), ROCm, and FP8.
 
     **Go deeper**
 

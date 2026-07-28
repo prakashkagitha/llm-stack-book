@@ -1,6 +1,6 @@
 # 2.6 The Transformer Block: Norms, Residuals, MLPs & Activations
 
-Every modern large language model is, at its heart, a stack of identical *transformer blocks*. Whether you are reading the weights of GPT-4, Llama 3, Gemma 2, or Mistral, the same four-element recipe repeats dozens or hundreds of times: a normalization step, a self-attention sublayer, another normalization step, and a feed-forward network (FFN) sublayer — all wired together through residual connections. Getting this wiring right is not a detail. It is the reason transformers train stably at scale when many predecessor architectures did not.
+Every modern large language model is, at its heart, a stack of identical *transformer blocks*. Whether you are reading the weights of Llama 3, Gemma 3, DeepSeek-V3, or Qwen3, the same four-element recipe repeats dozens or hundreds of times: a normalization step, a self-attention sublayer, another normalization step, and a feed-forward network (FFN) sublayer — all wired together through residual connections. Getting this wiring right is not a detail. It is the reason transformers train stably at scale when many predecessor architectures did not.
 
 This chapter dissects every component of the transformer block from first principles. We start with the residual stream — the conceptual backbone — then cover the two normalization variants (LayerNorm and RMSNorm), the critical pre-norm versus post-norm distinction, the FFN/MLP sublayer, and modern activation functions (ReLU, GELU, SwiGLU, GeGLU). We close with dropout, the complete block wiring diagram, a heavily commented implementation, and worked numerical examples. If you have already read [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html) and [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html), this chapter completes the picture of how a single layer is assembled. [Building a GPT From Scratch (nanoGPT-style)](../02-transformer/07-build-gpt-from-scratch.html) then stacks these blocks into a full model.
 
@@ -552,7 +552,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    The pre-norm + RMSNorm + SwiGLU transformer block is the settled standard for large-scale LLM training as of 2026, with Llama 3, Gemma 2, Mistral, and most frontier models converging on this design. Active research has shifted toward stability at extreme depth (1000+ layers), understanding what FFN neurons actually store, and architectural variants such as parallel attention-FFN blocks and sparse MoE substitutions for the FFN.
+    The pre-norm + RMSNorm + SwiGLU transformer block is the settled standard for large-scale LLM training as of 2026, with the Llama, Gemma 3, DeepSeek-V3, and Qwen3 families — and essentially every open-weight frontier model — converging on this design. Active research has shifted toward stability at extreme depth (1000+ layers), understanding what FFN neurons actually store, and architectural variants such as parallel attention-FFN blocks and sparse MoE substitutions for the FFN.
 
     **Foundational work**
 
@@ -561,10 +561,12 @@ For more on these and other architectural choices, see [Modern Architecture Impr
     - [Shazeer, *GLU Variants Improve Transformer* (2020)](https://arxiv.org/abs/2002.05202) — introduced SwiGLU and GeGLU; the paper behind Llama's three-matrix gated FFN design.
     - [Xiong et al., *On Layer Normalization in the Transformer Architecture* (2020)](https://arxiv.org/abs/2002.04745) — proved theoretically why pre-norm stabilizes gradients at initialization and removes the need for warmup.
 
-    **Recent advances (2023–2026)**
+    **Recent advances (2024–2026)**
 
-    - [Grattafiori et al., *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — canonical modern reference for pre-norm + RMSNorm + SwiGLU + GQA at scale (8B–405B parameters).
-    - [Gemma Team, *Gemma 2: Improving Open Language Models at a Practical Size* (2024)](https://arxiv.org/abs/2408.00118) — GeGLU with interleaved local-global attention and post+pre dual-norm; competitive with models 2–3× larger.
+    - [Grattafiori et al., *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — canonical modern reference for pre-norm + RMSNorm + SwiGLU + GQA at scale (8B–405B parameters); the 2025 Llama 4 herd keeps this block recipe and moves the FFN to a mixture-of-experts.
+    - [Gemma Team, *Gemma 3 Technical Report* (2025)](https://arxiv.org/abs/2503.19786) — the current Gemma generation (1B–27B, ≥128K context), raising the local-to-global attention ratio and shortening the local-attention span for memory-efficient long context.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — a 671B-parameter (37B active) frontier open-weight model pairing the modern pre-norm block with Multi-head Latent Attention and DeepSeekMoE; notably trained to completion with no loss spikes or rollbacks.
+    - [Qwen Team, *Qwen3 Technical Report* (2025)](https://arxiv.org/abs/2505.09388) — dense and Mixture-of-Experts models (0.6B–235B) on the same modern pre-norm gated-FFN spine, unifying thinking and non-thinking inference in one model.
     - [Wang et al., *DeepNet: Scaling Transformers to 1,000 Layers* (2022)](https://arxiv.org/abs/2203.00555) — DeepNorm residual scaling with a theoretically bounded update rule; shows post-norm can be stable at extreme depth with the right init.
 
     **Mechanistic understanding**

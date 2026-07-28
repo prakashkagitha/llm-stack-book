@@ -1131,7 +1131,7 @@ def compute_mrr(
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Hybrid retrieval (BM25 + dense) with cross-encoder reranking is now the production standard for RAG, with late chunking and LLM-based query rewriting closing the remaining gap between prototype and production quality. Evaluation benchmarks like BEIR and frameworks like RAGAS have made systematic pipeline comparison routine.
+    Hybrid retrieval (BM25 + dense) with cross-encoder reranking is now the production standard for RAG, with late chunking and LLM-based query rewriting closing the remaining gap between prototype and production quality. As of 2026 the reranker frontier has shifted from small MS-MARCO MiniLM cross-encoders toward instruction-tuned, LLM-initialized rerankers — Qwen3-Reranker (0.6B/4B/8B, up to 32k context) and mxbai-rerank-v2 now top the multilingual and code-retrieval boards — though a MiniLM cross-encoder remains the right default when latency dominates. Evaluation benchmarks like BEIR and the continuously updated MTEB leaderboard, together with frameworks like RAGAS, have made systematic pipeline comparison routine.
 
     **Foundational work**
 
@@ -1144,10 +1144,11 @@ def compute_mrr(
     - [Günther et al., *Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models* (2024)](https://arxiv.org/abs/2409.04701) — late chunking lets every chunk embedding see its full document context via self-attention before pooling, often beating fixed-window chunking without retraining.
     - [Thakur et al., *BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models* (NeurIPS 2021)](https://arxiv.org/abs/2104.08663) — 18-dataset benchmark that exposed BM25 as a surprisingly hard-to-beat baseline and set the standard for evaluating retrieval generalization.
     - [Liu et al., *Lost in the Middle: How Language Models Use Long Contexts* (TACL 2024)](https://arxiv.org/abs/2307.03172) — empirical evidence that LLMs downweight middle-context information; directly motivates placing the highest-ranked chunks at the top or bottom of the RAG prompt.
+    - [Qwen3-Reranker (Alibaba, 2025)](https://huggingface.co/Qwen/Qwen3-Reranker-4B) — instruction-following, LLM-initialized rerankers (0.6B/4B/8B) with 32k context and 100+ language support; representative of the 2025–2026 shift from small fixed cross-encoders to prompt-conditioned reranking (`mixedbread-ai/mxbai-rerank-large-v2` is a comparable open multilingual alternative).
 
     **Open-source & tools**
 
-    - [UKPLab/sentence-transformers](https://github.com/UKPLab/sentence-transformers) — canonical Python library for bi-encoder embeddings and cross-encoder rerankers; includes `cross-encoder/ms-marco-MiniLM-L-6-v2` and dozens of production-ready models.
+    - [huggingface/sentence-transformers](https://github.com/huggingface/sentence-transformers) — canonical Python library for bi-encoder embeddings and cross-encoder rerankers (the project moved from the UKPLab org to the Hugging Face org); includes `cross-encoder/ms-marco-MiniLM-L-6-v2` and dozens of production-ready models.
     - [jina-ai/late-chunking](https://github.com/jina-ai/late-chunking) — reference implementation and evaluation code for the late chunking method.
     - [xhluca/bm25s](https://github.com/xhluca/bm25s) — ultrafast BM25 in pure Python backed by sparse matrices; orders of magnitude faster than rank-bm25 for large corpora.
     - [RUC-NLPIR/FlashRAG](https://github.com/RUC-NLPIR/FlashRAG) — modular RAG research toolkit with 36 benchmark datasets and 23 RAG algorithms; excellent for ablating chunking/retrieval/reranking choices.

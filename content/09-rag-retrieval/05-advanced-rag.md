@@ -745,7 +745,7 @@ The embedding should be the **comment-stripped, docstring-enriched** function si
 
 ## Long Context vs. RAG: A Framework for the Choice
 
-The most important architectural decision in 2025 is whether to retrieve at all. With context windows of 128k, 200k, and even 1M tokens, it is tempting to skip the retrieval pipeline entirely and simply stuff the entire corpus into the prompt. This section gives you a framework for making that tradeoff.
+The most important architectural decision in 2026 is whether to retrieve at all. With 1M-token context windows now common at the frontier — and some models reaching into the multi-million-token range — it is tempting to skip the retrieval pipeline entirely and simply stuff the entire corpus into the prompt. This section gives you a framework for making that tradeoff.
 
 ### Memory and Cost Analysis
 
@@ -954,7 +954,7 @@ For indexing, the Anthropic contextual retrieval finding is almost universally a
     - [Yan et al., *Corrective Retrieval Augmented Generation* (2024)](https://arxiv.org/abs/2401.15884) — lightweight evaluator triggers web search fallback when retrieved docs score too low; plug-and-play on any RAG stack.
     - [Edge et al., *From Local to Global: A Graph RAG Approach to Query-Focused Summarization* (2024)](https://arxiv.org/abs/2404.16130) — Microsoft's GraphRAG using community detection and hierarchical summaries; uniquely addresses global sensemaking questions.
     - [Sarthi et al., *RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval* (2024)](https://arxiv.org/abs/2401.18059) — recursive clustering+summarization builds multi-granularity trees, improving holistic synthesis; ICLR 2024.
-    - [Gutiérrez et al., *HippoRAG: Neurobiologically Inspired Long-Term Memory for LLMs* (2024)](https://arxiv.org/abs/2405.14831) — Personalized PageRank over entity graphs propagates relevance for multi-hop retrieval without explicit sub-query generation; NeurIPS 2024.
+    - [Gutiérrez et al., *HippoRAG: Neurobiologically Inspired Long-Term Memory for LLMs* (2024)](https://arxiv.org/abs/2405.14831) — Personalized PageRank over entity graphs propagates relevance for multi-hop retrieval without explicit sub-query generation; NeurIPS 2024. The 2025 follow-up [*From RAG to Memory* (HippoRAG 2)](https://arxiv.org/abs/2502.14802) extends this into a continual-memory framework, improving multi-hop and sense-making retrieval; ICML 2025.
 
     **Open-source & tools**
 

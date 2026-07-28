@@ -1,6 +1,6 @@
 # 2.10 Modern Architecture Improvements & Design Choices
 
-The Transformer described by Vaswani et al. in 2017 was a landmark, but the architecture used in today's production LLMs — Llama 3, Qwen 2.5, DeepSeek-V3, Gemma 2 — bears only a family resemblance to that original design. A practitioner opening a modern model config file for the first time will encounter terms like `rms_norm`, `silu`, `rope_theta`, `num_key_value_heads`, `qk_norm`, and `no_bias`. Each of these represents a deliberate, empirically validated architectural decision made in pursuit of better training stability, improved compute efficiency, or stronger final model quality.
+The Transformer described by Vaswani et al. in 2017 was a landmark, but the architecture used in today's production LLMs — Llama 4, Qwen3, DeepSeek-V3, Gemma 3 — bears only a family resemblance to that original design. A practitioner opening a modern model config file for the first time will encounter terms like `rms_norm`, `silu`, `rope_theta`, `num_key_value_heads`, `qk_norm`, and `no_bias`. Each of these represents a deliberate, empirically validated architectural decision made in pursuit of better training stability, improved compute efficiency, or stronger final model quality.
 
 This chapter is your annotated map of those decisions. We will examine each improvement from first principles — why it was introduced, what it fixes, how it works mathematically, and how it appears in code. We conclude with a "modern transformer recipe" summarizing which choices are nearly universal versus still debated. For the transformer block basics, see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html); for positional encodings in depth, see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html); and for GQA/MQA mechanics, see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).
 
@@ -183,7 +183,7 @@ $$
 \theta_i = \text{base}^{-2i/d_k}, \quad i = 0, 1, \ldots, d_k/2 - 1
 $$
 
-The `rope_theta` hyperparameter (the base) controls the frequency range. GPT-2 had no RoPE. Llama 1 used `rope_theta=10000`. Llama 3 extended this to `rope_theta=500000` to improve long-context behavior by spreading frequencies more broadly, making it easier to extrapolate to new positions at inference time.
+The `rope_theta` hyperparameter (the base) controls the frequency range. GPT-2 had no RoPE. Llama 1 used `rope_theta=10000`. Llama 3 extended this to `rope_theta=500000` to improve long-context behavior by spreading frequencies more broadly, making it easier to extrapolate to new positions at inference time. RoPE's dominance is now being probed at the long-context frontier: Llama 4 (2025) uses *iRoPE*, interleaving a minority of position-free "NoPE" attention layers among the RoPE layers to support its 10M-token context window.
 
 ```python
 import torch
@@ -366,7 +366,7 @@ In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ c
 
 ### QK-norm: normalize Q and K before attention
 
-The fix, used in models like Gemma 2 and DeepSeek-V3, is to apply RMSNorm to the query and key vectors *before* computing the attention scores:
+The fix, used in models like Gemma 2/3 and OLMo 2, is to apply RMSNorm to the query and key vectors *before* computing the attention scores:
 
 $$
 \text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{\text{RMSNorm}(Q)\,\text{RMSNorm}(K)^\top}{\sqrt{d_k}}\right)V
@@ -635,7 +635,7 @@ We now have enough pieces to assemble a complete reference. The table below summ
 | Multi-head variant | MHA | GQA | Ainslie et al. 2023 |
 | Bias in Linear | Yes | No | Empirical preference |
 | Tied embeddings | Yes | Untied (usually) | Llama 2+ trend |
-| QK-norm | No | Yes (large scale) | Gemma 2, Qwen 2.5 |
+| QK-norm | No | Yes (increasingly standard) | Gemma 2/3, OLMo 2 |
 | Logit soft-cap | No | Optional | Gemma 2 |
 | Attention sink | Ignored | Keep BOS in KV cache | StreamingLLM, 2023 |
 
@@ -792,7 +792,7 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
     - **SwiGLU** provides multiplicative gating that consistently outperforms ReLU/GELU FFNs at equal parameter cost; the three-weight design requires scaling the intermediate dimension to $\frac{8}{3}d$ to stay iso-parameter.
     - **RoPE** enables relative positional encoding without a separate embedding table, generalizes beyond training context length, and is the universal choice for decoder-only models. The `rope_theta` base should be set high (100k–500k) for long-context models.
     - **GQA** (Grouped Query Attention) reduces KV cache memory by a factor equal to the grouping ratio (commonly 4–8x) with minimal quality degradation; this is the key architectural enabler for long-context inference.
-    - **QK-norm** (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; used in Gemma 2 and DeepSeek-V3.
+    - **QK-norm** (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; used in Gemma 2/3 and OLMo 2, and increasingly a default rather than a large-scale-only trick.
     - **No biases** in linear layers is almost universal at the frontier; biases add optimizer memory overhead and negligible quality benefit, especially with pre-RMSNorm.
     - **Logit soft-capping** ($z \to c \cdot \tanh(z/c)$) is a differentiable alternative to hard clipping that prevents output distribution collapse and improves numerical stability.
     - **Attention sinks** (typically the BOS token) must be preserved in the KV cache for streaming/long-context inference; evicting them causes catastrophic attention pattern collapse.
@@ -801,7 +801,7 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 3, Qwen 2.5, DeepSeek-V3, Mistral) since 2023, with logit soft-capping and attention-sink awareness rounding out the toolkit for stable long-context training.
+    The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 4, Qwen3, DeepSeek-V3, Gemma 3) since 2023, with logit soft-capping and attention-sink awareness rounding out the toolkit for stable long-context training. The 2025 generation pushed on two fronts: sparse Mixture-of-Experts backbones (DeepSeek-V3, Llama 4, Qwen3) and long-context attention variants (Gemma 3's 5:1 local-to-global sliding-window interleave; Llama 4's position-free "NoPE" layers).
 
     **Foundational work**
 
@@ -812,15 +812,15 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
 
     **Recent advances (2023–2026)**
 
-    - [Peng et al., *YaRN: Efficient Context Window Extension of Large Language Models* (2023)](https://arxiv.org/abs/2309.00071) — extends RoPE to 128K+ contexts via frequency-aware interpolation, requiring 10x fewer tokens than naive fine-tuning; adopted by Mistral, Qwen, and others.
     - [The Gemma Team, *Gemma 2: Improving Open Language Models at a Practical Size* (2024)](https://arxiv.org/abs/2408.00118) — introduces QK-norm and logit soft-capping ($c \cdot \tanh(z/c)$) as complementary stability mechanisms, alongside interleaved sliding-window attention.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — comprehensive recipe for a 671B MoE model using MLA, SwiGLU, RMSNorm, and auxiliary-loss-free load balancing; shows the modern stack scales to frontier quality.
-    - [Meta AI, *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — documents the full open-source recipe at 8B–405B scale: GQA, RoPE with `theta=500000`, untied embeddings, and a 128K context window.
+    - [Meta AI, *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — documents the full open-source recipe at 8B–405B scale: GQA, RoPE with `theta=500000`, untied embeddings, and a 128K context window. Its 2025 successor, [Llama 4](https://ai.meta.com/blog/llama-4-multimodal-intelligence/), moves to a Mixture-of-Experts backbone with *iRoPE* — interleaving position-free "NoPE" layers among the RoPE layers to reach a 10M-token context.
+    - [The Gemma Team, *Gemma 3 Technical Report* (2025)](https://arxiv.org/abs/2503.19786) — the follow-up to Gemma 2 keeps QK-norm and adopts a 5:1 local-to-global sliding-window attention ratio (1024-token local windows) to cut long-context KV-cache cost.
+    - [Qwen Team, *Qwen3 Technical Report* (2025)](https://arxiv.org/abs/2505.09388) — a 0.6B–235B family spanning dense and MoE variants that folds fast/"thinking" reasoning modes into a single checkpoint atop the standard RMSNorm/SwiGLU/RoPE/GQA stack.
 
     **Open-source & tools**
 
-    - [huggingface/transformers](https://github.com/huggingface/transformers) — canonical implementations of every major modern architecture (Llama, Mistral, Qwen, Gemma) with config files exposing every design knob discussed in this chapter.
-    - [EleutherAI/gpt-neox](https://github.com/EleutherAI/gpt-neox) — research training framework with clean reference implementations of RoPE, ALiBi, SwiGLU, and GQA for GPU-scale pretraining.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — canonical implementations of every major modern architecture (Llama, Qwen, Gemma, DeepSeek) with config files exposing every design knob discussed in this chapter.
 
     **Go deeper**
 

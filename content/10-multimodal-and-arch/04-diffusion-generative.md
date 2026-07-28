@@ -1,6 +1,6 @@
 # 10.4 Diffusion Models & Generative Modeling (Breadth)
 
-Generative modeling is the art of learning a distribution $p_\theta(\mathbf{x})$ from data and then sampling from it. For a decade, the dominant paradigms were variational autoencoders (VAEs), generative adversarial networks (GANs), and autoregressive models. Diffusion models — arriving in earnest around 2020 with Ho et al.'s DDPM — quietly displaced GANs as the state of the art for image synthesis, and by 2024 they underpin nearly every major text-to-image and text-to-video system (Stable Diffusion, DALL-E, Imagen, Sora). As an LLM engineer you will encounter diffusion-based image encoders as vision backbone components (see [Vision Transformers & Image Encoders](../10-multimodal-and-arch/01-vision-transformers.html)), diffusion-based image/video generation coupled to language models (see [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html)), and even diffusion applied to *text tokens* as a competitor to autoregressive LLMs. This chapter gives you the conceptual and mathematical toolkit to reason about all of these.
+Generative modeling is the art of learning a distribution $p_\theta(\mathbf{x})$ from data and then sampling from it. For a decade, the dominant paradigms were variational autoencoders (VAEs), generative adversarial networks (GANs), and autoregressive models. Diffusion models — arriving in earnest around 2020 with Ho et al.'s DDPM — quietly displaced GANs as the state of the art for image synthesis, and today they underpin nearly every major text-to-image and text-to-video system (Stable Diffusion, Flux, Imagen, Sora). As an LLM engineer you will encounter diffusion-based image encoders as vision backbone components (see [Vision Transformers & Image Encoders](../10-multimodal-and-arch/01-vision-transformers.html)), diffusion-based image/video generation coupled to language models (see [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html)), and even diffusion applied to *text tokens* as a competitor to autoregressive LLMs. This chapter gives you the conceptual and mathematical toolkit to reason about all of these.
 
 ## Why Diffusion? Motivation and Context
 
@@ -498,10 +498,10 @@ This gives parallel generation, a key advantage over autoregressive models which
 | Conditional probability | Exact $p(x_i \mid x_{<i})$ | Approximate |
 | Revision / editing | Hard (requires resampling) | Natural: re-mask and regenerate |
 | Long-range coherence | Strong (attention over all previous) | Weaker (depends on architecture) |
-| Current quality | Best for NLU/NLG tasks | Competitive on shorter sequences |
+| Current quality | Best for NLU/NLG tasks | Competitive at ~8B scale (LLaDA); commercial dLLMs shipping |
 | Controllability | Via prompting | Easier arbitrary-region infilling |
 
-Diffusion LMs remain competitive with AR on unconditional text generation and controlled infilling, but for tasks requiring long-range consistency (e.g., long-form reasoning), autoregressive models still hold an edge. However, diffusion's native support for infilling makes it attractive for code editing, style transfer, and constrained generation scenarios (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)).
+As of 2026, diffusion LMs have scaled up and reached production. LLaDA-8B (Nie et al., 2025) matches LLaMA3-8B on in-context-learning benchmarks, while commercial diffusion LLMs (Inception Labs' Mercury) and Google DeepMind's experimental Gemini Diffusion exploit parallel token decoding for large throughput gains — Gemini Diffusion reports on the order of 1,400 tokens/sec. Autoregressive models still tend to hold an edge on the very longest-range reasoning, but the gap has narrowed sharply, and diffusion's native support for infilling makes it attractive for code editing, style transfer, and constrained generation scenarios (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)).
 
 {{fig:masked-diffusion-vs-ar-decoding}}
 
@@ -544,7 +544,7 @@ Why should an engineer focused on language models care about diffusion?
     - Compare to pixel-space diffusion at the same resolution: the U-Net would operate on $1024\times1024\times3$ activations, roughly 64× larger spatial volume, making each step $\sim$64× more expensive — latent diffusion's entire raison d'être.
 
 !!! sota "State of the Art & Resources (2026)"
-    Diffusion and flow-matching models are the dominant paradigm for image and video generation: the field has moved from DDPM's 1000-step pixel-space sampling to rectified-flow transformers (SD3, Flux.1) that produce state-of-the-art images in fewer than 10 steps, while masked-diffusion language models now offer a competitive parallel alternative to autoregressive text generation.
+    Diffusion and flow-matching models are the dominant paradigm for image and video generation: the field has moved from DDPM's 1000-step pixel-space sampling to rectified-flow transformers (SD3, Flux.1) that produce state-of-the-art images in fewer than 10 steps, while diffusion language models have scaled to the 8B range (LLaDA) and reached commercial deployment (Inception Labs' Mercury, Google's experimental Gemini Diffusion), offering a genuinely parallel alternative to autoregressive text generation.
 
     **Foundational work**
 
@@ -561,6 +561,7 @@ Why should an engineer focused on language models care about diffusion?
     - [Liu et al., *Flow Straight and Fast: Rectified Flow* (2023)](https://arxiv.org/abs/2209.03003) — straight-line interpolant between noise and data; backbone of SD3 and Flux.1.
     - [Esser et al., *Scaling Rectified Flow Transformers for High-Resolution Image Synthesis* (2024)](https://arxiv.org/abs/2403.03206) — the Stable Diffusion 3 paper; combines DiT with rectified flow and multimodal attention for state-of-the-art text-to-image quality.
     - [Sahoo et al., *Simple and Effective Masked Diffusion Language Models* (NeurIPS 2024)](https://arxiv.org/abs/2406.07524) — MDLM: shows masked-discrete diffusion matches autoregressive perplexity on standard benchmarks, powering parallel text generation.
+    - [Nie et al., *Large Language Diffusion Models* (LLaDA, 2025)](https://arxiv.org/abs/2502.09992) — scales masked diffusion to 8B parameters, matching LLaMA3-8B on in-context-learning benchmarks and showing that strong LLM capabilities are not unique to autoregressive training.
 
     **Open-source & tools**
 

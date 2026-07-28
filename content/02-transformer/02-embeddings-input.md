@@ -493,13 +493,13 @@ This perspective has practical implications:
 
     **Recent advances (2023–2026)**
 
-    - [Yu et al., *Scaling Embedding Layers in Language Models* (2025)](https://arxiv.org/abs/2502.01637) — SCONE adds frequent n-gram embeddings off-accelerator so a 1B model matches a 1.9B baseline at half the compute.
+    - [Yu et al., *Scaling Embedding Layers in Language Models* (2025)](https://arxiv.org/abs/2502.01637) — SCONE adds frequent n-gram embeddings off-accelerator so a 1B model outperforms a 1.9B baseline at roughly half the inference FLOPs and accelerator memory (NeurIPS 2025).
     - [Tao et al., *LLMs are Also Effective Embedding Models: An In-depth Overview* (2024)](https://arxiv.org/abs/2412.12591) — surveys how decoder-only LLMs (GPT, LLaMA) now outperform BERT-style encoders for retrieval and semantic similarity.
 
     **Open-source & tools**
 
     - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — ~300-line reference for weight tying, embedding initialization, and the full token-ID-to-logit pipeline.
-    - [huggingface/tokenizers](https://huggingface.co/docs/tokenizers/index) — official docs for the Rust-backed tokenizer library that feeds token IDs into embedding layers in production systems.
+    - [huggingface/tokenizers](https://github.com/huggingface/tokenizers) — the Rust-backed tokenizer library (BPE, WordPiece, Unigram) that feeds token IDs into embedding layers in production systems.
 
     **Go deeper**
 

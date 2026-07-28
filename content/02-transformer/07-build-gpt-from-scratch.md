@@ -893,7 +893,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
     - Scaling this nanoGPT to a frontier model is mostly module swaps (BPE, RoPE, GQA, RMSNorm/SwiGLU, MoE) and more data/compute — the skeleton is invariant across scale.
 
 !!! sota "State of the Art & Resources (2026)"
-    The decoder-only GPT architecture introduced in GPT-2 (2019) remains the structural blueprint for every frontier LLM — Llama 3, GPT-4, Gemini, Claude — with targeted module swaps (RoPE, GQA, RMSNorm/SwiGLU) rather than structural overhauls. Andrej Karpathy's nanoGPT is the canonical minimal reference implementation that makes this lineage directly readable.
+    The decoder-only GPT architecture introduced in GPT-2 (2019) remains the structural blueprint for every frontier LLM — Llama 4, GPT, Gemini, Claude — with targeted module swaps (RoPE, GQA, RMSNorm/SwiGLU, and increasingly a sparse Mixture-of-Experts MLP) rather than structural overhauls. Andrej Karpathy's nanoGPT — and its 2025 successor nanochat — is the canonical minimal reference implementation that makes this lineage directly readable.
 
     **Foundational work**
 
@@ -905,12 +905,13 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
 
     **Recent advances (2023–2026)**
 
-    - [Grattafiori et al., *The Llama 3 Herd of Models* (Meta, 2024)](https://arxiv.org/abs/2407.21783) — shows how the nanoGPT skeleton scales to 405B parameters with RoPE, GQA, and SwiGLU, illustrating exactly the module-swap path described at the end of this chapter.
+    - [Grattafiori et al., *The Llama 3 Herd of Models* (Meta, 2024)](https://arxiv.org/abs/2407.21783) — shows how the nanoGPT skeleton scales to 405B parameters with RoPE, GQA, and SwiGLU, illustrating exactly the module-swap path described at the end of this chapter. Its 2025 successor, [Llama 4](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) (Scout/Maverick, April 2025), keeps the same block skeleton but makes the MLP a sparse Mixture-of-Experts layer — the one module swap this chapter's dense baseline deliberately omits.
     - [Dao et al., *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness* (2022)](https://arxiv.org/abs/2205.14135) — the IO-aware kernel that powers `F.scaled_dot_product_attention`; understanding it explains why the `is_causal=True` path in this chapter's code is fast in practice.
 
     **Open-source & tools**
 
-    - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — the minimal, readable GPT-2 training repo this chapter follows; ~300 lines each for the model and the training loop.
+    - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — the minimal, readable GPT-2 training repo this chapter follows; ~300 lines each for the model and the training loop. (As of late 2025 it is marked deprecated in favor of nanochat, below, but remains the clearest pretraining-only reference.)
+    - [karpathy/nanochat](https://github.com/karpathy/nanochat) — Karpathy's 2025 successor to nanoGPT: the same decoder skeleton extended into a full tokenize → pretrain → finetune → chat pipeline runnable on one GPU node (a GPT-2-capability model for roughly \$100).
     - [karpathy/build-nanogpt](https://github.com/karpathy/build-nanogpt) — step-by-step git history accompanying the video lecture, letting you replay the build commit by commit.
 
     **Go deeper**

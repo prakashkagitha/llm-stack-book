@@ -247,6 +247,10 @@ Modern choices for the backbone include:
 | GTE (Li et al., 2023) | 110M–7B | 768–3584 | Includes LLM-based variants |
 | BGE (Zhang et al., 2023) | 110M–7B | 768–4096 | Strong MTEB performer |
 | Nomic Embed | 137M | 768 | Fully open, MTEB competitive |
+| Qwen3-Embedding (2025) | 0.6B–8B | 32–4096 (MRL) | Current open standard-bearer; 100+ languages, 32k context |
+| Gemini Embedding (2025) | API | flexible (MRL) | Proprietary; tops the multilingual leaderboard |
+
+By 2026 the frontier of the MTEB/MMTEB leaderboard is dominated by these LLM-based encoders — Qwen3-Embedding (built on the Qwen3 foundation models, Apache-2.0) is the leading fully-open family, while Google's Gemini Embedding leads among proprietary API models. The BERT-scale models above remain the pragmatic default when latency and memory dominate.
 
 ### Training Data Pipelines
 
@@ -335,7 +339,7 @@ def matryoshka_infonce_loss(
     return total_loss / sum(weights)
 ```
 
-MRL is now standard in leading open embedding models. OpenAI's text-embedding-3 family supports variable dimensions via MRL-style training. BGE-M3 (Chen et al., 2024) combines MRL with multi-lingual and multi-granularity retrieval.
+MRL is now standard in leading open embedding models. OpenAI's text-embedding-3 family supports variable dimensions via MRL-style training. BGE-M3 (Chen et al., 2024) combines MRL with multi-lingual and multi-granularity retrieval, and the 2025-era standard-bearers (Qwen3-Embedding, Gemini Embedding) expose a full MRL range — Qwen3-Embedding, for instance, lets you request any dimension from 32 to 4096 from the same model.
 
 ## Instruction-Following Embeddings
 
@@ -350,7 +354,7 @@ Represent this sentence for retrieval:
 
 The instruction is tokenized and processed by the encoder together with the query; the pool operation then attends over both. Because the transformer is causal or uses a prefix mask, the instruction's context bleeds into the query representation.
 
-This is especially powerful for LLM-based embedders. Models like E5-mistral-7b-instruct (Wang et al., 2023) use a decoder-only LLM backbone and use the last-token representation instead of mean pooling (since left-to-right autoregressive models produce context-rich representations at the final token, not the first).
+This is especially powerful for LLM-based embedders. Models like E5-mistral-7b-instruct (Wang et al., 2023) — and the 2025 frontier models Qwen3-Embedding and Gemini Embedding that superseded it on the leaderboards — use a decoder-only LLM backbone and take the last-token representation instead of mean pooling (since left-to-right autoregressive models produce context-rich representations at the final token, not the first).
 
 ```python
 from sentence_transformers import SentenceTransformer
@@ -390,6 +394,8 @@ The **Massive Text Embedding Benchmark** (MTEB, Muennighoff et al., 2023) is the
 | Bitext mining | Tatoeba (multilingual) | F1 |
 
 MTEB's retrieval sub-tasks (the BEIR benchmark, Thakur et al., 2021) are especially important for RAG use cases. Models are evaluated **zero-shot** on held-out domains, measuring generalization rather than in-distribution performance.
+
+The original MTEB has since grown into **MMTEB** (Massive Multilingual Text Embedding Benchmark, Enevoldsen et al., 2025), a community-driven expansion covering over 500 quality-controlled tasks across 250+ languages, plus instruction-following, long-document, and code-retrieval tasks. By 2026 the public multilingual leaderboard on MMTEB is the reference most practitioners consult when picking a model.
 
 ### Running MTEB Evaluation
 
@@ -591,7 +597,7 @@ For the next stage — indexing these embeddings and querying them efficiently a
     - Hybrid search (dense + BM25) consistently outperforms either method alone; use embeddings as one signal, not the only signal.
 
 !!! sota "State of the Art & Resources (2026)"
-    Dense text embeddings have matured from BERT fine-tuning into multi-billion-parameter LLM-based encoders that top the MTEB leaderboard; Matryoshka training and instruction-aware prefixes are now industry standard, and multilingual 100-language models are the default choice for new RAG systems.
+    Dense text embeddings have matured from BERT fine-tuning into multi-billion-parameter LLM-based encoders that top the MTEB/MMTEB leaderboards; as of 2026 the open frontier is Qwen3-Embedding (0.6B–8B) and the proprietary frontier is Google's Gemini Embedding. Matryoshka training and instruction-aware prefixes are now industry standard, and multilingual models spanning 100+ languages are the default choice for new RAG systems.
 
     **Foundational work**
 
@@ -603,9 +609,9 @@ For the next stage — indexing these embeddings and querying them efficiently a
 
     - [Chen et al., *BGE M3-Embedding: Multi-Lingual, Multi-Functionality, Multi-Granularity Text Embeddings Through Self-Knowledge Distillation* (2024)](https://arxiv.org/abs/2402.03216) — single model supporting dense, sparse, and multi-vector retrieval in 100+ languages with up to 8 192-token inputs.
     - [BehnamGhader et al., *LLM2Vec: Large Language Models Are Secretly Powerful Text Encoders* (COLM 2024)](https://arxiv.org/abs/2404.05961) — converts decoder-only LLMs into strong text encoders via bidirectional attention + masked next-token prediction, reaching SOTA on MTEB using only public data.
-    - [Lee et al., *NV-Embed: Improved Techniques for Training LLMs as Generalist Embedding Models* (ICLR 2025 Spotlight)](https://arxiv.org/abs/2405.17428) — latent-attention pooling and two-stage training bring Llama-3-based embeddings to #1 on MTEB retrieval.
-    - [Muennighoff et al., *MTEB: Massive Text Embedding Benchmark* (EACL 2023)](https://arxiv.org/abs/2210.07316) — the 58-dataset, 8-task benchmark that is now the standard evaluation suite for any embedding model.
-    - [Thakur et al., *BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models* (NeurIPS 2021)](https://arxiv.org/abs/2104.08663) — 18-domain zero-shot retrieval benchmark that exposed brittle generalization in dense models and remains the primary RAG-relevant sub-benchmark inside MTEB.
+    - [Zhang et al., *Qwen3 Embedding: Advancing Text Embedding and Reranking Through Foundation Models* (2025)](https://arxiv.org/abs/2506.05176) — the current open standard-bearer; 0.6B/4B/8B Apache-2.0 models built on Qwen3, topping the MTEB multilingual leaderboard with 100+ language and 32k-context support.
+    - [Lee et al., *Gemini Embedding: Generalizable Embeddings from Gemini* (2025)](https://arxiv.org/abs/2503.07891) — Google's proprietary encoder distilled from Gemini, leading MMTEB across multilingual, English, and code benchmarks.
+    - [Enevoldsen et al., *MMTEB: Massive Multilingual Text Embedding Benchmark* (2025)](https://arxiv.org/abs/2502.13595) — community-driven expansion of MTEB to 500+ tasks across 250+ languages; the reference leaderboard for embedding models in 2026.
 
     **Open-source & tools**
 
