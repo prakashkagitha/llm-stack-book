@@ -537,7 +537,7 @@ Notice the frequency column. TP and EP pay *per layer*, so they demand the faste
     - **Activation memory, not parameters, is often what OOMs you** at scale; TP+sequence-parallel, CP, 1F1B, and recomputation are your levers against it.
 
 !!! sota "State of the Art & Resources (2026)"
-    Tensor, pipeline, sequence, and expert parallelism are now mature, production-proven techniques: every frontier training run (GPT-4, Llama, DeepSeek-V3) uses some combination of all four axes. Active research is pushing toward zero-bubble schedules, compute-communication overlap (DualPipe), and smarter MoE load balancing — squeezing the last few percent of MFU out of clusters of thousands of GPUs.
+    Tensor, pipeline, sequence, and expert parallelism are now mature, production-proven techniques: every frontier training run — dense giants like Llama 3 405B and large sparse MoE systems like DeepSeek-V3 (671B total, 256 experts) — uses some combination of all four axes, and MoE-at-scale has become the dominant frontier architecture. Active research is pushing toward zero-bubble schedules, compute-communication overlap (DualPipe), and smarter MoE load balancing — squeezing the last few percent of MFU out of clusters of tens of thousands of GPUs.
 
     **Foundational work**
 

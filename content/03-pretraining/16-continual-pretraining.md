@@ -495,7 +495,7 @@ def fit_cpt_trajectory(tokens, losses):
 - **Chen et al., "Net2Net: Accelerating Learning via Knowledge Transfer" (2015)** — function-preserving net2wider/net2deeper transformations underlying model growth.
 - **Gong et al., "Efficient Training of BERT by Progressively Stacking" (2019)** and **Chen et al., "bert2BERT: Towards Reusable Pretrained Language Models" (2021)** — depth/width growth with weight reuse for transformers.
 - **Komatsuzaki et al., "Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints" (2022)** — the dense-to-MoE upcycling recipe.
-- **Wu et al., "FOCUS: Effective Embedding Initialization for Monolingual Specialization of Multilingual Models" (2023)** — sub-token-mean embedding initialization for vocabulary/tokenizer transfer.
+- **Dobler & de Melo, "FOCUS: Effective Embedding Initialization for Monolingual Specialization of Multilingual Models" (EMNLP 2023)** — sub-token-mean embedding initialization for vocabulary/tokenizer transfer.
 - **Wu et al., "BloombergGPT" (2023)** and **Chen et al., "Meditron" / SaulLM legal-LM reports (2023–2024)** — real domain-adaptive pretraining recipes for finance, medicine, and law.
 
 ## Exercises

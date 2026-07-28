@@ -35,7 +35,7 @@ Linear decay is fast to implement and interpretable. It was widely used in BERT-
 
 ### Cosine Annealing
 
-The dominant pretraining schedule as of 2024. After warmup, the learning rate follows the right half of a cosine curve, smoothly decaying to a floor $\eta_{\min}$ (usually $\eta_{\max}/10$ or a small constant like $1\text{e-}5$):
+For years the default pretraining schedule, and still one of the two standard choices in 2026 (alongside WSD, below). After warmup, the learning rate follows the right half of a cosine curve, smoothly decaying to a floor $\eta_{\min}$ (usually $\eta_{\max}/10$ or a small constant like $1\text{e-}5$):
 
 {{fig:lr-schedule}}
 

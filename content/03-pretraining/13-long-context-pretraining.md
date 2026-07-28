@@ -534,7 +534,7 @@ For chunked prefill — processing a 128 K context in chunks rather than all at 
 
     2. **RoPE + continued pretraining (PI or YaRN):** Apply a scaling method such as YaRN to the positional embeddings, then continue pretraining on long documents for a few hundred to a few thousand steps at a reduced learning rate. The model learns genuine long-range attention patterns, not just in-distribution positional angles. Requires on the order of 5–20 B tokens of long training data and 100–1 000 GPU-hours for a 7 B model. Recovers most of the short-context performance if the mix includes sufficient short documents.
 
-    3. **Train long contexts from scratch:** Incorporate long documents from the beginning of pretraining, using ring/context attention from the start. Expensive but produces models with consistent performance across the full context window. State-of-the-art long-context models (Claude 3, Gemini 1.5) use this strategy. Tradeoff: each token in a long sequence is more expensive per step (quadratic FLOPs), so you see fewer unique tokens per dollar.
+    3. **Train long contexts from scratch:** Incorporate long documents from the beginning of pretraining, using ring/context attention from the start. Expensive but produces models with consistent performance across the full context window. State-of-the-art long-context models (e.g., Gemini 2.5 Pro at a 1M-token window, Llama 4 Scout advertising 10M via its iRoPE scheme) lean on this strategy — a large native pretraining context extended further in mid-training. Tradeoff: each token in a long sequence is more expensive per step (quadratic FLOPs), so you see fewer unique tokens per dollar.
 
     For a 32 K target, approach 2 with YaRN is the sweet spot — achievable by a mid-sized team with a few weeks of compute.
 
@@ -626,7 +626,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Long-context pretraining has progressed rapidly: production models routinely support 128K–1M token windows using a combination of RoPE-based position extension, continued pretraining on long documents, and ring/context parallelism. The core techniques (PI, NTK-aware scaling, YaRN) are now standard ingredients in every major open-weight recipe, and context windows beyond 2M tokens have been demonstrated in research settings.
+    Long-context pretraining has progressed rapidly: production models routinely support 128K–1M token windows — Gemini 2.5 Pro ships a 1M-token window and Llama 4 Scout advertises 10M — using a combination of RoPE-based position extension, continued pretraining on long documents, and ring/context parallelism. The core techniques (PI, NTK-aware scaling, YaRN) are now standard ingredients in every major open-weight recipe, and non-uniform search methods (LongRoPE) have demonstrated windows beyond 2M tokens.
 
     **Foundational work**
 
@@ -639,6 +639,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
     - [Liu et al., *Ring Attention with Blockwise Transformers for Near-Infinite Context* (2023)](https://arxiv.org/abs/2310.01889) — sequence parallelism via a GPU ring; enables training at 128K+ tokens without approximations.
     - [Chen et al., *LongLoRA: Efficient Fine-tuning of Long-Context Large Language Models* (2023)](https://arxiv.org/abs/2309.12307) — shifted sparse attention cuts the compute cost of long-context fine-tuning 16x while preserving full attention at inference.
     - [Ding et al., *LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens* (2024)](https://arxiv.org/abs/2402.13753) — non-uniform positional interpolation search pushes verified context to 2M tokens with only 1K fine-tuning steps.
+    - [Meta AI, *The Llama 4 Herd* (2025)](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) — Scout's 10M-token window via iRoPE (interleaved layers without positional embeddings plus inference-time attention temperature scaling), the current production high-water mark for context length.
 
     **Open-source & tools**
 

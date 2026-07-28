@@ -22,7 +22,7 @@ Three design axes frame every data decision:
 
 ## Common Crawl: The Backbone of LLM Data
 
-[Common Crawl](https://commoncrawl.org) is a nonprofit that continuously crawls the web and publishes monthly snapshots under an open-access license. It is the primary raw material for almost every large open dataset. As of 2025, the Common Crawl corpus spans over 250 billion web pages accumulated across more than a decade of monthly releases.
+[Common Crawl](https://commoncrawl.org) is a nonprofit that continuously crawls the web and publishes monthly snapshots under an open-access license. It is the primary raw material for almost every large open dataset. It has collected petabytes of data via monthly snapshots since 2008, and as of 2026 the corpus spans hundreds of billions of web pages accumulated across nearly two decades of releases.
 
 ### File Formats: WARC, WET, and WAT
 
@@ -218,7 +218,7 @@ Dolma is a 3 trillion token open corpus assembled by the Allen Institute for AI 
 - **Legal care**: documents are tagged with license information; Books3 is excluded.
 - **Taggers**: Dolma attaches Gopher-quality signals, language identification scores, and toxicity scores to every document without removing them — allowing users to filter at different thresholds.
 
-The Dolma toolkit (a separate open-source tool) supports streaming processing of WARC/WET files, deduplication, and mixing — making it the most production-ready open data pipeline as of 2025.
+The Dolma toolkit (a separate open-source tool) supports streaming processing of WARC/WET files, deduplication, and mixing — making it one of the most production-ready open data pipelines available.
 
 ### RefinedWeb (TII, Penedo et al., 2023)
 
@@ -235,7 +235,7 @@ The public release is a 600B-token extract of a ~5-trillion-token internal corpu
 
 FineWeb is a 15 trillion token dataset derived entirely from Common Crawl (96 monthly snapshots through 2024). Its key innovation is showing that *aggressive quality filtering alone* — without exotic curated corpora — can match or exceed the downstream performance of carefully hand-curated mixes. The FineWeb-Edu subset (1.3T tokens) applies an educational quality classifier (a fine-tuned LLM scoring each page on a 0–5 scale for educational value) and dramatically outperforms base FineWeb on knowledge-intensive benchmarks at small model scales (1B–7B parameters).
 
-FineWeb is released under the Common Crawl terms of service, making it the most legally accessible large-scale web corpus.
+FineWeb is released under the Common Crawl terms of service, making it the most legally accessible large-scale web corpus. Its 2025 successor, **FineWeb-2**, generalizes the pipeline to over 1,000 languages (a ~20 TB, ~5-billion-document multilingual corpus built from nearly 100 snapshots), and NVIDIA's **Nemotron-CC** (2024) pushed the English frontier further by combining classifier ensembling with LLM-based synthetic rephrasing to retain roughly four times more unique tokens than DCLM at equal quality — a shift away from the "filter away 90% of the crawl" recipe toward rewriting and augmenting borderline data.
 
 ---
 
@@ -707,7 +707,7 @@ Training data sources fall into a rough hierarchy of legal clarity:
 | Unclear / no license | Most of the web, Common Crawl | High — jurisdiction-dependent |
 | Opted-out or robots.txt blocked | Varies by site | Should exclude |
 
-Most frontier training corpora rely heavily on Tier 3–4 material, betting on fair-use arguments in the US and equivalent doctrines elsewhere. The EU AI Act (effective 2025–2026) adds new transparency requirements: providers of general-purpose AI models must publish a "sufficiently detailed summary" of training data, including copyright opt-outs.
+Most frontier training corpora rely heavily on Tier 3–4 material, betting on fair-use arguments in the US and equivalent doctrines elsewhere. The EU AI Act's obligations for general-purpose AI models became applicable on 2 August 2025, and in July 2025 the Commission published a template requiring providers to publish a "sufficiently detailed summary" of their training data — including the main data sources, the largest datasets and top domain names, and copyright opt-outs.
 
 ### C2PA and Data Consent Infrastructure
 
@@ -765,7 +765,8 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
     **Recent advances (2023–2026)**
 
     - [Penedo et al., *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale* (2024)](https://arxiv.org/abs/2406.17557) — 15T-token web corpus; shows aggressive quality filtering alone matches curated mixes; FineWeb-Edu classifier boosts knowledge benchmarks.
-    - [Li et al., *DataComp-LM: In Search of the Next Generation of Training Sets for Language Models* (2024)](https://arxiv.org/abs/2406.11794) — controlled benchmark for data-curation strategies; DCLM-Baseline enables 64% MMLU at 7B with 2.6T tokens.
+    - [Li et al., *DataComp-LM: In Search of the Next Generation of Training Sets for Language Models* (2024)](https://arxiv.org/abs/2406.11794) — controlled benchmark for data-curation strategies; DCLM-Baseline enables 64% MMLU at 7B with 2.6T tokens; the 240T-token DCLM pool is now a standard curation testbed.
+    - [NVIDIA, *Nemotron-CC: Transforming Common Crawl into a Refined Long-Horizon Pretraining Dataset* (2024)](https://arxiv.org/abs/2412.02595) — classifier ensembling plus LLM synthetic rephrasing retains ~4x more unique tokens than DCLM at equal quality; an 8B model trained on it beats Llama 3.1 8B by +5 MMLU. Its multilingual sibling, [FineWeb2 (2025)](https://arxiv.org/abs/2506.20920), extends the FineWeb pipeline to 1,000+ languages.
     - [Soldaini et al., *Dolma: An Open Corpus of Three Trillion Tokens for Language Model Pretraining Research* (2024)](https://arxiv.org/abs/2402.00159) — most thoroughly documented open pipeline; per-document provenance, license tags, and multi-threshold quality signals.
     - [Xie et al., *DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining* (2023)](https://arxiv.org/abs/2305.10429) — group DRO on a proxy model finds domain weights that outperform human-tuned mixes by 6.5 pp on downstream tasks.
     - [Muennighoff et al., *Scaling Data-Constrained Language Models* (2023)](https://arxiv.org/abs/2305.16264) — quantifies how data repetition beyond ~4 epochs degrades generalization; introduces scaling laws for repeated-token regimes.
@@ -774,7 +775,7 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
 
     - [huggingface/datatrove](https://github.com/huggingface/datatrove) — platform-agnostic, memory-efficient pipeline library (readers, filters, dedup, writers) used to build FineWeb; runs locally or on SLURM unchanged.
     - [allenai/dolma](https://github.com/allenai/dolma) — production-ready data curation toolkit with Rust Bloom-filter dedup, parallel taggers, and S3 support; backs the OLMo training corpus.
-    - [mlfoundations/dclm](https://github.com/mlfoundations/dclm) — DCLM benchmark framework; 300T-token Common Crawl pool, 53-task evaluation suite, and OpenLM pretraining recipes across 411M–7B scales.
+    - [mlfoundations/dclm](https://github.com/mlfoundations/dclm) — DCLM benchmark framework; 240T-token Common Crawl pool, 53-task evaluation suite, and OpenLM pretraining recipes across 411M–7B scales.
     - [togethercomputer/RedPajama-Data](https://github.com/togethercomputer/RedPajama-Data) — open replication of the LLaMA data recipe; v2 adds 40+ pre-computed quality signals to 30T tokens across five languages.
 
     **Go deeper**

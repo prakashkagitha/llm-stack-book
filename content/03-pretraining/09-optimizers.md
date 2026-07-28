@@ -296,7 +296,7 @@ This approximates the full $nm\times nm$ preconditioner by the Kronecker product
 
 ## Muon: Orthogonalizing the Update
 
-**Muon** (Jordan et al., 2024) is the newest entrant and has driven much of the recent optimizer excitement, including reported speed records on nanoGPT and use in frontier-scale training. The name stands for **M**oment**U**m **O**rthogonalized by **N**ewton-Schulz. Its premise is geometric: for a 2-D weight matrix, the *momentum* update $M_t$ is typically dominated by a few large singular directions — it is effectively low-rank, so most of the update's "energy" pushes along a handful of directions and starves the rest. Muon fixes this by replacing the momentum update with its **orthogonalization**: the nearest semi-orthogonal matrix, which has all singular values equal to 1.
+**Muon** (Jordan et al., 2024) is the most prominent of the recent entrants and has driven much of the optimizer excitement since 2024, graduating from record-setting nanoGPT speedruns to frontier-scale production training (Moonshot's Kimi K2 and Zhipu's GLM-4.5 both train on Muon variants). The name stands for **M**oment**U**m **O**rthogonalized by **N**ewton-Schulz. Its premise is geometric: for a 2-D weight matrix, the *momentum* update $M_t$ is typically dominated by a few large singular directions — it is effectively low-rank, so most of the update's "energy" pushes along a handful of directions and starves the rest. Muon fixes this by replacing the momentum update with its **orthogonalization**: the nearest semi-orthogonal matrix, which has all singular values equal to 1.
 
 Formally, if $M_t = U\Sigma V^\top$ is the singular value decomposition (SVD) of the momentum, Muon's update is
 
@@ -357,7 +357,7 @@ Muon's properties make it a compelling AdamW replacement for the bulk of an LLM'
 - **Memory.** Like momentum SGD and Lion, it stores **one** buffer per parameter (momentum), not two — half of Adam's optimizer-state memory. There is no second-moment tensor at all.
 - **Only for 2-D weights.** Orthogonalization is defined for matrices. The standard recipe is **hybrid**: use Muon for the 2-D hidden weight matrices (attention and MLP projections) and a small **AdamW for the 1-D parameters and the input embedding / output head**, which are not matrix-multiplied in the same sense and behave better under Adam.
 - **Scale matching.** The $\sqrt{\max(n,m)}$ factor makes Muon's update RMS comparable to AdamW's, so learning-rate intuition transfers and you can reuse much of an AdamW schedule.
-- **Reported gains.** On small-scale benchmarks (nanoGPT speedruns) and in some larger reports, Muon reaches a target loss in meaningfully fewer steps/tokens than tuned AdamW, while using less memory.
+- **Reported gains.** On small-scale benchmarks (nanoGPT speedruns) and, more recently, at MoE scale (Moonshot's 16B/3B-active Moonlight on 5.7T tokens), Muon reaches a target loss in meaningfully fewer steps/tokens than tuned AdamW — roughly $2\times$ compute efficiency at the compute-optimal frontier — while using less memory.
 
 The mechanism connects cleanly to Shampoo: orthogonalizing $M = U\Sigma V^\top$ to $UV^\top$ is exactly applying the preconditioner $(MM^\top)^{-1/2}M$, a "whitening" of the update — the same spectral idea as Shampoo's inverse-root preconditioning, but computed cheaply with matmuls and applied to the momentum rather than accumulated second moments. Muon can be read as a streamlined, GPU-friendly descendant of the Shampoo line.
 

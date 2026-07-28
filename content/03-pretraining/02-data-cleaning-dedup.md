@@ -950,7 +950,7 @@ For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, a
     - Always run the pipeline on a sample first and audit yield, language distribution, and spot-checked documents before committing to a full run.
 
 !!! sota "State of the Art & Resources (2026)"
-    Web-scale data curation has matured into a disciplined engineering subdiscipline: MinHash + suffix-array deduplication, LLM-scored quality classifiers, and rigorous benchmark decontamination are now standard practice, with open tooling (Dolma toolkit, datatrove, DCLM) making reproducible pipelines accessible to independent researchers.
+    Web-scale data curation has matured into a disciplined engineering subdiscipline: MinHash + suffix-array deduplication, LLM-scored quality classifiers, and rigorous benchmark decontamination are now standard practice, with open tooling (Dolma toolkit, datatrove, DCLM) making reproducible pipelines accessible to independent researchers. The 2025 frontier has shifted from *removing* low-quality text toward *raising the ceiling* on what survives — ensembling multiple model-based quality classifiers and LLM-rephrasing borderline documents into cleaner form (Nemotron-CC, Ultra-FineWeb) rather than discarding them, which extracts more usable tokens from the same crawl for long-horizon training runs.
 
     **Foundational work**
 
@@ -964,6 +964,8 @@ For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, a
     - [Soldaini et al., *Dolma: an Open Corpus of Three Trillion Tokens* (2024)](https://arxiv.org/abs/2402.00159) — fully open 3T-token corpus with detailed ablations of each cleaning stage (heuristics, PII, dedup, decontamination).
     - [Li et al., *DataComp-LM: In Search of the Next Generation of Training Sets* (2024)](https://arxiv.org/abs/2406.11794) — controlled benchmark for data-curation strategies across model scales; finds model-based filtering outperforms heuristics alone.
     - [Penedo et al., *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale* (2024)](https://arxiv.org/abs/2406.17557) — 15T-token open dataset built with full pipeline transparency; FineWeb-Edu shows LLM-annotated quality scores dramatically improve downstream educational benchmarks.
+    - [Su et al., *Nemotron-CC: Transforming Common Crawl into a Refined Long-Horizon Pretraining Dataset* (2024)](https://arxiv.org/abs/2412.02595) — 6.3T-token corpus that ensembles quality classifiers and LLM-rephrases web text, showing filtering *plus* synthetic rephrasing beats aggressive removal for long token-horizon training.
+    - [Wang et al., *Ultra-FineWeb: Efficient Data Filtering and Verification for High-Quality LLM Training Data* (2025)](https://arxiv.org/abs/2505.05427) — a fast, verified model-based filtering pipeline that refines FineWeb into ~1T high-quality English tokens, formalizing how to validate a data-filter before trusting it.
 
     **Open-source & tools**
 

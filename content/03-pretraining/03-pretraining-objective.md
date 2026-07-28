@@ -723,7 +723,7 @@ Training stability issues and how loss diagnostics help debug them are covered i
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Next-token prediction via cross-entropy remains the universal pretraining objective for all major decoder-only LLMs (GPT-4, Llama 3, Gemini, Claude). Active research is refining *how* the loss is computed (memory-efficient kernels, mixed-objective pretraining) and *what it should measure* (tokenizer-agnostic metrics like bits-per-byte), but the core mathematical framework from the 2010s is stable and foundational.
+    Next-token prediction via cross-entropy remains the universal pretraining objective for every major decoder-only LLM through the 2025–2026 frontier generation (GPT-5, Claude Opus 5, Gemini 3, Llama 4, DeepSeek-V3, Qwen3). Active research is refining *how* the loss is computed (memory-efficient kernels such as Cut Cross-Entropy, mixed-objective pretraining) and *what it should measure* (tokenizer-agnostic metrics like bits-per-byte), but the core mathematical framework from the 2010s is stable and foundational.
 
     **Foundational work**
 
@@ -736,7 +736,7 @@ Training stability issues and how loss diagnostics help debug them are covered i
     - [Tay et al., *UL2: Unifying Language Learning Paradigms* (2022)](https://arxiv.org/abs/2205.05131) — shows a mixture of causal (S-denoising), short-span (R-denoising), and aggressive (X-denoising) objectives in a single model matches or beats specialist objectives across tasks.
     - [Wang et al., *What Language Model Architecture and Pretraining Objective Work Best for Zero-Shot Generalization?* (2022)](https://arxiv.org/abs/2204.05832) — large-scale empirical comparison of causal vs. masked objectives across decoder-only and encoder-decoder architectures; key reference for practitioners choosing an objective.
     - [Grattafiori et al., *The Llama 3 Herd of Models* (Meta, 2024)](https://arxiv.org/abs/2407.21783) — details how a state-of-the-art open model is pretrained with standard next-token prediction at scale (15T tokens, 405B params), including packing and BPB evaluation.
-    - [Wijmans et al., *Cut Your Losses in Large-Vocabulary Language Models* (2024)](https://arxiv.org/abs/2411.09009) — proposes Cut Cross-Entropy (CCE), a fused kernel that computes cross-entropy without materializing the full logit matrix, reducing loss-layer memory from 24 GB to 1 MB for a 2B model.
+    - [Wijmans et al., *Cut Your Losses in Large-Vocabulary Language Models* (2024; ICLR 2025)](https://arxiv.org/abs/2411.09009) — proposes Cut Cross-Entropy (CCE), a fused kernel that computes cross-entropy without materializing the full logit matrix, reducing loss-layer memory from 24 GB to 1 MB for a 2B (Gemma 2) model; increasingly adopted as the memory-efficient loss path in modern training stacks.
     - [Chowdhery et al., *PaLM: Scaling Language Modeling with Pathways* (2022)](https://arxiv.org/abs/2204.02311) — documents z-loss and other engineering stabilizations for cross-entropy at 540B-parameter scale.
 
     **Open-source & tools**

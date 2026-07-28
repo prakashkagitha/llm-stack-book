@@ -543,7 +543,7 @@ DeepSpeed extends ZeRO with **offload**: push the sharded optimizer states (and 
 
 ## FSDP: PyTorch-Native Fully Sharded Data Parallel
 
-**FSDP** (Fully Sharded Data Parallel) is PyTorch's native implementation of the ZeRO-3 idea, built into `torch.distributed`. Conceptually it is ZeRO-3; in practice it has its own vocabulary and knobs worth knowing because FSDP (and its successor FSDP2) is what most PyTorch-native large-model training uses today.
+**FSDP** (Fully Sharded Data Parallel) is PyTorch's native implementation of the ZeRO-3 idea, built into `torch.distributed`. Conceptually it is ZeRO-3; in practice it has its own vocabulary and knobs worth knowing because FSDP — and, as of 2026, its successor **FSDP2** (`fully_shard`), the API PyTorch now recommends for new training code — is what most PyTorch-native large-model training uses today.
 
 ### The FSDP Unit and the Flat Parameter
 
@@ -703,7 +703,7 @@ A few load-bearing details in that script:
 
 ### FSDP2: Per-Parameter Sharding with DTensor
 
-The newer **FSDP2** redesigns sharding around per-parameter `DTensor` (distributed tensor) representations instead of the monolithic FlatParameter. Each parameter is individually a sharded `DTensor`, which composes cleanly with tensor parallelism (you can have a parameter that is both TP-sharded along one mesh dimension and FSDP-sharded along another), removes FlatParameter's awkward edge cases around mixed dtypes and frozen parameters, and integrates better with `torch.compile`. The mental model — all-gather a unit's params before compute, free after, reduce-scatter grads — is unchanged; FSDP2 mostly makes the *composition* with other parallelism dimensions (the "$N$-D parallelism" of Chapter 3.6 and 3.7) far cleaner via a unified `DeviceMesh`.
+The newer **FSDP2** redesigns sharding around per-parameter `DTensor` (distributed tensor) representations instead of the monolithic FlatParameter. Each parameter is individually a sharded `DTensor`, which composes cleanly with tensor parallelism (you can have a parameter that is both TP-sharded along one mesh dimension and FSDP-sharded along another), removes FlatParameter's awkward edge cases around mixed dtypes and frozen parameters, and integrates better with `torch.compile`. The mental model — all-gather a unit's params before compute, free after, reduce-scatter grads — is unchanged; FSDP2 mostly makes the *composition* with other parallelism dimensions (the "$N$-D parallelism" of Chapter 3.6 and 3.7) far cleaner via a unified `DeviceMesh`. As of 2026 `fully_shard` (FSDP2) is the API PyTorch recommends for new code, and PyTorch ships an FSDP1→FSDP2 migration guide; the `FullyShardedDataParallel` (FSDP1) wrapper used in the runnable examples above still works, but new development has moved to FSDP2.
 
 ### Putting It Together: A Runnable Distributed `train.py`
 

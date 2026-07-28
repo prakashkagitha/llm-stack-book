@@ -119,7 +119,7 @@ If you trained *only* on rephrasings, you would inherit every quirk of the rewri
 
 ## Recipe 2 — Textbook-Style Generation (Phi, Cosmopedia, FineWeb-Edu)
 
-The second recipe goes further: generate *new* expository content rather than rewriting a specific source. The thesis, from Microsoft's **Phi** series ("Textbooks Are All You Need," Gunasekar et al.), is that data *quality* can substitute for *quantity* and *model size*. A small model trained on a curated diet of "textbook-quality" text — clear, pedagogically structured, low-noise — can match much larger models trained on raw web scrapings. Phi-1 (1.3B) reached strong code performance on a tiny, curated corpus; later Phi models extended the recipe to general reasoning.
+The second recipe goes further: generate *new* expository content rather than rewriting a specific source. The thesis, from Microsoft's **Phi** series ("Textbooks Are All You Need," Gunasekar et al.), is that data *quality* can substitute for *quantity* and *model size*. A small model trained on a curated diet of "textbook-quality" text — clear, pedagogically structured, low-noise — can match much larger models trained on raw web scrapings. Phi-1 (1.3B) reached strong code performance on a tiny, curated corpus; later Phi models extended the recipe to general reasoning. By Phi-4 (14B, late 2024) synthetic data had become a central pillar of the pretraining mix rather than a garnish — and, tellingly, phi-4 surpasses its own teacher on STEM question-answering, evidence that careful data *generation* can go beyond plain distillation.
 
 There are two ways to get textbook-quality tokens:
 
@@ -351,7 +351,7 @@ Three design points are doing the heavy lifting:
 
 ### Distillation vs. RL: where synthetic SFT stops
 
-Rejection-sampling distillation is **off-policy SFT on filtered samples**. It is cheap, stable, and gets you most of the way. But it has a ceiling: the student can only imitate traces the teacher already produces, and SFT on someone else's tokens can teach *style* without *competence* (the student parrots "Let me think step by step" without the underlying search). When you want the student to *exceed* its imitation ceiling, you move to RL with verifiable rewards, where the student generates its *own* traces and is rewarded for correctness — see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html) and [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html). A common modern pipeline is: rejection-sampling SFT to bootstrap, *then* RLVR to push past the teacher.
+Rejection-sampling distillation is **off-policy SFT on filtered samples**. It is cheap, stable, and gets you most of the way. But it has a ceiling: the student can only imitate traces the teacher already produces, and SFT on someone else's tokens can teach *style* without *competence* (the student parrots "Let me think step by step" without the underlying search). When you want the student to *exceed* its imitation ceiling, you move to RL with verifiable rewards, where the student generates its *own* traces and is rewarded for correctness — see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html) and [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html). A common modern pipeline is: rejection-sampling SFT to bootstrap, *then* RLVR to push past the teacher. The landmark demonstration is DeepSeek-R1 (2025): the reasoning traces of an RL-trained frontier model were distilled by plain SFT into small dense students that inherited much of the teacher's reasoning — the clearest evidence to date that this recipe transfers frontier capability into compact models.
 
 ---
 
@@ -621,6 +621,8 @@ The throughline across all five: **synthetic data converts compute into targeted
     - [Gerstgrasser et al., *Is Model Collapse Inevitable?* (2024)](https://arxiv.org/abs/2404.01413) — shows accumulating real + synthetic data breaks the collapse dynamic; test risk bounded by π²/6 of the baseline.
     - [Muennighoff et al., *Scaling Data-Constrained Language Models* (2023)](https://arxiv.org/abs/2305.16264) — NeurIPS 2023 outstanding paper; quantifies diminishing returns of repeated epochs vs. fresh tokens.
     - [Cheng et al., *Instruction Pre-Training* (2024)](https://arxiv.org/abs/2406.14491) — injecting 200M synthesized instruction-response pairs during pretraining; enables Llama3-8B to match 70B on downstream tasks.
+    - [*Phi-4 Technical Report* (Microsoft, 2024)](https://arxiv.org/abs/2412.08905) — a 14B model whose recipe makes synthetic data a central pillar of pretraining; phi-4 surpasses its own teacher on STEM QA, showing generation goes beyond distillation.
+    - [DeepSeek-AI, *DeepSeek-R1* (2025)](https://arxiv.org/abs/2501.12948) — reasoning distilled by plain SFT on verified traces from an RL-trained frontier model into small dense students; the landmark demonstration of Recipe 4 at scale.
 
     **Open-source & tools**
 

@@ -710,12 +710,12 @@ import deepspeed
 model_engine, _, _, _ = deepspeed.initialize(model=model, config="ds_config_zero1.json")
 ```
 
-This pattern — Megatron-Core for the TP/PP topology, DeepSpeed for the optimizer-side ZeRO sharding — is sometimes called **3D + ZeRO** and is the dominant approach for frontier model training runs as of 2025.
+This pattern — Megatron-Core for the TP/PP topology, DeepSpeed for the optimizer-side ZeRO sharding — is sometimes called **3D + ZeRO** and remains the dominant approach for frontier model training runs in 2026, now increasingly running on NVIDIA Blackwell (B200 / GB200 NVL72) systems alongside the large H100/H200 fleets of the previous generation.
 
 For inference serving after training, the parallelism story shifts toward pure TP (no PP, since autoregressive decode cannot pipeline) and often requires weight resharding from the training checkpoint format. See [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html) for the inference-side parallelism story.
 
 !!! sota "State of the Art & Resources (2026)"
-    As of 2026, the 3D + ZeRO pattern (Megatron-Core for tensor/pipeline parallelism, DeepSpeed for optimizer sharding) remains the dominant approach for frontier pretraining runs, with recent additions of context parallelism (CP) expanding the space to 4D or even 5D parallelism for long-sequence models. Production clusters regularly achieve 40–55% MFU on H100/H200 hardware using these frameworks.
+    As of 2026, the 3D + ZeRO pattern (Megatron-Core for tensor/pipeline parallelism, DeepSpeed for optimizer sharding) remains the dominant approach for frontier pretraining runs, with recent additions of context parallelism (CP) expanding the space to 4D or even 5D parallelism for long-sequence models. Production clusters regularly achieve 40–55% MFU on H100/H200 hardware, and increasingly on NVIDIA Blackwell (B200 / GB200 NVL72) systems — now the frontier training platform — using these frameworks.
 
     **Foundational work**
 

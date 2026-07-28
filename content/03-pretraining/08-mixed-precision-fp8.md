@@ -215,7 +215,7 @@ A second pattern, common in large-scale frameworks (DeepSpeed, Megatron, FSDP wi
 
 ## FP8 training: pushing the matmuls to 8 bits
 
-bf16 is now table stakes. The 2024-2026 frontier is **FP8 training**, where the heavy matmuls run with 8-bit inputs, doubling tensor-core throughput again and halving the bytes moved through the matmul. NVIDIA's Hopper (H100) and Blackwell GPUs have native FP8 tensor cores; DeepSeek-V3 famously trained a 671B-parameter MoE largely in FP8 and documented the recipe.
+bf16 is now table stakes, and **FP8 training** — heavy matmuls with 8-bit inputs, doubling tensor-core throughput again and halving the bytes moved through the matmul — has gone from research frontier to standard production practice. NVIDIA's Hopper (H100) and Blackwell GPUs have native FP8 tensor cores; DeepSeek-V3 famously trained a 671B-parameter MoE largely in FP8 and documented the recipe. By 2026 the frontier has pushed one rung lower still, to **4-bit (FP4) training** on Blackwell — covered later in this section.
 
 But 8 bits is *brutally* few. Recall the two FP8 formats and their jobs:
 
@@ -304,6 +304,10 @@ The mental model: **FP8 is for the GEMMs only.** The element-wise glue of a tran
 
     Empirically the input embedding, the final LM head (the big $d_\text{model} \times \text{vocab}$ projection), the LayerNorm/RMSNorm, and the attention softmax are the most precision-sensitive parts of a transformer. Almost every successful FP8 recipe (DeepSeek-V3, NVIDIA's) keeps these in bf16/fp32 and FP8s only the bulk feed-forward and projection GEMMs. The throughput you give up is small; the stability you buy is large. Start conservative, then expand the FP8 surface as you confirm the loss curve matches a bf16 baseline.
 
+### The next rung: FP4 and hardware microscaling
+
+The narrow-inputs/wide-accumulator logic extends below 8 bits. Blackwell tensor cores add native **microscaling** formats — MXFP8, MXFP4, and NVIDIA's **NVFP4** — where the block scale factor is applied *in hardware* over small (e.g. 16- or 32-element) blocks, generalizing the software blockwise scaling above and making the delayed-scaling amax bookkeeping largely unnecessary. In 2025 NVIDIA reported the first long-horizon 4-bit run: a 12B-parameter model trained on 10T tokens in **NVFP4** matched an FP8 baseline's loss and downstream accuracy, using Random Hadamard transforms to spread outliers, 2D block scaling, stochastic rounding on the gradients, and keeping a small fraction of sensitive layers in higher precision. FP4 is still delicate and not yet a default, but it is where the throughput race is now headed.
+
 ## Numerics, stability, and debugging low-precision runs
 
 Low precision interacts with everything else in the training stack. A few mechanisms worth internalizing:
@@ -352,7 +356,7 @@ grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ b
     - Keep **softmax, norms, loss, and optimizer state in fp32**; the rule of thumb is "any large-range reduction or division by a small number wants fp32."
 
 !!! sota "State of the Art & Resources (2026)"
-    Mixed-precision training is now standard practice for all large-scale LLM runs: bf16 with fp32 optimizer states is the default baseline, and FP8 (E4M3/E5M2 with per-tensor or blockwise delayed scaling) is the production frontier on Hopper and Blackwell GPUs. The key open challenges are extending fine-grained FP8 scaling to attention and MoE routing layers while preserving training stability at multi-trillion-token scale.
+    Mixed-precision training is now standard practice for all large-scale LLM runs: bf16 with fp32 optimizer states is the default baseline, and FP8 (E4M3/E5M2 with per-tensor or blockwise scaling) is now standard production practice on Hopper and Blackwell, with Blackwell adding hardware **microscaling** (MXFP8/MXFP4/NVFP4). The 2026 frontier is **4-bit (FP4) training**: NVIDIA's NVFP4 recipe has trained a 12B model on 10T tokens at parity with an FP8 baseline, and the open challenges are stabilizing 4-bit training at larger scale and extending fine-grained scaling to attention and MoE routing layers.
 
     **Foundational work**
 
@@ -365,6 +369,7 @@ grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ b
     - [Peng et al., *FP8-LM: Training FP8 Large Language Models* (2023)](https://arxiv.org/abs/2310.18313) — extends FP8 to gradients and optimizer states, achieving 75% faster training and 39% memory reduction vs. BF16 on GPT-175B.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — first public account of fine-grained (per-token-group and 128×128 tile) FP8 training at 671B scale; details which components stay in bf16/fp32.
     - [Xi et al., *COAT: Compressing Optimizer States and Activation for Memory-Efficient FP8 Training* (2024)](https://arxiv.org/abs/2410.19313) — ICLR 2025; reduces end-to-end training memory 1.54× vs. BF16 by quantizing optimizer states and activations into FP8.
+    - [NVIDIA, *Pretraining Large Language Models with NVFP4* (2025)](https://arxiv.org/abs/2509.25149) — the first long-horizon 4-bit training run (12B params, 10T tokens) matching an FP8 baseline, via Random Hadamard transforms, 2D block scaling, and stochastic rounding.
 
     **Open-source & tools**
 
@@ -373,7 +378,8 @@ grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ b
     **Go deeper**
 
     - [PyTorch AMP Tutorial](https://docs.pytorch.org/tutorials/recipes/recipes/amp_recipe.html) — official step-by-step guide to `torch.autocast` and `GradScaler` with timing benchmarks.
-    - [NVIDIA Developer Blog, *Floating-Point 8: An Introduction to Efficient, Lower-Precision AI Training*](https://developer.nvidia.com/blog/floating-point-8-an-introduction-to-efficient-lower-precision-ai-training/) — accessible explainer of E4M3/E5M2, scaling strategies, and throughput gains on H100.
+    - [NVIDIA Developer Blog, *Floating-Point 8: An Introduction to Efficient, Lower-Precision AI Training*](https://developer.nvidia.com/blog/floating-point-8-an-introduction-to-efficient-lower-precision-ai-training/) — accessible explainer of E4M3/E5M2, scaling strategies, and throughput gains on H100, including Blackwell's MXFP8 microscaling.
+    - [NVIDIA Developer Blog, *NVFP4 Trains with Precision of 16-bit and Speed and Efficiency of 4-bit*](https://developer.nvidia.com/blog/nvfp4-trains-with-precision-of-16-bit-and-speed-and-efficiency-of-4-bit/) — the microscaling FP4 pretraining recipe and Blackwell hardware support.
 
 ## Further reading
 

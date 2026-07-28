@@ -399,7 +399,7 @@ class AsyncCheckpointer:
         self._check_for_errors()
 ```
 
-Modern training frameworks (PyTorch's `AsyncCheckpointing` in `torch.distributed.checkpoint`, DeepSpeed's `async_checkpoint_engine`) implement variations of this pattern. The `dist.barrier()` inside the snapshot step ensures all ranks have finished their CPU copy before training resumes, which is critical — you cannot have rank 0 already on step $N+1$ while rank 3 is still copying rank-$N$ tensors.
+Modern training frameworks (PyTorch's `AsyncCheckpointing` in `torch.distributed.checkpoint`, DeepSpeed's `async_checkpoint_engine`) implement variations of this pattern. As of 2025, PyTorch DCP defaults its async path to a *separate process* rather than a background thread (`AsyncCheckpointerType.PROCESS`), which removes the Python GIL contention that otherwise slows the training steps overlapping the write. The `dist.barrier()` inside the snapshot step ensures all ranks have finished their CPU copy before training resumes, which is critical — you cannot have rank 0 already on step $N+1$ while rank 3 is still copying rank-$N$ tensors.
 
 ### In-Memory Checkpointing
 
@@ -962,7 +962,7 @@ if __name__ == "__main__":
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Checkpointing and fault tolerance for LLM pretraining has become a first-class systems research area: with 1000+ GPU runs lasting weeks, the field has moved from epoch-level saves to sub-minute asynchronous in-memory checkpoints, topology-agnostic sharded formats, and per-step fault tolerance with zero training interruption.
+    Checkpointing and fault tolerance for LLM pretraining has become a first-class systems research area: with runs now spanning thousands to tens of thousands of GPUs over weeks or months, the field has moved from epoch-level saves to sub-minute asynchronous in-memory checkpoints, topology-agnostic sharded formats, and per-step fault tolerance with zero training interruption.
 
     **Foundational work**
 
@@ -993,7 +993,7 @@ if __name__ == "__main__":
 - **Zhao et al. (2023)** — "PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel." *VLDB*. Describes FSDP state dict types and the engineering decisions behind sharded checkpointing.
 - **Rajbhandari et al. (2020)** — "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models." *SC'20*. Covers ZeRO optimizer state sharding, which directly informs checkpoint design in DeepSpeed.
 - **DeepSpeed `checkpoint_engine`** — DeepSpeed's async checkpoint engine and its `AsyncTensorSwapper` are described in the DeepSpeed GitHub repository and blog posts.
-- **Lian et al. (2022)** — "GEMINI: Fast Failure Recovery in Distributed Training with In-Memory Checkpoints." *SOSP 2022*. A landmark systems paper on in-memory checkpointing with neighbor-replica redundancy.
+- **Wang et al. (2023)** — "GEMINI: Fast Failure Recovery in Distributed Training with In-Memory Checkpoints." *SOSP 2023*. A landmark systems paper on in-memory checkpointing with neighbor-replica redundancy.
 - **Eisenbud et al. (2022)** — "Pathways: Asynchronous Distributed Dataflow for ML." Describes Google's approach to fault tolerance in large-scale ML infrastructure.
 
 ---
