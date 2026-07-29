@@ -258,9 +258,9 @@ We need each activation paired with its derivative (expressed in terms of cached
 | Tanh | $\tanh(z)$ | $1-\tanh^2(z)$ | zero-centered; saturates |
 | ReLU | $\max(0,z)$ | $\mathbb{1}[z>0]$ | cheap; can "die" |
 | Leaky ReLU | $\max(\alpha z, z)$ | $\alpha$ if $z<0$ else $1$ | fixes dead units |
-| GELU | $z\,\Phi(z)$ | $\Phi(z)+z\,\phi(z)$ | smooth; LLM default |
+| GELU | $z\,\Phi(z)$ | $\Phi(z)+z\,\varphi(z)$ | smooth; transformer default |
 
-GELU (Gaussian Error Linear Unit; $\Phi$ is the standard normal CDF) is the activation inside most transformer feed-forward blocks; we cover it in [The Transformer Block](../02-transformer/06-transformer-block.html). For our from-scratch MLP we use ReLU, whose derivative is a simple gate.
+GELU (Gaussian Error Linear Unit) uses $\Phi$ for the standard normal CDF and $\varphi$ for its density — distinct from the generic $\phi$ we use for "an activation." GELU, and the gated SwiGLU that has largely displaced it in 2026-era LLM feed-forward blocks, are covered in [The Transformer Block](../02-transformer/06-transformer-block.html). For our from-scratch MLP we use ReLU, whose derivative is a simple gate.
 
 ```python
 import numpy as np
@@ -419,6 +419,87 @@ for epoch in range(2000):
 
 Running this, the gradient check prints a relative error on the order of $10^{-7}$ — the gap between analytic and numerical gradients is pure floating-point noise, confirming the backward pass is exact. The loss falls and accuracy climbs toward 1.0 as the two hidden ReLU layers carve the angular decision boundary that no single linear layer could. You have now trained a neural network with code you could write on a whiteboard.
 
+### What backprop costs: the 2/4 FLOP split and the activation bill
+
+Now count the arithmetic, because this small calculation is the origin of every training-compute estimate in the rest of the book. One layer's forward pass is a single matmul $Z = XW$ with $X \in \mathbb{R}^{N\times d_{\text{in}}}$, $W \in \mathbb{R}^{d_{\text{in}}\times d_{\text{out}}}$. A matmul does one multiply and one add per element of the contraction, so it costs $2\,N\,d_{\text{in}}\,d_{\text{out}}$ FLOPs — i.e. **2 FLOPs per parameter per example**. The backward pass is *two* matmuls of exactly the same shape, $\bar W = X^\top\bar Z$ and $\bar X = \bar Z W^\top$, hence **4 FLOPs per parameter per example**. Total: 6.
+
+Sum that over every layer of any network built from dense matmuls and you get the rule of thumb
+
+$$
+C \;\approx\; 6\,N_{\text{params}}\,D_{\text{tokens}},
+$$
+
+which is the budgeting equation behind Chinchilla-style compute allocation in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html). Two footnotes fall straight out of the derivation. First, the *last* layer needs only $\bar W$, not $\bar X$ (our loop's `if i > 0:` guard skips it), and the *first* layer's $\bar X$ is likewise wasted unless you need input gradients — a small constant saving. Second, inference is forward-only, so it is $\approx 2 N_{\text{params}}$ FLOPs per token, one third of training.
+
+The memory bill is the other half of the story, and it is the reason backprop is expensive on real hardware. To compute $\bar W^{(\ell)} = (A^{(\ell-1)})^\top \bar Z^{(\ell)}$ you must still have $A^{(\ell-1)}$ when the backward sweep reaches layer $\ell$ — so *every* forward activation stays resident from the moment it is produced until its layer's backward runs. That is the `cache` dict in our `MLP.forward`, and it scales with batch size, not just with parameters.
+
+!!! example "Worked example: the backward pass's memory bill"
+
+    Take `MLP([784, 256, 128, 10])` with a batch of $N = 1024$ in fp32. Parameters: $784\cdot256 + 256\cdot128 + 128\cdot10 \approx 2.35\times10^5$, about **0.94 MB**. Cached activations: the inputs to the three layers are $A^{(0)}, A^{(1)}, A^{(2)}$ with widths $784 + 256 + 128 = 1168$, so $1024 \times 1168 \approx 1.20\times10^6$ floats, about **4.8 MB** — five times the parameter memory, from a *tiny* network.
+
+    That ratio only worsens with depth and sequence length, which is why large-model training is activation-memory-bound and why **gradient checkpointing** (recompute activations in the backward pass instead of storing them) exists; see [Automatic Differentiation & PyTorch Internals](../01-foundations/07-autodiff-pytorch.html) and [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html). Add gradients (one per parameter) and Adam's two moment buffers and you have the full training memory equation of [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html).
+
+### The same MLP in PyTorch — what the library does for you
+
+You should now write this network the way you will write every network for the rest of the book: as a `torch.nn.Module`, letting autograd generate the backward pass you just wrote by hand. The point of the exercise is the *correspondence* — every library call below replaces a specific block of our NumPy code.
+
+| From-scratch piece | PyTorch equivalent |
+|---|---|
+| `X @ W + b` | `nn.Linear(d_in, d_out)` (stores `weight` as `(d_out, d_in)`, computes `x @ weight.T + bias`) |
+| `rng.normal(0, sqrt(2/d_in), ...)` | `nn.init.kaiming_normal_(w, mode="fan_in", nonlinearity="relu")` |
+| `softmax` + `-log P[y]` + `dZ = (P-Y)/N` | `F.cross_entropy(logits, y)` — fuses log-softmax and NLL, and its backward *is* $(P-Y)/N$ |
+| the whole `loss_and_grads` backward loop | `loss.backward()` |
+| `p.grad = 0.0` before each step | `optimizer.zero_grad(set_to_none=True)` |
+| `net.step(dW, db, lr)` | `torch.optim.SGD(net.parameters(), lr=...)` then `.step()` |
+| `clip_grads(...)` | `torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)` |
+| `gradient_check(...)` | `torch.autograd.gradcheck(fn, inputs)` (use `float64`) |
+| `BatchNorm1d` above | `nn.BatchNorm1d(dim)` + `model.train()` / `model.eval()` |
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class TorchMLP(nn.Module):
+    """The NumPy MLP above, expressed in PyTorch. Same math, autograd backward."""
+
+    def __init__(self, sizes):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            nn.Linear(d_in, d_out) for d_in, d_out in zip(sizes[:-1], sizes[1:])
+        )
+        for lin in self.layers:
+            # nn.Linear's DEFAULT init is kaiming_uniform_(a=sqrt(5)) -- a legacy
+            # choice, NOT He-for-ReLU. Set it explicitly to match our NumPy MLP.
+            nn.init.kaiming_normal_(lin.weight, mode="fan_in", nonlinearity="relu")
+            nn.init.zeros_(lin.bias)
+
+    def forward(self, x):
+        for lin in self.layers[:-1]:
+            x = F.relu(lin(x))
+        return self.layers[-1](x)                  # logits; no softmax here
+
+torch.manual_seed(0)
+Xt = torch.tensor(X, dtype=torch.float32)          # reuse the demo data above
+yt = torch.tensor(y, dtype=torch.long)
+
+net_t = TorchMLP([D, 64, 64, C])
+opt = torch.optim.SGD(net_t.parameters(), lr=0.2)
+
+for epoch in range(2000):
+    logits = net_t(Xt)
+    loss = F.cross_entropy(logits, yt)             # fused softmax + CE, mean over batch
+    opt.zero_grad(set_to_none=True)                # gradients accumulate -- zero them
+    loss.backward()                                # the reverse-topological sweep
+    torch.nn.utils.clip_grad_norm_(net_t.parameters(), 1.0)
+    opt.step()
+    if epoch % 400 == 0:
+        acc = (logits.argmax(dim=1) == yt).float().mean().item()
+        print(f"epoch {epoch:4d}  loss {loss.item():.4f}  acc {acc:.3f}")
+```
+
+Two traps worth naming now. **Do not** apply a softmax before `F.cross_entropy` — it already contains `log_softmax`, and softmaxing twice silently flattens your gradients. And `nn.Linear`'s weight is stored transposed relative to our $(d_{\text{in}}, d_{\text{out}})$ convention, which is the single most common shape bug when porting hand-written code to PyTorch. The machinery that turns `loss.backward()` into the sweep you wrote by hand — the tape, `grad_fn`, custom `autograd.Function` — is dissected in [Automatic Differentiation & PyTorch Internals](../01-foundations/07-autodiff-pytorch.html), and this exact loop skeleton (module, `cross_entropy`, `zero_grad`, `backward`, clip, `step`) is what the capstone scales up to train a 100M-parameter transformer in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
+
 ---
 
 ## Initialization and the Gradient Pathologies
@@ -509,7 +590,7 @@ def clip_grads(grads, max_norm):
     return grads
 ```
 
-This exact technique stabilizes large-model training runs; we return to it in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
+This exact technique stabilizes large-model training runs. In PyTorch the one-liner is `torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)`, called *after* `loss.backward()` and *before* `optimizer.step()`; a global norm of 1.0 is the near-universal default in LLM pretraining, and it is exactly what the Stack-100M loop uses in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html). We return to clipping and its failure modes in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
 
 ### The dead-ReLU trap
 
@@ -536,20 +617,24 @@ The $\gamma$ and $\beta$ are trained like any other parameter; crucially, the ne
 
 The payoffs are large: BatchNorm permits much higher learning rates (the normalization caps how far activations can drift), reduces sensitivity to initialization, and has a mild regularizing effect because each example's normalization depends on the random composition of its batch.
 
+!!! note "Aside: 'internal covariate shift' is the wrong explanation"
+
+    BatchNorm works, but the mechanism the original paper proposed has not held up. Santurkar et al., *How Does Batch Normalization Help Optimization?* (2018), showed that you can deliberately *inject* distributional shift after a BatchNorm layer and still keep its optimization benefits, and that networks with and without BatchNorm show similar amounts of covariate shift. Their explanation — the one the field now largely accepts — is that normalization **smooths the loss landscape**: it reduces the Lipschitz constant of the loss and of its gradient, so gradients are more predictive over longer distances and larger learning rates become safe. The same reparameterization argument is what justifies LayerNorm and RMSNorm in transformers. Cite the mechanism, not the slogan, if an interviewer asks.
+
 ### Backprop through BatchNorm
 
 BatchNorm is a genuinely instructive backward pass because the normalization couples every example in the batch — $\mu$ and $\sigma^2$ depend on all of them — so the gradient is not elementwise. Differentiating the transform and collecting terms gives the canonical result:
 
 $$
 \frac{\partial L}{\partial z_n}
-= \frac{\gamma}{\sqrt{\sigma^2+\varepsilon}}\left(
+= \frac{1}{\sqrt{\sigma^2+\varepsilon}}\left(
 \bar{\hat z}_n
 - \frac{1}{N}\sum_{m}\bar{\hat z}_m
 - \frac{\hat z_n}{N}\sum_{m}\bar{\hat z}_m \hat z_m
 \right),
 $$
 
-where $\bar{\hat z}_n = \partial L/\partial \hat z_n = \gamma \cdot \partial L/\partial y_n$. The two subtracted terms are corrections for how each input influences the shared mean and variance. Here is a complete, gradient-checkable implementation.
+where $\bar{\hat z}_n = \partial L/\partial \hat z_n = \gamma \cdot \partial L/\partial y_n$ — the $\gamma$ enters once, inside the adjoint, so it must not be repeated in the prefactor. The two subtracted terms are corrections for how each input influences the shared mean and variance. Here is a complete, gradient-checkable implementation.
 
 ```python
 import numpy as np
@@ -648,7 +733,7 @@ A second favorite: *why does backprop cost about the same as the forward pass ra
 !!! key "Key Takeaways"
 
     - An MLP is a chain of affine maps and elementwise nonlinearities; the nonlinearity is non-negotiable, because composing linear maps just yields another linear map. Depth buys compositional efficiency at the price of a harder optimization landscape.
-    - Backprop is the chain rule evaluated right-to-left, carrying an adjoint (upstream gradient) and applying a vector-Jacobian product at each node. Reverse-mode autodiff computes all parameter gradients in one backward sweep at ~2× forward cost.
+    - Backprop is the chain rule evaluated right-to-left, carrying an adjoint (upstream gradient) and applying a vector-Jacobian product at each node. Reverse-mode autodiff computes all parameter gradients in one backward sweep at ~2× forward cost — 2 FLOPs per parameter per token forward, 4 backward, which is where $C \approx 6ND$ comes from — and it pays for that with **activation memory**, since every forward input must survive until its layer's backward runs.
     - The two identities you must own: for $Z=XW+\mathbf b$, $\bar W = X^\top\bar Z$, $\bar X = \bar Z W^\top$, $\bar{\mathbf b}=\mathbf 1^\top\bar Z$. Every dense-layer gradient is one of these.
     - The softmax + cross-entropy gradient collapses to $P-Y$ ("predicted minus true"); always fuse the two for correctness and numerical stability.
     - Gradients **accumulate**, so zero them before each backward pass — and always gradient-check a hand-written backward against central differences before trusting it.
@@ -667,6 +752,7 @@ A second favorite: *why does backprop cost about the same as the forward pass ra
     - [Glorot & Bengio, *Understanding the Difficulty of Training Deep Feedforward Neural Networks* (2010)](https://proceedings.mlr.press/v9/glorot10a.html) — Introduced Xavier initialization via forward/backward variance analysis; diagnosed why sigmoid saturates deep nets.
     - [He et al., *Delving Deep into Rectifiers* (2015)](https://arxiv.org/abs/1502.01852) — Derived the factor-of-2 Kaiming correction for ReLU networks and introduced PReLU.
     - [Ioffe & Szegedy, *Batch Normalization* (2015)](https://arxiv.org/abs/1502.03167) — Showed that normalizing pre-activations per mini-batch allows much higher learning rates and reduces sensitivity to initialization.
+    - [Santurkar et al., *How Does Batch Normalization Help Optimization?* (2018)](https://arxiv.org/abs/1805.11604) — Refuted the internal-covariate-shift story and replaced it with loss-landscape smoothing; the modern explanation for why normalization layers work.
 
     **Open-source & tools**
 

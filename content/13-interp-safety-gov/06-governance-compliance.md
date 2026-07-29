@@ -18,6 +18,8 @@ Before diving into specifics, a mental map helps. Several regulatory streams are
 
 These three frameworks are complementary: the EU AI Act tells you *what* you must do and by when; the NIST AI RMF tells you *how* to run the governance process; ISO/IEC 42001 tells you *how to prove* to an auditor that you run that process consistently.
 
+The EU is the most prescriptive regime, which is why the bulk of this chapter is spent there, but it is not the only one an engineer will meet. In the **United States** there is still no comprehensive federal AI statute: Executive Order 14110 was rescinded in January 2025 and replaced by a deregulatory, competitiveness-focused federal posture (the 2025 "AI Action Plan"), which pushes the binding rules down to the states — Colorado's AI Act (SB 24-205), the first US state law placing duties on developers *and* deployers of "high-risk" AI, whose effective date has been postponed more than once, and California's SB 53 (Transparency in Frontier Artificial Intelligence Act, signed September 2025), which requires large frontier developers to publish a safety framework and report critical safety incidents to the state. The **UK** has taken a sectoral, regulator-led approach with no cross-cutting AI statute, with the AI Security Institute (renamed from AI Safety Institute in 2025) doing pre-deployment testing by agreement rather than by law. **China** has the most operationally intrusive regime for generative AI: the Interim Measures for Generative AI Services (2023), a filing/registration requirement for algorithms and large models, and labelling rules for AI-generated synthetic content in force since September 2025. Internationally, the Council of Europe Framework Convention on AI (opened for signature September 2024) and the G7 Hiroshima Process code of conduct are the main soft-law instruments. The practical consequence for a multinational deployment: build to the strictest applicable regime (usually the EU AI Act), then map the artefacts onto the others — the underlying evidence (model card, eval report, incident log, data-rights register) is largely the same.
+
 ---
 
 ## The EU AI Act: Structure and Timeline
@@ -26,12 +28,16 @@ The EU AI Act (Regulation (EU) 2024/1689) entered into force on 1 August 2024. I
 
 | Date | Obligation active |
 |---|---|
-| 2 Feb 2025 | Prohibited AI practices banned (Article 5) |
-| 2 Aug 2025 | GPAI model obligations; AI literacy duties |
-| 2 Aug 2026 | High-risk application obligations; notified-body audits; fines apply |
-| 2 Aug 2027 | High-risk embedded systems (Annex I) grace period ends |
+| 2 Feb 2025 | Prohibited AI practices banned (Article 5); AI-literacy duty (Article 4) |
+| 2 Aug 2025 | GPAI model obligations (Chapter V); governance bodies, notified bodies and penalties provisions |
+| 2 Aug 2026 | High-risk application obligations (Annex III); Article 50 transparency duties; general applicability of the Act |
+| 2 Aug 2027 | High-risk AI embedded in regulated products (Annex I); GPAI models already on the market before Aug 2025 must be brought into compliance |
 
 Engineers need to care most about **2 Aug 2025** (GPAI model obligations — affects every frontier model provider) and **2 Aug 2026** (high-risk application rules — affects deployers building on those models).
+
+!!! warning "The timetable is a moving target"
+
+    Treat the table above as the position under the Regulation as enacted, not as gospel. In November 2025 the European Commission proposed a "Digital Omnibus" simplification package that would, among other things, postpone parts of the high-risk regime and adjust some GPAI and transparency provisions; that proposal had to pass the ordinary legislative procedure, so the dates that actually bind you may have shifted. Before you build a compliance plan around a date, check the current consolidated text on EUR-Lex and the European AI Office's guidance pages. Never hard-code a regulatory deadline into a design document without a dated citation next to it.
 
 ### Risk Tiers
 
@@ -46,11 +52,21 @@ Most LLM applications land in **limited-risk** if deployed for open consumer use
 
 {{fig:gov-eu-ai-act-risk-pyramid}}
 
+### Article 50: The Transparency Tier Has Teeth Too
+
+"Limited risk" sounds like "nothing to do", but Article 50 (applicable from 2 Aug 2026) imposes concrete engineering work on almost every LLM product:
+
+- **Disclose the machine.** Systems that interact directly with people must tell the person they are talking to an AI, unless it is obvious from context.
+- **Mark synthetic output machine-readably.** Providers of systems that generate synthetic audio, image, video *or text* must ensure the outputs are marked in a machine-readable format and detectable as artificially generated or manipulated, with solutions that are "effective, interoperable, robust and reliable as far as this is technically feasible".
+- **Label deep fakes and synthetic news text.** Deployers who publish deep fakes, or AI-generated text published to inform the public on matters of public interest, must disclose that fact.
+
+The machine-readable marking duty is the one that forces a technical decision. In practice teams satisfy it with two complementary layers: **cryptographic content credentials** (the C2PA / Content Credentials standard, with the open-source `c2pa-rs` and `c2patool` implementations, which sign provenance manifests into media files) and **statistical watermarking** of generated text (SynthID-Text and the Kirchenbauer et al. green-list scheme are the reference approaches). Neither is a complete answer — signatures are stripped by re-encoding, text watermarks are degraded by paraphrase — which is exactly why the Act qualifies the duty with "as far as technically feasible". See [Watermarking, Provenance & AI-Content Detection](../13-interp-safety-gov/04-watermarking-provenance.html) for the mechanisms and their attack surface.
+
 ---
 
 ## General-Purpose AI (GPAI) Model Obligations
 
-Title VIII of the Act creates a distinct regime for "general-purpose AI models" (GPAI) — models trained on broad data at scale that can be adapted to many downstream tasks. Practically, this means every large pre-trained language model, including models released open-weight.
+Chapter V of the Act (Articles 51–56, with the documentation contents spelled out in Annexes XI and XII) creates a distinct regime for "general-purpose AI models" (GPAI) — models trained on broad data at scale that can be adapted to many downstream tasks. Practically, this means every large pre-trained language model, including models released open-weight.
 
 The key definitions:
 
@@ -95,16 +111,40 @@ Every GPAI model provider, regardless of compute, must:
 3. **Copyright compliance** — Implement a policy to comply with EU copyright law, including the text-and-data mining exceptions in the 2019 Copyright Directive. Retain records to demonstrate compliance.
 4. **Downstream deployer information** — Provide AI system providers who integrate the GPAI model with documentation and instructions sufficient to comply with their own obligations.
 
+Mapping to the letters of Article 53(1), which you will need when you cite them in a compliance document: (a) technical documentation for the AI Office and national authorities (contents in Annex XI); (b) documentation for downstream providers (contents in Annex XII); (c) the copyright policy; (d) the public training-data summary.
+
+!!! tip "The open-source carve-out (Article 53(2)) — and its limits"
+
+    If you release your model under a **free and open-source licence** that permits access, use, modification and distribution, **and** you publicly release the parameters (including weights), the architecture information, and the model-usage information, then obligations (a) and (b) — the technical documentation and the downstream-provider documentation — do not apply to you.
+
+    Two limits matter enormously and are routinely missed. First, the carve-out **does not** cover (c) the copyright policy or (d) the public training-data summary: those apply to every GPAI provider, open-weight or not. Second, the carve-out **evaporates entirely** for a model with systemic risk. So an open-weight 100M-parameter model still owes the world a copyright policy and a training-data summary; an open-weight 500B-parameter frontier model owes everything. If you are open-weighting Stack-100M from Part XIV, this is precisely the obligation surface you inherit — see the note below.
+
 ### GPAI Systemic-Risk Obligations (Article 55)
 
-For models above $10^{25}$ FLOPs, four *additional* obligations apply:
+For models above $10^{25}$ FLOPs, four *additional* obligations apply, in the order Article 55(1) lists them:
 
-1. **Adversarial testing (red-teaming)** — Perform model evaluations, including adversarial testing, to identify and mitigate systemic risks.
-2. **Incident reporting** — Report serious incidents and possible corrective measures to the European AI Office within two days of becoming aware.
-3. **Cybersecurity measures** — Protect the model and its infrastructure against adversarial attacks.
-4. **Energy efficiency reporting** — Report training energy consumption (in MWh) and inferred operational energy when known.
+1. **Model evaluation, including adversarial testing** (Art. 55(1)(a)) — Evaluate the model per standardised protocols and state-of-the-art tools, including conducting and documenting adversarial testing (red-teaming), to identify and mitigate systemic risks.
+2. **Systemic-risk assessment and mitigation** (Art. 55(1)(b)) — Assess and mitigate possible systemic risks at Union level, including those arising from development, market placement or use.
+3. **Serious-incident reporting** (Art. 55(1)(c)) — Track, document, and report without undue delay to the AI Office (and, as appropriate, national competent authorities) information about serious incidents and corrective measures.
+4. **Cybersecurity measures** (Art. 55(1)(d)) — Ensure an adequate level of cybersecurity protection for the model and its physical infrastructure.
+
+A frequent citation error is worth flagging: **energy reporting is not in Article 55**. The obligation to document the "known or estimated energy consumption" of the model sits in **Annex XI**, the contents list for the Article 53(1)(a) technical documentation, so it lands on GPAI providers generally rather than only on systemic-risk providers. Article 55(1)(d) is cybersecurity, not energy.
+
+Article 55(2) adds the compliance route that actually matters in practice: providers may rely on **codes of practice** to demonstrate compliance until a harmonised European standard exists. The Commission-endorsed **GPAI Code of Practice** (final version July 2025) is that route — it has a Transparency chapter (with a fill-in Model Documentation Form), a Copyright chapter, and a Safety and Security chapter that operationalises Article 55, including a Safety and Security Framework, a pre-deployment Model Report to the AI Office, and tiered initial-reporting deadlines for serious incidents (measured in days, tightest for incidents that are serious cybersecurity breaches of model controls). Signing the Code does not create a legal presumption of conformity the way a harmonised standard would, but it gives the AI Office a defined checklist and gives you legal certainty about what "adequate" means. Check the current text before relying on any specific deadline in it.
 
 {{fig:gov-flop-systemic-risk-gate}}
+
+!!! note "Where Stack-100M lands"
+
+    Run the same arithmetic on the capstone model. Stack-100M is roughly $N = 1\times10^{8}$ parameters trained on $D = 2\times10^{10}$ tokens ([Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html)):
+
+    $$
+    C = 6 \times 10^{8} \times 2\times10^{10} = 1.2\times10^{19}\ \text{FLOPs}
+    $$
+
+    That is about six orders of magnitude below the $10^{25}$ systemic-risk bar, and also below the roughly $10^{23}$-FLOP figure the Commission's 2025 GPAI guidelines propose as an *indicative* threshold for presuming a model is a general-purpose AI model at all. So Stack-100M is almost certainly not a GPAI model in the Act's sense, and Chapter V does not bite.
+
+    That is a reason to practise the artefacts, not to skip them. Three things still apply in the real world. (1) If you publish the weights, downstream fine-tuners and deployers will ask for exactly the Article 53 evidence — model card, training-data summary, licence and rights basis — because *their* deployment may be high-risk even though your model is not. (2) The copyright duty in the DSM Directive applies to your crawl regardless of the Act: honour TDM opt-outs when you collect the 20 B tokens. (3) The compute, energy and data-provenance numbers are cheapest to capture during the run, which is why the capstone's cost accounting and reproducibility ledger ([Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html)) doubles as a compliance record, and the honest-benchmark reporting in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) doubles as the eval-report evidence.
 
 ---
 
@@ -317,17 +357,17 @@ evaluations:
   - benchmark: "MT-Bench"
     score: "see eval-report-v1.2.0.pdf"
 
-  # Safety evaluations required for GPAI providers
-  safety_evals:
-    - name: "Dangerous capabilities (bio, chem, cyber, radiological)"
-      methodology: "Internal red-team + third-party assessment"
-      pass: true
-    - name: "Bias and fairness (BBQ, WinoBias)"
-      methodology: "Automated + human review"
-      result: "see fairness-report-v1.2.0.pdf"
-    - name: "Adversarial robustness"
-      methodology: "AutoAttack, PAIR jailbreak suite"
-      result: "see adversarial-report-v1.2.0.pdf"
+# ── Safety evaluations (expected of GPAI providers) ──────────────────────────
+safety_evals:
+  - name: "Dangerous capabilities (bio, chem, cyber, radiological)"
+    methodology: "Internal red-team + third-party assessment"
+    passed: true
+  - name: "Bias and fairness (BBQ, WinoBias)"
+    methodology: "Automated + human review"
+    result: "see fairness-report-v1.2.0.pdf"
+  - name: "Adversarial robustness"
+    methodology: "AutoAttack, PAIR jailbreak suite"
+    result: "see adversarial-report-v1.2.0.pdf"
 
 # ── Intended Use ─────────────────────────────────────────────────────────────
 intended_use:
@@ -351,6 +391,59 @@ eu_ai_act:
   technical_documentation_url: "https://example.com/model-docs/tech-doc-v1.2.0.pdf"
   ai_office_registration_id: "EUAIO-GPAI-2025-00042"   # fictional example
 ```
+
+#### Generating the card with `huggingface_hub`
+
+You do not have to invent the serialisation format. The Hugging Face Hub's model card is a Markdown file (`README.md`) with a YAML front-matter block, and `huggingface_hub` gives you a typed API for it — which means the card can be emitted by the same job that finishes training, instead of being written by hand weeks later:
+
+```python
+# generate_model_card.py
+# Emit a Hub-compatible model card whose YAML front matter carries the
+# structured governance metadata, then attach the AI-Act sections as body text.
+#   pip install "huggingface_hub>=0.24"
+
+from huggingface_hub import ModelCard, ModelCardData, EvalResult
+
+card_data = ModelCardData(
+    model_name="Stack-100M",
+    license="apache-2.0",                 # SPDX id; the weights licence
+    language=["en"],
+    library_name="transformers",
+    tags=["eu-ai-act", "governance", "open-weights"],
+    datasets=["HuggingFaceFW/fineweb-edu"],   # declared training sources
+    eval_results=[
+        EvalResult(
+            task_type="text-generation",
+            dataset_type="hellaswag",
+            dataset_name="HellaSwag",
+            metric_type="accuracy",
+            metric_value=0.0,             # fill from your eval harness output
+        )
+    ],
+)
+
+# `from_template` with no template_path uses the Hub's default card template.
+card = ModelCard.from_template(
+    card_data,
+    model_id="Stack-100M",
+    developers="ExampleCorp",
+    model_description="A 100M-parameter decoder-only LM trained from scratch.",
+)
+
+# Append the governance sections the default template does not cover.
+card.text += (
+    "\n\n## EU AI Act status\n"
+    "- Training compute (6ND estimate): 1.2e19 FLOPs — below the 1e25 "
+    "systemic-risk threshold and below the indicative GPAI threshold.\n"
+    "- Training-data summary: see `training-data-summary.md`.\n"
+    "- Copyright policy: TDM opt-outs honoured at crawl time; see "
+    "`rights-register.csv`.\n"
+)
+
+card.save("README.md")          # or: card.push_to_hub("ExampleCorp/Stack-100M")
+```
+
+The same package exposes `DatasetCard` / `DatasetCardData` for the dataset side. Two other tools are worth wiring in: the MLCommons **Croissant** metadata format (`mlcroissant`), which the Hub emits for datasets and which gives you a machine-readable description of fields, licences and provenance; and **`sigstore/model-transparency`** (the OpenSSF model-signing project), which signs model artefacts so a downstream user can verify the weights they loaded are the ones your card describes — the supply-chain half of "chain of custody".
 
 ### Dataset Datasheets
 
@@ -445,9 +538,11 @@ def export_rights_register(records: List[DataSourceRecord]) -> str:
 
 ## Serious-Incident Reporting
 
-Article 62 of the EU AI Act requires providers and deployers of high-risk AI systems to notify the relevant national market surveillance authority of *serious incidents* — defined as: incidents that resulted, or could have resulted, in death or serious harm to health; significant property damage; serious and irreversible disruption of essential services; or violations of EU law protecting fundamental rights.
+**Article 73** of the EU AI Act (numbered Article 62 in earlier drafts — a stale citation you will still see in blog posts and in vendor compliance decks) requires providers of high-risk AI systems to notify the market surveillance authority of the Member State where the incident occurred of *serious incidents*. Article 3(49) defines a serious incident as one that directly or indirectly leads to: the death of a person or serious harm to health; a serious and irreversible disruption of the management or operation of critical infrastructure; infringement of Union law obligations protecting fundamental rights; or serious harm to property or the environment.
 
-For GPAI providers with systemic risk, Article 55(1)(b) additionally requires reporting *systemic-risk incidents* directly to the European AI Office within **two days** of first becoming aware.
+The reporting clock is tiered rather than flat. The outer limit is **15 days** after the provider becomes aware; it tightens to **10 days** where the incident involves a person's death, and to **2 days** for a widespread infringement or a serious and irreversible disruption of critical infrastructure. Where the full picture is not yet available, the Act contemplates an **initial incomplete report followed by a complete one** — build your pipeline to send a partial notification on the deadline rather than to wait for a finished root-cause analysis.
+
+For GPAI providers with systemic risk, **Article 55(1)(c)** separately requires tracking, documenting and reporting serious incidents and corrective measures to the European AI Office "without undue delay". The Act itself puts no number on it; the GPAI Code of Practice's Safety and Security chapter is where the concrete day counts live, and the tightest of them is on the order of a couple of days for incidents that constitute serious cybersecurity breaches of model controls. The code below uses **2 days** as the systemic-risk budget and 15 days as the high-risk budget; treat those as configuration, keyed to whichever instrument currently binds you, not as constants of nature.
 
 ### Building a Compliant Incident Pipeline
 
@@ -472,8 +567,10 @@ class IncidentSeverity(enum.Enum):
     """
     MINOR = "minor"              # Internal only; no external reporting required
     SIGNIFICANT = "significant"  # Log; 72-hour internal review required
-    SERIOUS = "serious"          # Art. 62 notification to national authority (≤15 days)
-    SYSTEMIC = "systemic"        # Art. 55(1)(b) notification to EU AI Office (≤2 days)
+    SERIOUS = "serious"          # Art. 73 notification to national authority (≤15 days;
+                                 # ≤10 if a death, ≤2 if critical-infrastructure disruption)
+    SYSTEMIC = "systemic"        # Art. 55(1)(c) notification to EU AI Office (Code of
+                                 # Practice deadline; ~2 days for control breaches)
 
 
 @dataclass
@@ -555,8 +652,10 @@ def notify_authority(
 ) -> None:
     """
     Send structured incident notification email to the relevant authority.
-    Replace with the EU AI Office AISOG portal API when it becomes available.
-    Deadline: SYSTEMIC = 2 days; SERIOUS = 15 days (national authority).
+    Replace with the AI Office / national-authority reporting portal API
+    when one is published.
+    Deadline: SYSTEMIC ~2 days (Code of Practice); SERIOUS <=15 days
+    (Art. 73; tighter for deaths and critical-infrastructure disruption).
     """
     body = json.dumps(asdict(report), indent=2, default=str)
     msg = MIMEText(body, "plain", "utf-8")
@@ -576,7 +675,7 @@ def notify_authority(
 
 !!! warning "Common pitfall"
 
-    Many teams conflate their general security-incident response process with AI-Act incident reporting. The key difference: AI-Act incidents are triggered by *harm or potential harm to people*, not by service outages or security breaches per se. A DDOS attack on your inference API is a security incident; a model that caused a user to self-harm following biased mental-health advice is an AI Act serious incident. Build separate triage paths.
+    Many teams conflate their general security-incident response process with AI-Act incident reporting. The key difference: AI-Act incidents are triggered by *harm or potential harm to people*, not by service outages or security breaches per se. A DDOS attack on your inference API is a security incident; a model that caused a user to self-harm following biased mental-health advice is an AI Act serious incident. Build separate triage paths — but wire them to the same event bus, because the two do intersect (an outage of an AI system embedded in critical infrastructure *is* an Article 73 serious incident, and a breach of model-weight controls at a systemic-risk provider *is* an Article 55 one). The rule is separate triage criteria and separate deadlines, not separate telemetry. See [Reliability Engineering for LLM Systems: SLOs & Incident Response](../12-production-mlops/08-reliability-engineering.html) for the SRE side of the same pipeline.
 
 {{fig:gov-incident-severity-ladder}}
 
@@ -636,13 +735,13 @@ Before any deployment in a high-risk context, the eval suite must be documented 
 
 ### Ongoing Transparency Reports
 
-The EU AI Act Article 53(1)(e) requires GPAI providers to publish an annually updated transparency report. Several voluntary frameworks (the Frontier Safety Framework from major labs, the Responsible Scaling Policy pattern) add further structure. Key sections in such a report:
+The Act does not mandate a general annual "transparency report" for GPAI providers — the only artefact Article 53 requires you to *publish* is the training-data summary (Art. 53(1)(d)); the technical documentation goes to the AI Office on request, not to the public. But the combination of the GPAI Code of Practice (which expects a maintained Model Documentation Form and, for systemic-risk models, a Safety and Security Model Report to the AI Office), California SB 53's published frontier framework and incident reporting, and the voluntary lab frameworks (Frontier Safety Framework, Responsible Scaling Policy, Preparedness Framework) has converged on a recurring public report as the de facto norm. Key sections in such a report:
 
 1. **Model population summary** — All live models, versions, compute tier, and GPAI/systemic-risk classification.
 2. **Incident log summary** — Aggregated statistics on serious-incident notifications (without PII).
 3. **Red-team summary** — High-level results of adversarial evaluations since last report.
 4. **Copyright and data-rights updates** — Changes to training-data composition, new opt-out compliance actions.
-5. **Energy and compute disclosure** — Training and operational energy per Article 55(1)(d).
+5. **Energy and compute disclosure** — Training compute and known or estimated energy consumption, per Annex XI (the contents list for the Article 53(1)(a) technical documentation).
 
 ---
 
@@ -704,7 +803,7 @@ Here is a minimal FLOP counter that emits a systemic-risk flag at training time:
 
 import logging
 
-SYSTEMIC_RISK_THRESHOLD = 1e25   # EU AI Act Art. 51(1)(a)
+SYSTEMIC_RISK_THRESHOLD = 1e25   # EU AI Act Art. 51(2) presumption threshold
 WARNING_FRACTION = 0.8           # Warn at 80% of threshold
 
 
@@ -765,6 +864,54 @@ class FlopTracker:
         }
 ```
 
+### Measuring, Not Estimating: `FlopCounterMode` and `codecarbon`
+
+The $6ND$ rule is an *estimate*, and a regulator asking "how did you arrive at that number?" deserves a better answer than "a scaling-laws paper". Two open-source tools turn the two headline compliance numbers — cumulative training FLOPs and training energy — into measurements you can defend.
+
+PyTorch ships a FLOP counter as a dispatch-mode context manager. It counts the actual matmul/convolution FLOPs executed under it (including the backward pass, if the backward runs inside the block), which is exactly the "cumulative amount of computation used for training" the Act asks about, and it will show you how far off $6ND$ is for your architecture — MoE routing, attention at long context, and tied embeddings all move the ratio.
+
+```python
+# measured_flops.py
+# Calibrate the analytic 6ND estimate against measured FLOPs for one step.
+#   requires torch >= 2.1
+import torch
+from torch.utils.flop_counter import FlopCounterMode
+
+model = ...            # your nn.Module
+batch = ...            # one tokenised batch, shape (B, T)
+
+with FlopCounterMode(display=False) as fcm:
+    loss = model(batch).logits.float().mean()
+    loss.backward()                      # counted too: fwd + bwd in one block
+
+measured = fcm.get_total_flops()         # FLOPs for this fwd+bwd step
+n_tokens = batch.numel()
+analytic = 6.0 * sum(p.numel() for p in model.parameters()) * n_tokens
+print(f"measured={measured:.3e}  analytic 6ND={analytic:.3e}  "
+      f"ratio={measured / analytic:.3f}")
+# Record the ratio once, then use `analytic * ratio` for the whole run so you
+# are not paying the counter's overhead on every step.
+```
+
+For energy, **`codecarbon`** is the standard open-source instrument: it samples NVIDIA GPU power via NVML, CPU/RAM power, and applies a regional grid carbon intensity, writing a CSV you can attach verbatim to the Annex XI energy field.
+
+```python
+# track_energy.py
+#   pip install codecarbon
+from codecarbon import EmissionsTracker
+
+tracker = EmissionsTracker(project_name="stack-100m-pretrain",
+                           output_dir="./compliance", log_level="error")
+tracker.start()
+try:
+    train()                    # your training loop
+finally:
+    emissions_kg = tracker.stop()   # kg CO2eq; energy in kWh lands in the CSV
+print(f"run emissions: {emissions_kg:.3f} kg CO2eq")
+```
+
+Alternatives with the same role: **`zeus`** (energy measurement and energy-optimal DVFS for DL training) and, if you already run a Prometheus stack, NVIDIA's **DCGM exporter** scraping `DCGM_FI_DEV_POWER_USAGE` and integrating over the run — see [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html). Whichever you pick, log the number *per run*, tagged with the run ID that also tags your checkpoints; reconstructing energy after the cluster has been reallocated is impossible.
+
 ---
 
 ## Copyright, Provenance, and the Chain of Custody
@@ -777,10 +924,10 @@ The EU Copyright in the Digital Single Market Directive (2019/790), Articles 3 a
 
 For LLM developers, this creates a duty to:
 
-1. **Check opt-out signals** at crawl time (`robots.txt`; `X-Robots-Tag`; `tdm-reservation` metadata per the Rightscom TDM Reservation Protocol).
-2. **Exclude opted-out sources** from training data.
+1. **Check opt-out signals** at crawl time. Three mechanisms are in real use: (a) `robots.txt` disallow rules aimed at named AI crawlers (`GPTBot`, `ClaudeBot`, `Google-Extended`, `CCBot`, `Bytespider`, …); (b) the **W3C TDM Reservation Protocol (TDMRep)**, whose signal `tdm-reservation: 1` ("rights reserved") can be carried in an HTTP header, an HTML `<meta name="tdm-reservation">` tag, or a site-wide `/.well-known/tdmrep.json` document, optionally paired with `tdm-policy` pointing at licensing terms; and (c) licence metadata attached to the work itself. A fourth is stabilising: the IETF **AI Preferences (`aipref`)** working group is standardising a vocabulary for expressing training-usage preferences, so expect the signal surface to consolidate rather than shrink.
+2. **Exclude opted-out sources** from training data — and note that "lawfully accessible" is a precondition of the exception in the first place, so paywalled or pirated corpora do not become lawful just because no opt-out was filed.
 3. **Maintain a rights register** documenting the basis for including each source.
-4. **Retain evidence** of opt-out checks, preferably a signed record of the `robots.txt` as it existed at crawl time.
+4. **Retain evidence** of opt-out checks, preferably a hashed and timestamped record of the `robots.txt` / `tdmrep.json` as it existed at crawl time. Opt-outs are not retroactive in practice — you must be able to show what the signal said *on the day you crawled*, which is why the check result belongs in the per-document provenance record, not in a separate audit spreadsheet.
 
 The following snippet shows how to check TDM reservation signals when building a crawler:
 
@@ -789,16 +936,14 @@ The following snippet shows how to check TDM reservation signals when building a
 # Check TDM reservation signals before including a URL's content in training data.
 # Should be called as part of the data collection pipeline.
 
-import re
 import urllib.robotparser
-from urllib.parse import urlparse
 
 
-TDM_RESERVATION_HEADERS = {
-    "tdm-reservation",       # Rightscom protocol header
-    "x-tdm-reservation",
-    "x-robots-tag",          # Google's extension; check for "tdm: none"
-}
+# W3C TDM Reservation Protocol (TDMRep). The signal is a VALUE, not a
+# presence check: "1" means rights are reserved (opt-out), "0" means not
+# reserved. The same key appears as an HTTP header, an HTML <meta> name,
+# and a field in /.well-known/tdmrep.json.
+TDM_RESERVATION_HEADERS = ("tdm-reservation", "x-tdm-reservation")
 
 
 def check_tdm_opt_out(url: str, headers: dict, robots_txt: str) -> dict:
@@ -818,20 +963,22 @@ def check_tdm_opt_out(url: str, headers: dict, robots_txt: str) -> dict:
         "reason": None,
     }
 
-    # 1. Check TDM reservation headers
+    # 1. Check TDMRep reservation headers. Reserved iff the value is "1".
     for h in TDM_RESERVATION_HEADERS:
-        if h in headers:
-            val = headers[h].lower()
-            if "tdm" in val or "reservation" in val or "none" in val:
-                result["tdm_reservation_header_present"] = True
+        val = headers.get(h)
+        if val is not None:
+            result["tdm_reservation_header_present"] = True
+            if val.strip() == "1":
                 result["should_exclude"] = True
-                result["reason"] = f"TDM opt-out header: {h}={headers[h]}"
+                result["reason"] = f"TDMRep opt-out: {h}={val}"
                 return result
 
-    # 2. Check robots.txt for AI training crawlers
-    # Common user-agent strings used by AI training crawlers
-    ai_crawlers = ["GPTBot", "CCBot", "ClaudeBot", "anthropic-ai", "Common Crawl"]
-    parsed = urlparse(url)
+    # 2. Check robots.txt for AI training crawlers.
+    # Conservative policy: if ANY of the user-agent tokens we crawl under is
+    # disallowed for this path, treat the source as opted out. Note that
+    # robots.txt is a *site* signal while TDMRep can be per-resource, so a
+    # production crawler evaluates both and takes the union of exclusions.
+    ai_crawlers = ["GPTBot", "CCBot", "ClaudeBot", "Google-Extended", "Bytespider"]
     rp = urllib.robotparser.RobotFileParser()
     rp.parse(robots_txt.splitlines())
 
@@ -842,9 +989,11 @@ def check_tdm_opt_out(url: str, headers: dict, robots_txt: str) -> dict:
             result["reason"] = f"robots.txt disallows {crawler}"
             return result
 
-    # 3. Check for inline <meta name="robots" content="notdmcontent"> patterns
-    # (for HTML pages; caller would pass page source)
-    # Not shown here for brevity; check the Rightscom TDM spec.
+    # 3. Remaining TDMRep surfaces the caller should also feed in:
+    #    - HTML <meta name="tdm-reservation" content="1"> in the page head
+    #    - the site-wide /.well-known/tdmrep.json document, whose entries
+    #      match URL path prefixes and may carry a tdm-policy URL
+    #    Both are omitted here for brevity; see the W3C TDMRep specification.
 
     result["should_exclude"] = False
     result["reason"] = "No opt-out signal detected"
@@ -855,7 +1004,9 @@ def check_tdm_opt_out(url: str, headers: dict, robots_txt: str) -> dict:
 
 Every document that enters training should carry a **provenance record** — source URL, crawl timestamp, licence, opt-out check result — stored alongside the tokenised data. This is cheap at training time and invaluable when a regulator or rightsholder later asks "did this document go into your training data?"
 
-See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) for the broader data pipeline engineering, and [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) for deduplication methods that also help with copyright compliance.
+Concretely, this is a field you add to the document schema in your extraction/filtering pipeline. In **`datatrove`** (the HF pipeline used to build FineWeb) every `Document` carries a free-form `metadata` dict that survives each `PipelineStep`, so a custom filter can stamp `metadata["tdm"] = check_tdm_opt_out(...)` at the WARC-reading stage and every downstream stage — dedup, quality filtering, tokenisation — will carry it through to the final shard index. NVIDIA **NeMo-Curator** and **Dolma** expose the same idea under different names. The rule of thumb: provenance must be attached at the *earliest* stage and must never be dropped by a stage that rewrites text, because after tokenisation and packing the association between a token span and its source document is effectively unrecoverable.
+
+See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) for the broader data pipeline engineering, [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) for deduplication methods that also help with copyright compliance, and [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) for the capstone pipeline where you would actually add this field.
 
 ---
 
@@ -867,7 +1018,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     Base GPAI artefacts: (1) Technical documentation covering architecture, training data, compute, evaluations, and limitations; (2) a training-data summary published publicly, covering data sources, licence basis, and opt-out compliance; (3) a copyright policy; (4) downstream-deployer documentation.
 
-    Systemic-risk additions: (1) Evidence of adversarial testing / red-teaming; (2) a two-day serious-incident reporting pipeline connected to the EU AI Office; (3) cybersecurity documentation; (4) energy-consumption disclosure.
+    Systemic-risk additions (Art. 55(1), letters (a)–(d)): (1) model evaluation including documented adversarial testing; (2) a systemic-risk assessment and mitigation record; (3) a serious-incident pipeline reporting to the EU AI Office without undue delay, sized to the day-count deadlines in the GPAI Code of Practice; (4) cybersecurity protection for the weights and the infrastructure. I would note that energy consumption is an Annex XI documentation item that applies to us as a GPAI provider generally, not an Article 55 item — getting that right signals I have read the instrument rather than a summary of it. Because we are not open-weight, the Article 53(2) carve-out does not help us; even if we were, it would not survive the systemic-risk classification.
 
     I would present: the model card YAML, the rights register CSV, the pre-deployment eval report JSON, the audit log schema, the incident-triage code, and the FlopTracker summary. I would also produce the EU AI Office registration record and confirm Art. 53 training-data summary has been published.
 
@@ -876,7 +1027,9 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 !!! key "Key Takeaways"
 
     - The EU AI Act phases in obligations over 2025–2027; the most operationally significant dates are **Aug 2025** (GPAI model duties) and **Aug 2026** (high-risk application enforcement with fines up to 7% of global turnover).
-    - The **systemic-risk threshold** is $10^{25}$ FLOPs of training compute. Models below it still carry GPAI documentation and copyright obligations; models above it add adversarial testing, two-day incident reporting to the EU AI Office, and energy disclosure.
+    - The **systemic-risk threshold** is $10^{25}$ FLOPs of training compute (Art. 51(2)). Models below it still carry the Art. 53 documentation, copyright and training-data-summary obligations — including the Annex XI energy field; models above it add Art. 55's model evaluation and adversarial testing, systemic-risk mitigation, incident reporting to the EU AI Office, and cybersecurity.
+    - The **Article 53(2) open-source carve-out** drops the technical-documentation and downstream-provider duties for genuinely open-weight releases, but never drops the copyright policy or the public training-data summary, and disappears entirely once a model crosses the systemic-risk threshold.
+    - **Article 50** turns the "limited-risk" tier into real work from Aug 2026: disclose the AI, and mark synthetic output in a machine-readable way (C2PA content credentials plus text watermarking are the two practical layers).
     - **Compliance artefacts** — model cards, training-data summaries, rights registers, eval reports, and audit logs — should be generated automatically from metadata captured during training and evaluation, not reconstructed after the fact.
     - **Audit logs** for high-risk deployments must include input references, output text, invoker identity, and timestamps; use append-only or immutable storage.
     - **Serious-incident reporting** is triggered by harm to people, not system outages; build a separate triage pipeline distinct from general SRE incident response.
@@ -887,7 +1040,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    AI governance and compliance has rapidly moved from voluntary guidance to binding law: the EU AI Act's GPAI-model obligations have been in force since Aug 2025 (with the Commission-endorsed GPAI Code of Practice as the primary compliance route), and the high-risk application regime — including fines up to 7% of global turnover — takes effect Aug 2026, while the NIST AI RMF and ISO/IEC 42001 have become the operational backbone that organisations use to satisfy those obligations. The resources below cover the foundational papers, the primary regulatory texts, and the open-source tooling engineers need to build compliant systems.
+    AI governance and compliance has rapidly moved from voluntary guidance to binding law: the EU AI Act's GPAI-model obligations have been in force since Aug 2025 (with the Commission-endorsed GPAI Code of Practice as the primary compliance route), and the high-risk application and Article 50 transparency regimes — with fines up to 7% of global turnover — were legislated to take effect Aug 2026, though the Commission's late-2025 "Digital Omnibus" simplification proposal sought to postpone parts of that regime, so verify the current consolidated timetable before you plan against it. Meanwhile the US layer has shifted to the states (California SB 53's frontier-developer transparency and incident reporting; Colorado's repeatedly delayed AI Act), and the NIST AI RMF and ISO/IEC 42001 have become the operational backbone that organisations use to satisfy all of these at once. The resources below cover the foundational papers, the primary regulatory texts, and the open-source tooling engineers need to build compliant systems.
 
     **Foundational work**
 
@@ -897,14 +1050,17 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     **Recent advances (2023–2026)**
 
-    - [Luccioni et al., *Power Hungry Processing: Watts Driving the Cost of AI Deployment?* (2023)](https://arxiv.org/abs/2311.16863) — empirical methodology for measuring inference energy, directly relevant to EU AI Act Article 55(1)(d) energy-disclosure obligations.
-    - [EU AI Act — Regulation (EU) 2024/1689, Official Journal](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng) — the full legislative text; Title VIII (GPAI) and Annex III (high-risk categories) are the primary engineering-relevant sections.
+    - [Luccioni et al., *Power Hungry Processing: Watts Driving the Cost of AI Deployment?* (2023)](https://arxiv.org/abs/2311.16863) — empirical methodology for measuring inference energy, directly relevant to the Annex XI energy-consumption documentation field.
+    - [EU AI Act — Regulation (EU) 2024/1689, Official Journal](https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng) — the full legislative text; Chapter V with Annexes XI–XII (GPAI), Annex III (high-risk categories), Article 50 (transparency) and Article 73 (serious incidents) are the primary engineering-relevant sections.
     - [GPAI Code of Practice, Final Version (July 2025)](https://digital-strategy.ec.europa.eu/en/policies/contents-code-gpai) — the European Commission's endorsed voluntary compliance tool for GPAI providers; adopting it gives legal certainty under Articles 53 and 55.
 
     **Open-source & tools**
 
     - [EU AI Act Compliance Checker (European Commission)](https://ai-act-service-desk.ec.europa.eu/en/eu-ai-act-compliance-checker) — official beta tool to determine which obligations apply to a given AI system or GPAI model.
     - [microsoft/presidio](https://github.com/microsoft/presidio/) — open-source PII detection and anonymisation framework (text, images, structured data) widely used to satisfy data-minimisation obligations in audit logs and training pipelines.
+    - [mlco2/codecarbon](https://github.com/mlco2/codecarbon) — measures GPU/CPU/RAM energy and estimates CO2eq for a training or inference run; the practical way to fill the Annex XI energy-consumption field with a measured rather than guessed number.
+    - [contentauth/c2pa-rs](https://github.com/contentauth/c2pa-rs) — Rust implementation (plus `c2patool` and language bindings) of the C2PA Content Credentials standard for signing provenance manifests into generated media, one of the two layers used to meet the Article 50 machine-readable marking duty.
+    - [sigstore/model-transparency](https://github.com/sigstore/model-transparency) — OpenSSF model-signing tooling that hashes and signs model artefacts so a downstream user can verify the weights match the documentation you published.
 
     **Go deeper**
 
@@ -919,16 +1075,17 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 - NIST AI Risk Management Framework (AI RMF 1.0), NIST AI 100-1, January 2023 — the primary US voluntary governance framework.
 - NIST Artificial Intelligence 600-1, "Generative AI Profile," 2024 — extension of the AI RMF to foundation and generative models.
 - ISO/IEC 42001:2023, "Information technology — Artificial intelligence — Management system" — the auditable AI management system standard.
-- Regulation (EU) 2024/1689 (the EU AI Act) — the full legislative text; Recitals 97–110 and Title VIII are the most relevant for GPAI.
-- European AI Office, GPAI Code of Practice drafts (2025) — the operationalisation guidance for GPAI providers; check the EU AI Office website for the latest version.
-- Luccioni et al., "Power Hungry Processing: Watts Driving the Cost of AI Deployment?" ACL 2023 — empirical energy measurement methodology relevant to Art. 55(1)(d) reporting.
+- Regulation (EU) 2024/1689 (the EU AI Act) — the full legislative text; Chapter V (Articles 51–56) with Annexes XI and XII is the GPAI regime, Article 50 the transparency regime, Article 73 serious incidents.
+- European AI Office, GPAI Code of Practice (final version, July 2025) and the Commission's Guidelines on the scope of the GPAI obligations (2025) — the operationalisation guidance for GPAI providers, including the indicative compute threshold for being a GPAI model at all; check the EU AI Office website for the current version.
+- W3C TDM Reservation Protocol (TDMRep) Community Group Final Report — the machine-readable rights-reservation signals (`tdm-reservation`, `tdm-policy`, `/.well-known/tdmrep.json`) an EU-compliant crawler must honour.
+- Luccioni et al., "Power Hungry Processing: Watts Driving the Cost of AI Deployment?" ACL 2023 — empirical energy measurement methodology relevant to the Annex XI energy field.
 - Bommasani et al., "On the Opportunities and Risks of Foundation Models," Stanford CRFM 2021 — comprehensive analysis of systemic risks relevant to the systemic-risk regulatory category.
 
 ---
 
 ## Exercises
 
-**1.** A DDoS attack knocks your inference API offline for four hours, and separately a user reports that your mental-health triage assistant gave biased advice that plausibly contributed to self-harm. Your SRE on-call wants to file both through the same incident channel. Explain why, under the EU AI Act, these are two different kinds of incident, and state which one (if any) triggers an Article 62 serious-incident notification.
+**1.** A DDoS attack knocks your inference API offline for four hours, and separately a user reports that your mental-health triage assistant gave biased advice that plausibly contributed to self-harm. Your SRE on-call wants to file both through the same incident channel. Explain why, under the EU AI Act, these are two different kinds of incident, and state which one (if any) triggers an Article 73 serious-incident notification.
 
 ??? note "Solution"
 
@@ -936,7 +1093,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     - The **DDoS attack** is a security/availability incident. It degrades the service but is not, by itself, an event that "resulted, or could have resulted, in death or serious harm to health," property damage, disruption of an essential service, or a fundamental-rights violation. It flows through the ordinary SRE/security incident-response path. (It could become an AI Act incident only if the outage itself caused one of those harms — e.g. an essential service failing.)
 
-    - The **biased mental-health advice that plausibly contributed to self-harm** is exactly an Article 62 *serious incident*: an event that "could have resulted in death or serious harm to health." It must be notified to the relevant national market-surveillance authority.
+    - The **biased mental-health advice that plausibly contributed to self-harm** is exactly an Article 73 *serious incident*: an event leading directly or indirectly to death or serious harm to a person's health. It must be notified to the market-surveillance authority of the Member State where the incident occurred, within 15 days of becoming aware (10 if a death occurred) — with an initial incomplete report if the investigation is not finished by then.
 
     The engineering consequence stated in the chapter is that you build *separate triage paths*: one keyed on availability/security signals, one keyed on harm-to-people signals. Merging them into a single channel risks either flooding the regulatory pipeline with irrelevant outages or, worse, burying a genuine harm event inside routine SRE noise and missing the notification deadline.
 
@@ -1073,7 +1230,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
         print("chain verification OK")
     ```
 
-**5.** Extend the incident pipeline with deadline logic. Article 55(1)(b) gives a systemic-risk incident **2 days** to notify the EU AI Office; an Article 62 serious incident gives **15 days** to notify the national authority; `SIGNIFICANT` is internal-only (no external deadline) and `MINOR` needs no notification. Implement `notification_deadline_ms(report)` returning the absolute deadline timestamp (or `None` when no external notification is required), and `is_overdue(report, now_ms)` returning whether the deadline has passed without a notification having been sent.
+**5.** Extend the incident pipeline with deadline logic. Take the chapter's configured budgets: a systemic-risk incident (Art. 55(1)(c), day count from the GPAI Code of Practice) gets **2 days** to notify the EU AI Office; an Article 73 serious incident gets **15 days** to notify the national authority; `SIGNIFICANT` is internal-only (no external deadline) and `MINOR` needs no notification. Implement `notification_deadline_ms(report)` returning the absolute deadline timestamp (or `None` when no external notification is required), and `is_overdue(report, now_ms)` returning whether the deadline has passed without a notification having been sent.
 
 ??? note "Solution"
 
@@ -1089,8 +1246,8 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     # Days allowed for EXTERNAL notification, keyed by severity.
     _DEADLINE_DAYS = {
-        IncidentSeverity.SYSTEMIC: 2,    # Art. 55(1)(b): EU AI Office
-        IncidentSeverity.SERIOUS: 15,    # Art. 62: national authority
+        IncidentSeverity.SYSTEMIC: 2,    # Art. 55(1)(c): EU AI Office
+        IncidentSeverity.SERIOUS: 15,    # Art. 73: national authority
         # SIGNIFICANT and MINOR: no external deadline
     }
 

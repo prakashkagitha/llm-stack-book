@@ -87,6 +87,8 @@ class TokenBucketLimiter:
 
 The crucial idea is **reserve-then-reconcile**: because output length is unknown, you charge a pessimistic estimate up front (so a burst of long requests cannot overrun the budget) and refund the slack when the stream ends. This same pattern reappears in admission control and in cost accounting.
 
+In production you seldom write this gateway yourself. Two open-source options implement exactly the layer above: **LiteLLM proxy** (`BerriAI/litellm`) — an OpenAI-compatible server with per-key virtual budgets, token-per-minute limits, fallbacks and spend tracking, covered further in [Caching, Routing & Cost Control in Production](../12-production-mlops/03-caching-routing-cost.html) — and **Envoy AI Gateway** (`envoyproxy/ai-gateway`), which extends Envoy's rate-limit API so that a request's cost is its *token* count (input, output, or a CEL-weighted combination) extracted from the OpenAI-schema response, rather than a flat "1". Recognizing that both are just reserve-then-reconcile token buckets with a control plane is the point of writing the 30 lines above.
+
 !!! tip "Practitioner tip"
 
     Put a hard server-side cap on `max_tokens` at the gateway and refuse requests that omit one or ask for absurd lengths. Unbounded generation is the single most common cause of a "healthy" cluster suddenly blowing its p99 — a handful of 16k-token requests can monopolize KV cache and starve everyone else. A cap is a one-line policy that prevents a class of incidents.
@@ -142,6 +144,16 @@ Power-of-two-choices is a beautiful result from balls-into-bins theory: sampling
 
     If every router instance always sends to the *single* globally least-loaded replica, they all pick the same one simultaneously, overload it, then all stampede to the next — load oscillates instead of balancing. This is why power-of-*d*-choices (with randomization) beats "always pick the minimum" in a distributed router. Randomize, and never let all routers share one synchronous view of "the best" replica.
 
+### The open-source routers that implement this
+
+`effective_load` above is a teaching model of a component you can deploy off the shelf. Three implementations are worth knowing, all of them scoring endpoints on the same signals — queue depth, KV-cache utilization, prefix overlap:
+
+- **vLLM production-stack** (`vllm-project/production-stack`) — vLLM's Kubernetes-native reference deployment. Its router offers round-robin, session-sticky, prefix-aware, KV-aware and disaggregated-prefill routing policies, with LMCache integration for cross-replica KV reuse. There is also a standalone high-performance **vLLM Router** written in Rust that does power-of-two-choices, consistent-hash prefix affinity, and prefill/decode-aware dispatch.
+- **Gateway API Inference Extension** (`kubernetes-sigs/gateway-api-inference-extension`) — the Kubernetes-standard answer. It adds an `InferencePool` resource (a set of model-server pods) plus an **Endpoint Picker (EPP)**, an ext-proc extension that scrapes each replica's metrics — pending-queue length, KV-cache utilization, which LoRA adapters are resident — and tells the gateway which pod to send the request to. Supported backends include vLLM, SGLang and TensorRT-LLM; it is what GKE's Inference Gateway and several Istio/Envoy-based gateways build on.
+- **NVIDIA Dynamo** (`ai-dynamo/dynamo`) — a datacenter-scale orchestration layer that coordinates disaggregated prefill/decode pools and KV-aware routing across nodes, running on top of vLLM, SGLang or TensorRT-LLM.
+
+The lesson to carry into a design review: the routing *policy* is the interesting part, and the reason these projects exist is that a stock L7 load balancer has no way to see queue depth or KV-cache state, so it cannot compute anything like `effective_load`.
+
 ## SLOs: Defining "Fast Enough" Precisely
 
 You cannot design a system without a target. For LLM serving the target is a set of **SLOs** (service-level objectives) on latency, stated as *percentiles*, because averages hide the tail that users actually feel.
@@ -156,6 +168,8 @@ The canonical four metrics:
 | **Throughput** | tokens/sec across the fleet | Drives cost-per-token (the business metric) |
 
 A real SLO names a percentile and a number, e.g. *"p50 TTFT ≤ 300 ms, p99 TTFT ≤ 1,000 ms, p90 TPOT ≤ 50 ms, for prompts ≤ 2k tokens."* The percentile matters enormously: the gap between p50 and p99 is almost entirely **queueing delay** under load, which is why batching and admission control (below) are SLO tools, not just throughput tools.
+
+Once you have SLOs, the quantity you actually optimize stops being throughput and becomes **goodput**: the rate of requests that complete *while meeting both* their TTFT and TPOT targets. A fleet driven to saturation shows a beautiful tokens/sec number and near-zero goodput, because every request violates the SLO. Goodput is the objective function behind disaggregation and chunked-prefill scheduling (DistServe, Sarathi-Serve) and behind every sizing decision below; the measurement procedure — sweep the offered rate, take the throughput at the last rate that still meets the SLO — is in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
 
 The fundamental tension is **throughput vs. latency**, mediated by batch size. Bigger batches amortize weight loads across more tokens, raising throughput (lower cost), but they make each decode step take longer (worse TPOT) and make a newly arrived request wait behind a larger in-flight batch (worse TTFT). Continuous batching ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)) and chunked prefill ([Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html)) exist to move this frontier outward, but the tradeoff never disappears. The serving system's batching *policy* is the knob that places you on the curve where your SLOs are met at the lowest cost.
 
@@ -182,6 +196,26 @@ $$
 {{fig:serving-queueing-cliff}}
 
 As $\rho \to 1$, $W \to \infty$. This is the mathematical reason a cluster that looks "80% utilized and fine" falls off a cliff at 95%: the queueing term $1/(1-\rho)$ goes from $5$ to $20$ — a 4x latency increase from a 15-point utilization change. The tail percentiles explode even faster than the mean. **This is why you provision LLM clusters to run at 60–75% utilization, not 95%.** The headroom is not waste; it is the budget that keeps p99 bounded.
+
+Every symbol in that arithmetic — $\mu$, the per-replica service rate, and the `replica_token_capacity` the autoscaler later divides by — is something you **measure**, never guess, because it depends on your model, GPU, precision and prompt-length distribution. The standard instrument is an *open-loop* load generator that issues requests at a fixed Poisson rate regardless of whether earlier ones finished (a closed-loop tool with a fixed concurrency can never build a queue, so it cannot find your cliff):
+
+```bash
+# In one shell: start ONE replica exactly as production would run it.
+#   vllm serve meta-llama/Meta-Llama-3-8B-Instruct --port 8000
+
+# In another shell: sweep the offered rate against the SAME prompt/output length distribution
+# your traffic has, and read off TTFT/TPOT percentiles at each rate.
+for rate in 4 8 12 16 20 24; do
+  vllm bench serve \
+    --backend vllm --host 127.0.0.1 --port 8000 \
+    --model meta-llama/Meta-Llama-3-8B-Instruct \
+    --dataset-name random --random-input-len 800 --random-output-len 200 \
+    --num-prompts 500 --request-rate "$rate" \
+    --percentile-metrics ttft,tpot,itl --metric-percentiles 50,90,99
+done
+```
+
+The highest `--request-rate` whose p99 TTFT and p90 TPOT still sit inside the SLO is that replica's **goodput**; dividing it by the target utilization gives the $\mu$ you plug into the sizing formulas. (SGLang ships the equivalent as `python -m sglang.bench_serving`; NVIDIA's `genai-perf` does the same for TensorRT-LLM and Triton.)
 
 !!! example "Worked example: sizing a pool to a p99 TTFT SLO"
 
@@ -275,6 +309,8 @@ print(n)  # -> 223 concurrent 2k-token sequences fit in KV cache
 
 For a 70B model the weights alone (≈140 GB in bf16) exceed one 80 GB GPU, forcing **tensor parallelism** (TP) across GPUs — covered in [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html). The sizing rule then operates per-shard: with TP=4, each GPU holds a quarter of the weights and a quarter of each layer's KV, and the four GPUs together form *one replica*. PagedAttention ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)) is what lets you actually pack memory to near this theoretical $N_{\text{concurrent}}$ instead of wasting it on fragmentation and worst-case pre-allocation.
 
+Run the same arithmetic at the other end of the scale and the regime flips. Stack-100M — the ~100M-parameter model built end-to-end in Part XIV — has bf16 weights of roughly 0.2 GB and, with its handful of layers and KV heads, a KV footprint per token measured in *kilobytes*; a single consumer GPU holds thousands of concurrent sequences, so nothing is memory-bound and the binding constraint is purely prefill/decode compute. Serving it (including int4 quantization and a laptop-scale deployment) is [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html); the value of doing the arithmetic there is that you can verify the formulas above against a model you can actually hold in one GPU.
+
 !!! note "Aside: two sizing constraints, take the binding one"
 
     You now have two independent replica counts: one from *throughput* ($\lambda / (0.7\mu)$) and one from *concurrency/memory* ($N_{\text{requests}} / N_{\text{concurrent}}$). The real fleet size is the **maximum** of the two. Compute-bound workloads (long prompts, short outputs) are limited by prefill throughput; memory-bound workloads (many concurrent long-context chats) are limited by KV capacity. Know which regime you are in before you order GPUs.
@@ -325,6 +361,28 @@ class BatchPolicy:
         return decode_tokens, chunks
 ```
 
+Every field of that toy class is a real flag on a real engine. This is what the policy looks like when you actually launch a replica:
+
+```bash
+# --max-num-seqs            concurrency cap  -> KV-memory bound
+# --max-num-batched-tokens  per-step budget  -> TPOT bound
+# --max-model-len           hard context cap (also caps KV per sequence)
+# --gpu-memory-utilization  fraction of HBM vLLM may claim; the rest is reserve
+# --kv-cache-dtype fp8      halves KV bytes/token -> ~2x concurrency
+# --tensor-parallel-size    >1 shards weights AND KV across GPUs (still ONE replica)
+# --enable-prefix-caching   prefix/KV reuse (already the default in vLLM's V1 engine)
+vllm serve meta-llama/Meta-Llama-3-8B-Instruct \
+  --max-num-seqs 256 \
+  --max-num-batched-tokens 8192 \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.90 \
+  --kv-cache-dtype fp8 \
+  --tensor-parallel-size 1 \
+  --enable-prefix-caching
+```
+
+One honest difference from the toy class: vLLM has no separate `prefill_chunk_size` knob. In its V1 engine chunked prefill is on by default and the chunk size *is* `--max-num-batched-tokens` — a long prefill is sliced to fill whatever token budget remains after the running sequences take one decode token each, which is exactly the `step_budget` policy above. SGLang exposes the same two levers as `--max-running-requests` and `--chunked-prefill-size`.
+
 The deep lesson: **the batch policy is how you spend your latency budget.** A bigger `max_num_batched_tokens` raises throughput (cheaper) but lengthens each decode step (worse TPOT); enabling chunked prefill protects TPOT at the cost of slightly higher TTFT. There is no universally correct setting — there is only the setting that meets *your* SLO at the lowest cost, found by load-testing against your real traffic distribution.
 
 ## Autoscaling on GPUs: Scaling a Resource You Cannot Get Instantly
@@ -364,6 +422,31 @@ def desired_replicas(current_replicas,
 
 Two operational guardrails make this stable in practice. **Hysteresis / asymmetric timing**: scale *up* aggressively (spikes hurt users now) but scale *down* slowly (e.g. only after load stays low for several minutes), so a brief dip does not trigger an expensive teardown-then-rebuild cycle. **Cost-aware bounds**: GPUs are expensive enough that the `min_replicas` floor and `warm_buffer` are real budget decisions, not afterthoughts — a warm H100 sitting idle still bills by the second. Scale-to-zero is attractive for rarely-used models but pays the full multi-minute cold start on the next request, so reserve it for latency-tolerant or batch workloads.
 
+In a Kubernetes deployment you do not run that control law yourself; you express it declaratively. Kubernetes' built-in HPA scales on CPU and memory, which are useless signals for a GPU server (CPU stays near-idle while the GPU melts), so the standard pattern is **KEDA** — it manages an HPA underneath but drives it from an arbitrary metric, here vLLM's own Prometheus gauge:
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-llama3-8b
+spec:
+  scaleTargetRef:
+    name: vllm-llama3-8b          # the Deployment running `vllm serve`
+  minReplicaCount: 2              # never scale to zero for a latency-sensitive model
+  maxReplicaCount: 64
+  cooldownPeriod: 300             # scale DOWN slowly: 5 min of quiet before shrinking
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-operated.monitoring.svc:9090
+        metricName: vllm_num_requests_waiting
+        # The leading indicator: work already queued, summed over the pool.
+        query: sum(vllm:num_requests_waiting)
+        threshold: "5"            # ~5 waiting requests per replica is the target
+```
+
+`vllm:num_requests_waiting` is one of the gauges vLLM exports on `/metrics` alongside `vllm:num_requests_running`, `vllm:gpu_cache_usage_perc` and the `vllm:time_to_first_token_seconds` / `vllm:time_per_output_token_seconds` histograms (see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html) and [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html)). Asymmetric timing is configured through KEDA's `advanced.horizontalPodAutoscalerConfig.behavior` (fast `scaleUp`, throttled `scaleDown`), and draining is bought with a generous `terminationGracePeriodSeconds` plus a `preStop` hook that deregisters the pod from the router before the engine is asked to stop. **KServe** and **Ray Serve** package the same loop (including scale-to-zero and request-driven autoscaling) at a higher level if you would rather not assemble it from primitives.
+
 !!! warning "Common pitfall: autoscaling on the wrong metric"
 
     Scaling on GPU utilization or even on request count feels natural and is wrong for LLMs. Utilization saturates at 100% and stays pinned while the queue (and p99) grows underneath it — it cannot tell you *how much* you are behind. Request count ignores that one 8k-token request is worth a hundred 80-token ones. Scale on **waiting/running tokens** (or predicted TTFT). It is the only signal that is both a leading indicator and proportional to actual GPU work.
@@ -372,7 +455,7 @@ Two operational guardrails make this stable in practice. **Hysteresis / asymmetr
 
 Production fleets serve dozens of models: base + fine-tunes, multiple sizes, embedding models, a moderation classifier, several customer-specific adapters. Giving each its own always-on dedicated GPUs is simple but ruinously expensive when most are lightly used. Three strategies, from cheapest-but-slowest to most-isolated.
 
-**LoRA / adapter multiplexing (best for fine-tunes).** If twenty models are LoRA fine-tunes ([PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html)) of one base, you load the base weights *once* and swap only the small low-rank adapter matrices per request — even *within a single batch*, different requests can use different adapters (multi-LoRA batching, as in vLLM's S-LoRA-style support). One GPU's worth of base weights serves twenty "models" at near-zero marginal memory. This is the highest-leverage multi-model trick when it applies.
+**LoRA / adapter multiplexing (best for fine-tunes).** If twenty models are LoRA fine-tunes ([PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html)) of one base, you load the base weights *once* and swap only the small low-rank adapter matrices per request — even *within a single batch*, different requests can use different adapters (multi-LoRA batching, as in vLLM's S-LoRA-style support). One GPU's worth of base weights serves twenty "models" at near-zero marginal memory. This is the highest-leverage multi-model trick when it applies. Operationally it is `vllm serve <base> --enable-lora --max-loras 8 --max-lora-rank 32 --lora-modules sql=/adapters/sql legal=/adapters/legal`, after which clients pass `"model": "sql"` and vLLM batches both adapters' requests together; the mechanics and its scaling limits are in [Multi-Tenant LoRA & Adapter Serving at Scale](../07-inference-serving/14-multi-tenant-lora-serving.html).
 
 **Time-sharing with hot-swap (best for many independent models, spiky traffic).** Keep a pool of GPUs and load/evict *full* model weights on demand, treating HBM like a cache with an LRU policy keyed on recent traffic. The cost is the cold-start latency on a cache miss; mitigate it by keeping the top-$k$ models pinned and streaming weights fast from a local NVMe tier.
 
@@ -441,6 +524,7 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
     - **Batching policy is how you spend the latency budget.** `max_num_batched_tokens`, chunked prefill, and prefill/decode disaggregation place you on the throughput-vs-TPOT frontier; tune them against your real traffic, not a benchmark.
     - **Autoscale on a leading indicator (queue depth / waiting tokens), not GPU utilization.** Cold starts are minutes, so keep a warm buffer, scale up fast and down slow, and *drain* before releasing a GPU.
     - **Multi-model serving is a memory-management problem.** Multiplex LoRA adapters over a shared base, hot-swap whole models with an LRU/pinned cache, and statically partition only the few high-QPS models.
+    - **Every layer here has an off-the-shelf implementation — know the name.** Gateway: LiteLLM proxy or Envoy AI Gateway. Router: vLLM production-stack, Gateway API Inference Extension's `InferencePool` + Endpoint Picker, or NVIDIA Dynamo. Engine knobs: `vllm serve --max-num-seqs / --max-num-batched-tokens / --gpu-memory-utilization`. Autoscaler: KEDA on `vllm:num_requests_waiting`. Measurement: `vllm bench serve` in open loop. Build the toy versions to understand the policy; deploy the real ones.
 
 !!! sota "State of the Art & Resources (2026)"
     LLM serving systems have matured into a rich stack: continuous batching (Orca/vLLM) and PagedAttention are now table-stakes defaults, while prefill/decode disaggregation, KVCache-centric architectures (Mooncake), dedicated disaggregated-serving orchestration layers (NVIDIA Dynamo), and multi-LoRA multiplexing define the production frontier for high-throughput, SLO-compliant fleets.
@@ -465,6 +549,9 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance alternative with RadixAttention, disaggregated prefill/decode, powering 400k+ GPUs in production.
     - [NVIDIA/TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM) — NVIDIA's optimized inference library with custom attention kernels, speculative decoding, and Triton integration.
     - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA's open-source datacenter-scale orchestration layer (2025) that runs alongside vLLM, SGLang, or TensorRT-LLM to coordinate disaggregated prefill/decode pools and KV-aware routing across multi-node clusters — a production instantiation of the disaggregation and cache-affinity ideas this chapter builds from first principles.
+    - [vllm-project/production-stack](https://github.com/vllm-project/production-stack) — vLLM's K8s-native reference deployment: a router with round-robin / session / prefix-aware / KV-aware / disaggregated-prefill policies, LMCache integration, Prometheus dashboards, and KEDA autoscaling recipes. The closest thing to "this chapter, deployable."
+    - [kubernetes-sigs/gateway-api-inference-extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension) — the Kubernetes standard for inference-aware routing: `InferencePool` plus an Endpoint Picker that scores replicas on queue depth, KV-cache utilization, and resident LoRA adapters. Backs GKE Inference Gateway and Istio/Envoy-based inference gateways.
+    - [envoyproxy/ai-gateway](https://github.com/envoyproxy/ai-gateway) — Envoy-based AI gateway with token-usage-based (not request-count) rate limiting extracted from OpenAI-schema responses, plus multi-provider routing — the gateway layer of this chapter, productionized.
 
     **Go deeper**
 

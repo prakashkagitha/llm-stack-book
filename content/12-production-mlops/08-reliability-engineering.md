@@ -4,7 +4,9 @@ Classical site reliability engineering (SRE) was designed for systems with clear
 
 This chapter adapts SRE methodology to these realities. We cover how to define service level indicators (SLIs) and objectives (SLOs) for probabilistic text systems, how to build a diagnosis tree for LLM-specific failure modes, how to execute prompt and model rollbacks safely, how to write trace-attached postmortems, and how to design graceful degradation and multi-provider failover. By the end you will have concrete runbooks you can paste into an incident wiki.
 
-This chapter sits at the intersection of several others. Observability primitives (traces, spans, structured logs) are covered in [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html). How to set up online A/B testing and guardrail metrics is in [Online Evaluation: A/B Testing, Canaries & Guardrail Metrics](../12-production-mlops/07-online-eval-ab-testing.html). Cost-based routing decisions belong in [Caching, Routing & Cost Control in Production](../12-production-mlops/03-caching-routing-cost.html).
+This chapter sits at the intersection of several others. Observability primitives (traces, spans, structured logs) are covered in [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html). How to set up online A/B testing and guardrail metrics is in [Online Evaluation: A/B Testing, Canaries & Guardrail Metrics](../12-production-mlops/07-online-eval-ab-testing.html). Cost-based routing decisions belong in [Caching, Routing & Cost Control in Production](../12-production-mlops/03-caching-routing-cost.html), and the gateway/engine topology being kept alive is designed in [Designing an LLM Serving System](../12-production-mlops/01-serving-system-design.html).
+
+Everything here applies just as much when *you* are the provider. If you serve your own weights — the Stack-100M capstone deployment in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) — the quality SLO, the diagnosis tree, the degradation ladder, and the burn-rate alerts are unchanged; only the first branch of the tree points at your own GPUs and your own vLLM process instead of somebody else's status page.
 
 ---
 
@@ -34,7 +36,19 @@ $$
 \text{Quality SLO window} = \frac{\text{judged-good responses in last } W \text{ minutes}}{\text{total judged responses in last } W \text{ minutes}} \geq \theta
 $$
 
-Choose $W$ and $\theta$ based on traffic volume. With 10,000 requests per hour a 30-minute window gives you 5,000 samples, enough to detect a 2-percentage-point drop at high confidence. With 100 requests per hour, use a 6-hour window and supplement with a daily offline eval suite.
+Choose $W$ and $\theta$ based on traffic volume, and choose it *quantitatively* — the window width is a statistical decision, not a taste one. The judged-good count in a window is a binomial draw, so the standard error of the measured rate $\hat{p}$ over $n$ judged samples is
+
+$$
+\operatorname{SE}(\hat{p}) = \sqrt{\frac{p(1-p)}{n}}
+$$
+
+With 10,000 requests per hour, a 30-minute window gives $n = 5{,}000$ samples; at $p = 0.95$ that is $\operatorname{SE} = \sqrt{0.95 \times 0.05 / 5000} \approx 0.0031$, i.e. 0.31 percentage points. A 2-percentage-point drop is therefore about $6\sigma$ of window noise — detectable at a glance. Going the other way, to detect a drop of size $\delta$ against a known baseline at 95% confidence and 80% power you need roughly
+
+$$
+n \approx \frac{(z_{0.975} + z_{0.80})^2 \cdot 2p(1-p)}{\delta^2} = \frac{(1.96 + 0.84)^2 \cdot 2(0.95)(0.05)}{\delta^2}
+$$
+
+which for $\delta = 0.02$ is $\approx 1{,}900$ judged samples per window. Below that, your window is too narrow to distinguish a regression from noise and you will page on nothing. With 100 requests per hour, no short window can reach 1,900 samples: use a 6-hour window, sample-judge aggressively (judge 100% of traffic rather than 1%), and supplement with a daily offline eval suite. This sample-size arithmetic is the same one behind canary sizing in [Online Evaluation: A/B Testing, Canaries & Guardrail Metrics](../12-production-mlops/07-online-eval-ab-testing.html).
 
 ### Latency tail budgets
 
@@ -46,6 +60,8 @@ LLM latency is bimodal: most responses are fast, but long-input or long-output r
 - **Timeout rate** — fraction of requests exceeding a hard wall-clock limit.
 
 Track these per route, not just globally. A summarization endpoint with 4,096-token outputs has very different latency characteristics than a classification endpoint returning a single token.
+
+If you serve the model yourself, do not re-derive these SLIs from application timers — the engine already exports them. vLLM publishes a Prometheus endpoint on `/metrics` with `vllm:time_to_first_token_seconds` and `vllm:time_per_output_token_seconds` histograms, `vllm:e2e_request_latency_seconds`, and the saturation gauges `vllm:num_requests_running`, `vllm:num_requests_waiting`, and `vllm:kv_cache_usage_perc`; SGLang exposes an equivalent set when launched with `--enable-metrics`. Your latency SLI is then one PromQL expression over the engine's own histogram, which is both cheaper and more honest than client-side timing (it excludes network jitter you cannot fix). See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html) for the full metric inventory and OTLP wiring.
 
 !!! example "Worked example: error budget arithmetic"
 
@@ -104,18 +120,27 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Most providers host on Statuspage, which exposes a machine-readable
+# /api/v2/status.json. Domains do move (Anthropic's page is also served at
+# status.claude.com) — assert on a 200 + parseable JSON in a startup check so a
+# renamed status page fails loudly instead of silently reporting "unknown".
 PROVIDER_STATUS_URLS = {
     "openai": "https://status.openai.com/api/v2/status.json",
     "anthropic": "https://status.anthropic.com/api/v2/status.json",
     "google": "https://status.cloud.google.com/incidents.json",
 }
 
+def _utcnow() -> datetime.datetime:
+    # datetime.utcnow() is deprecated since Python 3.12: it returns a naive
+    # datetime, which silently misaligns with timestamps in your traces.
+    return datetime.datetime.now(datetime.timezone.utc)
+
 @dataclass
 class ProviderHealth:
     provider: str
     status: str          # "operational", "degraded", "outage"
     indicator: str       # raw indicator from status page
-    checked_at: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    checked_at: datetime.datetime = field(default_factory=_utcnow)
     error: Optional[str] = None
 
 async def check_provider_status(provider: str) -> ProviderHealth:
@@ -151,6 +176,23 @@ async def diagnose_providers() -> dict[str, ProviderHealth]:
     )
     return {h.provider: h for h in results}
 ```
+
+### Branch 1, self-hosted: when you are the provider
+
+If the model runs on your own GPUs there is no status page to poll, and Branch 1 becomes an infrastructure investigation. The failure modes are different from an API vendor's and each has a specific engine-level signal:
+
+| Failure | Signal | First action |
+|---|---|---|
+| Queue saturation (traffic above capacity) | `vllm:num_requests_waiting` climbing, `vllm:kv_cache_usage_perc` pinned near 1.0, TTFT p99 blowing out while TPOT stays flat | Shed load / scale replicas; do not "fix" it with a bigger `--max-num-seqs` |
+| KV-cache thrash | preemption counter (`vllm:num_preemptions_total`; exact name varies by engine version — read your `/metrics`) rising from zero | Lower `--max-num-seqs`, raise `--gpu-memory-utilization`, or cap `--max-model-len` |
+| Engine crash / CUDA OOM | Process restart in pod logs, `/health` failing, request errors spike to 100% for that replica | Kubernetes liveness probe restarts it; check for a long-context request that blew the activation budget |
+| Hardware fault | Xid errors in `dmesg`, DCGM health checks failing, thermal or power throttling, ECC errors | Cordon the node; drain traffic before the GPU takes the whole replica down |
+| Wrong artifact deployed | Quality collapses immediately after a deploy; served checkpoint SHA does not match the intended one | Roll back the image/checkpoint tag; assert the weight hash at boot |
+| Numerical corruption | NaN/inf logits, degenerate repetition, garbage after a quantization or kernel change | Fall back to the previous quantization; re-run the canary eval on the exact artifact |
+
+Two probes, not one. A liveness probe should hit the engine's cheap `/health` endpoint (vLLM; SGLang additionally offers `/health_generate`, which runs a one-token generation and so catches a wedged-but-listening engine). A readiness probe should additionally require that the model is loaded and the queue is not already saturated, so Kubernetes stops sending traffic to a replica that is still warming up a 20 GB weight load. Deploy pod topology, drain semantics, and autoscaling on `vllm:num_requests_waiting` are covered in [Designing an LLM Serving System](../12-production-mlops/01-serving-system-design.html).
+
+At Stack-100M scale this branch is delightfully cheap to make redundant: 100M parameters at 4 bits is roughly 50–100 MB of weights, so the "secondary provider" in the failover section below can simply be a second replica on another node — or a `llama.cpp` GGUF copy running on CPU, slow but essentially never down. See [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html).
 
 ### Branch 2: Prompt change regression
 
@@ -362,7 +404,7 @@ Every LLM request should emit a structured trace with at least these fields:
 }
 ```
 
-See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html) for the full observability infrastructure to produce these traces.
+Do not invent this schema from nothing. The open convention is OpenTelemetry's **GenAI semantic conventions** — span attributes such as `gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens` (still evolving, so pin your instrumentation version) — and **OpenLLMetry** (`traceloop/openllmetry`) auto-instruments the common client libraries to emit them, so a `Traceloop.init()` at process start gets you spans for model calls, retrieval, and framework steps without hand-written tracing. Add your incident-specific fields (`prompt_sha`, judge score and flags, degradation level at request time) as extra attributes on the same spans; open-source backends such as Langfuse and Arize Phoenix ingest them and let you filter a whole incident window by `prompt_sha`. See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html) for the full observability infrastructure to produce these traces.
 
 ### Postmortem template
 
@@ -704,7 +746,11 @@ class MultiProviderGateway:
                 # Success: record and return
                 print(f"[GATEWAY] Served by {provider.name}")
                 return result
-            except (httpx.TimeoutException, httpx.HTTPStatusError, Exception) as e:
+            # Deliberately broad: httpx.TimeoutException / HTTPStatusError and any
+            # provider-SDK error must all fall through to the next provider rather
+            # than fail the user's request. (asyncio.CancelledError inherits from
+            # BaseException, so shutdown/cancellation still propagates correctly.)
+            except Exception as e:
                 last_error = e
                 circuit = self.circuits[provider.name]
                 circuit.record_failure(provider.window_seconds)
@@ -738,6 +784,35 @@ class MultiProviderGateway:
             return r.json()
 ```
 
+### The same thing with a real gateway (LiteLLM)
+
+Write the gateway above once so that nothing is a black box, then stop maintaining it. **LiteLLM** (`BerriAI/litellm`) is the de-facto open-source implementation of exactly this layer as of 2026, and its reliability settings map one-for-one onto the classes we just wrote — `allowed_fails` is `max_failures`, `cooldown_time` is the `trip()` cooldown, `fallbacks` is `_available_providers()` ordering:
+
+```yaml
+# config.yaml  —  run with:  litellm --config config.yaml   (pip install "litellm[proxy]")
+model_list:
+  - model_name: llm-v2                      # your stable internal alias
+    litellm_params:
+      model: openai/gpt-4o-2024-08-06       # pinned snapshot, not a floating alias
+  - model_name: llm-v2-backup               # secondary provider
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+  - model_name: llm-v2-local                # your own vLLM server: just another
+    litellm_params:                         # OpenAI-compatible backend
+      model: openai/stack-100m-int4
+      api_base: http://vllm-svc:8000/v1
+
+router_settings:
+  routing_strategy: latency-based-routing   # or simple-shuffle / usage-based-routing
+  num_retries: 2                            # in-provider retries (backoff is built in)
+  timeout: 30                               # per-request wall clock, seconds
+  allowed_fails: 5                          # failures before this deployment is cooled off
+  cooldown_time: 30                         # seconds to keep it out of rotation
+  fallbacks: [{"llm-v2": ["llm-v2-backup", "llm-v2-local"]}]
+```
+
+Application code then only ever asks for `llm-v2`; which provider answered is a reliability decision made by the gateway and recorded in its logs. The routing/cost side of the same config (caching, per-key budgets, spend tracking) is developed in [Caching, Routing & Cost Control in Production](../12-production-mlops/03-caching-routing-cost.html). Two cautions the config does not give you for free: fallbacks only help if the fallback model has passed your canary eval on the *same* prompts (a cheaper backup model that fails your JSON schema converts an outage into a silent quality incident), and you must export the gateway's per-deployment failure and cooldown metrics into the same dashboard as your quality SLI, or failover becomes invisible.
+
 ### Provider outage runbook
 
 This is the step-by-step procedure for on-call engineers. Pin it in your incident wiki and Slack channel.
@@ -756,7 +831,10 @@ Track token consumption as a first-class metric. If your gateway observes a 429,
 3. Alert if token consumption is trending toward the quota limit so you can request a quota increase proactively.
 
 ```python
+import asyncio
 import random
+
+import httpx
 
 async def retry_with_backoff(
     call_fn,
@@ -807,6 +885,58 @@ $$
 
 A $4\times$ burn rate exhausts the monthly budget in $30/4 = 7.5$ days — a warning-level alert.
 
+!!! warning "A burn-rate threshold can be unreachable"
+
+    The maximum possible burn rate is $1/(1-\text{SLO})$: if *every* response is bad, the budget burns at $\frac{1-0}{1-\text{SLO}}$. For an availability SLO of 99.9% that ceiling is $1000\times$, so a $14.4\times$ page fires on a mere 1.4% error rate. But for a **quality** SLO of 95% the ceiling is only $20\times$, and $14.4\times$ requires 72% of responses to be judged bad — a threshold you will essentially never hit before users have long since churned. Scale the burn thresholds to the SLO: for a 95% quality SLO, page at roughly $4$–$6\times$ (20–30% bad) and warn at $2\times$. Copying 14.4/6 verbatim from the SRE Workbook, which assumes high-availability SLOs, is a common and silent way to build an alert that never fires.
+
+### Alerting as code
+
+Burn-rate alerts should live in version control next to the SLO definition, not in a dashboard someone clicked together. The standard implementation is a Prometheus recording rule for the SLI plus a *multi-window* alert: a long window establishes that meaningful budget has been consumed, and a short window ensures the alert resolves quickly once the incident is over.
+
+```yaml
+# prometheus-rules.yaml  (kube-prometheus PrometheusRule, or a plain rule_files entry)
+groups:
+  - name: llm-quality-slo
+    rules:
+      # Recording rule: judged-good fraction. Counters are emitted by the online
+      # judge described earlier; label by route so segments are alertable.
+      - record: llm:quality_sli:ratio_rate1h
+        expr: |
+          sum by (route) (rate(llm_quality_good_total[1h]))
+            / sum by (route) (rate(llm_quality_judged_total[1h]))
+      - record: llm:quality_sli:ratio_rate5m
+        expr: |
+          sum by (route) (rate(llm_quality_good_total[5m]))
+            / sum by (route) (rate(llm_quality_judged_total[5m]))
+
+      # Fast burn: long window confirms budget loss, short window confirms it is
+      # still happening. 0.05 = 1 - SLO(0.95); 6 = burn multiple (see the warning
+      # above on scaling thresholds to a loose SLO).
+      - alert: LLMQualityFastBurn
+        expr: |
+          (1 - llm:quality_sli:ratio_rate1h) > (6 * 0.05)
+            and
+          (1 - llm:quality_sli:ratio_rate5m) > (6 * 0.05)
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: "Quality SLO burning at >6x on {{ $labels.route }}"
+          runbook: "https://wiki.internal/runbooks/llm-quality-slo"
+
+      # Slow burn: catches the gradual silent collapse a fast-burn rule misses.
+      # (Define llm:quality_sli:ratio_rate6h and ...rate30m with the same two
+      #  recording rules as above, only the range selector changes.)
+      - alert: LLMQualitySlowBurn
+        expr: |
+          (1 - llm:quality_sli:ratio_rate6h) > (2 * 0.05)
+            and
+          (1 - llm:quality_sli:ratio_rate30m) > (2 * 0.05)
+        for: 15m
+        labels: {severity: ticket}
+```
+
+Writing these by hand for every SLO is tedious and error-prone, so generators exist: **Sloth** (`slok/sloth`) and **Pyrra** both compile a short SLO spec into the full set of recording and multi-window burn-rate rules, and **OpenSLO** is the vendor-neutral spec format they and commercial platforms consume. Define the SLO once in YAML, let the generator emit the twelve rules, and review the *spec* in code review rather than the rules.
+
 ### Error budget reviews
 
 Hold a monthly error budget review. The agenda:
@@ -851,8 +981,9 @@ War Room Checklist
     - **Prompt and model versioning** must be first-class infrastructure: SHA-based prompt registries with atomic rollback, pinned model version strings at the provider API, and canary eval gates before full rollout.
     - **Trace-attached postmortems** anchor every claim to a specific trace ID (prompt SHA, retrieval scores, quality judge output); without trace evidence, postmortems devolve into speculation.
     - Design a **degradation ladder** (full RAG → retrieval-off → smaller model → cache-only → graceful error) with automatic circuit-breaker transitions; never assume binary up/down.
-    - **Multi-provider failover** with circuit breaking is non-negotiable for production systems; no single provider offers five-nines availability, and automatic failover should reduce mean-time-to-restore to under 2 minutes.
-    - Use **burn rate alerts** (fast-burn ≥ 14.4×, slow-burn ≥ 6×) rather than raw SLI threshold alerts to give early warning proportional to the speed at which the error budget is being consumed.
+    - **Multi-provider failover** with circuit breaking is non-negotiable for production systems; no single provider offers five-nines availability, and automatic failover should reduce mean-time-to-restore to under 2 minutes. Build it once to understand it, then run **LiteLLM**'s `fallbacks` / `allowed_fails` / `cooldown_time` — the same state machine, maintained by someone else.
+    - When you serve your own weights, **Branch 1 becomes an infrastructure branch**: queue depth (`vllm:num_requests_waiting`), KV-cache saturation and preemptions, engine `/health` liveness plus a generate-based readiness probe, GPU Xid/ECC faults, and a boot-time assertion that the deployed checkpoint hash is the intended one.
+    - Use **burn rate alerts** — a long window to prove budget loss and a short window so the page clears — rather than raw SLI thresholds, and **scale the multiple to the SLO**: the maximum achievable burn is $1/(1-\text{SLO})$, so the Workbook's 14.4× is meaningful for a 99.9% availability SLO but unreachable in practice for a 95% quality SLO (use ~4–6× there). Generate the rules from an SLO spec with Sloth, Pyrra, or OpenSLO instead of hand-writing PromQL.
 
 ---
 
@@ -876,6 +1007,7 @@ War Room Checklist
     - [traceloop/openllmetry](https://github.com/traceloop/openllmetry) — OpenTelemetry-based instrumentation for LLM pipelines; provides standard span attributes for model calls, prompt versions, and retrieval stages across 15+ providers.
     - [BerriAI/litellm](https://github.com/BerriAI/litellm) — Rust-core AI gateway with Python SDK (54k+ stars) unifying 100+ LLM providers with built-in fallbacks, circuit-breaker-style cooldowns, MCP gateway support, and per-provider spend tracking.
     - [LangSmith](https://www.langchain.com/langsmith) — trace-level observability platform for LLM agents; supports online evaluations, quality scoring, and PagerDuty/webhook alerting on production traces.
+    - [slok/sloth](https://github.com/slok/sloth) and [OpenSLO](https://github.com/OpenSLO/OpenSLO) — SLO-as-code: Sloth compiles a short SLO spec into the full set of Prometheus recording rules and multi-window burn-rate alerts, and OpenSLO is the vendor-neutral spec format for the same thing (Pyrra is a comparable alternative with a UI).
 
     **Go deeper**
 

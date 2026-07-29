@@ -2,7 +2,7 @@
 
 Modern large language models require compute that no single GPU can provide. Training a 70-billion-parameter model in a reasonable amount of time requires hundreds — sometimes thousands — of GPUs working in tight coordination. This chapter explains the substrate that makes that coordination possible: the programming model for parallel computation and the collective communication operations that keep thousands of accelerators synchronized. Everything in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html) builds on the foundations developed here.
 
-We start from first principles — processes, threads, and how GPUs expose parallelism — and build up to the exact cost models engineers use to reason about whether a training job will be network-bound or compute-bound.
+We start from first principles — processes, threads, and how GPUs expose parallelism — and build up to the exact cost models engineers use to reason about whether a training job will be network-bound or compute-bound. Even at the small end this matters: the ~100M-parameter model we build in [The Pretraining Run](../14-capstone/07-pretraining-run.html) has a bf16 gradient buffer of only ~0.24 GB, so a single-node 4-GPU DDP all-reduce over NVLink costs a couple of milliseconds per step — which is exactly why data parallelism alone is the right (and only) parallelism the capstone needs.
 
 ## Processes, Threads, and the SPMD Model
 
@@ -25,6 +25,7 @@ The SPMD programming model is the backbone of all distributed deep learning. Eve
 ```python
 # spmd_demo.py — run with:
 #   torchrun --nproc_per_node=4 spmd_demo.py
+import os
 import torch
 import torch.distributed as dist
 
@@ -32,11 +33,13 @@ def main():
     # Initialize the default process group. "nccl" for GPU; "gloo" for CPU.
     dist.init_process_group(backend="nccl")
 
-    rank = dist.get_rank()        # which GPU am I?
+    rank = dist.get_rank()        # global rank: unique across the whole job
     world_size = dist.get_world_size()  # total GPU count
+    # LOCAL_RANK is the index *within this node* — always use it (not RANK) to
+    # pick a device, or rank 8 of a 2-node job will ask for a nonexistent cuda:8.
+    local_rank = int(os.environ["LOCAL_RANK"])
 
-    # Every rank uses its rank as a local device index.
-    device = torch.device(f"cuda:{rank}")
+    device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
 
     # Each process creates a tensor whose value equals its rank.
@@ -55,7 +58,24 @@ if __name__ == "__main__":
     main()
 ```
 
-When you launch with `torchrun --nproc_per_node=4`, the launcher forks four processes. Each process discovers its rank and world size through environment variables (`RANK`, `WORLD_SIZE`, `MASTER_ADDR`, `MASTER_PORT`) that `torchrun` sets before calling your script. This is the SPMD contract: every process runs `main()`, but the outcome differs by rank.
+When you launch with `torchrun --nproc_per_node=4`, the launcher spawns four processes. Each process discovers its identity through environment variables (`RANK`, `LOCAL_RANK`, `WORLD_SIZE`, `MASTER_ADDR`, `MASTER_PORT`) that `torchrun` sets before calling your script. This is the SPMD contract: every process runs `main()`, but the outcome differs by rank.
+
+`torchrun` (the `torch.distributed.run` elastic launcher, successor to the deprecated `torch.distributed.launch`) is also how you go multi-node. Run the *same* command on every node and let the c10d rendezvous server on node 0 assign global ranks:
+
+```bash
+# On EVERY node (identical command; the rendezvous assigns RANK automatically):
+torchrun \
+  --nnodes=2 --nproc_per_node=8 \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint=node0.cluster.local:29500 \
+  --rdzv_id=my_training_job \
+  train.py --config configs/base.yaml
+
+# Under Slurm, `srun` supplies one task per node and torchrun fans out to GPUs:
+#   srun --nodes=2 --ntasks-per-node=1 torchrun --nnodes=2 --nproc_per_node=8 ...
+```
+
+With `--rdzv_backend=c10d` you never set `--node_rank` by hand; with the older static rendezvous you must pass `--node_rank`, `--master_addr`, and `--master_port` explicitly. Elastic rendezvous also lets you specify `--nnodes=2:4` (min:max) so the job restarts from the last checkpoint with a smaller world when a node dies — see [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
 ## NCCL: The Collective Communication Library
 
@@ -165,6 +185,42 @@ def overlapped_allreduce_example(grad_tensor, device):
     return grad_tensor
 ```
 
+### Point-to-Point: send, recv and `batch_isend_irecv`
+
+Collectives are not the whole story. **Pipeline parallelism** moves activations from stage $i$ to stage $i+1$ and gradients back, which is a pure point-to-point (P2P) exchange between two ranks — no collective involved. NCCL exposes this as `dist.send`/`dist.recv` (blocking) and `dist.isend`/`dist.irecv` (async).
+
+The footgun is ordering: if every rank calls blocking `send` first and `recv` second, and every send is large enough to exceed the transport's internal buffering, the whole ring deadlocks because no one is receiving. The two safe patterns are (a) alternate the order by parity, or (b) use `dist.batch_isend_irecv`, which hands NCCL the whole set of P2P ops at once so it can group them into a single communication round:
+
+```python
+# p2p_ring_exchange.py — each rank sends to rank+1 and receives from rank-1.
+import torch
+import torch.distributed as dist
+
+def ring_exchange(send_buf: torch.Tensor, recv_buf: torch.Tensor):
+    """Deadlock-free neighbour exchange — the primitive under 1F1B pipelining."""
+    rank, world_size = dist.get_rank(), dist.get_world_size()
+    next_rank = (rank + 1) % world_size
+    prev_rank = (rank - 1) % world_size
+
+    # Post BOTH ops together. NCCL fuses them into one grouped call, so there is
+    # no send-before-recv ordering hazard even if every rank is symmetric.
+    ops = [
+        dist.P2POp(dist.isend, send_buf, next_rank),
+        dist.P2POp(dist.irecv, recv_buf, prev_rank),
+    ]
+    for req in dist.batch_isend_irecv(ops):
+        req.wait()
+    return recv_buf
+
+# Blocking alternative — correct ONLY because the order alternates by parity:
+#   if rank % 2 == 0:
+#       dist.send(send_buf, dst=next_rank); dist.recv(recv_buf, src=prev_rank)
+#   else:
+#       dist.recv(recv_buf, src=prev_rank); dist.send(send_buf, dst=next_rank)
+```
+
+Two rules that will save you hours: the receiver must allocate a buffer of exactly the right shape and dtype (NCCL P2P carries no metadata, so a shape mismatch silently corrupts memory or hangs), and both ranks must agree on the number and order of P2P ops. Megatron-LM's `p2p_communication.py` is essentially this function plus shape negotiation and CUDA-stream bookkeeping; see [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html).
+
 ## Ring All-Reduce: The Algorithm That Scaled Deep Learning
 
 Naive all-reduce has rank 0 collect everything then broadcast — a star topology that makes rank 0 a bottleneck. Ring all-reduce eliminates this bottleneck and achieves near-optimal bandwidth utilization.
@@ -195,11 +251,13 @@ The tradeoff:
 | Tree (binary) | $2 \log_2 n$ | $O(M \log n)$ | Small messages, latency-sensitive |
 | Recursive halving | $\log_2 n$ reduce + $\log_2 n$ broadcast | Near-optimal | Medium messages |
 
-NCCL selects the algorithm automatically based on message size and topology.
+The $O(M \log n)$ row describes a *naive* binomial-tree reduce followed by a broadcast, where the same bytes traverse every level. NCCL's actual `Tree` algorithm is smarter: it is a **double binary tree** (Sanders et al., 2009), which overlays two complementary trees so that every node is an interior node in one and a leaf in the other. This keeps the $O(\log n)$ latency *and* recovers near-optimal bandwidth, which is why NCCL often prefers Tree over Ring for large-message all-reduce at high *node* counts — the ring's $2(n-1)\alpha$ term becomes intolerable long before its bandwidth term does.
+
+NCCL selects among `Ring`, `Tree`, `NVLS`, `CollNet` and friends automatically, using an internal cost model over message size, topology, and rank count. You can override it for experiments with `NCCL_ALGO=Tree` / `NCCL_ALGO=Ring` and force a wire protocol with `NCCL_PROTO=Simple|LL|LL128` (`LL` = low-latency, used for tiny messages; `LL128` exploits 128-byte NVLink flits). Overriding is a diagnostic tool, not a tuning strategy — NCCL's defaults beat hand-picked settings on almost every cluster.
 
 ## Bandwidth and Latency Cost Models
 
-To reason about whether your training run is compute-bound or communication-bound, you need a simple cost model. The **alpha-beta model** (also called the LogP model in the literature) approximates the time to send a message of $B$ bytes as:
+To reason about whether your training run is compute-bound or communication-bound, you need a simple cost model. The **alpha-beta model** (also called the Hockney model; the LogP family of models is a richer refinement that additionally separates per-message CPU overhead from network occupancy) approximates the time to send a message of $B$ bytes as:
 
 $$
 T(B) = \alpha + \frac{B}{\beta}
@@ -260,7 +318,7 @@ This topology means:
 {{fig:nvswitch-crossbar-topology}}
 
 
-NCCL exploits NVSwitch by using its own **all-reduce algorithm** that leverages the all-to-all connectivity, avoiding a sequential ring in favor of a one-shot reduce pattern across the switch fabric.
+NCCL exploits NVSwitch by using its own **all-reduce algorithm** that leverages the all-to-all connectivity, avoiding a sequential ring in favor of a one-shot reduce pattern across the switch fabric. On Hopper and Blackwell systems this is the **NVLS** algorithm (NVLink SHARP): the NVSwitch chips contain arithmetic units that perform the reduction *inside the switch*, so each GPU pushes its buffer once and pulls the reduced result once instead of relaying $2\frac{n-1}{n}M$ bytes around a ring. InfiniBand has the analogous **SHARP** in-network reduction in Quantum switches for the inter-node hop. You will see `NVLS` and `NVLS Tree` appear in `NCCL_DEBUG=INFO` logs when NCCL picks these paths.
 
 ### Inter-Node: InfiniBand
 
@@ -287,6 +345,7 @@ The following implements a minimal DDP-style training loop from scratch, showing
 ```python
 # minimal_ddp.py
 # Run: torchrun --nproc_per_node=4 minimal_ddp.py
+import os
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -298,7 +357,8 @@ from torch.utils.data import DataLoader, TensorDataset, DistributedSampler
 dist.init_process_group(backend="nccl")
 rank       = dist.get_rank()
 world_size = dist.get_world_size()
-device     = torch.device(f"cuda:{rank}")
+local_rank = int(os.environ["LOCAL_RANK"])   # node-local device index
+device     = torch.device(f"cuda:{local_rank}")
 torch.cuda.set_device(device)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -354,7 +414,11 @@ for epoch in range(2):
         # causing model divergence after the first step.
         for param in model.parameters():
             if param.grad is not None:
-                # SUM then divide → average; or use ReduceOp.AVG if supported.
+                # SUM then divide → average. The NCCL backend also supports
+                # op=dist.ReduceOp.AVG directly, which is both fewer kernels and
+                # numerically safer in bf16 (it divides inside the reduction
+                # tree instead of letting the sum grow by a factor of world_size
+                # before scaling). Gloo/CPU does not support AVG.
                 dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
                 param.grad.data /= world_size
         # ────────────────────────────────────────────────────────────────────
@@ -419,12 +483,42 @@ def build_tp_dp_groups(tp_size: int):
 
 NCCL treats each `new_group` call as a new communicator; it internally runs its topology detection and algorithm selection within that group.
 
+### DeviceMesh: The Library API for the Same Idea
+
+Hand-rolling nested `new_group` loops is exactly the code that gets subtly wrong when you go from 2D (DP × TP) to 4D (DP × TP × PP × CP). PyTorch's **`DeviceMesh`** (`torch.distributed.device_mesh`) is the supported abstraction for it: you declare an $n$-dimensional logical grid of devices with named dimensions, and it builds and caches every sub-group for you. It is the substrate that FSDP2, `TensorParallel`, and `DTensor` are all written against.
+
+```python
+# device_mesh_demo.py — the same TP/DP decomposition as above, in 3 lines.
+from torch.distributed.device_mesh import init_device_mesh
+
+# world_size = 8, laid out as dp=2 x tp=4.
+# Mesh dimensions vary fastest on the RIGHT, so this yields exactly:
+#   tp groups: [0,1,2,3], [4,5,6,7]      (contiguous → lands on NVLink)
+#   dp groups: [0,4], [1,5], [2,6], [3,7]
+mesh = init_device_mesh("cuda", (2, 4), mesh_dim_names=("dp", "tp"))
+
+tp_group = mesh["tp"].get_group()   # a real ProcessGroup, usable with dist.*
+dp_group = mesh["dp"].get_group()
+
+# dist.all_reduce(activation_shard, group=tp_group)  # fast, intra-node
+# dist.all_reduce(grad,             group=dp_group)  # slower, inter-node
+
+# Higher-level APIs consume the mesh directly:
+#   from torch.distributed.fsdp import fully_shard
+#   fully_shard(model, mesh=mesh["dp"])
+#   from torch.distributed.tensor.parallel import parallelize_module
+#   parallelize_module(block, mesh["tp"], {...})
+```
+
+Note the ordering rule, which is the whole reason meshes are worth using: the **last** mesh dimension is the fastest-varying, so putting `tp` last guarantees tensor-parallel ranks are contiguous and therefore co-located on one node behind NVLink, while the data-parallel dimension is the one that straddles the slow InfiniBand hop. Getting that backwards puts your highest-volume collective on your slowest link. Megatron-LM encodes the same convention in its `parallel_state.py` rank-ordering logic (see [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html)).
+
 ## Collective Performance: Benchmarking and Profiling
 
 Understanding actual achieved bandwidth versus theoretical peak is essential for diagnosing training slowdowns.
 
 ```python
 # benchmark_allreduce.py — measure achieved bandwidth for a ring all-reduce
+import os
 import time
 import torch
 import torch.distributed as dist
@@ -436,7 +530,7 @@ def benchmark_all_reduce(message_bytes: int, n_iters: int = 50):
     """
     rank       = dist.get_rank()
     world_size = dist.get_world_size()
-    device     = torch.device(f"cuda:{rank}")
+    device     = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")
 
     # Allocate a float32 buffer of the requested size.
     n_elements = message_bytes // 4
@@ -474,7 +568,46 @@ def benchmark_all_reduce(message_bytes: int, n_iters: int = 50):
 # (Illustrative figures; actual results depend on driver version and cluster state)
 ```
 
-The **busbw** (bus bandwidth) formula $\frac{2(n-1)}{n} \cdot M / T$ is the standard metric because it accounts for the ring algorithm's traffic pattern and is comparable across cluster sizes. Compare busbw to the theoretical NVLink bandwidth to understand efficiency.
+The **busbw** (bus bandwidth) formula $\frac{2(n-1)}{n} \cdot M / T$ is the standard metric because it accounts for the ring algorithm's traffic pattern and is comparable across cluster sizes. Compare busbw to the theoretical NVLink bandwidth to understand efficiency. Note the correction factor is collective-specific: all-reduce uses $\frac{2(n-1)}{n}$, while reduce-scatter and all-gather each use $\frac{n-1}{n}$, and broadcast/reduce use $1$. Using the wrong factor is the most common way people convince themselves a cluster is twice as fast as it is.
+
+### nccl-tests: The Standard Cluster Benchmark
+
+Before blaming your training code, benchmark the fabric with the vendor tool. [`NVIDIA/nccl-tests`](https://github.com/NVIDIA/nccl-tests) is what every cluster acceptance test uses, and it reports both `algbw` (raw bytes/time) and `busbw` (the corrected metric above) at every message size:
+
+```bash
+# Build (MPI=1 if you want to sweep multiple nodes via mpirun).
+git clone https://github.com/NVIDIA/nccl-tests && cd nccl-tests
+make MPI=0 CUDA_HOME=/usr/local/cuda -j
+
+# Sweep 8 B → 8 GB, doubling each step, across 8 GPUs on this node.
+#   -b begin size   -e end size   -f size multiplier   -g GPUs per process
+./build/all_reduce_perf -b 8 -e 8G -f 2 -g 8
+# Columns:  size  count  type  redop  time(us)  algbw(GB/s)  busbw(GB/s)  #wrong
+# Read the plateau of the busbw column: that is your real all-reduce bandwidth.
+
+# Same sweep for the MoE-critical collective:
+./build/alltoall_perf -b 1M -e 1G -f 2 -g 8
+```
+
+The environment variables you will actually reach for:
+
+```bash
+export NCCL_DEBUG=INFO                     # print topology + chosen algorithm
+export NCCL_DEBUG_SUBSYS=INIT,GRAPH,ENV    # narrow the (very verbose) output
+export NCCL_SOCKET_IFNAME=eth0             # which NIC carries bootstrap traffic
+export NCCL_IB_HCA=mlx5_0,mlx5_1           # which InfiniBand HCAs to use
+export NCCL_IB_DISABLE=0                   # set 1 to force TCP (diagnostic only)
+export NCCL_P2P_DISABLE=0                  # set 1 to disable NVLink/P2P (diagnostic)
+
+# PyTorch-side hang debugging (names are TORCH_*-prefixed since PyTorch 2.2):
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1   # crash the rank instead of hanging
+export TORCH_NCCL_TRACE_BUFFER_SIZE=2000   # NCCL "flight recorder": on a watchdog
+                                           # timeout, dump the last N collectives
+                                           # per rank so you can see WHICH rank
+                                           # failed to enter WHICH collective.
+```
+
+The flight recorder is the single highest-value debugging tool for a hung multi-node job: a collective mismatch (one rank taking a different code path, as in the deadlock pitfall below) shows up immediately as one rank stuck on `ALLREDUCE` sequence number $k$ while everyone else is at $k+1$.
 
 For production profiling, use PyTorch Profiler with NCCL tracing enabled:
 
@@ -607,8 +740,9 @@ Understanding this table is what separates an engineer who can debug a distribut
     - The alpha-beta cost model $T = \alpha + B/\beta$ separates latency (per-call startup) from bandwidth (asymptotic rate). Large messages are bandwidth-bound; small messages are latency-bound.
     - NVLink/NVSwitch provides ~10–50× more bandwidth than InfiniBand, making intra-node collectives much cheaper than inter-node ones. Hierarchical collectives exploit this.
     - Different parallelism strategies use different collectives: data parallelism uses all-reduce, ZeRO/FSDP uses reduce-scatter+all-gather, tensor parallelism uses all-reduce within a sub-group, and MoE uses all-to-all.
-    - Process groups (`dist.new_group`) let you create communicators over subsets of ranks, enabling the 3D parallelism (DP × TP × PP) used by Megatron-LM.
-    - Every collective is a synchronization barrier — missing a collective call or making it conditional causes deadlock.
+    - Process groups (`dist.new_group`) let you create communicators over subsets of ranks, enabling the 3D parallelism (DP × TP × PP) used by Megatron-LM; in modern PyTorch you declare them once as a named `DeviceMesh` and let FSDP2/`DTensor` consume it, with the fastest-varying (last) mesh dimension deliberately placed on the fastest link.
+    - Pipeline parallelism uses point-to-point `isend`/`irecv` rather than collectives; post sends and receives together with `batch_isend_irecv` to avoid ordering deadlocks.
+    - Every collective is a synchronization barrier — missing a collective call or making it conditional causes deadlock. `TORCH_NCCL_TRACE_BUFFER_SIZE` (the NCCL flight recorder) tells you which rank stalled on which collective; `nccl-tests` tells you whether the fabric itself is healthy.
 
 !!! sota "State of the Art & Resources (2026)"
     Collective communication is a mature but rapidly evolving field: ring all-reduce remains the workhorse for large-message gradient synchronization, while NVLink/NVSwitch fabrics, hierarchical collectives, and algorithm-selection heuristics in NCCL 2.x continue to push practical bandwidth efficiency close to hardware limits at scales of 10,000+ GPUs.
@@ -633,7 +767,8 @@ Understanding this table is what separates an engineer who can debug a distribut
 
     **Go deeper**
 
-    - [PyTorch torch.distributed API docs](https://docs.pytorch.org/docs/2.13/distributed.html) — full API reference for process groups, backends, collective calls, and async operations.
+    - [PyTorch torch.distributed API docs](https://docs.pytorch.org/docs/stable/distributed.html) — full API reference for process groups, backends, collective calls, and async operations.
+    - [PyTorch DeviceMesh recipe](https://docs.pytorch.org/tutorials/recipes/distributed_device_mesh.html) — the modern replacement for hand-rolled `new_group` loops; the object FSDP2, `DTensor`, and `parallelize_module` all take as input.
     - [NVIDIA NCCL Documentation — Overview](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/overview.html) — official guide covering algorithm selection, topology detection, environment variables, and tuning.
     - [Understanding NCCL Tuning to Accelerate GPU-to-GPU Communication (NVIDIA Blog, 2025)](https://developer.nvidia.com/blog/understanding-nccl-tuning-to-accelerate-gpu-to-gpu-communication/) — explains NCCL's cost model, dynamic scheduler, and tuner-plugin interface for cluster-specific optimization.
 

@@ -26,7 +26,9 @@ No flywheel works without high-quality logs. Logs are not just debugging artifac
 
 ### What to log
 
-A minimal request record contains: request ID, timestamp, model version, raw user input, any retrieved context, the full model output, latency, token counts, and any client-side signals received (thumbs up/down, copy events, follow-up edits, session end). A richer record adds: the sampled probabilities of the chosen tokens (for distillation and importance weighting), the intermediate chain-of-thought if visible, and the system prompt hash.
+A minimal request record contains: request ID, timestamp, model version, raw user input, any retrieved context, the full model output, latency, token counts, and any client-side signals received (thumbs up/down, copy events, follow-up edits, session end). A richer record adds: the sampled probabilities of the chosen tokens (for distillation and importance weighting), the sampling parameters actually used (temperature, top-p, seed — without these the logprobs are not a valid propensity), the intermediate chain-of-thought if visible, and the system prompt hash.
+
+You do not have to invent the transport. The open-source convention is **OpenTelemetry's GenAI semantic conventions**, which standardize span attributes such as `gen_ai.system`, `gen_ai.request.model`, and `gen_ai.usage.input_tokens`; the open-source LLM-observability backends **Langfuse** and **Arize Phoenix** both ingest those spans and expose a "score" API so that thumbs-up/down events can be attached to a trace after the fact (this is the same instrumentation described in [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html)). Use the tracer for interactive debugging and the columnar log below for training-set assembly — the two have different retention, schema, and cost profiles, and conflating them is a common early mistake.
 
 ```python
 # flywheel/logging/request_logger.py
@@ -57,6 +59,9 @@ SCHEMA = {
         {"name": "retrieved_docs", "type": {"type": "array", "items": "string"}, "default": []},
         {"name": "model_output",   "type": "string"},
         {"name": "output_logprobs","type": {"type": "array", "items": "float"}, "default": []},
+        # Sampling params make output_logprobs interpretable as a propensity.
+        {"name": "temperature",    "type": "float", "default": 1.0},
+        {"name": "top_p",          "type": "float", "default": 1.0},
         {"name": "latency_ms",     "type": "float"},
         {"name": "input_tokens",   "type": "int"},
         {"name": "output_tokens",  "type": "int"},
@@ -81,6 +86,8 @@ class RequestRecord:
     retrieved_docs: list[str] = field(default_factory=list)
     model_output: str = ""
     output_logprobs: list[float] = field(default_factory=list)
+    temperature: float = 1.0
+    top_p: float = 1.0
     latency_ms: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -125,6 +132,8 @@ class AvroRequestLogger:
 ### Joining async signals back to requests
 
 Client signals (thumbs up, copy, regeneration requests) arrive seconds to minutes after the original request. You need a join service that updates the immutable log record. The cleanest approach is an event stream (Kafka or Pub/Sub): the serving tier emits request events; the client browser emits signal events keyed on request ID; a Flink or Spark Streaming job performs a session-windowed join and writes the enriched record to a curated table.
+
+In practice you rarely need true streaming here — training-set assembly is a batch consumer. The cheap open-source version is: append raw Avro/Parquet to object storage as above, and let a nightly job `MERGE` the signal events into an **Apache Iceberg** or **Delta Lake** table keyed on `request_id`. Both formats give you upserts, snapshot isolation, and *time travel*, which is what makes a training run reproducible: your retraining DAG pins a table snapshot ID, so "the data as of last Monday" is recoverable byte-for-byte even after late signals have landed. Reading it back for training is one line — `datasets.load_dataset("parquet", data_files="gs://my-logs/curated/*.parquet")` — which is the same Hugging Face `datasets` path used everywhere else in the book.
 
 
 {{fig:flywheel-async-signal-join}}
@@ -245,6 +254,52 @@ def sample_pairs_for_labeling(
     return [(a, b) for a, b, _ in all_pairs[:n_pairs]]
 ```
 
+`edit_distance_ratio` above is written out in full because the recurrence is worth seeing once; in production replace it with `rapidfuzz.distance.Levenshtein.normalized_distance`, which is a C++ implementation orders of magnitude faster than the Python/NumPy double loop.
+
+### Where the labels actually live: Argilla, and the format TRL expects
+
+The pairs you just selected need to reach a human. The default open-source annotation stack for LLM preference data is **Argilla** (a labeling server with an LLM-shaped data model — records with typed fields and questions), often driven by **distilabel** for the AI-feedback variant where a judge model pre-labels and humans only adjudicate disagreements. **Label Studio** is the general-purpose alternative if you also label images or audio. Pushing a batch of pairs into Argilla 2.x is short:
+
+```python
+# flywheel/labeling/push_to_argilla.py
+# pip install "argilla>=2.0"
+import argilla as rg
+
+client = rg.Argilla(api_url="http://localhost:6900", api_key="argilla.apikey")
+
+dataset = rg.Dataset(
+    name="prod-preferences-2026-w30",
+    settings=rg.Settings(
+        fields=[
+            rg.TextField(name="prompt"),
+            rg.TextField(name="response_a"),
+            rg.TextField(name="response_b"),
+        ],
+        questions=[
+            rg.LabelQuestion(name="preference", labels=["a", "b", "tie"]),
+            rg.TextQuestion(name="reason", required=False),
+        ],
+    ),
+)
+dataset.create()
+
+# `pairs` is the output of sample_pairs_for_labeling(...); each candidate
+# dict also carries the `request_id` it was read from in the curated log.
+dataset.records.log([
+    rg.Record(
+        fields={"prompt": a["prompt"],
+                "response_a": a["response"],
+                "response_b": b["response"]},
+        # Metadata travels with the record so you can audit *why* it was queued.
+        metadata={"request_id": a["request_id"], "rm_margin": abs(
+            a["reward_model_score"] - b["reward_model_score"])},
+    )
+    for a, b in pairs
+])
+```
+
+The step people skip is the *export contract*. Annotated pairs are only useful if they land in the exact schema the trainer consumes. TRL's `DPOTrainer` expects a dataset with three columns — `prompt`, `chosen`, `rejected` (each a string, or a chat-style list of messages) — and its `RewardTrainer` expects the same pair in `chosen`/`rejected` form. So the export step is: drop `tie` rows, map the `preference` label to which of `response_a`/`response_b` becomes `chosen`, and write a Parquet file with those three columns. Getting this contract right once means every later retraining run is a config change rather than a data-engineering project. The same three columns are what the capstone's post-training stage consumes in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
 ## Active Learning: Which Examples to Label Next?
 
 Not all unlabeled examples are equally informative. Active learning selects the subset of production traffic where labeling effort will produce the largest model improvement.
@@ -262,6 +317,8 @@ This is just the average negative log-probability per token, i.e. the per-token 
 ### Core-set / diversity sampling
 
 Uncertainty sampling alone leads to annotation of many near-duplicate examples (the model is uncertain in a cluster around the same concept). Add a diversity constraint: after computing uncertainty scores, run k-medoids clustering on the prompt embeddings, then sample the highest-uncertainty example from each cluster.
+
+The embeddings come from an off-the-shelf encoder — `sentence-transformers` (a small model such as `all-MiniLM-L6-v2` is plenty for clustering prompts) — and at production scale the nearest-center lookups go through **FAISS**, the same index you would use for RAG retrieval ([Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html)). Nothing here needs a bespoke system.
 
 {{fig:active-learning-uncertainty-vs-diversity}}
 
@@ -285,8 +342,12 @@ def greedy_k_medoids_indices(
     """
     Greedy farthest-first traversal (core-set construction).
     Returns indices of the k most diverse examples.
-    Time: O(N * k).  For N < 100k this is fast enough.
+    Time: O(N * k).  For N < 100k this is fast enough; beyond that,
+    use a FAISS index for the nearest-center query instead of the
+    dense distance recomputation below.
     """
+    if k <= 0:
+        return []
     rng = np.random.default_rng(seed)
     chosen = [int(rng.integers(len(embeddings)))]
     # Squared distances to the nearest chosen center
@@ -368,6 +429,11 @@ production prompts; we train the student to match the teacher's
 distribution using a combination of cross-entropy on the text and
 KL divergence on the top-k logits.
 
+Note on terminology: training on TEACHER-generated text (below) is the
+off-policy/"sequence-level KD" case.  Strict on-policy distillation
+trains on the STUDENT's own samples, scored by the teacher — see the
+note after this listing.
+
 This is a simplified illustration; in production you would use a
 proper distributed training harness (e.g., TRL's SFT trainer).
 """
@@ -381,6 +447,7 @@ def top_k_kl_loss(
     student_logits: Tensor,   # (batch, seq_len, vocab)
     teacher_top_k_ids: Tensor,  # (batch, seq_len, k) long
     teacher_top_k_logprobs: Tensor,  # (batch, seq_len, k) float
+    loss_mask: Tensor,               # (batch, seq_len) bool: True = supervised
     temperature: float = 2.0,
 ) -> Tensor:
     """
@@ -392,6 +459,7 @@ def top_k_kl_loss(
       1. Gather student logits at the teacher's top-k positions.
       2. Re-normalize both distributions over those k positions.
       3. Compute KL(teacher || student) (forward KL).
+      4. Average ONLY over supervised (completion) positions.
     """
     B, T, k = teacher_top_k_ids.shape
 
@@ -410,8 +478,11 @@ def top_k_kl_loss(
     student_log_probs = F.log_softmax(student_logprobs_scaled, dim=-1)  # (B, T, k)
 
     # KL(teacher || student): sum_i p_t * (log p_t - log p_s)
-    kl = (teacher_probs * (teacher_probs.log() - student_log_probs)).sum(dim=-1)
-    return kl.mean()
+    kl = (teacher_probs * (teacher_probs.log() - student_log_probs)).sum(dim=-1)  # (B, T)
+
+    # Masked mean: prompt/pad positions contribute no distillation signal.
+    m = loss_mask.to(kl.dtype)
+    return (kl * m).sum() / m.sum().clamp(min=1.0)
 
 
 def distillation_loss(
@@ -437,15 +508,24 @@ def distillation_loss(
         ignore_index=-100,
     )
 
-    # KL from teacher soft labels
+    # KL from teacher soft labels, over supervised positions only
     kl_loss = top_k_kl_loss(
-        student_logits, teacher_top_k_ids, teacher_top_k_logprobs, temperature
+        student_logits, teacher_top_k_ids, teacher_top_k_logprobs,
+        loss_mask=(labels != -100), temperature=temperature,
     )
 
     return alpha * ce_loss + (1.0 - alpha) * (temperature ** 2) * kl_loss
 ```
 
-The $T^2$ factor in the combined loss corrects for the fact that temperature scaling reduces gradient magnitudes (it was proved in the original Hinton et al., 2015 paper and is easy to derive: if logits are divided by $T$, the softmax output is flatter, reducing entropy by $T^2$ in expectation for Gaussian logits).
+The $T^2$ factor in the combined loss corrects for the fact that temperature scaling shrinks the *gradients* of the soft-target term. Differentiating the softened KL with respect to a student logit $z_i$ gives $\frac{\partial \mathcal{L}_{KL}}{\partial z_i} = \frac{1}{T}\left(q_i - p_i\right)$, where $q$ and $p$ are the temperature-softened student and teacher distributions. In the high-temperature limit both distributions flatten toward uniform, and expanding the softmax to first order shows the difference $q_i - p_i$ itself scales like $1/T$ — so the gradient falls off as $1/T^2$. Multiplying the KL term by $T^2$ restores it, which is exactly why Hinton et al. (2015) recommend the correction: it keeps the relative weight of the hard-label and soft-label terms roughly constant as you tune $T$, rather than silently turning up $T$ into turning off distillation.
+
+Note also the `labels != -100` masking in the KL term above. Prompt positions and padding carry no distillation signal, and averaging over them dilutes the loss by a factor that changes with your batch's prompt/response ratio — a subtle bug that makes runs irreproducible across data mixes.
+
+### On-policy distillation and the library that implements it
+
+The loss above is *off-policy*: the student is trained on text the teacher wrote. That is fine and cheap, but it leaves the classic exposure-bias gap — at inference the student conditions on its own prefixes, which it never saw in training, and errors compound. **Generalized Knowledge Distillation (GKD)** (Agarwal et al., *On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes*) closes this by sampling from the *student*, scoring those samples with the teacher, and minimizing a generalized Jensen-Shannon divergence — an interpolation between forward and reverse KL, which matters when the student lacks the capacity to cover the teacher's full distribution (reverse KL makes it mode-seeking rather than mass-covering; see [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html) for the same forward/reverse trade-off in a different guise).
+
+You do not have to write this. TRL ships a `GKDTrainer` (in recent versions under `trl.experimental.gkd`) that wraps `SFTTrainer` and takes a `teacher_model` argument, with `lmbda` controlling the fraction of on-policy student-generated batches and `beta` interpolating the JSD between forward KL (`beta=0`) and reverse KL (`beta=1`). Because it needs student samples every step, generation throughput dominates the run — this is where you point it at **vLLM** for the sampling half rather than naive `model.generate`. Check the trainer's current signature against your installed TRL version; this API has moved between releases.
 
 ### Data flywheel for cheaper inference
 
@@ -512,6 +592,8 @@ retraining_job:
     on_pass: deploy_to_canary_10pct
 ```
 
+Nothing in that YAML is exotic. The `sft_step` is `trl.SFTTrainer` with a `peft.LoraConfig(r=64, ...)`; the `preference_step` is `trl.DPOTrainer` with `beta=0.1` (or `trl.GRPOTrainer` if you have a verifier and are doing RLVR); the DAG runner is Argo Workflows or Kubeflow; and the pinned base model is a specific commit in a model registry (an MLflow registry, or simply a pinned Hugging Face Hub revision SHA). Pin *three* things or the run is not reproducible: the base-model revision, the data snapshot (the Iceberg/Delta snapshot ID from earlier, or a DVC/`datasets` revision hash), and the library versions. "It got worse this week and we don't know which of the three changed" is the single most common way a flywheel stalls.
+
 ### Preventing catastrophic forgetting
 
 The biggest practical failure mode is a new model that is better on the new data but worse on some existing capability. Three defenses:
@@ -519,6 +601,20 @@ The biggest practical failure mode is a new model that is better on the new data
 1. **Replay buffers.** Mix old data in at ratio $\rho$ as above.
 2. **EWC-style regularization.** Elastic Weight Consolidation adds a penalty proportional to the Fisher information of the old task. In practice, a simpler proxy — adding a KL divergence penalty relative to the frozen previous checkpoint — is more common for LLMs (this is essentially the PPO KL term applied during SFT).
 3. **Regression test suite.** A hardcoded set of golden examples that the new model must answer identically to the old model (or better). Any regression on these blocks the deployment.
+
+### The logged data is off-policy — and it is your own output
+
+There is a statistical subtlety that separates flywheels that keep improving from flywheels that quietly rot. Every training example you harvested was *generated by the current policy* $\pi_{\text{old}}$, under a specific sampling temperature, and *selected* by a routing policy. Two consequences follow.
+
+First, **offline estimates are biased unless you correct for the propensity.** If you want to estimate how a candidate policy $\pi_{\text{new}}$ would have scored on last week's traffic without deploying it, the naive average of logged rewards answers the wrong question. The inverse-propensity-scoring (IPS) estimator is the standard fix:
+
+$$
+\hat{V}(\pi_{\text{new}}) = \frac{1}{n}\sum_{i=1}^{n} \frac{\pi_{\text{new}}(y_i \mid x_i)}{\pi_{\text{old}}(y_i \mid x_i)}\, r_i
+$$
+
+This is why the schema stores `output_logprobs` *and* the sampling parameters: $\log \pi_{\text{old}}(y_i \mid x_i)$ is the sum of the per-token logprobs under the sampler that actually ran, and without it the denominator is unrecoverable. In practice, clip the importance ratio (say at 10) to trade a little bias for a large variance reduction — the same clipping logic as PPO's ratio clip in [Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html).
+
+Second, **a policy only ever collects data about actions it takes.** If the model never emits a certain style of answer, no user ever rates it, so it never enters the training set, so the next model emits it even less. The loop is self-confirming. The defences are cheap: hold out a small exploration slice (1–5% of traffic served at higher temperature, or routed to a deliberately different variant) whose only job is to keep the logged distribution wider than the greedy policy, and keep a fixed fraction of *human-written* — not model-written — data in every retraining mix. Training generation after generation purely on your own model's outputs is the setting in which Shumailov et al. demonstrated **model collapse**: variance in the tails disappears first, then the distribution narrows toward its own mean. A flywheel is not exempt from this simply because there are users in the loop; it is protected only to the extent that genuinely new human signal enters each round.
 
 ## Eval-Gated Deployment
 
@@ -531,6 +627,18 @@ $$
 where $k$ indexes the set of evaluation dimensions and $\tau_k$ is the minimum acceptable score on dimension $k$.
 
 ### Building the eval gate
+
+The gate itself is glue; the harnesses it calls should be off-the-shelf. For static capability benchmarks the standard is EleutherAI's **lm-evaluation-harness**, which the gate can shell out to and whose JSON output it parses:
+
+```bash
+lm_eval --model hf \
+  --model_args pretrained=gs://my-models/dpo-candidate,dtype=bfloat16 \
+  --tasks gsm8k,arc_challenge,hellaswag \
+  --batch_size auto \
+  --output_path results/dpo-candidate/
+```
+
+That JSON carries a bootstrap `stderr` alongside every metric — feed it into the gate, not just the point estimate. For agentic or tool-using tasks, the UK AI Safety Institute's **Inspect AI** is the equivalent (it models an eval as a dataset plus a solver plus a scorer, and handles sandboxed tool execution); for safety scans, **garak** is the open-source probe suite. The harness-building details are in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The gate below is deliberately harness-agnostic: it invokes a named harness, parses metrics, and compares them to thresholds.
 
 ```python
 # flywheel/eval_gate/gate.py
@@ -669,7 +777,12 @@ if __name__ == "__main__":
 
 ### The win-rate judge
 
-The most commonly used gate metric for open-ended generation quality is the **win rate against production**: an LLM judge (a frontier model such as GPT-5.1 or Claude Opus 4.5, or an internal judge model) evaluates 500–1,000 prompt/response pairs and decides which of candidate vs. production is better. A win rate $\geq 0.52$ with statistical significance is a typical deployment gate. This approach is described in detail in [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html).
+The most commonly used gate metric for open-ended generation quality is the **win rate against production**: an LLM judge (a frontier model such as GPT-5.1 or Claude Opus 4.5, or an internal judge model) evaluates 500–1,000 prompt/response pairs and decides which of candidate vs. production is better. A win rate $\geq 0.52$ is a typical *target*, but be careful — that threshold is only meaningful with enough comparisons behind it.
+
+!!! warning "Your 52% win rate is probably noise"
+    Treat each comparison as a Bernoulli trial. At $n = 500$ the standard error on a win rate near $0.5$ is $\sqrt{0.25/500} \approx 0.022$, i.e. 2.2 percentage points. A measured $0.52$ is *less than one standard error* from a coin flip: you would need roughly $0.5 + 1.96 \times 0.022 \approx 0.544$ at $n=500$ to reject "no difference" at the 5% level. Powering a test to *detect* a true 2-point edge 80% of the time needs about $n \approx (1.96 + 0.84)^2 \cdot 0.25 / 0.02^2 \approx 4{,}900$ comparisons.
+
+    Three ways out, in order of cost: (1) raise the threshold to match your $n$ (require $\geq 0.55$ at $n=500$); (2) pair the comparisons on the same prompts and drop ties, which removes prompt difficulty from the variance and typically cuts the required $n$ substantially; (3) buy more comparisons. Also debias the judge — randomize which response is shown first, since position bias of several points is routinely observed. The full treatment is in [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html), and judge design is in [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html).
 
 !!! warning "Common pitfall: eval distribution mismatch"
     If your eval suite is assembled once and never updated, it will diverge from the distribution of real user traffic over time. The model can overfit to the eval suite — passing all gates while regressing on real users (a form of Goodhart's Law). Fix this by *adding new golden examples from production traffic to the regression suite* on every release, and rotating out examples that the model has easily solved for multiple consecutive releases.
@@ -701,6 +814,10 @@ Here is a complete end-to-end picture of how the components described above wire
 
 {{fig:flywheel-system-architecture}}
 
+
+### The same loop at 100M scale
+
+None of this requires a million users. The capstone model, Stack-100M, runs a miniature version of exactly this loop, and it is worth seeing the correspondence because it is what makes the chapter buildable rather than aspirational. Its narrow auto-research agent ([A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html)) emits a trajectory log per episode — the analogue of the request record here. The "labeler" is not a human but a **verifier**: for the capstone's tasks, correctness is checkable, so successful trajectories are filtered out and become new SFT data (rejection sampling / expert iteration), and the pass/fail signal becomes the RLVR reward in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO)](../14-capstone/09-post-training.html). The eval gate is the honest benchmark suite from [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html), run before any checkpoint is promoted. Replace "human annotator" with "unit test" and the six-stage loop runs unchanged on a single GPU — which is also the reason verifiable domains were the first place production flywheels started spinning fast.
 
 ### Operational cadence
 
@@ -736,10 +853,16 @@ The weekly retraining cycle is a practical baseline. Teams with very high traffi
     - [Xia et al., *LESS: Selecting Influential Data for Targeted Instruction Tuning* (ICML 2024)](https://arxiv.org/abs/2402.04333) — gradient-similarity-based data selection; training on a LESS-selected 5% of data often outperforms training on the full set, making active learning tractable at scale.
     - [Ankner et al., *Perplexed by Perplexity: Perplexity-Based Data Pruning With Small Reference Models* (2024)](https://arxiv.org/abs/2405.20541) — a 125M proxy model scoring perplexity on training candidates improves a 3B model by up to 2 points on downstream tasks; practical guidance for flywheel data-quality filtering.
     - [Liu et al., *Online Speculative Decoding* (ICML 2024)](https://arxiv.org/abs/2310.07177) — continuously distills the production target model into the draft model using live query traffic, improving token acceptance by 10–65% with cost-neutral retraining on idle serving capacity.
+    - [Agarwal et al., *On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes* (ICLR 2024)](https://arxiv.org/abs/2306.13649) — GKD: train the student on its *own* samples scored by the teacher, with a generalized JSD objective; implemented as TRL's `GKDTrainer`.
+    - [Shumailov et al., *AI Models Collapse When Trained on Recursively Generated Data* (Nature, 2024)](https://www.nature.com/articles/s41586-024-07566-y) — the canonical model-collapse result: recursive training on generated data first loses the tails, then narrows the whole distribution; the argument for keeping fresh human data in every flywheel round.
 
     **Open-source & tools**
 
     - [princeton-nlp/LESS](https://github.com/princeton-nlp/LESS) — official ICML 2024 implementation of gradient-based influential-data selection for instruction tuning, with scripts for warmup, gradient collection, and LoRA fine-tuning.
+    - [argilla-io/argilla](https://github.com/argilla-io/argilla) and [argilla-io/distilabel](https://github.com/argilla-io/distilabel) — the open-source annotation server for LLM feedback data and its synthetic/AI-feedback pipeline framework; the default place production preference pairs get labeled before export to TRL.
+    - [huggingface/trl](https://github.com/huggingface/trl) — `SFTTrainer`, `DPOTrainer`, `RewardTrainer`, `GRPOTrainer`, and `GKDTrainer`: every training step the retraining DAG in this chapter invokes, with the `prompt`/`chosen`/`rejected` dataset contract the labeling pipeline must produce.
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) and [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the two harnesses an eval gate should call: the former for static benchmarks with bootstrap standard errors, the latter for agentic/tool-use evals with sandboxed execution.
+    - [langfuse/langfuse](https://github.com/langfuse/langfuse) and [Arize-ai/phoenix](https://github.com/Arize-ai/phoenix) — open-source LLM tracing backends speaking the OpenTelemetry GenAI conventions, with score/annotation APIs for attaching late-arriving user feedback to a trace.
     - [opendilab/awesome-RLHF](https://github.com/opendilab/awesome-RLHF) — continuously updated catalogue of RLHF papers (2020–2026), codebases, datasets, and blog posts; the best single index for tracking the preference-learning literature.
 
     **Go deeper**
@@ -753,12 +876,16 @@ The weekly retraining cycle is a practical baseline. Teams with very high traffi
 - Settles, "Active Learning Literature Survey," University of Wisconsin, 2010 — comprehensive reference on uncertainty sampling, query by committee, and core-set methods.
 - Hinton, Vinyals, and Dean, "Distilling the Knowledge in a Neural Network," NIPS Deep Learning Workshop 2015 — the temperature-scaled soft-label distillation paper.
 - Kim and Rush, "Sequence-Level Knowledge Distillation," EMNLP 2016 — adapts KD to sequence-to-sequence models; the on-policy variant is widely used for LLM compression.
+- Agarwal et al., "On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes," ICLR 2024 — GKD, the on-policy distillation objective implemented by TRL's `GKDTrainer`.
+- Shumailov et al., "AI Models Collapse When Trained on Recursively Generated Data," Nature 2024 — why every flywheel round needs fresh human data.
+- Swaminathan and Joachims, "Counterfactual Risk Minimization: Learning from Logged Bandit Feedback," ICML 2015 — the foundational treatment of learning from logged, propensity-weighted interaction data.
 - Sorscher et al., "Beyond Neural Scaling Laws: Beating Power Law Scaling via Data Pruning," NeurIPS 2022 — argues that intelligent data selection can beat scaling on a fixed compute budget.
 - Ankner et al., "Perplexed by Perplexity: Perplexity-Based Data Pruning With Small Reference Models," arXiv 2024 — practical guidance on using small proxy models to filter training data quality.
 
 !!! key "Key Takeaways"
     - The data flywheel is a compounding advantage: better model → more users → more signal → better model. After enough rounds, the training distribution gap is larger than any architectural advantage a new entrant can claim.
-    - Every logged request is raw material. Design schemas for schema evolution (Avro/Protobuf), join client signals asynchronously, and store per-token logprobs even if you do not use them immediately.
+    - Every logged request is raw material. Design schemas for schema evolution (Avro/Protobuf), join client signals asynchronously into a snapshot-versioned Iceberg/Delta table, and store per-token logprobs *and the sampling parameters* even if you do not use them immediately — together they are the propensity $\pi_{\text{old}}(y\mid x)$ you need for off-policy correction and distillation.
+    - Logged data is off-policy and self-generated. Correct offline estimates with clipped importance weights, hold out an exploration slice so the logged distribution stays wider than the greedy policy, and keep genuine human-written data in every mix — otherwise the loop narrows into model collapse.
     - Explicit preference labels are expensive and sparse; proxy reward models trained on implicit signals (copy, edit, session continuation) can extend coverage to 100% of traffic.
     - Active learning with core-set diversity sampling is 3–5x more label-efficient than random sampling — you get coverage of the hard tail without annotation redundancy on easy clusters.
     - Distillation from production traffic with top-k logit storage lets you continuously compress the serving model, reducing inference cost while maintaining quality on the actual user distribution.

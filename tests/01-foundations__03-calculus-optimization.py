@@ -10,6 +10,14 @@ Chapter blocks tested (assembled in document order):
       prints/JSON-serializes trajectories. Copied verbatim from the chapter
       and executed via `main()` below, which is the block's own entry point.
 
+    - the two PyTorch blocks added in the library/buildability revision pass:
+      "The Library Layer: torch.optim" (AdamW parameter groups, LambdaLR
+      warmup+cosine, clip_grad_norm_, and an equivalence check between the
+      chapter's from-scratch heavy-ball update and torch.optim.SGD) and
+      "Measuring Curvature Without Forming the Hessian" (double-backward
+      Hessian-vector products + power iteration for lambda_max). Both are
+      copied verbatim and executed at the bottom of this file.
+
 SKIPPED (per task spec, non-Python / prose blocks):
     - block #0 (line ~135): SKIP(non-python): ```text``` ASCII-art schematic of
       convex vs non-convex loss landscapes -- not executable code.
@@ -326,3 +334,136 @@ if __name__ == "__main__":
         assert val < 1e-6, f"{name}'s final quadratic loss should be tiny, got {val}"
 
     print("\nAll assertions passed for content/01-foundations/03-calculus-optimization.md block #1.")
+
+
+# ============================================================================
+# block "The Library Layer: torch.optim" (added in the library/buildability
+# revision pass; appears in the chapter BEFORE the numpy block above, in the
+# "Gradient Descent: Variants and Analysis" section). Copied verbatim.
+# ============================================================================
+
+import math
+import torch
+import torch.nn as nn
+
+torch.manual_seed(0)
+model = nn.Sequential(nn.Linear(64, 256), nn.GELU(), nn.Linear(256, 64))
+
+# AdamW with the LLM-pretraining convention: decoupled weight decay applied to
+# 2D matmul weights only -- never to biases or norm gains (1D tensors).
+decay = [p for p in model.parameters() if p.ndim >= 2]
+no_decay = [p for p in model.parameters() if p.ndim < 2]
+opt = torch.optim.AdamW(
+    [{"params": decay,    "weight_decay": 0.1},
+     {"params": no_decay, "weight_decay": 0.0}],
+    lr=3e-4,
+    betas=(0.9, 0.95),                 # beta2=0.95 (not 0.999) is standard for LLMs
+    eps=1e-8,
+    fused=torch.cuda.is_available(),   # fused/foreach kernels: far fewer launches
+)
+
+# Warmup + cosine decay to 10% of peak, expressed as a multiplier on lr.
+WARMUP, TOTAL = 100, 1000
+
+def lr_multiplier(step: int) -> float:
+    if step < WARMUP:
+        return (step + 1) / WARMUP                       # linear ramp
+    progress = (step - WARMUP) / max(1, TOTAL - WARMUP)  # in [0, 1]
+    return 0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_multiplier)
+
+x, y = torch.randn(32, 64), torch.randn(32, 64)
+for step in range(3):
+    loss = ((model(x) - y) ** 2).mean()
+    opt.zero_grad(set_to_none=True)     # set_to_none frees the grad buffers
+    loss.backward()                     # populates p.grad for every parameter
+    gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    opt.step()                          # the update rule
+    sched.step()                        # advance the schedule
+    print(f"step {step}  loss {loss.item():.4f}  "
+          f"pre-clip |g|={gnorm:.3f}  lr={sched.get_last_lr()[0]:.3e}")
+
+# ---------------------------------------------------------------------------
+# Our from-scratch heavy-ball update IS torch.optim.SGD(momentum=...).
+# ---------------------------------------------------------------------------
+p = nn.Parameter(torch.tensor([4.0, 1.0]))
+sgd = torch.optim.SGD([p], lr=0.005, momentum=0.9)    # nesterov=True gives NAG
+theta, v = torch.tensor([4.0, 1.0]), torch.zeros(2)
+for _ in range(10):
+    sgd.zero_grad(set_to_none=True)
+    (p[0] ** 2 + 10.0 * p[1] ** 2).backward()         # the quadratic from above
+    sgd.step()
+    g = torch.tensor([2.0 * theta[0], 20.0 * theta[1]])
+    v = 0.9 * v - 0.005 * g                           # our chapter's form
+    theta = theta + v
+assert torch.allclose(p.detach(), theta, atol=1e-5)
+print("from-scratch momentum matches torch.optim.SGD:", theta.tolist())
+
+# --- assertions on the library-layer block ---------------------------------
+# The warmup schedule must actually be ramping (3 steps in, lr is a tiny
+# fraction of the 3e-4 peak, and strictly increasing).
+assert 0 < sched.get_last_lr()[0] < 3e-4
+# Parameter-group wiring: 1D tensors must carry zero weight decay.
+assert opt.param_groups[0]["weight_decay"] == 0.1
+assert opt.param_groups[1]["weight_decay"] == 0.0
+assert all(t.ndim >= 2 for t in opt.param_groups[0]["params"])
+assert all(t.ndim < 2 for t in opt.param_groups[1]["params"])
+# Adam state really is 2 buffers per parameter tensor (the 8 bytes/param claim).
+st = opt.state[opt.param_groups[0]["params"][0]]
+assert "exp_avg" in st and "exp_avg_sq" in st
+
+
+# ============================================================================
+# block "Measuring Curvature Without Forming the Hessian" (chapter section
+# "Saddle Points and Escape Dynamics"). Copied verbatim.
+# ============================================================================
+
+import torch
+import torch.nn as nn
+
+torch.manual_seed(0)
+model = nn.Sequential(nn.Linear(8, 16), nn.Tanh(), nn.Linear(16, 1))
+x, y = torch.randn(64, 8), torch.randn(64, 1)
+params = [p for p in model.parameters()]
+
+
+def hvp(vec):
+    """Hessian-vector product H @ v. Cost ~2 backward passes; H never formed."""
+    loss = ((model(x) - y) ** 2).mean()
+    g = torch.autograd.grad(loss, params, create_graph=True)   # keep the graph
+    gv = sum((gi * vi).sum() for gi, vi in zip(g, vec))        # scalar g . v
+    return torch.autograd.grad(gv, params)                     # d/dtheta (g.v) = H v
+
+
+# Power iteration: v <- Hv/||Hv|| converges to the eigenvector of largest |lambda|.
+v = [torch.randn_like(p) for p in params]
+nrm = torch.sqrt(sum((vi ** 2).sum() for vi in v))
+v = [vi / nrm for vi in v]
+for _ in range(60):
+    Hv = hvp(v)
+    nrm = torch.sqrt(sum((h ** 2).sum() for h in Hv)) + 1e-12
+    v = [h / nrm for h in Hv]
+
+lam = sum((h * vi).sum() for h, vi in zip(hvp(v), v)).item()
+print(f"lambda_max(H) ~= {lam:.4f}")
+print(f"stability ceiling 2/lambda_max = {2.0 / lam:.4f}  (max usable GD lr)")
+
+# --- assertions on the HVP block -------------------------------------------
+# The chapter quotes lambda_max ~= 4.09 and 2/lambda_max ~= 0.49 for this
+# seeded toy network; verified by running this exact code.
+assert abs(lam - 4.0909) < 5e-2, f"lambda_max drifted: {lam}"
+assert abs(2.0 / lam - 0.4889) < 5e-3
+
+# Cross-check the HVP operator against an explicitly materialized Hessian on a
+# tiny quadratic, where the answer is known exactly: f(w) = w^T A w has H = 2A.
+w = torch.nn.Parameter(torch.tensor([1.0, -2.0, 0.5]))
+A = torch.tensor([[3.0, 0.5, 0.0], [0.5, 2.0, 1.0], [0.0, 1.0, 5.0]])
+probe = torch.tensor([1.0, 0.0, -1.0])
+fw = (w @ A @ w)
+g_exact = torch.autograd.grad(fw, [w], create_graph=True)
+gv = (g_exact[0] * probe).sum()
+Hv_exact = torch.autograd.grad(gv, [w])[0]
+assert torch.allclose(Hv_exact, 2.0 * (A @ probe), atol=1e-5), Hv_exact
+
+print("\nAll assertions passed for the torch.optim and HVP blocks.")

@@ -36,7 +36,7 @@ Gradient descent drives $p_\theta(x_i \mid x_{<i}) \to 1$ for tokens it can fit.
 
 Empirically, three factors dominate how much a given string gets memorized:
 
-1. **Duplication.** This is the single biggest lever. A sequence that appears $n$ times in the corpus is memorized roughly in proportion to $\log n$ — duplication has a *super-linear* effect on extractability. Deduplicating the training set is the highest-ROI privacy intervention you have, and it is free (you were going to dedup for quality anyway).
+1. **Duplication.** This is the single biggest lever. The *fraction* of a sequence that is extractable grows roughly **log-linearly** in its duplication count $n$ (Carlini et al., 2022), while the *rate* at which the model spontaneously regurgitates it grows far faster than linearly: Kandpal et al. (2022) found that a sequence appearing on the order of ten times in the corpus is generated on the order of a thousand times more often than one appearing once. Deduplicating the training set is the highest-ROI privacy intervention you have, and it is free (you were going to dedup for quality anyway).
 2. **Model scale.** Larger models memorize more, at every duplication level. Roughly, the fraction of extractable training data grows with $\log(\text{parameters})$. A 6B model memorizes substantially more than a 125M model trained on the identical data.
 3. **Context length (prompt length).** The longer the prefix you give the model that matches the training context, the more likely it completes the memorized continuation. Memorization is "unlocked" by sufficiently long, in-distribution prompts.
 
@@ -82,6 +82,8 @@ $$
 The key methodological point — and a frequent interview trap — is that **MIA success must be measured by true-positive rate at very low false-positive rate (TPR @ low FPR)**, plotted on a log-log ROC, *not* by average accuracy. A privacy attack that is correct 50.5% of the time on average but achieves 100× the chance TPR at 0.1% FPR is a serious breach for the few people in that high-confidence tail. Average accuracy hides exactly the worst-case leakage that matters.
 
 {{fig:mia-tpr-low-fpr-roc}}
+
+You rarely need to reimplement the attack zoo to get a baseline. The open-source **MIMIR** suite (Duan et al., 2024) packages the standard LLM MIAs — LOSS, reference/ratio, zlib, min-$k$% probability, and neighbourhood attacks — against Pythia checkpoints with *known* train/test splits, and is the right thing to benchmark your own attack against. Its headline result is itself a rigor lesson: against a real pretrained LLM (huge corpus, roughly one epoch, deduplicated), most published MIAs perform **close to chance**, and a large share of the apparent success in the literature comes from *distribution shift* between the "member" and "non-member" sets (members scraped earlier, non-members later) rather than from memorization. When you build your own audit, draw members and non-members from the same distribution and time window — otherwise you are measuring a topic classifier, not a privacy leak.
 
 ### 2.3 Reconstruction and attribute inference
 
@@ -185,6 +187,8 @@ def canary_exposure(model, tokenizer, template, true_body, body_space_size,
 
 The audit recipe in production: insert a *family* of canaries (different formats, different duplication counts, placed at different points in training) and report the exposure distribution. Rising exposure on low-duplication canaries is your early-warning system that the pipeline memorizes too aggressively — *before* a real secret leaks.
 
+This is one of the few privacy experiments you can genuinely run end to end at hobby scale, and the capstone is the place to do it: inject the canary family while the corpus is already streaming through the filter/dedup stages of [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) (record each canary's insertion count), then score exposure at every checkpoint written by [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html). At ~100M parameters the whole sweep costs minutes of GPU time, and the exposure-vs-duplication curve you get out is a direct, personally-verified measurement of the log-linear duplication law from §1.2 — plus proof that your dedup actually did something.
+
 {{fig:canary-exposure-rank-ladder}}
 
 ---
@@ -243,6 +247,24 @@ print(clean)   # Contact <EMAIL> or <PHONE>; key <AWSKEY>; ssn <SSN>.
 print(counts)  # {'AWSKEY': 1, 'SSN': 1, 'EMAIL': 1, 'PHONE': 1}
 ```
 
+In production you do not hand-roll this. **Microsoft Presidio** is the standard open-source PII stack: a set of recognizers (regex + checksum validators + spaCy/transformer NER + context words) feeding a confidence score per detected entity, and a separate anonymizer that applies a per-entity-type operator (replace, mask, hash, encrypt).
+
+```python
+# pip install presidio-analyzer presidio-anonymizer && python -m spacy download en_core_web_lg
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+analyzer, anonymizer = AnalyzerEngine(), AnonymizerEngine()
+
+sample = "Contact john.doe@acme.io or 415-555-0199; ssn 123-45-6789."
+results = analyzer.analyze(text=sample, language="en")   # list of (entity_type, start, end, score)
+results = [r for r in results if r.score >= 0.6]         # tune the precision/recall knob
+redacted = anonymizer.anonymize(text=sample, analyzer_results=results).text
+print(redacted)   # entities replaced by <EMAIL_ADDRESS>, <PHONE_NUMBER>, <US_SSN>, ...
+```
+
+Two things Presidio buys you that a bare regex cannot: **validators** (a 16-digit run is only reported as a credit card if it passes the Luhn checksum, killing most false positives) and a **thresholdable confidence score**, so you can pick your operating point on the precision/recall curve instead of accepting whatever a regex happens to match. Add custom recognizers for your own secret formats (internal ticket IDs, API-key prefixes). At corpus scale, run the scrubber *inside* the pipeline you already stream through rather than as a separate pass — `datatrove` ships a PII-masking formatter block (emails, IP addresses) that slots in next to the dedup and quality-filter stages of [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html), so scrubbing costs one extra map over data you are already touching.
+
 The limitation is fundamental: scrubbing only removes the PII *you can detect*. It cannot catch a phone number written as "four one five, five five five..." or a name that is also a common word. Scrubbing is necessary, high-value, and **not sufficient**. It also gives no formal guarantee — which is what motivates the next layer.
 
 ### 4.2 Training-level: differential privacy and DP-SGD
@@ -254,6 +276,8 @@ $$
 $$
 
 Read it operationally: *no attacker, however powerful, with any side information, can tell whether any one record was in the training set with confidence beyond a factor of $e^\varepsilon$* (up to failure probability $\delta$). This directly upper-bounds the success of *every* membership-inference attack — DP is precisely a worst-case bound on the MIA adversary of §2.2. Smaller $\varepsilon$ = more privacy. As a rule of thumb $\varepsilon \le 1$ is strong, $\varepsilon \approx 8$ is "meaningful but loose," and $\varepsilon \gg 50$ is mostly cosmetic. $\delta$ should be $\ll 1/N$ (smaller than one over the dataset size).
+
+The definition hides one decision you must make explicitly: **what counts as "a single record."** The clipping is per *example*, so the guarantee is example-level. If one user contributed $k$ documents to the fine-tune set, group privacy degrades their protection to roughly $k\varepsilon$ — often the number that actually matters legally, since GDPR protects the *person*, not the row. **User-level DP** fixes this by clipping each user's *aggregate* contribution (concatenate or average a user's per-example gradients, then clip that once, and sample users rather than examples); it costs more utility per unit $\varepsilon$ because there are fewer units to average over, and it is the regime Google's production DP fine-tuning work targets.
 
 The algorithm that delivers DP for deep learning is **DP-SGD** (Abadi et al., 2016). It modifies ordinary SGD with two operations per step:
 
@@ -268,6 +292,30 @@ The algorithm that delivers DP for deep learning is **DP-SGD** (Abadi et al., 20
 
 The noise multiplier $\sigma$ together with the **sampling rate** $q = B/N$ and the number of steps $T$ determines $\varepsilon$ via a *privacy accountant* (the Rényi-DP / moments accountant, or the tighter PRV accountant). Each step "spends" privacy budget; composition adds it up over training.
 
+!!! warning "Common pitfall: shuffled batches silently invalidate the reported ε"
+    Every DP-SGD accountant analyses the **subsampled** Gaussian mechanism, and the standard analysis assumes **Poisson sampling**: each example is included independently with probability $q = B/N$, so the batch size is a *random* variable. The usual shuffle-and-chunk `DataLoader` is sampling *without* replacement with a fixed batch size — a different mechanism, and pairing it with a Poisson accountant means the $\varepsilon$ you report is an under-estimate of what you actually spent. Opacus handles this for you by swapping in a Poisson sampler (`UniformWithReplacementSampler`) inside `make_private*`; if you write the loop yourself, draw the batch with a Bernoulli($q$) mask and make sure your code tolerates the occasional empty batch.
+
+??? note "Optional: computing ε yourself, so the accountant is not a black box"
+    The Gaussian mechanism with $L_2$ sensitivity $C$ and noise std $\sigma C$ satisfies $\big(\alpha,\ \alpha/(2\sigma^2)\big)$-**Rényi DP** for every order $\alpha>1$, and RDP composes by simply *adding* the second argument. So $T$ steps give $\big(\alpha,\ T\alpha/(2\sigma^2)\big)$-RDP, and the standard RDP $\to(\varepsilon,\delta)$ conversion optimized over $\alpha$ gives a closed form:
+
+    $$
+    \varepsilon(\delta) \;=\; \min_{\alpha>1}\left[\frac{T\alpha}{2\sigma^2} + \frac{\log(1/\delta)}{\alpha-1}\right] \;=\; \frac{T}{2\sigma^2} \;+\; 2\sqrt{\frac{T}{2\sigma^2}\,\log\frac{1}{\delta}}\,.
+    $$
+
+    ```python
+    import math
+
+    def eps_no_subsampling(T, sigma, delta):
+        """(eps, delta)-DP for T composed FULL-BATCH Gaussian steps, via RDP.
+        Valid but very loose for DP-SGD: it ignores amplification by subsampling."""
+        a = T / (2.0 * sigma ** 2)                      # RDP epsilon per unit alpha
+        return a + 2.0 * math.sqrt(a * math.log(1.0 / delta))
+
+    print(round(eps_no_subsampling(T=1465, sigma=0.8, delta=1e-6)))   # ~1396
+    ```
+
+    An $\varepsilon$ of ~1400 is meaningless — and that is exactly the point. Essentially *all* of DP-SGD's usable privacy comes from **amplification by subsampling**: when each example participates only with probability $q$, the per-step RDP drops from $O(\alpha/\sigma^2)$ to roughly $O(q^2\alpha/\sigma^2)$, a factor of order $q^2$ cheaper. The subsampled Gaussian has no clean closed form, so libraries evaluate it numerically: Opacus's `rdp` accountant integrates the Mironov et al. bound, while its `prv` accountant convolves the privacy-loss random variables directly and is typically tighter (Google's `dp_accounting` library implements the same family). That $q^2$ is why the worked example below lands at $\varepsilon\approx7.3$ with $q\approx2\times10^{-3}$ instead of at four digits — and why "just use a bigger batch" is not free: raising $B$ raises $q$ too.
+
 ```python
 import torch
 
@@ -275,9 +323,10 @@ def dp_sgd_step(model, batch, loss_fn, optimizer,
                 clip_norm=1.0, noise_multiplier=1.0, device="cuda"):
     """
     One DP-SGD step done explicitly (microbatch=1) to expose the mechanism.
-    In production use Opacus (PrivacyEngine) or a JAX/Flax DP library, which
-    compute per-sample grads efficiently via vmap / functorch and track the
-    privacy accountant for you. This loop is pedagogical, not fast.
+    In production use Opacus (PrivacyEngine), which gets per-sample gradients
+    via module hooks (GradSampleModule) or torch.func.vmap(grad(...)) instead
+    of this Python loop, and tracks the privacy accountant for you. This loop
+    is pedagogical, not fast.
     """
     xs, ys = batch                       # xs: (B, ...), ys: (B, ...)
     B = xs.size(0)
@@ -309,14 +358,25 @@ def dp_sgd_step(model, batch, loss_fn, optimizer,
     optimizer.step()
     return loss.item()
 
-# Real usage with Opacus (handles per-sample grads + accountant efficiently):
+# Real usage with Opacus (per-sample grads, Poisson sampling, accountant):
 #   from opacus import PrivacyEngine
-#   privacy_engine = PrivacyEngine()
+#   from opacus.utils.batch_memory_manager import BatchMemoryManager
+#   privacy_engine = PrivacyEngine(accountant="prv")     # "prv" is tighter than "rdp"
 #   model, optimizer, loader = privacy_engine.make_private_with_epsilon(
 #       module=model, optimizer=optimizer, data_loader=loader,
-#       target_epsilon=8.0, target_delta=1e-6, epochs=3, max_grad_norm=1.0)
-#   # ... standard training loop ...
-#   eps = privacy_engine.get_epsilon(delta=1e-6)   # report the spent budget
+#       target_epsilon=8.0, target_delta=1e-7, epochs=3, max_grad_norm=1.0)
+#   # ^ solves for the noise multiplier that hits your epsilon, and replaces the
+#   #   sampler with a Poisson one so the accounting is actually valid.
+#   with BatchMemoryManager(data_loader=loader, max_physical_batch_size=8,
+#                           optimizer=optimizer) as safe_loader:
+#       for batch in safe_loader:                        # huge LOGICAL batch,
+#           ...                                          # small PHYSICAL batch
+#   eps = privacy_engine.get_epsilon(delta=1e-7)         # report the spent budget
+#
+# For HF Transformers + LoRA, microsoft/dp-transformers wires Opacus into the HF
+# Trainer. Freeze the base weights first: per-sample gradients are then only ever
+# materialized for the (tiny) adapter tensors, which is what makes DP fine-tuning
+# of a multi-billion-parameter model fit on a single node.
 ```
 
 {{fig:dp-sgd-clip-then-noise}}
@@ -326,7 +386,7 @@ def dp_sgd_step(model, batch, loss_fn, optimizer,
 DP-SGD is not free. Three taxes:
 
 - **Utility tax.** Clipping + noise hurt accuracy, and the damage falls hardest on the *tail* — rare classes, minority dialects, long-tail facts — because those examples have large, distinctive gradients that clipping flattens. This is the privacy/fairness tension: DP can disproportionately degrade underrepresented groups.
-- **Compute and memory tax.** Per-example gradients break the standard batched backward pass. Naively you store a gradient per example; even with `vmap`/functorch tricks, DP-SGD is materially slower and more memory-hungry than vanilla SGD. Large *physical* batch sizes are essential for DP to work well, which compounds the cost.
+- **Compute and memory tax.** Per-example gradients break the standard batched backward pass. Naively you store a gradient per example — a $B\times$ blowup in optimizer-state-sized memory. **Ghost clipping** (Li et al., 2022) is the trick that makes this tractable: for linear/embedding layers you can compute each example's gradient *norm* from the layer's saved activations and output gradients alone, never materializing the per-example gradient, then run a second backward with the per-example clipping factors folded into the loss weights. Memory ends up close to non-private training at roughly 2× the time; `private-transformers` was the original implementation and recent Opacus releases expose fast-gradient/ghost clipping as an alternative grad-sample mode. Large *logical* batch sizes are still essential for DP to work well (see below), which is what `BatchMemoryManager`-style gradient accumulation is for.
 - **Hyperparameter sensitivity.** DP-SGD wants very large batches, a carefully tuned clip norm $C$, and more epochs than you would expect; it is finicky.
 
 The pragmatic finding that makes DP usable for LLMs: **DP fine-tuning works far better than DP pretraining.** Pretrain non-privately on public/web data, then *fine-tune with DP-SGD on the sensitive dataset*. The public pretraining gives a strong prior so the private phase only needs a small, noisy nudge — DP fine-tuning of large models recovers most of the non-private accuracy at $\varepsilon$ in the single digits, whereas DP *pretraining* from scratch is brutally lossy. Parameter-efficient methods (LoRA, prompt tuning — see [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html)) pair especially well with DP because there are fewer parameters to noise.
@@ -437,7 +497,8 @@ def roc_tpr_at_fpr(scores_member, scores_nonmember, fpr_targets=(0.001, 0.01, 0.
     y = y[order]
     tps = np.cumsum(y); fps = np.cumsum(1 - y)
     tpr_curve = tps / tps[-1]; fpr_curve = fps / fps[-1]
-    auc = np.trapz(tpr_curve, fpr_curve)
+    trapz = getattr(np, "trapezoid", None) or np.trapz   # np.trapz removed in NumPy 2.0
+    auc = trapz(tpr_curve, fpr_curve)
     return out, auc
 
 # ----------------------------------------------------------------------------
@@ -567,8 +628,8 @@ The engineering upshot is a single sentence you can take to a design review: **d
     - **The attack ladder is MIA → extraction → reconstruction.** Always evaluate membership inference at **TPR @ low FPR** on a log-ROC, never average accuracy — average accuracy hides the worst-case leakage that regulators and plaintiffs care about.
     - **Canary exposure is your measuring stick.** Insert synthetic secrets, compute $\operatorname{exposure} = \log_2|R| - \log_2 \operatorname{rank}$; an exposure near $\log_2|R|$ means the secret is brute-force extractable. Watch it during training as an early-warning signal.
     - **Deduplication is the highest-ROI privacy defense** — order-of-magnitude reduction in extractable memorization at zero (often negative) utility cost. PII scrubbing is necessary but incomplete and gives no formal guarantee.
-    - **Differential privacy (DP-SGD) is the only formal guarantee.** Per-example gradient clipping + calibrated Gaussian noise yields an $(\varepsilon,\delta)$ bound that caps *every* membership-inference adversary. Read $\varepsilon$ as a bound on the attacker's odds shift of $e^{\varepsilon}$.
-    - **DP fine-tuning ≫ DP pretraining.** Pretrain non-privately, then DP-fine-tune the sensitive set (ideally with PEFT) to recover most utility at single-digit $\varepsilon$. DP's costs are real: utility hit on the tail, higher compute/memory, and finicky hyperparameters.
+    - **Differential privacy (DP-SGD) is the only formal guarantee.** Per-example gradient clipping + calibrated Gaussian noise yields an $(\varepsilon,\delta)$ bound that caps *every* membership-inference adversary. Read $\varepsilon$ as a bound on the attacker's odds shift of $e^{\varepsilon}$. Almost all of that privacy comes from **amplification by subsampling**, so the guarantee is only valid if you actually **Poisson-sample** your batches — and it is *example*-level unless you clip per *user*.
+    - **DP fine-tuning ≫ DP pretraining.** Pretrain non-privately, then DP-fine-tune the sensitive set (ideally with PEFT) to recover most utility at single-digit $\varepsilon$; Opacus (+ `dp-transformers` for the HF `Trainer`) and ghost clipping make this practical. DP's costs are real: utility hit on the tail, higher compute/memory, and finicky hyperparameters.
     - **Inference-time mitigations are mitigations, not guarantees** — output PII redaction, verbatim-emission Bloom filters, MemFree-style decoding, and refusal of extraction-shaped prompts raise attack cost but don't bound leakage.
     - **Defenses follow the threat model and the law.** White-box / open-weights releases of sensitive-data models essentially require DP-during-training; GDPR's right-to-erasure and HIPAA's de-identification push you toward minimization, DP, and provable audits.
 
@@ -592,12 +653,16 @@ The engineering upshot is a single sentence you can take to a design review: **d
 
     **Open-source & tools**
 
-    - [pytorch/opacus](https://github.com/pytorch/opacus) — Meta's production-grade DP-SGD library for PyTorch; handles per-sample gradients, privacy accounting, and LoRA-compatible fine-tuning with minimal code changes.
-    - [microsoft/presidio](https://github.com/microsoft/presidio) — open-source PII detection and anonymization framework (NER + regex + customizable pipelines) for scrubbing training data and filtering model outputs.
+    - [pytorch/opacus](https://github.com/pytorch/opacus) — Meta's production-grade DP-SGD library for PyTorch; handles per-sample gradients (hooks or `torch.func`), Poisson sampling, RDP/PRV accounting, `BatchMemoryManager` gradient accumulation, and LoRA-compatible fine-tuning with minimal code changes.
+    - [microsoft/dp-transformers](https://github.com/microsoft/dp-transformers) — thin integration of Opacus with the Hugging Face `Trainer`, including PEFT/LoRA recipes; the shortest path from a non-private fine-tune script to a DP one.
+    - [google/differential-privacy](https://github.com/google/differential-privacy) — Google's DP library, including the `dp_accounting` package (RDP and PRV accountants) used to price subsampled-Gaussian training.
+    - [microsoft/presidio](https://github.com/microsoft/presidio) — open-source PII detection and anonymization framework (regex + checksum validators + NER + context words, with thresholdable confidence scores) for scrubbing training data and filtering model outputs.
+    - [iamgroot42/mimir](https://github.com/iamgroot42/mimir) — reference implementations of the standard LLM membership-inference attacks (LOSS, ratio, zlib, min-k% prob, neighbourhood) with controlled member/non-member splits; the right baseline to beat before believing your own MIA.
 
     **Go deeper**
 
     - [Lee et al., *Deduplicating Training Data Makes Language Models Better* (ACL 2022)](https://arxiv.org/abs/2107.06499) — quantifies the order-of-magnitude memorization reduction from deduplication, with released suffix-array tooling for large corpora.
+    - [Li et al., *Large Language Models Can Be Strong Differentially Private Learners* (ICLR 2022)](https://arxiv.org/abs/2110.05679) — ghost clipping: per-example gradient *norms* without materializing per-example gradients, which is what makes DP fine-tuning of large transformers memory-feasible.
 
 ## Further reading
 
@@ -610,7 +675,10 @@ The engineering upshot is a single sentence you can take to a design review: **d
 - **Lee, Ippolito et al., "Deduplicating Training Data Makes Language Models Better," ACL 2022** — quantifies how deduplication reduces memorization (and improves quality).
 - **Yu, Naik, Backurs, Gopi, Inan, Kamath, Kulkarni, Lee, Manoel, Wutschitz, Zanella-Béguelin et al., "Differentially Private Fine-tuning of Language Models," ICLR 2022** — shows DP fine-tuning of large LMs recovers most utility at single-digit $\varepsilon$.
 - **Nasr et al., "Scalable Extraction of Training Data from (Production) Language Models," 2023** — the divergence ("repeat this word") attack on aligned models.
-- **microsoft/presidio** and **pytorch/opacus** — production-grade open-source libraries for PII detection/anonymization and for DP-SGD training, respectively.
+- **Kandpal, Wallace, Raffel, "Deduplicating Training Data Mitigates Privacy Risks in Language Models," ICML 2022** — the super-linear relationship between duplication count and regeneration rate quoted in §1.2.
+- **Li, Tramèr, Liang, Hashimoto, "Large Language Models Can Be Strong Differentially Private Learners," ICLR 2022** — ghost clipping and the DP fine-tuning hyperparameter recipe (huge batches, large clipping-normalized updates).
+- **Duan et al., "Do Membership Inference Attacks Work on Large Language Models?" 2024 (the MIMIR benchmark)** — most published LLM MIAs are near chance once member/non-member distribution shift is controlled.
+- **microsoft/presidio**, **pytorch/opacus**, **microsoft/dp-transformers**, **google/differential-privacy (`dp_accounting`)** — production-grade open-source libraries for PII detection/anonymization, DP-SGD training, DP fine-tuning with Hugging Face, and privacy accounting.
 
 ---
 
@@ -650,7 +718,7 @@ The engineering upshot is a single sentence you can take to a design review: **d
 
    (a) What is the standard deviation of the added noise *per coordinate* on the **summed** (pre-average) gradient, and does it depend on the batch size $B$?
    (b) After dividing by $B$, what is the noise std per coordinate on $\hat{g}$ for $B = 256$ versus $B = 4096$?
-   (c) Assume the clipped per-example gradients are roughly aligned so the *signal* per coordinate of the averaged gradient is about constant at $g \approx 0.02$ regardless of $B$. Compute the signal-to-noise ratio (SNR) for each batch size. Explain in one sentence why the chapter says "large physical batch sizes are essential for DP to work well."
+   (c) Assume the clipped per-example gradients are roughly aligned so the *signal* per coordinate of the averaged gradient is about constant at $g \approx 0.02$ regardless of $B$. Compute the signal-to-noise ratio (SNR) for each batch size. Explain in one sentence why the chapter says "large *logical* batch sizes are essential for DP to work well."
 
 ??? note "Solution"
     **(a)** The Gaussian noise added to the *sum* is $\mathcal{N}(0, \sigma^2 C^2 \mathbf{I})$, so the per-coordinate std on the summed gradient is
@@ -666,6 +734,8 @@ The engineering upshot is a single sentence you can take to a design review: **d
     - $B = 4096$: $0.02 \times 4096 / 1.1 \approx 74.5$.
 
     The SNR grows *linearly* in $B$ (a $16\times$ larger batch gives a $16\times$ better SNR here) because the injected noise is fixed on the sum while the averaged useful signal is constant — so the only way to drown out the DP noise and get a usable gradient direction is to average over a very large batch. That is why DP-SGD "wants very large batches," and it compounds the compute/memory cost of per-example gradients.
+
+    The catch, at fixed $\varepsilon$: raising $B$ also raises the sampling rate $q = B/N$, and the accountant charges roughly $O(q^2/\sigma^2)$ per step, so a bigger batch buys SNR only if you also raise $\sigma$ (or take fewer steps). The net is still favourable — the noise-to-signal ratio $\sigma C/(gB)$ improves faster than the accounting cost — which is why published DP fine-tuning recipes use batches in the thousands with noise multipliers around 1, and why you should always let the accountant, not intuition, price the trade.
 
 **4.** *(Quantitative / conceptual.)* Your DP accountant reports the fine-tune achieved $(\varepsilon, \delta) = (8.0, 10^{-6})$ on a dataset of $N = 2\times10^6$ records.
 

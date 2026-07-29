@@ -116,7 +116,9 @@ $$
 
 We cannot compute this directly; we estimate it with the *empirical risk* on held-out data. Classical VC theory bounds the generalization gap as roughly $O(\sqrt{d_{\text{VC}} / N})$ where $d_{\text{VC}}$ is the Vapnik–Chervonenkis dimension of the model class. For neural networks, VC theory is loose — modern understanding relies on PAC-Bayes, neural tangent kernel theory, and empirical scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)).
 
-**Why LLMs seem to avoid classical overfitting.** Self-supervised objectives on internet-scale data ($N \sim 10^{12}$ tokens) push the training-distribution gap close to zero. The model generalizes not because it memorizes less but because the training distribution is so broad that it effectively approximates $p_{\text{data}}$.
+**Why LLMs seem to avoid classical overfitting.** The mechanical reason is the *single-epoch* regime. A pretraining run consumes each token roughly once, so the empirical risk being minimized is a fresh, unbiased sample of the population risk at every step — train loss and held-out loss track each other almost exactly, and the classical U-curve never appears. It is not that the model memorizes less; it is that there is nothing to memorize *twice*.
+
+This breaks the moment you repeat data, which you will at 100M scale if your corpus is smaller than your compute budget wants. Muennighoff et al., *Scaling Data-Constrained Language Models* (2023), found empirically that repeating a corpus for up to roughly four epochs is nearly as valuable as fresh tokens, after which returns decay quickly and the run starts to overfit in the classical sense. That is the number to keep in mind when sizing the capstone corpus (see [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html)).
 
 ---
 
@@ -239,17 +241,69 @@ class EarlyStopping:
 # stopper.restore_best(model)
 ```
 
-Early stopping is, in a sense, equivalent to L2 regularization for gradient descent (see Goodfellow et al., 2016, Chapter 7 for the proof sketch). It has zero computational overhead and is almost always applied when training LLMs via the validation perplexity curve.
+Early stopping is, in a sense, equivalent to L2 regularization for gradient descent (see Goodfellow et al., 2016, Chapter 7 for the proof sketch — the equivalence is exact only for a quadratic loss with small learning rate). It has essentially zero computational overhead and is the default in the multi-epoch supervised regime.
+
+!!! warning "Early stopping is *not* how LLM pretraining works"
+    A pretraining run has a **fixed token budget** chosen in advance from a scaling law, and the learning-rate schedule (cosine or warmup-stable-decay) is tied to that budget — stopping early leaves you with a model at a high learning rate that has not been annealed, which is strictly worse than the same compute spent on a shorter, fully-decayed schedule. So you do *not* early-stop a pretraining run; you monitor validation loss to detect divergence, bad data, and loss spikes, and you restart from a checkpoint when something breaks. Early stopping returns in **fine-tuning** (SFT/LoRA on a small dataset for a few epochs), where overfitting is real. See [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html) and [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
 
 ### Other Regularization Techniques
 
 | Technique | Mechanism | Typical use |
 |---|---|---|
-| Batch Normalization | Normalizes activations, adds noise that acts like regularization | CNNs, Transformers |
-| Layer Normalization | Same but over feature dim; stable for sequence models | Transformers |
+| Batch Normalization | Normalizes activations over the batch; the batch-statistic noise acts like regularization | CNNs; *not* used in Transformers (batch-dependent, breaks with variable-length sequences and causal decoding) |
+| Layer / RMS Normalization | Same but over the feature dim, per token; batch-independent and stable for sequence models | Transformers (RMSNorm is the 2026 default — see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html)) |
 | Data augmentation | Expands effective dataset size | Vision, NLP paraphrasing |
-| Label smoothing | Softens targets from 0/1 to $\epsilon/(K-1)$, $1-\epsilon$ | Classification heads |
-| Gradient clipping | Clips gradient norm; prevents exploding gradients | RNNs, Transformers |
+| Label smoothing | Softens targets from 0/1 to $\epsilon/(K-1)$, $1-\epsilon$ | Classification heads; rare in LLM pretraining |
+| Gradient clipping | Rescales the global gradient norm to a cap (typically 1.0); prevents exploding gradients and loss spikes | RNNs, Transformers — standard in every LLM run |
+
+### Which of These Survive in LLM Pretraining
+
+The regularization toolkit above was built for the *multi-epoch, small-data* regime. Pretraining a ~100M-parameter model on ~20B tokens is the opposite: roughly a single pass over the corpus, so the model never sees a training token twice and classical overfitting is not the binding constraint — compute is. Accordingly, modern pretraining recipes keep only two of the levers:
+
+- **Dropout is set to 0.** GPT-2 used dropout 0.1; from GPT-3 onward, and in Llama, OLMo and the SmolLM family, pretraining dropout is disabled. It costs throughput and buys nothing when data is effectively infinite. Dropout returns for SFT and LoRA fine-tuning, where you *do* run several epochs over a small dataset.
+- **Decoupled weight decay (AdamW), typically $\lambda \approx 0.1$, applied only to matrix-shaped parameters.** Biases and LayerNorm/RMSNorm gains are excluded: they carry no capacity to overfit with, and decaying a norm gain silently rescales an entire layer's output. This exclusion is implemented with optimizer **parameter groups**, and is one of the small details that is easy to get wrong when writing a training loop from scratch.
+- **Global-norm gradient clipping at 1.0**, which is really a stability device rather than a regularizer (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)).
+
+```python
+import torch
+import torch.nn as nn
+
+def configure_optimizer(model: nn.Module, lr: float = 3e-4,
+                        weight_decay: float = 0.1, betas=(0.9, 0.95)):
+    """AdamW with the standard LLM parameter-group split.
+
+    Decay only tensors with ndim >= 2 (weight matrices, embeddings);
+    never decay biases or norm gains (ndim == 1).
+    """
+    decay, no_decay = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        (decay if p.ndim >= 2 else no_decay).append(p)
+
+    groups = [
+        {"params": decay,    "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+    print(f"decayed tensors: {len(decay)}  "
+          f"({sum(p.numel() for p in decay):,} params)")
+    print(f"non-decayed    : {len(no_decay)} "
+          f"({sum(p.numel() for p in no_decay):,} params)")
+    # betas=(0.9, 0.95) is the LLM convention; 0.999 is too slow-moving here
+    return torch.optim.AdamW(groups, lr=lr, betas=betas)
+
+# A toy block with a matrix, a bias, and a norm gain
+block = nn.Sequential(nn.Linear(128, 512), nn.GELU(),
+                      nn.Linear(512, 128), nn.LayerNorm(128))
+opt = configure_optimizer(block)
+
+# In the training loop, clip before stepping:
+# loss.backward()
+# torch.nn.utils.clip_grad_norm_(block.parameters(), max_norm=1.0)
+# opt.step(); opt.zero_grad(set_to_none=True)
+```
+
+This exact parameter-group split is what the capstone's optimizer uses — see [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html) and [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) for why AdamW's *decoupled* decay differs from adding $\frac{\lambda}{2}\|\theta\|^2$ to the loss under an adaptive optimizer.
 
 ---
 
@@ -307,6 +361,42 @@ print(f"\n5-fold CV accuracy: {np.mean(fold_accuracies):.4f} "
       f"± {np.std(fold_accuracies):.4f}")
 ```
 
+### Hyperparameter Search: What the Validation Set Is For
+
+The validation set exists so you can *choose* things: learning rate, weight decay, width, dropout. Three facts govern how:
+
+- **Random search beats grid search** (Bergstra & Bengio, 2012). If only a few hyperparameters actually matter, a grid wastes most of its budget re-evaluating irrelevant axes at the same values of the important ones; random sampling gives every trial a distinct value of every hyperparameter. Sample learning rates and weight decays **log-uniformly**, not uniformly.
+- **Kill bad trials early.** Successive halving and its asynchronous variant ASHA run many configurations for a short budget, keep the top fraction, and repeat — an order of magnitude more configurations explored for the same compute.
+- **You cannot tune at target scale.** For anything larger than a toy, the hyperparameters are chosen on small proxy models and transferred, either empirically via a scaling-law sweep or analytically via $\mu$P width-scaling rules. See [Mini Scaling Laws: Fit Your Own Law Before Spending the Budget](../14-capstone/05-mini-scaling-laws.html) and [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
+
+The open-source tooling at this layer is **Optuna** (define-by-run search with a TPE sampler and pruners), **Ray Tune** (distributed scheduling, including ASHA and PBT), and **Weights & Biases** Sweeps or **MLflow** for tracking and comparing runs. A minimal Optuna study:
+
+```python
+import optuna                       # pip install optuna
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score
+from sklearn.datasets import make_classification
+
+X, y = make_classification(n_samples=500, n_features=20,
+                           n_informative=10, random_state=0)
+
+def objective(trial):
+    # Log-uniform over regularization strength; C = 1/lambda in sklearn
+    C = trial.suggest_float("C", 1e-4, 1e2, log=True)
+    penalty = trial.suggest_categorical("penalty", ["l1", "l2"])
+    clf = LogisticRegression(C=C, penalty=penalty, solver="liblinear", max_iter=500)
+    # Objective = mean validation accuracy; never touches the test set
+    return cross_val_score(clf, X, y, cv=3, scoring="accuracy").mean()
+
+study = optuna.create_study(direction="maximize",
+                            sampler=optuna.samplers.TPESampler(seed=0))
+study.optimize(objective, n_trials=25, show_progress_bar=False)
+print(study.best_params, f"{study.best_value:.4f}")
+```
+
+!!! warning "Tuning on the test set by accident"
+    Every hyperparameter you select by looking at a score makes that score optimistically biased. If you run 200 trials and report the *best* validation number as your headline result, you have reported the maximum of 200 noisy draws, not a generalization estimate. Select on validation, report on a test set you touched once. For LLM benchmarks specifically, this is why leaderboards drift — see [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html).
+
 ### Data Leakage — The Silent Killer
 
 **Data leakage** occurs when information from the validation or test set contaminates the model during training or preprocessing. It causes the model to appear better than it truly is on unseen data.
@@ -319,7 +409,38 @@ Common leakage sources:
 4. **Label leakage.** A feature that is a direct proxy for the label (e.g., including the diagnosis code when predicting disease).
 
 !!! warning "Always fit preprocessing on training data only"
-    Any scaler, tokenizer vocabulary, or normalization constant must be computed on the *training* split and then *applied* (not refit) to validation and test. In `sklearn`, use `Pipeline` objects so that `.fit_transform(X_train)` and `.transform(X_val)` are clearly separated.
+    Any scaler, tokenizer vocabulary, or normalization constant must be computed on the *training* split and then *applied* (not refit) to validation and test. In `sklearn`, use `Pipeline` objects so that `.fit_transform(X_train)` and `.transform(X_val)` are clearly separated. The LLM analogue is the tokenizer: train the BPE merges on a sample of the *training* corpus only, then apply the frozen vocabulary to validation and test text.
+
+### The Split Protocol for a Pretraining Run
+
+Cross-validation is never used for LLM pretraining — retraining $k$ times is unaffordable, and with $10^{10}$+ tokens the variance of a single held-out estimate is already negligible. The protocol instead looks like this, and it is worth getting right before you spend a GPU-week:
+
+1. **Hold out whole documents, not random token windows.** If half of a document lands in train and half in validation, the model has effectively seen the validation text's context and your val loss is optimistic. Split at the document level, deterministically, by hashing a stable document id.
+2. **Hold out *after* deduplication.** A near-duplicate of a validation document sitting in the training set is exactly the "duplicates across splits" leak from above, and web crawls are full of them (see [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html)).
+3. **Match the training mixture, and also keep per-domain shards.** A single validation loss over the same mixture as training is your primary curve; separate per-domain shards (web / code / math) tell you *which* domain a regression came from. A few million tokens per shard is plenty.
+4. **Decontaminate against your evaluation benchmarks.** Strip training documents that n-gram-overlap with the test splits of the benchmarks you plan to report. This is the LLM version of test-set contamination and the single most common cause of over-reported results (see [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html)).
+
+```python
+import hashlib
+
+def split_of(doc_id: str, val_frac: float = 0.001) -> str:
+    """Deterministic, order-independent document-level train/val assignment.
+
+    Hashing (rather than shuffling) means the same document always lands in
+    the same split, even across re-runs, added shards, or parallel workers.
+    """
+    h = hashlib.blake2b(doc_id.encode("utf-8"), digest_size=8).digest()
+    bucket = int.from_bytes(h, "big") / 2**64        # uniform in [0, 1)
+    return "val" if bucket < val_frac else "train"
+
+docs = [f"cc-2026-08/{i:07d}" for i in range(100_000)]
+counts = {"train": 0, "val": 0}
+for d in docs:
+    counts[split_of(d)] += 1
+print(counts)   # {'train': 99894, 'val': 106} — ~0.1% held out
+```
+
+In practice you do not write the surrounding pipeline by hand: HuggingFace **`datasets`** handles sharded streaming reads and `train_test_split`, and **`datatrove`** provides distributed dedup and filtering blocks that run the same code locally or on a Slurm cluster. The capstone applies exactly this protocol to ~20B tokens in [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html), and the resulting validation shard is what the training loop in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) evaluates against.
 
 ---
 
@@ -410,7 +531,9 @@ $$
 
 where $B_m$ is the $m$-th bin of predictions, $\text{acc}(B_m)$ is the fraction of positives in that bin, and $\text{conf}(B_m)$ is the mean predicted probability.
 
-Neural networks are often *overconfident* — their raw softmax scores are not well-calibrated. **Temperature scaling** is a simple post-hoc fix: divide logits by a learned scalar $T > 1$ before softmax, which smooths the output distribution.
+Neural networks are often *overconfident* — their raw softmax scores are not well-calibrated. **Temperature scaling** is a simple post-hoc fix: divide logits by a learned scalar $T > 1$ before softmax, which smooths the output distribution. In `scikit-learn`, `calibration_curve` plots the reliability diagram and `CalibratedClassifierCV` wraps a fitted estimator with Platt scaling (`method="sigmoid"`) or isotonic regression; you implement ECE and temperature scaling yourself in Exercises 5 and 6.
+
+Calibration is not just a classical-ML concern. The same sampling temperature that controls generation diversity at inference (see [Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html)) is literally this $T$, and an LLM's calibration is routinely measured on multiple-choice benchmarks by comparing its normalized answer log-probabilities against empirical accuracy — the standard `lm-evaluation-harness` reports exactly these log-likelihoods.
 
 !!! example "Worked example: Precision, Recall, F1"
     Suppose we are evaluating a spam filter on 1000 emails: 100 true spam, 900 ham. Our model predicts:
@@ -434,11 +557,11 @@ Neural networks are often *overconfident* — their raw softmax scores are not w
 
 | Metric | Formula | When to use |
 |---|---|---|
-| MAE | $\frac{1}{N}\sum|y_i - \hat{y}_i|$ | Robust to outliers |
+| MAE | $\frac{1}{N}\sum \lvert y_i - \hat{y}_i \rvert$ | Robust to outliers |
 | MSE | $\frac{1}{N}\sum(y_i - \hat{y}_i)^2$ | Differentiable; penalizes large errors |
 | RMSE | $\sqrt{\text{MSE}}$ | Same units as target |
 | $R^2$ | $1 - \frac{\text{SS}_{\text{res}}}{\text{SS}_{\text{tot}}}$ | Fraction of variance explained |
-| MAPE | $\frac{1}{N}\sum|\frac{y_i - \hat{y}_i}{y_i}|$ | Relative error; undefined if $y_i = 0$ |
+| MAPE | $\frac{1}{N}\sum \lvert \frac{y_i - \hat{y}_i}{y_i} \rvert$ | Relative error; undefined if $y_i = 0$ |
 
 For language models, the primary metric is **perplexity**, which is the exponentiated average cross-entropy per token:
 
@@ -447,6 +570,26 @@ $$
 $$
 
 A perplexity of 10 means the model is, on average, as uncertain as choosing uniformly among 10 equally likely next tokens.
+
+**Perplexity is not comparable across tokenizers.** A model with a larger vocabulary packs more characters into each token, so it makes fewer, harder predictions; its per-token perplexity can look worse while the model is objectively better at compressing the same text. The tokenizer-independent fix is **bits-per-byte (BPB)** — total negative log-likelihood measured in bits, divided by the number of *UTF-8 bytes* in the raw text:
+
+$$
+\text{BPB} = \frac{\sum_{t=1}^{T} -\log_2 p_\theta(w_t \mid w_{<t})}{B} = \frac{\mathcal{L}_{\text{CE}}}{\ln 2} \cdot \frac{T}{B}
+$$
+
+where $\mathcal{L}_{\text{CE}}$ is mean cross-entropy in nats per token, $T$ the token count and $B$ the byte count. For example, at a validation cross-entropy of $3.0$ nats/token with a byte-level BPE tokenizer achieving $4.3$ bytes/token, $\text{BPB} = (3.0 / 0.6931) / 4.3 \approx 1.01$ bits per byte. Report BPB whenever you compare two models that do not share a tokenizer — it is the metric of choice for the capstone's held-out evaluation (see [A Byte-Level BPE Tokenizer From Scratch (and Why Vocab Size Is a Design Lever at 100M)](../14-capstone/03-tokenizer.html) and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)).
+
+```python
+import math
+
+def bits_per_byte(mean_ce_nats: float, n_tokens: int, n_bytes: int) -> float:
+    """Convert mean per-token cross-entropy (nats) to tokenizer-independent BPB."""
+    total_bits = mean_ce_nats * n_tokens / math.log(2)
+    return total_bits / n_bytes
+
+# 1M tokens of validation text that is 4.3M UTF-8 bytes long
+print(f"{bits_per_byte(3.0, 1_000_000, 4_300_000):.4f}")   # 1.0065
+```
 
 ---
 
@@ -621,7 +764,8 @@ print(f"ROC-AUC: {roc_auc_score(y_true, y_score):.4f}")
     - **Regularization toolkit:** L2 (weight decay) encourages small weights; L1 encourages sparsity; dropout trains implicit ensembles; early stopping uses validation loss as a stopping criterion. AdamW implements decoupled weight decay that is better than adding L2 to Adam naively.
     - **Data protocol hygiene:** Always fit preprocessing statistics on training data only. Never touch the test set until final evaluation. Use stratified splits for imbalanced classes.
     - **Data leakage** is the most common cause of over-optimistic reported results in production ML: duplicates across splits, future-leaking features, and test-set-contaminated preprocessing are the three main culprits.
-    - **Metric choice matters:** Accuracy is misleading under class imbalance. Prefer F1 or PR-AUC for imbalanced classification. Use ROC-AUC for threshold-free ranking evaluation. For language models, use perplexity as the primary metric, but always validate on downstream task metrics too.
+    - **Metric choice matters:** Accuracy is misleading under class imbalance. Prefer F1 or PR-AUC for imbalanced classification. Use ROC-AUC for threshold-free ranking evaluation. For language models, perplexity is the primary metric — but it is tokenizer-dependent, so report **bits-per-byte** whenever you compare models that do not share a tokenizer, and always validate on downstream task metrics too.
+    - **The pretraining regime rewrites the toolkit:** single-epoch training means no classical overfitting, so dropout is off, weight decay ($\approx 0.1$, AdamW, matrices only — never biases or norm gains) plus grad-norm clipping at 1.0 are what remain, and you never early-stop a schedule tied to a fixed token budget. Repeating a corpus is fine for a few epochs and then is not.
     - **Calibration is a separate property from discrimination.** A model can have high AUC but terrible calibration. ECE measures calibration; temperature scaling is the simplest fix.
     - **Generalization is not magic:** it comes from inductive biases that align with data structure. Implicit regularization from SGD noise, flat minima preference, and architectural choices (attention, convolutions) all contribute. There is no free lunch — knowing your problem distribution is the starting point.
 
@@ -642,17 +786,23 @@ print(f"ROC-AUC: {roc_auc_score(y_true, y_score):.4f}")
     - [Belkin et al., *Reconciling modern machine learning practice and the classical bias–variance trade-off* (2019)](https://arxiv.org/abs/1812.11118) — Introduces the double-descent curve; shows why overparameterized models can still generalize.
     - [Guo et al., *On Calibration of Modern Neural Networks* (2017)](https://arxiv.org/abs/1706.04599) — Establishes that modern nets are overconfident; introduces temperature scaling and ECE.
     - [Keskar et al., *On Large-Batch Training for Deep Learning: Generalization Gap and Sharp Minima* (2017)](https://arxiv.org/abs/1609.04836) — Explains why small-batch SGD generalizes better via flat minima.
+    - [Bergstra & Bengio, *Random Search for Hyper-Parameter Optimization*, JMLR (2012)](https://jmlr.org/papers/v13/bergstra12a.html) — Why random search dominates grid search when only a few hyperparameters matter.
+    - [Loshchilov & Hutter, *Decoupled Weight Decay Regularization* (AdamW, 2019)](https://arxiv.org/abs/1711.05101) — Why L2-in-the-loss and weight decay are *not* the same thing under an adaptive optimizer.
 
     **Recent advances (2022–2026)**
 
     - [Power et al., *Grokking: Generalization Beyond Overfitting on Small Algorithmic Datasets* (2022)](https://arxiv.org/abs/2201.02177) — Demonstrates late generalization; challenges the simple "training longer hurts" narrative.
     - [Nanda et al., *Progress Measures for Grokking via Mechanistic Interpretability* (2023)](https://arxiv.org/abs/2301.05217) — Reverse-engineers the algorithm a grokking network learns, showing the "sudden" generalization is the endpoint of a gradual internal phase transition.
     - [Nakkiran et al., *Deep Double Descent: Where Bigger Models and More Data Hurt* (2020)](https://arxiv.org/abs/1912.02292) — Shows double descent as a function of model size, dataset size, and training epochs; extends Belkin et al. to practice.
+    - [Muennighoff et al., *Scaling Data-Constrained Language Models* (2023)](https://arxiv.org/abs/2305.16264) — What happens when you *repeat* pretraining data: roughly four epochs are nearly as good as fresh tokens, then returns decay. The overfitting question, restated for LLMs.
 
-    **Visual explainers & tools**
+    **Tools & libraries at this layer**
 
+    - [scikit-learn User Guide](https://scikit-learn.org/stable/user_guide.html) — Canonical reference for cross-validation, metrics (ROC, PR-AUC), calibration (`calibration_curve`, `CalibratedClassifierCV`), and regularized linear models with working Python code.
+    - [Optuna](https://optuna.org/) and [Ray Tune](https://docs.ray.io/en/latest/tune/index.html) — Define-by-run hyperparameter search with TPE samplers and pruners; distributed schedulers including ASHA and population-based training.
+    - [Weights & Biases](https://docs.wandb.ai/) / [MLflow](https://mlflow.org/) — Experiment tracking and sweep orchestration; the practical answer to "which of my 200 runs was actually best, and with what config".
+    - [TorchMetrics](https://lightning.ai/docs/torchmetrics/stable/) and HuggingFace [`evaluate`](https://huggingface.co/docs/evaluate) — Batched, device-aware metric implementations for PyTorch training loops; [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) is the standard for LLM-side log-likelihood and task metrics.
     - [MLU-Explain: Bias-Variance Tradeoff](https://mlu-explain.github.io/bias-variance/) — Interactive visual essay from Amazon ML University; great for building intuition before the math.
-    - [scikit-learn User Guide](https://scikit-learn.org/stable/user_guide.html) — Canonical reference for cross-validation, metrics (ROC, PR-AUC, ECE), and regularized linear models with working Python code.
 
 ---
 

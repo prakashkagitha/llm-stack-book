@@ -91,6 +91,8 @@ print(y.shape, y.sharding)    # (1024, 8192), sharded as XLA decided.
 
 The mental shift for a GPU person: there is no kernel to profile in the Nsight sense, no occupancy to tune, no shared-memory bank conflict to chase. Your performance levers are (a) the **sharding annotations** — get the parallelism wrong and XLA inserts catastrophic collectives — (b) keeping shapes **static** so XLA can compile once, and (c) avoiding ops XLA cannot fuse well. When you *do* need a custom kernel — a fused FlashAttention variant, a block-sparse MoE op — you reach for **Pallas**, JAX's kernel language (spiritually a Triton for TPU/GPU) that lets you write tiled programs against the MXU/VPU directly. This is the TPU answer to [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html).
 
+"Just write JAX" hides a stack, and the real libraries are worth naming: **Flax** (`flax.nnx`, or the older `flax.linen`) for modules, **Optax** for optimizers and LR schedules, **Orbax** for sharded checkpointing, and — as a complete, readable reference LLM you can actually run — Google's **MaxText** (JAX/Flax, TPU *and* GPU) or Stanford CRFM's **Levanter**. PyTorch users reach the same silicon through `torch_xla`, whose SPMD API deliberately mirrors JAX's mesh-and-`PartitionSpec` annotations. Installation on a Cloud TPU VM is a one-liner (`pip install -U "jax[tpu]"`), and access is not restricted to Google: Colab and Kaggle both expose free TPU runtimes, and Google's **TPU Research Cloud (TRC)** grants pod slices to researchers on application. For *serving* on TPU the stack is **MaxText/JetStream** or the TPU backend of **vLLM**, both of which lean on Pallas kernels for paged/ragged attention — you do not write the decode kernel yourself.
+
 !!! note "Aside: why TPUs love bf16 and big batches"
     TPUs were co-designed with **bfloat16** (Google invented the format). bf16 keeps FP32's 8 exponent bits — same dynamic range — and throws away mantissa bits, which is exactly the trade a systolic MAC array wants: wide range so you rarely need loss scaling, narrow mantissa so each MAC cell is cheap. Because the MXU retires a full tile every cycle once filled, TPUs are happiest with *large, statically-shaped* matmuls — big batch, big hidden dim. Tiny, dynamically-shaped, branchy workloads (the kind that plague a SIMT GPU less) are where the systolic model struggles, since the array drains and refills.
 
@@ -129,10 +131,12 @@ for step, (xb, yb) in enumerate(loader):
     # mark_step() cuts the graph, hands it to neuronx-cc, and runs it.
     # The FIRST occurrence of a given graph shape triggers a (slow) compile;
     # afterwards the compiled binary is cached and reused.
+    # (Recent torch_xla releases spell these `torch_xla.device()` and
+    #  `torch_xla.sync()`; the `xm.*` names above still work.)
     xm.mark_step()
 ```
 
-The big operational gotchas for a GPU engineer moving to Trainium are exactly the gotchas of any lazy/compiled stack: (1) **dynamic shapes trigger recompilation** — if your sequence length or batch size varies every step, you thrash the compiler, so you bucket/pad to a fixed set of shapes; (2) **data-dependent control flow** (Python `if` on a tensor value) forces graph breaks and is slow; (3) the **first step is dominated by compilation**, so warm-up and a persistent compile cache matter. When you need a true custom kernel, the **Neuron Kernel Interface (NKI)** is the Trainium analog of Triton/Pallas — a Python-embedded language for writing tiled kernels directly against the TensorEngine/VectorEngine.
+The big operational gotchas for a GPU engineer moving to Trainium are exactly the gotchas of any lazy/compiled stack: (1) **dynamic shapes trigger recompilation** — if your sequence length or batch size varies every step, you thrash the compiler, so you bucket/pad to a fixed set of shapes; (2) **data-dependent control flow** (Python `if` on a tensor value) forces graph breaks and is slow; (3) the **first step is dominated by compilation**, so warm-up and a persistent compile cache matter. When you need a true custom kernel, the **Neuron Kernel Interface (NKI)** is the Trainium analog of Triton/Pallas — a Python-embedded language for writing tiled kernels directly against the TensorEngine/VectorEngine. Above the raw bridge, the libraries you would actually assemble are Hugging Face's **`optimum-neuron`** (Trainium/Inferentia-aware wrappers around `transformers` and TRL, so an SFT script ports with a few import changes) and AWS's **`neuronx-distributed`** for tensor/pipeline/sequence parallelism; for serving, **vLLM** ships a Neuron backend.
 
 !!! tip "Practitioner tip: bucket your shapes on any XLA backend"
     On TPU *and* Trainium, the single highest-leverage habit is to **enumerate and fix your tensor shapes**. Pad sequences to a small set of length buckets (e.g. 512/1024/2048/4096), fix the batch size, and pad the vocabulary to a friendly multiple. You pay a one-time compile per unique shape and then run compiled binaries forever. The most common "TPU/Trainium is mysteriously slow" bug is silent recompilation from shapes that wobble step to step.
@@ -216,7 +220,9 @@ for xb, yb in loader:
     htcore.mark_step()   # like xm.mark_step(): cut & dispatch the graph.
 ```
 
-The takeaway: Gaudi sits in the same "systolic-MME + programmable-vector + graph-compiler" family as TPU and Trainium, with the twist that its scale-out is plain Ethernet/RoCE. The porting mental model is the XLA-family one (bucket shapes, avoid graph breaks, warm the compile cache), not the CUDA one.
+In practice you rarely touch SynapseAI directly: Hugging Face's **`optimum-habana`** supplies a drop-in `GaudiTrainer` and Gaudi-optimized `transformers`/TRL paths, **DeepSpeed** ZeRO is supported for multi-card training, and **vLLM** has a Gaudi backend for serving.
+
+The takeaway: Gaudi sits in the same "systolic-MME + programmable-vector + graph-compiler" family as TPU and Trainium, with the twist that its scale-out is plain Ethernet/RoCE. The porting mental model is the XLA-family one (bucket shapes, avoid graph breaks, warm the compile cache), not the CUDA one. One caution before you commit a fleet: Intel's accelerator roadmap beyond Gaudi3 has been publicly re-planned more than once, so weigh the maturity and staffing of the software stack at least as heavily as the datasheet — on every non-NVIDIA platform, software maturity is the real risk, not FLOPS.
 
 ---
 
@@ -240,6 +246,8 @@ A few organizing principles fall out of this map and are worth stating as rules 
 ## Reading a Spec Sheet to Pick Hardware
 
 Now the practical skill: given a workload, choose a chip by reading three numbers — **HBM capacity (GB)**, **HBM bandwidth (TB/s)**, and **low-precision matmul throughput (FP8/FP4 TFLOP/s)** — and one fourth, **interconnect bandwidth (GB/s per link)**, for multi-chip jobs. Which number dominates depends entirely on whether you are training or serving, and within serving, whether you are *prefill*-bound or *decode*-bound (see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html)).
+
+Two caveats before you compare any two datasheets. First, check whether the headline TFLOPS is **dense** or assumes **2:4 structured sparsity** — NVIDIA quotes both, and the sparse number is 2× the one you will actually get on a dense transformer. Second, peak is an upper bound nobody reaches: the honest cross-vendor figure is **MFU** (model FLOPs utilization) — the model's useful FLOP/s (from the $6ND$-style count of [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)) divided by the chip's peak *dense* FLOP/s. Well-tuned large-model training on a mature stack typically lands in roughly the 35–55% band, and an immature backend can sit far below it, which is precisely why software maturity often beats raw datasheet FLOPS in a procurement decision.
 
 ### Step 1: Does the model even fit? (capacity)
 
@@ -279,10 +287,12 @@ class Chip:
     link_gbs: float        # per-chip interconnect bandwidth, GB/s
 
 # Illustrative figures -- teach the method, not the exact values.
+# All compute figures are DENSE (no 2:4-sparsity doubling).
 CHIPS = [
-    Chip("H100-SXM",   80,  3.35,  1979,  450),   # NVLink
-    Chip("MI300X",    192,  5.3,   2615,  448),   # Infinity Fabric
-    Chip("TPU v5p",    95,  2.76,   918,  600),   # ICI (bf16-class peak)
+    Chip("H100-SXM",   80,  3.35,  1979,  450),   # NVLink; FP8 dense
+    Chip("MI300X",    192,  5.3,   2615,  448),   # Infinity Fabric; FP8 dense
+    Chip("TPU v5p",    95,  2.76,   918,  600),   # ICI; v5p has no FP8 -- 918 is
+                                                  # its int8 TOP/s (bf16 ~459)
     Chip("Gaudi3",    128,  3.7,   1835,  300),   # RoCE/Ethernet (aggregate)
 ]
 
@@ -328,6 +338,10 @@ The function encodes the doctrine: for **decode** serving, rank by *aggregate HB
 
 {{fig:accel-capacity-decision-70b}}
 
+### Sizing the capstone: what hardware does Stack-100M need?
+
+Run the same three-number reasoning on this book's capstone model ([The Capstone: Building Stack-100M, and the 2026 Small-Model Landscape](../14-capstone/01-overview-and-landscape.html)) and the answer inverts the 70B story. At $N \approx 100\times10^{6}$ parameters trained in bf16 with an fp32 master copy and Adam's two fp32 moments, the persistent state is $100\times10^{6}\times(2 + 4 + 4 + 4) \approx 1.4\ \text{GB}$; activations at a modest batch and 2k context add a few GB more. The entire training job therefore fits on **one** 16 GB accelerator with room to spare, which is exactly why [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) is a single-device loop with no tensor or pipeline parallelism at all. At this scale you are never capacity-bound — you are **throughput**-bound, and the figure to maximize is achieved bf16 TFLOP/s per dollar-hour, because the ~20B-token budget of [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) is what sets wall-clock. Practically: a free Colab T4 works but is slow; a single A100/H100 hour, one MI300X, or a free Colab/Kaggle TPU slice (via JAX or `torch_xla`) all clear the bar, and the ROCm and XLA paths above are genuinely usable for the capstone rather than being NVIDIA-only. Serving the finished model is the opposite extreme again: 100M int4 weights are roughly 50 MB, so it runs on a laptop CPU through llama.cpp — see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
 ### A comparison table to anchor the families
 
 | Vendor / chip | Core architecture | Lanes/group | Matmul unit | SDK / language | Compile model | Interconnect | Standout trait |
@@ -351,6 +365,7 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
 3. **Swap the kernel libraries.** Replace NCCL→RCCL (AMD) or use the vendor collective; ensure FlashAttention has a backend on your target (AMD CK / Triton-AMD; Pallas/NKI flash kernels on systolic chips). For serving, check that **vLLM/SGLang** have an upstream backend for your chip — they increasingly do — rather than porting kernels yourself.
 4. **Re-tune, do not re-translate, the hot kernels.** If you own Triton kernels, recompile for the target and re-sweep block sizes / `num_warps` for the 64-wide wavefront (AMD) or the MXU tile (Pallas/NKI). Do not assume NVIDIA-tuned constants transfer.
 5. **Audit for NVIDIA-only assumptions.** Grep for hard-coded `32` (warp size), inline PTX, Hopper-specific intrinsics, and `cuda`-only library calls with no portable analog. These are the items that genuinely do not port and must be rewritten.
+6. **Learn the vendor's `nvidia-smi` and profiler, on day one.** Device inventory and utilization come from `rocm-smi` (AMD), `neuron-ls` / `neuron-top` / `neuron-monitor` (Trainium), `hl-smi` (Gaudi), and `jax.devices()` plus Cloud TPU monitoring on TPU. The Nsight equivalents for traces are `rocprof` and the ROCm Compute Profiler (formerly Omniperf) on AMD, the Neuron Profiler on Trainium, and the JAX/XLA profiler viewed in TensorBoard's trace viewer on TPU — which is also the fastest way to *see* the repeated-compilation gaps from step 2 rather than guess at them.
 
 !!! interview "Interview Corner"
     **Q:** A team wants to serve a 70B model and is choosing between two H100s (80 GB each) and one AMD MI300X (192 GB). The MI300X has *lower* peak FP8 TFLOPS than two H100s combined. Why might the single MI300X still be the better serving choice, and when would you reverse the decision?
@@ -396,7 +411,8 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
     - **Read three numbers off the spec sheet:** HBM capacity (does it fit?), HBM bandwidth (decode throughput), and FP8/FP4 TFLOPS (training/prefill throughput) — plus interconnect bandwidth for pods.
     - **Decode serving is bandwidth-bound; training/prefill is compute-bound.** This single distinction flips which chip wins — which is why a 192 GB MI300X can out-serve two H100s on decode while losing on training.
     - **The interconnect is part of the chip.** TPU's ICI torus, Trainium's NeuronLink, AMD's Infinity Fabric, and Gaudi's RoCE-over-Ethernet decide pod-scale efficiency as much as per-chip FLOPS.
-    - vLLM/SGLang/PyTorch/JAX increasingly ship upstream backends for all four families — the portable path is to ride those, not to port kernels by hand.
+    - **Compare MFU, not peak TFLOPS** — and check whether a vendor's headline number is dense or assumes 2:4 sparsity. Software maturity, not silicon, is the usual reason a non-NVIDIA fleet underperforms.
+    - vLLM/SGLang/PyTorch/JAX increasingly ship upstream backends for all four families, and the Hugging Face bridges (`optimum-neuron`, `optimum-habana`, ROCm `transformers`/TRL) plus the JAX stack (Flax, Optax, Orbax, MaxText) cover training — the portable path is to ride those, not to port kernels by hand.
 
 **Further reading.**
 

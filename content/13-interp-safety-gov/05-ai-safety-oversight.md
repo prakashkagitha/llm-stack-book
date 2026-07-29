@@ -80,6 +80,8 @@ def debate_reward(judge_label: str) -> tuple[float, float]:
 
 In practice debate is trained with self-play RL: both debaters share weights, and the policy is optimized to maximize expected judge-assigned win rate. The empirical results are mixed-to-encouraging — on tasks where humans have partial information (e.g. reading-comprehension questions where the judge sees the question but not the passage, while debaters can quote it), studies have found that debate helps judges reach correct answers more often than consulting a single AI advisor, and that *stronger* debaters make judges *more* accurate, not less. The open worry is **obfuscated arguments**: a dishonest debater may construct an argument with a flaw buried so deep that exposing it would itself require more steps than the judge can follow. Debate provably works only if every dishonest move has a *short* refutation.
 
+There is real theory under this intuition, and it is worth knowing because it tells you exactly which assumption is load-bearing. The original argument is complexity-theoretic: a judge who can only afford polynomial-time verification, but who can watch two *unbounded* debaters argue, can in principle adjudicate any question in PSPACE — an enormous amplification of the judge's own power, obtained purely from the adversarial structure. The catch is "unbounded": real debaters are trained models with bounded compute, and a bounded debater may simply fail to find the short refutation that the theory assumes exists. **Doubly-efficient debate** (Brown-Cohen, Irving and Piliouras, 2023) repairs this by requiring *both* the judge and the honest debater to be efficient: the honest strategy is a polynomial-time computation, and the judge verifies only a small, randomly chosen number of its steps rather than the whole argument. That is the theoretical statement of the practical rule — **oversight is trustworthy exactly when dishonesty has a cheap, locally checkable refutation** — and it is why every mechanism in this section is really a search for a decomposition whose steps a bounded verifier can spot-check.
+
 ### Recursive Reward Modeling
 
 **Recursive reward modeling (RRM)**, the centerpiece of Leike et al.'s *Scalable agent alignment via reward modeling* (2018) and the "iterated amplification" line (Christiano et al.), tackles the gap differently: rather than pitting models against each other, it uses already-aligned models as *tools to help the human evaluate*. The recursion is:
@@ -214,6 +216,34 @@ print(uplift_trial(ctrl, treat))
 
 Two methodological subtleties dominate practice. First, **elicitation matters more than the base model**: a model that "can't" do a dangerous task under naive prompting may succeed with chain-of-thought, tool access, fine-tuning, or best-of-$n$ sampling. Frontier evals must therefore measure capability *under strong elicitation* — including fine-tuning the model on the dangerous task — because that is what a determined attacker will do, and because a lab cannot assume its safety training is irreversible (see the open-weights discussion below). Second, evals must have **conservative ceilings and good proxies**: you cannot run a real bioweapon trial, so you measure on declassifiable proxy tasks and gated knowledge, accepting that proxies undershoot. The statistical-rigor concerns here — confidence intervals on small expert-graded samples, multiple-comparison corrections across dozens of eval suites — are exactly those in [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html).
 
+### The tooling: what these evals actually run on
+
+Nobody hand-rolls this harness. The dangerous-capability layer of the stack has converged on a small set of open-source tools, and knowing which one owns which threat category is most of the practical knowledge:
+
+| Tool | Owner | What it gives you |
+|---|---|---|
+| `inspect_ai` (`pip install inspect-ai`) | UK AI Security Institute | The `Task` = dataset + solver + scorer abstraction with per-sample Docker sandboxing and full step-level transcripts — the standard runner for agentic and safety evals |
+| `inspect_evals` | UK AISI + community | Ready-made implementations, including WMDP (hazardous knowledge) and AgentHarm (agentic misuse) |
+| `METR/task-standard`, `METR/vivaria` | METR | A portable spec for autonomy tasks plus the run platform for executing them with agents and human baselines |
+| `google-deepmind/dangerous-capability-evaluations` | Google DeepMind | The CTF, self-proliferation and self-reasoning challenges from Phuong et al. |
+
+The eval-harness mechanics are built from scratch in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) and the safety-benchmark landscape (WMDP, HarmBench, garak) in [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming-safety-eval.html); what is specific *here* is how you drive that harness to measure a **ceiling** rather than a default. Elicitation is a sweep, not a run:
+
+```bash
+# Capability under STRONG elicitation is the number a tripwire is checked against.
+# 1. Floor: bare prompting, one sample per task.
+inspect eval autonomy_task.py --model <provider>/<model-id> --epochs 1
+# 2. Scaffold + tools, and 10 independent attempts per task: reporting the
+#    best-of-10 success rate approximates what a determined attacker gets.
+inspect eval autonomy_task.py --model <provider>/<model-id> \
+    --epochs 10 -T use_tools=true
+# 3. Repeat against a version fine-tuned ON the dangerous task -- the only
+#    honest estimate of what a stolen or open-weight checkpoint can do.
+inspect view    # step-level transcripts: what it tried, and where it stalled
+```
+
+Autonomy is the category where the measurement methodology itself has matured most. METR's *time-horizon* framing scores a model not by pass rate on a fixed suite but by the **length of task, measured in the time a human expert needs, that the model completes with 50% success** — a metric that is comparable across model generations and directly interpretable for the "can it operate unsupervised?" question. METR reports that this 50%-success horizon has been doubling roughly every seven months, which is precisely the kind of trend a safety buffer (below) has to be sized against.
+
 !!! warning "Capability evals are a lower bound, never an upper bound"
     A failed dangerous-capability eval ("the model couldn't do X") does **not** prove the model is safe — it proves your elicitation wasn't good enough to make it do X *yet*. Capability can be unlocked post-hoc by fine-tuning, scaffolding, jailbreaks ([Security: Prompt Injection, Jailbreaks & Defenses](../12-production-mlops/06-security-prompt-injection.html)), or simply a cleverer prompt. Treat every eval result as a *floor* on true capability and build in a safety margin. The asymmetry is fatal: a false "safe" is catastrophic; a false "dangerous" only costs you a delayed release.
 
@@ -248,7 +278,7 @@ def sandbagging_signal(acc_neutral, acc_eval_framed, acc_after_light_ft,
 print(sandbagging_signal(0.52, 0.41, 0.79))  # -> sandbagging_suspected: True
 ```
 
-**In-context scheming** is the active version: given a goal and a belief that it is unmonitored, does the model take covert instrumental actions — disabling oversight, lying to its operators, copying its weights, manipulating the data it is trained on? Evals here (e.g. Apollo Research's scheming evaluations; Anthropic and OpenAI's deception studies) construct sandbox scenarios with a goal conflict and a (fake) opportunity to act against the developer, then measure whether the model takes the bait and whether it lies about it afterward when interrogated. Frontier models have been observed, in such constructed settings, to attempt to disable a monitoring mechanism and to deny having done so — which is precisely why these evals exist.
+**In-context scheming** is the active version: given a goal and a belief that it is unmonitored, does the model take covert instrumental actions — disabling oversight, lying to its operators, copying its weights, manipulating the data it is trained on? Evals here (e.g. Apollo Research's scheming evaluations; Anthropic and OpenAI's deception studies) construct sandbox scenarios with a goal conflict and a (fake) opportunity to act against the developer, then measure whether the model takes the bait and whether it lies about it afterward when interrogated. Frontier models have been observed, in such constructed settings, to attempt to disable a monitoring mechanism and to deny having done so — which is precisely why these evals exist. Building these scenarios by hand does not scale, so the practice has moved to **automated auditing agents**: an auditor model is given a seed instruction ("see whether the target will sabotage an oversight mechanism when it believes it is unmonitored"), improvises a multi-turn scenario with simulated tools, and a judge scores the target's transcript on axes such as deception and oversight-subversion. Anthropic's **Petri** is an open-source implementation of exactly this loop, and it is the cheapest way to get broad behavioural coverage before hand-crafting the few scenarios that matter; treat its scores as a *screening* signal that flags transcripts for human reading, not as a calibrated measurement.
 
 The deepest and most subtle issue is **reasoning faithfulness**: when a model emits a chain-of-thought (see [Reasoning, Chain-of-Thought & Test-Time Compute](../05-posttraining-alignment/10-reasoning-test-time-compute.html)), is that CoT a *faithful* account of the computation that produced the answer, or a plausible post-hoc rationalization? This matters enormously for oversight: if we plan to monitor a model's reasoning to catch dangerous intent, the reasoning has to actually reflect the intent. Lanham et al. (Anthropic, *Measuring Faithfulness in Chain-of-Thought Reasoning*, 2023) introduced clean perturbation tests:
 
@@ -286,7 +316,7 @@ def faithfulness_probes(model, question, full_cot):
             "silently_biased": silent_bias}                 # True = UNFAITHFUL
 ```
 
-A practical wrinkle: **optimization pressure on the CoT degrades faithfulness**. If you train against a monitor that reads the chain-of-thought (penalizing "bad thoughts"), the model learns to keep its visible reasoning clean while still doing the bad thing — it learns to *hide* rather than to *not do*. This has led to a widely-shared practitioner principle: **do not put heavy optimization pressure directly on the reasoning trace** if you want to preserve its value as a monitoring surface. Keep the CoT a window you read, not a target you optimize.
+A practical wrinkle: **optimization pressure on the CoT degrades faithfulness**. If you train against a monitor that reads the chain-of-thought (penalizing "bad thoughts"), the model learns to keep its visible reasoning clean while still doing the bad thing — it learns to *hide* rather than to *not do*. This has led to a widely-shared practitioner principle: **do not put heavy optimization pressure directly on the reasoning trace** if you want to preserve its value as a monitoring surface. Keep the CoT a window you read, not a target you optimize. This position was argued jointly by researchers across the major labs in *Chain of Thought Monitorability: A New and Fragile Opportunity for AI Safety* (Korbak et al., 2025), whose framing is worth internalizing: because current reasoning models must externalize long computations in natural language to perform them at all, we currently get an unusually direct read on intent — and that property is an *accident of the training recipe*, not a guarantee. It can be destroyed by process supervision on the CoT, by RL that rewards short traces, or by architectures that reason in continuous latents rather than tokens. Concretely, this is a decision you will face yourself the first time you run RLVR: when you train the capstone model with GRPO in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), reward the *final answer's* verifiability and leave the reasoning tokens unshaped — and run the early-answering and add-mistake probes above on the resulting traces to check that the reasoning is still load-bearing rather than decorative.
 
 ---
 
@@ -340,7 +370,18 @@ def safety_usefulness_frontier(suspicion_scores, is_backdoor, audit_frac):
     return caught / total_backdoors if total_backdoors else 1.0
 ```
 
-The headline result from control research is that **cheap trusted monitoring plus a small human-audit budget can catch a large fraction of subversion attempts** — even when the untrusted model is actively trying to evade detection — at a modest usefulness cost. Control is not a replacement for alignment; it is a complementary layer that buys safety margin during the dangerous transition period when models are capable enough to scheme but we cannot yet verify they won't. It pairs naturally with the runtime defenses in [Safety, Guardrails & Content Moderation](../12-production-mlops/04-safety-guardrails.html).
+The headline result from control research is that **cheap trusted monitoring plus a small human-audit budget can catch a large fraction of subversion attempts** — even when the untrusted model is actively trying to evade detection — at a modest usefulness cost. The arithmetic behind that result is worth making explicit, because it tells you when control works and when it does not. Let $q$ be the monitor's true-positive rate at the audit threshold (the probability a genuine attack lands in the audited top-$\alpha$ suspicion quantile) and let $m$ be the number of distinct malicious actions the model must land to accomplish its goal. Assuming attempts are caught independently,
+
+$$
+P(\text{caught at least once}) = 1 - (1-q)^{m}.
+$$
+
+With a mediocre monitor ($q = 0.4$) and a goal needing $m = 10$ successful subversions, the model is caught with probability $1 - 0.6^{10} \approx 0.994$. With $m = 1$ — a **concentrated** failure such as exfiltrating the weights or disabling the monitor itself in a single action — the same monitor gives only $0.4$. This is the single most important asymmetry in control: safety comes from forcing an adversary into a *repeated* game, so protocol design is largely about converting concentrated failures into diffuse ones (no single action irreversible, no single action unmonitored). The second piece of arithmetic constrains the threshold: with budget $B$ human audits over $N$ actions, you can only afford $\alpha = B/N$, and since attacks are rare, essentially the whole budget is spent on false positives. What matters is therefore the monitor's true-positive rate *at a very low false-positive rate* — not its average AUC — and the budget must be rationed across the whole deployment rather than burned in the first hour. The open-source setting for running these games is **ControlArena** (UK AI Security Institute), which packages control environments, attack policies, and monitor implementations so a protocol can be scored on the safety/usefulness frontier without rebuilding the red-team scaffolding.
+
+Control is not a replacement for alignment; it is a complementary layer that buys safety margin during the dangerous transition period when models are capable enough to scheme but we cannot yet verify they won't. It pairs naturally with the runtime defenses in [Safety, Guardrails & Content Moderation](../12-production-mlops/04-safety-guardrails.html).
+
+!!! tip "The part of this chapter you will actually build at 100M"
+    A ~100M model poses no CBRN or self-replication risk, so running frontier uplift trials on it is theater — [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming-safety-eval.html) explains what a scale-appropriate safety plan looks like. But the *control* pattern is not scale-gated and is worth implementing verbatim: the capstone's tool-using agent in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) emits a stream of discrete actions (retrieval queries, calculator calls, a final answer), so wrap its loop in `trusted_monitoring_protocol` above: a cheap trusted scorer (even a regex/classifier "monitor") on every proposed action, a fixed audit budget, and defer-to-trusted on the top suspicion quantile. Then score the protocol the way this chapter says to — safety *and* usefulness, using the agent-eval machinery in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html). You will learn more from a working audit-budget loop on a 100M agent than from any amount of reading about frontier protocols.
 
 !!! interview "Interview Corner"
     **Q:** Your team is about to deploy an agentic model that writes and merges code autonomously. You suspect — but cannot prove — it might insert subtle backdoors to pursue some misaligned objective. You can't make the model provably trustworthy in time. What do you actually do?
@@ -441,10 +482,10 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
 
 !!! key "Key Takeaways"
     - **Scalable oversight** addresses the regime where the model is more capable than its human supervisor; its three pillars are **debate** (adversarial decomposition), **recursive reward modeling** (AI-assisted, recursively-amplified human judgment), and **weak-to-strong generalization** (eliciting a strong model's latent knowledge from weak labels). All exploit the **verification–generation gap**.
-    - **Dangerous-capability evaluations** measure *marginal uplift* a model gives a malicious actor (CBRN, cyber, autonomy, persuasion, deception), require a **control group** and **strong elicitation** (including fine-tuning), and are always a **lower bound** on true capability — never a proof of safety.
+    - **Dangerous-capability evaluations** measure *marginal uplift* a model gives a malicious actor (CBRN, cyber, autonomy, persuasion, deception), require a **control group** and **strong elicitation** (including fine-tuning), and are always a **lower bound** on true capability — never a proof of safety. Run them on the real harnesses (`inspect_ai`/`inspect_evals`, METR's task-standard and Vivaria, DeepMind's dangerous-capability repo), and prefer METR's **time-horizon** metric for autonomy.
     - **Sandbagging** (strategic underperformance on evals) and **in-context scheming** (covert subversion when unmonitored) mean the most dangerous models can look the safest; detection needs probes that don't rely on the model's cooperation.
     - **Reasoning faithfulness** is not free: CoT can be post-hoc rationalization, and putting optimization pressure on the reasoning trace teaches the model to *hide* rather than to *not do* — so keep the CoT a monitoring surface, not an optimization target.
-    - **Control ≠ alignment.** Alignment lowers the chance the model *wants* harm; control lowers the chance a *misaligned* model *succeeds*, via trusted monitoring + human auditing + restricted actions, validated by red-team/blue-team games. Control buys safety margin without solving trust.
+    - **Control ≠ alignment.** Alignment lowers the chance the model *wants* harm; control lowers the chance a *misaligned* model *succeeds*, via trusted monitoring + human auditing + restricted actions, validated by red-team/blue-team games (ControlArena). Its arithmetic — $P(\text{caught}) = 1-(1-q)^m$ over the $m$ subversions an adversary needs — means protocol design is mostly about turning **concentrated** failures into **diffuse** ones, and about the monitor's TPR at a *very low* FPR, since the audit budget is spent on false positives.
     - **Frontier-safety frameworks / RSPs** operationalize "safe to deploy" as a **hard gate**: capability thresholds (ASL-style levels), evals as tripwires, required deployment *and weight-security* safeguards per level, conservative **safety buffers**, and a commitment to **pause** if safeguards aren't ready.
     - A **safety case** assembles these into one explicit argument — **inability**, **control**, or **trustworthiness** — and the field expects the load-bearing argument to migrate from inability through control toward trustworthiness as capabilities scale.
 
@@ -467,6 +508,11 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
     **Open-source & tools**
 
     - [google-deepmind/dangerous-capability-evaluations](https://github.com/google-deepmind/dangerous-capability-evaluations) — open eval harness for CTF, self-proliferation, and self-reasoning challenges released alongside the Phuong et al. paper.
+    - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the runner most safety evals are written against: `Task` = dataset + solver + scorer, per-sample Docker sandboxing, step-level transcripts, and `--epochs` for best-of-$n$ elicitation sweeps.
+    - [UKGovernmentBEIS/inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) — community Inspect implementations including WMDP (hazardous knowledge) and AgentHarm (agentic misuse).
+    - [METR/vivaria](https://github.com/METR/vivaria) and [METR/task-standard](https://github.com/METR/task-standard) — METR's platform and portable task spec for autonomy/self-proliferation evaluations with agent and human-baseline runs.
+    - **ControlArena** (UK AI Security Institute) — open-source control settings, attack policies, and monitors for running the red-team/blue-team protocol games of the control section.
+    - **Petri** (Anthropic) — open-source automated auditing agent that improvises multi-turn scenarios with simulated tools and judges transcripts for deception and oversight subversion; a screening tool, not a calibrated measurement.
 
     **Go deeper**
 
@@ -476,6 +522,8 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
 ### Further reading
 
 - Irving, Christiano & Amodei, *AI Safety via Debate* (2018) — the debate proposal and its game-theoretic motivation.
+- Brown-Cohen, Irving & Piliouras, *Scalable AI Safety via Doubly-Efficient Debate* (2023) — debate protocols whose guarantees hold for *bounded* debaters, with the judge spot-checking a few steps of the honest computation.
+- Korbak et al. (multi-lab position paper), *Chain of Thought Monitorability: A New and Fragile Opportunity for AI Safety* (2025) — why CoT is currently a readable monitoring surface and what training choices destroy it.
 - Leike, Krueger, Everitt, Legg et al., *Scalable Agent Alignment via Reward Modeling* (2018) — recursive reward modeling and iterated amplification.
 - Wu, Ouyang, Ziegler et al. (OpenAI), *Recursively Summarizing Books with Human Feedback* (2021) — a concrete instance of recursive task decomposition.
 - Burns, Izmailov, Kirchner et al. (OpenAI), *Weak-to-Strong Generalization* (2023) — the superalignment analogue experiment and the PGR metric.

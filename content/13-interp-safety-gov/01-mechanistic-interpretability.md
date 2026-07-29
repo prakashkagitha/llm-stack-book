@@ -2,7 +2,7 @@
 
 A trained transformer is a 70-billion-parameter function that maps token sequences to next-token distributions, and for most of its history we have treated it as a black box: feed it text, read off logits, judge it by its outputs. That stance is comfortable until the model lies, leaks a secret, develops a backdoor, or refuses for reasons you cannot articulate. At that point "the eval went up" stops being an explanation and you want to ask a sharper question: *what computation, inside the network, produced this behavior?* **Mechanistic interpretability** (often "mech interp") is the program of answering that question by reverse-engineering the learned algorithms a network implements — not statistical summaries of inputs and outputs, but the actual circuits, features, and intermediate representations that carry information from layer to layer.
 
-This chapter is a working engineer's tour of that toolkit. We build the central mental model first — the **residual stream** as a shared communication channel, and **superposition** as the reason features are tangled — and then develop the practical instruments in roughly increasing order of causal force: **probing** (does the information exist?), the **logit lens** (what does the model "believe" mid-stack?), **activation patching** and **causal tracing** (which components *cause* a behavior?), **circuit discovery** (how do components compose into an algorithm?), and **sparse autoencoders** (how do we pull monosemantic features out of superposition?). We close with the applied payoff — debugging, **activation steering**, feature-based monitoring for safety — the tooling ecosystem (TransformerLens, SAE frameworks), and an honest accounting of what this field cannot yet do. Two from-scratch code experiments anchor the theory: a logit lens you can run on any HuggingFace model, and a tiny activation-patching study that localizes a factual association to a specific layer and token.
+This chapter is a working engineer's tour of that toolkit. We build the central mental model first — the **residual stream** as a shared communication channel, and **superposition** as the reason features are tangled — and then develop the practical instruments in roughly increasing order of causal force: **probing** (does the information exist?), the **logit lens** (what does the model "believe" mid-stack?), **activation patching** and **causal tracing** (which components *cause* a behavior?), **circuit discovery** (how do components compose into an algorithm?), and **sparse autoencoders** (how do we pull monosemantic features out of superposition?). We close with the applied payoff — debugging, **activation steering**, feature-based monitoring for safety — the tooling ecosystem (TransformerLens, SAE frameworks), and an honest accounting of what this field cannot yet do. Two from-scratch code experiments anchor the theory — a logit lens you can run on any HuggingFace model, and a tiny activation-patching study that localizes a factual association to a specific layer and token — and each is then shown in the form you would actually ship it, using TransformerLens and SAELens.
 
 This material sits downstream of the architecture you already know. If the residual stream, attention heads, or the MLP block are hazy, revisit [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html) and [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html). Interpretability is also a precondition for the editing and safety techniques in [Knowledge Editing & Machine Unlearning](../13-interp-safety-gov/02-knowledge-editing-unlearning.html) and [AI Safety: Scalable Oversight, Dangerous-Capability Evals & Frontier Safety](../13-interp-safety-gov/05-ai-safety-oversight.html).
 
@@ -25,6 +25,15 @@ x_\ell = x_\text{embed} + \sum_{k < \ell} \big(\operatorname{Attn}_k + \operator
 $$
 
 This running sum is the **residual stream**. The Anthropic "Mathematical Framework for Transformer Circuits" (Elhage et al., 2021) made this view canonical, and it reorganizes how you think about the network. The residual stream is not a transient activation — it is a *persistent communication channel*, a bus that all layers read from and write to. A head in layer 2 can write a vector that a head in layer 9 reads, by *aligning their weight matrices along a shared subspace* of $\mathbb{R}^{d_\text{model}}$. The intermediate layers simply leave that subspace untouched. We call such an arrangement a **virtual weight** connection: the effective linear map from the writer to the reader, even though no single weight matrix connects them.
+
+The same framework factors each attention head into two independent low-rank circuits *on the residual stream*, which is the formalism that makes head-to-head interaction analyzable. With column-vector convention ($q = W_Q x$, $k = W_K x$), the attention score between positions $i$ and $j$ and the head's write-back at position $i$ are
+
+$$
+s_{ij} \;=\; \tfrac{1}{\sqrt{d_\text{head}}}\, x_i^\top \underbrace{W_Q^\top W_K}_{W_{QK}}\, x_j, \qquad
+\Delta x_i \;=\; \sum_j \alpha_{ij}\, \underbrace{W_O W_V}_{W_{OV}}\, x_j ,
+$$
+
+with $\alpha = \operatorname{softmax}_j(s_{ij})$. Both $W_{QK}$ and $W_{OV}$ are $d_\text{model}\times d_\text{model}$ maps of rank at most $d_\text{head}$: the **QK circuit** decides *where* a head reads from, the **OV circuit** decides *what* it copies there. Two heads **compose** when the downstream head's QK or OV circuit reads a subspace the upstream head's OV circuit writes into, and we name the composition by which input of the downstream head is affected — **Q-composition** (upstream output feeds its queries), **K-composition** (its keys), **V-composition** (its values). The induction circuit of §5.1 is the canonical K-composition: substituting head $A$'s contribution into head $B$'s key input turns the score into $x_i^\top \big(W_{QK}^{(B)} W_{OV}^{(A)}\big) x_j$, and that product *is* the virtual weight connecting the two heads.
 
 
 {{fig:mechinterp-residual-stream-bus}}
@@ -80,12 +89,16 @@ probe = LogisticRegression(C=0.5, max_iter=2000)
 probe.fit(h_train.numpy(), y_train.numpy())
 real_acc = probe.score(h_val.numpy(), y_val.numpy())
 
-# Control task (Hewitt & Liang): assign each *input type* a fixed random label, refit, re-score.
+# Control task (Hewitt & Liang): give each *input type* (e.g. each word type) ONE fixed random
+# label and reuse that same mapping for train AND val. Drawing fresh randomness on the val set
+# would pin control accuracy at chance by construction and tell you nothing about probe capacity.
 import numpy as np
+# type_train / type_val: (N,) integer id of the input type each example belongs to
 rng = np.random.default_rng(0)
-ctrl_labels = rng.integers(0, 2, size=y_train.shape)          # random but held fixed per example
-ctrl = LogisticRegression(C=0.5, max_iter=2000).fit(h_train.numpy(), ctrl_labels)
-ctrl_acc = ctrl.score(h_val.numpy(), rng.integers(0, 2, size=y_val.shape))
+n_types = int(max(type_train.max(), type_val.max())) + 1
+type_label = rng.integers(0, 2, size=n_types)                 # the fixed random type -> label map
+ctrl = LogisticRegression(C=0.5, max_iter=2000).fit(h_train.numpy(), type_label[type_train])
+ctrl_acc = ctrl.score(h_val.numpy(), type_label[type_val])
 
 print(f"probe acc={real_acc:.3f}  control acc={ctrl_acc:.3f}  selectivity={real_acc-ctrl_acc:.3f}")
 # A trustworthy linear probe has HIGH real accuracy and LOW control accuracy → high selectivity.
@@ -205,6 +218,8 @@ There are two directions, and they answer different questions:
 
 The two can disagree, and the disagreement is informative; a component that is sufficient when denoised but whose ablation barely hurts (because of redundancy/backup) is a real phenomenon (see "backup heads" in the IOI work, §5). The corruption method also matters: **Gaussian noising** of embeddings (ROME's original choice) can push activations off-distribution, so the modern preference is **symmetric/interchange patching** — swap to a genuine alternative prompt (`Paris`↔`Rome`) so both runs stay on-distribution. The "Towards Automated Circuit Discovery" and Neel Nanda's exposition both stress this point.
 
+Ablation carries the same distributional hazard, and you must say *which* ablation you ran. **Zero ablation** (force a component's output to $0$) is the crudest: zero is not a value the residual stream ever actually takes, so the model is evaluated far off-distribution and "damage" may reflect the shock rather than the lost information. **Mean ablation** replaces the output with its average over a reference distribution, which at least preserves the component's typical bias contribution. **Resample ablation** replaces it with the value it took on a randomly drawn *other* prompt from the same distribution — the IOI-style default, because it destroys the task-relevant signal while keeping activation statistics realistic. A head can look essential under zero ablation and irrelevant under resample ablation; the resample number is the one to trust, and reporting both is cheap insurance.
+
 !!! warning "Common pitfall: patching with LayerNorm and the residual stream"
     Two traps bite newcomers. (1) **Position alignment.** Clean and corrupted prompts must be the *same length and tokenization* or patched activations land at the wrong position and the result is noise. Pad or design prompts to match exactly. (2) **LayerNorm folding.** A patched residual changes the LN statistics (mean/variance) at that position, so the effect you measure includes LN's renormalization. For attribution that should be linear, libraries like TransformerLens offer *LN-frozen* or *folded* modes. If your patching results look bizarre, suspect length mismatch or LN before you suspect a deep finding.
 
@@ -295,6 +310,48 @@ The numbers are illustrative but the structure is the well-replicated **two-bump
     $$
     Restoring one residual vector at one position recovered ~78% of a 10.5-nat swing in the answer — strong evidence that this single site carries most of the distinguishing information. Compare that to $(L0,\ \text{The})$ at $0.00$: patching there does nothing, so no relevant computation has happened yet.
 
+### 4.4 The same experiment in TransformerLens
+
+The hooks above are how patching *works*; **TransformerLens** is how you actually run it. It reloads a HuggingFace checkpoint into a uniform `HookedTransformer` (folding LayerNorm and the LN scale into adjacent weights so attribution stays linear), gives every internal tensor a canonical name, and exposes `run_with_cache` / `run_with_hooks`. The whole §4.3 script collapses to this:
+
+```python
+# pip install transformer_lens
+import torch
+from transformer_lens import HookedTransformer, utils
+
+model = HookedTransformer.from_pretrained("gpt2-small")     # LN folded, activations named
+clean_tokens   = model.to_tokens("The Eiffel Tower is in the city of")
+corrupt_tokens = model.to_tokens("The Colosseum  is in the city of")
+assert clean_tokens.shape == corrupt_tokens.shape
+paris, rome = model.to_single_token(" Paris"), model.to_single_token(" Rome")
+
+def metric(logits):                                          # Paris - Rome at final position
+    return (logits[0, -1, paris] - logits[0, -1, rome]).item()
+
+clean_logits, clean_cache = model.run_with_cache(clean_tokens)   # every activation, by name
+m_clean   = metric(clean_logits)
+m_corrupt = metric(model(corrupt_tokens))
+
+def patch(resid, hook, pos):                                 # hook fn: (activation, HookPoint)
+    resid[:, pos, :] = clean_cache[hook.name][:, pos, :]
+    return resid
+
+n_pos = clean_tokens.shape[1]
+recovery = torch.zeros(model.cfg.n_layers, n_pos)
+for layer in range(model.cfg.n_layers):
+    name = utils.get_act_name("resid_post", layer)           # "blocks.5.hook_resid_post"
+    for pos in range(n_pos):
+        logits = model.run_with_hooks(
+            corrupt_tokens,
+            fwd_hooks=[(name, lambda r, h, p=pos: patch(r, h, p))],
+        )
+        recovery[layer, pos] = (metric(logits) - m_corrupt) / (m_clean - m_corrupt + 1e-9)
+
+print(recovery.round(decimals=2))
+```
+
+Two practical wins over hand-rolled hooks. First, *names*: `blocks.5.attn.hook_z` (per-head output), `hook_resid_pre/mid/post`, `blocks.5.mlp.hook_post` — so you can patch a **single head** as easily as a whole layer, which is what circuit work requires. Second, LN folding: because `from_pretrained` folds the LayerNorm gain into the next weight matrix and centres the writing weights, the "LayerNorm renormalization contaminates my attribution" trap of the box above largely disappears. The library also ships prepackaged sweeps in `transformer_lens.patching` (helpers that patch the residual stream, per-head outputs, or per-head Q/K/V across all positions and hand you the grid), plus `FactoredMatrix` accessors (`model.QK`, `model.OV`) that let you inspect the low-rank weight products of §1.1 without ever materializing a $d_\text{model}\times d_\text{model}$ matrix. Use the from-scratch version to understand what is happening; use this one for real work.
+
 ---
 
 ## 5. Circuit Discovery: How Components Compose into Algorithms
@@ -304,6 +361,29 @@ A single causal hot-spot is a clue; a **circuit** is the explanation. A circuit 
 ### 5.1 Two landmark circuits
 
 **Induction heads** are the canonical example, from the "In-context Learning and Induction Heads" work (Olsson et al., 2022). An induction circuit implements the rule *"if the sequence `[A][B] ... [A]` appeared, predict `[B]`"* — basic copy-from-context that underlies much of in-context learning. It is a two-head, two-layer composition: a **previous-token head** in an early layer writes "the token before me was `A`" into each position; then an **induction head** in a later layer attends *back* to the position right after the earlier `A` (using that written signal as its key) and copies its value forward. The two heads compose through the residual stream — a textbook **K-composition** (one head's output becomes another's key). Strikingly, the formation of induction heads coincides with a phase change in the loss curve during training and with the emergence of in-context learning, tying a circuit to a capability.
+
+Induction heads are also the one circuit you can *find automatically in ten lines*, which makes them the standard first experiment. The trick is a synthetic probe: feed a random token sequence repeated twice, so the only way to predict the second copy is to copy from the first. Then score each head by its **prefix-matching score** — the average attention weight from position $i$ in the second copy back to position $i{-}\text{seq\_len}{+}1$ in the first copy, i.e. the token that *followed* the earlier occurrence of the current token.
+
+```python
+import torch
+from transformer_lens import HookedTransformer
+
+model = HookedTransformer.from_pretrained("gpt2-small")
+batch, seq_len = 8, 50
+rand = torch.randint(1000, 10000, (batch, seq_len))          # arbitrary mid-vocab tokens
+tokens = torch.cat([rand, rand], dim=1)                      # [X X] : only copying can help
+_, cache = model.run_with_cache(tokens)
+
+q = torch.arange(seq_len, 2 * seq_len - 1)                   # queries in the 2nd copy
+k = q - seq_len + 1                                          # the induction target keys
+for layer in range(model.cfg.n_layers):
+    patt = cache["pattern", layer]                           # (batch, head, q_pos, k_pos)
+    score = patt[:, :, q, k].mean(dim=(0, 2))                # (head,) prefix-matching score
+    for h in (score > 0.3).nonzero().flatten().tolist():
+        print(f"induction head L{layer}H{h}  prefix-matching = {score[h]:.2f}")
+```
+
+A companion diagnostic is the **induction loss gap**: per-token loss on the second copy minus the first. A model with no induction circuit shows roughly zero gap; once induction heads form, second-copy loss collapses. That single scalar, logged every few hundred steps, is the cheapest possible confirmation that in-context learning has emerged in a model *you* are training — and at 100M parameters you can watch the phase change happen in a single run. If your architecture is custom and TransformerLens cannot load it, compute the same score from raw attention weights via a forward hook on the attention module (or `output_attentions=True` in a HF-style block); the metric is architecture-agnostic. See [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) for where this hooks into the Stack-100M training loop.
 
 **The IOI circuit** ("Interpretability in the Wild," Wang et al., 2022) reverse-engineered how GPT-2 small solves *indirect object identification* — completing "When Mary and John went to the store, John gave a drink to ___" with " Mary." The full circuit involves ~26 heads in classes that the authors named functionally: *duplicate-token heads* and *induction heads* detect that "John" is repeated, *S-inhibition heads* suppress the repeated name, and *name-mover heads* attend to and copy the correct name. It also revealed **backup name-mover heads** that activate only when the primary movers are ablated — built-in redundancy that explains why naive ablation can under-estimate a component's role, and why denoising and noising disagree (§4.2).
 
@@ -398,6 +478,35 @@ You judge an SAE on three axes that trade against each other:
 - **Sparsity** — the average number of active features per token ($L_0$). Lower is more interpretable but harder to reconstruct from.
 - **Interpretability** — do features correspond to crisp human concepts? Measured via auto-interpretation (an LLM labels each feature from its top-activating examples, then predicts activations on held-out text).
 
+In practice you rarely train the first SAE yourself: **SAELens** loads pretrained dictionaries by `(release, sae_id)` and plugs them straight into a TransformerLens cache, and **Neuronpedia** hosts the auto-interp label, top-activating examples, and a steering slider for each feature id you find.
+
+```python
+# pip install sae-lens
+from sae_lens import SAE
+from transformer_lens import HookedTransformer
+
+model = HookedTransformer.from_pretrained("gpt2-small")
+# Releases are browsable on Neuronpedia / in SAELens' pretrained directory; e.g. the
+# GPT-2 small residual-stream set, or "gemma-scope-*" for Gemma 2.
+sae, cfg_dict, sparsity = SAE.from_pretrained(
+    release="gpt2-small-res-jb", sae_id="blocks.8.hook_resid_pre",
+)   # NOTE: SAELens has changed this return signature across versions — check the docstring.
+
+_, cache = model.run_with_cache("The Golden Gate Bridge is in")
+acts  = cache[sae.cfg.hook_name]        # (batch, seq, d_model) at the SAE's hook point
+feats = sae.encode(acts)                # (batch, seq, d_sae), only ~L0 entries nonzero
+top = feats[0, -1].topk(5)
+print(list(zip(top.indices.tolist(), top.values.round(decimals=2).tolist())))
+# Look those feature ids up on Neuronpedia to read their auto-interp labels.
+
+recon = sae.decode(feats)               # splice back in to measure CE-loss-recovered
+x, xh = acts.reshape(-1, acts.shape[-1]), recon.reshape(-1, recon.shape[-1])
+fvu = (x - xh).pow(2).sum() / (x - x.mean(0, keepdim=True)).pow(2).sum()
+print(f"L0 = {(feats > 0).float().sum(-1).mean():.1f}   frac variance explained = {1 - fvu:.3f}")
+```
+
+Training your own is also within reach at small scale, and this is the one place where a 100M-parameter model is an *advantage*: with $d_\text{model}$ in the hundreds, a 32× SAE is a few tens of millions of parameters, and a few hundred million cached activation vectors from your own pretraining corpus will train it on one GPU in hours. If you built [Stack-100M](../14-capstone/07-pretraining-run.html), you have both the model and the exact data distribution it was trained on — the ideal setting for an end-to-end "train an SAE, label its features, steer with one" project.
+
 The applied payoff is large. SAE features give you a **monitoring vocabulary**: you can watch a "deception" or "refers to a known exploit" feature fire during generation, a far more targeted signal than an output classifier — covered as a safety control in §7. They also enable precise **steering**: add a multiple of a feature's decoder direction to the residual stream and the model's behavior shifts along that concept (Anthropic's public "Golden Gate Claude" demo amplified a single bridge feature). SAE-based **sparse feature circuits** let you draw circuits over interpretable features rather than polysemantic neurons.
 
 !!! warning "SAEs are not a solved oracle"
@@ -429,6 +538,8 @@ def steering_hook(v, alpha, positions=slice(None)):
 # too large = incoherent text. The usable window is model/layer specific.
 ```
 
+This is also the cheapest interpretability payoff on a model you trained yourself: after the SFT/DPO stage of [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), a difference-of-means direction computed from a few dozen paired prompts will already move a 100M model's behavior measurably, and comparing that direction before and after alignment tells you what post-training actually installed.
+
 Steering's appeal is that it is cheap, reversible, and composable; its danger is that it is *blunt* — a direction tuned on one distribution can degrade fluency or have side effects off-distribution, and "one direction = one concept" is an approximation. Validate steered models on a broad eval suite, not just the target behavior.
 
 ### 7.2 Feature-based monitoring for safety
@@ -437,7 +548,13 @@ Interpretability promises a monitoring layer that watches *internal* state, not 
 
 ### 7.3 Debugging workflows
 
-Day-to-day, the techniques compose into a debugging discipline. Model emits a surprising token? **Direct logit attribution** (decompose the final logit into per-component contributions via the residual stream's linearity) tells you which heads/MLPs pushed it. A prompt that should trigger a behavior doesn't? **Logit lens** shows at which layer the prediction diverges from expectation. A backdoor or spurious trigger suspected? **Activation patching** between triggered and clean inputs localizes the responsible component. A fine-tune that regressed? Compare logit-lens trajectories or probe accuracies before/after to see *where* the representation changed.
+Day-to-day, the techniques compose into a debugging discipline. Model emits a surprising token? **Direct logit attribution** (DLA) tells you which heads/MLPs pushed it. The mechanism is just §1.1's linearity: the final logit for token $t$ is $W_U[t]^\top \operatorname{LN}_f(x_L)$, and $x_L$ is a *sum* of component outputs, so freezing the LN scale $\sigma$ at its observed value makes the logit decompose exactly,
+
+$$
+\text{logit}_t \;=\; \sum_{c \,\in\, \{\text{embed}\} \cup \{\text{heads}\} \cup \{\text{MLPs}\}} \frac{1}{\sigma}\,\big\langle W_U[t],\; \text{out}_c \big\rangle ,
+$$
+
+one scalar per component — and per *head*, not just per layer, since a layer's attention output is itself a sum over heads. Sort those scalars and you have a ranked list of who is responsible for the token, with no intervention required (TransformerLens' LN folding is what makes the $1/\sigma$ bookkeeping honest). A prompt that should trigger a behavior doesn't? **Logit lens** shows at which layer the prediction diverges from expectation. A backdoor or spurious trigger suspected? **Activation patching** between triggered and clean inputs localizes the responsible component. A fine-tune that regressed? Compare logit-lens trajectories or probe accuracies before/after to see *where* the representation changed.
 
 ### 7.4 Tooling
 
@@ -471,10 +588,10 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
     **A:** I'd treat it as an activation-patching problem with a crisp metric. First, two aligned inputs: a **clean** prompt containing the trigger (unsafe behavior) and a **corrupted** one where I swap the trigger for a benign token of equal token-length (safe behavior). Pick a metric — logit difference between an unsafe and a safe continuation. Then **denoising-patch**: run the corrupted prompt but inject the clean residual stream at one (layer, position) at a time, sweeping all sites, and measure recovery $(m_\text{patched}-m_\text{corrupt})/(m_\text{clean}-m_\text{corrupt})$. The (layer, position) where recovery spikes localizes where the trigger's effect enters and where it acts. To go from localization to *mechanism*, classify the implicated attention heads by their attention pattern and use direct logit attribution to see what they write. Crucially, to make it **causal not correlational**, I validate by **knockout**: ablate the proposed component(s) and confirm the unsafe behavior disappears on triggered inputs while clean behavior is intact; conversely confirm that ablating everything *outside* my proposed circuit leaves the behavior intact. I'd also run *both* noising and denoising — if denoising says a head is sufficient but ablating it doesn't hurt, I should suspect a **backup circuit** and widen my analysis. A probe that merely predicts "trigger present" from activations is *not* sufficient evidence — that's correlation; the patching/knockout interventions are what license a causal claim.
 
 !!! key "Key Takeaways"
-    - The **residual stream** is an additive, shared communication bus: every sub-layer reads from and writes to it, which makes downstream quantities (logits, attention scores) *linearly decomposable* into per-component contributions — the basis of every attribution method here.
+    - The **residual stream** is an additive, shared communication bus: every sub-layer reads from and writes to it, which makes downstream quantities (logits, attention scores) *linearly decomposable* into per-component contributions — the basis of every attribution method here. Each head factors into a **QK circuit** ($W_Q^\top W_K$, where to attend) and an **OV circuit** ($W_O W_V$, what to copy); heads compose through the stream via Q-, K-, or V-composition, and the product of the two circuits is the **virtual weight** between them.
     - **Superposition** lets a model pack far more sparse features than it has dimensions into non-orthogonal directions; the cost is **polysemantic neurons**, which is why you cannot interpret a network neuron-by-neuron and why SAEs exist.
     - **Probing** and the **logit lens** are cheap *observational* tools — they reveal what information is present and where predictions sharpen — but they measure correlation; use control tasks for probes and remember a positive probe does not imply the model *uses* the feature.
-    - **Activation patching / causal tracing** is the workhorse for *causal* claims: patch a clean activation into a corrupted run (denoising) or vice-versa (noising) and measure recovery to localize a behavior to a (layer, position, component). Mind LayerNorm and position alignment.
+    - **Activation patching / causal tracing** is the workhorse for *causal* claims: patch a clean activation into a corrupted run (denoising) or vice-versa (noising) and measure recovery to localize a behavior to a (layer, position, component). Mind LayerNorm and position alignment, keep both runs on-distribution, and prefer **resample ablation** over zero ablation when knocking components out.
     - **Circuits** (induction heads, the IOI circuit) are reverse-engineered algorithms over heads/MLPs; finding them combines patching, attention-pattern analysis, and knockout validation, with **ACDC** and **attribution patching** automating the search.
     - **Sparse autoencoders / transcoders** decompose superposition into a larger set of sparser, more monosemantic features, enabling feature-level monitoring, steering, and circuits — but suffer feature splitting, lossy reconstruction, and no ground-truth, so features are hypotheses to validate, not oracles.
     - Applied payoffs are real today: **activation steering** (e.g. the single refusal direction), **feature-based safety monitoring** that inspects internal state before a token is emitted, and **factual-recall localization** that powers knowledge editing.

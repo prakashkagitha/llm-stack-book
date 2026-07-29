@@ -90,8 +90,10 @@ $$
 
 Multiplying an $(m \times k)$ matrix by a $(k \times n)$ matrix costs $2mkn$ FLOPs (multiply-accumulate, factor of 2). For a transformer layer with hidden dim $d = 4096$:
 
-- A single linear projection $W \in \mathbb{R}^{4096 \times 4096}$ applied to a batch $X \in \mathbb{R}^{B \times S \times 4096}$ costs $2 \cdot B \cdot S \cdot 4096^2 \approx 34 \times 10^9 \cdot B \cdot S$ FLOPs.
-- At batch size 1 and sequence length 512, that is roughly 17 GFLOPs per linear layer.
+- A single linear projection $W \in \mathbb{R}^{4096 \times 4096}$ applied to a batch $X \in \mathbb{R}^{B \times S \times 4096}$ costs $2 \cdot B \cdot S \cdot 4096^2 \approx 33.6 \times 10^6 \cdot B \cdot S$ FLOPs (about 33.6 MFLOPs *per token*).
+- At batch size 1 and sequence length 512, that is $33.6 \times 10^6 \times 512 \approx 17$ GFLOPs per linear layer.
+
+This per-token accounting is the seed of the famous $\approx 6N$ rule (forward + backward cost per token for a model of $N$ parameters): each weight participates in one multiply-accumulate in the forward pass ($2N$) and two more in the backward pass ($4N$, once for $\partial L/\partial X$ and once for $\partial L/\partial W$ — exactly the two identities derived later in this chapter). We use that rule to budget the Stack-100M run in [Mini Scaling Laws: Fit Your Own Law Before Spending the Budget](../14-capstone/05-mini-scaling-laws.html) and [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html).
 
 By 2026, flagship datacenter GPUs have moved well past the once-"modern" A100 (312 TFLOPS in BF16, circa 2020) through the Hopper (H100/H200) generation to NVIDIA's Blackwell (B200/GB200) and Blackwell Ultra (GB300) chips, each delivering roughly an order of magnitude more raw BF16 throughput than the A100. So in theory you can run enormous numbers of linear layers per second — but memory bandwidth is still often the bottleneck, not raw FLOPs. See [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) for the full story.
 
@@ -133,6 +135,39 @@ K = torch.randn(H, S, d)
 scores = Q @ K.transpose(-2, -1)  # uses broadcasting/batched matmul
 print(f"Score shape: {scores.shape}")  # (32, 512, 512)
 ```
+
+### What `@` actually calls: BLAS, tensor cores, and accumulation precision
+
+`torch.matmul` is not a Python loop and not even a PyTorch kernel in the usual sense: it is a *dispatch*. On CPU it lands in a BLAS (Basic Linear Algebra Subprograms) library — oneAPI MKL, OpenBLAS, or oneDNN, depending on how your wheel was built. On NVIDIA GPUs it lands in **cuBLAS**/**cuBLASLt**, NVIDIA's closed-source BLAS, whose kernels are generated from the same tiling ideas as the open-source **CUTLASS** template library. Those kernels are what actually feed the *tensor cores*, the matmul-specific hardware units that give a modern GPU its headline TFLOPS number. Nothing you write in PyTorch beats them for plain dense matmul; the reason to learn Triton and CUDA later (see [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)) is to *fuse* the operations around the matmul, not to replace it.
+
+Two precision knobs follow directly from this, and both matter the first time you train a model:
+
+- **TF32 for fp32 matmuls.** Ampere and later tensor cores can execute an `fp32` matmul in TensorFloat-32 mode: inputs rounded to a 10-bit mantissa, accumulation still in fp32. It is typically several times faster and, in practice, harmless for training. PyTorch defaults to full fp32 (`"highest"`); you opt in with one line.
+- **Accumulation is wider than storage.** A `bf16` matmul on tensor cores multiplies bf16 inputs but accumulates the length-$k$ sum in fp32, then writes bf16 out. This is why bf16 training works at all: bf16 has only ~8 bits of mantissa, and naively accumulating $k = 4096$ terms in bf16 would destroy the result. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) and [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html).
+
+```python
+import torch
+
+# Opt in to TF32 tensor cores for fp32 matmuls (Ampere/Hopper/Blackwell).
+# "highest" = true fp32 (default), "high" = TF32, "medium" = bf16-ish.
+torch.set_float32_matmul_precision("high")
+
+# Accumulation width: bf16 inputs, fp32 accumulate.
+# Compare a bf16 matmul against an fp64 reference to see the error scale.
+k = 4096
+A = torch.randn(512, k)
+B = torch.randn(k, 512)
+ref = (A.double() @ B.double())                     # near-exact reference
+err_bf16 = ((A.bfloat16() @ B.bfloat16()).double() - ref).abs().mean()
+err_fp32 = ((A @ B).double() - ref).abs().mean()
+print(f"mean |err|  bf16={err_bf16:.4f}   fp32={err_fp32:.6f}")
+# bf16 error is ~1e-1 on entries of size ~sqrt(k)~64: a relative error
+# ~1e-3, consistent with bf16's ~8-bit mantissa -- NOT with accumulating
+# 4096 terms in bf16, which would be far worse.
+```
+
+!!! warning "Matmul is not bitwise reproducible"
+    Floating-point addition is not associative, and cuBLAS picks a tiling (and sometimes a split-$k$ reduction order) based on shapes, GPU model, and library version. The same `A @ B` can therefore give bitwise-different results across machines or PyTorch versions. Never assert bitwise equality across hardware; use `torch.allclose` with a tolerance matched to the dtype (roughly `1e-6` for fp32, `1e-2` for bf16). For run-to-run determinism on one machine, `torch.use_deterministic_algorithms(True)` plus a fixed `CUBLAS_WORKSPACE_CONFIG` gets you most of the way, at a performance cost.
 
 ---
 
@@ -201,7 +236,7 @@ $$
 
 where $Q$ is orthogonal (its columns are eigenvectors) and $\Lambda = \text{diag}(\lambda_1, \ldots, \lambda_n)$.
 
-Eigenvalues govern stability in optimization: the **condition number** $\kappa(A) = \lambda_{\max} / \lambda_{\min}$ measures how much the problem is ill-conditioned. Large condition numbers slow down gradient descent; this is part of why adaptive optimizers (Adam et al.) help — see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html).
+Eigenvalues govern stability in optimization. The **condition number** in the 2-norm is $\kappa_2(A) = \sigma_{\max}(A) / \sigma_{\min}(A)$ — a ratio of *singular* values in general, which reduces to $\lambda_{\max} / \lambda_{\min}$ exactly when $A$ is symmetric positive definite (the case that matters for a loss Hessian near a minimum). A large $\kappa$ means the loss surface is a long thin valley: plain gradient descent must use a step size set by the steepest direction $\lambda_{\max}$ while progress along the flattest direction $\lambda_{\min}$ crawls, so the number of steps to converge scales like $\kappa$. This is part of why adaptive optimizers (Adam et al.) help — per-coordinate step sizes are a cheap diagonal preconditioner that shrinks the *effective* condition number — see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) and [Calculus, Optimization & Convexity](../01-foundations/03-calculus-optimization.html).
 
 ### The Singular Value Decomposition
 
@@ -337,9 +372,9 @@ This is where linear algebra meets gradient descent. Understanding matrix calcul
 
 ### Jacobians and gradients
 
-For a scalar function $f: \mathbb{R}^n \to \mathbb{R}$, the **gradient** $\nabla_{\mathbf{x}} f \in \mathbb{R}^n$ has entries $(\nabla_{\mathbf{x}} f)_i = \partial f / \partial x_i$. We adopt the **numerator layout** convention (a row Jacobian becomes the transpose of the gradient column vector).
+For a scalar function $f: \mathbb{R}^n \to \mathbb{R}$, the **gradient** $\nabla_{\mathbf{x}} f \in \mathbb{R}^n$ has entries $(\nabla_{\mathbf{x}} f)_i = \partial f / \partial x_i$. For a vector function $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$, the **Jacobian** $J \in \mathbb{R}^{m \times n}$ has $J_{ij} = \partial f_i / \partial x_j$ (**numerator layout**: output index first).
 
-For a vector function $\mathbf{f}: \mathbb{R}^n \to \mathbb{R}^m$, the **Jacobian** $J \in \mathbb{R}^{m \times n}$ has $J_{ij} = \partial f_i / \partial x_j$.
+Throughout this book we use the **ML convention**: Jacobians of vector functions are laid out numerator-first as above, but the gradient of a *scalar* loss with respect to *any* variable — vector, matrix, or 4-D tensor — is stored with **the same shape as that variable**. This is exactly what PyTorch does (`p.grad.shape == p.shape` always), and it is what lets us write $\partial L / \partial W$ as a matrix the same size as $W$ below. The two conventions only ever collide when you differentiate a vector by a vector, which in practice we avoid: autodiff never materializes a Jacobian, it only ever computes vector-Jacobian products (see [Automatic Differentiation & PyTorch Internals](../01-foundations/07-autodiff-pytorch.html)).
 
 ### Key identities
 
@@ -436,6 +471,9 @@ An important identity for softmax + cross-entropy (used everywhere in language m
 ### Orthogonal matrices
 
 A matrix $Q \in \mathbb{R}^{n \times n}$ is **orthogonal** if $Q^\top Q = Q Q^\top = I$. Its columns form an orthonormal basis: they are unit vectors, pairwise perpendicular. Key property: $\|Q\mathbf{x}\|_2 = \|\mathbf{x}\|_2$ — orthogonal matrices preserve lengths and angles. This is why the $U$ and $V$ factors in SVD do not distort the geometry of the data; only $\Sigma$ stretches.
+
+!!! note "Aside: orthogonalization is not just theory — it is the Muon optimizer"
+    Given the SVD $G = U \Sigma V^\top$ of a gradient (or momentum) matrix, the matrix $UV^\top$ is the closest *semi-orthogonal* matrix to $G$: it keeps every singular *direction* but flattens every singular *value* to 1, so its spectral norm is exactly 1 and it stretches all directions equally. The **Muon** optimizer (Jordan et al., 2024) applies precisely this map to each 2-D parameter's momentum before stepping, so no single dominant singular direction can hog the update. Computing a full SVD every step would be far too slow, so Muon approximates $UV^\top$ with a handful of **Newton–Schulz** iterations — a fixed odd polynomial in $G$ applied repeatedly, which needs only matmuls and therefore runs at tensor-core speed. This is the clearest example in the book of a "pure linear algebra" fact becoming a production training technique; Stack-100M trains with it in [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html), and the full derivation is in [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html).
 
 ### Projections
 
@@ -582,8 +620,52 @@ print(f"LoRA trainable params: {trainable:,} vs full fine-tuning: {total_equiv:,
 # e.g. 8,192 vs 262,144 — about 32× reduction
 ```
 
+### The library you would actually use: Hugging Face `peft`
+
+You now understand LoRA well enough to have written it. In production nobody re-writes it: **`peft`** (Parameter-Efficient Fine-Tuning, `pip install peft`) does the module surgery for you — it walks the model, swaps every matching `nn.Linear` for a `lora.Linear` wrapper holding exactly the frozen $W_0$ and trainable $A$, $B$ above, and gives you save/load of adapters as ~megabyte files. It is the layer that TRL, Axolotl, and Unsloth all build on. The full treatment (QLoRA, DoRA, rank/target-module choice) is in [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html); here is the whole API surface on a toy module so you can see it is the same math:
+
+```python
+# pip install peft
+import torch
+import torch.nn as nn
+from peft import LoraConfig, get_peft_model
+
+class TinyBlock(nn.Module):
+    """Stand-in for a transformer block's projections."""
+    def __init__(self, d=64):
+        super().__init__()
+        self.q_proj = nn.Linear(d, d)
+        self.v_proj = nn.Linear(d, d)
+
+    def forward(self, x):
+        return self.v_proj(torch.relu(self.q_proj(x)))
+
+base = TinyBlock()
+
+cfg = LoraConfig(
+    r=8,                                   # the rank r from the algebra above
+    lora_alpha=16,                         # the alpha in scale = alpha / r
+    lora_dropout=0.0,
+    target_modules=["q_proj", "v_proj"],   # which Linear layers get adapters
+    bias="none",
+)
+model = get_peft_model(base, cfg)
+model.print_trainable_parameters()
+# trainable params: 2,048 || all params: 10,368 || trainable%: 19.75
+# (2 layers x r x (d_in + d_out) = 2 x 8 x 128 = 2,048 -- our formula exactly)
+
+y = model(torch.randn(2, 64))              # trains like any nn.Module
+
+# Fold the adapter into the base weights for zero-overhead inference:
+# this is literally W0 + (alpha/r) * B @ A, the merge you derive in Exercise 5.
+merged = model.merge_and_unload()
+assert isinstance(merged, TinyBlock)
+```
+
+Note `LoraConfig(init_lora_weights="pissa")`, which implements the SVD-based initialization described next.
+
 !!! note "Connection to SVD initialization"
-    One can also initialize LoRA from the top-$r$ SVD of $W_0$: set $A = \Sigma_r^{1/2} V_r^\top$ and $B = U_r \Sigma_r^{1/2}$, so $BA = U_r \Sigma_r V_r^\top = A_r$ (the best rank-$r$ approximation). This starts LoRA from the most informative low-rank subspace and can improve convergence. Some variants (e.g., PiSSA) exploit exactly this idea.
+    One can also initialize the adapter from the top-$r$ SVD of $W_0$: set $A = \Sigma_r^{1/2} V_r^\top$ and $B = U_r \Sigma_r^{1/2}$, so $BA = U_r \Sigma_r V_r^\top = A_r$, the Eckart-Young-optimal rank-$r$ approximation. This is the idea behind **PiSSA** (Principal Singular values and Singular vectors Adaptation). One detail is easy to get wrong: with $B \neq 0$ at initialization the layer no longer reproduces the pretrained function, so PiSSA also replaces the frozen base with the *residual* $W_0^{\text{res}} = W_0 - A_r$. Then $W_0^{\text{res}} + BA = W_0$ exactly at step 0 — the function is unchanged — but the trainable directions are now the *principal* ones rather than a random subspace, which empirically speeds early convergence. (The contrast is with LoRA's default $B = 0$, which achieves the same "no change at init" property the lazy way.) Exercise 5 implements the factorization; adding the residual subtraction is a two-line extension.
 
 ---
 
@@ -596,6 +678,32 @@ Never compute $A^{-1}$ and then multiply when you can instead solve $Ax = b$ dir
 - `torch.linalg.solve(A, b)` for $A^{-1}b$
 - `torch.linalg.lstsq(A, b)` for overdetermined systems
 - Cholesky factorization when $A$ is PSD: `torch.linalg.cholesky(A)`
+
+### Randomized SVD: when the full factorization is too slow
+
+A full `torch.linalg.svd` costs $O(mn\min(m,n))$ — for a $4096 \times 4096$ weight matrix that is seconds, and you may want it for every matrix in a 100M-parameter model. When you only need the top few singular components (which is the *only* case in this chapter: LoRA/PiSSA initialization, spectral diagnostics, weight compression), use a **randomized** algorithm instead: project $A$ onto a random $q$-dimensional sketch, orthonormalize, and factor the small matrix. PyTorch ships this as `torch.svd_lowrank` (and `torch.pca_lowrank`), which follows the Halko-Martinsson-Tropp randomized-range-finder scheme and costs a couple of matmuls instead of a dense factorization.
+
+```python
+import torch, time
+
+torch.manual_seed(0)
+W = torch.randn(2048, 8) @ torch.randn(8, 2048) + 0.01 * torch.randn(2048, 2048)
+
+t0 = time.perf_counter(); U, S, Vh = torch.linalg.svd(W, full_matrices=False)
+t_full = time.perf_counter() - t0
+
+# q = target rank + a small oversampling margin; niter = power iterations
+t0 = time.perf_counter(); Ur, Sr, Vr = torch.svd_lowrank(W, q=16, niter=4)
+t_rand = time.perf_counter() - t0
+
+print(f"full SVD {t_full*1e3:.0f} ms   randomized {t_rand*1e3:.0f} ms")
+print("top-8 singular values agree:",
+      torch.allclose(S[:8], Sr[:8], rtol=1e-3))   # True
+# Note torch.svd_lowrank returns V (n x q), not Vh: reconstruct as U diag(S) V^T
+approx = (Ur[:, :8] * Sr[:8]) @ Vr[:, :8].T
+print("rel err of rank-8 randomized approx:",
+      ((W - approx).norm() / W.norm()).item())
+```
 
 ### Einsum notation
 
@@ -724,7 +832,8 @@ x_cont = x_perm.contiguous()           # ensures efficient downstream matmul
     - Low-rank structure is empirically pervasive in fine-tuning updates, enabling LoRA: replacing $\Delta W$ with $BA$ (where $r \ll d$) compresses trainable parameters by orders of magnitude with minimal quality loss.
     - The two most important backprop identities are $\partial L / \partial W = X^\top G$ and $\partial L / \partial X = G W^\top$, where $G$ is the upstream gradient. Everything else in backprop follows from stacking these.
     - Vector and matrix norms ($\ell_2$, Frobenius, spectral) appear in regularization, gradient clipping, and Lipschitz analysis. Know which norm each technique uses.
-    - Orthogonal matrices preserve lengths and angles; $U$ and $V$ in the SVD are orthogonal. Orthogonality is why attention projection heads do not distort the embedding geometry.
+    - Orthogonal matrices preserve lengths and angles; $U$ and $V$ in the SVD are orthogonal. Replacing a gradient matrix $G = U\Sigma V^\top$ by $UV^\top$ — every direction kept, every scale equalized — is exactly what the Muon optimizer does via Newton-Schulz iterations.
+    - `A @ B` dispatches to cuBLAS/oneDNN, not to PyTorch: your job is to feed those kernels well (contiguous, tensor-core-friendly shapes) and to set the precision knobs — `torch.set_float32_matmul_precision("high")` for TF32, and remember that bf16 matmuls accumulate in fp32. Matmul is therefore not bitwise reproducible across GPUs or library versions.
     - Einsum notation (`torch.einsum`) unifies all tensor contractions in a single API and often compiles to optimal CUDA kernels. Prefer it over manual reshapes when expressing complex multi-dimensional operations.
     - Never compute explicit matrix inverses in code; use `torch.linalg.solve` or factorization routines for numerical stability.
 
@@ -751,6 +860,9 @@ x_cont = x_perm.contiguous()           # ensures efficient downstream matmul
     **Open-source & tools**
 
     - [PyTorch `torch.linalg` documentation](https://docs.pytorch.org/docs/2.12/linalg.html) — Official API reference for all linear algebra operations used in this chapter (SVD, norms, solvers, Cholesky); dispatches to cuBLAS/LAPACK under the hood.
+    - [einops (arogozhnikov/einops)](https://github.com/arogozhnikov/einops) — The named-axis `rearrange`/`reduce`/`repeat` library used throughout this book for shape manipulation; framework-agnostic and now standard in HF and timm model code.
+    - [NVIDIA CUTLASS](https://github.com/NVIDIA/cutlass) — Open-source CUDA C++ templates for tensor-core GEMM; the readable counterpart to closed-source cuBLAS, and the substrate many custom fused kernels are built on.
+    - [Hugging Face `peft`](https://huggingface.co/docs/peft) — Production implementation of the LoRA algebra developed in this chapter (plus QLoRA, DoRA, PiSSA initialization, adapter merging); the library TRL, Axolotl, and Unsloth all build on.
 
     **Reference**
 

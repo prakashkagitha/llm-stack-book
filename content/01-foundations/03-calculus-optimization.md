@@ -243,6 +243,8 @@ $$
 
 Typical defaults: $\beta_1 = 0.9$, $\beta_2 = 0.999$, $\epsilon = 10^{-8}$, $\eta = 3 \times 10^{-4}$. The bias-correction terms ($\hat{m}_t, \hat{v}_t$) are crucial in early training when the moving averages have not yet warmed up.
 
+For LLM pretraining specifically, the convention departs from those defaults in two ways: $\beta_2$ is usually lowered to $0.95$ (as in GPT-3 and the Llama models) so the second moment forgets stale curvature faster on a heavy-tailed, non-stationary gradient distribution, and plain Adam is replaced by **AdamW**, which applies weight decay as a separate shrinkage step $\theta \leftarrow \theta - \eta\lambda\theta$ rather than folding an L2 term into $g$ (where the $1/\sqrt{\hat v_t}$ normalization would rescale it per parameter and destroy its meaning).
+
 Adam is the workhorse optimizer for LLM pretraining. Its variants (AdamW, Adafactor, Lion) are covered in depth in [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html).
 
 ### Summary of Variants
@@ -255,6 +257,83 @@ Adam is the workhorse optimizer for LLM pretraining. Its variants (AdamW, Adafac
 | AdaGrad | $O(B)$ | $O(2n)$ | Yes (cumulative) | Sparse features |
 | RMSProp | $O(B)$ | $O(2n)$ | Yes (EMA) | RNN training |
 | Adam | $O(B)$ | $O(3n)$ | Yes (EMA) | LLM pretraining |
+
+That memory column decides what you can fit on one GPU, so it is worth making concrete. Take the book's capstone model, Stack-100M, at roughly $n = 1.2 \times 10^8$ parameters trained in mixed precision. You pay 4 bytes/param for the fp32 master weights, 4 for the fp32 gradients, and 4 each for Adam's $m$ and $v$ — 16 bytes/param, or about 1.9 GB — on top of the 0.24 GB of bf16 weights the forward pass actually uses. Optimizer state, not the model, is the dominant fixed cost; that single fact is why 8-bit optimizer states (`bitsandbytes`), Adafactor's factored second moment, and ZeRO/FSDP optimizer-state sharding exist at all. See [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) for the full accounting and [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html) for the concrete choice made for Stack-100M.
+
+### The Library Layer: `torch.optim`
+
+Everything above is implemented for you. In practice you never hand-roll these update rules — you write them once from scratch to understand them (as we do below), then use `torch.optim`, whose implementations are fused into few CUDA kernels and battle-tested against edge cases you would not think of. The code below is the entire optimization layer of a real training loop: parameter groups, AdamW, a warmup + cosine schedule, gradient clipping, and a step.
+
+```python
+"""
+The library layer: every update rule above, as a few lines of torch.optim.
+"""
+
+import math
+import torch
+import torch.nn as nn
+
+torch.manual_seed(0)
+model = nn.Sequential(nn.Linear(64, 256), nn.GELU(), nn.Linear(256, 64))
+
+# AdamW with the LLM-pretraining convention: decoupled weight decay applied to
+# 2D matmul weights only -- never to biases or norm gains (1D tensors).
+decay = [p for p in model.parameters() if p.ndim >= 2]
+no_decay = [p for p in model.parameters() if p.ndim < 2]
+opt = torch.optim.AdamW(
+    [{"params": decay,    "weight_decay": 0.1},
+     {"params": no_decay, "weight_decay": 0.0}],
+    lr=3e-4,
+    betas=(0.9, 0.95),                 # beta2=0.95 (not 0.999) is standard for LLMs
+    eps=1e-8,
+    fused=torch.cuda.is_available(),   # fused/foreach kernels: far fewer launches
+)
+
+# Warmup + cosine decay to 10% of peak, expressed as a multiplier on lr.
+WARMUP, TOTAL = 100, 1000
+
+def lr_multiplier(step: int) -> float:
+    if step < WARMUP:
+        return (step + 1) / WARMUP                       # linear ramp
+    progress = (step - WARMUP) / max(1, TOTAL - WARMUP)  # in [0, 1]
+    return 0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_multiplier)
+
+x, y = torch.randn(32, 64), torch.randn(32, 64)
+for step in range(3):
+    loss = ((model(x) - y) ** 2).mean()
+    opt.zero_grad(set_to_none=True)     # set_to_none frees the grad buffers
+    loss.backward()                     # populates p.grad for every parameter
+    gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    opt.step()                          # the update rule
+    sched.step()                        # advance the schedule
+    print(f"step {step}  loss {loss.item():.4f}  "
+          f"pre-clip |g|={gnorm:.3f}  lr={sched.get_last_lr()[0]:.3e}")
+
+# ---------------------------------------------------------------------------
+# Our from-scratch heavy-ball update IS torch.optim.SGD(momentum=...).
+# PyTorch buffers b <- mu*b + g, then theta <- theta - lr*b, which is
+# algebraically identical to v <- beta*v - lr*g; theta <- theta + v at a
+# CONSTANT lr (v_t = -lr * b_t). They diverge under a schedule: PyTorch
+# applies today's lr to the whole accumulated buffer, while our form bakes
+# each step's historical lr permanently into the velocity.
+# ---------------------------------------------------------------------------
+p = nn.Parameter(torch.tensor([4.0, 1.0]))
+sgd = torch.optim.SGD([p], lr=0.005, momentum=0.9)    # nesterov=True gives NAG
+theta, v = torch.tensor([4.0, 1.0]), torch.zeros(2)
+for _ in range(10):
+    sgd.zero_grad(set_to_none=True)
+    (p[0] ** 2 + 10.0 * p[1] ** 2).backward()         # the quadratic from above
+    sgd.step()
+    g = torch.tensor([2.0 * theta[0], 20.0 * theta[1]])
+    v = 0.9 * v - 0.005 * g                           # our chapter's form
+    theta = theta + v
+assert torch.allclose(p.detach(), theta, atol=1e-5)
+print("from-scratch momentum matches torch.optim.SGD:", theta.tolist())
+```
+
+Three details in that snippet are load-bearing for real runs. **Parameter groups** are how you exclude 1D tensors from weight decay — decaying a LayerNorm gain toward zero is actively harmful. **`opt.state_dict()`** holds $m$ and $v$; a checkpoint without it silently restarts the moment estimates and produces a loss bump on resume (see [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html)). And **`fused=True`/`foreach=True`** matter more than they look: with hundreds of parameter tensors, an unfused optimizer launches thousands of tiny kernels per step and can become a measurable fraction of step time.
 
 ---
 
@@ -277,6 +356,54 @@ Not all minima are equal. The **sharpness** of a minimum is captured by the maxi
 This observation (Hochreiter & Schmidhuber, 1997; Keskar et al., 2017) motivates Sharpness-Aware Minimization (SAM), which explicitly penalizes sharp minima, and also explains why large-batch SGD (which has lower gradient noise) tends to find sharper minima than small-batch SGD.
 
 {{fig:flat-vs-sharp-minima-generalization}}
+
+### Measuring Curvature Without Forming the Hessian
+
+Sharpness is not just a theoretical quantity — you can measure $\lambda_{\max}(H)$ for a real network in a few lines, and it is the diagnostic behind edge-of-stability plots and sharpness-aware methods. The trick is that although $H$ is $n \times n$, the **Hessian-vector product** $Hv$ costs only about two backward passes: differentiate the scalar $g^\top v$ (where $g = \nabla\mathcal{L}$ is itself built with `create_graph=True`) once more, since $\nabla_\theta (g^\top v) = Hv$ for constant $v$. Power iteration on that operator then gives the top eigenvalue.
+
+```python
+"""
+Measuring curvature without ever forming the Hessian:
+Hessian-vector products via double backward + power iteration for lambda_max.
+"""
+
+import torch
+import torch.nn as nn
+
+torch.manual_seed(0)
+model = nn.Sequential(nn.Linear(8, 16), nn.Tanh(), nn.Linear(16, 1))
+x, y = torch.randn(64, 8), torch.randn(64, 1)
+params = [p for p in model.parameters()]
+
+
+def hvp(vec):
+    """Hessian-vector product H @ v. Cost ~2 backward passes; H never formed."""
+    loss = ((model(x) - y) ** 2).mean()
+    g = torch.autograd.grad(loss, params, create_graph=True)   # keep the graph
+    gv = sum((gi * vi).sum() for gi, vi in zip(g, vec))        # scalar g . v
+    return torch.autograd.grad(gv, params)                     # d/dtheta (g.v) = H v
+
+
+# Power iteration: v <- Hv/||Hv|| converges to the eigenvector of largest |lambda|.
+v = [torch.randn_like(p) for p in params]
+nrm = torch.sqrt(sum((vi ** 2).sum() for vi in v))
+v = [vi / nrm for vi in v]
+for _ in range(60):
+    Hv = hvp(v)
+    nrm = torch.sqrt(sum((h ** 2).sum() for h in Hv)) + 1e-12
+    v = [h / nrm for h in Hv]
+
+# Rayleigh quotient v^T H v with ||v|| = 1 gives the eigenvalue itself, signed:
+# a NEGATIVE value means the dominant direction is one of negative curvature,
+# i.e. we are sitting at or near a saddle.
+lam = sum((h * vi).sum() for h, vi in zip(hvp(v), v)).item()
+print(f"lambda_max(H) ~= {lam:.4f}")
+print(f"stability ceiling 2/lambda_max = {2.0 / lam:.4f}  (max usable GD lr)")
+```
+
+On this toy network it prints $\lambda_{\max} \approx 4.09$ and a stability ceiling of $2/\lambda_{\max} \approx 0.49$ — a learning rate above that will diverge, which you can verify by running the chapter's `run_gd` on it. Two practical notes: power iteration finds the eigenvalue of largest *magnitude*, so a negative result is informative rather than a bug (it means negative curvature dominates); and for a real LLM you would estimate this on a fixed batch, since $H$ depends on the data you evaluate it on.
+
+PyTorch ships higher-level wrappers for the same primitives — `torch.autograd.functional.hvp`/`vhp`, and `torch.func.jacrev`/`torch.func.hessian` for functions small enough to materialize — and the [PyHessian](https://github.com/amirgholami/PyHessian) library builds on HVPs to estimate the top-$k$ eigenvalues, the Hessian trace (via Hutchinson's estimator), and the full eigenvalue density of a trained network.
 
 ---
 
@@ -630,6 +757,8 @@ $$
 
 This is not a cure for bad initialization or bad data, but it prevents one catastrophically large step from derailing an otherwise healthy run. Typical values: $\tau \in [0.5, 5.0]$, with $\tau = 1.0$ common for LLM training.
 
+In PyTorch this is the single line `torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)`, called after `loss.backward()` and before `opt.step()`. It returns the **pre-clip** total norm — always log that value, because a gradient norm that starts climbing is the earliest available warning of an impending loss spike. Two footguns: the norm must be computed over *all* shards, so under FSDP you call the wrapped module's own `clip_grad_norm_` method rather than the free function, and under gradient accumulation you clip once after the final micro-batch, not per micro-batch.
+
 ### Connection to Second-Order Methods
 
 The ideal update would be $\theta \leftarrow \theta - H^{-1} \nabla \mathcal{L}$ (Newton's method), which solves the local quadratic approximation exactly. This converges in $O(\log(1/\epsilon))$ steps regardless of condition number — it completely handles ill-conditioning. The problem is cost: inverting $H$ for $n = 10^9$ is $O(n^3)$, completely intractable.
@@ -652,7 +781,7 @@ Training a large language model is not just applying Adam to a convex problem. T
 
 4. **Loss spikes:** Occasional sharp increases in loss, sometimes by $2-10\times$, can result from bad batches, gradient accumulation bugs, or instability in normalization layers. Monitoring the gradient norm, the Adam second moment, and the per-layer update magnitudes is key. See [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
 
-The full probabilistic picture of why the loss landscape is navigable — the statistical mechanics viewpoint, the role of overparameterization, and the relationship to the Neural Tangent Kernel (NTK) — goes beyond our scope here. For the practitioner, the takeaways from optimization theory are: use Adam, clip gradients, warm up the learning rate, and monitor training closely.
+The full probabilistic picture of why the loss landscape is navigable — the statistical mechanics viewpoint, the role of overparameterization, and the relationship to the Neural Tangent Kernel (NTK) — goes beyond our scope here. For the practitioner, the takeaways from optimization theory are: use AdamW (with $\beta_2 \approx 0.95$), clip gradients, warm up the learning rate, and monitor training closely. AdamW remains the default, but matrix-aware optimizers that precondition 2D weight matrices with an orthogonalized update — Muon and its stabilized variant MuonClip — have moved from research curiosities to production pretraining runs since 2024–2025; they are covered in [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html), and applied to the book's ~100M-parameter capstone model in [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html) and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
 
 ---
 
@@ -662,10 +791,10 @@ The full probabilistic picture of why the loss landscape is navigable — the st
     - The **Hessian** captures second-order curvature. Its eigenvalue spectrum determines whether a critical point is a minimum, maximum, or saddle. For large models, the Hessian is never formed explicitly — approximations (Adam's second moment, Shampoo's Kronecker factors) are used instead.
     - Neural network loss surfaces are **non-convex**: they have permutation symmetry, saddle points, and flat regions. Most critical points are saddles, not local minima, especially in high dimension.
     - **SGD momentum** accumulates velocity in consistent gradient directions, accelerating convergence in narrow valleys. The theoretical speedup over GD is $O(\sqrt{\kappa})$ via Nesterov acceleration.
-    - **Adam** applies per-parameter adaptive learning rates, effectively precondition the gradient by the square root of the second moment. This dramatically reduces sensitivity to the condition number and is the standard optimizer for LLM pretraining.
+    - **Adam** applies per-parameter adaptive learning rates, effectively preconditioning the gradient by the square root of the second moment. This dramatically reduces sensitivity to the condition number; **AdamW** with $\beta_2 \approx 0.95$ is the standard for LLM pretraining, and its two moment buffers — 8 bytes/parameter on top of weights and gradients — are the dominant fixed memory cost of a training run.
     - The **condition number** $\kappa = L/\mu$ governs how many steps are needed to converge. Well-conditioned problems ($\kappa \approx 1$) converge fast; ill-conditioned ones ($\kappa \gg 1$) benefit from preconditioning.
     - **SGD generalizes better than large-batch GD** because gradient noise biases the optimizer toward flat minima, which are more robust to distribution shift.
-    - **Gradient clipping** and **learning rate warmup** are practical necessities for stable LLM training, preventing early-phase instability from derailing otherwise healthy runs.
+    - **Gradient clipping** and **learning rate warmup** are practical necessities for stable LLM training, preventing early-phase instability from derailing otherwise healthy runs. In code that is `torch.optim.AdamW` + parameter groups + an `lr_scheduler` + `clip_grad_norm_` between `backward()` and `step()` — the from-scratch versions here exist so that nothing in those four lines is a black box.
 
 !!! sota "State of the Art & Resources (2026)"
     Optimization for deep learning is a mature field with well-established foundations — the core algorithms (SGD, Adam, Nesterov) are from the 1960s–2010s — but active research continues on flat-minima geometry, sharpness-aware methods, and second-order approximations for billion-parameter models.
@@ -689,7 +818,9 @@ The full probabilistic picture of why the loss landscape is navigable — the st
 
     **Open-source & tools**
 
+    - [`torch.optim`](https://pytorch.org/docs/stable/optim.html) — the reference implementation of every update rule in this chapter (SGD with heavy-ball/Nesterov momentum, Adagrad, RMSprop, Adam/AdamW, L-BFGS), plus `lr_scheduler` and `foreach`/`fused` kernel variants. Read the source: each optimizer is ~150 lines of readable Python over a fused kernel.
     - [tomgoldstein/loss-landscape](https://github.com/tomgoldstein/loss-landscape) — PyTorch code to compute and plot 1D/2D loss-surface slices for any model; companion to the Li et al. NeurIPS 2018 paper.
+    - [PyHessian](https://github.com/amirgholami/PyHessian) — Hessian-vector-product-based estimation of top eigenvalues, trace, and eigenvalue density for PyTorch models; the practical tool for the sharpness measurements discussed above.
 
     **Go deeper**
 

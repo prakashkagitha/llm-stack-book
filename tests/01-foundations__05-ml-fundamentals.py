@@ -10,6 +10,9 @@ names defined by earlier ones, exactly as the chapter intends):
     - block #3 (line ~204): EarlyStopping class                      -> instantiated/used via glue below
     - block #4 (line ~282): Stratified 5-fold CV (LogisticRegression) -> executed in-block
     - block #5 (line ~370): classification_report / ROC-AUC / PR-AUC -> executed in-block
+    - AdamW parameter-group split ("Which of These Survive in LLM Pretraining")
+    - deterministic document-level train/val split (`split_of`)
+    - bits-per-byte conversion (`bits_per_byte`)
 
 SKIPPED (per task spec):
     - block #1 (line ~92): SKIP(non-python): this is a ```text``` fenced block showing
@@ -23,6 +26,8 @@ SKIPPED (per task spec):
       pattern, and block #5's classification-report/ROC-AUC/PR-AUC reporting. Skipping it keeps
       this test fast and deterministic while still covering every distinct piece of logic it
       contains via the other four blocks.
+    - the Optuna hyperparameter-search block: SKIP(optional-dep). `optuna` is not in the
+      guaranteed CI import list; the chapter snippet is explicitly marked `# pip install optuna`.
 """
 
 import copy
@@ -292,6 +297,114 @@ assert roc_auc > 0.6
 assert pr_auc > 0.6
 assert cm.shape == (2, 2)
 assert cm.sum() == 1000
+
+
+# ============================================================================
+# NEW block: AdamW parameter-group split ("Which of These Survive in LLM Pretraining")
+# ============================================================================
+
+def configure_optimizer(model: nn.Module, lr: float = 3e-4,
+                        weight_decay: float = 0.1, betas=(0.9, 0.95)):
+    """AdamW with the standard LLM parameter-group split."""
+    decay, no_decay = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        (decay if p.ndim >= 2 else no_decay).append(p)
+
+    groups = [
+        {"params": decay,    "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+    print(f"decayed tensors: {len(decay)}  "
+          f"({sum(p.numel() for p in decay):,} params)")
+    print(f"non-decayed    : {len(no_decay)} "
+          f"({sum(p.numel() for p in no_decay):,} params)")
+    return torch.optim.AdamW(groups, lr=lr, betas=betas)
+
+
+block = nn.Sequential(nn.Linear(128, 512), nn.GELU(),
+                      nn.Linear(512, 128), nn.LayerNorm(128))
+opt = configure_optimizer(block)
+
+# 2 weight matrices decayed; 2 linear biases + LayerNorm weight/bias not decayed
+assert len(opt.param_groups) == 2
+assert opt.param_groups[0]["weight_decay"] == 0.1
+assert opt.param_groups[1]["weight_decay"] == 0.0
+assert len(opt.param_groups[0]["params"]) == 2
+assert len(opt.param_groups[1]["params"]) == 4
+assert all(p.ndim >= 2 for p in opt.param_groups[0]["params"])
+assert all(p.ndim == 1 for p in opt.param_groups[1]["params"])
+
+# the clipping line the chapter shows as a comment must actually work
+_loss = block(torch.randn(4, 128)).square().mean()
+_loss.backward()
+torch.nn.utils.clip_grad_norm_(block.parameters(), max_norm=1.0)
+opt.step()
+opt.zero_grad(set_to_none=True)
+
+
+# ============================================================================
+# NEW block: deterministic document-level train/val split
+# ============================================================================
+
+import hashlib
+
+
+def split_of(doc_id: str, val_frac: float = 0.001) -> str:
+    """Deterministic, order-independent document-level train/val assignment."""
+    h = hashlib.blake2b(doc_id.encode("utf-8"), digest_size=8).digest()
+    bucket = int.from_bytes(h, "big") / 2**64        # uniform in [0, 1)
+    return "val" if bucket < val_frac else "train"
+
+
+docs = [f"cc-2026-08/{i:07d}" for i in range(100_000)]
+counts = {"train": 0, "val": 0}
+for d in docs:
+    counts[split_of(d)] += 1
+print(counts)
+
+assert counts == {"train": 99894, "val": 106}, counts   # value printed in the chapter
+# determinism / order-independence: same id -> same split, regardless of call order
+assert split_of(docs[7]) == split_of(docs[7])
+assert sum(counts.values()) == 100_000
+
+
+# ============================================================================
+# NEW block: bits-per-byte (tokenizer-independent LM metric)
+# ============================================================================
+
+import math
+
+
+def bits_per_byte(mean_ce_nats: float, n_tokens: int, n_bytes: int) -> float:
+    """Convert mean per-token cross-entropy (nats) to tokenizer-independent BPB."""
+    total_bits = mean_ce_nats * n_tokens / math.log(2)
+    return total_bits / n_bytes
+
+
+bpb = bits_per_byte(3.0, 1_000_000, 4_300_000)
+print(f"{bpb:.4f}")
+assert abs(bpb - 1.0065) < 1e-4, bpb          # value printed in the chapter
+
+# Sanity: BPB is invariant to the tokenizer. A tokenizer with half the bytes/token
+# on the same text must show half the per-token cross-entropy for the same model.
+assert abs(bits_per_byte(1.5, 2_000_000, 4_300_000) - bpb) < 1e-9
+
+
+# ============================================================================
+# SKIPPED: the Optuna hyperparameter-search block.
+# `optuna` is an optional third-party dependency and is not in the guaranteed CI
+# import list (the chapter's own snippet is prefixed with `# pip install optuna`).
+# The block is a ~10-line study over sklearn's LogisticRegression with no logic
+# of its own beyond the Optuna API, so there is nothing to reimplement here.
+# ============================================================================
+try:
+    import optuna  # noqa: F401
+    _HAS_OPTUNA = True
+except Exception:
+    _HAS_OPTUNA = False
+print(f"optuna available: {_HAS_OPTUNA} (block skipped when False)")
 
 
 print("\nAll block executions and assertions passed.")

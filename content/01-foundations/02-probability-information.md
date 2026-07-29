@@ -157,6 +157,8 @@ Key properties:
 
 The forward KL $D_{\text{KL}}(p\|q)$ is called **inclusive** — minimizing it forces $q$ to cover all modes of $p$. The reverse KL $D_{\text{KL}}(q\|p)$ is **exclusive** — minimizing it lets $q$ concentrate on one mode of $p$. This asymmetry is critical in variational inference and in RLHF/DPO, where we penalize the KL between the fine-tuned policy and the reference model.
 
+One practical wrinkle is worth flagging here because it follows directly from the definition. Between two *next-token* distributions the KL is an exact finite sum over the $V$ vocabulary entries — you have both logit vectors, so nothing is estimated. Between two *policies over whole sequences* the sum ranges over $V^T$ possible continuations and is hopelessly intractable, so RL loops replace it with a Monte-Carlo estimate from the single token that was actually sampled. The naive estimator $\hat{k}_1 = \log\frac{\pi_\theta(a)}{\pi_{\text{ref}}(a)}$ is unbiased but can be negative on any individual sample, which makes for a strange penalty; the standard fix is the unbiased *and* non-negative estimator $\hat{k}_3 = e^{r} - 1 - r$ with $r = \log\frac{\pi_{\text{ref}}(a)}{\pi_\theta(a)}$, derived and compared in [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
+
 {{fig:kl-asymmetry-mode-covering-vs-seeking}}
 
 ### Cross-Entropy
@@ -207,7 +209,7 @@ $$
 \mathcal{L} = -\frac{1}{T} \sum_{t=1}^T \log p_\theta(x_t \mid x_1, \ldots, x_{t-1})
 $$
 
-See [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) for exactly how this is computed in practice at scale.
+See [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) for exactly how this is computed in practice at scale, and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) for the loss curve this objective produces when you actually run it end to end on a ~100M-parameter model.
 
 ---
 
@@ -270,11 +272,19 @@ Intuition: a perplexity of $K$ means the model is "as confused as if it had to c
 
     The model is roughly as confused as if choosing among 5 options at each step on this sequence.
 
-    For reference, GPT-2 (1.5B) achieves roughly 18–20 perplexity on WikiText-103 in nats, while the strong open-weight model families current as of this writing (Llama 4, Gemma 3, Qwen3) can reach single-digit perplexity on held-out text from the same distribution.
+    Note that perplexity carries no unit: if you measure the loss in bits you must exponentiate base 2, and if you measure it in nats you exponentiate base $e$ — the two conventions cancel and give the identical number. For reference, the GPT-2 paper reports a zero-shot WikiText-103 perplexity of roughly 17.5 for the 1.5B model, while the strong open-weight families current as of this writing (Llama 4, Gemma 3, Qwen3) reach single-digit perplexity on held-out text from a matched distribution — but read the pitfalls below before putting two such numbers side by side.
 
 ### Perplexity Pitfalls
 
 Perplexity depends strongly on tokenization. A model using a byte-level tokenizer will report higher perplexity than one using a word-level tokenizer because more decisions are made per word. Always compare perplexity numbers computed with the same tokenizer on the same test set.
+
+The fix, when tokenizers differ, is to normalize by a unit the tokenizer cannot change: the raw bytes of the text. **Bits per byte (BPB)** divides the *total* negative log-likelihood of the passage, converted to bits, by the number of UTF-8 bytes in the original string:
+
+$$
+\text{BPB} = \frac{\sum_{t=1}^{T} -\log_2 p_\theta(x_t \mid x_{<t})}{n_{\text{bytes}}} = \frac{T \cdot \mathcal{L}_{\text{CE}}}{\ln 2 \cdot n_{\text{bytes}}}
+$$
+
+where $\mathcal{L}_{\text{CE}}$ is the mean per-token loss in nats and $T$ the token count. The numerator is precisely the number of bits an optimal arithmetic coder would need to store the text given the model, so BPB *is* a compression rate — and unlike perplexity it is comparable across any two models regardless of vocabulary size. Modern LLMs land below 1 bit per byte on ordinary English (i.e. better than 8:1 compression). This is the metric `lm-evaluation-harness` reports as `bits_per_byte`; see [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) for the training-loop implementation and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for how Stack-100M is scored with it.
 
 Perplexity is also not a direct proxy for downstream task quality — a model can have lower perplexity than another while being worse at instruction following or reasoning. See [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html) for a fuller treatment.
 
@@ -618,6 +628,74 @@ Label smoothing adds regularization: LS loss > hard CE = False
 
 The first block (CE/KL decomposition) is deterministic — `p` and `q` are fixed tensors, so those four numbers are exact and will match on any machine. The last two blocks depend on `torch.manual_seed(42)`-seeded random logits, so the specific numbers (and even the `True`/`False` outcome of the last comparison) can differ across PyTorch versions and hardware. The point the code demonstrates is architectural — `H(p,q) = H(p) + D_KL(p‖q)` holds exactly — not that label smoothing is guaranteed to increase the loss on any single random draw of untrained logits.
 
+### The Library Versions of Everything Above
+
+You write these by hand once, to know what is inside them, and then you call the library for the rest of your career. Every quantity in this chapter has a one-line implementation in PyTorch — each one a fused, numerically stable kernel built on the logsumexp shift trick derived in [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) — and knowing which to reach for, and which has a hostile signature, is part of the working knowledge.
+
+```python
+"""
+library_versions.py — the same quantities via the standard PyTorch APIs.
+Requires: torch. Run: python library_versions.py
+"""
+
+import torch
+import torch.nn.functional as F
+from torch.distributions import Categorical, kl_divergence
+
+torch.manual_seed(0)
+logits = torch.randn(4, 8)                # (T=4 positions, V=8 vocabulary)
+targets = torch.tensor([2, 5, 0, 7])      # ground-truth next-token ids
+
+# 1. Cross-entropy = NLL = the training loss. Takes RAW logits, never probabilities:
+#    it fuses log_softmax + gather + mean, using the logsumexp shift trick derived in
+#    the Numerical Computing chapter to stay stable when logits are large.
+loss = F.cross_entropy(logits, targets, reduction="mean")   # nats per token
+ppl = loss.exp()                                            # perplexity
+# Label smoothing and padding are flags here, not separate code paths:
+loss_ls = F.cross_entropy(logits, targets, label_smoothing=0.1, ignore_index=-100)
+
+# 2. Entropy of the model's OWN predictive distribution, one value per position.
+#    Build the distribution from logits= (not probs=) so the log-softmax stays stable.
+dist = Categorical(logits=logits)
+H = dist.entropy()               # (4,) nats; the ceiling here is log(8) = 2.079
+#    This is exactly the quantity an RL "entropy bonus" maximizes to delay mode collapse.
+
+# 3. KL between two categorical distributions — the RLHF/DPO reference-model penalty.
+ref_logits = logits + 0.3 * torch.randn_like(logits)
+kl = kl_divergence(Categorical(logits=ref_logits),          # p = reference
+                   Categorical(logits=logits))              # q = policy  -> D_KL(p||q)
+
+# 4. The same number via F.kl_div, whose signature is a well-known trap (see below).
+kl_f = F.kl_div(
+    F.log_softmax(logits, dim=-1),         # `input`  MUST already be LOG-probs (q)
+    F.log_softmax(ref_logits, dim=-1),     # `target` (p) — log-probs only because...
+    log_target=True,                       # ...we set log_target=True
+    reduction="none",
+).sum(dim=-1)                              # sum over vocabulary -> per-position KL
+
+if __name__ == "__main__":
+    print(f"loss      = {loss.item():.4f} nats   ppl = {ppl.item():.3f}")
+    print(f"loss (LS) = {loss_ls.item():.4f} nats")
+    print(f"mean H(q) = {H.mean().item():.4f} nats")
+    print(f"KL agrees: {torch.allclose(kl, kl_f, atol=1e-5)}")   # True
+```
+
+!!! warning "`F.kl_div` has three footguns"
+
+    **(1)** Its first argument `input` must *already* be log-probabilities, while `target` is plain probabilities unless you pass `log_target=True`. Handing it raw logits returns a silently wrong number rather than raising. **(2)** It computes $D_{\text{KL}}(\text{target} \,\|\, \text{input})$ — the arguments are in the *opposite* order from the mathematical notation $D_{\text{KL}}(p\|q)$ you read left to right. **(3)** `reduction="mean"` averages over *every element* (positions × vocabulary), which is not a KL of anything; for a per-token divergence use `reduction="none"` then `.sum(-1)`, or `reduction="batchmean"`. When in doubt reach for `torch.distributions.kl_divergence`, which takes distribution objects and cannot be misread.
+
+At the evaluation layer the standard open-source tool is EleutherAI's **`lm-evaluation-harness`**, which wraps the same sliding-window loop written out above and applies it across hundreds of tasks with a fixed, citable methodology:
+
+```bash
+pip install lm-eval
+lm_eval --model hf \
+        --model_args pretrained=EleutherAI/pythia-160m \
+        --tasks wikitext \
+        --batch_size 8
+```
+
+Its `wikitext` task deliberately reports word-level perplexity, byte-level perplexity, and `bits_per_byte` side by side — three normalizations of the same total negative log-likelihood — precisely so that the tokenizer-dependence discussed above is visible rather than hidden. Building your own version of this harness is covered in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
+
 ---
 
 ## A Unified Picture
@@ -652,7 +730,7 @@ This picture has three take-aways:
     - **MLE** and **cross-entropy minimization** are the same thing: the training loss is the negative log-likelihood of the data under the model.
     - **Cross-entropy decomposes** as $H(p,q) = H(p) + D_{\text{KL}}(p\|q)$; since $H(p)$ is constant w.r.t. model parameters, training minimizes KL divergence from data to model.
     - **KL divergence is asymmetric**: forward KL (MLE) forces the model to cover all data modes; reverse KL (used in RLHF/DPO as a penalty) encourages the policy to stay near the reference model.
-    - **Perplexity** = $\exp(\text{avg cross-entropy loss})$; a perplexity of $K$ means the model is as uncertain as a uniform distribution over $K$ options.
+    - **Perplexity** = $\exp(\text{avg cross-entropy loss})$; a perplexity of $K$ means the model is as uncertain as a uniform distribution over $K$ options. It is only comparable within a fixed tokenizer — across tokenizers use **bits per byte**, which is literally a compression rate.
     - **Label smoothing** prevents overconfidence by replacing one-hot targets with a mixture; it implicitly keeps $D_{\text{KL}}(p\|q)$ well-defined and acts as calibration regularization.
     - **Mutual information** $I(X;Y) = H(X) - H(X|Y)$ quantifies dependence; it appears in contrastive objectives (InfoNCE), probing studies, and tokenization design.
     - **Entropy is maximized by the uniform distribution** and zero for degenerate distributions; understanding entropy lets you reason about what the model is "uncertain" about.
@@ -677,7 +755,8 @@ This picture has three take-aways:
 
     **Open-source & tools**
 
-    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the standard open-source framework for computing perplexity and benchmarking LMs; used by Hugging Face's Open LLM Leaderboard.
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the standard open-source framework for computing perplexity and benchmarking LMs; reports `word_perplexity`, `byte_perplexity` and `bits_per_byte` for language-modeling tasks, and is the harness Hugging Face leaderboards have been built on.
+    - [`torch.distributions`](https://pytorch.org/docs/stable/distributions.html) — PyTorch's distribution objects (`Categorical`, `Normal`, `Dirichlet`) with `.entropy()`, `.log_prob()`, `.sample()` and `kl_divergence()`; the safe way to compute the quantities in this chapter, alongside `torch.nn.functional.cross_entropy` (which takes `label_smoothing` and `ignore_index` directly).
 
     **Visual explainers & go deeper**
 

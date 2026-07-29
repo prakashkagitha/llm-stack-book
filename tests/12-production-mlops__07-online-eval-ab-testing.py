@@ -1,17 +1,19 @@
 """
 Runnability test for content/12-production-mlops/07-online-eval-ab-testing.md
 
-Chapter has 7 heuristically CPU-runnable Python blocks:
-  - block #0 (line ~112): assign_variant() + two_proportion_z_test()
-  - block #1 (line ~226): InterleavingSession / compute_interleaving_win_rate()
-  - block #2 (line ~300): cuped_estimate()
-  - block #3 (line ~378): always_valid_ci()
-  - block #5 (line ~455): should_rollback()
-  - block #6 (line ~548): stratified_sampler()
-  - block #7 (line ~598): RollingQualityMonitor
+Chapter has 9 heuristically CPU-runnable Python blocks:
+  - block #0: assign_variant() + two_proportion_z_test()
+  - block #1: srm_check()
+  - block #2: ratio_metric_delta_method()
+  - block #3: InterleavingSession / compute_interleaving_win_rate()
+  - block #4: cuped_estimate()
+  - block #5: cs_halfwidth() / tune_rho() / always_valid_ci()
+  - block #7: should_rollback()
+  - block #8: stratified_sampler()
+  - block #9: RollingQualityMonitor
 
 Skipped:
-  - block #4 (line ~428): YAML Argo Rollouts config, not Python. # SKIP(non-python)
+  - Argo Rollouts + Istio VirtualService YAML, not Python. # SKIP(non-python)
 
 scipy is NOT in the guaranteed-available import list for this test harness
 (only numpy, torch-cpu, einops, scikit-learn, and stdlib are guaranteed), so
@@ -274,39 +276,139 @@ else:
     print("SKIP(no scipy): block #2 cuped_estimate call skipped")
 
 # =========================================================================
-# Block #3 (line ~378): always-valid (anytime) confidence interval
+# Block #1: sample ratio mismatch (SRM) chi-square check
+# Block #2: delta-method SE for a ratio-of-sums metric
 # =========================================================================
+
+if stats is not None:
+
+    def srm_check(
+        n_control: int,
+        n_treatment: int,
+        expected_treatment_fraction: float = 0.5,
+        alarm_p: float = 0.001,
+    ) -> dict:
+        """Chi-square goodness-of-fit test on the observed traffic split."""
+        total = n_control + n_treatment
+        expected = [total * (1 - expected_treatment_fraction),
+                    total * expected_treatment_fraction]
+        observed = [n_control, n_treatment]
+        chi2 = sum((o - e) ** 2 / e for o, e in zip(observed, expected))
+        p_value = float(stats.chi2.sf(chi2, df=1))
+        return {"observed_treatment_fraction": n_treatment / total,
+                "chi2": chi2, "p_value": p_value, "srm": p_value < alarm_p}
+
+    _big = srm_check(100_000, 98_000)
+    _small = srm_check(1_000, 980)
+    print(_big)
+    print(_small)
+    # Same 1% imbalance: an alarm at 100k sessions, pure noise at 1k.
+    assert _big["srm"] is True and _big["p_value"] < 1e-4
+    assert _small["srm"] is False and _small["p_value"] > 0.1
+    # A perfectly balanced split must never fire.
+    assert srm_check(50_000, 50_000)["p_value"] == 1.0
+else:
+    print("SKIP(no scipy): block #1 srm_check skipped")
+
+
+def ratio_metric_delta_method(y: np.ndarray, d: np.ndarray) -> dict:
+    """
+    SE of a ratio-of-sums metric when the randomisation unit is the user:
+    y[i] = user i's numerator events, d[i] = user i's denominator events.
+    """
+    k = len(y)
+    d_bar = d.mean()
+    m = y.sum() / d.sum()
+    var = (np.var(y, ddof=1)
+           - 2 * m * np.cov(y, d, ddof=1)[0, 1]
+           + m ** 2 * np.var(d, ddof=1)) / (k * d_bar ** 2)
+    return {"metric": m, "se": float(np.sqrt(var)), "n_users": k}
+
+
+_rng = np.random.default_rng(0)
+_k_users = 2_000
+_d = _rng.poisson(8, _k_users) + 1
+_p_user = _rng.beta(4, 6, _k_users)
+_y = _rng.binomial(_d, _p_user)
+
+_clustered = ratio_metric_delta_method(_y, _d)
+_m = _clustered["metric"]
+_naive_se = np.sqrt(_m * (1 - _m) / _d.sum())
+_ratio = _clustered["se"] / _naive_se
+print(f"metric={_m:.4f}  clustered SE={_clustered['se']:.4f}  "
+      f"naive SE={_naive_se:.4f}  ratio={_ratio:.2f}x")
+# The book claims metric=0.3960, clustered SE=0.0049, naive SE=0.0036, 1.34x.
+assert abs(_m - 0.3960) < 5e-4
+assert abs(_clustered["se"] - 0.0049) < 5e-4
+assert abs(_naive_se - 0.0036) < 5e-4
+assert abs(_ratio - 1.34) < 0.02
+# Clustering can only ever widen the interval relative to the i.i.d. fiction.
+assert _ratio > 1.0
+# The book also claims the factor grows with events per user: ~2x at 30/user.
+_d30 = _rng.poisson(30, _k_users) + 1
+_y30 = _rng.binomial(_d30, _rng.beta(4, 6, _k_users))
+_c30 = ratio_metric_delta_method(_y30, _d30)
+_naive30 = np.sqrt(_c30["metric"] * (1 - _c30["metric"]) / _d30.sum())
+assert _c30["se"] / _naive30 > _ratio, "clustering penalty must grow with d/user"
+
+
+# =========================================================================
+# Block #5: always-valid (anytime) confidence sequence
+# =========================================================================
+
+def cs_halfwidth(n: int, rho: float, alpha: float = 0.05,
+                 sigma: float = 0.5) -> float:
+    """Half-width of the normal-mixture confidence sequence at sample size n."""
+    return sigma * math.sqrt(
+        2.0 * (n * rho ** 2 + 1.0) / (n ** 2 * rho ** 2)
+        * math.log(math.sqrt(n * rho ** 2 + 1.0) / alpha)
+    )
+
+
+def tune_rho(n_target: int, alpha: float = 0.05) -> float:
+    """Choose where the confidence sequence is tightest (ternary search)."""
+    lo, hi = 1e-5, 10.0
+    for _ in range(200):
+        m1, m2 = lo + (hi - lo) / 3, hi - (hi - lo) / 3
+        if cs_halfwidth(n_target, m1, alpha) < cs_halfwidth(n_target, m2, alpha):
+            hi = m2
+        else:
+            lo = m1
+    return 0.5 * (lo + hi)
+
 
 def always_valid_ci(
     n: int,
-    k: int,       # successes so far
+    k: int,
     alpha: float = 0.05,
+    n_target: int = 10_000,
 ) -> "tuple[float, float]":
-    """
-    Approximate always-valid (anytime) confidence interval for a
-    Bernoulli proportion using the Howard et al. (2021) normal-mixture bound.
-
-    This CI is valid at any sample size n >= 1 without correction for peeking.
-    """
+    """Anytime-valid CI for a Bernoulli proportion; valid at every n >= 1."""
     p_hat = k / n
-    # Confidence sequence width parameter (from Howard et al., 2021, eq. 1)
-    # rho: mixing parameter, typical value 0.5 for balanced experiments
-    rho = 0.5
-    log_term = math.log(2 * math.log(n + 1) / alpha)
-    width = math.sqrt(
-        (p_hat * (1 - p_hat) / n) * (log_term + rho * math.log(log_term + 1))
-    )
-    return (max(0.0, p_hat - width), min(1.0, p_hat + width))
+    w = cs_halfwidth(n, tune_rho(n_target, alpha), alpha)
+    return (max(0.0, p_hat - w), min(1.0, p_hat + w))
 
 
 _widths = []
-for _n, _k in [(100, 40), (1000, 400), (5000, 2000)]:
-    _lo, _hi = always_valid_ci(_n, _k)
-    print(f"n={_n:5d}: {_lo:.3f} - {_hi:.3f}  (width {_hi-_lo:.3f})")
+for _n, _k in [(100, 40), (1_000, 400), (5_000, 2_000), (20_000, 8_000)]:
+    _lo, _hi = always_valid_ci(_n, _k, n_target=10_000)
+    _p = _k / _n
+    _fixed = 2 * 1.96 * math.sqrt(_p * (1 - _p) / _n)
+    print(f"n={_n:6d}: anytime {_lo:.3f}-{_hi:.3f} (width {_hi-_lo:.3f})"
+          f"   fixed-n width {_fixed:.3f}")
     assert 0.0 <= _lo <= _hi <= 1.0
+    # An anytime-valid interval is never narrower than the fixed-n interval.
+    assert (_hi - _lo) > _fixed
     _widths.append(_hi - _lo)
 # The confidence sequence must shrink as more data accumulates.
-assert _widths[0] > _widths[1] > _widths[2]
+assert _widths[0] > _widths[1] > _widths[2] > _widths[3]
+# The book quotes these two rows verbatim.
+assert abs(_widths[1] - 0.121) < 1e-3
+assert abs(_widths[3] - 0.022) < 1e-3
+# tune_rho really does minimise the boundary at its target.
+_r = tune_rho(10_000)
+assert cs_halfwidth(10_000, _r) < cs_halfwidth(10_000, _r * 2)
+assert cs_halfwidth(10_000, _r) < cs_halfwidth(10_000, _r / 2)
 
 # Block #4 (line ~428): YAML Argo Rollouts canary config, not Python.
 # SKIP(non-python): nothing to execute.

@@ -40,6 +40,8 @@ Before editing you must know *where*. ROME's localization tool is **causal traci
 
 The cells that restore the most are where the fact is causally mediated. The robust finding: a band of **middle-layer MLP outputs at the last subject token** carries an outsized share of the causal effect. That last-subject-token position is exactly where the edit will be applied — the model has finished "reading" the subject and is about to look up its properties.
 
+You rarely hand-roll the patching loop: `nnsight` and TransformerLens both expose a few-line context-manager API for caching and overwriting activations (see [Mechanistic Interpretability & Model Internals](../13-interp-safety-gov/01-mechanistic-interpretability.html)), and the original tracing/editing code ships in the `kmeng01/rome` and `kmeng01/memit` repositories.
+
 
 {{fig:kedit-causal-tracing-heatmap}}
 
@@ -84,6 +86,21 @@ $$
 
 
 This is **rank one** — an outer product of two vectors — so it costs $d \times d_{\text{mlp}}$ extra storage at most and is trivially invertible (subtract it to undo the edit). The numerator's left factor $(v_* - W_0 k_*)$ is the *residual* we need to add at the key; the right factor $C^{-1} k_*$ steers the update along the direction that is least used by other keys (it is large where $C$ is small), which is precisely what minimizes collateral damage.
+
+??? note "Optional: deriving the rank-one solution"
+    Write the edit as $\Delta = W - W_0$ and take the preserved targets to be what the layer already produces, $V = W_0 K$. Then the objective is $\lVert WK - V\rVert_F^2 = \lVert \Delta K\rVert_F^2 = \operatorname{tr}\!\big(\Delta\,C\,\Delta^\top\big)$ with $C = KK^\top$, and the constraint $W k_* = v_*$ becomes $\Delta k_* = r$, where $r = v_* - W_0 k_*$ is the residual. With a Lagrange multiplier vector $\lambda$,
+
+    $$
+    \mathcal{L}(\Delta,\lambda) = \operatorname{tr}\!\big(\Delta C \Delta^\top\big) + \lambda^\top\big(\Delta k_* - r\big).
+    $$
+
+    Setting $\partial \mathcal{L}/\partial \Delta = 2\,\Delta C + \lambda k_*^\top = 0$ gives $\Delta = -\tfrac12 \lambda\,\big(C^{-1}k_*\big)^\top$ (using that $C$ is symmetric positive definite, hence invertible after damping). **Every stationary point is therefore an outer product** — the rank-one structure is a *consequence* of the least-squares objective, not an assumption. Substituting into the constraint fixes the unknown vector: $\Delta k_* = -\tfrac12\lambda\,\big(C^{-1}k_*\big)^\top k_* = r$, so $-\tfrac12\lambda = r / \big(k_*^\top C^{-1} k_*\big)$, and
+
+    $$
+    \Delta = \frac{r\,\big(C^{-1}k_*\big)^\top}{k_*^\top C^{-1} k_*},
+    $$
+
+    which is the boxed formula. The denominator is a quadratic form in a positive-definite matrix, so it is strictly positive whenever $k_* \neq 0$ — the solve never divides by zero. The same argument with a *matrix* of constraints $\Delta K_1 = R$ instead of a single vector yields MEMIT's Section 3.1 formula.
 
 !!! example "Worked example: the magnitudes of one edit"
     Take GPT-J (6B), where the MLP hidden width is $d_{\text{mlp}} = 16384$ and the model width is $d = 4096$. ROME edits a single layer's $W_{\text{down}} \in \mathbb{R}^{4096 \times 16384}$ — about 67M parameters, but the *update* $\Delta$ is rank one, so its "size" is just the two vectors: $4096 + 16384 = 20480$ numbers, roughly **0.03%** of that one matrix and about **0.0003%** of the model's 6B parameters.
@@ -272,6 +289,8 @@ def seq_logprob(model, batch):
     return (tok_logp * mask).sum(-1) / mask.sum(-1)    # mean log-prob per sequence
 ```
 
+In production this is not a new training stack: it is an ordinary fine-tuning loop with a custom loss. The usual wiring is a HuggingFace `Trainer` (or a TRL trainer) subclass whose `compute_loss` calls the function above, with the frozen reference model loaded once and kept in `eval()` — exactly the reference-model pattern from [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html), and the same loop you build for Stack-100M in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html). If you would rather not wire it yourself, **`open-unlearning`** (from the TOFU authors) is the reference open-source framework: it implements GA, gradient difference, KL, NPO, SimNPO and RMU against the TOFU and MUSE benchmarks behind one config-driven CLI, which also makes your numbers comparable to published ones.
+
 ### 6.3 Editing-as-unlearning
 
 The locate-then-edit machinery (Sections 2–3) doubles as an unlearning tool. Two flavors:
@@ -289,11 +308,14 @@ Because "the model won't say it" is not "the model unlearned it," the field buil
 
 ### 6.5 The auditor's view: did it really forget?
 
-The decisive test is adversarial, not behavioral. Three probes that routinely catch "fake" unlearning:
+The decisive test is adversarial, not behavioral. Four probes that routinely catch "fake" unlearning:
 
 1. **Membership inference (MIA)**: can an attacker tell, from loss/perplexity, that $x \in D_f$ was once in training? If forget-set perplexity is still anomalously low, the data's fingerprint remains. (See [Privacy, Memorization & Differential Privacy for LLMs](../13-interp-safety-gov/03-privacy-memorization-dp.html).)
 2. **Relearning / fine-tuning attacks**: a few gradient steps on a *tiny* sample of the forgotten data. If the model snaps back to full recall almost instantly, the knowledge was suppressed, not removed — a damning result, since true removal should require relearning from near-scratch.
 3. **Jailbreak / paraphrase elicitation**: ask in another language, via role-play, or with an indirect prompt. Output-only unlearning leaks under these constantly.
+4. **Perturb the weights and re-ask**: quantize the "unlearned" checkpoint to int4/int8, or steer/ablate in activation space. Reported results in 2025 found that plain post-training quantization can restore a substantial share of supposedly forgotten knowledge — the forget update was a small, low-precision-fragile perturbation sitting on top of intact knowledge. Since you will ship a quantized model anyway ([Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html)), *audit the quantized artifact*, not just the fp16 one.
+
+This is why **tamper-resistance** is the current research frontier: instead of only minimizing forget-set performance now, methods such as TAR (Tamirisa et al., 2024) meta-train the weights so that *an adversary's own fine-tuning steps fail to recover the capability*, optimizing through a simulated relearning attack. Nothing here yields a proof; the honest framing for a compliance conversation is "resistant to this attack budget," never "erased."
 
 
 {{fig:kedit-unlearn-suppress-vs-remove}}
@@ -413,10 +435,77 @@ print("[generalize]", generate("Where is the Eiffel Tower? It is in"))
 print("[locality] ", generate("The Colosseum is located in the city of"))
 ```
 
-What to watch when you run it: the **[edited]** line should now say *Rome*; the **[generalize]** line *often* but not always follows (rank-one edits generalize imperfectly — that's the Section 5 lesson live); and the **[locality]** line should still correctly say *Rome* for the Colosseum was already Rome, so pick an unrelated subject like "The Statue of Liberty is located in the city of" to confirm it still says *New York*. The Frobenius norm of $\Delta$ printed in step 3 will be tiny relative to $\lVert W\rVert_F$ — the edit is a whisper to the weight matrix, which is exactly why locality is even possible.
+What to watch when you run it: the **[edited]** line should now say *Rome*; the **[generalize]** line *often* but not always follows (rank-one edits generalize imperfectly — that's the Section 5 lesson live); and the **[locality]** line is deliberately booby-trapped — the Colosseum genuinely *is* in Rome, so that probe cannot tell "locality preserved" apart from "the edit leaked." Swap in an unrelated subject such as "The Statue of Liberty is located in the city of" (expected: *New York*) to make it informative; Exercise 5 walks through the fix. The Frobenius norm of $\Delta$ printed in step 3 will be tiny relative to $\lVert W\rVert_F$ — the edit is a whisper to the weight matrix, which is exactly why locality is even possible.
 
-!!! note "Aside: production editors use real covariance"
-    The identity-approximation above is the textbook simplification. Real ROME/MEMIT precompute $C = KK^\top$ from tens of thousands of Wikipedia activations so the $C^{-1}k_*$ term genuinely steers the update into *under-used* directions. The HuggingFace-ecosystem library **EasyEdit** (Zhang et al.) packages ROME, MEMIT, GRACE, WISE, and more behind one API and ships these covariance statistics — reach for it before hand-rolling anything for real use.
+### 7.1 Closing the last black box: estimating $C$ yourself
+
+The identity approximation above is the one place the listing cheats. The real thing is barely longer: $C$ is just the uncentered second moment $\mathbb{E}[k k^\top]$ of the *same* activation you captured as $k_*$, accumulated over a generic corpus. Run this **before** splicing the edit (it must see the unedited model), then use `Cinv @ k_star` in place of the identity approximation in step 3.
+
+```python
+# est_cov.py — precompute the ROME/MEMIT key covariance for ONE layer of GPT-2.
+# pip install datasets
+from datasets import load_dataset
+
+D_MLP = W_down.shape[0]                       # 3072 for GPT-2 small
+C = torch.zeros(D_MLP, D_MLP, device=device, dtype=torch.float64)
+n_tokens = 0
+acts = {}
+h = mlp.c_proj.register_forward_hook(
+    lambda mod, inp, out: acts.__setitem__("k", inp[0].detach()))
+
+ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="train[:5000]")
+with torch.no_grad():
+    for row in ds:                            # ~1e5-1e6 tokens is plenty for a demo
+        text = row["text"].strip()
+        if len(text) < 32:
+            continue
+        ids = tok(text, return_tensors="pt", truncation=True, max_length=256).to(device)
+        model(**ids)
+        k = acts["k"].reshape(-1, D_MLP).double()   # [n_tok, d_mlp] keys seen here
+        C += k.T @ k                                # accumulate k k^T
+        n_tokens += k.shape[0]
+h.remove()
+
+C /= max(n_tokens, 1)                         # E[k k^T]
+# Damping: C is near-singular (activations live on a low-dim manifold), so we must
+# ridge it before inverting. The damping factor is ROME's lambda hyperparameter.
+C += 1e-2 * C.diagonal().mean() * torch.eye(D_MLP, device=device, dtype=torch.float64)
+Cinv = torch.linalg.inv(C).float()
+print("C condition number after damping:", torch.linalg.cond(C).item())
+
+# Now in step 3, replace the identity approximation with the real steering vector:
+#     Cinv_k = Cinv @ k_star
+# Everything else (residual, denominator, outer product) is unchanged.
+```
+
+Two things to notice. First, the inverse is computed **once per layer** and reused for every future edit to that layer — it is fact-independent, which is what makes per-edit cost seconds rather than minutes. Second, the damping term is not optional: real key covariances are badly conditioned because activations occupy a low-dimensional manifold, and an undamped inverse amplifies noise directions until the edit destroys fluency. Raising the damping moves you along the reliability-vs-locality frontier of Section 5.1 in exactly the way Exercise 6(c) describes.
+
+### 7.2 The library you would actually use: EasyEdit
+
+For real work, do not hand-roll. **EasyEdit** (`zjunlp/EasyEdit`, ACL 2024) packages ROME, MEMIT, AlphaEdit, GRACE, WISE and many newer editors behind one API, ships precomputed layer statistics, and — crucially — computes the Section 5.1 metrics for you so your numbers are comparable to published ones:
+
+```python
+# easyedit_rome.py — the same edit, via the standard library (API tracks the repo).
+from easyeditor import BaseEditor, ROMEHyperParams
+
+hparams = ROMEHyperParams.from_hparams("./hparams/ROME/gpt2-xl.yaml")  # layer, lr, damping
+editor = BaseEditor.from_hparams(hparams)
+
+metrics, edited_model, _ = editor.edit(
+    prompts=["The Eiffel Tower is located in the city of"],
+    ground_truth=["Paris"],
+    target_new=["Rome"],
+    subject=["The Eiffel Tower"],          # needed to find the last-subject-token site
+    # locality/portability probes are scored automatically and returned in `metrics`
+    locality_inputs={"neighborhood": {
+        "prompt": ["The Statue of Liberty is located in the city of"],
+        "ground_truth": ["New York"]}},
+    sequential_edit=False,                 # True for lifelong/streaming edits
+)
+print(metrics)   # per-edit reliability ("rewrite_acc"), generalization, locality
+```
+
+Swap `ROMEHyperParams` for `MEMITHyperParams`, `AlphaEditHyperParams`, `GraceHyperParams` or `WISEHyperParams` and pass a list of hundreds of prompts to move from Section 2 to Sections 3–4 without changing your evaluation harness. Because Stack-100M ([The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html)) is a plain HF-compatible decoder, all of this applies to it directly — and at 100M parameters the covariance estimate above finishes in minutes on one GPU, making your own model the cheapest possible sandbox for reproducing ROME, MEMIT and their failure modes.
 
 ---
 
@@ -437,7 +526,7 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
     - **Memory/adapter editors** (**GRACE**'s activation codebook, **WISE**'s routed side memory) keep base weights frozen — better for lifelong editing, auditability, and rollback, at the cost of an inference-time lookup.
     - The hard part is **side effects**: **ripple effects** (multi-hop consequences stay inconsistent), **locality** violations (unrelated facts move), and **forgetting/collapse** under accumulated edits. A good edit must satisfy reliability, generalization, locality, *and* fluency at once.
     - **Machine unlearning** removes the *influence* of data; the gold standard is **indistinguishability from a model retrained without it**. Practical recipes — gradient ascent, gradient difference, **NPO**, **RMU**, editing-as-unlearning — are all *approximate* with no formal guarantee.
-    - "The model won't say it" ≠ "the model unlearned it." Audit with **membership inference**, **relearning/fine-tuning attacks**, and **paraphrase/cross-lingual elicitation**; benchmark on **TOFU** and **MUSE**.
+    - "The model won't say it" ≠ "the model unlearned it." Audit with **membership inference**, **relearning/fine-tuning attacks**, **paraphrase/cross-lingual elicitation**, and a re-test **after quantization** (which can resurrect "forgotten" knowledge); benchmark on **TOFU** and **MUSE** with `open-unlearning`, and edit with **EasyEdit** rather than hand-rolled weight surgery.
     - When a fact changes often or you must *prove* deletion, prefer **retrieval** or **SISA/DP training** over parametric editing — editing changes associations and suppresses outputs, not beliefs and knowledge.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -461,6 +550,8 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
     **Open-source & tools**
 
     - [zjunlp/EasyEdit](https://github.com/zjunlp/EasyEdit) — ACL 2024 framework unifying ROME, MEMIT, GRACE, WISE, AlphaEdit, and many newer editors (AnyEdit, UltraEdit, and more) behind one API, including precomputed layer statistics; the standard starting point for practitioners. Actively maintained through 2026 (Transformers 5.x support, multi-GPU editing), with a sibling **EasyEdit2** for real-time inference-time steering.
+    - [locuslab/open-unlearning](https://github.com/locuslab/open-unlearning) — the unlearning counterpart, from the TOFU authors: gradient ascent, gradient difference, KL, NPO, SimNPO and RMU implemented against the TOFU and MUSE benchmarks with a config-driven CLI, so forget-quality/utility numbers are directly comparable to the literature.
+    - [kmeng01/rome](https://github.com/kmeng01/rome) and [kmeng01/memit](https://github.com/kmeng01/memit) — the original research code for causal tracing and both editors; read these when you need the exact covariance-estimation and hyperparameter details behind the equations above.
 
     **Go deeper**
 
@@ -481,7 +572,9 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
 - Shi et al. — *MUSE: Machine Unlearning Six-Way Evaluation for Language Models*, 2024.
 - Zhang et al. — *Negative Preference Optimization* (NPO), 2024.
 - Li et al. — *The WMDP Benchmark* (and RMU for unlearning), 2024.
+- Tamirisa et al. — *Tamper-Resistant Safeguards for Open-Weight LLMs* (TAR), 2024.
 - Zhang et al. — *EasyEdit: An Easy-to-use Knowledge Editing Framework for LLMs*.
+- `locuslab/open-unlearning` — open framework for LLM unlearning methods and the TOFU/MUSE benchmarks.
 
 ## Exercises
 

@@ -48,6 +48,8 @@ $$
 
 A threshold $z^* \approx 4$ corresponds to a false-positive rate on the order of $10^{-5}$ per document.
 
+Be careful with that null, though: it assumes each scored token is green *independently* with probability $\gamma$, and repeated $n$-grams break the assumption. If a passage repeats the phrase "the quarterly revenue figure" five times, the same context hashes to the same green list every time and the same token is scored green five times — correlated draws that inflate $z$ and quietly raise the real false-positive rate above the nominal one. Production detectors therefore deduplicate: Hugging Face's `WatermarkDetector` exposes exactly this as `ignore_repeated_ngrams=True`, which scores each distinct context $n$-gram once. Always report which convention you used when you quote a $z$-score.
+
 !!! example "Worked numerical example"
     Suppose $\gamma = 0.5$ (half the vocabulary is green at each step), $\delta = 2.0$, and the text is $T = 200$ tokens long.
 
@@ -84,6 +86,23 @@ $$
 where $F_t^{-1}$ is the quantile function of the model's next-token distribution. Because we apply a monotone transformation, the *marginal* distribution of each token is unchanged — the text is statistically identical to unmodified sampling. Yet the sequence of tokens is correlated with the known random sequence, giving a detectable signal.
 
 Detection uses a test based on the rank statistics of the observed tokens under the model's predicted distribution: under watermarking, observed tokens should cluster near $r_t$ in probability space, while human text is uniform.
+
+A closely related distortion-free trick, usually credited to Scott Aaronson's 2022 description of an (unreleased) OpenAI scheme, is *Gumbel* or *exponential-minimum* sampling: draw a key-derived uniform $r_v \in (0,1)$ for every token $v$ and emit $\arg\max_v r_v^{1/p_v}$. This is exactly the Gumbel-max trick with the randomness supplied by the key instead of a fresh RNG, so the emitted token is distributed exactly as $p$; but the detector, which can recompute $\{r_v\}$, sees that the chosen tokens have systematically high $r_v$ and sums $-\log(1 - r_{w_t})$ into a test statistic. The catch shared by all such schemes: the *marginal* per-token distribution is preserved, but generation becomes **deterministic given the key and the context**, so the same prompt regenerates the same text. Practical systems break this by mixing a per-request nonce into the key (see the key-derivation exercise at the end of this chapter).
+
+### Tournament Sampling: SynthID-Text
+
+The scheme actually deployed at production scale on text is **SynthID-Text** (Dathathri et al., *Scalable watermarking for identifying large language model outputs*, Nature 2024), used in Gemini. It is worth understanding because it sits between KGW and the distortion-free family and because its implementation is open source.
+
+Instead of perturbing logits, SynthID-Text perturbs the *sampling* step with a knockout tournament. At step $t$:
+
+1. Draw $2^\ell$ candidate tokens i.i.d. from the model's true next-token distribution $p_t$ (so far, nothing is distorted).
+2. Hash the previous $n-1$ tokens (an $n$-gram context) together with a set of watermarking keys to produce $\ell$ pseudorandom *scoring functions* $g_1,\dots,g_\ell$, each mapping a candidate token to a value in $\{0,1\}$ (or a small finite set).
+3. Run the tournament: in layer $i$, pair the surviving candidates and keep, from each pair, the one with the larger $g_i$ value; break ties uniformly at random.
+4. Emit the single survivor.
+
+With one layer ($\ell = 1$) the scheme is **non-distortionary**: averaged over the random keys, the emitted token is still distributed as $p_t$, because both members of each pair were drawn from $p_t$ and the tie-breaking is symmetric. Adding layers strictly increases detectability — the emitted token wins more and more key-derived comparisons — at the cost of a small, controlled deviation from $p_t$. That single knob, "how many tournament layers," is the cleaner analogue of KGW's $\delta$.
+
+Detection is a mean test: compute $\bar{g} = \frac{1}{\ell T}\sum_{t,i} g_i(w_t)$ over the passage. Under the null this concentrates around its chance value; under watermarking it is biased upward. The Nature paper reports that a *learned Bayesian detector* — a small classifier trained on watermarked and unwatermarked samples from the same model — is substantially more sample-efficient than the training-free weighted-mean test, which matters because you want confident detection from a few dozen tokens, not a few hundred. Two implementation details are load-bearing: **repeated-context masking** (skip positions whose $n$-gram context has already been seen, so a repeated phrase does not get watermarked twice and does not get counted twice) and the fact that, exactly as with KGW, low-entropy spans carry no signal because all $2^\ell$ candidates are the same token.
 
 ---
 
@@ -323,6 +342,85 @@ Here the 40% substitution attack already drops $z$ below the 4.0 threshold for t
 
 ---
 
+## The Same Watermark With Real Libraries
+
+You would not ship the loop above. The KGW scheme is built into Hugging Face `transformers` as a `LogitsProcessor` plus a matching detector, so watermarking a real model is a two-object change to your generation call. The parameter names map one-to-one onto the mechanism we just implemented: `greenlist_ratio` is $\gamma$, `bias` is $\delta$, `context_width` is $h$, and `hashing_key` is the secret $k$.
+
+```python
+# pip install "transformers>=4.46" torch
+import torch
+from transformers import (
+    AutoModelForCausalLM, AutoTokenizer,
+    WatermarkingConfig, WatermarkDetector,
+)
+
+model_id = "HuggingFaceTB/SmolLM2-135M-Instruct"   # any causal LM; ~100M-class here
+tok = AutoTokenizer.from_pretrained(model_id)
+model = AutoModelForCausalLM.from_pretrained(model_id).eval()
+
+# The KGW green-list watermark, i.e. exactly the scheme coded from scratch above.
+wm_cfg = WatermarkingConfig(
+    greenlist_ratio=0.25,       # gamma
+    bias=2.0,                   # delta (logit boost on green tokens)
+    hashing_key=15485863,       # the SECRET key -> HSM in production
+    seeding_scheme="lefthash",  # hash the h previous tokens; "selfhash" also available
+    context_width=1,            # h
+)
+
+prompt = tok("The economics of small language models are", return_tensors="pt")
+out = model.generate(
+    **prompt, do_sample=True, top_p=0.95, temperature=1.0,
+    max_new_tokens=200,
+    watermarking_config=wm_cfg,   # merged into the generation config -> logits processor
+)
+
+# Detection needs the IDENTICAL config: same key, gamma, scheme and context width.
+detector = WatermarkDetector(
+    model_config=model.config, device="cpu",
+    watermarking_config=wm_cfg,
+    ignore_repeated_ngrams=True,  # see the independence caveat above
+)
+res = detector(out, z_threshold=3.0, return_dict=True)
+print(res.num_tokens_scored, res.num_green_tokens, res.green_fraction)
+print("z =", res.z_score, "p =", res.p_value, "flagged =", res.prediction)
+```
+
+Two things are worth noticing. First, `seeding_scheme="selfhash"` hashes the *candidate* token along with the context, which makes the green list depend on the token being scored and materially raises the cost of the adaptive attacks described below — at the price of a $|V|$-way hash per step instead of one. Second, the detector takes the *full* sequence including the prompt; if you score prompt tokens the model never chose, you dilute $z$ exactly like the copy-paste splicing attack in Exercise 3.
+
+SynthID-Text lives in the same API surface:
+
+```python
+from transformers import SynthIDTextWatermarkingConfig
+
+synthid_cfg = SynthIDTextWatermarkingConfig(
+    keys=[654, 400, 836, 123, 340, 443, 597, 160, 57],  # one key per tournament layer
+    ngram_len=5,                                        # context n-gram width
+)
+out = model.generate(**prompt, do_sample=True, max_new_tokens=200,
+                     watermarking_config=synthid_cfg)
+```
+
+Detection here is *not* free: `transformers` ships `SynthIDTextWatermarkDetector` wrapping a `BayesianDetectorModel` that you must first **fit on watermarked and unwatermarked samples from your own model** — the detector is model- and key-specific. Budget for that training step (and for holding out a clean corpus of your model's unwatermarked output) when you plan a deployment. Google's [`google-deepmind/synthid-text`](https://github.com/google-deepmind/synthid-text) repo carries the reference implementation and the mean/weighted-mean detectors alongside the Bayesian one.
+
+For research and evaluation rather than serving, **MarkLLM** (`THU-BPM/MarkLLM`, EMNLP 2024 demo) is the standard harness: it implements two dozen schemes — KGW, Unigram, SynthID-Text, SIR, EXP/Gumbel, and more — behind one interface, together with attack and robustness pipelines so you can compare them on the same model:
+
+```python
+# Installed from source; see the repo README for the exact config schema.
+from watermark.auto_watermark import AutoWatermark
+
+wm = AutoWatermark.load("KGW",
+                        algorithm_config="config/KGW.json",
+                        transformers_config=my_transformers_config)
+text = wm.generate_watermarked_text("Explain rotary position embeddings.")
+print(wm.detect_watermark(text))       # -> {"is_watermarked": True, "score": ...}
+```
+
+**In the serving stack.** A watermark is just a logits processor, so it belongs at the same point in the pipeline as top-p and repetition penalty — see [Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html). vLLM exposes a logits-processor extension point for exactly this, though the interface changed with the V1 engine (per-request `logits_processors` callables in the older engine; a batched `LogitsProcessor` class registered as a plugin in V1), so pin your version and check its docs before writing the hook. The ordering rule is version-independent and easy to get wrong: **apply the watermark bias after temperature and truncation warpers**, otherwise top-$k$/top-$p$ may prune the green tokens you just promoted — `transformers` appends the watermark processor last for precisely this reason.
+
+If you are building Stack-100M in Part XIV, this is the hook to add to its serving path ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)). Do measure before you trust it: a 100M-parameter model produces shorter, lower-entropy, more repetitive text than a frontier model, which is the regime where $z$ accumulates slowest, so empirically calibrate how many tokens you need for $z > 4$ on *your* model rather than importing a number from the paper.
+
+---
+
 ## Robustness to Attacks
 
 A watermark that fails under modest editing provides only false assurance. The main attack classes are:
@@ -350,11 +448,11 @@ Text watermarking exploits the discrete token distribution. Image, audio, and vi
 
 ### SynthID-Class Image Watermarking
 
-Google DeepMind's SynthID (Fernandez et al., 2023) embeds a learned, imperceptible pattern into image pixel values. Rather than modifying pixel intensities post-hoc (the classical LSB or DWT approach), SynthID integrates a small neural network "watermark decoder" trained jointly with or fine-tuned alongside the image model. The encoder learns to add a near-zero-magnitude steganographic signal that:
+Google DeepMind's SynthID (first announced in 2023 for Imagen, later extended across Gemini's modalities) embeds a learned, imperceptible pattern into image pixel values. Rather than modifying pixel intensities post-hoc (the classical LSB or DWT approach), SynthID pairs a small neural *encoder* that injects the signal with a *decoder* network that recovers it, both trained end-to-end against a differentiable stack of augmentations (JPEG, resize, crop, noise) so the signal learns to survive them. The closest published academic construction is *The Stable Signature* (Fernandez et al., ICCV 2023), which fine-tunes a latent diffusion model's **decoder** so that every image the model emits carries a per-user binary signature — the watermark is rooted in the weights rather than bolted on afterwards, so an attacker cannot simply delete a post-processing step. Such learned encoders aim to add a near-zero-magnitude steganographic signal that:
 
-- Survives JPEG compression at quality factors as low as 50.
+- Survives lossy compression down to moderate JPEG quality factors (on the order of Q=50).
 - Survives resizing and cropping.
-- Is invisible to the human eye (SSIM > 0.999 on natural images).
+- Is visually imperceptible — the perturbation is well below the just-noticeable-difference threshold on natural images, though the exact reported fidelity numbers vary by system and are not always published.
 
 Detection uses the same decoder network: the residual embedding is projected onto a learned detection vector, and a threshold test is applied.
 
@@ -362,7 +460,7 @@ Detection uses the same decoder network: the residual embedding is projected ont
 
 ### Audio and Video
 
-For speech synthesis (text-to-speech), audio watermarking can be applied in the mel-spectrogram domain before vocoding or via a neural encoder-decoder analogous to SynthID. SynthID-Audio (announced by Google, 2024) claims robustness to mp3 compression, speed changes of ±10%, and additive noise up to 30dB SNR loss.
+For speech synthesis (text-to-speech), audio watermarking can be applied in the mel-spectrogram domain before vocoding or via a neural encoder-decoder analogous to SynthID. Google's SynthID for audio (deployed with the Lyria music models from 2024) converts the waveform to a spectrogram, embeds the signal there, and converts back; Google reports robustness to the common transformations audio actually undergoes — lossy compression such as MP3, added noise, and moderate speed/tempo changes — though the precise operating envelope is not fully published. Meta's **AudioSeal** (open source, `facebookresearch/audioseal`) is the equivalent you can actually run: a localized watermark whose detector emits a per-sample probability, so it can find a watermarked span spliced into a longer human recording rather than scoring the clip as a whole.
 
 Video watermarking faces an additional adversary: temporal resampling (frame-rate change, slow-motion). Frame-level image watermarks compound across frames, so detection uses majority voting across sampled frames, which is robust to partial frame replacement.
 
@@ -376,7 +474,7 @@ Watermarking answers "was this generated by model X?" but not "who generated it,
 
 ### The C2PA Standard
 
-The Coalition for Content Provenance and Authenticity (C2PA) is a joint effort of Adobe, Microsoft, BBC, Intel, Sony, and others. The specification (C2PA 2.x — version 2.0 landed in 2024, with 2.4 the current release as of writing) defines:
+The Coalition for Content Provenance and Authenticity (C2PA) is a joint effort of Adobe, Microsoft, BBC, Intel, Sony, and others. The specification is now in its 2.x line (2.0 landed in 2024, with further 2.x point releases since — check [spec.c2pa.org](https://spec.c2pa.org/specifications/) for the current version, and note that the specification has also been taken into formal international standardization). It defines:
 
 - **Content Credentials**: a JSON-LD manifest embedded in the file's XMP/JUMBF metadata. It records the asset's identity, creation tool, timestamp, and a list of *actions* (crop, generate, edit) performed.
 - **Hard-binding**: a cryptographic hash of the asset bytes (SHA-256) is included in the manifest, binding the manifest to exactly this file. Any modification breaks the hash.
@@ -415,6 +513,31 @@ The Coalition for Content Provenance and Authenticity (C2PA) is a joint effort o
   }
 }
 ```
+
+### Signing and Verifying in Practice: `c2pa-rs` and `c2patool`
+
+You do not implement C2PA yourself. The reference implementation is the Rust crate **`c2pa-rs`** from the Content Authenticity Initiative, with a CLI (**`c2patool`**) and bindings for Python, JavaScript, and C. The manifest above is the input you hand to it; the tool does the JUMBF embedding, the hard-binding hash, and the COSE/X.509 signing.
+
+```bash
+# Read whatever credentials an asset already carries (exits non-zero if invalid).
+c2patool ./candidate.jpg --detailed
+
+# Sign an asset with the manifest definition shown above.
+# The manifest JSON references a signing cert chain + private key
+# (in production: a cert from a C2PA-recognised CA, key held in an HSM/KMS).
+c2patool ./render.png --manifest ./manifest.json --output ./signed.png
+```
+
+```python
+# pip install c2pa-python   -- Reader/Builder mirror the CLI's read/sign paths.
+from c2pa import Reader
+
+with Reader.from_file("signed.png") as reader:
+    manifest_store = reader.json()   # validation status + full assertion list
+print(manifest_store)
+```
+
+Check the crate's README for the exact flag and API names, which have moved across the 0.x releases. The engineering point that does not move: **verification is a certificate-chain problem, not an image-processing problem.** A valid signature tells you only that *some* holder of *some* trusted certificate asserted these actions; the trust decision is about which roots you accept, and revocation and expiry apply exactly as they do for TLS. This is also why provenance and watermarking are deployed together — an operator generating an image typically embeds a SynthID-class pixel watermark *and* signs a C2PA manifest, so that stripping the metadata leaves the pixel signal and re-encoding the pixels leaves the manifest.
 
 ### Limitations of Provenance
 
@@ -467,19 +590,21 @@ A language model that is fine-tuned post-hoc to evade a specific detector can do
 
 The EU AI Act's transparency obligations for generative AI take effect on 2 August 2026 — though the 2026 "Omnibus" simplification reform granted generative-AI systems already on the market a grace period until 2 December 2026 to meet the machine-readable-marking requirement. Article 50 specifies:
 
-1. **Machine-generated content must be labeled.** Providers of general-purpose AI systems that generate synthetic audio, image, video, or text "intended to interact with persons" must ensure the output is marked as AI-generated in a machine-readable format.
+Note who each obligation binds — the Article splits duties between **providers** (who build and ship the system) and **deployers** (who use it), and the split is the part engineers most often get wrong:
 
-2. **Text watermarking for public communication.** For AI-generated text used for public communication (news, opinion, political content), Article 50(2) additionally requires that the content be *watermarked* in a technically robust way, "unless the AI-generated content has undergone substantial human review or editorial oversight."
+1. **Chatbot disclosure — Article 50(1), on providers.** Systems intended to interact directly with natural persons must make it clear to the person that they are interacting with an AI, unless that is obvious from the context.
 
-3. **Deepfake disclosure.** AI-generated or manipulated images, audio, or video of real persons must carry a clear disclosure label visible to the end user.
+2. **Machine-readable marking — Article 50(2), on providers.** Providers of AI systems that generate synthetic audio, image, video, or **text** must ensure the outputs are marked in a machine-readable format and detectable as artificially generated or manipulated. The Act requires the solutions to be "effective, interoperable, robust and reliable as far as this is technically feasible" — deliberately technology-neutral wording that watermarks, C2PA-style credentials, and metadata all aim at.
 
-The Act leaves the specific technical implementation to the Commission (via standards bodies, likely ETSI and CEN/CENELEC), but explicitly names C2PA-style content credentials as a compliant approach. Penalties for non-compliance can reach 1.5% of global annual turnover.
+3. **Deepfake and public-interest-text disclosure — Article 50(4), on deployers.** A deployer publishing AI-generated or manipulated image, audio, or video constituting a deepfake must disclose it. Separately, a deployer publishing AI-generated or AI-manipulated **text** in order to inform the public on matters of public interest must disclose that too — *unless* the content underwent human review and a natural or legal person holds editorial responsibility for it.
+
+The Act leaves the specific technical implementation to the Commission (via standards bodies, likely ETSI and CEN/CENELEC), and C2PA-style content credentials are the leading candidate for a compliant machine-readable marking. Non-compliance with the Article 50 transparency obligations falls under the second fine tier: up to EUR 15 million or 3% of total worldwide annual turnover, whichever is higher.
 
 Practically, this means:
 
 - LLM API providers serving EU users must expose a watermark API (or embed watermarks by default) for public-facing text generation.
 - Image and video generation services must embed C2PA credentials or equivalent.
-- The "substantial human review" exemption creates a compliance design choice: a product can choose either watermarking or a mandatory human-in-the-loop review gate.
+- The editorial-responsibility exemption is narrower than it first looks: it relieves the *deployer* of the disclosure duty for public-interest text, but it does not relieve the *provider* of the Article 50(2) machine-readable marking duty. If you build the model, human review downstream does not get you out of marking.
 
 Cross-reference: [AI Governance, Compliance & Regulation](../13-interp-safety-gov/06-governance-compliance.html) covers the full EU AI Act risk-tier framework and the broader global compliance landscape.
 
@@ -509,7 +634,7 @@ Despite their elegance, current watermarking schemes face several real-world lim
 
 **Multi-model provenance.** When a document is partly human-written, partly AI-generated, and partly AI-edited, neither a single $z$-score nor a binary classifier can give a nuanced answer. Forensic attribution — "this paragraph is AI-generated; this one is not" — requires token-level rather than document-level watermarking, an active research area.
 
-**Open-weight models.** Any open-weight model (LLaMA, Mistral, etc.) can be deployed without watermarking. The operator can remove the watermark processor trivially. This means watermarking mandates (like EU AI Act Article 50) apply only to API-based closed models; open-weight models present a policy gap. One proposed mitigation is embedding watermarks *in the model weights* (via fine-tuning to prefer green tokens without an explicit processor), but this is easily circumvented by further fine-tuning.
+**Open-weight models.** Any open-weight model (LLaMA, Mistral, etc.) can be deployed without watermarking. The operator can remove the watermark processor trivially. This means watermarking mandates (like EU AI Act Article 50) apply only to API-based closed models; open-weight models present a policy gap. One proposed mitigation is embedding watermarks *in the model weights* (via fine-tuning to prefer green tokens without an explicit processor), but this is easily circumvented by further fine-tuning. This is the honest position for a project like Stack-100M: once you release checkpoints, you cannot make anyone else's copy watermark its output. What you *can* do — and what a responsible release does — is watermark the endpoint you host, sign the artifacts you publish, and document the model card so downstream users know what they are re-hosting.
 
 **Semantic watermarks.** An emerging line of work embeds watermarks at the *semantic* level — in the choice of which concepts to mention, which synonyms to use — rather than at the token level. Semantic watermarks are more robust to paraphrase but harder to detect without access to a semantic model, and their statistical properties are less well understood.
 
@@ -518,13 +643,13 @@ Despite their elegance, current watermarking schemes face several real-world lim
 ## Key Takeaways
 
 !!! key "Key Takeaways"
-    - The KGW green-list watermark biases sampling toward a secret-key-derived token subset. Detection computes a z-score under the Binomial null; a score above ~4 corresponds to a false-positive rate around $10^{-5}$.
+    - The KGW green-list watermark biases sampling toward a secret-key-derived token subset. Detection computes a z-score under the Binomial null; a score above ~4 corresponds to a false-positive rate around $10^{-5}$ — provided you deduplicate repeated $n$-grams, whose correlated scores otherwise inflate $z$. In practice you get it from `transformers` as `WatermarkingConfig` + `WatermarkDetector`, applied as a logits processor *after* temperature and top-p.
     - Distortion-free watermarks (Kuditipudi et al.) preserve the exact marginal token distribution while still embedding a detectable signal via inverse-CDF coupling; preferred when output quality is paramount.
     - A 40% random token substitution attack roughly halves the z-score; an adversary must destroy 70–80% of the text to reliably evade detection — at which point they have rewritten the content anyway.
-    - SynthID-class image watermarks use learned neural encoders trained end-to-end; they survive JPEG, resizing, and cropping far better than classical LSB or DFT approaches.
+    - SynthID-class image watermarks use learned neural encoders trained end-to-end against differentiable augmentations; they survive JPEG, resizing, and cropping far better than classical LSB or DFT approaches. SynthID-**Text** instead watermarks the sampling step via a knockout tournament over candidate tokens — non-distortionary at one layer, more detectable with more layers — and is the production-scale text scheme, with a learned Bayesian detector you must fit on your own model.
     - C2PA content credentials provide cryptographically signed manifests with hard and soft asset bindings; they are complementary to watermarking — manifests survive format preservation, watermarks survive metadata stripping.
     - Post-hoc AI-text detectors have fundamental limitations: domain shift, adversarial evasion, and false-positive rates that systematically disadvantage non-native speakers. They should not be used for high-stakes automated decisions.
-    - EU AI Act Article 50 mandates machine-readable watermarking or labeling for AI-generated text used in public communication, with penalties up to 1.5% of global turnover for non-compliance.
+    - EU AI Act Article 50 splits duties: *providers* must mark generated audio/image/video/text in a machine-readable, robust format (50(2)); *deployers* must disclose deepfakes and AI-generated public-interest text (50(4)), with an editorial-responsibility carve-out that does not excuse the provider's marking duty. Fines for breaching Article 50 reach EUR 15 million or 3% of worldwide annual turnover, whichever is higher.
     - Open-weight models create a policy gap: any operator can remove watermarking infrastructure, making technical mandates applicable only to API-gated services.
     - Key management and per-request key derivation are the production engineering concerns most often overlooked in academic watermarking papers.
 
@@ -551,10 +676,13 @@ Despite their elegance, current watermarking schemes face several real-world lim
     - [jwkirchenbauer/lm-watermarking](https://github.com/jwkirchenbauer/lm-watermarking) — official KGW reference implementation as a Hugging Face `LogitsProcessor`; drop-in for any model supporting `generate`.
     - [google-deepmind/synthid-text](https://github.com/google-deepmind/synthid-text) — reference implementation for the Nature 2024 SynthID-Text watermark with both weighted-mean and Bayesian detectors.
     - [THU-BPM/MarkLLM](https://github.com/THU-BPM/MarkLLM) — unified toolkit (EMNLP 2024 demo) implementing 24 watermarking algorithms including KGW, SynthID-Text, and SIR, with detection pipelines and robustness evaluation.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — ships KGW (`WatermarkingConfig`, `WatermarkDetector`) and SynthID-Text (`SynthIDTextWatermarkingConfig`, `SynthIDTextWatermarkDetector`) as first-class generation options; the fastest path from this chapter to a watermarked model.
+    - [contentauth/c2pa-rs](https://github.com/contentauth/c2pa-rs) — reference Rust implementation of C2PA with the `c2patool` CLI and Python/JS bindings for signing and verifying content credentials.
+    - [facebookresearch/audioseal](https://github.com/facebookresearch/audioseal) — open-source localized audio watermarking with a per-sample detector, so a watermarked span spliced into a longer recording can still be found.
 
     **Go deeper**
 
-    - [C2PA Technical Specification (v2.4)](https://spec.c2pa.org/specifications/) — normative standard for content credentials: hard- and soft-binding, X.509 certificate chains, and the JSON-LD manifest format.
+    - [C2PA Technical Specification (2.x)](https://spec.c2pa.org/specifications/) — normative standard for content credentials: hard- and soft-binding, X.509 certificate chains, and the JSON-LD manifest format.
     - [Content Authenticity Initiative — How It Works](https://contentauthenticity.org/how-it-works) — accessible explainer on C2PA deployment across cameras, editing tools, and social platforms; covers the "nutrition label" model for provenance.
 
 ## Further Reading
@@ -566,6 +694,7 @@ Despite their elegance, current watermarking schemes face several real-world lim
 - Weber-Wulff, D. et al. — *Testing of Detection Tools for AI-Generated Text* (2023). Rigorous empirical audit of commercial detectors.
 - C2PA Technical Specification v2.0 — Coalition for Content Provenance and Authenticity (2024). The normative standard for content credentials.
 - Google DeepMind — *SynthID: Identifying AI-Generated Content* (Nature, 2024). Details of SynthID image and audio watermarking.
+- Dathathri, S. et al. — *Scalable Watermarking for Identifying Large Language Model Outputs* (Nature, 2024). The SynthID-Text tournament-sampling scheme, its non-distortionary configuration, and the learned Bayesian detector, evaluated in a live Gemini deployment.
 - Zhao, X., Ananth, P., Li, L., and Wang, Y. — *Provably Robust Multi-bit Watermarking for AI-Generated Text* (2023). Multi-bit extensions with information-theoretic robustness proofs.
 
 ---

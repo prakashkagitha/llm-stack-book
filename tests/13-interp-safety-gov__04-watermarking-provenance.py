@@ -1,9 +1,12 @@
 """CI-tested extracts of runnable code blocks from
 content/13-interp-safety-gov/04-watermarking-provenance.md
 
-Only block #0 (the from-scratch KGW-style green-list watermark, line ~92) is
-heuristically CPU-runnable. Blocks #1 (illustrative expected-output text) and
-#2 (a C2PA JSON manifest example) are non-Python and are SKIPPED.
+Only the from-scratch KGW-style green-list watermark block is dependency-free
+and CPU-runnable, so it is the one mirrored here. The chapter's other fenced
+blocks are SKIPPED: the illustrative expected-output text block, the C2PA JSON
+manifest example, the `c2patool` bash snippet, and the library snippets
+(`transformers` KGW / SynthID-Text, `c2pa-python`, MarkLLM), which all need a
+model download, a signing certificate, or an out-of-tree package.
 
 Run directly: `python3 tests/13-interp-safety-gov__04-watermarking-provenance.py`
 """
@@ -276,9 +279,10 @@ def main():
         fn()
     print(f"\nAll {len(BLOCKS)} code blocks executed and verified.")
     print(
-        "\nSKIPPED (non-Python, not code blocks): "
-        "#1 (illustrative expected-output text block), "
-        "#2 (C2PA JSON manifest example)."
+        "\nSKIPPED: illustrative expected-output text block; C2PA JSON "
+        "manifest example; c2patool bash snippet; library snippets "
+        "(transformers KGW/SynthID-Text, c2pa-python, MarkLLM) that need a "
+        "model download, signing certificate, or out-of-tree package."
     )
 
 

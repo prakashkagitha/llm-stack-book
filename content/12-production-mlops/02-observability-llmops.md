@@ -103,19 +103,44 @@ def handle_request(
             elapsed_ms = (time.perf_counter() - t0) * 1000
             usage = response.usage
             # LLM-specific span attributes are the most valuable for cost analysis.
-            llm_span.set_attribute("llm.model",               "gpt-4o-mini")
-            llm_span.set_attribute("llm.prompt_tokens",       usage.prompt_tokens)
-            llm_span.set_attribute("llm.completion_tokens",   usage.completion_tokens)
-            llm_span.set_attribute("llm.total_tokens",        usage.total_tokens)
-            llm_span.set_attribute("llm.latency_ms",          elapsed_ms)
-            llm_span.set_attribute("llm.finish_reason",       response.choices[0].finish_reason)
+            # Use the OpenTelemetry GenAI semantic-convention names (gen_ai.*) rather
+            # than ad-hoc keys, so any OTel-native backend can build dashboards without
+            # per-app mapping rules. (The conventions are still marked "Development",
+            # so pin the SDK version and expect occasional renames.)
+            llm_span.set_attribute("gen_ai.operation.name",       "chat")
+            llm_span.set_attribute("gen_ai.system",               "openai")   # newer revisions: gen_ai.provider.name
+            llm_span.set_attribute("gen_ai.request.model",        "gpt-4o-mini")
+            llm_span.set_attribute("gen_ai.request.max_tokens",   max_tokens)
+            llm_span.set_attribute("gen_ai.response.model",       response.model)
+            llm_span.set_attribute("gen_ai.usage.input_tokens",   usage.prompt_tokens)
+            llm_span.set_attribute("gen_ai.usage.output_tokens",  usage.completion_tokens)
+            # finish_reasons is an ARRAY in the spec (n>1 sampling returns several).
+            llm_span.set_attribute("gen_ai.response.finish_reasons",
+                                   [c.finish_reason for c in response.choices])
+            llm_span.set_attribute("llm.latency_ms",              elapsed_ms)   # app-local extra
 
         answer = response.choices[0].message.content
         root_span.set_attribute("response.length_chars", len(answer))
         return {"answer": answer, "docs": docs}
 ```
 
-The key design principle here: put *semantic attributes* on every span so you can slice metrics by model, user cohort, or prompt template later. Avoid putting raw prompt strings in span attributes (size limits + PII risk) — instead log them separately and link by trace ID.
+The key design principle here: put *semantic attributes* on every span so you can slice metrics by model, user cohort, or prompt template later. Avoid putting raw prompt strings in span attributes (size limits + PII risk) — instead log them separately and link by trace ID. The GenAI conventions do define a way to carry message content, but it is opt-in precisely because of that risk; most SDKs gate it behind an environment flag such as `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`.
+
+In practice you rarely hand-write every span. Three open-source auto-instrumentation families monkey-patch the client libraries for you and emit conforming spans: `opentelemetry-instrumentation-*` packages from OTel itself (contrib, plus a `openai-v2` GenAI instrumentation), Arize's **OpenInference** instrumentors (`openinference-instrumentation-openai`, `-langchain`, `-llama-index`, `-vllm`), and Traceloop's **OpenLLMetry** (`traceloop-sdk`). All three export plain OTLP, so they land in whatever backend you already run:
+
+```python
+# auto_instrument.py  —  zero-code-change tracing for OpenAI + LangChain calls
+# Requirements: openinference-instrumentation-openai openinference-instrumentation-langchain
+from openinference.instrumentation.openai import OpenAIInstrumentor
+from openinference.instrumentation.langchain import LangChainInstrumentor
+from trace_setup import setup_tracing
+
+setup_tracing("llm-chat-service")     # installs the global TracerProvider first
+OpenAIInstrumentor().instrument()     # every .chat.completions.create() now emits a span
+LangChainInstrumentor().instrument()  # chains/agents emit a nested span tree
+```
+
+Write manual spans only for the parts *your* code owns — retrieval, prompt assembly, business logic — and let the instrumentors cover the library calls.
 
 ## Token, Latency & Cost Metrics
 
@@ -131,6 +156,8 @@ Metrics are aggregates. We want to observe their distributions over time, not ju
 | Token cost | USD / 1M tokens | Unit economics; budget guardrails |
 
 TTFT is dominated by prefill and queue wait. TPOT is dominated by memory bandwidth during autoregressive decode. See [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html) for the underlying mechanics, and [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) for the cost model in full detail.
+
+The OTel GenAI conventions name these too — `gen_ai.client.operation.duration` and `gen_ai.client.token.usage` on the caller side, `gen_ai.server.time_to_first_token` and `gen_ai.server.time_per_output_token` on the inference-server side. If you emit metrics through the OTel SDK you get those names for free; the hand-rolled Prometheus metrics below are what you write when Prometheus is already your system of record. Either way, keep one naming scheme across services or your dashboards will silently double-count.
 
 ```python
 # metrics.py  —  Prometheus metrics for an LLM serving endpoint
@@ -255,6 +282,31 @@ groups:
     $$
 
     That is USD 171.07/day — a 34% reduction. Tracking token distributions per-template makes these opportunities visible; without metrics you are flying blind.
+
+### Cost when you host the model yourself
+
+The `PRICING` table above only exists because a vendor published a price list. When you serve your own weights — the situation for the model you build in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) — there is no per-token price; there is a rented GPU that costs the same whether it is busy or idle. The unit cost is therefore *derived* from throughput:
+
+$$
+\text{USD per 1M output tokens} = \frac{C_{\text{gpu}}}{T \times 3600} \times 10^6
+$$
+
+where $C_{\text{gpu}}$ is the hourly instance price and $T$ is sustained output tokens/second at your target latency SLO. For example, at an illustrative USD 2.00/hour for a single GPU and a measured $T = 900$ tokens/s under continuous batching, that is $2.00 / (900 \times 3600) \times 10^6 \approx \$0.62$ per 1M output tokens — and it *halves* if better batching doubles $T$. This is why self-hosted cost dashboards must plot the derived cost alongside utilization: an idle GPU has infinite cost per token. Instrument it directly from the serving metrics rather than a static table:
+
+```python
+# selfhost_cost.py  —  derive USD/1M tokens from live throughput
+GPU_HOURLY_USD = 2.00        # your actual instance price
+NUM_GPUS       = 1
+
+def usd_per_million_tokens(tokens_per_second: float) -> float:
+    """Amortize GPU rent over measured throughput. Returns inf when idle."""
+    if tokens_per_second <= 0:
+        return float("inf")
+    cost_per_second = GPU_HOURLY_USD * NUM_GPUS / 3600.0
+    return cost_per_second / tokens_per_second * 1e6
+```
+
+In PromQL against a vLLM server, `tokens_per_second` is just `rate(vllm:generation_tokens_total[5m])`, so the whole cost panel is one expression. See [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) for the full utilization-vs-latency tradeoff behind $T$.
 
 ## Prompt & Response Logging
 
@@ -550,22 +602,23 @@ At 1,000 sessions/day with 10% traffic in the treatment arm, that is 100 session
 
 ## Langfuse and the LLMOps Ecosystem
 
-Langfuse is an open-source LLM observability platform that provides a purpose-built UI for traces, evals, prompt versioning, and datasets. It exposes an OpenAI-compatible SDK decorator and a REST API.
+Langfuse is an open-source LLM observability platform that provides a purpose-built UI for traces, evals, prompt versioning, and datasets. Since its v3 Python SDK it is built *on top of* OpenTelemetry: the decorator below creates ordinary OTel spans, so Langfuse can also ingest spans from any other OTel exporter and you are not locked in.
 
 ```python
-# langfuse_integration.py  —  SDK-level Langfuse tracing
+# langfuse_integration.py  —  SDK-level Langfuse tracing (v3 Python SDK)
 # Requirements: langfuse openai
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
-import openai
+from langfuse import observe, get_client
+# Drop-in wrapper: identical surface to `openai`, but every call is traced.
+from langfuse.openai import OpenAI
 
 # Langfuse reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env
-lf = Langfuse()
+langfuse = get_client()
+client = OpenAI()
 
 @observe(name="rag_pipeline")          # Creates a trace named "rag_pipeline"
 def run_rag(query: str, user_id: str) -> str:
     # Update the current trace with metadata (user, session, tags)
-    langfuse_context.update_current_trace(
+    langfuse.update_current_trace(
         user_id=user_id,
         tags=["production", "rag-v2"],
     )
@@ -573,8 +626,7 @@ def run_rag(query: str, user_id: str) -> str:
     # Retrieval step — appears as a child span
     docs = retrieve_documents(query)
 
-    # LLM call — use the Langfuse-wrapped OpenAI client for automatic token counting
-    client = lf.get_openai_client()     # wraps openai.OpenAI transparently
+    # LLM call — the wrapped client records model, token usage, and cost automatically
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": build_prompt(query, docs)}],
@@ -599,7 +651,38 @@ Beyond Langfuse, the ecosystem includes:
 - **Datadog LLM Observability**: Managed, enterprise-grade; integrates with existing Datadog alerts.
 - **OpenLIT**: OpenTelemetry-native SDK with native GPU metric collection, useful when running self-hosted inference.
 
-For organizations running self-hosted inference with vLLM or SGLang, expose the OpenAI-compatible `/metrics` endpoint that these servers natively provide, then scrape with Prometheus. vLLM emits metrics including `vllm:num_requests_running`, `vllm:kv_cache_usage_perc`, and `vllm:generation_tokens_total` — see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for details.
+### Observing a self-hosted server
+
+If you serve your own weights, the engine already emits most of what this chapter asks for and you should not re-implement it. vLLM exposes a Prometheus endpoint at `/metrics` on the API server, including `vllm:num_requests_running`, `vllm:num_requests_waiting` (the queue-depth gauge), `vllm:kv_cache_usage_perc`, `vllm:time_to_first_token_seconds`, `vllm:time_per_output_token_seconds`, `vllm:e2e_request_latency_seconds`, and the `vllm:prompt_tokens_total` / `vllm:generation_tokens_total` counters. SGLang exposes an equivalent set once launched with `--enable-metrics`. Both also speak OTLP for traces, so the same collector receives engine spans and your application spans:
+
+```bash
+# Self-hosted serving with metrics + tracing turned on.
+vllm serve ./stack-100m \
+  --port 8000 \
+  --otlp-traces-endpoint http://localhost:4317   # engine spans -> your OTel collector
+# Prometheus scrape target is then http://localhost:8000/metrics
+
+# SGLang equivalent
+python -m sglang.launch_server --model-path ./stack-100m \
+  --port 30000 --enable-metrics
+```
+
+```yaml
+# prometheus.yml  —  scrape a self-hosted engine alongside your app
+scrape_configs:
+  - job_name: vllm
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:8000"]
+  - job_name: llm-app
+    static_configs:
+      - targets: ["localhost:9090"]
+```
+
+vLLM ships an example Prometheus + Grafana stack in its `examples/` directory, so a usable dashboard is a `docker compose up` away rather than a build project. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for what the underlying gauges mean, and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for wiring this to the Stack-100M model you build in Part XIV.
+
+!!! note "Aside: observability during *training*, not just serving"
+    The same discipline applies one layer up. A pretraining run is a long-lived job whose health is visible only through telemetry: loss, gradient norm, learning rate, tokens/second, MFU, and activation/gradient statistics. The open-source tools there are Weights & Biases, MLflow, TensorBoard, and Aim — logged from the training loop rather than scraped. The failure modes rhyme with production ones (a silent loss spike is the training-time analogue of a silent hallucination), and the fix is the same: log enough to reconstruct what happened without re-running. See [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) for the concrete logging set used in the capstone run.
 
 ## The LLMOps Lifecycle and Continuous Improvement
 
@@ -689,14 +772,15 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
 - **Shankar et al., "Who Validates the Validators? Aligning LLM-Assisted Evaluation of LLM Outputs with Human Preferences" (2024)** — on the reliability and calibration of LLM-as-judge pipelines.
 - **Langfuse** (github.com/langfuse/langfuse) — open-source LLM observability; read the architecture docs for a practical reference implementation.
 - **Arize Phoenix** (github.com/Arize-ai/phoenix) — OTel-native tracing and embedding drift for LLMs and RAG.
+- **OpenInference** (github.com/Arize-ai/openinference) and **OpenLLMetry** (github.com/traceloop/openllmetry) — the two main open-source auto-instrumentation suites for LLM/agent frameworks; both emit OTLP, so they work with any backend.
 - **Google SRE Book, Chapter 5: Eliminating Toil** (sre.google/sre-book) — the error-budget and burn-rate alerting model that LLMOps adapts.
 - **Klaise et al., "Alibi Detect: Algorithms for Outlier, Adversarial and Drift Detection" (JMLR 2022)** — statistical toolkit for production drift detection including CUSUM and PSI.
 - **OpenTelemetry GenAI Semantic Conventions** (github.com/open-telemetry/semantic-conventions-genai) — the emerging standard for LLM span attributes, maintained by the OTel community; relocated in 2025–2026 from the main OpenTelemetry docs site into this dedicated repository and still marked "Development" status.
 
 !!! key "Key Takeaways"
     - LLM observability requires all three pillars: distributed **traces** (per-request causal chains), **metrics** (aggregated time-series for TTFT, tokens, cost), and **logs** (verbatim prompts and responses for qualitative debugging).
-    - Use OpenTelemetry as the vendor-neutral instrumentation layer; export to any backend (Langfuse, Jaeger, Grafana Tempo, Datadog).
-    - Track TTFT, TPOT, total latency, prompt/completion token counts, and estimated cost per request as your baseline metric set. Use Prometheus histograms, not averages.
+    - Use OpenTelemetry as the vendor-neutral instrumentation layer, with the GenAI semantic-convention attribute names (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, …) rather than ad-hoc keys; export to any backend (Langfuse, Phoenix, Jaeger, Grafana Tempo, Datadog). Auto-instrumentors (OpenInference, OpenLLMetry, `opentelemetry-instrumentation-*`) cover the library calls; hand-write spans only for your own logic.
+    - Track TTFT, TPOT, total latency, prompt/completion token counts, and estimated cost per request as your baseline metric set. Use Prometheus histograms, not averages. Self-hosted serving has no price list — derive USD/1M tokens from GPU hourly cost divided by measured throughput, and scrape vLLM's or SGLang's native `/metrics` instead of re-implementing it.
     - Prompt/response logs are uniquely valuable and uniquely sensitive: hash user IDs, classify by data sensitivity, enforce retention policies, and store in access-controlled object storage — never in plaintext RDBMS.
     - Run eval-in-production with strategic sampling (100% of failures, 5–30% of new-template traffic, ~5% of baseline); use an async LLM-as-judge pipeline so eval does not add request latency.
     - Detect three kinds of drift: input distribution shift (PSI on prompt embeddings), output quality drift (CUSUM on eval scores), and provider model drift (hourly canary probes).

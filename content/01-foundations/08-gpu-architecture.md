@@ -142,6 +142,14 @@ A **Tensor Core** is a small systolic-array-like unit that computes an entire sm
 
 The catch: Tensor Cores only accelerate **matrix multiplication** (and operations you can phrase as one), and only in **reduced precision** (BF16/FP16/FP8/FP4 inputs, usually with FP32 accumulation). They want tile-shaped, contiguous data with dimensions that are multiples of 8 or 16. A pointwise operation (add, GELU, layernorm) gets *zero* benefit from Tensor Cores — it runs on CUDA cores and is almost always memory-bound. This split — matmuls on Tensor Cores, everything else on CUDA cores and bandwidth-limited — is the structural reason kernel fusion ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)) matters so much.
 
+### Tile and wave quantization: why dimensions want to be round
+
+Two "quantization" effects — nothing to do with numeric quantization — fall directly out of tile-shaped hardware, and they explain a surprising amount of real-world model design.
+
+**Tile quantization.** A Tensor Core GEMM kernel carves the output matrix into fixed-size tiles (typically $128\times128$, $128\times256$, or similar, chosen by the library's heuristics). A dimension that is not a multiple of the tile forces a final, partly-wasted tile: an output width of 257 needs $\lceil 257/128 \rceil = 3$ tile-columns of work to produce 257 useful columns, so ~33% of the issued work is padding. Efficiency therefore drops in a sawtooth as dimensions cross tile boundaries. This is why hidden sizes, FFN widths, head dimensions, and vocabularies are padded to multiples of 64 or 128 in practice — Megatron-LM exposes exactly this as `--make-vocab-size-divisible-by 128`, and it is why you see vocabularies like 50,304 (a padded 50,257) rather than the tokenizer's raw count. We apply the same rounding when choosing Stack-100M's width and vocabulary ([The Stack-100M Architecture: SOTA Components, Cited and Assembled](../14-capstone/04-architecture.html)).
+
+**Wave quantization.** The grid is executed in *waves*: roughly (number of SMs) × (blocks resident per SM) blocks run concurrently, then the next wave starts. A grid of 133 blocks at one block per SM on a 132-SM H100 runs two waves, the second of which occupies a single SM — nearly half the wall-clock at under 1% utilization. Kernel time therefore rises in a staircase, and a problem size just past a wave boundary is the worst case. Practical consequence: prefer batch/tile shapes whose grid is an exact multiple of the SM count, and be suspicious when a *small* increase in problem size causes a *large* jump in time.
+
 {{fig:cuda-core-vs-tensor-core}}
 
 !!! note "Aside: how the throughput numbers multiply up"
@@ -421,6 +429,73 @@ print(f"KV cache (8k ctx, batch 32, GQA-8, bf16): {kv:.1f} GB")
 
 This snippet captures the two questions you ask of every (model, GPU) pair: **does it fit** (HBM capacity, including the KV cache that grows with batch × context — see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)), and **how fast does it decode** (HBM bandwidth). H200's jump to 141 GB and B200's to 192 GB are aimed directly at the first question; their bandwidth bumps at the second.
 
+### Know your own GPU: querying and profiling the real device
+
+Spec tables are for reasoning; the GPU in front of you is what you must actually feed. You will most likely train the book's ~100M-parameter model on a single mid-range GPU ([The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html)), so learn to interrogate it directly. PyTorch exposes the device properties CUDA reports, and a two-line copy benchmark gives you an *achieved* bandwidth number. Expect it to come in meaningfully under the spec-sheet peak — a plain copy is not a tuned streaming kernel, clocks throttle, and a shared GPU is slower still — so treat it as a realistic floor for what your own kernels can hope for, and as the $\beta$ to use when you want a conservative roofline.
+
+```python
+import torch
+
+def gpu_report(dev=0):
+    """Everything you need to compute your own ridge point, from the driver."""
+    if not torch.cuda.is_available():
+        print("no CUDA device visible"); return None
+    p = torch.cuda.get_device_properties(dev)
+    l2 = getattr(p, "L2_cache_size", None)          # present on recent PyTorch
+    print(f"{p.name}  (compute capability {p.major}.{p.minor})")
+    print(f"  SMs                     : {p.multi_processor_count}")
+    print(f"  HBM capacity            : {p.total_memory / 1e9:.1f} GB")
+    print(f"  max threads / SM        : {getattr(p, 'max_threads_per_multi_processor', '?')}")
+    print(f"  registers / SM          : {getattr(p, 'regs_per_multiprocessor', '?')}")
+    print(f"  SMEM / SM               : {getattr(p, 'shared_memory_per_multiprocessor', '?')} B")
+    if l2: print(f"  L2 cache                : {l2 / 1e6:.0f} MB")
+    return p
+
+def measured_hbm_bandwidth(n_bytes=1 << 30, iters=20):
+    """Empirical HBM bandwidth: a big device-to-device copy reads AND writes."""
+    if not torch.cuda.is_available():
+        return None
+    x = torch.empty(n_bytes // 2, dtype=torch.float16, device="cuda")
+    y = torch.empty_like(x)
+    y.copy_(x)                                       # warm up
+    torch.cuda.synchronize()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    for _ in range(iters):
+        y.copy_(x)
+    end.record()
+    torch.cuda.synchronize()
+    ms = start.elapsed_time(end) / iters
+    return 2 * n_bytes / (ms * 1e-3) / 1e12          # TB/s (read x + write y)
+
+if gpu_report():
+    bw = measured_hbm_bandwidth()
+    print(f"measured HBM bandwidth  : {bw:.2f} TB/s")
+    # Pair this with the measured BF16 matmul TFLOP/s from earlier in the chapter:
+    # ridge = measured_TFLOPs * 1e12 / (bw * 1e12)  -> YOUR chip's FLOP/byte.
+```
+
+Two more habits worth forming now. First, divide measured throughput by peak to get **model FLOPs utilization (MFU)** — the standard headline efficiency number for a training run, formalized in [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html); well-tuned dense BF16 transformer pretraining typically lands in the tens of percent, and anything in the low single digits means you are host-bound, memory-bound, or not on the Tensor Cores at all. Second, remember that `nvidia-smi`'s memory number reflects PyTorch's *caching allocator*, not live tensors: use `torch.cuda.memory_allocated()` / `max_memory_allocated()` for the truth, and see [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html) for allocator tuning and fragmentation.
+
+The standard NVIDIA tooling, in ascending order of detail:
+
+```bash
+# 1. What hardware am I on, and is it busy? (ships with the driver)
+nvidia-smi --query-gpu=name,memory.total,memory.used,utilization.gpu,clocks.sm \
+           --format=csv
+nvidia-smi topo -m            # NVLink vs PCIe topology between GPUs in the node
+
+# 2. Whole-program timeline: are there gaps? is the GPU idle waiting on Python?
+nsys profile -o trace python train.py        # NVIDIA Nsight Systems
+
+# 3. One kernel, in forensic detail: occupancy, achieved bandwidth, Tensor Core
+#    utilization, and a measured roofline point for that kernel.
+ncu --set full -k regex:my_kernel python train.py   # NVIDIA Nsight Compute
+```
+
+Inside PyTorch, `torch.profiler.profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA])` gives you a per-op CUDA-time table without leaving Python, and is usually the right first stop; reach for Nsight Systems when you suspect launch overhead or host-bound stalls, and Nsight Compute when a single kernel is the problem ([CUDA Programming Essentials for ML Engineers](../04-kernels-efficiency/05-cuda-essentials.html)).
+
 ---
 
 ## Putting It Together: Reading a Workload Like the Hardware Does
@@ -483,6 +558,7 @@ print("LayerNorm:", ln)   # -> memory-bound: the reason norms get fused into mat
     - **Occupancy** is the ratio of resident warps to the SM maximum, bounded by registers, shared memory, and slot limits. More occupancy buys latency-hiding, but **maximum occupancy is not the goal** — high-register, low-occupancy GEMM/attention kernels often win.
     - **Arithmetic intensity** $I = \text{FLOPs}/\text{HBM bytes}$ versus the **ridge point** $\pi/\beta$ decides compute- vs memory-bound. Large matmuls are compute-bound ($I \sim 10^3$); single-token decode is memory-bound ($I \sim 1$). Total FLOPs alone tells you nothing.
     - Across **A100 → H100 → H200 → B200**, compute (and low precision: FP8, then FP4) grew faster than bandwidth, so the **ridge point keeps rising** and more workloads become memory-bound. H200/B200's big HBM3e capacity and bandwidth target inference's two limits: fitting the model+KV cache, and bandwidth-bound decode.
+    - The hardware is **tile-shaped and wave-scheduled**: pad hidden sizes and vocabularies to multiples of 64/128 to avoid tile quantization, and size grids to fill whole waves of SMs. And never trust a spec sheet over your own device — `torch.cuda.get_device_properties`, a copy-bandwidth microbenchmark, `torch.profiler`, Nsight Systems (`nsys`) and Nsight Compute (`ncu`) give you the real $\pi$, $\beta$, and per-kernel truth.
     - **NVLink/NVSwitch** give all-to-all, multi-hundred-GB/s intra-node bandwidth that makes tensor parallelism viable inside an 8-GPU domain; PCIe and inter-node networks are an order of magnitude slower, which is why parallelism strategies map onto the interconnect tiers.
 
 ---
@@ -511,6 +587,7 @@ print("LayerNorm:", ln)   # -> memory-bound: the reason norms get fused into mat
 
     - [NVIDIA, *Hopper Architecture In-Depth* (2022)](https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/) — official deep-dive on H100's Transformer Engine, TMA, thread-block clusters, and FP8; required reading before writing Hopper-specific kernels.
     - [NVIDIA, *Blackwell Architecture Technical Overview* (2024)](https://resources.nvidia.com/en-us-blackwell-architecture) — covers B200's dual-die design, FP4 Tensor Cores, and NVLink 5 specs.
+    - [NVIDIA, *Matrix Multiplication Background User's Guide* (deep-learning performance docs)](https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html) — the official explanation of GEMM tiling, tile quantization, and wave quantization, with the sawtooth efficiency plots behind the "round your dimensions" rule.
     - [Horace He, *Making Deep Learning Go Brrrr From First Principles* (2022)](https://horace.io/brrr_intro.html) — concise engineer's guide to the compute / memory-bandwidth / overhead trifecta, with worked PyTorch examples.
     - [NVIDIA, *CUDA Programming Guide* (continuously updated)](https://docs.nvidia.com/cuda/cuda-programming-guide/index.html) — authoritative reference for the execution model, memory hierarchy, and warp semantics described in this chapter.
 

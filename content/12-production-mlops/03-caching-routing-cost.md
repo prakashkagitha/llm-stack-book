@@ -4,7 +4,7 @@ LLM inference is expensive. A single frontier-model call can cost anywhere from 
 
 The techniques here sit at the intersection of distributed systems, economics, and ML: semantic caching, prompt-prefix caching, model routing cascades, speculative routing, quantised fallbacks, intelligent batching, and spot/preemptible GPU scheduling. We will cover the mechanism of each, when to reach for it, and how to wire them together into a coherent cost-control stack.
 
-Cross-references: [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) covers the per-token cost model; [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html) covers the low-level KV-cache reuse mechanism; [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html) covers the scheduler side of batching; [Quantization I](../04-kernels-efficiency/07-quantization-ptq.html) and [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html) cover the quantisation methods we invoke here as fallbacks.
+Cross-references: [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) covers the per-token cost model; [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html) covers the low-level KV-cache reuse mechanism; [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html) covers the scheduler side of batching; [Quantization I](../04-kernels-efficiency/07-quantization-ptq.html) and [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html) cover the quantisation methods we invoke here as fallbacks. When we serve the Stack-100M model we build in Part XIV, the levers in this chapter are exactly the ones we pull — see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
 
 ---
 
@@ -104,6 +104,14 @@ A practical approach:
 
 For general chat bots a threshold near 0.92–0.95 is common. For medical, legal, or financial applications a higher bar (0.97+) or a human-review loop on borderline hits is appropriate.
 
+That domain gap is not arbitrary — it falls out of a decision-theoretic view of $\tau$. Let $h(\tau)$ be the hit rate, $e(\tau)$ the fraction of admitted hits that are semantically wrong, $c_\text{call}$ the money a hit saves, and $c_\text{err}$ the cost of serving a wrong answer (refund, escalation, harm). Expected saving per query is
+
+$$
+S(\tau) = h(\tau)\,\Big[\big(1 - e(\tau)\big)\,c_\text{call} - e(\tau)\,c_\text{err}\Big]
+$$
+
+which is positive only when the admitted-hit precision satisfies $1 - e(\tau) > \dfrac{c_\text{err}}{c_\text{call} + c_\text{err}}$. With $c_\text{err} \approx c_\text{call}$ you need barely 50% precision and can run a loose threshold; with $c_\text{err} = 30 c_\text{call}$ you need better than 96.8% precision, which is precisely why regulated domains land at 0.97+ or add a review loop. Sweep $\tau$, measure $h$ and $e$ on held-out data, and pick the $\tau$ that maximises $S$ rather than the one that maximises hit rate.
+
 {{fig:cost-semantic-threshold-tradeoff}}
 
 ```python
@@ -145,6 +153,8 @@ class SemanticCache:
 ### Embedding model selection and latency
 
 The embedding call itself introduces latency. A 100 ms embedding call eats into the savings if the cached path is supposed to be fast. Use a small, locally-hosted embedding model (e.g., a 22M-parameter sentence-transformer) so the embedding call completes in 1–5 ms on CPU. The ANN lookup in a vector store like Qdrant or FAISS is another 1–10 ms at typical scales. Compare that to a frontier model call at 500 ms to 5 s: the speedup is 100×.
+
+In production you rarely hand-roll this. `GPTCache` (Zilliz) wraps the whole pattern — embedding function, vector backend (FAISS, Qdrant, Milvus), similarity evaluator, eviction policy — behind a drop-in wrapper around the OpenAI/LangChain client, and LiteLLM (below) exposes both an exact Redis cache and a vector-store-backed semantic cache at the gateway. Build the toy version above once to understand the failure modes, then adopt a library so you inherit eviction, TTL, and hit-rate metrics for free.
 
 Semantic caching integrates naturally with RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html)) — you can cache at both the retrieval step and the generation step.
 
@@ -217,6 +227,26 @@ print(f"Input tokens: {usage.input_tokens}")
 print(f"Cache read tokens: {usage.cache_read_input_tokens}")   # billed at 10%
 print(f"Cache write tokens: {usage.cache_creation_input_tokens}")  # first call
 ```
+
+### Self-hosted prefix caching (vLLM, SGLang)
+
+If you serve your own weights — a quantised 7B fallback tier, or the Stack-100M model of Part XIV — you get the same mechanism without any provider, because the open-source servers implement it directly. vLLM calls it *automatic prefix caching* (APC): KV blocks are hashed by their token contents so any request sharing a prefix reuses them; SGLang calls it *RadixAttention* and keeps the KV blocks in a radix tree so branching prefixes (few-shot templates, multi-turn threads, parallel samples of the same prompt) share ancestors.
+
+```bash
+# vLLM: automatic prefix caching. Enabled by default in recent (V1-engine)
+# releases; the flag is written out explicitly here so the intent is visible.
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --enable-prefix-caching \
+  --gpu-memory-utilization 0.90
+
+# SGLang: RadixAttention is on by default. Disable it to A/B measure the win.
+python -m sglang.launch_server \
+  --model-path meta-llama/Llama-3.1-8B-Instruct \
+  --port 30000
+  # add --disable-radix-cache for the no-cache control run
+```
+
+Two differences from the provider case matter operationally. First, the saving is not a line item on an invoice: a hit removes prefill FLOPs you would otherwise buy with GPU-seconds, so it shows up as lower time-to-first-token and higher tokens/second per GPU — you must divide it into your own cost-per-token model. Second, the cache lives in the same GPU memory as the KV cache for running requests and is LRU-evicted, so the hit rate is a function of (working-set of distinct prefixes) versus (free KV blocks): raising `--gpu-memory-utilization` or shrinking `--max-model-len` buys hit rate. Both servers export prefix-cache hit counters on their Prometheus `/metrics` endpoint; treat that number as a first-class dashboard tile alongside your application cache hit rate. Mechanism details are in [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
 
 ---
 
@@ -427,6 +457,8 @@ def run_fallback(prompts: list[str]) -> list[str]:
     return [o.outputs[0].text for o in outputs]
 ```
 
+Producing the quantised checkpoint is its own step, and by 2026 you generally quantise your own weights rather than hunting for a community upload (the once-ubiquitous `TheBloke` repositories stopped being refreshed in 2024, so they only cover older model generations). The standard open-source paths are `llm-compressor` (Red Hat / Neural Magic), which emits `compressed-tensors` checkpoints that vLLM loads with `quantization="compressed-tensors"` and which covers INT8/INT4 weight-only, W8A8, and FP8 recipes; `AutoAWQ` and `GPTQModel` for classic AWQ/GPTQ weights; `bitsandbytes` for zero-effort NF4 loading in HF Transformers; and `llama.cpp`'s quantisers for GGUF when the fallback tier is CPU or a laptop. All of them want a small calibration set (typically a few hundred in-domain sequences) — use samples of your *production* traffic, not generic web text, or you will calibrate the activation scales for the wrong distribution. The capstone walks the whole loop at 100M scale — quantise to int8 then int4, re-measure the benchmark deltas, and export for CPU serving with these same tools as the upgrade path: [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html).
+
 ### When to invoke a quantised fallback
 
 Quantised fallbacks fit into the routing cascade as the cheap-but-hosted tier, between the semantic cache and the frontier API call. You can also use them for latency degradation gracefully: when the frontier API returns a 429 rate-limit or a timeout, fall back to the local quantised model rather than returning an error to the user.
@@ -633,7 +665,46 @@ class CostControlStack:
         return resp
 ```
 
-### Monitoring and continuous improvement
+### Doing this with a real gateway (LiteLLM)
+
+The stack above is written out longhand so that nothing is a black box, but in production most teams put a *gateway* in front of everything: one OpenAI-compatible endpoint that owns keys, retries, caching, routing, fallbacks, and per-tenant spend limits, so application code never learns which provider answered. LiteLLM is the de-facto open-source choice for that layer as of 2026 (it speaks 100+ providers, and any vLLM/SGLang server you run yourself is just another OpenAI-compatible backend in its model list).
+
+```python
+# pip install "litellm[proxy]"
+import litellm
+from litellm import Router
+
+# Layer 1: exact response cache, keyed on the full request (model + messages +
+# params) — the same hashing discipline as our _cache_key, done for us.
+litellm.cache = litellm.Cache(type="redis", host="localhost", port="6379")
+
+router = Router(
+    model_list=[
+        # Cheap tier: our own quantised model served by vLLM on spot GPUs.
+        {"model_name": "cheap",
+         "litellm_params": {"model": "openai/local-7b-int4",
+                            "api_base": "http://vllm-spot:8000/v1",
+                            "api_key": "EMPTY"}},
+        # Frontier tier: a hosted API.
+        {"model_name": "frontier",
+         "litellm_params": {"model": "anthropic/claude-opus-4-5"}},
+    ],
+    fallbacks=[{"cheap": ["frontier"]}],   # 429 / timeout / 5xx on cheap -> frontier
+    num_retries=2,
+    routing_strategy="latency-based-routing",   # among replicas of one model_name
+)
+
+# Our classifier from above still decides the tier; the gateway executes it,
+# caches the result, records spend, and handles the failure path we hand-coded.
+router_clf = RoutingClassifier(embed_fn, labels=["cheap", "frontier"])
+router_clf.fit(train_queries, train_tier_labels)   # from cascade logs
+
+messages = [{"role": "user", "content": query}]
+tier, _confidence = router_clf.predict(query)      # "cheap" | "frontier"
+resp = router.completion(model=tier, messages=messages, caching=True)
+```
+
+Note the division of labour. The gateway owns the *mechanical* concerns — caching, retries, fallback on 429/timeout, load-balancing across replicas, per-key budgets — which is exactly the quantised-fallback wrapper and exact cache we wrote by hand above. What it does **not** own is the *judgement*: which tier a query deserves, what the quality gate is, and what similarity threshold is safe for your domain. Those stay yours. RouteLLM plugs into the same seam as a trained preference-data router if you would rather not train your own classifier, and LiteLLM's semantic-cache mode covers Layer 2 when you do not want a separate service.
 
 No cost-control stack is set-and-forget. Wire up the following metrics:
 
@@ -661,8 +732,8 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
     - Cost per request = $C_\text{input} \cdot n_p + C_\text{output} \cdot n_g$; output tokens cost 3–5× more — reduce generated length before reducing input length.
     - Exact caching (Redis + SHA-256) is zero-latency and zero-risk; it pays off most for embedding calls and templated workloads.
     - Semantic caching adds a 10–20 ms overhead but can serve 20–40% of conversational traffic; calibrate the cosine threshold against your domain's precision floor.
-    - Provider-side prompt caching (Anthropic, OpenAI) can reduce input costs by up to 90% for repeated long prefixes; restructure prompts to put stable content first.
-    - Model routing cascades (sequential or classifier-based) deliver 2–6× cost reductions by routing simple queries to cheap models; bootstrap the classifier from cascade logs.
+    - Provider-side prompt caching (Anthropic, OpenAI) can reduce input costs by up to 90% for repeated long prefixes; restructure prompts to put stable content first. On your own weights the same mechanism is free in vLLM (automatic prefix caching) and SGLang (RadixAttention) — it pays out as prefill FLOPs saved, not an invoice line.
+    - Model routing cascades (sequential or classifier-based) deliver 2–6× cost reductions by routing simple queries to cheap models; bootstrap the classifier from cascade logs, and let a gateway (LiteLLM) own the mechanics — caching, retries, fallbacks, per-tenant budgets — while you keep the judgement calls (tier policy, quality gates, thresholds).
     - Speculative routing fires cheap and expensive models in parallel and cancels the expensive one on early success — optimal when cheap model latency << expensive model latency and cancellation is cheap.
     - INT4 quantisation halves GPU memory relative to INT8 and reduces hardware cost 4× relative to FP16, with 1–3% quality loss on standard benchmarks — acceptable for a fallback tier.
     - Spot/preemptible GPUs provide 60–80% cost reduction; make workers stateless, handle SIGTERM gracefully, and keep a small on-demand floor.
@@ -690,6 +761,7 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
     - [BerriAI/litellm](https://github.com/BerriAI/litellm) — unified gateway/SDK for 100+ LLM providers with built-in request caching and router-based fallback/load-balancing across model deployments; the most common way production teams wire caching and routing together as of 2026.
     - [zilliztech/GPTCache](https://github.com/zilliztech/GPTCache) — pluggable semantic cache library for LLM APIs; supports FAISS, Qdrant, and Milvus backends with drop-in LangChain/LlamaIndex integration. Feature development has slowed since 2024 (maintainers note they are no longer adding support for new model APIs) — still a solid reference implementation of the pattern, but prefer LiteLLM above for an actively-developed dependency.
     - [lm-sys/RouteLLM](https://github.com/lm-sys/routellm) — open-source routing framework from LMSYS; drop-in OpenAI-compatible client that redirects queries to cheap or strong models based on trained preference-data routers.
+    - [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor) — the maintained path for producing your own quantised fallback checkpoints (INT8/INT4 weight-only, W8A8, FP8) in the `compressed-tensors` format that vLLM loads natively; supersedes hunting for community-uploaded GPTQ/AWQ repos.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance serving framework with RadixAttention prefix caching; achieves up to 6.4× higher throughput than baseline systems (verified against the original paper's abstract), and by 2026 supports current-generation accelerators (e.g., NVIDIA GB300 NVL72) alongside its original GPU targets.
 
     **Go deeper**

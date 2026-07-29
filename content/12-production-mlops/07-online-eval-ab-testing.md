@@ -2,7 +2,7 @@
 
 Offline benchmarks are necessary but not sufficient. A model that tops your held-out evaluation set may still lose you users, inflate costs, or silently regress on edge cases that only emerge at production scale. The gap between an offline MMLU score and real user satisfaction is not a failure of offline evaluation — it is a structural property: users are not IID draws from a benchmark corpus, and the distribution of inputs, intents, and behaviors that matter commercially is only observable in production.
 
-This chapter closes the loop. We cover how to design statistically sound A/B and interleaving experiments for LLM features, which guardrail metrics to instrument and how to prevent them from being gamed, how to make decisions faster with CUPED variance reduction and sequential testing, how to roll out safely via shadow deployments and canaries, and how to keep live judges scoring sampled traffic so you stay honest about quality even after launch. We also examine the systematic biases — novelty effects, feedback loops, position bias — that corrupt online signals if left unaddressed.
+This chapter closes the loop. We cover how to design statistically sound A/B and interleaving experiments for LLM features, which guardrail metrics to instrument and how to prevent them from being gamed, how to validate that the experiment itself is trustworthy (sample ratio mismatch, clustered standard errors for per-event metrics), how to make decisions faster with CUPED variance reduction and sequential testing, how to roll out safely via shadow deployments and canaries, and how to keep live judges scoring sampled traffic so you stay honest about quality even after launch. We also examine the systematic biases — novelty effects, feedback loops, position bias — that corrupt online signals if left unaddressed.
 
 Related chapters that provide useful context: [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html), [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html), [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html), [Data Flywheels & Continuous Improvement](../12-production-mlops/05-data-flywheel.html), and [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html).
 
@@ -207,6 +207,82 @@ result = two_proportion_z_test(
 print(result)
 ```
 
+In production you do not hand-roll the assignment layer, because the hash is the easy half — the hard half is emitting a durable **exposure event** (user, experiment, variant, timestamp) at the moment the variant is actually served, since that log defines the analysis population. Open-source feature-flag/experiment SDKs do both: **GrowthBook** (its SDK hashes `hashAttribute + seed` exactly as above and logs exposures via a `trackingCallback`), **Unleash**, and **Flagsmith**, all behind **OpenFeature** — the CNCF vendor-neutral flag API — so the evaluation call site does not change when you swap providers. Keep the from-scratch version anyway: it is what you use in a load test or a notebook replay, and it makes the failure modes below legible.
+
+### Sanity check first: sample ratio mismatch (SRM)
+
+Before reading a single metric, check that the arms received the traffic they were supposed to receive. A **sample ratio mismatch** — an observed split that deviates from the designed split by more than chance — means the assignment or logging layer is broken, and every downstream number is untrustworthy. Typical causes are very LLM-specific: the treatment model times out on long prompts and those sessions never reach the metrics table; a retry loop re-buckets a user; a bot filter matches one arm's latency profile more often. Kohavi, Tang & Xu call SRM the single highest-yield trustworthiness check, and it is one chi-square test:
+
+```python
+import numpy as np
+from scipy import stats
+
+def srm_check(
+    n_control: int,
+    n_treatment: int,
+    expected_treatment_fraction: float = 0.5,
+    alarm_p: float = 0.001,   # deliberately strict: SRM is a bug, not an effect
+) -> dict:
+    """Chi-square goodness-of-fit test on the observed traffic split."""
+    total = n_control + n_treatment
+    expected = [total * (1 - expected_treatment_fraction),
+                total * expected_treatment_fraction]
+    observed = [n_control, n_treatment]
+    chi2 = sum((o - e) ** 2 / e for o, e in zip(observed, expected))
+    p_value = float(stats.chi2.sf(chi2, df=1))
+    return {"observed_treatment_fraction": n_treatment / total,
+            "chi2": chi2, "p_value": p_value, "srm": p_value < alarm_p}
+
+print(srm_check(100_000, 98_000))  # 1% shortfall at 100k → p ≈ 7e-6, SRM: True
+print(srm_check(1_000, 980))       # same 1% shortfall at 1k → p ≈ 0.65, fine
+```
+
+The two calls make the key point: a 1% imbalance is invisible noise at a thousand users and a screaming alarm at a hundred thousand. When SRM fires, do not "adjust for it" — find the bug, fix it, and restart the experiment.
+
+### Ratio metrics: the analysis unit is not the randomization unit
+
+The $z$-test above assumes one Bernoulli observation per randomized unit. Most LLM metrics are not shaped like that: you randomize *users* but measure *per message* (thumbs-up per assistant message, tool-call error rate per call, regeneration rate per response). A chatty user contributes dozens of correlated events, so treating events as independent understates the standard error and overstates significance. This is the same clustering problem as in offline evaluation ([Statistical Rigor in Evaluation](../11-evaluation/06-statistical-rigor-eval.html)), now at the experiment layer.
+
+The metric is a **ratio of sums**, $M = \sum_i Y_i / \sum_i D_i$, over users $i$ with numerator $Y_i$ (thumbs-up events) and denominator $D_i$ (messages). Its variance follows from the delta method:
+
+$$
+\widehat{\operatorname{Var}}(M) \approx \frac{1}{K \bar{D}^2}\left(
+\operatorname{Var}(Y) - 2M \operatorname{Cov}(Y, D) + M^2 \operatorname{Var}(D)\right)
+$$
+
+with $K$ users and $\bar{D}$ the mean denominator per user. (The two cheaper alternatives are equally acceptable: collapse to one value per user and run the ordinary test, losing a little power; or bootstrap over users. The delta method is what production stats engines use because it is closed-form and streams.)
+
+```python
+def ratio_metric_delta_method(y: np.ndarray, d: np.ndarray) -> dict:
+    """
+    SE of a ratio-of-sums metric when the randomisation unit is the user:
+    y[i] = user i's numerator events, d[i] = user i's denominator events.
+    """
+    k = len(y)
+    d_bar = d.mean()
+    m = y.sum() / d.sum()
+    var = (np.var(y, ddof=1)
+           - 2 * m * np.cov(y, d, ddof=1)[0, 1]
+           + m ** 2 * np.var(d, ddof=1)) / (k * d_bar ** 2)
+    return {"metric": m, "se": float(np.sqrt(var)), "n_users": k}
+
+# 2,000 users with heterogeneous per-user thumbs-up propensities.
+rng = np.random.default_rng(0)
+k_users = 2_000
+d = rng.poisson(8, k_users) + 1          # messages per user
+p_user = rng.beta(4, 6, k_users)         # user-level propensity (the cluster)
+y = rng.binomial(d, p_user)              # thumbs-up per user
+
+clustered = ratio_metric_delta_method(y, d)
+m = clustered["metric"]
+naive_se = np.sqrt(m * (1 - m) / d.sum())  # pretend messages are i.i.d.
+print(f"metric={m:.4f}  clustered SE={clustered['se']:.4f}  "
+      f"naive SE={naive_se:.4f}  ratio={clustered['se'] / naive_se:.2f}x")
+# metric=0.3960  clustered SE=0.0049  naive SE=0.0036  ratio=1.34x
+```
+
+The naive per-message SE is understated by 1.34× here, which inflates the $z$-statistic by the same factor — enough to turn a null result into a "significant" one. The gap grows with messages per user: in this simulation it is about 1.2× at 3 messages per user, 2.0× at 30, and over 3× at 100. Any agentic or coding-assistant product, where one session emits hundreds of events, sits at the dangerous end of that range.
+
 ---
 
 ## Interleaving: A Faster Alternative to A/B for Preference Signals
@@ -226,6 +302,7 @@ The statistical efficiency gain is substantial. Because each user sees both mode
 ```python
 from collections import defaultdict
 from typing import NamedTuple
+from scipy import stats
 
 class InterleavingSession(NamedTuple):
     user_id: str
@@ -375,35 +452,68 @@ $$
 P\!\left(\text{reject } H_0 \text{ at any time } t \leq \tau \mid H_0\right) \leq \alpha
 $$
 
-For Bernoulli outcomes, a practical implementation uses the Robbins confidence sequence — an always-valid confidence interval that shrinks as data accumulates. Many experimentation platforms (Statsig, Optimizely, GrowthBook) now implement this by default, often alongside CUPED and bandit-based adaptive traffic allocation in the same stats engine. (Statsig itself was acquired by OpenAI in a ~$1.1B all-stock deal announced in September 2025 — its founder became OpenAI's CTO of Applications — but the platform continues operating and serving outside customers.)
+The concrete object you compute is a **confidence sequence**: a sequence of intervals $\{C_n\}$ such that $P(\forall n \geq 1:\ p \in C_n) \geq 1 - \alpha$. Note where the quantifier sits — the coverage guarantee is over *all* sample sizes at once, not one pre-committed sample size, which is exactly what licenses looking after every event. For Bernoulli (or any $[0,1]$-bounded) metric, the simplest correct construction is the sub-Gaussian **normal-mixture** boundary of Howard, Ramdas, McAuliffe & Sekhon (2021). Many experimentation platforms (Statsig, Optimizely, GrowthBook) now implement a sequence like this by default, often alongside CUPED and bandit-based adaptive traffic allocation in the same stats engine. (Statsig itself was acquired by OpenAI in a ~USD 1.1B all-stock deal announced in September 2025 — its founder became OpenAI's CTO of Applications — but the platform continues operating and serving outside customers.)
 
 ```python
+import math
+
+# -------------------------------------------------------------------------
+# Sub-Gaussian normal-mixture confidence sequence (Howard, Ramdas, McAuliffe
+# & Sekhon, 2021). A metric bounded in [0, 1] is (1/2)-sub-Gaussian by
+# Hoeffding's lemma, and the normal-mixture boundary with tuning parameter
+# rho holds SIMULTANEOUSLY for all n >= 1 with probability >= 1 - alpha:
+#
+#   |p_hat_n - p| <= sigma * sqrt( 2 (n rho^2 + 1) / (n^2 rho^2)
+#                                  * log( sqrt(n rho^2 + 1) / alpha ) )
+# -------------------------------------------------------------------------
+
+def cs_halfwidth(n: int, rho: float, alpha: float = 0.05,
+                 sigma: float = 0.5) -> float:
+    """Half-width of the normal-mixture confidence sequence at sample size n."""
+    return sigma * math.sqrt(
+        2.0 * (n * rho ** 2 + 1.0) / (n ** 2 * rho ** 2)
+        * math.log(math.sqrt(n * rho ** 2 + 1.0) / alpha)
+    )
+
+def tune_rho(n_target: int, alpha: float = 0.05) -> float:
+    """
+    A confidence sequence cannot be tightest everywhere; rho chooses *where*.
+    Pick the sample size you realistically expect to stop at and minimise the
+    boundary there (it is unimodal in rho, so a ternary search suffices).
+    """
+    lo, hi = 1e-5, 10.0
+    for _ in range(200):
+        m1, m2 = lo + (hi - lo) / 3, hi - (hi - lo) / 3
+        if cs_halfwidth(n_target, m1, alpha) < cs_halfwidth(n_target, m2, alpha):
+            hi = m2
+        else:
+            lo = m1
+    return 0.5 * (lo + hi)
+
 def always_valid_ci(
     n: int,
-    k: int,       # successes so far
+    k: int,                    # successes so far
     alpha: float = 0.05,
+    n_target: int = 10_000,    # sample size to optimise the boundary for
 ) -> tuple[float, float]:
-    """
-    Approximate always-valid (anytime) confidence interval for a
-    Bernoulli proportion using the Howard et al. (2021) normal-mixture bound.
-
-    This CI is valid at any sample size n ≥ 1 without correction for peeking.
-    """
+    """Anytime-valid CI for a Bernoulli proportion; valid at every n >= 1."""
     p_hat = k / n
-    # Confidence sequence width parameter (from Howard et al., 2021, eq. 1)
-    # rho: mixing parameter, typical value 0.5 for balanced experiments
-    rho = 0.5
-    log_term = math.log(2 * math.log(n + 1) / alpha)
-    width = math.sqrt(
-        (p_hat * (1 - p_hat) / n) * (log_term + rho * math.log(log_term + 1))
-    )
-    return (max(0.0, p_hat - width), min(1.0, p_hat + width))
+    w = cs_halfwidth(n, tune_rho(n_target, alpha), alpha)
+    return (max(0.0, p_hat - w), min(1.0, p_hat + w))
 
-# Compare width at n=100 vs n=1000 for p≈0.4
-for n, k in [(100, 40), (1000, 400), (5000, 2000)]:
-    lo, hi = always_valid_ci(n, k)
-    print(f"n={n:5d}: {lo:.3f} – {hi:.3f}  (width {hi-lo:.3f})")
+# The price of anytime validity: compare with the fixed-n 95% interval, which
+# is only honest if you look exactly once, at a pre-committed sample size.
+for n, k in [(100, 40), (1_000, 400), (5_000, 2_000), (20_000, 8_000)]:
+    lo, hi = always_valid_ci(n, k, n_target=10_000)
+    p = k / n
+    fixed_width = 2 * 1.96 * math.sqrt(p * (1 - p) / n)
+    print(f"n={n:6d}: anytime {lo:.3f}-{hi:.3f} (width {hi - lo:.3f})"
+          f"   fixed-n width {fixed_width:.3f}")
+# n=  1000: anytime 0.340-0.460 (width 0.121)   fixed-n width 0.061
+# n= 20000: anytime 0.389-0.411 (width 0.022)   fixed-n width 0.014
 ```
+
+There is no free lunch, and the numbers say so plainly: near the tuning point the anytime interval is roughly 1.5–2× wider than the fixed-$n$ interval, and very early (n = 100) it is vacuous. That width *is* the peeking correction, paid up front and honestly, instead of being silently spent by stopping the moment $p$ dips under 0.05.
 
 ---
 
@@ -421,6 +531,30 @@ In shadow mode, you run the candidate model on all production traffic but *disca
 
 
 {{fig:online-eval-shadow-deployment}}
+
+
+You do not have to build the duplication yourself: the service mesh does it. **Envoy** (and therefore **Istio**) supports request mirroring, which fire-and-forgets a copy of each request to a second cluster and *discards the response*, so mirrored latency and mirrored errors can never touch the user. The mirrored `Host` header is suffixed with `-shadow` so downstream logs and traces are trivially separable:
+
+```yaml
+# Istio VirtualService: 100% of live traffic served by v1, 10% mirrored to v2.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: llm-api
+spec:
+  hosts: ["llm-api"]
+  http:
+    - route:
+        - destination: {host: llm-api, subset: v1}
+          weight: 100
+      mirror:
+        host: llm-api
+        subset: v2                 # candidate model — responses discarded
+      mirrorPercentage:
+        value: 10.0                # start low: shadowing doubles GPU cost
+```
+
+Two caveats specific to LLM shadowing. First, mirrored traffic is real GPU work — at 100% mirroring you are paying for two fleets, which is why `mirrorPercentage` starts low and why shadow runs are time-boxed. Second, **mirror only idempotent requests**: if your handler writes to a database, sends an email, or calls a paid third-party tool, the shadow copy will do it twice. Route shadow traffic to a sandboxed tool layer (see [Security: Prompt Injection, Jailbreaks & Defenses](../12-production-mlops/06-security-prompt-injection.html) for the sandbox pattern), or restrict mirroring to read-only endpoints. For pure throughput/latency profiling without any mesh at all, replay a captured prompt-length distribution against the candidate server with `vllm bench serve` (vLLM's serving benchmark, formerly `benchmarks/benchmark_serving.py`) — cheaper than mirroring and reproducible, at the cost of not exercising real request arrival patterns.
 
 
 ### Canary rollout
@@ -536,6 +670,8 @@ Even with good behavioral metrics, they are *proxies*. The only way to know whet
 
 
 The LLM judge rates each sampled response on a rubric (helpfulness, accuracy, safety, format). Human raters review a smaller fraction (on the order of 0.05–0.1% of traffic) to calibrate judge accuracy and detect drift in judge behavior. See [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) for the judge design.
+
+The open-source layer that runs this loop is your tracing backend: **Langfuse** ships *online evaluators* that attach a judge prompt to a sampled fraction of live traces and write the result back as a numeric `score` on the trace, and **Arize Phoenix** and **Evidently** do the equivalent. Because the traces already carry the experiment variant (log it as a span attribute — see [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html)), the judge score becomes just another metric you can slice by arm, which is what lets a quality regression show up in the same dashboard as latency and cost. Build the sampler and the rolling monitor below yourself only when you need routing logic the platform does not express — the stratified sampling policy is usually exactly that case.
 
 ### Stratified sampling
 
@@ -686,6 +822,10 @@ A mature evaluation stack is not a collection of ad-hoc tests — it is a pipeli
 
 The lifecycle makes explicit that offline evaluation, shadow testing, canaries, A/B experiments, and live judging are not alternatives — they are sequential filters. Each stage catches different failure modes, and bypassing any stage (usually in the name of speed) shifts the risk onto downstream stages or onto users.
 
+### The same lifecycle at Stack-100M scale
+
+None of this requires a million users. When you deploy the capstone model from [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html), the same five filters collapse into a weekend-sized version: (1) offline bits-per-byte and task accuracy on the held-out split gate the checkpoint; (2) shadow the new checkpoint behind the old one on a replayed prompt log to compare tokens/s and P99 latency at int4; (3) canary it to one of two server replicas with the `should_rollback` guardrail on refusal rate, latency, and empty-output rate; (4) run **interleaving rather than A/B** — with a handful of users, the 10–30× efficiency gain is not a nicety, it is the difference between a readable signal and none, and the win rate can be scored by an LLM judge when human raters are scarce; (5) keep a live judge on 1–5% of traffic. For the narrow research agent in [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html) the primary metric is unambiguous and cheap — automated task success (did the tool call parse, did the retrieved citation actually support the claim) — which is exactly the regime where a small product can run a trustworthy online experiment: verifiable outcomes need far fewer sessions than noisy preference proxies.
+
 ---
 
 !!! interview "Interview Corner"
@@ -698,7 +838,7 @@ The lifecycle makes explicit that offline evaluation, shadow testing, canaries, 
 !!! key "Key Takeaways"
     - Offline metrics are proxies for online outcomes, not substitutes. Track the offline-online correlation across launches to know how much to trust your evaluation suite.
     - Guardrail metrics (safety, latency, cost, regeneration rate) should be defined *before* the experiment and treated as hard blockers, not advisory.
-    - Randomize at the user-session level, not the request level, to satisfy SUTVA and avoid contamination within sessions.
+    - Randomize at the user-session level, not the request level, to satisfy SUTVA and avoid contamination within sessions. Check for sample ratio mismatch before reading any metric, and when the metric counts *events* inside a randomized *user*, use the delta method (or a bootstrap over users) — the naive per-event standard error is too small by 1.3–3×.
     - CUPED can halve required sample sizes by exploiting pre-experiment correlations; sequential testing (always-valid p-values) allows anytime peeking without inflating false positive rates.
     - Interleaving surfaces preference signals with 10–30x fewer user-sessions than parallel A/B; use it for quick directional reads on completion quality.
     - Shadow deployments let you profile latency, cost, and judge scores at production scale before any user sees the new model.
@@ -728,6 +868,8 @@ The lifecycle makes explicit that offline evaluation, shadow testing, canaries, 
     - [argoproj/argo-rollouts](https://github.com/argoproj/argo-rollouts) — Kubernetes progressive delivery controller; canary and blue-green rollouts with metric-based automatic promotion/rollback as shown in the chapter.
     - [evidentlyai/evidently](https://github.com/evidentlyai/evidently) — open-source ML and LLM observability framework with 100+ metrics for continuous quality monitoring of production traffic.
     - [growthbook/growthbook](https://github.com/growthbook/growthbook) — open-source A/B testing and feature-flag platform with built-in CUPED, Bayesian, and sequential statistics; used by several major LLM companies.
+    - [open-feature/spec](https://github.com/open-feature/spec) — CNCF vendor-neutral feature-flag API with SDKs in every major language and providers for GrowthBook, Unleash, and Flagsmith; the assignment/exposure layer that sits under an experiment.
+    - [langfuse/langfuse](https://github.com/langfuse/langfuse) — open-source LLM observability with online evaluators that score a sampled fraction of live traces and write judge scores back onto the trace, sliceable by experiment variant.
 
     **Go deeper**
 
@@ -742,7 +884,8 @@ The lifecycle makes explicit that offline evaluation, shadow testing, canaries, 
 - Radlinski, F., Craswell, N. — "Optimized Interleaving for Online Retrieval Evaluation," *WSDM 2013*.
 - Kohavi, R., Tang, D., Xu, Y. — *Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing*, Cambridge University Press, 2020.
 - Benjamini, Y., Hochberg, Y. — "Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing," *Journal of the Royal Statistical Society B, 1995*.
-- Gu, Y. et al. — "A Survey of LLM Evaluation" (covers live evaluation methodology), arXiv, 2024.
+- Gu, J. et al. — "A Survey on LLM-as-a-Judge," arXiv, 2024 (the judge design that live scoring of production traffic depends on).
+- Fabijan, A., Gupchup, J., Gupta, S., Omhover, J., Qin, W., Vermeer, L., Dmitriev, P. — "Diagnosing Sample Ratio Mismatch in Online Controlled Experiments," *KDD 2019*.
 
 ---
 
@@ -938,3 +1081,26 @@ The lifecycle makes explicit that offline evaluation, shadow testing, canaries, 
     ```
 
     Key points: the decrease is expressed as a positive `relative_drop = (baseline - canary) / baseline` so it compares cleanly against a positive threshold; the zero-baseline branch is handled explicitly (a metric that was 0 has no meaningful percentage drop, so it is skipped); and the original increase-based guardrails are left untouched, so latency/cost/thumb-down behavior is unchanged.
+
+**7.** A coding-assistant team reports a win: over a two-week experiment, control logged 100,000 sessions and treatment 98,000, and the *per-suggestion* accept rate rose from 0.300 to 0.309, with a naive two-proportion $z$-test over all suggestions giving $z = 2.60$ ($p \approx 0.009$). (a) Run the SRM check on the session counts and say what it implies. (b) Assuming the SRM is explained and fixed, the metric is still suggestions-per-user, with a delta-method standard error 1.34× the naive per-suggestion one. Recompute $z$ and the two-sided $p$-value. (c) What should the team report?
+
+??? note "Solution"
+    **(a) SRM.** Total $= 198{,}000$, so each arm was designed to get $99{,}000$:
+
+    $$
+    \chi^2 = \frac{(100000 - 99000)^2}{99000} + \frac{(98000 - 99000)^2}{99000}
+    = 2 \times \frac{10^6}{99000} \approx 20.2
+    $$
+
+    With 1 degree of freedom, $p \approx 7 \times 10^{-6}$ — far below the strict $10^{-3}$ alarm threshold, so this **is** an SRM. A 2,000-session shortfall is only a 1% imbalance, which would be pure noise at a thousand sessions but is impossible by chance at a hundred thousand. The plausible causes are all bugs that bias the metric in the *same* direction as the reported win: if the treatment model times out on the longest, hardest prompts and those sessions never reach the metrics table, the missing sessions are exactly the ones that would have had low accept rates. Nothing downstream should be believed until the missing 2,000 sessions are accounted for.
+
+    **(b) Clustered SE.** The delta-method SE is 1.34× larger, and $z$ is inversely proportional to the SE:
+
+    $$
+    z_{\text{clustered}} = \frac{2.60}{1.34} \approx 1.94,
+    \qquad p = 2\,(1 - \Phi(1.94)) \approx 0.052.
+    $$
+
+    The result crosses back over the 0.05 line. Nothing about the point estimate changed — the +0.9pp lift is still the best guess — but the honest interval is wide enough to include zero, because one user contributing 200 correlated suggestions is not 200 independent data points.
+
+    **(c) What to report.** "SRM detected ($p \approx 7\text{e-}6$); the experiment is invalid as run." Fix the assignment/logging bug, restart, and pre-register the clustered analysis (delta method or bootstrap over users) so the next read is not re-derived after seeing the data. If the effect is real, it survives; the cost of one more clean two-week run is far smaller than shipping a regression that a broken denominator disguised as a win.

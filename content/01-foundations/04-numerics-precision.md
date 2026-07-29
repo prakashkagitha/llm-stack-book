@@ -8,7 +8,7 @@ Familiarity with the concepts here is assumed throughout the rest of the book. [
 
 ## IEEE 754: The Foundation
 
-The **IEEE 754** standard (1985, revised 2008) defines how a real number is represented, rounded, and how arithmetic operations behave. Every mainstream ML accelerator — NVIDIA GPUs, Google TPUs, AMD MI-series — implements IEEE 754 (or a deliberate approximation of it, as we will see with TF32 and FP8).
+The **IEEE 754** standard (1985, revised 2008 and 2019) defines how a real number is represented, rounded, and how arithmetic operations behave. Every mainstream ML accelerator — NVIDIA GPUs, Google TPUs, AMD MI-series — implements IEEE 754 (or a deliberate approximation of it, as we will see with TF32 and FP8).
 
 ### The bit layout
 
@@ -38,15 +38,17 @@ The last decade has produced a proliferation of numeric formats as hardware desi
 
 | Format | Sign | Exponent | Mantissa | Total bits | Max value | Min normal | Notes |
 |--------|------|----------|----------|------------|-----------|------------|-------|
-| fp64 | 1 | 11 | 52 | 64 | ~1.8×10¹⁰⁸ | ~2.2×10⁻³⁰⁸ | "double" |
+| fp64 | 1 | 11 | 52 | 64 | ~1.8×10³⁰⁸ | ~2.2×10⁻³⁰⁸ | "double" |
 | **fp32** | 1 | 8 | 23 | 32 | ~3.4×10³⁸ | ~1.2×10⁻³⁸ | Standard training historically |
 | **tf32** | 1 | 8 | 10 | 19\* | ~3.4×10³⁸ | ~1.2×10⁻³⁸ | NVIDIA Ampere+; accumulates in fp32 |
 | **bf16** | 1 | 8 | 7 | 16 | ~3.4×10³⁸ | ~1.2×10⁻³⁸ | Training workhorse |
 | **fp16** | 1 | 5 | 10 | 16 | ~65504 | ~6.1×10⁻⁵ | Inference; narrow range |
-| fp8 E4M3 | 1 | 4 | 3 | 8 | 448 | ~1.95×10⁻³ | FP8 fine-scale |
-| fp8 E5M2 | 1 | 5 | 2 | 8 | ~57344 | ~1.5×10⁻⁶ | FP8 gradients |
+| fp8 E4M3 | 1 | 4 | 3 | 8 | 448 | $2^{-6} \approx 1.6\times10^{-2}$ | FP8 fine-scale |
+| fp8 E5M2 | 1 | 5 | 2 | 8 | ~57344 | $2^{-14} \approx 6.1\times10^{-5}$ | FP8 gradients |
 
 \* TF32 packs into a 32-bit register; only 19 bits carry information.
+
+The "min normal" column is the smallest *normal* magnitude; subnormals extend a little lower (fp8 E4M3 down to $2^{-9} \approx 1.95\times10^{-3}$, E5M2 down to $2^{-16} \approx 1.5\times10^{-5}$). Note also that the E4M3 variant hardware actually implements is `E4M3FN` ("finite"): it spends the all-ones exponent on ordinary numbers rather than infinities, which is how it reaches a max of 448 instead of 240. PyTorch exposes it as `torch.float8_e4m3fn`; you can confirm every row of this table yourself with `torch.finfo(dtype)`.
 
 ```text
 FP32  [s|eeeeeeee|mmmmmmmmmmmmmmmmmmmmmmm]   32 bits
@@ -339,6 +341,66 @@ print(f"Float64 reference: {ref_result:.10f}  error={abs(ref_result - true_sum):
 
 Kahan summation matters most in **gradient accumulation** (summing many micro-batch gradients before an optimizer step) and in **weight update** computations. PyTorch's optimizer implementations typically accumulate in fp32 even when parameters are stored in fp16/bf16; this is the "master weights" pattern described in the mixed-precision training chapter.
 
+### Stochastic rounding: the other way to beat accumulated bias
+
+Kahan's insight is to *remember* the discarded bits. The alternative is to *randomize* them. Default IEEE rounding is round-to-nearest-even, which is deterministic and therefore **biased** in a repeated accumulation: if every increment is smaller than half a ULP of the running total, every single one rounds to zero and the sum freezes forever. That is precisely the fp16/bf16 "stagnant update" failure from earlier in this chapter.
+
+**Stochastic rounding** rounds $x$ down to the representable value $x_{\text{lo}}$ with probability $(x_{\text{hi}} - x)/(x_{\text{hi}} - x_{\text{lo}})$ and up otherwise, so that
+
+$$
+\mathbb{E}[\operatorname{round}_{\text{stoch}}(x)] = x .
+$$
+
+The rounding error becomes zero-mean noise instead of a systematic drift, so errors cancel over many steps rather than compounding. Implementing it for fp32 → bf16 is a two-line bit trick: bf16 is the top 16 bits of fp32, so adding a uniform random 16-bit integer to the mantissa *before* truncating makes the carry into bit 16 happen with exactly the right probability.
+
+```python
+import torch
+
+
+def stochastic_round_to_bf16(x: torch.Tensor) -> torch.Tensor:
+    """
+    Round fp32 -> bf16 stochastically, so that E[result] == x.
+
+    bf16 is literally the top 16 bits of fp32. Adding a uniform random
+    16-bit integer to the low mantissa bits before truncating makes the
+    carry into bit 16 fire with probability equal to the fractional
+    distance to the next bf16 value -- i.e. exactly stochastic rounding.
+    """
+    assert x.dtype == torch.float32
+    bits = x.view(torch.int32)
+    noise = torch.randint(0, 1 << 16, x.shape, dtype=torch.int32, device=x.device)
+    return ((bits + noise) & ~0xFFFF).view(torch.float32).bfloat16()
+
+
+# Accumulate 0.01 one thousand times in a bf16 accumulator.
+# Once the total passes ~8, one ULP is 0.0625 and 0.01 is below half
+# a ULP -- round-to-nearest sends every further increment to zero.
+torch.manual_seed(0)
+N, step = 1000, 0.01
+
+acc = torch.zeros((), dtype=torch.bfloat16)
+for _ in range(N):
+    acc = (acc.float() + step).bfloat16()          # round-to-nearest
+nearest = acc.item()
+
+acc = torch.zeros((), dtype=torch.bfloat16)
+for _ in range(N):
+    acc = stochastic_round_to_bf16(acc.float() + step)   # stochastic
+stoch = acc.item()
+
+print(f"exact sum:                 {N * step:.4f}")
+print(f"bf16, round-to-nearest:    {nearest:.4f}")
+print(f"bf16, stochastic rounding: {stoch:.4f}")
+```
+
+```text
+exact sum:                 10.0000
+bf16, round-to-nearest:    4.0000
+bf16, stochastic rounding: 9.1875
+```
+
+Round-to-nearest freezes at 4.0 — it never recovers, no matter how many more increments you add. Stochastic rounding lands near 10; because it is unbiased rather than exact, it fluctuates around the true value from run to run (roughly 9–11 across seeds here) instead of collapsing. That trade — a little variance in exchange for no drift — is why stochastic rounding is the standard tool for keeping weights or optimizer states in bf16 (and is a required ingredient in the FP4 training recipes discussed below). Some accelerators, notably Graphcore IPUs and several TPU generations, implement it in hardware; on NVIDIA GPUs it is done in software as above or inside a library like Transformer Engine.
+
 ---
 
 ## Why bf16 Won Training
@@ -347,11 +409,11 @@ The story of how bf16 displaced fp32 (and then fp16) as the default training for
 
 ### The fp16 era and its problems
 
-Around 2017–2018, the community began training in fp16 with the **mixed-precision training** recipe (Micikevicius et al., ICLR 2018). The idea: store weights and activations in fp16, accumulate gradient updates in fp32 ("master weights"), and use loss scaling to prevent gradient underflow. Hardware reasons: fp16 FLOP/s is 2× higher than fp32 on Pascal/Volta GPUs, and memory bandwidth doubles.
+Around 2017–2018, the community began training in fp16 with the **mixed-precision training** recipe (Micikevicius et al., ICLR 2018). The idea: store weights and activations in fp16, accumulate gradient updates in fp32 ("master weights"), and use loss scaling to prevent gradient underflow. Hardware reasons: fp16 halves the bytes moved per tensor, and Volta's tensor cores delivered several times the fp32 throughput on matmuls.
 
 The problems:
 1. **Overflow**: weight norms, gradient norms, and optimizer states can transiently exceed 65504. Loss scaling helps but requires dynamic tuning.
-2. **Precision**: with only 10 mantissa bits ($\varepsilon_{\text{mach}} \approx 10^{-3}$), small weight updates are rounded to zero when the weight magnitude exceeds roughly $10^3 \times \varepsilon_{\text{mach}} = 1$. At large learning rates late in training, this is fine; at small learning rates fine-tuning, it is not.
+2. **Precision (the "stagnant update" problem)**: with only 10 mantissa bits ($\varepsilon_{\text{mach}} \approx 9.8 \times 10^{-4}$), the update $w \leftarrow w + \Delta w$ is a no-op whenever $|\Delta w| < \tfrac{1}{2}\varepsilon_{\text{mach}}|w|$ — the increment falls below half a ULP at the weight's magnitude and rounds away. With $|w| \approx 0.02$ and $\varepsilon_{\text{mach}} \approx 10^{-3}$, any update smaller than about $10^{-5}$ vanishes. Late in training, when the learning rate has decayed, a large fraction of updates land in exactly this regime and the model quietly stops learning. This — not overflow — is why fp32 master weights are mandatory in fp16 training.
 3. **Engineering complexity**: loss scaling, gradient unscaling, and `inf`/`NaN` checks add fragile infrastructure.
 
 ### The bf16 solution
@@ -364,6 +426,56 @@ Google introduced bf16 for TPU training and NVIDIA added native bf16 support in 
 
 The practical result: training LLMs in pure bf16 (no loss scaling, no master weights in many implementations) "just works." This simplification dramatically reduced training infrastructure complexity.
 
+### The library layer: what `torch.autocast` actually does
+
+"Training in bf16" almost never means *every* tensor is bf16. In practice you run a **mixed**-precision loop, and the component that decides what goes where is `torch.autocast` — PyTorch's automatic mixed precision (AMP) context manager. It is worth knowing precisely what it does, because it is the single most-used numerics tool in the entire stack.
+
+Autocast maintains an internal per-operator policy list. Roughly:
+
+- **Cast to bf16/fp16**: the big, rounding-tolerant, tensor-core-bound ops — `matmul`, `linear`, `conv*`, `bmm`, `einsum`, `scaled_dot_product_attention`.
+- **Force fp32**: ops that are reductions, involve exponentials/logs, or are otherwise precision-critical — `softmax`, `log_softmax`, `cross_entropy`, `layer_norm`, `sum`, `norm`, `pow`, `exp`, `log`.
+- **Promote to the widest input dtype**: ops like `cat`, `stack`, `addcdiv` where mixing would be ambiguous.
+
+This is exactly the taxonomy the rest of this chapter argues for: matmuls are error-averaging dot products where bf16's coarse mantissa washes out, while softmax and normalization are the places where cancellation and small-variance division bite.
+
+```python
+import torch
+
+dev = "cuda" if torch.cuda.is_available() else "cpu"   # autocast supports both
+model = torch.nn.Linear(512, 512).to(dev)           # params stay fp32
+x = torch.randn(8, 512, device=dev)                 # input fp32
+opt = torch.optim.AdamW(model.parameters(), lr=1e-3)  # states fp32
+
+with torch.autocast(device_type=dev, dtype=torch.bfloat16):
+    h = model(x)                    # matmul -> runs in bf16
+    print(h.dtype)                  # torch.bfloat16
+    p = torch.softmax(h, dim=-1)    # softmax -> forced back to fp32
+    print(p.dtype)                  # torch.float32
+    loss = p.mean()                 # fp32 loss
+
+# Backward and the optimizer step run OUTSIDE the autocast context.
+# Gradients arrive in the dtype of each parameter (fp32 here), so the
+# update happens at full precision -- the "master weights" pattern.
+loss.backward()
+opt.step()
+opt.zero_grad(set_to_none=True)
+```
+
+Two details that trip people up. First, **`backward()` belongs outside the `autocast` block**: autograd replays each op in the dtype it was recorded with, so wrapping backward adds nothing and can mis-cast. Second, **autocast does not change your parameter dtypes** — the `Linear` weights are still fp32; autocast casts a bf16 *copy* on the fly for the matmul. That is what gives you fp32 master weights for free. With fp16 you additionally need `torch.amp.GradScaler` for loss scaling; with bf16 you do not, which is the whole point of the format.
+
+For a ~100M model, this is the entire precision plan:
+
+| Component | dtype | Why |
+|-----------|-------|-----|
+| Parameters (master) | fp32 | Updates smaller than half a ULP must not vanish |
+| Forward/backward matmuls | bf16 (via autocast) | 2× memory traffic saved, tensor-core throughput |
+| Softmax / norms / loss | fp32 (autocast forces) | Cancellation and small-variance division |
+| Gradients | dtype of the parameter (fp32) | Accumulation across micro-batches stays exact |
+| Adam moments $m$, $v$ | fp32 | $v$ holds squared grads; bf16 would quantize them badly |
+| Activations saved for backward | bf16 | Dominant memory term; tolerant to rounding |
+
+A useful sanity check on this table: fp32 master weights + fp32 Adam moments cost $4 + 4 + 4 = 12$ bytes per parameter, so a 100M-parameter model needs ~1.2 GB of optimizer/parameter state before a single activation is stored. The full accounting, plus the FP8 recipe, is in [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html); the concrete loop that uses it is [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
+
 ### TF32: the tensor-core compromise
 
 TF32 (TensorFloat-32) is an NVIDIA-specific format introduced with Ampere. It is not a storage format — it is a compute format used internally by tensor cores. When you do a matrix multiply in fp32, Ampere automatically:
@@ -371,7 +483,23 @@ TF32 (TensorFloat-32) is an NVIDIA-specific format introduced with Ampere. It is
 2. Performs the multiply-accumulate in the tensor core.
 3. Accumulates the result in fp32.
 
-The effect: 8× higher FLOP/s for matmul vs. fp32, with minimal precision loss because the accumulation is fp32. You get this for free without changing your training code — `torch.backends.cuda.matmul.allow_tf32 = True` (default on Ampere+).
+The effect: on A100, TF32 tensor-core matmul is roughly 8× the non-tensor-core fp32 rate, with minimal accuracy loss because the accumulation is fp32.
+
+There is a footgun here that catches people constantly: **PyTorch does not enable TF32 for matmuls by default.** Since PyTorch 1.12, `torch.backends.cuda.matmul.allow_tf32` defaults to `False` (so that `A @ B` on fp32 tensors gives fp32-faithful results), while `torch.backends.cudnn.allow_tf32` defaults to `True` (so convolutions do use it). If you benchmark "fp32 training" on an A100 and it is mysteriously slow, this is usually why. The modern, dtype-agnostic way to opt in is:
+
+```python
+import torch
+
+# Preferred modern API: "highest" = true fp32, "high" = TF32 (or bf16x3),
+# "medium" = bf16 for the internal matmul. Affects fp32 matmuls only.
+torch.set_float32_matmul_precision("high")   # turn TF32 matmuls on
+
+# Equivalent low-level switches (still supported):
+# torch.backends.cuda.matmul.allow_tf32 = True
+# torch.backends.cudnn.allow_tf32 = True     # already True by default
+```
+
+Turning this on is essentially free accuracy-wise and is a standard first line in any training script — including the Stack-100M run in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
 
 ```python
 import torch
@@ -416,7 +544,21 @@ FP8 (introduced in the H100 Transformer Engine) pushes further. Two variants:
 - **E4M3** (4 exponent, 3 mantissa): higher precision, for forward activations and weights.
 - **E5M2** (5 exponent, 2 mantissa): larger range, for gradients.
 
-Because FP8 has only 3 or 2 mantissa bits, it requires **dynamic quantization** — per-tensor or per-block scaling factors to keep values in the representable range. NVIDIA's Transformer Engine handles this automatically. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full workflow.
+Because FP8 has only 3 or 2 mantissa bits, it requires **dynamic quantization** — per-tensor or per-block scaling factors to keep values in the representable range. The scale is what supplies the dynamic range that the format itself lacks; the 8 bits only have to encode the *shape* of the local distribution.
+
+At the library level you have two real choices, and you should know both. NVIDIA's **Transformer Engine** (`transformer_engine.pytorch`) provides drop-in `te.Linear` / `te.TransformerLayer` modules and an `fp8_autocast` context that manages the scaling factors and their delayed-scaling history for you. The framework-native alternative is **torchao** (`pytorch/ao`), which converts an existing `nn.Module` tree in place and composes with `torch.compile` and FSDP:
+
+```python
+# pip install torchao
+from torchao.float8 import convert_to_float8_training
+
+# Swaps eligible nn.Linear layers for float8 versions that pick scales
+# dynamically and dispatch to torch._scaled_mm under the hood.
+convert_to_float8_training(model)
+model = torch.compile(model)   # fusion of the scaling/cast ops matters a lot
+```
+
+Both ultimately bottom out in the same primitive — a scaled FP8 matmul, exposed in PyTorch as `torch._scaled_mm(a_fp8, b_fp8, scale_a=..., scale_b=..., out_dtype=torch.bfloat16)` — which multiplies FP8 inputs on tensor cores while accumulating in fp32 and rescaling on the way out. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full workflow, and [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html) for the inference-side story.
 
 By 2026, NVIDIA's Blackwell and Rubin generations push the same idea a step further with native 4-bit floating-point formats — **NVFP4** and **MXFP4** — applying finer-grained per-block scaling to keep a 4-bit mantissa usable. Transformer Engine now ships full NVFP4 *training* recipes (not just inference), typically pairing FP4 matmuls with higher-precision master weights and stochastic rounding to control the added quantization noise. FP8 remains the mainstream format for large-scale pretraining as of this writing; FP4 training is the current research and early-production frontier.
 
@@ -654,11 +796,12 @@ print(f"Gradient norm after clipping:  {norm_after:.4f}  (target: ≤ 1.0)")
 !!! key "Key Takeaways"
     - IEEE 754 floating-point encodes numbers as $(-1)^s \times 1.m \times 2^{e-\text{bias}}$; exponent bits determine dynamic range, mantissa bits determine relative precision.
     - bf16 keeps fp32's 8-bit exponent (max ~$3.4 \times 10^{38}$) with only 7 mantissa bits. Its identical dynamic range makes loss scaling unnecessary, which is why it displaced fp16 as the LLM training standard.
+    - "Training in bf16" means `torch.autocast`, not a bf16 model: matmuls run in bf16 while softmax, norms, and the loss are forced back to fp32, and parameters plus Adam moments stay fp32 (12 bytes/param) so that small updates do not round away.
     - fp16 overflows at ~65504; this is a hard wall that causes NaN in training unless carefully managed with loss scaling. bf16 essentially eliminates this failure mode.
     - Catastrophic cancellation destroys precision when subtracting nearly equal numbers. Stable softmax avoids it by subtracting the maximum logit before exponentiation — a mathematically equivalent but numerically safe rewrite.
     - The logsumexp identity $m + \log \sum_j e^{z_j - m}$ is the foundation of stable softmax, stable log-softmax, numerically correct cross-entropy, and the online attention algorithm in FlashAttention.
-    - Kahan summation reduces floating-point summation error from $O(N \varepsilon)$ to $O(\varepsilon)$; the pattern of accumulating in higher precision is used throughout PyTorch (LayerNorm statistics, gradient norm computation, optimizer states).
-    - TF32 is a hardware-only intermediate format in NVIDIA Ampere tensor cores: fp32 inputs are rounded to 10-bit mantissa internally, with fp32 accumulation, delivering ~8× higher throughput than fp32 matmul with negligible accuracy loss.
+    - Kahan summation reduces floating-point summation error from $O(N \varepsilon)$ to $O(\varepsilon)$; the pattern of accumulating in higher precision is used throughout PyTorch (LayerNorm statistics, gradient norm computation, optimizer states). Stochastic rounding is the complementary trick — it makes rounding error zero-mean instead of a systematic drift, which is what keeps low-precision accumulators from freezing.
+    - TF32 is a hardware-only intermediate format in NVIDIA Ampere tensor cores: fp32 inputs are rounded to 10-bit mantissa internally, with fp32 accumulation, delivering ~8× higher throughput than fp32 matmul with negligible accuracy loss. PyTorch leaves it **off** for matmuls by default — opt in with `torch.set_float32_matmul_precision("high")`.
     - FP8 (E4M3 for weights/activations, E5M2 for gradients) requires per-tensor scaling factors because its 3/2 mantissa bits offer almost no dynamic range on their own.
     - When debugging NaN/inf in training: check in order — activation magnitudes, gradient norms, loss scaling logic, LayerNorm implementation, and optimizer state dtypes.
 
@@ -672,6 +815,7 @@ print(f"Gradient norm after clipping:  {norm_after:.4f}  (target: ≤ 1.0)")
     - [Goldberg, *What Every Computer Scientist Should Know About Floating-Point Arithmetic* (1991)](https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html) — the canonical reference on IEEE 754 representation, rounding, and error analysis.
     - [Higham, *Accuracy and Stability of Numerical Algorithms* (SIAM, 2002)](https://nhigham.com/accuracy-and-stability-of-numerical-algorithms/) — graduate-level treatment of backward error analysis, condition numbers, and algorithm stability.
     - [Micikevicius et al., *Mixed Precision Training* (ICLR 2018)](https://arxiv.org/abs/1710.03740) — introduced loss scaling and master-weight fp32 copies to make fp16 training viable at scale.
+    - [Gupta et al., *Deep Learning with Limited Numerical Precision* (ICML 2015)](https://arxiv.org/abs/1502.02551) — introduced stochastic rounding to deep learning, showing 16-bit fixed-point training matches fp32 when rounding is unbiased.
     - [Kalamkar et al., *A Study of BFLOAT16 for Deep Learning Training* (2019)](https://arxiv.org/abs/1905.12322) — the empirical case that bf16's fp32-equivalent dynamic range makes loss scaling unnecessary.
 
     **Recent advances (2022–2026)**
@@ -684,6 +828,7 @@ print(f"Gradient norm after clipping:  {norm_after:.4f}  (target: ≤ 1.0)")
 
     - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — reference implementation of FlashAttention 1–4, supporting CUDA and ROCm, used in virtually every major LLM training stack.
     - [NVIDIA Transformer Engine — FP8 & FP4 guide](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/fp8_primer.html) — official guide to FP8 / MXFP8, plus native NVFP4/MXFP4 training recipes with delayed and block-wise scaling, on Hopper, Blackwell, and Rubin GPUs.
+    - [pytorch/ao (torchao)](https://github.com/pytorch/ao) — PyTorch-native float8 (and low-bit) training and inference: `convert_to_float8_training` swaps `nn.Linear` layers for scaled-FP8 versions that compose with `torch.compile` and FSDP, without leaving the PyTorch module system.
 
     **Go deeper**
 
