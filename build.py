@@ -549,7 +549,8 @@ def write_index(coll, total_words, nch):
                f'<a class="btn-ghost" href="map/index.html">Learning map</a>'
                f'<a class="btn-ghost" href="glossary/index.html">Glossary</a>'
                f'<a class="btn-ghost" href="tools/index.html">Tools &amp; calculators</a>'
-               f'<a class="btn-ghost" href="interview/index.html">Interview companion</a></p>')
+               f'<a class="btn-ghost" href="interview/index.html">Interview companion</a>'
+               f'<a class="btn-ghost" href="print.html">Print / PDF edition</a></p>')
 
     canonical = SITE_BASE + (f'{coll.out_subdir}/' if coll.out_subdir else "")
     cite = ""
@@ -833,6 +834,114 @@ def write_glossary(book):
     return len(gloss)
 
 
+def write_print_edition(book):
+    """One self-contained /print.html with every chapter in order (cover + auto TOC),
+    cross-links rewritten to in-page anchors, print-optimized CSS, KaTeX for math.
+    The reader opens it and uses Print -> Save as PDF (renders figures/math faithfully);
+    scripts/make_pdf.sh automates that with headless Chrome where the sandbox allows."""
+    try:
+        style_css = open(os.path.join(SITE, "assets", "style.css")).read()
+        pyg_css = open(os.path.join(SITE, "assets", "pygments.css")).read()
+    except OSError:
+        return 0
+
+    def anchor(url):
+        return url[:-5].replace("/", "__") if url.endswith(".html") else url.replace("/", "__")
+
+    link_re = re.compile(r'href="(?:\.\./)?([0-9a-z][0-9a-z-]+)/([0-9a-z][0-9a-z-]+)\.html((?:#[^"]*)?)"')
+    sections, toc, cur_part = [], [], None
+    for c in book.flat_chapters:
+        md = markdown.Markdown(extensions=MD_EXTENSIONS, extension_configs=MD_CONFIG)
+        if os.path.exists(c["md_path"]):
+            raw = open(c["md_path"]).read()
+        else:
+            continue
+        raw = expand_figures(raw)
+        raw = expand_tools(raw)
+        body = md.convert(raw)
+        # cross-chapter links -> in-page anchors
+        body = link_re.sub(lambda m: f'href="#{m.group(1)}__{m.group(2)}"', body)
+        a = anchor(c["url"])
+        num = "" if c.get("is_front") else f'{c["part_no"]}.{c["chap_no"]} '
+        if c.get("part_title") != cur_part:
+            cur_part = c.get("part_title")
+            toc.append(f'<li class="pe-toc-part">{html.escape(cur_part or "")}</li>')
+        sections.append(f'<section class="pe-chapter" id="{a}">\n{body}\n</section>')
+        toc.append(f'<li class="pe-toc-ch"><a href="#{a}">{html.escape(num + c["title"])}</a></li>')
+
+    m = book.m
+    cover = (f'<div class="pe-cover">'
+             f'<div class="pe-cover-eyebrow">The complete book &middot; print / PDF edition</div>'
+             f'<h1 class="pe-cover-title">{html.escape(m["title"])}</h1>'
+             f'<div class="pe-cover-sub">{html.escape(m.get("subtitle",""))}</div>'
+             f'<p class="pe-cover-tag">{html.escape(m.get("tagline",""))}</p>'
+             f'<div class="pe-cover-meta">{len(sections)} chapters &middot; generated {BUILD_DATE} &middot; '
+             f'<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a><br>'
+             f'{html.escape(SITE_BASE)}</div>'
+             f'<p class="pe-cover-hint">Tip: use your browser&rsquo;s <b>Print &rarr; Save as PDF</b> '
+             f'(A4/Letter, background graphics on). Interactive widgets print their initial state.</p>'
+             f'</div>')
+    toc_html = f'<nav class="pe-toc"><h2>Contents</h2><ol>{"".join(toc)}</ol></nav>'
+    print_css = """
+:root{color-scheme:light}
+html[data-theme]{}
+body.pe-body{max-width:52rem;margin:0 auto;padding:2rem 1.4rem;background:#fff;color:#222}
+.pe-cover{min-height:80vh;display:flex;flex-direction:column;justify-content:center;text-align:center;break-after:page}
+.pe-cover-title{font-size:2.6rem;line-height:1.1;margin:.4rem 0}
+.pe-cover-sub{font-size:1.3rem;color:#555}
+.pe-cover-tag{color:#666;max-width:34rem;margin:1rem auto}
+.pe-cover-eyebrow{letter-spacing:.08em;text-transform:uppercase;font-size:.75rem;color:#a03d1f;font-weight:700}
+.pe-cover-meta{margin-top:1.4rem;color:#777;font-size:.9rem}
+.pe-cover-hint{margin-top:2rem;color:#888;font-size:.85rem}
+.pe-toc{break-after:page}
+.pe-toc ol{list-style:none;padding-left:0;columns:1}
+.pe-toc-part{font-weight:700;margin:1rem 0 .3rem;color:#a03d1f}
+.pe-toc-ch a{text-decoration:none;color:#334;font-size:.95rem}
+.pe-chapter{break-before:page}
+.pe-chapter h1{font-size:1.9rem;border-bottom:2px solid #eee;padding-bottom:.3rem;margin-top:0}
+.viz-replay,.viz-tool button,.vt-in button{display:none!important}
+.viz svg,.viz-tool svg{max-width:100%;height:auto}
+pre{white-space:pre-wrap;word-break:break-word;background:#f6f7f9;border:1px solid #eceef3;border-radius:6px;padding:.7rem;font-size:.8rem}
+code{word-break:break-word}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{border:1px solid #ddd;padding:.3rem .5rem}
+.admonition{border:1px solid #e5e5e5;border-left:4px solid #a03d1f;border-radius:5px;padding:.5rem .8rem;margin:1rem 0;font-size:.92rem}
+.admonition-title{font-weight:700}
+img{max-width:100%}
+a{color:#a03d1f}
+@media print{
+  body.pe-body{max-width:none;padding:0}
+  .pe-cover-hint,.pe-toc a{color:#000}
+  a{color:#000;text-decoration:none}
+  @page{margin:1.6cm 1.4cm}
+}
+"""
+    doc = f"""<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(m["title"])} — Print / PDF edition</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<style>{style_css}</style>
+<style>{pyg_css}</style>
+<style>{print_css}</style>
+</head>
+<body class="pe-body markdown-body">
+{cover}
+{toc_html}
+{"".join(sections)}
+<script>window.MathJax=null;</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{{delimiters:[{{left:'\\\\[',right:'\\\\]',display:true}},{{left:'\\\\(',right:'\\\\)',display:false}},{{left:'$$',right:'$$',display:true}}],throwOnError:false}});"></script>
+</body>
+</html>
+"""
+    open(os.path.join(SITE, "print.html"), "w").write(doc)
+    return len(sections)
+
+
 def write_sitemap(entries):
     """entries: list of (path_relative_to_SITE_BASE, lastmod_date). Emits sitemap.xml + robots.txt."""
     items = []
@@ -898,6 +1007,9 @@ def main():
     n_gloss = write_glossary(book)
     if n_gloss:
         print(f"  glossary: {n_gloss} terms -> site/glossary/")
+    n_print = write_print_edition(book)
+    if n_print:
+        print(f"  print edition: {n_print} chapters -> site/print.html")
 
     # sitemap.xml + robots.txt (git_last_date is cached from the render pass, so this is cheap)
     entries = [("", BUILD_DATE)]
@@ -907,6 +1019,8 @@ def main():
         entries.append(("map/", BUILD_DATE))
     if n_gloss:
         entries.append(("glossary/", BUILD_DATE))
+    if n_print:
+        entries.append(("print.html", BUILD_DATE))
     entries += [(c["url"], git_last_date(c["md_path"])) for c in book.flat_chapters]
     entries.append(("interview/", BUILD_DATE))
     entries += [("interview/" + c["url"], git_last_date(c["md_path"])) for c in interview.flat_chapters]
