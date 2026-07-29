@@ -119,7 +119,7 @@ The pipeline:
 1. Render each PDF page to an image (e.g., at ~150 DPI). **No OCR.**
 2. Feed the image to a VLM's vision encoder + projection. The original ColPali used PaliGemma (a SigLIP vision tower feeding a Gemma language model). The image becomes a sequence of patch tokens — for PaliGemma, a $32\times 32$ grid yields **1024 patch embeddings** per page.
 3. Project each patch embedding down to a low dimension $d$ (ColPali uses $d = 128$, matching ColBERT) with a linear layer, and L2-normalize. Store these 1024 vectors as the page's representation.
-4. The text query is tokenized and run through the **same model's** language tower to produce one $d$-vector per query token.
+4. The text query is tokenized and run through the **same model's** language tower to produce one $d$-vector per query token. Following ColBERT, the query is also *augmented*: `colpali-engine`'s `process_queries` prepends a short instruction-style prefix and appends a handful of padding tokens that are **not** masked out of the MaxSim. Those extra slots behave as learned query-expansion vectors — they can latch onto page evidence the literal query words never mention — and removing them typically costs a little recall.
 5. Score with MaxSim, identical to ColBERT.
 
 {{fig:colpali-late-interaction-maxsim}}
@@ -200,7 +200,7 @@ def colpali_loss(Qb, Db, q_mask, d_mask):
 
 ## Indexing Multi-Vector Embeddings at Scale
 
-The brute-force MaxSim above is fine for a few thousand pages but collapses at corpus scale. The whole field of efficient multi-vector retrieval is about avoiding the full $O(\text{pages} \times \text{patches} \times \text{q-tokens})$ scan. There are two dominant approaches.
+The brute-force MaxSim above is fine for a few thousand pages but collapses at corpus scale. The whole field of efficient multi-vector retrieval is about avoiding the full $O(\text{pages} \times \text{patches} \times \text{q-tokens})$ scan. There is also a structural reason you cannot simply hand MaxSim to an off-the-shelf ANN library: MaxSim is a **Chamfer-style set similarity**, not an inner product between two single vectors, and it is not a metric (it is asymmetric and violates the triangle inequality), so the geometric assumptions HNSW and IVF are built on do not hold for it. Every practical system therefore *reduces* MaxSim to something indexable — per-token ANN over individual patches, centroid assignments, or a fixed-dimensional encoding whose dot product approximates MaxSim — and computes true MaxSim only on a shortlist. There are two dominant approaches.
 
 {{fig:multivector-storage-funnel}}
 
@@ -270,9 +270,57 @@ class PatchHNSWIndex:
         return scored[:topn]
 ```
 
+In production you rarely hand-roll this. Qdrant stores a whole **matrix** of patch vectors per point and evaluates MaxSim natively, so the funnel above becomes a few lines of client code:
+
+```python
+from qdrant_client import QdrantClient, models
+
+client = QdrantClient(":memory:")                 # or url="http://localhost:6333"
+client.create_collection(
+    collection_name="pages",
+    vectors_config=models.VectorParams(
+        size=128,                                  # ColPali projection dim
+        distance=models.Distance.COSINE,
+        # Each point holds [m, 128] patch vectors; scoring is MaxSim, not a dot product.
+        multivector_config=models.MultiVectorConfig(
+            comparator=models.MultiVectorComparator.MAX_SIM),
+    ),
+)
+client.upsert("pages", points=[
+    models.PointStruct(id=i, vector=emb.tolist(), payload={"page": i})
+    for i, emb in enumerate(page_embeddings)       # emb: [m, 128] per page
+])
+hits = client.query_points("pages", query=q_emb[0].tolist(), limit=5).points
+```
+
+Vespa expresses the same scoring declaratively as a tensor rank-profile (a `reduce(..., max, patch)` over the query-token × patch tensor product, then a sum over query tokens), and Weaviate exposes multi-vector fields with an optional MUVERA encoder for the candidate stage. The trade-off is identical everywhere: the database can compute MaxSim for you, but *you* still decide how the candidate stage narrows millions of pages down to hundreds.
+
 ### Token Pooling and Compression
 
-Because 1024 patches per page is the cost driver, a cheap win is **token pooling**: cluster a page's patch vectors (e.g., hierarchical agglomerative clustering) and keep a smaller set of representative vectors — say 256 instead of 1024 — before indexing. Empirically you can drop a large fraction of patches with little retrieval-quality loss, because many patches (margins, whitespace, repeated background) are redundant. Combined with **binary quantization** of what remains, real ColPali deployments routinely shrink the index by 10–30× from the naive 256 KiB/page figure. **MUVERA** (Multi-Vector Retrieval via Fixed Dimensional Encodings) goes further: it deterministically projects the whole multi-vector set into a *single* fixed-dimensional vector whose dot product approximates MaxSim, letting you reuse a standard single-vector ANN index for candidate generation and only fall back to exact MaxSim for reranking.
+Because 1024 patches per page is the cost driver, a cheap win is **token pooling**: cluster a page's patch vectors (e.g., hierarchical agglomerative clustering) and keep a smaller set of representative vectors — say 256 instead of 1024 — before indexing. Empirically you can drop a large fraction of patches with little retrieval-quality loss, because many patches (margins, whitespace, repeated background) are redundant. It is about ten lines:
+
+```python
+import numpy as np
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import pdist
+
+def pool_patches(D, keep=128):
+    """D: [m, d] L2-normalized patch vectors -> [<=keep, d] pooled, renormalized.
+    Average-link agglomerative clustering on cosine distance, cut at `keep` clusters;
+    each cluster collapses to the (renormalized) mean of its members."""
+    if D.shape[0] <= keep:
+        return D
+    Z = linkage(pdist(D, metric="cosine"), method="average")
+    labels = fcluster(Z, t=keep, criterion="maxclust")     # at most `keep` clusters
+    pooled = np.stack([D[labels == c].sum(0) for c in np.unique(labels)])
+    return pooled / np.linalg.norm(pooled, axis=1, keepdims=True)
+
+D = np.random.default_rng(0).standard_normal((1024, 128))
+D /= np.linalg.norm(D, axis=1, keepdims=True)
+print(pool_patches(D, keep=128).shape)                     # (128, 128)
+```
+
+MaxSim over the pooled set is a lower-resolution version of the original: a query token now matches a *region* of the page rather than a single patch, which is exactly why quality degrades gracefully. `colpali-engine` ships an equivalent hierarchical token pooler (parameterized by a pool factor) so you can apply this at index time without writing it yourself. Combined with **binary quantization** of what remains, real ColPali deployments routinely shrink the index by 10–30× from the naive 256 KiB/page figure. **MUVERA** (Multi-Vector Retrieval via Fixed Dimensional Encodings) goes further: it deterministically projects the whole multi-vector set into a *single* fixed-dimensional vector whose dot product approximates MaxSim, letting you reuse a standard single-vector ANN index for candidate generation and only fall back to exact MaxSim for reranking.
 
 !!! tip "Practitioner tip: separate the two storage tiers"
 
@@ -296,6 +344,8 @@ model = ColPali.from_pretrained("vidore/colpali-v1.3",
 processor = ColPaliProcessor.from_pretrained("vidore/colpali-v1.3")
 
 # --- OFFLINE: render pages and embed them ---
+# pdf2image shells out to poppler; `pypdfium2` is a pure-wheel alternative with no
+# system dependency, which matters when you containerize the indexer.
 pages = convert_from_path("annual_report.pdf", dpi=150)  # list[PIL.Image]
 page_embeddings = []
 with torch.no_grad():
@@ -320,6 +370,8 @@ top = scores.topk(3).indices.tolist()
 retrieved_images = [pages[i] for i in top]
 
 # --- GENERATION: hand the raw page images to a VLM (no OCR text!) ---
+# Any capable VLM works here; swap in a newer Qwen2.5-VL / Qwen3-VL checkpoint
+# (or serve it behind vLLM/SGLang) without touching the retrieval half.
 from transformers import AutoModelForImageTextToText, AutoProcessor
 vlm = AutoModelForImageTextToText.from_pretrained(
     "Qwen/Qwen2-VL-7B-Instruct", torch_dtype=torch.bfloat16).to(device).eval()
@@ -408,6 +460,8 @@ def ndcg_at_k(retrieved_rels, ideal_rels, k=5):
 print(round(ndcg_at_k([1, 0, 1, 0, 0], [1, 1, 1, 0, 0], k=5), 4))
 ```
 
+You should not re-implement the harness around that metric. The ViDoRe authors ship **`vidore-benchmark`** (a Python package plus CLI) that pulls the benchmark's page-image datasets from the Hugging Face Hub, runs any `colpali-engine` retriever — or your own, by registering a class that exposes `forward_queries` / `forward_passages` and a scoring function — across every task and reports per-task nDCG@5; the ViDoRe tasks are also reachable through MTEB's multimodal retrieval suite. Wiring your retriever into it is the same argument as using `lm-evaluation-harness` for text evals rather than hand-rolling one (see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)): comparability with published numbers is the whole point.
+
 A few measurement subtleties specific to this setting:
 
 - **Report retrieval and end-to-end separately.** A page can be retrieved correctly yet the VLM still answers wrong, or vice versa. Measure nDCG@k for retrieval and an answer-correctness metric (exact match, LLM-as-judge; see [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html)) for the full pipeline.
@@ -427,7 +481,7 @@ The decision is a corpus question, not a fashion question. Reach for ColPali-sty
 - OCR is **lossy or failing** on your documents (multi-column, non-Latin scripts, handwriting, complex tables).
 - You can afford a **multi-vector index** (or the compression to make it affordable) and you want to skip the brittle OCR-and-layout engineering entirely.
 
-Stay with text RAG (and OCR if needed) when the corpus is **born-digital clean text**, when **index size is tightly constrained**, or when you need **exact lexical matching** on identifiers as the dominant signal (though hybrid fusion lets you have both). And remember the cost asymmetry: visual retrieval shifts expense from a parsing pipeline (offline, one-time) to **storage** (multi-vector index) and **generation tokens** (page images in the VLM). For high-value, layout-heavy corpora that trade is usually worth it; for commodity text it usually is not.
+Stay with text RAG (and OCR if needed) when the corpus is **born-digital clean text**, when **index size is tightly constrained**, or when you need **exact lexical matching** on identifiers as the dominant signal (though hybrid fusion lets you have both). And remember the cost asymmetry: visual retrieval shifts expense from a parsing pipeline (offline, one-time) to **storage** (multi-vector index) and **generation tokens** (page images in the VLM). For high-value, layout-heavy corpora that trade is usually worth it; for commodity text it usually is not. The capstone makes exactly this call and lands on the text side: Stack-100M has no vision tower and its research corpus is born-digital, so [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html) uses a single-vector text index. Late interaction is the upgrade path the moment that corpus becomes scanned PDFs — the MaxSim scorer, the candidate-then-exact funnel, and the two-tier storage split all port over unchanged; only the document encoder changes.
 
 This chapter closes Part IX. The retrieval mechanisms here — dual encoders, late interaction, multi-vector indexing, staged reranking — are the same primitives you have seen throughout the part, recombined for pixels instead of tokens. The generation side hands off directly to Part X: see [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html) for how the VLM actually reads those retrieved pages, and [Vision Transformers & Image Encoders](../10-multimodal-and-arch/01-vision-transformers.html) for the patch encoders that make any of this possible.
 
@@ -467,8 +521,9 @@ This chapter closes Part IX. The retrieval mechanisms here — dual encoders, la
     **Open-source & tools**
 
     - [illuin-tech/colpali (`colpali-engine`)](https://github.com/illuin-tech/colpali) — reference ColPali/ColQwen2/ColQwen2.5 training and inference (`colpali-engine` ≥ 0.3).
-    - [stanford-futuredata/ColBERT](https://github.com/stanford-futuredata/ColBERT) — the original ColBERT + PLAID engine.
-    - Multi-vector support in Qdrant, Vespa (tensor MaxSim ranking), and Weaviate for building ColPali indexes on production vector databases.
+    - [stanford-futuredata/ColBERT](https://github.com/stanford-futuredata/ColBERT) — the original ColBERT + PLAID engine (`RAGatouille` is the friendlier wrapper around it).
+    - [illuin-tech/vidore-benchmark](https://github.com/illuin-tech/vidore-benchmark) — the `vidore-benchmark` package/CLI for evaluating any retriever on ViDoRe v1/v2 with comparable nDCG@5.
+    - Multi-vector support in Qdrant (`MultiVectorComparator.MAX_SIM`), Vespa (tensor MaxSim rank-profiles), and Weaviate (multi-vector fields + MUVERA encoding) for building ColPali indexes on production vector databases.
 
 ## Further Reading
 

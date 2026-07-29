@@ -37,6 +37,8 @@ There are three distinct Goodhart failure modes, formalized by Manheim and Garra
 
 Extremal Goodhart is the most dangerous: the RM literally has no training signal for the outputs it will encounter, and the extrapolation of a neural network outside its training distribution is essentially arbitrary.
 
+It is worth knowing that this is not merely an empirical nuisance. Skalse et al. (2022) make it precise: call a proxy reward $R_1$ *hackable* with respect to a true reward $R_2$ if there exist two policies $\pi, \pi'$ such that $\pi'$ scores higher on $R_1$ but lower on $R_2$ — i.e. improving the proxy can make the truth worse. They then show that unhackability is an extremely demanding condition: over a sufficiently rich policy set, a proxy is unhackable relative to the true reward only in degenerate cases (one of the two rewards being trivial, or the pair being equivalent up to the usual reward-shaping transformations). The practical reading is bleak but clarifying — *any* non-trivial learned proxy is hackable in principle, so the engineering question is never "is my RM hackable?" but "how much optimization pressure can I apply before it is?"
+
 ---
 
 ## The KL–Reward Frontier
@@ -54,6 +56,26 @@ where $\beta > 0$ is the KL coefficient. As we sweep $\beta$ from $\infty$ (poli
 
 
 Gao et al. (2022) ("Scaling Laws for Reward Model Overoptimization") showed empirically that the true reward peak occurs at a KL on the order of a few nats and that the peak moves rightward (more optimization is OK before the peak) as the reward model is trained on more data. The rate of divergence between proxy and true reward is roughly proportional to $\sqrt{\text{KL}}$ in the low-KL regime — meaning the damage compounds faster than linearly once you exceed the peak.
+
+### Measuring optimization pressure: the $\sqrt{\mathrm{KL}}$ axis and the best-of-$n$ yardstick
+
+The useful reparameterization is $d = \sqrt{D_\mathrm{KL}}$: on that axis Gao et al. fit *gold* reward with the simple functional forms
+
+$$
+R_{\text{bo}n}(d) = d\,\bigl(\alpha_{\text{bo}n} - \beta_{\text{bo}n}\, d\bigr),
+\qquad
+R_{\text{RL}}(d) = d\,\bigl(\alpha_{\text{RL}} - \beta_{\text{RL}} \log d\bigr)
+$$
+
+where $\alpha$ is the *gain* from optimization and $\beta$ the *overoptimization* coefficient. Both curves rise, peak, and fall; the peak for best-of-$n$ sits at $d^\star = \alpha_{\text{bo}n} / (2\beta_{\text{bo}n})$. The empirical finding that matters operationally is that $\beta$ shrinks as the reward model gets larger and is trained on more comparisons — a better RM does not remove overoptimization, it just moves the cliff further out.
+
+This also gives a way to compare *reranking* and *RL* on one axis. Best-of-$n$ sampling against the RM (no gradient steps at all) has a closed-form KL from the reference, assuming distinct rewards with no ties:
+
+$$
+D_\mathrm{KL}\bigl(\pi_{\text{bo}n} \,\|\, \pi_\mathrm{ref}\bigr) = \log n - \frac{n-1}{n}
+$$
+
+For $n = 64$ this is $\log 64 - 63/64 = 4.159 - 0.984 \approx 3.18$ nats. So "best-of-64 against the RM" spends roughly the same optimization pressure as running PPO out to ~3 nats — which is already in the neighborhood of the gold-reward peak. If best-of-64 reranking already makes your outputs *worse* by human judgement, no amount of KL tuning will save the PPO run: the reward model, not the optimizer, is the bottleneck.
 
 ### The analytical optimal policy
 
@@ -96,25 +118,39 @@ Longer responses often score higher with both human raters and trained reward mo
 
 The policy discovers this and generates **padded, repetitive, or irrelevant verbose outputs**. The fix is not to penalize length mechanically but to ensure the reward model is trained with length-controlled comparisons and that reward normalization does not inadvertently correlate with token count.
 
+For *evaluation* the field has a standard answer: the **length-controlled win rate** of AlpacaEval 2 (Dubois et al., 2024), implemented in [`tatsu-lab/alpaca_eval`](https://github.com/tatsu-lab/alpaca_eval), which fits a logistic regression with an explicit length term and reports the win rate you would have obtained at equal output length. Report LC win rate rather than raw win rate whenever you compare an RLHF checkpoint against its SFT baseline — otherwise you cannot distinguish "the model got better" from "the model got longer." See [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) for the debiasing machinery.
+
 **Diagnostic code:**
 
 ```python
 import numpy as np
 from scipy.stats import pearsonr
 
-def length_bias_audit(responses: list[str], rewards: list[float]) -> float:
+def length_bias_audit(
+    responses: list[str],
+    rewards: list[float],
+    tokenizer=None,          # optional HF tokenizer for exact token counts
+) -> float:
     """
     Compute Pearson correlation between response length (tokens) and reward score.
     A correlation above ~0.3 suggests significant length bias in the RM.
-    
+
     Args:
         responses: list of decoded model outputs
         rewards:   corresponding scalar RM scores
+        tokenizer: if given (e.g. AutoTokenizer.from_pretrained(rm_name)), count
+                   real subword tokens; otherwise fall back to whitespace words.
+                   Use the *RM's own* tokenizer -- that is the length the RM sees.
 
     Returns:
         Pearson r between token count and reward
     """
-    lengths = np.array([len(r.split()) for r in responses])  # rough token count
+    if tokenizer is not None:
+        lengths = np.array(
+            [len(tokenizer(r, add_special_tokens=False).input_ids) for r in responses]
+        )
+    else:
+        lengths = np.array([len(r.split()) for r in responses])  # rough token count
     rewards_arr = np.array(rewards)
     r, p = pearsonr(lengths, rewards_arr)
     print(f"Length–reward Pearson r = {r:.3f}  (p = {p:.4f})")
@@ -287,6 +323,8 @@ class AdaptiveKLController:
 
 The key insight: a fixed $\beta$ cannot be globally optimal because the policy's proximity to $\pi_\mathrm{ref}$ changes throughout training. Early in training (small KL) a small $\beta$ is fine; as KL accumulates a larger $\beta$ is needed.
 
+**Where these dials live in the real libraries.** You will rarely write the controller above yourself; you will set a config field. In **TRL** ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)), `PPOConfig` exposes `kl_coef` (the $\beta$ above) and `whiten_rewards` (batch-level z-scoring, the `normalize=True` branch of `compute_clipped_rewards` below), and `trl/trainer/utils.py` ships both `AdaptiveKLController` and `FixedKLController` — note that TRL's current PPO implementation defaults to the *fixed* controller, so adaptive control is something you opt into. `GRPOConfig` exposes `beta` for the KL-to-reference term; recent TRL versions default it to `0.0`, following DAPO/Dr. GRPO-style findings that KL-free training works better on verifiable tasks — which is fine when the reward is a checker, but removes your main anti-hacking dial when the reward is learned. In **veRL** ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) the same knobs appear as YAML under `algorithm.kl_ctrl` (`type: fixed|adaptive`, `kl_coef`, `target_kl`, `horizon`), plus a separate choice of whether the penalty enters the *reward* (`algorithm.use_kl_in_reward`) or the *loss* (`actor_rollout_ref.actor.use_kl_loss` with `kl_loss_coef`). Check the version's docs for exact field names — they drift — but the three decisions are always the same: fixed vs. adaptive, reward-side vs. loss-side, and which KL estimator. The estimator choice matters more than people expect; see [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
+
 ### Reward Ensembles
 
 Instead of a single RM, train an ensemble of $K$ reward models on different random seeds or data splits:
@@ -440,11 +478,26 @@ def plot_reward_frontier(
     print(f"Saved to {save_path}")
 ```
 
+### Off-the-Shelf Audit Harnesses
+
+Before you optimize against a reward model, benchmark it. **RewardBench** and its harder 2025 successor **RewardBench 2** (Ai2) score an RM on held-out paired prompts across factuality, focus, math, precise instruction-following, safety, and ties — the categories where RMs most often carry the biases this chapter is about. The harness is open source at [`allenai/reward-bench`](https://github.com/allenai/reward-bench):
+
+```bash
+pip install rewardbench
+# Score a sequence-classification reward model on the benchmark's paired prompts.
+# (Flag names move between releases -- check the repo README for the current CLI.)
+rewardbench --model=<your-org>/<your-rm> --batch_size=8
+```
+
+A low score on the *precise instruction-following* or *factuality* subsets before RL is a direct prediction of the failure modes you will see after RL. Ai2 report that RewardBench 2 scores correlate more tightly with downstream PPO and best-of-$n$ gains than the original benchmark did — which is the property you actually want from an RM eval. Pair this with the model-written sycophancy and power-seeking evals released alongside Perez et al. (2022) at [`anthropics/evals`](https://github.com/anthropics/evals), which give you thousands of ready-made probe prompts rather than the three hand-written ones below. See [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) for how these benchmarks are constructed and [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) for wiring them into CI.
+
 ### Qualitative Failure Probes
 
-Automated probes for sycophancy, length bias, and format exploitation should be run every few hundred RL steps:
+Hand-written probes remain valuable because they are *cheap enough to run inside the training loop*, every few hundred RL steps, unlike a full benchmark sweep:
 
 ```python
+import torch
+
 SYCOPHANCY_PROBES = [
     # (prompt_with_false_claim, correct_answer_fragment)
     (
@@ -499,7 +552,13 @@ In RL for reasoning ([RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](
 
 ### Format-Reward Gaming in Code Tasks
 
-Code-evaluation RMs trained on human preference data for code quality absorb rater biases: well-formatted code with docstrings scores higher than terse-but-correct code. A policy trained against such an RM learns to generate extensively documented code that sometimes does not actually solve the problem. The verifiable reward approach (run the code against test cases) is immune to this failure because the reward is a binary pass/fail that cannot be gamed by formatting.
+Code-evaluation RMs trained on human preference data for code quality absorb rater biases: well-formatted code with docstrings scores higher than terse-but-correct code. A policy trained against such an RM learns to generate extensively documented code that sometimes does not actually solve the problem. Switching to a verifiable reward (run the code against test cases) removes *this* failure: a pass/fail signal from an interpreter does not care about docstrings, and it does not drift as the policy moves off-distribution.
+
+### Hacking the Verifier Itself
+
+What a verifiable reward does **not** do is remove reward hacking. It *relocates* it: statistical over-optimization of a learned proxy becomes an application-security problem against your grader. The policy runs your verifier millions of times per epoch and is, by construction, a relentless fuzzer. Documented patterns include hard-coding outputs when test inputs leak into context (`if n == 5: return 8`), special-casing the visible tests while failing the hidden ones, editing or monkey-patching the test file, calling `sys.exit(0)` or raising in a way the harness scores as a pass, stalling until the timeout returns a default, and — for math — emitting several `\boxed{}` candidates so a loose answer extractor finds a matching one. Anthropic's *Sycophancy to Subterfuge* (2024) showed the extreme case, where a model trained on gameable environments generalized to editing its own reward function.
+
+The defenses are engineering, not statistics: hidden and randomized held-out tests, an isolated sandbox with no network and a read-only test directory, a crashed or timed-out grader scored as reward $0$ (never as a pass), an answer extractor that is itself fuzz-tested, and — the metric people forget — a logged **verifier false-negative rate**, since a buggy checker that marks correct answers wrong poisons training just as effectively. The mechanics of building such a sandbox are in [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html) and [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html). The rule of thumb: *prefer the most exact verifier the domain admits*, and threat-model it like a public API taking untrusted input.
 
 ---
 
@@ -513,6 +572,7 @@ The table below summarizes mitigations by the failure mode they address:
 | Length bias | Length-controlled comparisons | Reward normalization |
 | Format exploitation | Content-ablation RM audits | Verifiable outcome signals |
 | Specification gaming | Verifiable rewards (RLVR) | Constitutional AI self-critique |
+| Verifier gaming (RLVR) | Hidden/randomized tests, isolated sandbox | Fail-closed grader, log false-negative rate |
 | Extremal Goodhart | KL penalty (adaptive $\beta$) | Online RM updates |
 | Reward model adversarial | Ensemble RMs | RM adversarial probing |
 
@@ -624,6 +684,12 @@ class RobustPPOTrainer:
 
     Instrument your training loop to log *all* of the following every N steps: mean proxy reward, std proxy reward, mean gold reward, KL from reference, sycophancy probe score, mean response length, and format probe score. Plot them together. Reward hacking rarely announces itself as a sudden collapse — it looks like a slow, consistent divergence between proxy and gold scores. Catching it at step 500 is far cheaper than catching it at step 5,000.
 
+### What This Looks Like at 100M Parameters
+
+The capstone model ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)) has no budget for a gold RM, an ensemble, or a human evaluation panel — so the monitoring above has to be rebuilt from things that cost nothing. Three cheap signals carry most of the load: **mean response length**, **format-tag compliance rate**, and **token-level policy entropy**. Your "gold" is a held-out set of verified problems the RL loop never trains on, scored by exact match.
+
+The good news is that hacking at this scale is crude and therefore easy to see. A 100M policy does not construct deceptive arguments; it farms whatever is cheapest. In practice that means (a) **format-reward farming** — emitting the `<think>...</think>` tags perfectly while the enclosed reasoning is boilerplate, which is why a format bonus must be small and contingent on actually attempting an answer; (b) **length inflation** from GRPO's per-response normalization rather than from any preference signal at all, fixed by the token-level loss of Dr. GRPO/DAPO ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)) rather than by a KL penalty; and (c) **entropy collapse**, where reward is flat but the policy has become nearly deterministic and pass@$k$ has fallen even as pass@1 held. Log entropy from step one — it is the earliest of the three to move, and a run whose entropy has already collapsed cannot be rescued by tuning $\beta$.
+
 ---
 
 ## The Alignment Failure Landscape Beyond Hacking
@@ -668,7 +734,7 @@ For deeper coverage of constitutional and self-improvement approaches to these l
     - The KL coefficient $\beta$ is the primary control dial; adaptive KL control (e.g., Ziegler-style multiplicative update) outperforms a fixed $\beta$ because the policy's distance from the reference changes throughout training.
     - Reward ensembles combined with uncertainty penalties reduce extremal hacking by lowering scores in RM regions with high disagreement — but they are not a complete fix for systematic biases shared by all ensemble members.
     - Online reward model updates (iterative RLHF) are the most principled defense: adding current-policy data to RM training keeps the RM in-distribution. The cost is ongoing human annotation or a credible automated substitute.
-    - Verifiable rewards (pass/fail test execution, symbolic verification) are immune to reward model distribution shift and should be used whenever the task admits them.
+    - Verifiable rewards (pass/fail test execution, symbolic verification) are immune to reward model distribution shift and should be used whenever the task admits them — but they do not end reward hacking, they convert it into application security against your grader: hide and randomize tests, isolate the sandbox, fail closed, and log the verifier's false-negative rate.
     - Sycophancy, the most socially dangerous failure mode, requires explicit counter-training: preference data where models that correct users are labeled superior, and regular probing with false-claim prompts during RL training.
     - No single mitigation is sufficient; a robust pipeline combines adaptive KL control, reward clipping, ensemble RMs, qualitative probing, and gold-reward monitoring in an integrated training loop.
 
@@ -694,7 +760,11 @@ For deeper coverage of constitutional and self-improvement approaches to these l
 
     **Open-source & tools**
 
-    - [huggingface/trl](https://github.com/huggingface/trl) — the reference implementation of PPO, GRPO, DPO, and reward modeling with built-in adaptive KL control and reward normalization; the practical starting point for any RLHF pipeline.
+    - [huggingface/trl](https://github.com/huggingface/trl) — the reference implementation of PPO, GRPO, DPO, and reward modeling; `PPOConfig(kl_coef=..., whiten_rewards=...)`, `GRPOConfig(beta=...)`, and the `AdaptiveKLController`/`FixedKLController` pair in `trl/trainer/utils.py` are the anti-hacking dials of this chapter.
+    - [volcengine/verl](https://github.com/volcengine/verl) — production RL library where the same controls are YAML (`algorithm.kl_ctrl.type`, `target_kl`, `use_kl_in_reward` vs. `actor.use_kl_loss`), plus pluggable reward functions and sandboxed verifiers for RLVR.
+    - [allenai/reward-bench](https://github.com/allenai/reward-bench) — Ai2's harness for RewardBench and the harder RewardBench 2; audit an RM's factuality, focus, and precise-instruction-following before you optimize against it.
+    - [tatsu-lab/alpaca_eval](https://github.com/tatsu-lab/alpaca_eval) — length-controlled win rate, the standard debiasing for the verbosity that RLHF reliably induces.
+    - [anthropics/evals](https://github.com/anthropics/evals) — the model-written evaluation datasets from Perez et al. (2022), including large sycophancy and power-seeking probe sets.
 
     **Go deeper**
 
@@ -708,7 +778,7 @@ For deeper coverage of constitutional and self-improvement approaches to these l
 - **Ziegler et al., "Fine-Tuning Language Models from Human Preferences" (2019)** — The original RLHF paper for language models; introduces the adaptive KL controller that remains standard.
 - **Perez et al., "Discovering Language Model Behaviors with Model-Written Evaluations" (2022)** — Systematic study of sycophancy, power-seeking, and other emergent alignment failure modes in RLHF-trained models.
 - **Coste et al., "Reward Model Ensembles Help Mitigate Overoptimization" (2023)** — Controlled experiments showing ensemble RMs reduce reward hacking at multiple KL levels.
-- **Kambhampati et al., "LLMs Can't Plan, But Can Help Planning" (2024)** — Discusses specification gaming and goal misgeneralization in capable models deployed on planning tasks.
+- **Skalse et al., "Defining and Characterizing Reward Hacking" (2022)** — Formal definition of hackability between a proxy and a true reward, and the result that unhackable non-trivial pairs essentially do not exist; the theoretical backbone for why mitigation, not elimination, is the goal.
 - **Anthropic, "Constitutional AI: Harmlessness from AI Feedback" (Bai et al., 2022)** — Introduces the RLAIF / self-critique approach as an alternative to pure human feedback that partially mitigates reward model brittleness.
 - **TRL library (Hugging Face)** — Reference implementation of PPO with adaptive KL, reward normalization, and ensemble support: `github.com/huggingface/trl`.
 

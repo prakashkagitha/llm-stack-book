@@ -286,6 +286,53 @@ class ProductQuantizer:
         return idx[np.argsort(approx[idx])]
 ```
 
+### OPQ: rotate before you split
+
+PQ carves $\mathbf{x}$ into *contiguous* blocks, which quietly assumes that adjacent coordinates belong together and that variance is spread evenly across the $m$ blocks. Real embeddings satisfy neither: some coordinate groups carry far more variance than others, so a uniform byte budget wastes bits on the flat blocks and starves the informative ones. **Optimized Product Quantization** (Ge et al., 2013) fixes this by learning an orthogonal rotation $R$ and quantizing $R\mathbf{x}$ instead of $\mathbf{x}$, alternating between updating $R$ and re-fitting the codebooks. Because $R$ is orthogonal it preserves L2 distances and inner products exactly, so it costs one $d \times d$ matrix-vector product on the query and nothing at ranking time. In FAISS it is the `OPQ64_768` prefix of a factory string, and for a few extra training minutes it is almost always worth it.
+
+### Scalar and binary quantization: the cheaper cousins
+
+PQ is not the only compressor, and it is often not the first one you should reach for.
+
+**Scalar quantization (SQ)** quantizes each coordinate independently. At train time you record a per-dimension range (min/max, or better, a clipped percentile range to survive outliers); at index time each `float32` becomes one `uint8`, giving a flat **4× reduction** with essentially no training cost and a decode that is one fused multiply-add. Recall loss is typically under a point for normalized text embeddings. This is FAISS's `SQ8`, Qdrant's default scalar quantization, and — one step milder — pgvector's `halfvec` (float16, 2×). *Start here.* If SQ8 plus a re-rank clears your eval bar, you never need PQ's $k$-means machinery.
+
+**Binary quantization (BQ)** takes the idea to its limit: store $\operatorname{sign}(x_j)$ as a single bit, so a 768-d vector becomes 96 bytes — **32×** — and distance becomes Hamming distance, computed with `xor` + `popcount` at many gigabytes per second. On its own it is crude, but because it is so cheap it makes an excellent *first stage*: shortlist a few hundred candidates by Hamming, then re-score them with full-precision (or SQ8) vectors. **RaBitQ** (Gao & Long, SIGMOD 2024) is the principled version of this: randomly rotate the residual, normalize it onto the unit sphere, and binarize — yielding an *unbiased* inner-product estimator with a provable error bound, and reported to match or beat PQ at the same memory budget. Its extension generalizes the construction to any bit budget, and it is being adopted in production engines as a PQ replacement.
+
+```python
+# Real-library usage: the two cheap quantizers, both with a re-rank stage.
+# pip install faiss-cpu
+import faiss, numpy as np
+
+d, N = 768, 100_000
+rng = np.random.default_rng(0)
+xb = rng.standard_normal((N, d)).astype("float32"); faiss.normalize_L2(xb)
+xq = rng.standard_normal((4, d)).astype("float32"); faiss.normalize_L2(xq)
+
+# --- 4x: int8 scalar quantization inside IVF cells (train is fast) ---
+sq = faiss.index_factory(d, "IVF1024,SQ8", faiss.METRIC_INNER_PRODUCT)
+sq.train(xb); sq.add(xb)
+faiss.ParameterSpace().set_index_parameter(sq, "nprobe", 16)
+D, I = sq.search(xq, 10)
+
+# --- 32x: 1 bit per dimension, Hamming shortlist, exact re-rank ---
+bb = np.packbits(xb > 0, axis=1)            # (N, d/8) uint8 -- sign bits packed
+bq = np.packbits(xq > 0, axis=1)
+bidx = faiss.IndexBinaryFlat(d)             # d = number of BITS here
+bidx.add(bb)
+_, cand = bidx.search(bq, 200)              # (4, 200) Hamming shortlist
+# Stage 2: re-score only the shortlist against full-precision vectors.
+top = []
+for qi in range(len(xq)):
+    c = cand[qi]
+    sims = xb[c] @ xq[qi]                   # exact inner products, 200 of them
+    top.append(c[np.argsort(-sims)[:10]])
+print(I.shape, np.array(top).shape)         # (4, 10) (4, 10)
+```
+
+!!! tip "Practitioner tip: shrink the vector before you compress it"
+
+    Compression is not the only memory lever. If your embedding model was trained with **Matryoshka Representation Learning** (see [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html)), you can simply *truncate* 1536-d vectors to 512-d and re-normalize, keeping most of the retrieval quality for a 3× cut — and then apply SQ8 on top for 12× total. Truncation and quantization multiply, and truncation is free.
+
 ### IVF + PQ: the workhorse of billion-scale search
 
 The legendary FAISS index `IVF{n_list},PQ{m}` combines all of the above. IVF restricts the search to a handful of cells (solving *speed*); PQ compresses each vector to $m$ bytes (solving *memory*). A common refinement, **IVFADC with residuals**, quantizes not the raw vector but its *residual* after subtracting its coarse centroid, which dramatically improves accuracy because residuals are small and well-clustered. A final, optional **re-ranking** step (`IndexRefineFlat`) fetches the top candidates' full vectors from disk and re-scores them exactly to recover the recall that quantization lost.
@@ -439,6 +486,28 @@ ef=200   recall@10 = 0.955     (slow, high recall)
 
 That table *is* the recall-latency tradeoff, made concrete. You turn one knob, `ef`, and slide along the curve.
 
+!!! note "Aside: the neighbor-selection heuristic we simplified"
+
+    Our `_select_neighbors` keeps the $M$ *closest* candidates. The paper's Algorithm 4 does something smarter, and on real data it matters a great deal: it accepts a candidate $c$ only if $c$ is closer to the node being linked than it is to *any already-accepted neighbor*. This is the **relative neighborhood graph** (RNG) pruning rule, and what it buys is *diversity of direction*. Without it, every one of a node's $M$ links inside a dense cluster points back into that same cluster; the graph fragments into cliques with no bridges between them, and greedy search dead-ends in local minima. With it, each link is spent on a distinct direction out of the node, which is precisely what makes long-range navigation work. Swapping it in is a few lines:
+
+    ```python
+    def _select_neighbors_heuristic(self, node, candidates, M):
+        """HNSW Algorithm 4: keep *diverse* neighbors, not merely the closest."""
+        scored = sorted((l2(self.data[node], self.data[c]), c)
+                        for c in set(candidates) if c != node)
+        kept = []
+        for d_nc, c in scored:              # consider the nearest candidate first
+            # accept c only if it is closer to `node` than to every kept neighbor;
+            # otherwise some kept neighbor already "covers" that direction.
+            if all(d_nc < l2(self.data[c], self.data[r]) for r in kept):
+                kept.append(c)
+            if len(kept) >= M:
+                break
+        return kept
+    ```
+
+    Point `HNSW._select_neighbors = _select_neighbors_heuristic` and re-run. On *clustered* data — 4,000 points drawn from 40 Gaussian blobs in 32 dimensions, which is much closer to how real embeddings are distributed than the single uniform blob in our earlier test — we measured recall@10 go from **0.70 to 0.99 at `ef=16`**, and the naive version stopped improving entirely as `ef` rose (0.70 at `ef=16` *and* at `ef=50`), which is the signature of a fragmented graph: widening the beam cannot help if the true neighbors are in a component the walk can never reach. Both FAISS and hnswlib use this heuristic by default. It is the difference between a toy graph and a production one.
+
 ### Why HNSW dominates — and its costs
 
 HNSW gives the best recall-per-latency of any method for in-memory data, with no training step (unlike IVF/PQ's $k$-means). Its costs are real, though:
@@ -458,6 +527,12 @@ $$
 $$
 
 By learning codebooks under this loss, ScaNN preserves the inner products that determine ranking, achieving higher recall at the same compression. Combined with a partitioning tree and a heavily SIMD-optimized in-register distance computation, ScaNN is one of the fastest libraries on standard benchmarks. The broader lesson generalizes well beyond ScaNN: **optimize the quantizer for the *task metric* (ranking by inner product), not for a generic surrogate (reconstruction MSE).**
+
+!!! note "Aside: whatever happened to LSH?"
+
+    **Locality-Sensitive Hashing** was the celebrated ANN method of the 2000s and is still what most algorithms courses teach. The idea: hash vectors so that the *probability of collision* is a monotone function of similarity. For cosine, the classic hash is a signed random projection, $h_{\mathbf{r}}(\mathbf{x}) = \operatorname{sign}(\mathbf{r}^\top \mathbf{x})$ with $\mathbf{r}$ drawn from a standard Gaussian, for which $P[h_{\mathbf{r}}(\mathbf{q}) = h_{\mathbf{r}}(\mathbf{x})] = 1 - \theta/\pi$ where $\theta$ is the angle between them. Concatenate $b$ such bits into a bucket key, keep $L$ independent tables, and probe only the query's bucket in each — sublinear query time with provable guarantees.
+
+    In practice it lost, and the reason is instructive. LSH is **data-independent**: the random hyperplanes know nothing about where your data actually lives, so to reach a given recall it needs many tables (memory) and long probe lists (latency). The methods in this chapter are all **data-dependent** — $k$-means cells fitted to the corpus, PQ codebooks learned from the corpus, a graph built out of the corpus's actual neighborhoods — and they reach the same recall with far less work. On the ann-benchmarks recall-versus-QPS frontier, LSH implementations sit well below HNSW and IVF-PQ. The random-projection idea did survive, though: it is exactly what binary quantization does, and RaBitQ's random rotation is a direct descendant.
 
 ## The Recall–Latency–Memory Triangle
 
@@ -479,7 +554,9 @@ Always compute `exact_k` with brute force on a held-out query set. A subtle but 
 |---|---|---|---|---|
 | Flat (brute) | — (always exact) | none (full vectors) | none | $N \lesssim$ few M; GPU; need recall = 1.0 |
 | IVF-Flat | `n_probe` | none (full vectors) | $k$-means | moderate $N$, want simple + exact-ish |
+| IVF-SQ8 | `n_probe` | fixed 4× | $k$-means only | the easy 4× — try before PQ |
 | IVF-PQ | `n_probe` | $m$ (bytes/vec) | $k$-means $\times (1{+}m)$ | billion-scale, RAM-constrained |
+| Binary/RaBitQ + rerank | shortlist size | 1–2 bits/dim (~32×) | rotation only | extreme memory pressure, fast first stage |
 | HNSW | `ef` | $M$ (graph degree) | high (graph build) | in-memory, $\lesssim$ 100M, top recall/latency |
 | HNSW-PQ | `ef` | $M$ + $m$ | high | large + RAM-constrained |
 | ScaNN | leaves/reorder | aniso codebooks | $k$-means + tree | MIPS, throughput-critical |
@@ -492,7 +569,7 @@ The mental model: **HNSW spends memory to buy recall and latency. PQ spends reca
 
     1. Start with **Flat** (brute force) on a sample. It is your correctness oracle and is often fast enough below a few million vectors, *especially on a GPU*. Do not add complexity you cannot justify.
     2. When Flat is too slow or too big, reach for **HNSW** if it fits in RAM — it needs no training and gives the best recall/latency.
-    3. When it does not fit in RAM, add **PQ** (HNSW-PQ or IVF-PQ) and a **re-ranking** stage that re-scores the top candidates with full-precision vectors.
+    3. When it does not fit in RAM, climb the compression ladder one rung at a time: **SQ8** first (4×, no training, ~free recall), then **PQ/OPQ** (HNSW-PQ or IVF-PQ) if you still need more — always with a **re-ranking** stage that re-scores the top candidates against full-precision vectors.
     4. **Always** measure recall@k against Flat on held-out queries, and tune the knob (`ef` / `n_probe`) to the *cheapest setting that clears your downstream eval bar* — not to the highest recall you can squeeze out.
 
 ## Vector Databases: From Algorithm to System
@@ -503,7 +580,8 @@ An ANN *algorithm* (FAISS, ScaNN, hnswlib) is a library. A vector *database* wra
 - **Milvus** — a distributed vector *database* built on top of FAISS/HNSW/etc., with sharding, a write-ahead log, object-storage persistence, and a query/data/index node separation for independent scaling.
 - **Qdrant** — Rust, HNSW-based, with strong **payload filtering** (combine vector search with structured predicates) and good single-node ergonomics.
 - **Weaviate** — HNSW-based, with hybrid (vector + keyword) search and a built-in module ecosystem.
-- **pgvector** — a PostgreSQL extension adding a `vector` column type with IVF-Flat and HNSW indexes. The pragmatic winner when you already run Postgres and your $N$ is modest: no new system to operate, transactional consistency for free, trivial joins between vectors and your relational data.
+- **pgvector** — a PostgreSQL extension adding `vector`, `halfvec` (float16) and `bit` column types with IVF-Flat and HNSW indexes. The pragmatic winner when you already run Postgres and your $N$ is modest: no new system to operate, transactional consistency for free, trivial joins between vectors and your relational data.
+- **Chroma** and **LanceDB** — embedded, single-process stores you `pip install` and point at a directory, with no server to run. Chroma is the default in many LangChain/LlamaIndex tutorials; LanceDB stores vectors in the columnar Lance format and serves IVF-PQ indexes straight off disk. For a laptop-scale corpus — including the capstone's agent — an embedded store plus a FAISS index is the entire retrieval tier.
 
 ### The filtering problem (where naive ANN breaks)
 
@@ -534,6 +612,74 @@ xq = rng.standard_normal((5, d)).astype("float32"); faiss.normalize_L2(xq)
 D, I = index.search(xq, k=10)           # I: (5,10) ids,  D: (5,10) similarities
 print(I.shape, D[0][:3])                # nearest-neighbor ids + scores for query 0
 ```
+
+### The FAISS factory string: composing an index in one line
+
+Everything in this chapter composes, and FAISS exposes that composition as a small string language. `index_factory(d, "OPQ16_128,IVF256,PQ16,RFlat")` reads left to right as a pipeline: a learned rotation, then a coarse partition, then 16-byte PQ codes inside each cell, then an exact re-ranking stage. This is how real indexes are specified — in production you tune the string and the two runtime parameters, not your code.
+
+```python
+# pip install faiss-cpu
+import faiss, numpy as np
+
+d, N = 128, 50_000
+rng = np.random.default_rng(0)
+xb = rng.standard_normal((N, d)).astype("float32"); faiss.normalize_L2(xb)
+xq = rng.standard_normal((4, d)).astype("float32"); faiss.normalize_L2(xq)
+
+# Read the string left to right as a pipeline:
+#   OPQ16_128 -> learned rotation, output dim 128, tuned for m=16 subquantizers
+#   IVF256    -> 256 coarse k-means cells        (keep >= ~39 train points/cell,
+#   PQ16      -> 16-byte PQ codes inside a cell   or FAISS prints a warning)
+#   RFlat     -> keep the full vectors and re-rank the shortlist exactly
+index = faiss.index_factory(d, "OPQ16_128,IVF256,PQ16,RFlat",
+                            faiss.METRIC_INNER_PRODUCT)
+index.train(xb)      # learns rotation + coarse centroids + PQ codebooks (~1 min)
+index.add(xb)        # rotates, assigns to a cell, encodes to 16 bytes
+
+# set_index_parameter reaches THROUGH the RFlat/OPQ wrappers to the IVF inside;
+# plain `index.nprobe = 32` fails here because `index` is not the IVF itself.
+faiss.ParameterSpace().set_index_parameter(index, "nprobe", 32)
+faiss.ParameterSpace().set_index_parameter(index, "k_factor_rf", 10)  # 10*k shortlist
+D, I = index.search(xq, 10)
+
+# Persistence: a FAISS index is just a file. This is what a vector DB wraps.
+faiss.write_index(index, "/tmp/chunks.faiss")
+reloaded = faiss.read_index("/tmp/chunks.faiss")
+print(reloaded.ntotal, I.shape)         # 50000 (4, 10)
+```
+
+Note what the last two lines imply. FAISS gives you an index and a file; a vector *database* is what you get after someone adds a write-ahead log so a crash mid-insert is recoverable, a shard router so the index can exceed one machine's RAM, a replica set so QPS can exceed one machine's cores, and a metadata store so you can filter. Those are database problems, not ANN problems — which is why the honest build-versus-buy question is "do I need a database, or do I need an index?"
+
+### pgvector: the same algorithms, inside your existing Postgres
+
+If your corpus is in the millions rather than the billions and you already run Postgres, the operationally cheapest vector store is a column. pgvector implements the same HNSW and IVF-Flat described above, and — the real win — the metadata filter is just a `WHERE` clause the planner handles:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE chunks (
+  id        bigserial PRIMARY KEY,
+  doc_id    int,
+  body      text,
+  embedding vector(768)          -- halfvec(768) instead halves the storage
+);
+
+-- Bulk-load rows FIRST, then build the index: it is far faster than
+-- inserting into a live HNSW graph one row at a time.
+CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+SET hnsw.ef_search = 100;         -- the per-session recall/latency knob
+
+-- <=> is cosine distance, <-> is L2, <#> is negative inner product.
+-- Use the operator matching your opclass or the index will not be used.
+SELECT id, body, 1 - (embedding <=> $1) AS cosine_sim
+FROM chunks
+WHERE doc_id = 42                 -- filter and vector search in one query
+ORDER BY embedding <=> $1
+LIMIT 10;
+```
+
+The filtering caveat from above applies here too: with a selective `WHERE`, an HNSW scan that returns `ef_search` candidates may yield fewer than `LIMIT` survivors. Recent pgvector releases address this with *iterative index scans* (`hnsw.iterative_scan`), which re-enter the index for more candidates instead of silently under-returning; check your installed version's documentation, because the behaviour changed across releases.
 
 !!! warning "Common pitfall: metric mismatch between embedding and index"
 
@@ -604,13 +750,16 @@ if __name__ == "__main__":
 
 The shape of the output is always the same story: Flat is exact but its latency grows with $N$; IVF and HNSW each expose one knob (`n_probe`, `ef`) that buys recall with latency; and if you swapped the data store to PQ codes you would watch memory drop while recall takes a measured hit. That is the entire chapter, in one runnable file.
 
+**Where this lands in the capstone.** Stack-100M's narrow auto-research agent retrieves over a corpus of roughly $10^5$–$10^6$ chunks — three to four orders of magnitude below where ANN becomes necessary. The right index there is `IndexFlatIP` on unit-normalized vectors: exact, zero-parameter, no training, no recall to measure, a few milliseconds per query, and a few hundred megabytes of RAM. Resist the urge to reach for HNSW; the whole point of this chapter's first section is knowing when brute force *is* the answer. See [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) for how that index is wired into the agent's tool loop, and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for the laptop-scale latency budget it has to fit inside.
+
 For how these retrievers slot into a generation pipeline — query construction, multi-vector retrieval, fusion with keyword search — continue to [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html) and [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html). For the embeddings that feed all of this, revisit [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html). And because retrieval lives in the latency budget of an LLM call, the serving concerns in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) apply directly.
 
 !!! key "Key Takeaways"
 
     - **Exact NN is a linear scan.** It is the right answer below a few million vectors (especially on a GPU) and is your non-negotiable *recall oracle* — never ship ANN without measuring recall@k against brute force.
     - **The curse of dimensionality** makes exact tree structures ($k$-d trees) degrade to linear scan above $d \approx 20$, because distances concentrate and pruning fails. ANN works only because real embeddings live on a low-dimensional manifold.
-    - **Three algorithm families** cover the field: **IVF** (partition into cells, probe a few — buys *latency*), **PQ** (split + quantize subvectors to bytes via ADC lookup tables — buys *memory*, ~100–400× compression), and **HNSW** (greedy search on a hierarchical small-world graph, log-$N$ hops — best *recall/latency* but memory-hungry).
+    - **Three algorithm families** cover the field: **IVF** (partition into cells, probe a few — buys *latency*), **quantization** (buys *memory*), and **HNSW** (greedy search on a hierarchical small-world graph, log-$N$ hops — best *recall/latency* but memory-hungry). The historical fourth family, **LSH**, lost because it is data-independent while all three winners are data-dependent.
+    - **The compression ladder, cheapest first:** truncate Matryoshka dims (free) → **SQ8** scalar quantization (4×, no training) → **PQ/OPQ** (up to ~100–400× via ADC lookup tables) → **binary/RaBitQ** (~32×, `xor`+`popcount` first stage). Every rung after the first should be paired with a full-precision **re-ranking** stage over the shortlist.
     - **Every deployment is a point in the recall–latency–memory triangle.** You get two corners cheap; the third is the cost. One knob per method slides you along the curve: `n_probe` (IVF), `ef` (HNSW), bytes $m$ (PQ).
     - **Production systems stack the families** — e.g. `IVF_HNSW,PQ` with a full-precision **re-ranking** stage — to hit all three corners, and that is exactly what FAISS factory strings express.
     - **ScaNN's lesson generalizes:** optimize the quantizer for the *task metric* (ranking by inner product), not a generic reconstruction MSE.
@@ -637,6 +786,8 @@ For how these retrievers slot into a generation pipeline — query construction,
     - [nmslib/hnswlib](https://github.com/nmslib/hnswlib) — lightweight header-only C++/Python HNSW implementation by the algorithm's authors; the reference for embedding HNSW in your own system.
     - [microsoft/DiskANN](https://github.com/microsoft/DiskANN) — composable disk+memory ANN library (Vamana graph); supports real-time updates and attribute filtering.
     - [milvus-io/milvus](https://github.com/milvus-io/milvus) — cloud-native distributed vector database supporting HNSW, IVF, DiskANN and PQ indexes with sharding, WAL, and payload filtering.
+    - [qdrant/qdrant](https://github.com/qdrant/qdrant) — Rust vector database with filter-aware HNSW traversal and built-in scalar / binary quantization behind a config flag.
+    - [pgvector/pgvector](https://github.com/pgvector/pgvector) — HNSW and IVF-Flat inside PostgreSQL, with `halfvec`/`bit` column types; the lowest-operational-cost option when your corpus is in the millions.
 
     **Go deeper**
 
@@ -646,6 +797,8 @@ For how these retrievers slot into a generation pipeline — query construction,
 ## Further reading
 
 - Hervé Jégou, Matthijs Douze, Cordelia Schmid, *Product Quantization for Nearest Neighbor Search* (IEEE TPAMI, 2011) — the original PQ and ADC.
+- Tiezheng Ge, Kaiming He, Qifa Ke, Jian Sun, *Optimized Product Quantization* (CVPR 2013 / IEEE TPAMI 2014) — the learned rotation that PQ's contiguous split needs.
+- Moses Charikar, *Similarity Estimation Techniques from Rounding Algorithms* (STOC 2002) — signed random projections, the cosine LSH and the ancestor of binary quantization.
 - Yury Malkov, Dmitry Yashunin, *Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs* (2016/2018) — HNSW.
 - Ruiqi Guo et al., *Accelerating Large-Scale Inference with Anisotropic Vector Quantization* (ICML 2020) — ScaNN.
 - Kevin Beyer, Jonathan Goldstein, Raghu Ramakrishnan, Uri Shaft, *When Is "Nearest Neighbor" Meaningful?* (ICDT 1999) — the curse of dimensionality, formalized.

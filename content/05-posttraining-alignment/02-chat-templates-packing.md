@@ -2,7 +2,7 @@
 
 Raw text pretraining teaches a model to continue arbitrary strings. Turning that capability into a *conversational assistant* requires convincing the model that conversations have structure: a system instruction, alternating user and assistant turns, and a definitive end-of-turn marker. This chapter is the engineering manual for that structure — how templates are designed, how loss masks are constructed to train only on completions, how multi-turn dialogues are packed tightly into fixed-length batches, and how tool calls extend the vocabulary of a chat turn.
 
-Related chapters: [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html) covers the overall SFT recipe; this chapter zooms into the data side. [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) explains the causal language modelling loss that we are selectively masking here. [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) explains how special tokens are added to a vocabulary.
+Related chapters: [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html) covers the overall SFT recipe; this chapter zooms into the data side. [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) explains the causal language modelling loss that we are selectively masking here. [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) explains how special tokens are added to a vocabulary. The capstone puts all of this to work: [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) formats, masks and packs the Stack-100M SFT mix, and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) reserves the chat control tokens at tokenizer-training time so the embedding table never has to be resized.
 
 ## Why Chat Templates Exist
 
@@ -266,6 +266,68 @@ def build_chatml_loss_mask(
 
     For a dataset of on the order of 100,000 conversations averaging ~200 tokens each, roughly 30–40% of tokens are typically assistant tokens and thus supervised. Packing (discussed below) ensures we do not pay for the other 60–70% with wasted sequence length.
 
+### Shipping It: The Jinja Template and the New Special Tokens
+
+A hand-written scanner like the one above is the right way to *understand* masking, but the artefact you ship is a Jinja2 string stored on the tokenizer, because that is what `apply_chat_template` — and every serving stack that reads `tokenizer_config.json` (vLLM, SGLang, TGI, llama.cpp) — will execute. Transformers extends Jinja with a `{% generation %}` block that marks precisely the spans the assistant is expected to produce, so the library can hand you the loss mask instead of you scanning for it:
+
+```python
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+tok   = AutoTokenizer.from_pretrained("path/to/stack-100m-base")
+model = AutoModelForCausalLM.from_pretrained("path/to/stack-100m-base")
+
+# 1. Add the ChatML control tokens. (Skip if the tokenizer was trained with
+#    them already reserved — see the capstone tokenizer chapter.)
+n_new = tok.add_special_tokens(
+    {"additional_special_tokens": ["<|im_start|>", "<|im_end|>"]}
+)
+tok.eos_token = "<|im_end|>"      # generation must stop at end-of-turn
+
+# 2. Attach the template. Each piece is a RAW string so that the "\n" stays a
+#    two-character Jinja escape instead of becoming a literal newline inside a
+#    Jinja string literal (which is a parse error).
+tok.chat_template = (
+    r"{% for m in messages %}"
+    r"{% if m['role'] == 'assistant' %}"
+    r"{{ '<|im_start|>assistant\n' }}"
+    r"{% generation %}{{ m['content'] + '<|im_end|>' }}{% endgeneration %}"
+    r"{{ '\n' }}"
+    r"{% else %}"
+    r"{{ '<|im_start|>' + m['role'] + '\n' + m['content'] + '<|im_end|>\n' }}"
+    r"{% endif %}"
+    r"{% endfor %}"
+    r"{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+)
+tok.save_pretrained("path/to/stack-100m-sft")   # template travels with weights
+
+# 3. Now the library builds the mask for you — no scanner required.
+out = tok.apply_chat_template(
+    [{"role": "user", "content": "What is 2+2?"},
+     {"role": "assistant", "content": "4."}],
+    tokenize=True,
+    return_dict=True,
+    return_assistant_tokens_mask=True,   # requires the {% generation %} block
+)
+input_ids = torch.tensor(out["input_ids"])
+loss_mask = torch.tensor(out["assistant_masks"], dtype=torch.bool)
+```
+
+New special tokens also need embeddings. Rows appended by `resize_token_embeddings` are randomly initialised and, because each new token appears at most a handful of times per batch, they can stay near that random init for a long time — which is why `<|im_end|>` is sometimes emitted unreliably early in a run. Initialising them at the *mean* of the existing embedding rows starts them in-distribution and is a one-line fix:
+
+```python
+old_vocab = model.get_input_embeddings().weight.shape[0]
+model.resize_token_embeddings(len(tok))          # new rows are appended at the end
+with torch.no_grad():
+    for mod in (model.get_input_embeddings(), model.get_output_embeddings()):
+        if mod is None:                          # some models have no separate head
+            continue
+        W = mod.weight
+        W[old_vocab:] = W[:old_vocab].mean(dim=0, keepdim=True)
+```
+
+For Stack-100M you can sidestep this entirely: reserve `<|im_start|>`, `<|im_end|>` and a block of spare `<|reserved_N|>` ids when you *train* the BPE tokenizer, so the vocabulary — and therefore every checkpoint's embedding shape — is fixed from the first pretraining step. The rows are still effectively untrained (those ids never occur in raw web text), so the mean-init trick above is still worth applying at the start of SFT.
+
 ## Loss Masking in Depth
 
 ### Why Mask the Prompt?
@@ -292,6 +354,8 @@ $$
 $$
 
 The denominator normalises by the number of *supervised* tokens rather than the total sequence length, so that longer prompts do not dilute the gradient.
+
+That denominator hides a subtlety once you add gradient accumulation or data parallelism. If every micro-batch divides by *its own* supervised-token count and you then average the micro-batch losses, each micro-batch gets equal weight no matter how much signal it carried: a micro-batch with 20 assistant tokens moves the update as much as one with 2,000, and the result is no longer the token-mean over the global batch. The fix is to accumulate *unnormalised* token losses and divide once by the global supervised-token count. HuggingFace `Trainer` does this by threading a `num_items_in_batch` argument down into the model's loss function, and `average_tokens_across_devices` (in `TrainingArguments`, inherited by TRL's `SFTConfig`) all-reduces that count across data-parallel ranks. Packing makes this matter *more*, not less, because packed rows vary widely in how many supervised tokens they contain.
 
 In PyTorch the standard way is to pass `labels` to a causal LM where masked positions are set to `-100` — `CrossEntropyLoss` ignores index `-100` by default.
 
@@ -490,7 +554,7 @@ def make_block_diagonal_mask(
     return mask  # (total_len, total_len)
 ```
 
-In practice, building this mask explicitly is memory-intensive for long sequences. Production implementations (e.g. in HuggingFace TRL's `DataCollatorForCompletionOnlyLM`, or in Megatron-LM) either use Flash Attention's `cu_seqlens` (cumulative sequence lengths) argument which natively handles variable-length batches without materialising the mask, or they pass the `document_ids` array and compute the mask on-the-fly inside the kernel.
+In practice, building this mask explicitly is memory-intensive for long sequences: it is $O(T^2)$ bytes, so a single 8,192-token packed row costs 268 MB in fp32 — larger than the activations it guards. Production implementations therefore never materialise it. Transformers' `DataCollatorWithFlattening` (the collator behind TRL's `padding_free=True`) concatenates a micro-batch into a single row of shape `(1, total_tokens)` and emits `position_ids` that reset to 0 at each document boundary; the Flash-Attention backend recovers `cu_seqlens` from those resets and dispatches to the varlen kernel, so document isolation comes for free. Megatron-LM does the equivalent by handing an explicit `PackedSeqParams` (cumulative sequence lengths plus max segment length) to its TransformerEngine fused-attention path. In both cases the boundary information travels as an $O(\text{num docs})$ offset vector rather than a $T \times T$ matrix.
 
 ```python
 # Using Flash Attention's varlen API (pseudo-code showing the key argument)
@@ -750,6 +814,31 @@ out = flash_attn.flash_attn_varlen_func(
 
 **Verify it.** With `pack=True`, the offsets and mask must be self-consistent: `assert int(batch["cu_seqlens"][-1]) == batch["input_ids"].numel()` (segments cover every token) and `assert (batch["labels"][batch["attention_mask"] == 0] == -100).all()` (every masked-out position is unsupervised). For the pad==eos trap, build a batch with a tokenizer where `pad_token_id == eos_token_id` and confirm `attention_mask.sum()` equals the number of real tokens — not real-tokens-minus-the-EOS-tokens, which is what the old `(batch_ids != pad_token_id)` mask would have produced.
 
+### The Library Path: TRL's `SFTTrainer`
+
+You now know exactly what has to happen, which means you are qualified to let a maintained library do it. TRL's `SFTTrainer` performs chat-template rendering, completion-only masking, bin packing and padding-free attention from configuration flags alone:
+
+```python
+from trl import SFTTrainer, SFTConfig
+
+# Rows of `train_ds` look like {"messages": [{"role": ..., "content": ...}, ...]};
+# SFTTrainer calls tokenizer.apply_chat_template on them for you.
+trainer = SFTTrainer(
+    model="path/to/stack-100m-base",
+    train_dataset=train_ds,
+    args=SFTConfig(
+        max_length=2048,
+        packing=True,                        # bin-pack examples into max_length rows
+        assistant_only_loss=True,            # needs {% generation %} in the template
+        average_tokens_across_devices=True,  # global supervised-token normaliser
+        bf16=True,
+    ),
+)
+trainer.train()
+```
+
+Each flag maps onto something we built by hand: `assistant_only_loss=True` is `build_chatml_loss_mask` (it consumes the `assistant_masks` that the `{% generation %}` block produces), and `packing=True` is `pack_sequences` plus the varlen call. Recent TRL versions pack with resetting `position_ids` so the Flash-Attention backend isolates documents; with `packing=False` you get the same varlen benefit on a plain right-padded batch via `padding_free=True`. Confirm the behaviour on your installed version rather than assuming it — the from-scratch code in this chapter is exactly what you fall back on to audit a suspicious run. The Stack-100M SFT stage in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) uses this configuration; its tool-calling data follows the format in [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html).
+
 !!! interview "Interview Corner"
     **Q:** You are fine-tuning a 13B-parameter model on a multi-turn chat dataset with average conversation length of 400 tokens and a context length of 4,096. A colleague suggests just padding everything to 4,096. What is wrong with that approach, and what would you do instead?
 
@@ -761,7 +850,7 @@ Template bugs are among the most common causes of unexplained degradation in SFT
 
 1. **Lock tokenizer version.** A tokenizer update can reorder or renumber special tokens. Pin your tokenizer to the same commit as your model weights.
 
-2. **Use `apply_chat_template`, not string concatenation.** `tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)` is always right; manual string formatting is often subtly wrong.
+2. **Use `apply_chat_template`, not string concatenation.** `tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)` is always right; manual string formatting is often subtly wrong. If your template carries `{% generation %}` blocks, add `return_dict=True, return_assistant_tokens_mask=True` and take the mask from the library rather than re-deriving it.
 
 3. **Verify the loss mask before training.** Print out a sample batch and confirm that `labels != -100` only for assistant content. A one-liner: `(labels != -100).float().mean()` should match your expected supervised-fraction (typically 0.25–0.50 for chat data).
 

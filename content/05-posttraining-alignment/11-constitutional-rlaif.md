@@ -329,6 +329,90 @@ def robust_ai_label(
     )
 ```
 
+### Soft Labels from Judge Log-Probabilities
+
+Multi-vote sampling is the brute-force way to extract a *graded* preference from a judge. The protocol RLAIF actually uses is cheaper and lower-variance: do not sample a verdict at all. Run one forward pass, read the judge's next-token distribution, restrict it to the two option tokens `A` and `B`, renormalize, and use the resulting probability as a **soft label** $p \in [0,1]$. Two passes — one per ordering — give you position-debiasing and calibration for the price of two calls instead of five.
+
+```python
+import torch
+import torch.nn.functional as F
+
+@torch.no_grad()
+def soft_preference_label(model, tokenizer, prompt_ab: str, prompt_ba: str) -> float:
+    """
+    Return P(response A is preferred) as a soft label in [0, 1].
+
+    prompt_ab: comparison prompt with the original A first, B second.
+    prompt_ba: the SAME prompt with the two responses swapped.
+
+    Both prompts must end immediately before the verdict letter (e.g. "...\nAnswer:"),
+    so that the next-token distribution IS the judge's verdict distribution.
+    """
+    # Tokenize the exact continuation the prompt implies. Most BPE tokenizers give
+    # " A" and "A" different ids; if the prompt ends with "Answer:" the model will
+    # emit a LEADING SPACE, so encode " A"/" B". Getting this wrong silently reads
+    # the probability of a token the judge would never produce.
+    a_id = tokenizer.encode(" A", add_special_tokens=False)[-1]
+    b_id = tokenizer.encode(" B", add_special_tokens=False)[-1]
+
+    def p_says_A(prompt: str) -> float:
+        ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+        logits = model(ids).logits[0, -1]                 # next-token logits
+        two = torch.stack([logits[a_id], logits[b_id]])   # restrict to {A, B}
+        return F.softmax(two, dim=-1)[0].item()
+
+    p_a_when_first = p_says_A(prompt_ab)          # judge says "A" -> prefers A
+    p_a_when_second = 1.0 - p_says_A(prompt_ba)   # judge says "B" -> prefers A
+    return 0.5 * (p_a_when_first + p_a_when_second)   # average out position bias
+```
+
+The soft label plugs straight into reward-model training: keep the Bradley–Terry loss from [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) and replace the hard 0/1 target with $p$,
+
+$$
+\mathcal{L}_\text{RM} = -\Big[\, p \log \sigma\big(r_\theta(x, y_A) - r_\theta(x, y_B)\big) + (1-p)\log \sigma\big(r_\theta(x, y_B) - r_\theta(x, y_A)\big) \Big],
+$$
+
+which is a one-line change (`F.binary_cross_entropy_with_logits(margin, soft_target)` instead of a target of ones) and preserves the judge's uncertainty instead of discarding it. A label near $p=0.5$ means "the judge cannot tell": filter on $|p - 0.5| < \tau$ rather than running a five-vote consistency check, and you get the same noise reduction for a fifth of the compute.
+
+!!! warning "Chain-of-thought and log-prob labels do not compose for free"
+    You cannot read a single-token verdict distribution *and* let the judge reason first, because the verdict token is no longer the next token. The two workable options: (a) sample the chain-of-thought, append it, and then score the distribution over the verdict token at the end of the reasoning — one generation plus one cheap forward pass per ordering; or (b) skip CoT and score directly, which is what makes log-prob labeling fast enough for tens of millions of pairs. Measure both on a held-out set of human-labeled anchors before committing; CoT helps most on nuanced safety comparisons and least on obvious helpfulness ones.
+
+### Running It With the Real Stack: vLLM + TRL
+
+Nobody generates RLAIF data with `model.generate` in a Python loop. The production shape is: **vLLM** (or SGLang) for offline batch generation of both candidates and verdicts, **`datasets`** as the on-disk format, and **TRL** to consume the pairs. vLLM returns per-token log-probabilities, so the soft-label trick above works unchanged at fleet scale.
+
+```python
+# pip install vllm trl datasets
+import math
+from vllm import LLM, SamplingParams
+from datasets import Dataset
+
+judge = LLM(model="Qwen/Qwen3-32B", tensor_parallel_size=2)  # any strong open-weights judge
+tok = judge.get_tokenizer()
+a_id = tok.encode(" A", add_special_tokens=False)[-1]
+b_id = tok.encode(" B", add_special_tokens=False)[-1]
+
+# max_tokens=1 + logprobs=20: we only want the verdict distribution, not text.
+params = SamplingParams(temperature=0.0, max_tokens=1, logprobs=20)
+
+def batch_soft_labels(prompts_ab: list[str], prompts_ba: list[str]) -> list[float]:
+    outs = judge.generate(prompts_ab + prompts_ba, params)   # one batched pass
+    n = len(prompts_ab)
+
+    def p_A(out) -> float:
+        lp = out.outputs[0].logprobs[0]        # {token_id: Logprob} for position 0
+        # Missing ids fall outside the top-20; -30.0 is an effectively-zero floor.
+        la = lp[a_id].logprob if a_id in lp else -30.0
+        lb = lp[b_id].logprob if b_id in lp else -30.0
+        m = max(la, lb)                        # stabilized 2-way softmax
+        ea, eb = math.exp(la - m), math.exp(lb - m)
+        return ea / (ea + eb)
+
+    return [0.5 * (p_A(outs[i]) + (1.0 - p_A(outs[n + i]))) for i in range(n)]
+```
+
+The resulting rows — `{"prompt", "chosen", "rejected"}`, optionally with a `soft_label` column — are exactly the schema TRL's `DPOTrainer` and `RewardTrainer` expect (see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)), so `Dataset.from_list(rows).push_to_hub(...)` is the whole handoff. If you would rather declare the pipeline than write it, **`distilabel`** (Argilla/HuggingFace) ships an `UltraFeedback` task that implements precisely this generate-then-AI-rate loop over a vLLM backend, and the public `openbmb/UltraFeedback` / `HuggingFaceH4/ultrafeedback_binarized` datasets are the canonical output of that recipe — the AI-feedback data that trained Zephyr, Tülu, and most open chat models.
+
 ### RLAIF vs Human Preference: Trade-offs
 
 | Dimension | Human feedback | AI feedback (RLAIF) |
@@ -460,6 +544,27 @@ def rejection_sampling_iteration(
     return accepted
 ```
 
+The loop above is the mechanism, not the implementation. One prompt at a time through `model.generate` leaves the GPU almost idle — RFT is dominated by generation, and generation is dominated by batching. In practice you replace the whole inner loop with an offline vLLM pass, which shares the prompt's KV cache across all $k$ samples via `n=k` and keeps thousands of sequences in flight (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)):
+
+```python
+from vllm import LLM, SamplingParams
+
+def rejection_sampling_vllm(model_path: str, prompts: list[str], reward_fn,
+                            k: int = 32, temperature: float = 0.8):
+    """Same contract as rejection_sampling_iteration, ~1-2 orders of magnitude faster."""
+    llm = LLM(model=model_path, gpu_memory_utilization=0.85)
+    # n=k reuses ONE prefill of the prompt for all k continuations.
+    params = SamplingParams(n=k, temperature=temperature, top_p=0.95, max_tokens=256)
+    accepted = []
+    for prompt, out in zip(prompts, llm.generate(prompts, params)):   # fully batched
+        for cand in out.outputs:                                     # k completions
+            if reward_fn(prompt, cand.text):
+                accepted.append((prompt, cand.text))
+    return accepted
+```
+
+The one operational wrinkle: each RFT round trains new weights, so the vLLM engine must be rebuilt (or its weights hot-swapped) between rounds. Because Grow and Improve are *separate offline phases* in ReST, a fresh engine per round is perfectly acceptable — this is exactly the boundary that makes offline rejection sampling so much simpler to operate than online PPO, where weights must be synchronized into the rollout engine every few steps ([Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html)). Deduplicate the accepted set before fine-tuning: with $k=32$, easy problems contribute dozens of near-identical solutions and will otherwise dominate the gradient.
+
 ### STaR: Self-Taught Reasoner
 
 Zelikman et al. (2022) introduced STaR (Self-Taught Reasoner), which addresses a key problem: when $k$ is small and the problem is hard, the model may produce zero correct completions for many prompts, yielding no training signal. STaR adds a *rationalization hint*: when the model fails, show it the ground-truth answer and ask it to construct a chain-of-thought that leads to that answer, then use that chain-of-thought as an additional training example.
@@ -543,9 +648,17 @@ The experimental setup is:
 
 Empirically, the strong student trained on weak labels does significantly *better* than the weak supervisor — it generalizes beyond the noisy signal. The gap between weak-supervised and strong-supervised performance (the "elicitation gap") shrinks with certain interventions:
 
-- **Bootstrapping.** Train an intermediate "medium" model on weak labels, then use the medium model to relabel data for the strong model.
-- **Consistency regularization.** Penalize the strong model for confidently disagreeing with the weak supervisor.
-- **Auxiliary confidence loss.** Train the strong model to predict *where* the weak supervisor's labels are likely correct, then weight training examples accordingly.
+- **Bootstrapping.** Train an intermediate "medium" model on weak labels, then use the medium model to relabel data for the strong model, and repeat up the size ladder. Each hop is a smaller capability gap than the single leap from weakest to strongest.
+- **Unsupervised generative fine-tuning.** Fine-tune the strong model on the task's raw text (no labels) before weak-label training, so the relevant concept is already salient and only needs *eliciting*.
+- **Auxiliary confidence loss.** Add a term that pulls the strong model toward *its own* confident predictions, so it is allowed to overrule weak labels it believes are mistakes rather than dutifully imitating the supervisor's errors.
+
+The confidence loss is the counter-intuitive one, and it is the interesting one. Naive fine-tuning on weak labels makes the strong student *imitate the supervisor's mistakes* — it has enough capacity to fit the noise. Burns et al. instead optimize a convex combination of the weak target and the student's own hardened prediction $\hat f_t(x) = \mathbb{1}[f_\theta(x) > t]$ (treated as a constant — no gradient flows through it):
+
+$$
+\mathcal{L}(\theta) = (1-\alpha)\, \mathrm{CE}\big(f_\theta(x),\, f_\text{weak}(x)\big) + \alpha\, \mathrm{CE}\big(f_\theta(x),\, \hat f_t(x)\big),
+$$
+
+with $\alpha$ ramped from 0 up to a maximum over training. Early on the student learns the task from the supervisor; later, the second term rewards *committing* to a belief, which on examples where the weak label is wrong means committing against it. The paper reports recovering on the order of 80 % of the weak-to-strong performance gap on NLP tasks with this loss — a large effect for a two-line change, and the cleanest existing evidence that "the strong model already knows, we just have to elicit it" is more than a slogan.
 
 ```python
 import torch
@@ -554,43 +667,51 @@ import torch.nn.functional as F
 
 class WeakToStrongTrainer:
     """
-    Illustrative trainer that implements the 'bootstrapping' weak-to-strong strategy.
-    In practice you would use your distributed training stack, but this
-    sketch shows the key loss computation.
+    Burns et al.'s auxiliary confidence loss for weak-to-strong training.
+    In practice you would use your distributed training stack; this sketch
+    isolates the loss, which is the only non-obvious part.
     """
 
     def __init__(
         self,
         strong_model: nn.Module,
-        weak_labels: torch.Tensor,   # shape [N], float in [0,1]
-        confidence_weight: float = 0.1,
+        weak_labels: torch.Tensor,   # shape [N], float in [0,1] (soft weak-supervisor labels)
+        alpha_max: float = 0.75,     # final weight on the self-confidence term
+        warmup_frac: float = 0.2,    # fraction of training on pure weak supervision
+        threshold: float = 0.5,      # set so hardened preds match the weak label balance
     ):
         self.model = strong_model
         self.weak_labels = weak_labels
-        self.conf_w = confidence_weight
+        self.alpha_max = alpha_max
+        self.warmup_frac = warmup_frac
+        self.threshold = threshold
+
+    def alpha(self, step: int, total_steps: int) -> float:
+        """Linear ramp 0 -> alpha_max after an initial pure-weak-supervision warmup."""
+        frac = (step / total_steps - self.warmup_frac) / (1.0 - self.warmup_frac)
+        return self.alpha_max * max(0.0, min(1.0, frac))
 
     def compute_loss(
         self,
         logits: torch.Tensor,     # shape [B, 2] for binary classification
         indices: torch.Tensor,    # which examples in the batch
+        step: int,
+        total_steps: int,
     ) -> torch.Tensor:
-        """
-        Main loss = cross-entropy with weak labels.
-        Auxiliary loss = learn the *confidence* of weak labels
-                         (treat examples with extreme weak probabilities as high-confidence).
-        """
-        weak = self.weak_labels[indices]  # [B] floats
-        probs = torch.sigmoid(logits[:, 1])  # binary case: P(positive)
+        weak = self.weak_labels[indices]              # [B] floats in [0,1]
+        probs = torch.softmax(logits, dim=-1)[:, 1]   # strong model's P(positive)
 
-        # Primary BCE against weak labels
-        ce_loss = F.binary_cross_entropy(probs, weak)
+        # Term 1: imitate the weak supervisor.
+        weak_ce = F.binary_cross_entropy(probs, weak)
 
-        # Confidence signal: |weak - 0.5| is high when weak supervisor is confident
-        weak_confidence = (2 * (weak - 0.5).abs())  # maps [0,1] to [0,1]
-        # Encourage the strong model to be right where the weak label is confident
-        conf_loss = F.binary_cross_entropy(probs, weak, weight=weak_confidence)
+        # Term 2: imitate the strong model's OWN hardened prediction.
+        # .detach() is load-bearing: the target must be a constant, otherwise the
+        # model minimizes this term by collapsing to a single class.
+        hardened = (probs > self.threshold).float().detach()
+        self_ce = F.binary_cross_entropy(probs, hardened)
 
-        return ce_loss + self.conf_w * conf_loss
+        a = self.alpha(step, total_steps)
+        return (1.0 - a) * weak_ce + a * self_ce
 ```
 
 !!! interview "Interview Corner"
@@ -675,8 +796,10 @@ class AlignmentPipelineConfig:
     cai_harmful_prompt_fraction: float = 0.3  # fraction of prompts to use CAI on
 
     # RLAIF preference labeling
-    rlaif_judge_model: str = "anthropic/claude-3-opus"  # or your own larger model
-    rlaif_n_votes: int = 5                 # majority-vote ensemble
+    # Any strong open-weights instruct model served locally with vLLM; a frontier
+    # API model works too but costs ~100x more and adds a network round trip.
+    rlaif_judge_model: str = "Qwen/Qwen3-32B"
+    rlaif_n_votes: int = 5                 # majority-vote ensemble (0 => use soft logprob labels)
     rlaif_consistency_threshold: float = 0.7
 
     # Rejection sampling (RFT)
@@ -763,17 +886,30 @@ def run_alignment_pipeline(
     return seed_policy  # the aligned model
 ```
 
+### What Survives at 100M Parameters
+
+Every loop in this chapter assumes the model can *judge*. That assumption breaks below roughly a billion parameters, and if you are building Stack-100M you need to know which techniques survive the drop and which quietly produce garbage.
+
+**Dead at 100M: self-critique and self-reward.** SL-CAI asks the model to find a principle violation in its own text; self-rewarding LMs ask it to score its own output on a four-part rubric. A 100M model does neither reliably — its "critiques" are fluent restatements of the principle, and its rubric scores correlate near-zero with quality. Running these loops does not merely fail to help, it manufactures confidently-labeled noise that DPO will happily fit.
+
+**Alive at 100M: rejection sampling against a program.** RFT is the one self-improvement loop that requires *no judging ability whatsoever* — only a non-zero pass@$k$ and a verifier that is a piece of code, not a model. This is exactly why the capstone's post-training stage is built on on-policy pair mining and GRPO over an exact-match checker rather than on a learned reward model; see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
+**Alive at 100M, with a teacher: AI feedback as distillation.** The way to use this chapter at 100M is to move the judge *out* of the model. A 7B–32B open-weights model served with vLLM plays every role the small model cannot: it writes the critique-revised SFT targets, and it scores the small model's own on-policy samples to produce the `chosen`/`rejected` split. The pairs stay on-policy (they are the 100M model's own generations, which is what makes DPO work at that scale) while the *labeling* is done by something competent. That is AI feedback used as [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html) — the pipeline of this chapter, with the "self" removed.
+
+**The constitution moves upstream.** With no RLAIF stage, the constitution stops being a reward signal and becomes two concrete artifacts: a filter over the SFT mixture (drop any target the teacher judges to violate a principle) and a system prompt the chat template always prepends ([Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)). This is the same compilation move as Constitutional Classifiers, just at hobby scale — and for a narrow agent it is the right amount of alignment machinery. The agent that consumes the result is built in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html).
+
 ---
 
 !!! key "Key Takeaways"
     - Constitutional AI replaces the human rater with an AI judge steered by an explicit principle set. The pipeline has two stages: supervised critique-revision (SL-CAI) and RL from AI feedback (RLAIF), each eliminating a different bottleneck.
-    - RLAIF can produce preference labels orders of magnitude faster and cheaper than human annotation. Position bias and label noise are mitigated by response-order randomization and multi-vote consistency filtering.
+    - RLAIF can produce preference labels orders of magnitude faster and cheaper than human annotation. Position bias and label noise are mitigated by response-order randomization and multi-vote consistency filtering — or, more cheaply, by reading the judge's log-probabilities over the `A`/`B` verdict tokens under both orderings and training the reward model against that *soft* Bradley–Terry target.
     - Self-rewarding language models use the same model as both policy and judge. The virtuous cycle improves both simultaneously, but risks self-grade inflation — mitigation includes mixing in external data and entropy bonuses.
     - Rejection sampling fine-tuning (RFT) is the simplest form of self-improvement: sample $k$ responses, keep the correct ones, fine-tune. STaR adds hint-conditioned rationalization to provide signal even when the model fails; ReST adds a curriculum threshold that rises each iteration.
     - SPIN (self-play fine-tuning) uses the model's own outputs as rejected examples, directly optimizing the gap between the current policy distribution and the target human data distribution.
-    - Weak-to-strong generalization shows that a capable student trained on noisy weak labels can exceed the supervisor. Bootstrapping (intermediate model, then strong model) and confidence-weighted loss close the elicitation gap further.
+    - Weak-to-strong generalization shows that a capable student trained on noisy weak labels can exceed the supervisor. Bootstrapping (intermediate model, then strong model) and the auxiliary *confidence* loss — a ramped term pulling the student toward its own hardened predictions, so it may overrule weak labels — close the elicitation gap further.
     - In production, a small but carefully targeted human annotation budget — spent on hard cases, adversarial examples, and calibration anchors — provides the quality floor that AI labeling alone cannot guarantee.
     - The alignment data flywheel: seed human data → SFT → RLAIF → RL → better model → better RLAIF labels → repeat. Each round should raise the reward threshold (curriculum) to avoid stagnation.
+    - Every loop here presumes the model can judge, which fails below ~1B parameters. At 100M, self-critique and self-reward manufacture noise; what survives is rejection sampling against a *program*, plus AI feedback supplied by a larger teacher — the same pipeline with the "self" removed, which is how the capstone post-trains Stack-100M.
 
 ---
 
@@ -797,8 +933,11 @@ def run_alignment_pipeline(
 
     **Open-source & tools**
 
-    - [huggingface/trl](https://huggingface.co/docs/trl/index) — full post-training library with SFT, DPO, PPO, GRPO, and reward-modeling trainers; the standard implementation base for RLAIF pipelines.
-    - [openai/weak-to-strong](https://github.com/openai/weak-to-strong) — reference codebase for weak-to-strong generalization experiments across NLP and vision tasks.
+    - [huggingface/trl](https://huggingface.co/docs/trl/index) — full post-training library with SFT, DPO, PPO, GRPO, and reward-modeling trainers; the standard implementation base for RLAIF pipelines. Its `DPOTrainer`/`RewardTrainer` consume the `{prompt, chosen, rejected}` rows this chapter produces without transformation.
+    - [vllm-project/vllm](https://docs.vllm.ai/) — the generation engine that makes AI feedback affordable: `SamplingParams(n=k)` for rejection sampling and `logprobs=` for soft verdict labels, both fully batched offline.
+    - [argilla-io/distilabel](https://github.com/argilla-io/distilabel) — declarative synthetic-data and AI-feedback pipelines over vLLM/API backends; ships `UltraFeedback` as a built-in task, i.e. the generate-then-AI-rate loop of this chapter as a few lines of config.
+    - [openbmb/UltraFeedback](https://huggingface.co/datasets/openbmb/UltraFeedback) — the canonical open AI-feedback preference corpus (and its `HuggingFaceH4/ultrafeedback_binarized` pairwise form), used to align Zephyr, Tülu and most open chat models.
+    - [openai/weak-to-strong](https://github.com/openai/weak-to-strong) — reference codebase for weak-to-strong generalization experiments across NLP and vision tasks, including the auxiliary confidence loss.
 
     **Go deeper**
 

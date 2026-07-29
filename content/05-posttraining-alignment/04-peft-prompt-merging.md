@@ -21,7 +21,7 @@ Three distinct families emerged:
 | Method | What is learned | Where it attaches | Params per task |
 |---|---|---|---|
 | **Prompt tuning** (Lester et al., 2021) | $k$ embedding vectors, first-layer input | Input layer only | $k \times d$ |
-| **Prefix tuning** (Li & Liang, 2021) | Key/value pairs injected at every layer | All attention layers | $2 \times L \times k \times d$ |
+| **Prefix tuning** (Li & Liang, 2021) | Key/value pairs injected at every layer | All attention layers | $2 \times L \times k \times d_{kv}$ |
 | **P-tuning v2** (Liu et al., 2022) | Deep prefix + per-layer MLP reparameterization | All layers | similar to prefix tuning |
 
 ---
@@ -155,6 +155,8 @@ $$
 where $P^K_\ell, P^V_\ell \in \mathbb{R}^{k \times d_k}$. The attention query is unchanged and attends to both the learned prefix and the real tokens.
 
 The effect: at every layer, the model has $k$ "virtual past tokens" whose key–value representations can be specialized to steer the layer's attention pattern for a particular task.
+
+The cleanest way to think about the implementation — and how `peft` actually does it on top of HuggingFace Transformers — is that **a prefix is a learned KV cache**. The prefix tensors are simply injected as the initial `past_key_values` before the real tokens are processed, so the attention kernel is untouched: FlashAttention, GQA and PagedAttention all keep working, because from their point of view there are just $k$ extra cached positions. That framing also prices the method honestly. The prefix occupies real KV cache for the whole life of the request: at $k=20$, $L=32$ layers, $n_\text{kv}=8$ GQA heads and $d_\text{head}=128$, the prefix costs $2 \times 32 \times 20 \times 8 \times 128 \times 2\text{ bytes} \approx 2.6$ MB *per sequence*, and it also shortens your usable context by $k$ tokens. Compare with the ordinary prefix caching of a hard prompt in [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html): the same cache slot, except the entries are *trained* rather than computed from text. (Note also that the parameter count is $2 L k \, d_{kv}$ with $d_{kv} = n_\text{kv} \times d_\text{head}$, which under GQA is several times smaller than the $2Lkd$ of the multi-head table above.)
 
 ### Reparameterization Trick
 
@@ -353,6 +355,66 @@ The T-Few paper packaged IA3 into a practical recipe for few-shot learning on T0
 
 The combination matched or beat much larger few-shot competitors while using a fraction of the compute.
 
+### All Three in One API: HuggingFace `peft`
+
+You will never hand-roll the wrappers above in production. HuggingFace **`peft`** implements prompt tuning, prefix tuning, P-tuning, and IA3 behind the same `get_peft_model(base_model, config)` call used for LoRA in the previous chapter — the only thing that changes is the config object. Everything else in your stack (Transformers `Trainer`, TRL's `SFTTrainer`, your data collator) is untouched.
+
+```python
+# pip install "peft>=0.14" transformers accelerate
+from peft import (
+    PromptTuningConfig, PromptTuningInit,
+    PrefixTuningConfig, IA3Config,
+    TaskType, get_peft_model, PeftModel,
+)
+from transformers import AutoModelForCausalLM
+
+MODEL = "gpt2"                      # swap for any causal LM
+base = AutoModelForCausalLM.from_pretrained(MODEL)
+
+# --- (1) Prompt tuning: k soft tokens at the input, warm-started from text ---
+prompt_cfg = PromptTuningConfig(
+    task_type=TaskType.CAUSAL_LM,
+    num_virtual_tokens=20,                      # the k of our SoftPromptWrapper
+    prompt_tuning_init=PromptTuningInit.TEXT,   # the Lester et al. warm start
+    prompt_tuning_init_text="Answer the following question:",
+    tokenizer_name_or_path=MODEL,
+)
+
+# --- (2) Prefix tuning: per-layer K/V prefixes ---
+prefix_cfg = PrefixTuningConfig(
+    task_type=TaskType.CAUSAL_LM,
+    num_virtual_tokens=20,
+    prefix_projection=True,   # True = Li & Liang's MLP reparameterization;
+                              # False = P-tuning v2's direct optimization
+)
+
+# --- (3) IA3: learned scale vectors on K, V and the FFN intermediate ---
+# target_modules are *your model's* module names; these are Llama-style.
+# feedforward_modules must be a subset of target_modules: for those, peft
+# scales the module's *input* (i.e. the FFN intermediate activation h),
+# which is exactly l_ff ⊙ σ(W1 x) from the equations above.
+ia3_cfg = IA3Config(
+    task_type=TaskType.CAUSAL_LM,
+    target_modules=["k_proj", "v_proj", "down_proj"],
+    feedforward_modules=["down_proj"],
+)
+
+model = get_peft_model(base, prompt_cfg)   # or prefix_cfg / ia3_cfg
+model.print_trainable_parameters()
+# e.g. trainable params: 15,360 || all params: 124,455,168 || trainable%: 0.0123
+
+# Train exactly as usual, then save — the adapter file is KBs to a few MB.
+model.save_pretrained("./adapter-prompt-tuning")
+# Reload on top of a fresh base:
+# model = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(MODEL),
+#                                   "./adapter-prompt-tuning")
+```
+
+Two practical asymmetries are worth internalizing, because they explain why LoRA and IA3 dominate deployment while soft prompts stayed a research favorite:
+
+- **Only weight-space methods fold away.** `model.merge_and_unload()` works for IA3 (and LoRA/DoRA) — the scales are baked into `W_K`, `W_V`, `W_2` and the adapter disappears. Prompt and prefix tuning have nothing to fold into; they *must* stay live at inference and they permanently consume $k$ positions of context and KV cache.
+- **The serving stacks are built around LoRA.** The multi-adapter hot-swap paths in vLLM and SGLang (see [Multi-Tenant LoRA & Adapter Serving at Scale](../07-inference-serving/14-multi-tenant-lora-serving.html)) center on LoRA-shaped adapters; soft prompts have never had comparable first-class support. If you need hundreds of tenants on one GPU, that decides it.
+
 ---
 
 ## Model Merging: The Big Idea
@@ -527,6 +589,23 @@ $$
 ```python
 import torch
 
+def magnitude_threshold(delta: torch.Tensor, trim_fraction: float) -> torch.Tensor:
+    """
+    Magnitude cutoff below which entries are trimmed.
+
+    NOTE: do *not* use torch.quantile here. It has a hard input-size limit
+    (a few tens of millions of elements) and raises a RuntimeError on real
+    LLM tensors — a 4096 x 14336 FFN matrix already has ~59M entries.
+    torch.kthvalue has no such limit and is exact.
+    """
+    flat = delta.abs().flatten()
+    k = int(trim_fraction * flat.numel())
+    if k <= 0:
+        return torch.tensor(0.0, dtype=flat.dtype, device=flat.device)
+    k = min(k, flat.numel())
+    return torch.kthvalue(flat, k).values
+
+
 def ties_merge(
     base_sd: dict,
     task_vectors: list[dict],
@@ -555,9 +634,9 @@ def ties_merge(
             if key not in tv:
                 continue
             delta = tv[key].float().clone()
-            # Compute magnitude threshold at the (trim_fraction) quantile
+            # Zero everything below the (trim_fraction) magnitude quantile
             if delta.numel() > 1:
-                threshold = torch.quantile(delta.abs().flatten(), trim_fraction)
+                threshold = magnitude_threshold(delta, trim_fraction)
                 delta[delta.abs() < threshold] = 0.0
             deltas.append(delta)
 
@@ -645,7 +724,9 @@ Wortsman et al. (2022) coined "model soups" for the practice of averaging multip
 2. Average all checkpoints that individually exceed some accuracy threshold.
 3. The resulting "soup" typically generalizes better than any single ingredient.
 
-The theoretical grounding connects to loss-landscape flatness and the work of Garipov et al. on loss surface geometry: fine-tunes from the same pre-trained model tend to lie in a connected low-loss region, so their average is also low-loss.
+The theoretical grounding connects to loss-landscape flatness and the work of Garipov et al. on loss surface geometry: fine-tunes from the same pre-trained model tend to lie in a connected low-loss region, so their average is also low-loss. The precondition is *linear mode connectivity*: two checkpoints are mergeable when the straight line between them stays in a low-loss valley. Shared pre-training buys you this almost for free (the fine-tunes never leave the basin); two models trained from different random seeds do not have it, because hidden units are permuted relative to each other — one would first have to solve a neuron-matching problem (the "Git Re-Basin" line of work) before averaging means anything.
+
+This is the single cheapest quality win available when you build Stack-100M in Part XIV. Post-training a 100M model is a matter of GPU-minutes, so you will naturally end up with several SFT or DPO checkpoints from different seeds, learning rates, or data mixes. Averaging the ones that clear your eval bar costs nothing and reliably buys a fraction of a point plus a visible reduction in eval variance — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html). A closely related trick from the same family, applied *within* a single run rather than across runs, is to average the last few checkpoints of the learning-rate decay phase — the annealing phase described in [Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html) — which acts as a cheap approximation to settling into a flatter minimum.
 
 ### Frankenmerges
 
@@ -716,14 +797,27 @@ dtype: bfloat16
 ```
 
 ```bash
-# Install and run
+# Install (PyPI, or `pip install -e .` from a git clone for the latest methods)
 pip install mergekit
 
-mergekit-merge merge_config.yaml ./output-model \
-    --cuda                   \   # use GPU if available
-    --copy-tokenizer         \   # copy tokenizer from base model
-    --lazy-unpickle              # stream large tensors to avoid OOM
+# The entrypoint that consumes a YAML config is `mergekit-yaml`:
+#   --cuda           run the arithmetic on GPU (optional; CPU works fine)
+#   --copy-tokenizer copy the tokenizer/config from the base model into the output
+#   --lazy-unpickle  stream tensors off disk one at a time to avoid OOM
+#   --out-shard-size shard the output safetensors files
+mergekit-yaml merge_config.yaml ./output-model \
+    --cuda \
+    --copy-tokenizer \
+    --lazy-unpickle \
+    --out-shard-size 5B
+
+# Sibling entrypoints you will meet in the wild:
+#   mergekit-moe            build a Mixture-of-Experts from several dense experts
+#   mergekit-evolve         evolutionary search over merge recipes (Akiba et al.)
+#   mergekit-extract-lora   recover a LoRA adapter from a full fine-tune's delta
 ```
+
+That last one is worth remembering: `mergekit-extract-lora` runs a truncated SVD of the task vector $\tau = \theta_\text{ft} - \theta_\text{base}$ and keeps the top-$r$ singular directions, turning a 14 GB full fine-tune back into a ~100 MB LoRA adapter you can hot-swap (see [Multi-Tenant LoRA & Adapter Serving at Scale](../07-inference-serving/14-multi-tenant-lora-serving.html)). It is the bridge between this chapter's weight-space arithmetic and the previous chapter's low-rank world.
 
 ---
 
@@ -742,6 +836,21 @@ This is the practical question you actually care about. Here is a decision frame
 | Models come from different base checkpoints | Merging is unreliable; use fine-tuning or distillation |
 
 The loss-landscape intuition is the key: merging works because fine-tunes from the same base model are geometrically close. If the models started from different initializations, the weight spaces are unrelated and merging is noise.
+
+Whatever method you pick, **merging is an empirical search, not a formula** — the merge itself is minutes of CPU arithmetic, so essentially all of your wall-clock goes into evaluating candidates. Make that loop concrete from day one: generate a small grid of configs (say $\lambda \in \{0.3, 0.5, 0.7\}$ × density $\in \{0.2, 0.4\}$), merge each with `mergekit-yaml`, and score each output with `lm-evaluation-harness` on the two or three tasks you actually care about plus one held-out task that neither ingredient was tuned on (to catch a merge that has simply overfit one skill).
+
+```bash
+for lam in 0.3 0.5 0.7; do
+  sed "s/__LAMBDA__/$lam/" template.yml > run.yml          # weight: __LAMBDA__
+  mergekit-yaml run.yml "./merged-$lam" --cuda --copy-tokenizer
+  lm_eval --model hf \
+          --model_args "pretrained=./merged-$lam,dtype=bfloat16" \
+          --tasks gsm8k,humaneval,arc_challenge \
+          --batch_size 8 --output_path "results/lam-$lam"
+done
+```
+
+See [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html) for how to keep that comparison honest, and note the obvious trap: with six configs and three benchmarks you are running eighteen comparisons, so a "winner" chosen on the same split you tuned on is partly noise. Hold out a final split.
 
 !!! interview "Interview Corner"
 
@@ -764,17 +873,17 @@ The loss-landscape intuition is the key: merging works because fine-tunes from t
 ## Comparison and Selection Guide
 
 ```text
-Method           Params trained   Modifies weights?  Inference overhead   Best for
-───────────────  ───────────────  ─────────────────  ──────────────────   ────────────────────────
-Prompt tuning    k × d            No                 +k tokens            Low-resource; huge models
-Prefix tuning    2 × L × k × d_k No                 +k KV per layer      NLG/seq2seq; all layers
-P-tuning v2      similar          No                 +k KV per layer      NLU (NER, SRL); robust
-IA3              L × (2d_k+d_ff)  No (foldable)      Zero (after fold)    Few-shot; fast deploy
-LoRA             2 × L × r × d   Yes (merge-able)    Zero (after merge)   General purpose
-TIES merge       0 (no training)  Yes                Zero                 Multi-task combination
-SLERP            0                Yes                Zero                 Two-model interpolation
-Task arithmetic  0                Yes                Zero                 Adding/removing skills
-Model soup       0                Yes                Zero                 Same-base checkpoint avg
+Method           Params trained     Modifies weights?  Inference overhead  Best for
+───────────────  ─────────────────  ─────────────────  ──────────────────  ────────────────────────
+Prompt tuning    k × d              No                 +k tokens           Low-resource; huge models
+Prefix tuning    2 × L × k × d_kv   No                 +k KV per layer     NLG/seq2seq; all layers
+P-tuning v2      similar            No                 +k KV per layer     NLU (NER, SRL); robust
+IA3              L × (2d_k + d_ff)  No (foldable)      Zero (after fold)   Few-shot; fast deploy
+LoRA             2 × L × r × d      Yes (merge-able)   Zero (after merge)  General purpose
+TIES merge       0 (no training)    Yes                Zero                Multi-task combination
+SLERP            0                  Yes                Zero                Two-model interpolation
+Task arithmetic  0                  Yes                Zero                Adding/removing skills
+Model soup       0                  Yes                Zero                Same-base checkpoint avg
 ```
 
 For a complete treatment of LoRA and adapters, see [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html). For the memory math behind training these methods, see [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html).
@@ -785,7 +894,8 @@ If your use case involves distribution shifts after merging, the evaluation fram
 
 !!! key "Key Takeaways"
     - **Prompt tuning** learns $k$ soft embedding vectors prepended to the input; it trains fewer than 0.01% of parameters and closes the gap with full fine-tuning only at very large model scales.
-    - **Prefix tuning** injects learned key–value pairs at *every* attention layer, giving the model a per-layer task signal; it is more effective than prompt tuning on smaller models and harder tasks.
+    - **Prefix tuning** injects learned key–value pairs at *every* attention layer, giving the model a per-layer task signal; it is more effective than prompt tuning on smaller models and harder tasks. Mechanically it is a **learned KV cache** — seeded `past_key_values` — so it needs no kernel changes but permanently consumes $k$ tokens of context and cache per sequence.
+    - **Use `peft` for all three.** Prompt tuning, prefix tuning, P-tuning and IA3 are one config object away (`PromptTuningConfig`, `PrefixTuningConfig`, `IA3Config`) behind the same `get_peft_model` call as LoRA; only weight-space methods (IA3, LoRA) survive `merge_and_unload()`, and only LoRA-shaped adapters get first-class multi-tenant serving.
     - **IA3** multiplies learned scale vectors into key, value, and FFN activations; its ~0.007% parameter overhead can be *folded into weights* at inference for zero latency cost.
     - **Task arithmetic** defines a task vector as $\theta_\text{ft} - \theta_\text{base}$; tasks can be added, subtracted, and composed algebraically — no new training required.
     - **TIES-Merging** reduces inter-task interference by trimming small-magnitude parameters, electing a majority sign per position, and averaging only the agreeing values.

@@ -315,6 +315,9 @@ def ppo_policy_loss(new_logprobs, old_logprobs, advantages, mask, clip_eps=0.2):
     return loss, clipfrac, approx_kl
 ```
 
+!!! note "Aside: when PPO is secretly REINFORCE"
+    Look at the very first gradient step taken on a fresh rollout buffer: $\theta = \theta_{\text{old}}$, so $r_t \equiv 1$ exactly, the clip is inactive, and $\nabla L^{\text{CLIP}} = -\hat A_t \nabla_\theta \log\pi_\theta(o_t\mid s_t)$ — *identical* to actor-critic REINFORCE with a baseline. Everything the clip does only becomes relevant on the *second* and later gradient steps over the same data. So if you set `PPO_EPOCHS = 1` and `MINIBATCHES = 1` (one gradient step per rollout, fully on-policy), PPO literally degenerates to REINFORCE-with-a-baseline, and the ratio machinery is dead weight. Several modern recipes do exactly this and drop the clip; most keep a few epochs because generation is far more expensive than a backward pass, and then the clip is what makes the reuse safe. This is also why `clipfrac` should be near zero on the first minibatch and grow through the epochs — if it is large immediately, your `old_logprobs` were computed with a *different* numerical path than your trainer (the generation–training skew discussed below), not by real policy drift.
+
 ### The value (critic) loss
 
 The critic $V_\phi$ is trained by regression toward the GAE returns $\hat R_t$. PPO uses a **clipped value loss** too — to stop the critic from moving too far per update, mirroring the policy clip:
@@ -408,7 +411,7 @@ The training loop has a characteristic **two-phase rhythm** — a *rollout phase
 
 {{fig:ppo-iteration-two-phase-loop}}
 
-Here is a compact but complete PPO step that ties the helper functions together. It is written for clarity over speed; a production system (TRL's `PPOTrainer`, OpenRLHF, veRL) disaggregates generation onto an inference engine and shards the four models, but the math is identical.
+Here is a compact but complete PPO step that ties the helper functions together. It is written for clarity over speed; a production system (TRL's `PPOTrainer`, OpenRLHF, veRL) disaggregates generation onto an inference engine and shards the four models, but the math is identical. The one helper left to you is `generate_batch`: ordinary batched temperature sampling from the policy ([Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html)) that returns the prompt-plus-response `input_ids` and a mask that is 1 exactly on generated tokens — sample at temperature 1.0 with no top-$k$/top-$p$ truncation, because the importance ratio and the KL are only valid if the tokens really were drawn from $\pi_{\text{old}}$ and not from a truncated version of it.
 
 ```python
 import torch
@@ -497,13 +500,63 @@ def ppo_update(buf):
 
     Interpretation: the optimizer already moved this token's probability up by $40\%$ since rollout — past the $20\%$ trust region. PPO refuses to reward going further this epoch. The token will get another chance after the *next* rollout, when $\pi_{\text{old}}$ is reset to the current policy and the ratio starts back at $1.0$. This is the trust region in action: bounded, incremental, safe steps. The `clipfrac` diagnostic counts what fraction of tokens hit this clip; a healthy run sits around $0.1$–$0.3$. A `clipfrac` near $0$ means your learning rate or advantages are tiny (no movement); near $1$ means you're taking wild steps and should lower the LR or $\epsilon$.
 
+### The same loop in a real library
+
+You write the loop above once, to understand it; in production you use a library that has already fixed the fifty details (padding, EOS handling, sharding, generation offload). In HuggingFace **TRL** the whole two-phase rhythm is one object, and every constructor argument is a symbol derived above — which is the fastest way to check your mental model:
+
+```python
+# pip install "trl>=0.12" transformers accelerate datasets
+from datasets import load_dataset
+from transformers import (AutoModelForCausalLM, AutoModelForSequenceClassification,
+                          AutoTokenizer)
+from trl import PPOConfig, PPOTrainer
+
+BASE    = "Qwen/Qwen2.5-0.5B-Instruct"
+RM_PATH = "path/to/your-reward-model"   # the RM you trained in chapter 5.5
+
+tok       = AutoTokenizer.from_pretrained(BASE)
+policy    = AutoModelForCausalLM.from_pretrained(BASE)   # actor, trains
+ref_model = AutoModelForCausalLM.from_pretrained(BASE)   # frozen π_ref for the KL leash
+# RM and critic are both scalar-head models; the critic trains, the RM is frozen.
+# The critic is conventionally *initialized from the RM* — it already knows what
+# "a good continuation" looks like, so V_phi starts far from random.
+reward_model = AutoModelForSequenceClassification.from_pretrained(RM_PATH, num_labels=1)
+value_model  = AutoModelForSequenceClassification.from_pretrained(RM_PATH, num_labels=1)
+
+cfg = PPOConfig(
+    output_dir="ppo-out",
+    learning_rate=1e-6,
+    per_device_train_batch_size=8,
+    num_ppo_epochs=4,          # PPO_EPOCHS above
+    num_mini_batches=4,        # MINIBATCHES above
+    total_episodes=20_000,     # total rollouts over the run
+    kl_coef=0.05,              # β in the per-token KL reward
+    cliprange=0.2,             # ε in L^CLIP
+    cliprange_value=0.2,       # ε_v in the clipped value loss
+    vf_coef=0.1,               # c_v
+    gamma=1.0, lam=0.95,       # GAE dial
+    whiten_rewards=False,      # advantages are whitened regardless
+    missing_eos_penalty=1.0,   # penalize samples that never terminated
+)
+
+# The dataset must supply tokenized prompts in an "input_ids" column.
+ds = load_dataset("trl-lib/tldr", split="train")
+
+trainer = PPOTrainer(args=cfg, processing_class=tok, model=policy, ref_model=ref_model,
+                     reward_model=reward_model, value_model=value_model,
+                     train_dataset=ds)
+trainer.train()
+```
+
+TRL rewrote `PPOTrainer` around the standard `Trainer` interface in v0.12 (the older `AutoModelForCausalLMWithValueHead` + `trainer.step(...)` style predates it), and config field names have shifted across releases — always read `PPOConfig`'s docstring for the version you install ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)). At larger scale the same objects appear in **veRL** (whose `verl/trainer/ppo/core_algos.py` contains a GAE routine that is line-for-line the `compute_gae` above, plus the clipped policy/value losses) and **OpenRLHF** (Ray actors for policy/critic/RM/reference with vLLM rollouts) — see [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html) and [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html). Reading one of those `core_algos`-style files after this chapter is a genuinely short trip: you will recognize every function.
+
 ## Why PPO is finicky
 
 PPO works, and InstructGPT proved it scales. But practitioners universally describe it as *brittle and operationally heavy*, and understanding **why** is exactly what motivates the rest of Part V and Part VI. The difficulties stack:
 
 **1. Four models in memory at once.** A PPO step needs the **policy** (trains), the **critic/value net** (trains, often as large as the policy), the **reward model** (frozen, large), and the **reference model** (frozen). On a 7B policy that is roughly $4\times$ the parameter footprint plus the policy's and critic's optimizer states (Adam keeps two moments per trainable parameter; see [Optimizers](../03-pretraining/09-optimizers.html)). Fitting this requires sharding (FSDP/ZeRO; see [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)) and careful memory choreography — and you still have to *generate* with the policy, which competes for the same GPUs ([Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html)).
 
-**2. The critic is hard to train and a major instability source.** A value head regressing sparse terminal rewards through a 7B transformer is itself a finicky learning problem. If $V_\phi$ is biased, your advantages are biased, the policy chases a wrong gradient, and the whole thing diverges quietly — reward looks fine, then collapses. Many practitioners spend more time debugging the critic than the policy. This single pain point is the entire reason **GRPO and RLOO delete the critic** ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)).
+**2. The critic is hard to train and a major instability source.** A value head regressing sparse terminal rewards through a 7B transformer is itself a finicky learning problem. If $V_\phi$ is biased, your advantages are biased, the policy chases a wrong gradient, and the whole thing diverges quietly — reward looks fine, then collapses. Many practitioners spend more time debugging the critic than the policy. This single pain point is the entire reason **GRPO and RLOO delete the critic** ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)). If you do keep a critic, the standard hardening is: **initialize it from the reward model** (not from random, and not by bolting an untrained scalar head onto the policy), **zero-initialize the final scalar layer** so $V_\phi \approx 0$ at step 0 rather than emitting arbitrary large values, run a **critic-only warmup** of a few dozen steps on frozen rollouts before letting the policy move at all, and give the critic its own (usually larger) learning rate. For long chain-of-thought responses a *length-adaptive* GAE $\lambda$ helps too, since a $\lambda$ tuned at 500 tokens over-smooths at 8,000 — the VAPO line of work is essentially a catalogue of these critic fixes ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html), [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html)).
 
 **3. A thicket of coupled hyperparameters.** $\beta$ (KL), $\epsilon$ (clip), $\lambda$ and $\gamma$ (GAE), $c_v$ and $c_e$, learning rates for policy *and* critic, number of PPO epochs, minibatch size, the reward-normalization scheme, the target KL for adaptive control. These interact non-linearly: a too-large LR with too-small $\beta$ reward-hacks; a too-large $\beta$ stalls; too many PPO epochs makes the data badly off-policy and the clip can't save you. The viable region is narrow and problem-dependent, and there is no clean loss curve telling you you're in it — you must watch *reward, KL, clipfrac, value loss, and entropy together*.
 
@@ -514,6 +567,8 @@ PPO works, and InstructGPT proved it scales. But practitioners universally descr
 **6. Sample inefficiency and cost.** Each iteration regenerates fresh rollouts (you can only reuse them for a few epochs before the clip stops being valid). Generation dominates wall-clock. This is why DPO — which needs *no* online generation — is so attractive when you already have preference pairs, and why so much RL-infra work targets rollout throughput ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)).
 
 The honest summary: PPO is the *right general algorithm* and the most *educational* one — every term has a clean theoretical justification — but it asks a lot of the engineer. The field's trajectory since 2023 has been a steady search for things that keep PPO's good behavior (trust-region stability, online exploration) while removing its pain (the critic, the hyperparameter thicket, the offline-impossibility). DPO removed the RL loop entirely; GRPO/RLOO removed the critic; RLVR removed the reward model in favor of verifiers. You cannot understand *why* any of those exist without first understanding the PPO they are simplifying — which is this chapter.
+
+This is also the calculus we make explicitly in the capstone: Stack-100M's RL stage uses **critic-free GRPO on a verifiable task**, not PPO, precisely because a second ~100M network plus its optimizer state buys almost nothing when the reward is terminal and a group baseline is available ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)). But essentially all of the *bookkeeping* in this chapter carries over verbatim to that run — gathering per-token log-probs of the sampled tokens, the response mask and its off-by-one shift, the reference-model forward pass and the per-token KL, advantage whitening, the clipped ratio, `clipfrac`/KL/entropy diagnostics. Write these helpers once, here, and the capstone's RL loop is a small edit away (replace GAE with a group mean, delete the value model).
 
 !!! interview "Interview Corner"
     **Q:** Walk me through the PPO clipped objective. Why the `min`, and what specifically does clipping prevent? Why do we even need importance sampling here?
@@ -536,7 +591,7 @@ The honest summary: PPO is the *right general algorithm* and the most *education
     - **PPO is finicky** because it juggles four models, a hard-to-train critic, a thicket of coupled hyperparameters, ever-present reward over-optimization, generation–training skew, and high generation cost — which is precisely the motivation for DPO (no RL loop), GRPO/RLOO (no critic), and RLVR (no reward model).
 
 !!! sota "State of the Art & Resources (2026)"
-    PPO remains the canonical, most general RL algorithm for RLHF, but the field has largely moved toward critic-free variants (GRPO, RLOO, REINFORCE++) that preserve PPO's trust-region stability while eliminating the expensive value network. The 2025–2026 frontier reasoning recipes (DAPO, GSPO) keep PPO's clipped importance-ratio machinery but drop the critic and refine exactly the two knobs this chapter derives — DAPO decouples the clip bounds, GSPO moves the importance ratio $r_t$ from per-token to per-sequence. PPO's four-model loop is now mainly seen in large-scale or multi-turn agent training where the full generality is warranted.
+    PPO remains the canonical, most general RL algorithm for RLHF, but the field has largely moved toward critic-free variants (GRPO, RLOO, REINFORCE++) that preserve PPO's trust-region stability while eliminating the expensive value network. The 2025–2026 frontier reasoning recipes (DAPO, GSPO) keep PPO's clipped importance-ratio machinery but drop the critic and refine exactly the two knobs this chapter derives — DAPO decouples the clip bounds, GSPO moves the importance ratio $r_t$ from per-token to per-sequence. PPO's four-model loop is now mainly seen in large-scale or multi-turn agent training where the full generality is warranted. The critic is not dead, though: the 2025 value-based line (VC-PPO, VAPO) shows that a *hardened* value model — RM initialization, critic warm-up, length-adaptive GAE $\lambda$ — can beat critic-free methods on long chain-of-thought, at the cost of hosting a second network. Treat "critic or no critic" as a live engineering trade, not a settled question.
 
     **Foundational work**
 
@@ -550,6 +605,7 @@ The honest summary: PPO is the *right general algorithm* and the most *education
     - [Zheng et al., *Secrets of RLHF in Large Language Models Part I: PPO* (2023)](https://arxiv.org/abs/2307.04964) — systematic ablation of every PPO-RLHF component; identifies policy-constraint tuning as the key stability factor and releases reproducible code.
     - [Hu et al., *REINFORCE++: Stabilizing Critic-Free Policy Optimization with Global Advantage Normalization* (2025)](https://arxiv.org/abs/2501.03262) — drops the critic entirely, adds global advantage normalization from PPO; matches PPO quality at lower compute cost.
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — critic-free, but its four tricks (decoupled higher/lower clip, dynamic sampling, token-level loss, overlong reward shaping) are all surgery on the PPO objects in this chapter; the de-facto open large-scale reasoning recipe on verl.
+    - [Yue et al., *VAPO: Efficient and Reliable Reinforcement Learning for Advanced Reasoning Tasks* (2025)](https://arxiv.org/abs/2504.05118) — the counter-argument to critic-free RL: a value model with length-adaptive GAE and critic warm-up outperforms DAPO on long-CoT reasoning, keeping every object in this chapter.
     - [Zheng et al., *Group Sequence Policy Optimization* (GSPO, Qwen, 2025)](https://arxiv.org/abs/2507.18071) — redefines the importance ratio $r_t$ at the *sequence* level instead of per token, fixing a GRPO variance/collapse failure mode and stabilizing MoE RL; used to train the Qwen3 models.
 
     **Open-source & tools**

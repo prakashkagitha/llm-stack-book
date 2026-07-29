@@ -356,6 +356,64 @@ A few engineering notes that matter in practice:
 - **KL is often set to zero in R1-style recipes.** DeepSeek-R1-Zero used essentially no KL/penalty and let the model drift far from the base, which is *desired* when you want emergent long reasoning. Keep $\beta>0$ for chat alignment where you must preserve the SFT persona.
 - **PPO_EPOCHS > 1 is why we need the ratio and clip at all.** If you only ever take one gradient step on each rollout batch ($\pi_\theta=\pi_{\text{old}}$, ratio $=1$), GRPO collapses into RLOO-with-std-normalization. The clip earns its keep only when you reuse rollouts.
 
+### The same algorithm in TRL and veRL
+
+You will write this loss from scratch once, to understand it; after that you configure it. Every algorithmic choice made above is a flag in the two libraries that dominate open GRPO training — HuggingFace **TRL** (`GRPOTrainer`, single-node, the standard entry point; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)) and **veRL** (multi-node HybridFlow, vLLM/SGLang rollouts + FSDP/Megatron training; see [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)). The mapping is one-to-one:
+
+| Concept in this chapter | Variable above | TRL `GRPOConfig` | veRL config key |
+|---|---|---|---|
+| group size $G$ | `GROUP_SIZE` | `num_generations` | `actor_rollout_ref.rollout.n` |
+| gradient epochs per rollout batch | `PPO_EPOCHS` | `num_iterations` | `actor_rollout_ref.actor.ppo_epochs` |
+| lower / upper clip | `CLIP_EPS_LOW` / `CLIP_EPS_HIGH` | `epsilon` / `epsilon_high` | `actor.clip_ratio_low` / `clip_ratio_high` |
+| KL coefficient $\beta$ | `KL_BETA` | `beta` (`0.0` skips the ref model entirely) | `actor.use_kl_loss`, `actor.kl_loss_coef` |
+| token-level vs. per-response loss | `token_level` | `loss_type` (`"grpo"`, `"dr_grpo"`, …) | `actor.loss_agg_mode` (`token-mean`, …) |
+| $\div\operatorname{std}$ on/off | `normalize_std` | `scale_rewards` | `algorithm.norm_adv_by_std_in_grpo` |
+| sequence-level ratio (GSPO, below) | — | `importance_sampling_level="sequence"` | `actor.policy_loss.loss_mode` |
+| rollout backend | `policy.generate` | `use_vllm=True` | `actor_rollout_ref.rollout.name=vllm` |
+| advantage estimator itself | `grpo_advantage` | (implied by the trainer) | `algorithm.adv_estimator=grpo` |
+
+So the 2025-fixed GRPO of the next section — Dr. GRPO advantage plus DAPO's clip-higher — is a handful of flags:
+
+```python
+from datasets import Dataset
+from trl import GRPOConfig, GRPOTrainer
+
+# TRL wants a "prompt" column; any extra column is forwarded to the reward fns.
+train_ds = Dataset.from_dict({
+    "prompt": ["What is 17 + 26? Put the final number in <answer></answer>."] * 64,
+    "gold":   ["43"] * 64,
+})
+
+cfg = GRPOConfig(
+    output_dir="grpo-run",
+    num_generations=8,              # G
+    num_iterations=2,               # gradient epochs per rollout batch
+    epsilon=0.2, epsilon_high=0.28, # clip-higher (DAPO)
+    loss_type="dr_grpo",            # token-level aggregation, no per-response 1/|o_i|
+    scale_rewards=False,            # drop the /std normalization (Dr. GRPO)
+    beta=0.0,                       # R1-style: no KL anchor
+    learning_rate=1e-6,
+    use_vllm=True,                  # generate on vLLM instead of .generate()
+)
+# reward_funcs are plain Python callables returning one float per completion --
+# exactly our reward_fn. Extra dataset columns (here "gold") arrive as kwargs.
+# Pass a list and TRL sums them (optionally weighted via `reward_weights`).
+def correctness_reward(completions, gold, **kwargs):
+    return [1.0 if f"<answer>{g}</answer>" in c else 0.0
+            for c, g in zip(completions, gold)]
+
+def format_reward(completions, **kwargs):
+    return [0.2 if ("<answer>" in c and "</answer>" in c) else 0.0
+            for c in completions]
+
+trainer = GRPOTrainer(model="Qwen/Qwen2.5-0.5B-Instruct",
+                      reward_funcs=[correctness_reward, format_reward],
+                      args=cfg, train_dataset=train_ds)
+trainer.train()
+```
+
+Flag *names* drift across releases (`scale_rewards`, for instance, became a string like `"none"`/`"group"` in later TRL versions), so pin a version and read `GRPOConfig`'s docstring or veRL's `ppo_trainer.yaml` — but the *concepts* in the table are stable, and knowing which flag corresponds to which term in the loss is the whole point of having derived it. For an end-to-end run at the scale of this book's capstone model — where $G$, the prompt set, and the verifier are all sized to a single GPU — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
 ## A worked numerical example
 
 Let's make the magnitudes concrete. Take one prompt, a group of $G=4$ sampled responses, and a verifiable reward in $\{0, 1\}$ (wrong / right), plus the format bonus from our `reward_fn`.
@@ -431,7 +489,7 @@ To get a deployable model, DeepSeek-R1 wraps the same GRPO core in a multi-stage
 The takeaways for an engineer: (1) a tiny **cold-start SFT** dramatically stabilizes RL and improves the final model's polish; (2) **rejection sampling + SFT** ("STaR-like" self-distillation) is a cheap, stable way to bank RL gains and broaden coverage; (3) you eventually need a **reward model** again for the non-verifiable parts (helpfulness, safety) — GRPO is reward-source-agnostic, it just needs *some* scalar per response. The DeepSeek team also showed that **distilling** R1's outputs into smaller dense models often beats running GRPO on those small models directly — a result echoed in [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html).
 
 !!! tip "Practitioner tip: pass@k as your north star, not pass@1"
-    GRPO can only learn from a prompt if the group contains *both* successes and failures — otherwise every advantage is zero and the gradient vanishes. So the right difficulty band for your prompt set is "hard but not impossible at $G$ samples." Track the fraction of prompts with mixed outcomes; if most groups are all-correct or all-wrong, the run is wasting compute. Curriculum (start easy, raise difficulty) and large $G$ both help keep groups informative.
+    GRPO can only learn from a prompt if the group contains *both* successes and failures — otherwise every advantage is zero and the gradient vanishes. So the right difficulty band for your prompt set is "hard but not impossible at $G$ samples." Quantify it: with a binary reward and per-sample pass rate $p$, a group of $G$ i.i.d. samples is dead with probability $p^G + (1-p)^G$. At $G=8$ that is $0.66$ for $p=0.95$, $0.27$ for $p=0.85$, but only $0.008$ for $p=0.5$ — so a prompt set that feels "comfortably learnable" can still throw away two thirds of your rollout budget, while prompts near 50% pass rate are worth roughly their weight in gradient. Track the fraction of prompts with mixed outcomes; if most groups are all-correct or all-wrong, the run is wasting compute. Curriculum (start easy, raise difficulty) and large $G$ both help keep groups informative — $G=8$–$16$ is the standard band, since the group baseline's own variance falls like $1/(G-1)$ while generation cost grows linearly in $G$.
 
 {{fig:grpo-dead-groups}}
 
@@ -469,7 +527,7 @@ This is *exactly the group-mean baseline of RLOO* (up to the $G/(G-1)$ factor). 
 
 ### Fix 3: clip-higher (decoupled clipping, from DAPO)
 
-PPO's symmetric clip $[1-\epsilon, 1+\epsilon]$ has a subtle pathology for exploration noted by the DAPO authors. The *upper* clip $1+\epsilon$ caps how much a *low-probability but good* token can be boosted in one update. Tokens that are currently rare (say $\pi_{\text{old}}=0.01$) but turn out to be useful can only be lifted to at most $1.01\times$ their probability per step — so the policy's **entropy collapses**: it doubles down on already-likely tokens and stops exploring. DAPO's fix is **clip-higher**: decouple the lower and upper clip ranges and raise the ceiling,
+PPO's symmetric clip $[1-\epsilon, 1+\epsilon]$ has a subtle pathology for exploration noted by the DAPO authors. The *upper* clip $1+\epsilon$ caps how much a *low-probability but good* token can be boosted in one update, and because the cap is **multiplicative** it bites hardest exactly where exploration lives. With $\epsilon=0.2$, a currently-rare token at $\pi_{\theta_{\text{old}}}=0.01$ can reach at most $1.2\times 0.01 = 0.012$ in one update — an *absolute* gain of $0.002$ — whereas a token already at $0.9$ has a ceiling of $1.08$, which is no binding constraint at all. Promising rare tokens therefore climb far too slowly while the policy doubles down on what it already likes, and **entropy collapses**. DAPO's fix is **clip-higher**: decouple the lower and upper clip ranges and raise the ceiling,
 
 $$
 \operatorname{clip}\big(r_{i,t},\; 1-\epsilon_{\text{low}},\; 1+\epsilon_{\text{high}}\big),\qquad \epsilon_{\text{high}} > \epsilon_{\text{low}}.
@@ -480,18 +538,46 @@ For example $\epsilon_{\text{low}}=0.2,\ \epsilon_{\text{high}}=0.28$. This give
 - **Dynamic sampling:** discard prompts whose entire group is all-correct or all-wrong (zero advantage, zero gradient) and resample, so every gradient step has informative groups. This directly addresses the "mixed-outcome" requirement from the practitioner tip above.
 - **Overlong filtering / soft length penalty:** mask the loss (or apply a graded penalty) on responses that hit the generation length cap, so truncated garbage doesn't get treated as a real (and mis-scored) sample.
 
+### Fix 4: GSPO — put the importance ratio where the reward is
+
+The fixes above leave one structural mismatch untouched, and it is the deepest of the three. **The advantage is per-sequence, but the importance ratio is per-token.** $\hat A_i$ is a single scalar for the whole response — that is the granularity at which the reward was actually measured — yet the surrogate re-weights and clips each token independently by $r_{i,t}$. Those per-token ratios are not an importance weight for anything the estimator is measuring; over a 4k-token chain of thought they are thousands of individually noisy corrections applied to one shared signal, and the noise compounds. The failure is worst for **Mixture-of-Experts** policies ([Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html)), where a small weight update can reroute a token to a different expert and swing that token's ratio wildly even though the sequence-level likelihood barely moved — which is why early MoE RL runs needed the "routing replay" workaround (cache the old routing so the ratios stay comparable).
+
+**GSPO** (Group Sequence Policy Optimization, Zheng et al., 2025 — the algorithm behind the Qwen3 models) resolves the mismatch by defining a *length-normalized sequence* ratio and clipping **that**:
+
+$$
+s_i(\theta) = \left(\frac{\pi_\theta(o_i\mid q)}{\pi_{\theta_{\text{old}}}(o_i\mid q)}\right)^{1/|o_i|}
+= \exp\!\left(\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}\log\frac{\pi_\theta(o_{i,t}\mid q,o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q,o_{i,<t})}\right),
+$$
+
+$$
+\mathcal{J}_{\text{GSPO}}(\theta) = \mathbb{E}\!\left[\frac{1}{G}\sum_{i=1}^{G}
+\min\big(s_i\hat A_i,\; \operatorname{clip}(s_i, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}})\,\hat A_i\big)\right].
+$$
+
+The $1/|o_i|$ exponent makes $s_i$ the *geometric mean* of the per-token ratios, which is what keeps it from being astronomically large or small for long responses (a raw product of 4000 ratios is numerically hopeless). It also means GSPO's clip range must be far tighter than PPO's, because $s_i$ concentrates very close to $1$: clip widths on the order of $10^{-3}$ rather than $0.2$. In our code it is a two-line change:
+
+```python
+# GSPO: ONE ratio per sequence (geometric mean of the per-token ratios).
+seq_logratio = ((new_lp - old_lp) * mask).sum(1) / mask.sum(1).clamp(min=1.0)  # (B,)
+s = seq_logratio.exp().unsqueeze(1)                    # (B, 1), broadcasts over tokens
+pg = -torch.min(s * A, torch.clamp(s, 1 - 3e-4, 1 + 4e-4) * A)   # e.g. tiny eps
+```
+
+Note the consequence for clipping *granularity*: GSPO discards or keeps an entire response, never individual tokens. That is a blunter instrument, but it is the honest one when the reward itself was sequence-level. TRL exposes it as `importance_sampling_level="sequence"` on `GRPOConfig`.
+
 ### Putting the fixes together
 
-| Component | Original GRPO | Dr. GRPO | DAPO |
-|---|---|---|---|
-| Baseline | group mean | group mean | group mean |
-| Std normalization | yes ($\div\operatorname{std}$) | **no** | **no** |
-| Loss aggregation | per-response mean, then mean | token-level (÷ constant) | **token-level** (÷ total tokens) |
-| Clipping | symmetric $\epsilon$ | symmetric | **clip-higher** ($\epsilon_{\text{low}}\!\neq\!\epsilon_{\text{high}}$) |
-| Dynamic sampling | no | no | **yes** |
-| KL penalty | yes ($\beta$) | optional | often **dropped** |
+| Component | Original GRPO | Dr. GRPO | DAPO | GSPO |
+|---|---|---|---|---|
+| Baseline | group mean | group mean | group mean | group mean |
+| Std normalization | yes ($\div\operatorname{std}$) | **no** | **no** | yes (z-score) |
+| Loss aggregation | per-response mean, then mean | token-level (÷ constant) | **token-level** (÷ total tokens) | per-sequence |
+| Importance ratio | per token | per token | per token | **per sequence** (geometric mean) |
+| Clipping | symmetric $\epsilon$ | symmetric | **clip-higher** ($\epsilon_{\text{low}}\!\neq\!\epsilon_{\text{high}}$) | sequence-level, $\epsilon\sim10^{-3}$ |
+| Dynamic sampling | no | no | **yes** | orthogonal |
+| KL penalty | yes ($\beta$) | optional | often **dropped** | often dropped |
 
-The arc is clear: each "fix" removes an artificial scaling from the loss until what remains is, essentially, **a clean token-level REINFORCE with a group-mean baseline and a PPO clip for off-policy safety** — RLOO's spirit with PPO's trust region. If you remember one thing: *the legitimate parts of GRPO are the group-mean baseline and the clipped ratio; the std-normalization and per-response length normalization are the parts that caused trouble.*
+The arc is clear: each "fix" removes an artificial scaling from the loss until what remains is, essentially, **a clean token-level REINFORCE with a group-mean baseline and a PPO clip for off-policy safety** — RLOO's spirit with PPO's trust region. GSPO is the one branch that runs the other way: it does not simplify the aggregation, it *corrects the unit* of the importance weight, which is what starts to matter once the policy is an MoE or the responses run to thousands of tokens. If you remember one thing: *the legitimate parts of GRPO are the group-mean baseline and the clipped ratio; the std-normalization and per-response length normalization are the parts that caused trouble.*
 
 !!! warning "Common pitfall: the all-equal-reward dead group"
     If every response in a group gets the same reward (all correct, all wrong, or a degenerate reward function), then `mean` equals every $R_i$, every advantage is $0$, and that group contributes *exactly zero gradient*. With std-normalization you additionally divide $0$ by a near-zero std — the $\varepsilon$ in the denominator saves you from NaNs, but the group is still dead. This is not a bug to fix in the loss; it is a signal that your prompts are mis-calibrated in difficulty (or your reward is too coarse). Monitor the fraction of non-degenerate groups as a first-class training metric, and use dynamic sampling to refill the batch.
@@ -518,7 +604,7 @@ It helps to place these methods on a single map (full PPO treatment in [Policy G
 | **RLOO** | reward fn (any scalar) | no | yes | leave-one-out group mean | no (single step) |
 | **GRPO** | reward fn (any scalar) | no | yes | group z-score | yes (clip) |
 
-The mental model: **DPO** is the cheapest (offline, no generation) but is limited to pairwise preferences and can't exploit a *programmatic* reward. **PPO** is the most general and lowest-variance but carries the critic. **GRPO/RLOO** hit the sweet spot for *verifiable-reward* reasoning RL: online (so the policy explores its own current behavior), critic-free (cheap), and able to consume any scalar reward — which is exactly what a unit-test runner or math checker provides. That is why the 2025–2026 reasoning-model wave runs on GRPO and its descendants rather than PPO or DPO — including the sequence-level variant **GSPO** (Group Sequence Policy Optimization), which clips on whole-sequence rather than per-token importance ratios for extra stability on Mixture-of-Experts policies and trains the Qwen3 models.
+The mental model: **DPO** is the cheapest (offline, no generation) but is limited to pairwise preferences and can't exploit a *programmatic* reward. **PPO** is the most general and lowest-variance but carries the critic. **GRPO/RLOO** hit the sweet spot for *verifiable-reward* reasoning RL: online (so the policy explores its own current behavior), critic-free (cheap), and able to consume any scalar reward — which is exactly what a unit-test runner or math checker provides. That is why the 2025–2026 reasoning-model wave runs on GRPO and its descendants rather than PPO or DPO — including the sequence-level variant **GSPO** derived above, which is GRPO with the importance ratio moved to the granularity of the reward.
 
 !!! interview "Interview Corner"
     **Q:** PPO and GRPO both use the same clipped surrogate objective. What exactly does GRPO remove, why is that valid for LLM RLHF, and what new failure mode does the replacement introduce?
@@ -535,7 +621,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
     - **RLOO** = plain REINFORCE with a **leave-one-out** group-mean baseline ($b_i=\frac{1}{G-1}\sum_{j\ne i}R_j$); unbiased, simple, single-step, no clipping.
     - **GRPO** = group-relative advantage $\hat A_i=(R_i-\operatorname{mean})/\operatorname{std}$ assigned to *every token*, optimized with PPO's **clipped surrogate** so you can take multiple epochs on one batch of rollouts. KL to a reference is an optional penalty (often dropped in R1-style runs).
     - **DeepSeek-R1-Zero** showed that GRPO + a pure **rule-based reward** (accuracy + format, no reward model) on a *base* model spontaneously grows long chain-of-thought, self-verification, and "aha" backtracking. **R1** wraps this in cold-start SFT → reasoning RL → rejection-sampling SFT → final RL.
-    - **GRPO has two real biases:** per-response **length normalization** ($1/|o_i|$) and **std-normalization** ($\div\operatorname{std}$). Both silently inflate length and reweight prompts. **Dr. GRPO** removes both (token-level loss, mean-only advantage); **DAPO** adds **clip-higher**, dynamic sampling, and overlong filtering.
+    - **GRPO has two real biases:** per-response **length normalization** ($1/|o_i|$) and **std-normalization** ($\div\operatorname{std}$). Both silently inflate length and reweight prompts. **Dr. GRPO** removes both (token-level loss, mean-only advantage); **DAPO** adds **clip-higher**, dynamic sampling, and overlong filtering. **GSPO** goes further and moves the importance ratio itself from per-token to per-*sequence* (a length-normalized geometric mean), matching the granularity at which the reward was measured — the change that makes MoE RL stable.
     - **A group is dead if all its rewards are equal** (advantage $=0$, zero gradient). Tune prompt difficulty and use dynamic sampling so groups have mixed pass/fail outcomes.
     - **Reward shaping is the attack surface.** Keep correctness dominant; make format/length bonuses small and contingent; treat every non-correctness component as a reward-hacking liability.
     - **Mental model:** the well-behaved core of GRPO is *token-level REINFORCE with a group-mean baseline plus a PPO clip* — i.e., RLOO's spirit with a trust region for off-policy reuse.
@@ -574,6 +660,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
 - Ahmadian, Cremer, Gallé, et al., **Back to Basics: Revisiting REINFORCE-Style Optimization for Learning from Human Feedback in LLMs** (2024) — RLOO for LLMs.
 - Liu, Chen, et al., **Understanding R1-Zero-Like Training: A Critical Perspective** (2025) — the "Dr. GRPO" analysis of GRPO's length and std biases.
 - Yu, et al. (Qwen / ByteDance Seed), **DAPO: An Open-Source LLM Reinforcement Learning System at Scale** (2025) — token-level loss, clip-higher, dynamic sampling, overlong filtering.
+- Zheng, et al. (Qwen), **Group Sequence Policy Optimization** (2025) — sequence-level importance ratio and clipping; the optimizer behind Qwen3.
 - John Schulman, **Approximating KL Divergence** (blog note) — the k1/k2/k3 estimators used for the GRPO KL term.
 - Williams, **Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning** (1992) — the original REINFORCE.
 - HuggingFace **TRL** (`GRPOTrainer`, `RLOOTrainer`) and **veRL** repositories — production implementations of everything in this chapter; see [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html) and [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html).
@@ -647,7 +734,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
 
     (b) **Std-normalization bias.** Dividing by $\operatorname{std}(\{R\})$ makes the advantage magnitude inversely proportional to the group's reward spread, so a low-variance group (e.g. $\{1,1,1,0\}$) gets its advantages *amplified* relative to a high-variance group (e.g. $\{1,1,0,0\}$). This silently re-weights prompts by the inverse of their reward spread — an artifact, worst for very easy/very hard prompts where std is tiny. **Fix:** drop the division and keep only the mean-subtraction, $\hat A_i^{\text{Dr.GRPO}}=R_i-\operatorname{mean}(\{R\})$ (the legitimate baseline, i.e. the RLOO group-mean up to the $G/(G-1)$ factor). In the code, `normalize_std=False`.
 
-    (c) The symmetric upper clip $1+\epsilon$ caps how much a *currently-low-probability but useful* token can be boosted in a single update (a token at $\pi_{\text{old}}=0.01$ can only be lifted to $\le 1.01\times$ its probability). Repeatedly, the policy can never quickly promote promising rare tokens, so it doubles down on already-likely tokens and **entropy collapses** (exploration dies). **Clip-higher** decouples the bounds and raises the ceiling ($\epsilon_{\text{high}}>\epsilon_{\text{low}}$, e.g. $0.28$ vs $0.2$), giving rare-but-good tokens more headroom to grow per step and sustaining entropy, while the tight lower clip still guards against catastrophically over-suppressing tokens.
+    (c) The symmetric upper clip $1+\epsilon$ caps how much a *currently-low-probability but useful* token can be boosted in a single update, and the cap is multiplicative: with $\epsilon=0.2$ a token at $\pi_{\theta_{\text{old}}}=0.01$ can reach at most $1.2\times 0.01=0.012$ — an absolute gain of $0.002$ — while a token already at $0.9$ has a ceiling of $1.08$ and is effectively unconstrained. Repeatedly, the policy can never quickly promote promising rare tokens, so it doubles down on already-likely tokens and **entropy collapses** (exploration dies). **Clip-higher** decouples the bounds and raises the ceiling ($\epsilon_{\text{high}}>\epsilon_{\text{low}}$, e.g. $0.28$ vs $0.2$), giving rare-but-good tokens more headroom to grow per step and sustaining entropy, while the tight lower clip still guards against catastrophically over-suppressing tokens.
 
 **5.** (Implementation) DAPO's *dynamic sampling* discards groups whose rewards are all equal (dead groups contribute zero gradient) so every update sees only informative groups. Building on the chapter's code, (a) write a function `dynamic_sampling_mask(rewards, group_size)` that returns a per-*response* boolean mask (`True` for responses whose group is non-degenerate) and the *fraction of non-degenerate groups* (the diagnostic the chapter says to monitor). (b) Show how to use it in `grpo_loss`'s token-level branch so dead-group tokens are excluded from the loss. Keep it consistent with the chapter's tensor conventions.
 

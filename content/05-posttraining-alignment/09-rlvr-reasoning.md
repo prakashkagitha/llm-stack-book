@@ -170,6 +170,34 @@ assert math_is_correct(r"\boxed{8}", "9") == 0.0
 
 This is the *minimal* version. Production math verifiers (the widely-used `math-verify` library, or the checker in PRM800K / the MATH dataset tooling) additionally use a symbolic engine (SymPy) to compare expressions like `(x+1)^2` vs `x^2+2x+1`, handle sets and tuples and intervals, and canonicalize LaTeX aggressively. The principle is the same: **parse, normalize to a canonical form, compare for equivalence — never raw strings.** A weak verifier is a silent reward-hacking vector: if your checker marks `0.5` wrong against `1/2`, the model learns to *avoid* decimal answers, distorting behavior for no good reason.
 
+**Do not ship the hand-rolled one.** Write it once to understand the failure modes, then use `math-verify` (HuggingFace), which is the de-facto open-source math checker behind most 2025–2026 RLVR runs and the `lighteval`/TRL math recipes. Its whole API is two functions:
+
+```python
+# pip install math-verify
+from math_verify import parse, verify
+
+# `parse` extracts the final answer (it understands \boxed{}, $...$, and plain
+# expressions) and returns canonical SymPy objects; `verify(gold, pred)` is True
+# iff they are symbolically/numerically equivalent. Order matters: gold first.
+gold = parse(r"$\frac{1}{2}$")
+pred = parse(r"...therefore the answer is $\boxed{0.5}$.")
+print(verify(gold, pred))          # True — the normalization gap closes itself
+
+def math_reward(completions: list[str], solution: list[str]) -> list[float]:
+    """Drop-in replacement for `math_is_correct`, SymPy-backed. Note the
+    try/except: `parse` can raise on malformed LaTeX, and an exception inside a
+    reward function must never take down the trainer — swallow it and score 0."""
+    out = []
+    for c, s in zip(completions, solution):
+        try:
+            out.append(float(bool(verify(parse(s), parse(c)))))
+        except Exception:
+            out.append(0.0)
+    return out
+```
+
+The important habit is the `try/except`: a verifier runs on *adversarial* input tens of thousands of times per step, and the single most common production incident is a reward function raising on one weird completion and killing an eight-hour job.
+
 !!! tip "Practitioner tip: log verifier false-negatives as a first-class metric"
     The most insidious RLVR bug is a verifier that rejects *correct* answers (false negatives) because of a parsing gap. These directly *poison* training: the model is punished for being right, learns to mimic the verifier's quirks, and your eval-vs-train gap silently widens. Periodically sample responses the verifier marked wrong, have a stronger model or a human spot-check them, and track the false-negative rate. A verifier with a 5% false-negative rate is a 5% mislabeling rate on your *reward* — far worse than the same rate in SFT data, because RL amplifies it.
 
@@ -425,7 +453,91 @@ The mental model: **RLVR converts statistical reward-hacking into software secur
 
 We can now state the full RLVR reasoning recipe as a checklist an engineer would actually follow. The optimizer details live in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html); this is the *data-and-reward* recipe that wraps it.
 
+1. **Assemble a prompt set whose answers are checkable — then decontaminate it.** Real open sets to start from: GSM8K and MATH for warm-up, and the RL-grade math pools that the 2025 reasoning wave produced — NuminaMath, Big-Math-RL-Verified, DeepScaleR-Preview, DAPO-Math-17k (all published as *problem + verified short answer*, exactly the shape RLVR wants). For code: CodeContests, TACO, and KodCode, which ship test suites. Keep only items whose gold answer your verifier can parse, and n-gram-decontaminate against the evals you will report (AIME, MATH-500, LiveCodeBench, GPQA) — RLVR trains directly on the answer, so contamination is not a subtle leak, it is memorization with a reward attached.
+2. **Write the verifier before the training loop, and test it like a parser.** Unit-test it on the dataset's own gold answers (a verifier that cannot verify the gold string against itself is broken), fuzz it with adversarial completions, and measure the false-negative rate on a sample the checker marked wrong. Prefer `math-verify` over anything you wrote.
+3. **Difficulty-calibrate the prompts against *your* base model.** Sample $G$ completions per prompt with the untrained policy, estimate pass@1, and drop everything at $p\approx 0$ and $p\approx 1$ — those groups are dead (Exercise 3 quantifies the waste). Keep the ~20–60% band and hold the harder shards back as curriculum; see [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html).
+4. **Pick the entry point: zero, or cold-start.** R1-Zero style (straight from base) is the scientifically interesting setting but produces messy, language-mixing output; a few thousand long-CoT SFT examples first ("cold start") stabilizes RL and gives a readable model, which is what R1 proper did.
+5. **Define the reward: accuracy dominant, everything else tiny and contingent.** Accuracy weight 1.0, format bonus ≲0.1 and only granted alongside a parseable answer attempt, degeneracy/repetition guard zeroing the total, timeout and crash both scoring 0 rather than "skip".
+6. **Run critic-free RL with the 2025 fixes on.** GRPO with a token-level loss and no std-normalization (Dr. GRPO), clip-higher and dynamic sampling (DAPO), overlong filtering, and a small or *zero* KL coefficient — in verifiable domains many teams drop the KL anchor entirely because the checker, not the reference model, is what keeps the policy honest.
+7. **Monitor five curves, not one.** Held-out accuracy (not reward), mean completion length, policy entropy, format/parse-failure rate, and the fraction of dead groups. Reward rising while held-out accuracy is flat is the signature of a hack; entropy collapsing is the signature of a run that has stopped exploring.
+8. **Then mix in the non-verifiable rewards** (helpfulness, safety, tone) as in §"Mixing verifiable and non-verifiable rewards" — the verifiable stage buys you reasoning, the mixed stage buys you a deployable assistant.
+
 {{fig:rlvr-reasoning-recipe-pipeline}}
+
+### The cheap baseline you should run first: expert iteration
+
+Before reaching for a policy gradient, run the *same verifier* through **expert iteration** (also called rejection-sampling fine-tuning, or STaR): sample $k$ completions per prompt, keep the ones the verifier accepts, and plain-SFT on them. Repeat. It uses the identical data and identical checker, needs no advantage estimator, no KL term, no reference model, and no rollout/trainer weight-sync machinery — and it captures a surprising fraction of the gain, which is why it is the standard baseline against which GRPO must justify its complexity, and why DeepSeek-R1's third stage is exactly this.
+
+```python
+def expert_iteration(prompts, verifier, sample_fn, sft_fn,
+                     rounds: int = 3, k: int = 8, keep_per_prompt: int = 2):
+    """STaR / rejection-sampling fine-tuning: RLVR without a policy gradient.
+
+    sample_fn(prompt, n) -> list[str]      : k completions from the current policy
+    verifier(prompt, completion) -> float  : the SAME checker you'd use for RL
+    sft_fn(examples) -> None               : one epoch of cross-entropy on kept traces
+
+    Two details do the real work: (a) de-duplicate kept traces, or an easy prompt
+    with 8 identical correct solutions drowns out 8 hard prompts with 1 each;
+    (b) cap per-prompt keeps, which is the same difficulty-balancing job that
+    group-relative advantages do for free in GRPO.
+    """
+    for _ in range(rounds):
+        batch = []
+        for p in prompts:
+            correct = [o for o in sample_fn(p, k) if verifier(p, o) == 1.0]
+            seen, uniq = set(), []
+            for o in correct:                      # dedup on normalized text
+                key = " ".join(o.split())
+                if key not in seen:
+                    seen.add(key)
+                    uniq.append(o)
+            batch += [{"prompt": p, "completion": o} for o in uniq[:keep_per_prompt]]
+        sft_fn(batch)                              # policy improves; next round re-samples
+    return batch                                   # last round's distilled dataset
+```
+
+The conceptual difference from GRPO is worth stating precisely, because it is a favorite exam question: **expert iteration only uses the positive examples.** It raises the probability of trajectories that worked but never *lowers* the probability of the failure modes, so it cannot suppress a confidently-wrong reasoning pattern, and it saturates once the policy's sampling diversity collapses (it can only ever learn from what it can already occasionally produce). GRPO's negative advantages are exactly the missing half of the signal. Expert iteration is the right first move at small scale and small budget — [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) uses this ordering to get a ~100M model doing verified arithmetic reasoning before any policy gradient is attempted.
+
+### Wiring a verifier into a real trainer
+
+Nothing above requires you to write a trainer. Every production RLVR stack exposes the *same* extension point — "give me a function from completions to floats" — so the verifier you built in this chapter is the only bespoke code you own. In **TRL**, that extension point is `reward_funcs`:
+
+```python
+# pip install trl
+from trl import GRPOTrainer, GRPOConfig
+
+def accuracy_reward(completions, solution, **kwargs):
+    """TRL's reward-function contract: it receives the batch of `completions`
+    plus every other dataset column as a keyword argument (here `solution`),
+    and returns ONE float per completion. Our verifier plugs in unchanged.
+    (With a conversational dataset, `completions` arrives as message dicts
+    rather than strings — index into the last message's "content".)"""
+    return [math_is_correct(c, s) for c, s in zip(completions, solution)]
+
+def format_reward(completions, **kwargs):
+    """A second, small-weight function. TRL SUMS the list of reward_funcs, so
+    shaping terms live in their own function at their own scale — never buried
+    inside the accuracy checker where you cannot ablate them."""
+    return [0.1 if ("<think>" in c and "</think>" in c) else 0.0 for c in completions]
+
+trainer = GRPOTrainer(
+    model="Qwen/Qwen2.5-1.5B",                  # a BASE model, R1-Zero style
+    reward_funcs=[accuracy_reward, format_reward],
+    train_dataset=math_ds,                      # columns: "prompt", "solution"
+    args=GRPOConfig(
+        num_generations=8,                      # the group size G
+        max_completion_length=1024,             # long CoT needs room to grow
+        temperature=1.0,                        # do NOT sample greedily: no variance,
+                                                # no advantage, no gradient
+        beta=0.0,                               # KL off — common in RLVR runs
+        use_vllm=True,                          # vLLM-backed rollout engine
+    ),
+)
+trainer.train()
+```
+
+**veRL** takes the same idea as a config-pointed Python file: you supply a module with a scoring function (roughly `compute_score(data_source, solution_str, ground_truth, extra_info)`) and veRL's reward manager calls it in a worker pool, which is what you want once execution-based verification is the bottleneck — see [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html) and [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html). Above both sits the `verifiers` library, which packages RLVR *environments* (prompt set + parser + rubric of reward functions, including multi-turn/tool-using ones) behind a common interface that TRL and veRL can both consume — the emerging standard unit of exchange for RLVR tasks, the way a `datasets` dataset is for pretraining data. Exact keyword names drift between releases of all three; the contract — batch in, list of floats out — does not.
 
 The deepest takeaway is a shift in worldview. For a decade, the bottleneck of supervised and preference learning was **labeled data**: you needed humans to demonstrate or judge. RLVR moves the bottleneck to **problems with checkable answers** — which we can *generate, mine, and synthesize* far more cheaply than we can collect human judgments, and which give an *exact* signal instead of a noisy one. That is why a one-line idea — "reward = did the checker pass" — reorganized the entire post-training stack in two years.
 
@@ -438,6 +550,7 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
     - **Code verifiers require true sandboxing.** Model-generated code is adversarial: isolate it (container/microVM), apply strict CPU/memory/time rlimits, block network and host filesystem, hide the tests, and treat a crashed grader as reward 0. Use graded (fraction-of-tests) reward to densify the signal.
     - **Reward hacking isn't eliminated — it moves from statistics to software.** The policy fuzzes your verifier/sandbox: test hard-coding, parser exploits, sandbox escapes, format/length farming. Threat-model your grader like a public API taking untrusted input.
     - **From narrow to general:** reasoning learned on verifiable math/code *transfers* to untrained domains; mix verifier + reward-model rewards in one run for deployable models; prefer the most exact verifier a task allows (symbolic > execution > LLM-judge > learned RM).
+    - **In practice you write the verifier, not the trainer.** Use `math-verify` for math equivalence and a sandbox service for code, then hand the checker to TRL (`reward_funcs`: batch in, list of floats out), veRL's reward manager, or a `verifiers` environment. And run **expert iteration** (sample $k$, keep the verified-correct, SFT, repeat) as the baseline first — same data, same checker, none of the RL machinery; GRPO's extra value is the *negative* advantages that expert iteration structurally cannot provide.
 
 !!! sota "State of the Art & Resources (2026)"
     RLVR is now the dominant post-training paradigm for reasoning: every frontier reasoning model (OpenAI's o-series and GPT-5, DeepSeek-R1, Qwen3's thinking mode) uses verifiable-reward RL, and open-source tooling (verl, OpenRLHF, TRL) makes the full recipe reproducible at scale. Active research in 2025–2026 focuses on whether RLVR expands the base model's reasoning frontier or primarily elicits latent capability, on unbiased group-relative objectives, and on extending verifiable rewards to new domains.
@@ -461,6 +574,8 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
     - [OpenRLHF/OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) — Ray + vLLM distributed RLHF/RLVR framework; supports PPO, GRPO, REINFORCE++, RLOO; used by HKUST to reproduce DeepSeek-R1-Zero on small models.
     - [huggingface/trl](https://github.com/huggingface/trl) — HuggingFace's RL library with a first-class GRPOTrainer; the lowest-friction entry point for RLVR experiments on any HF-compatible model.
     - [BytedTsinghua-SIA/DAPO](https://github.com/BytedTsinghua-SIA/DAPO) — fully open-sourced DAPO system: algorithm, training code (built on veRL), DAPO-Math-17k dataset, and reproducible AIME 2024 scripts.
+    - [huggingface/Math-Verify](https://github.com/huggingface/Math-Verify) — the de-facto open-source math answer checker: `parse` + `verify`, SymPy-backed LaTeX/expression equivalence. Use it instead of hand-rolled string matching; it is what the HF reasoning recipes and `lighteval` score with.
+    - [willccbb/verifiers](https://github.com/willccbb/verifiers) — RLVR *environments* (prompt set + parser + rubric of reward functions, incl. multi-turn and tool-using) behind one interface that TRL and veRL can consume; the emerging unit of exchange for RLVR tasks.
 
     **Go deeper**
 

@@ -39,6 +39,8 @@ Each extracted pair becomes a training row $(x, y_w, y_l)$ where $y_w$ ("win") i
 }
 ```
 
+You do not have to collect this yourself to get started. The open ecosystem publishes preference sets in exactly this `(prompt, chosen, rejected)` shape on the HuggingFace Hub, loadable with one line of `datasets`: `Anthropic/hh-rlhf` (the original helpfulness/harmlessness comparisons), `HuggingFaceH4/ultrafeedback_binarized` (GPT-4-scored responses from many models, binarized into pairs — the workhorse for open RM and DPO training), `nvidia/HelpSteer2` (human ratings on several attributes, from which pairs are derived), and `Skywork/Skywork-Reward-Preference-80K-v0.2` (a curated mixture behind several strong open RMs). These are also exactly the datasets [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html) consumes, since DPO eats the same rows.
+
 ### The dimensions labelers are asked to judge
 
 "Which is better?" is underspecified, so production labeling uses an explicit rubric. InstructGPT's instructions asked labelers to weigh:
@@ -113,6 +115,8 @@ A reward model is almost the same network as the policy. You take the SFT model,
 
 Why initialize from the SFT model rather than from scratch or from the base? It already understands language and the task distribution; you are only teaching it a new, low-dimensional output (a ranking). InstructGPT noted that a *smaller* RM than the policy works fine and is far cheaper — they used a 6B RM to align a 175B policy. The RM does not need to be as capable as the policy; it only needs to *recognize* quality, which is easier than *producing* it (judging is easier than generating).
 
+Three families of reward model coexist by 2026, and it is worth knowing which one you are building. (i) The **discriminative scalar-head RM** of this section: one forward pass per response, one number out. It is the only family that drops directly into a PPO inner loop, because PPO needs an absolute per-response scalar for thousands of samples per step. (ii) **Pairwise / preference-ranking models** put both responses in one context and predict which wins. They are typically more accurate — cross-attention between the two candidates is a real advantage — but they yield a *relative* verdict, so they suit best-of-N reranking and evaluation rather than PPO. (iii) **Generative reward models**, which write a critique against a rubric and then emit a score as text; they inherit the base model's reasoning, can be scaled at inference time by sampling several critiques and voting (DeepSeek-GRM), and blur into [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html). Orthogonal to all three is *where* the reward is attached: an **outcome** RM scores the finished response (this chapter), while a **process reward model** scores each intermediate reasoning step — the topic of [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html) and [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html).
+
 ### The from-scratch pairwise loss
 
 Here is the complete, runnable core of reward-model training — the loss every RLHF library implements. This is the central code of the chapter.
@@ -145,6 +149,10 @@ class RewardModel(nn.Module):
         scores = self.value_head(hidden).squeeze(-1)
         # Reward is read at the LAST non-pad token of each sequence.
         # attention_mask is 1 for real tokens, 0 for padding.
+        # NOTE: this index is only correct for RIGHT padding. Generation code
+        # usually left-pads, so a shared tokenizer can silently make you read the
+        # reward at a pad position; with left padding use `attention_mask.size(1) - 1`
+        # (the true last column) instead. Always assert the padding side.
         last_idx = attention_mask.sum(dim=1) - 1            # (B,) index of final real token
         batch_idx = torch.arange(input_ids.size(0), device=input_ids.device)
         reward = scores[batch_idx, last_idx]                # (B,) one scalar per sequence
@@ -232,6 +240,44 @@ Each of the $K$ completions is encoded by the transformer exactly once; the $\bi
 
     Finally, the **additive-constant invariance**: if we shifted *both* rewards by $+100$, every $\Delta$, every loss, and every gradient above is *identical*. The absolute scale of an RM's outputs is meaningless; only gaps are.
 
+### Doing it for real: TRL's `RewardTrainer`
+
+You will not hand-roll the training loop in production. The standard implementation is HuggingFace **TRL**'s `RewardTrainer`, which is the code above plus tokenization, padding, distributed training, and evaluation. The key mapping to know: HF's `AutoModelForSequenceClassification` with `num_labels=1` **is** the scalar-head reward model — it drops the LM head, attaches a `Linear(d_model, 1)`, and reads it at the last non-pad token, exactly like our `RewardModel`.
+
+```python
+# pip install "trl>=0.12" transformers datasets accelerate
+from datasets import load_dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from trl import RewardTrainer, RewardConfig
+
+model_id = "Qwen/Qwen2.5-0.5B-Instruct"      # in a real run: YOUR SFT checkpoint
+tok = AutoTokenizer.from_pretrained(model_id)
+
+rm = AutoModelForSequenceClassification.from_pretrained(model_id, num_labels=1)
+rm.config.pad_token_id = tok.pad_token_id    # REQUIRED: the head must know where sequences end
+
+# Rows carry "chosen"/"rejected" (with the prompt either separate or prepended);
+# TRL applies the chat template and tokenizes both sides for you.
+ds = load_dataset("HuggingFaceH4/ultrafeedback_binarized", split="train_prefs")
+
+trainer = RewardTrainer(
+    model=rm,
+    args=RewardConfig(
+        output_dir="rm-out",
+        per_device_train_batch_size=8,
+        num_train_epochs=1,                  # RMs overfit fast -- one epoch is standard
+        learning_rate=1e-5,                   # ~10x lower than SFT; the head is the new part
+        max_length=1024,                      # pairs longer than this are dropped, not truncated
+        center_rewards_coefficient=0.01,      # auxiliary penalty on (r_w + r_l)^2, see below
+    ),
+    train_dataset=ds,
+    processing_class=tok,                     # named `tokenizer=` in older TRL releases
+)
+trainer.train()
+```
+
+Two options deserve comment. `num_train_epochs=1` is not laziness: InstructGPT reported that a second epoch overfits the reward model, and this has held up across open recipes — RM training is a short, low-learning-rate job. `center_rewards_coefficient` adds $\lambda\,\mathbb{E}[(r_w + r_l)^2]$ to the loss, which does *nothing* to the preference likelihood (that depends only on the difference) but pins down the free additive constant we identified earlier, keeping rewards near zero so the downstream PPO advantages start on a sane scale. TRL logs `train/accuracy` — the pairwise preference accuracy from our `bradley_terry_loss` — as the metric to watch. The library-level tour of TRL, including `PPOTrainer`, is [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html); for multi-node RM and PPO training the Ray + vLLM alternative is [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html).
+
 ### What good RM training looks like
 
 The headline metric is **preference accuracy** on a held-out set — the fraction of pairs the RM orders the same way the human did. For well-curated data this lands somewhere in the high-60s to high-70s percent; remember that the *human–human* agreement ceiling is itself around 70–75%, so an RM scoring near there is essentially at the noise floor of the labels. Other diagnostics:
@@ -239,6 +285,8 @@ The headline metric is **preference accuracy** on a held-out set — the fractio
 - **Calibration:** bucket pairs by the RM's predicted preference probability $\sigma(\Delta)$ and check that, e.g., pairs where it predicts 80% are actually preferred ~80% of the time. A miscalibrated RM gives PPO a distorted gradient.
 - **Reward distribution:** plot the histogram of scores on a fixed eval set across training. A healthy RM has well-separated chosen/rejected distributions; a collapsing one pushes everything to extremes.
 - **Score on a fixed anchor set:** because rewards are only identified up to a constant, track *gaps* between fixed reference responses, not absolute values, to compare checkpoints.
+
+Held-out accuracy on your own data is necessary but self-referential: it shares the biases of your annotators. The standardized external check is **RewardBench** (Ai2), which scores an RM on curated pairs across chat, reasoning, and safety categories, so you can see *where* your RM is weak rather than just that it is 72% overall. It runs as a package on any HF sequence-classification RM (`pip install reward-bench`, then the `rewardbench` CLI pointed at your model path), and RewardBench 2 is the harder best-of-4 successor on fresh unseen prompts. Treat its per-category breakdown as a smoke test before you ever start PPO — an RM that is at chance on the reasoning subset will happily reward confident wrong math.
 
 ## Reward model evaluation and reward hacking
 
@@ -287,6 +335,8 @@ When people say RLHF is "memory-hungry and operationally heavy," this is what th
 | 2 | **Critic** $V_\psi$ | value function: predicts expected future reward of a partial sequence | **yes** | RM (or SFT) | reduces gradient variance via advantage estimation (GAE) |
 | 3 | **Reward** $r_\phi$ | scores the full response with one scalar | **no (frozen)** | trained in Stage 2 | supplies the optimization signal |
 | 4 | **Reference** $\pi_{\text{ref}}$ | frozen copy of the SFT model | **no (frozen)** | SFT model | the KL anchor that keeps the policy from drifting/hacking |
+
+This table is not an abstraction — it is literally the constructor signature of the libraries. TRL's `PPOTrainer` takes four model arguments named `policy`, `ref_model`, `reward_model`, and `value_model`; veRL calls the same four roles `actor`, `ref`, `reward`, and `critic` and gives each its own resource pool in its config ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)). If you can name the four and say which are frozen, you can read any RLHF config file.
 
 ### The actor and the reference
 
@@ -361,9 +411,13 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
     values         = critic(seq, resp_mask)                                         # (B, T)
 
     # ---- 4. Build the per-token reward: KL penalty everywhere + RM score at end. ----
+    #     Convention: every per-token tensor here is aligned to the RESPONSE
+    #     segment only (T = max response length), so column t is the t-th
+    #     GENERATED token and resp_mask marks real vs right-padding. Getting this
+    #     alignment wrong (leaving prompt columns in) is the #1 RLHF plumbing bug.
     kl_per_token = actor_logprobs.detach() - ref_logprobs                           # (B, T)
     rewards = -beta_kl * kl_per_token                                               # KL "rent"
-    last = resp_mask.sum(dim=1) - 1                                                 # final resp idx
+    last = resp_mask.sum(dim=1) - 1                                                 # final real resp token
     rewards[torch.arange(rewards.size(0)), last] += scores                          # add terminal r_φ
 
     # ---- 5. PPO update: compute advantages (GAE) from (rewards, values), then
@@ -375,6 +429,10 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
 ```
 
 Trace the four models through it: the **actor** generates (step 1) and supplies differentiable log-probs (step 3); the **reward model** scores once (step 2); the **reference** supplies frozen log-probs for KL (step 2); the **critic** supplies values (step 3) that become the advantage baseline (step 5). Every line of an industrial RLHF library is an elaboration of this skeleton — better generation engines, sharded models, vectorized KL control, and the PPO clip — but the data flow is exactly this.
+
+!!! tip "Practitioner tip: what survives at 100M parameters"
+
+    At the scale of this book's capstone model, full four-model PPO is the wrong tool — a 100M policy has too little headroom to explore usefully, and the RM would be as large as the model it grades. But the *reward model itself* is still worth training, with exactly the loss in this chapter, because it earns its keep in two cheaper ways: **best-of-N rejection sampling** at inference or as an SFT data filter, and **pair construction** — you can score candidate responses with the RM to build the $(y_w, y_l)$ pairs that DPO consumes without paying for fresh human labels. The capstone does precisely this in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), where preference optimization is DPO and the on-policy RL is GRPO against a *verifier* rather than a learned RM.
 
 !!! interview "Interview Corner"
 
@@ -395,7 +453,7 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
     - **RLHF turns cheap comparisons into a learned objective.** Humans can't author a target for every prompt, but they can reliably say which of two responses is better. RLHF distills those preferences into a reward model and optimizes the policy against it, letting the model exceed its SFT demonstrations.
     - **The InstructGPT recipe is three stages:** SFT (imitate demonstrations) → reward modeling (fit a scalar from rankings) → PPO (maximize reward under a KL leash). Each stage's output seeds the next.
     - **Bradley–Terry is the bridge from discrete preferences to a continuous reward.** It models $P(y_w\succ y_l)=\sigma\big(r(x,y_w)-r(x,y_l)\big)$; max-likelihood gives the pairwise loss $-\log\sigma(r_w - r_l)$. Rewards are identified only up to an additive constant — **only score differences are meaningful.**
-    - **The reward model is the SFT network with a scalar head**, read at the last token, trained as a shared-encoder (Siamese) comparator. It can be *smaller* than the policy, because recognizing quality is easier than producing it. Batch all $\binom{K}{2}$ pairs from one prompt together to avoid overfitting.
+    - **The reward model is the SFT network with a scalar head**, read at the last token, trained as a shared-encoder (Siamese) comparator. It can be *smaller* than the policy, because recognizing quality is easier than producing it. Batch all $\binom{K}{2}$ pairs from one prompt together to avoid overfitting. In practice that is `AutoModelForSequenceClassification(num_labels=1)` trained by TRL's `RewardTrainer` for **one epoch** at a low learning rate, then sanity-checked on RewardBench.
     - **The reward model is a proxy, and the policy is its adversary.** Optimizing it triggers Goodhart's law: length exploitation, sycophancy, format farming, and OOD gibberish that scores high but is worse to humans. "Reward went up" is never proof the model improved.
     - **The KL penalty to a frozen reference is the leash** that makes hacking expensive and curbs over-optimization; quality vs. KL traces a rise-then-fall curve, so you tune the KL budget and early-stop on a held-out *gold* signal you are *not* optimizing.
     - **The PPO stage juggles four models:** actor (trained), critic (trained), reward (frozen), reference (frozen). Reference controls distribution drift; critic controls gradient variance. This four-model, ~250 GB-for-7B footprint is precisely what DPO (drops RM + critic) and GRPO/RLOO (drop critic) were invented to shrink.
@@ -506,7 +564,7 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
 
     Averaging several independently trained RMs means the policy must hack *all* of them at once, which is harder than hacking one. The standard-deviation term flags reward-hacking candidates because genuinely degenerate / out-of-distribution responses (token soup, format farming) land in regions no RM trained on, where the independently-trained RMs have no shared signal and therefore **disagree** — high `std_r` signals an unreliable, likely-exploited score, so subtracting it deflates exactly the responses most likely to be hacks.
 
-**5.** In the skeleton RLHF loop, step 4 builds the per-token reward $R_t$ from the terminal RM score plus a per-token KL penalty (the formula in the chapter). Implement `build_per_token_rewards(scores, actor_logprobs, ref_logprobs, resp_mask, beta_kl)` returning a `(B, T)` tensor where every response token pays KL "rent" and the RM's scalar is added at each sequence's **last response token**. `scores` is `(B,)`, the log-prob tensors and `resp_mask` are `(B, T)` (mask is 1 on response tokens, 0 elsewhere). State which term of $R_t$ must be detached from the actor's graph and why.
+**5.** In the skeleton RLHF loop, step 4 builds the per-token reward $R_t$ from the terminal RM score plus a per-token KL penalty (the formula in the chapter). Implement `build_per_token_rewards(scores, actor_logprobs, ref_logprobs, resp_mask, beta_kl)` returning a `(B, T)` tensor where every response token pays KL "rent" and the RM's scalar is added at each sequence's **last response token**. `scores` is `(B,)`; the log-prob tensors and `resp_mask` are `(B, T)` aligned to the **response segment** (column $t$ is the $t$-th generated token; the mask is 1 on real generated tokens and 0 on right-padding). State which term of $R_t$ must be detached from the actor's graph and why.
 
 ??? note "Solution"
     ```python
@@ -519,7 +577,9 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
         scores         : (B,)   terminal reward-model score per sequence
         actor_logprobs : (B, T) log pi_theta(y_t | ...)   (from the actor)
         ref_logprobs   : (B, T) log pi_ref(y_t | ...)     (frozen reference)
-        resp_mask      : (B, T) 1 on response tokens, 0 elsewhere
+        resp_mask      : (B, T) 1 on real generated tokens, 0 on right-padding
+        All (B, T) tensors are aligned to the RESPONSE segment (t = t-th
+        generated token), not to the prompt++response sequence.
         Returns rewards (B, T).
         """
         # KL estimate per token; detach the actor term -- the KL enters as a

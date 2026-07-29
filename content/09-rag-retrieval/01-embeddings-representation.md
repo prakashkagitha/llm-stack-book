@@ -100,6 +100,17 @@ where $\tau > 0$ is the **temperature** hyperparameter. The loss is a cross-entr
 
 **Scaling with batch size.** With batch size $N$, each query sees $N-1$ negatives. Doubling $N$ roughly doubles the number of negatives per query, which empirically improves representation quality — this is why contrastive learning loves large batches. DPR (Karpukhin et al., 2020) used batch size 128; modern models often train with effective batch sizes in the thousands via gradient accumulation.
 
+!!! note "Why InfoNCE fixes anisotropy: alignment and uniformity"
+
+    Wang & Isola (*Understanding Contrastive Representation Learning through Alignment and Uniformity on the Hypersphere*, ICML 2020) showed that as $N \to \infty$ the InfoNCE loss on L2-normalized embeddings decomposes into two competing terms:
+
+    - **Alignment** — the numerator $\exp(\mathbf{e}_q \cdot \mathbf{e}_{d^+}/\tau)$ pulls positive pairs together, minimizing expected distance between matched pairs.
+    - **Uniformity** — the denominator is a softmax partition function over all in-batch documents; minimizing $\log \sum_j \exp(\cdot/\tau)$ is (asymptotically) minimizing a Gaussian-kernel potential, which spreads embeddings *evenly over the hypersphere*.
+
+    That second term is the mechanism behind the "raw BERT is anisotropic, contrastive fine-tuning fixes it" claim in the Interview Corner below — uniformity is not a side effect, it is half the objective. It also explains the role of $\tau$: it is the bandwidth of that repulsive kernel, so small $\tau$ means a sharply local repulsion that penalizes only the *nearest* negatives, which is why hard negatives and small $\tau$ go together.
+
+    Separately, InfoNCE is a variational lower bound on the mutual information $I(q; d^+)$, bounded above by $\log N$ (Oord et al., *Contrastive Predictive Coding*, 2018). That ceiling is a second, information-theoretic reason large batches help: with $N = 64$ you cannot certify more than $\log 64 \approx 4.2$ nats of query-document information no matter how good the encoder is.
+
 {{fig:emb-infonce-similarity-matrix}}
 
 ### Full In-Batch Negative Loss Implementation
@@ -220,13 +231,16 @@ $$
 
 where $s$ is cosine similarity. This only considers one negative per query per step. In practice, InfoNCE with large $N$ outperforms triplet loss because it simultaneously considers many negatives, providing a richer gradient signal.
 
-### GNNeg and Denoised Negatives
+### False Negatives and Denoised Negatives
 
-A subtle failure mode: the mining procedure mislabels genuinely relevant documents as negatives (false negatives). This corrupts training gradients. Denoising strategies include:
+A subtle failure mode: the mining procedure mislabels genuinely relevant documents as negatives (**false negatives**). The gold label says "this passage is not the answer," but it is — and the gradient actively pushes a correct pair apart. This is the dominant source of noise in hard-negative training, and it gets *worse* the harder you mine, because the highest-ranked mined candidates are precisely the ones most likely to be unlabelled positives. RocketQA (Qu et al., 2021) was the paper that made this concrete and gave the standard fix. Denoising strategies:
 
-- Re-annotating mined negatives with a strong model
-- Soft-labeling using a teacher's confidence score
-- Filtering via conditional negative sampling (only include a mined negative if its teacher score is below a threshold)
+- **Skip the very top of the ranking.** Do not take ranks 1–10 as negatives; sample from ranks ~10–50 instead. Cheap and surprisingly effective.
+- **Cross-encoder filtering.** Score each mined candidate with a strong reranker and drop anything above a confidence threshold (RocketQA's "denoised hard negatives").
+- **Absolute/relative score caps.** Reject a candidate whose similarity to the query exceeds some `max_score`, or that is within a `margin` of the positive's own score.
+- **Soft labels.** Instead of a hard 0/1 target, distil the teacher's score distribution over candidates (the approach BGE-M3 uses for self-knowledge distillation).
+
+These are not just theory — `sentence_transformers.util.mine_hard_negatives`, shown below, exposes exactly these knobs (`range_min`, `max_score`, `margin`, `cross_encoder`).
 
 {{fig:emb-contrastive-space-geometry}}
 
@@ -245,8 +259,9 @@ Modern choices for the backbone include:
 | MPNet | 110M | 768 | Permuted LM, strong on sentence tasks |
 | E5 (Wang et al., 2022) | 110M–560M | 768–1024 | Trained on large-scale text pairs |
 | GTE (Li et al., 2023) | 110M–7B | 768–3584 | Includes LLM-based variants |
-| BGE (Zhang et al., 2023) | 110M–7B | 768–4096 | Strong MTEB performer |
+| BGE / C-Pack (Xiao et al., 2023) | 110M–7B | 768–4096 | Strong MTEB performer |
 | Nomic Embed | 137M | 768 | Fully open, MTEB competitive |
+| EmbeddingGemma (2025) | 308M | 768 (MRL to 128) | Gemma-3-based; sized to run on CPU/edge |
 | Qwen3-Embedding (2025) | 0.6B–8B | 32–4096 (MRL) | Current open standard-bearer; 100+ languages, 32k context |
 | Gemini Embedding (2025) | API | flexible (MRL) | Proprietary; tops the multilingual leaderboard |
 
@@ -260,11 +275,18 @@ Modern embedding models are trained in two or three stages:
 2. **Supervised fine-tuning** on curated high-quality datasets (Natural Questions, MS MARCO, SNLI, STSb, etc.) with hard negatives.
 3. **Task-specific fine-tuning** for specialized domains (legal, biomedical, code).
 
-The `sentence-transformers` library (Reimers & Gurevych, Hugging Face) is the practical starting point for both training and inference.
+**Where do the pairs come from if you have none?** This is the question that blocks most people trying to adapt an embedder to their own corpus, and it has three standard answers, in increasing order of cost:
+
+- **Structural pairs, free from the corpus itself.** Title ↔ body, section heading ↔ paragraph, docstring ↔ function, question ↔ accepted answer, citation context ↔ cited abstract. This is exactly what stage 1 above harvests from the open web, and any structured corpus has some version of it.
+- **Self-supervised pairs from a single sentence.** SimCSE (Gao et al., EMNLP 2021) encodes the *same* sentence twice with dropout active; the two different dropout masks give two different vectors that InfoNCE treats as a positive pair, with the rest of the batch as negatives. No labels at all, and it recovers most of the anisotropy fix. TSDAE (denoising autoencoding of corrupted sentences) is the other common unsupervised option; in `sentence-transformers` these are `losses.MultipleNegativesRankingLoss` over duplicated sentences and `losses.DenoisingAutoEncoderLoss`.
+- **LLM-generated synthetic queries.** Take each passage, prompt an instruct model with "write the question this passage answers," and keep the pair. This is the Doc2Query / InPars (Bonifacio et al., 2022) / Promptagator (Dai et al., 2023) line of work, and it is how E5-mistral-7b-instruct built training data for tasks with no public dataset. A few tens of thousands of synthetic pairs over your own documents is usually enough to beat a general-purpose model on your own retrieval slice — and it is cheap enough to do in an afternoon.
+
+Whichever source you use, mine hard negatives *afterwards* against your real corpus; the negatives matter more than the positives.
+
+The `sentence-transformers` library (Reimers & Gurevych, now maintained at Hugging Face) is the practical starting point for both training and inference.
 
 ```python
-from sentence_transformers import SentenceTransformer, InputExample, losses
-from torch.utils.data import DataLoader
+from sentence_transformers import SentenceTransformer
 
 # Load a pre-trained backbone (already fine-tuned for sentence embedding)
 model = SentenceTransformer("BAAI/bge-small-en-v1.5")
@@ -286,6 +308,76 @@ doc_embs  = embeddings[1:]
 scores = doc_embs @ query_emb  # dot product of L2-normalized = cosine sim
 print(f"Scores: {scores}")     # e.g. [0.71, 0.58] — first doc more relevant
 ```
+
+### Fine-Tuning for Real: the `sentence-transformers` Trainer
+
+Everything this chapter derives from scratch — InfoNCE with in-batch negatives, mined hard negatives, gradient caching, Matryoshka losses — exists as a first-class API in `sentence-transformers` v3+, which wraps the Hugging Face `Trainer`. This is what you should actually run; the from-scratch loop later in the chapter is for understanding what it does.
+
+```python
+# pip install "sentence-transformers>=3.1" datasets accelerate faiss-cpu
+from datasets import Dataset
+from sentence_transformers import (
+    SentenceTransformer,
+    SentenceTransformerTrainer,
+    SentenceTransformerTrainingArguments,
+    losses,
+)
+from sentence_transformers.util import mine_hard_negatives
+
+model = SentenceTransformer("BAAI/bge-base-en-v1.5")
+
+# Step 1: (anchor, positive) pairs. Column ORDER is what matters to the loss,
+# not the column names. This is the output of the data pipeline above.
+pairs = Dataset.from_dict({
+    "anchor":   ["What is the capital of France?", "Who wrote Hamlet?"],
+    "positive": ["Paris is the capital of France.", "Hamlet was written by Shakespeare."],
+})
+
+# Step 2: mine hard negatives against the corpus with the current model
+# (this is exactly the ANCE loop, with the RocketQA denoising knobs).
+train_ds = mine_hard_negatives(
+    pairs,
+    model,
+    num_negatives=4,
+    range_min=10,          # skip ranks 1-9: most likely to be FALSE negatives
+    range_max=50,          # sample from ranks 10-50: hard but probably wrong
+    max_score=0.8,         # reject anything suspiciously similar to the query
+    margin=0.05,           # ...and anything within 0.05 of the positive's score
+    sampling_strategy="top",
+    output_format="n-tuple",   # -> anchor, positive, negative_1 ... negative_4
+    batch_size=256,
+    use_faiss=True,
+)
+
+# Step 3: loss. MultipleNegativesRankingLoss IS the InfoNCE we derived:
+# it uses the positive plus every other row's positive AND negatives as the
+# softmax denominator. `scale` is 1/temperature, so 20.0 == tau = 0.05.
+base_loss = losses.MultipleNegativesRankingLoss(model, scale=20.0)
+
+# Wrap it so the same batch is scored at every Matryoshka prefix.
+loss = losses.MatryoshkaLoss(model, base_loss,
+                             matryoshka_dims=[768, 256, 128, 64])
+
+args = SentenceTransformerTrainingArguments(
+    output_dir="bge-base-mydomain",
+    num_train_epochs=1,
+    per_device_train_batch_size=128,   # bigger batch == more negatives
+    learning_rate=2e-5,
+    warmup_ratio=0.1,
+    bf16=True,
+    # Guarantees no two rows in a batch share a text, so in-batch negatives
+    # are never accidental duplicates of the positive.
+    batch_sampler="no_duplicates",
+)
+
+trainer = SentenceTransformerTrainer(
+    model=model, args=args, train_dataset=train_ds, loss=loss,
+)
+trainer.train()
+model.save_pretrained("bge-base-mydomain/final")
+```
+
+Two swaps cover most scaling problems. When the batch no longer fits in memory, replace `MultipleNegativesRankingLoss` with `losses.CachedMultipleNegativesRankingLoss(model, scale=20.0, mini_batch_size=32)` — that is the GradCache algorithm (discussed below) packaged as a drop-in, and it lets a single GPU train at batch sizes in the thousands. When you want a stronger negative filter, pass `cross_encoder=CrossEncoder("BAAI/bge-reranker-v2-m3")` to `mine_hard_negatives` so candidates are rescored by a reranker before being accepted. BAAI's [FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding) toolkit offers the same pipeline with BGE-specific recipes, and `swift`/`LLaMA-Factory` can fine-tune the multi-billion-parameter LLM-based encoders with LoRA when a full fine-tune is out of budget.
 
 ## Matryoshka Representation Learning (MRL)
 
@@ -339,6 +431,8 @@ def matryoshka_infonce_loss(
     return total_loss / sum(weights)
 ```
 
+Dimension truncation composes with *precision* reduction, and the two multiply. `sentence_transformers.quantization.quantize_embeddings(emb, precision="int8" | "binary")` casts a float32 embedding to one byte or one *bit* per dimension; binary embeddings are compared with Hamming distance and, on MRL-trained models, typically retain a large majority of retrieval quality while cutting memory 32×. Stack that on a 768→128 MRL truncation and a 100M-vector index drops from ~307 GB to under 2 GB — cheap enough to hold in RAM, with a full-precision rescoring pass over the top few hundred candidates to recover the lost recall. The index-side machinery for this (product quantization, rescoring, the recall/memory triangle) is [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html).
+
 MRL is now standard in leading open embedding models. OpenAI's text-embedding-3 family supports variable dimensions via MRL-style training. BGE-M3 (Chen et al., 2024) combines MRL with multi-lingual and multi-granularity retrieval, and the 2025-era standard-bearers (Qwen3-Embedding, Gemini Embedding) expose a full MRL range — Qwen3-Embedding, for instance, lets you request any dimension from 32 to 4096 from the same model.
 
 ## Instruction-Following Embeddings
@@ -352,7 +446,7 @@ Represent this sentence for retrieval:
   Input: <query>
 ```
 
-The instruction is tokenized and processed by the encoder together with the query; the pool operation then attends over both. Because the transformer is causal or uses a prefix mask, the instruction's context bleeds into the query representation.
+The instruction is tokenized and encoded together with the query, so the pooled vector is a function of both. In a bidirectional (BERT-style) encoder every query token attends to the instruction tokens directly; in a decoder-only encoder the causal mask means the instruction sits in the *prefix*, and the last-token representation has attended over all of it. Either way the same backbone lands the query in a different region of the space depending on the stated task. One operational consequence: **the instruction must be applied at index time exactly as the model was trained**. E5 and BGE prefix documents with `passage:` and queries with `query:`; if you index with the wrong prefix (or none), scores degrade silently — no error, just worse retrieval.
 
 This is especially powerful for LLM-based embedders. Models like E5-mistral-7b-instruct (Wang et al., 2023) — and the 2025 frontier models Qwen3-Embedding and Gemini Embedding that superseded it on the leaderboards — use a decoder-only LLM backbone and take the last-token representation instead of mean pooling (since left-to-right autoregressive models produce context-rich representations at the final token, not the first).
 
@@ -419,7 +513,9 @@ results = evaluation.run(model, output_folder=f"results/{model_name}")
 # results contains nDCG@10 and other metrics per task
 ```
 
-For a thorough evaluation, run all 58 tasks and report the mean MTEB score. However, for RAG system design, prioritize the BEIR retrieval subset because it directly predicts retrieval quality in your pipeline. Semantic textual similarity (STS) tasks measure something slightly different — fine-grained similarity rather than ranking relevance.
+Rather than enumerating tasks by hand, ask `mteb` for a named benchmark — `mteb.get_benchmark("MTEB(eng, v2)")` or the multilingual/code suites — and pass the resulting task list to `mteb.MTEB(...)`; the library also caches results so a re-run only evaluates what is missing. For RAG system design, prioritize the BEIR retrieval subset because it directly predicts retrieval quality in your pipeline. Semantic textual similarity (STS) tasks measure something slightly different — fine-grained similarity rather than ranking relevance.
+
+The leaderboard is a *shortlist generator*, not a decision. Models with a two-point MTEB gap routinely swap places on a specific corpus, and the top of the leaderboard is partly a story about which public benchmarks a model's training mix overlapped. The decision comes from 100–300 labelled (query, gold-passage) pairs from your own domain, scored with Recall@$k$ and nDCG@$k$ — a day of annotation that is worth more than any leaderboard column. You can register that set as a custom `AbsTaskRetrieval` in `mteb` and get the same metrics and result format as the public tasks; see [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html) for stage-by-stage retrieval measurement.
 
 !!! interview "Interview Corner"
 
@@ -550,7 +646,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, device):
 
 ### Key Training Decisions
 
-**Gradient caching.** With large batch sizes, storing all intermediate activations for both query and document towers can overflow GPU memory. Gradient caching (GradCache, Gao et al.) computes embeddings in smaller sub-batches for the forward pass, then accumulates gradients in a second pass — achieving the statistical effect of a large batch at lower memory cost.
+**Gradient caching.** With large batch sizes, storing all intermediate activations for both query and document towers can overflow GPU memory. Gradient caching (GradCache, Gao et al., 2021) runs three passes instead of one: (1) encode every sub-batch under `torch.no_grad()` and keep only the embeddings; (2) compute the contrastive loss on the full set of embeddings and cache $\partial \mathcal{L}/\partial \mathbf{e}$ for each one — a tiny $(B, D)$ tensor; (3) re-encode each sub-batch *with* gradients and backprop the cached $\partial \mathcal{L}/\partial \mathbf{e}$ into the encoder, accumulating. Activation memory is now set by the sub-batch, not the batch, at the cost of roughly one extra forward pass. It is mathematically exact — not an approximation. Reference implementation: [luyug/GradCache](https://github.com/luyug/GradCache); in practice you get it for free via `losses.CachedMultipleNegativesRankingLoss`.
 
 **Multi-GPU synchronization.** With distributed training, in-batch negatives from other GPUs can be gathered via all-gather before computing the loss, effectively multiplying the batch size by the number of GPUs with no per-GPU memory increase. This "all-gather trick" is used in SimCLR, CLIP, and DPR follow-ups.
 
@@ -568,13 +664,15 @@ Several design decisions at the embedding layer propagate through the entire sys
 
 **Chunking policy.** A document is split into chunks before embedding. The chunk size (128–512 tokens) and overlap determine how much context each embedded unit contains. This is the first point where RAG quality is determined — see [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html).
 
-**Index refresh latency.** When new documents arrive, their embeddings must be computed and inserted into the ANN index. With asynchronous pipelines, there is a window where new content is not yet retrievable. High-throughput embedding inference on GPU batches can reduce this lag to seconds.
+**Index refresh latency.** When new documents arrive, their embeddings must be computed and inserted into the ANN index. With asynchronous pipelines, there is a window where new content is not yet retrievable. High-throughput embedding inference on GPU batches can reduce this lag to seconds. In production you do not call `model.encode` in your application process: you run a dedicated embedding server. Hugging Face's **Text Embeddings Inference (TEI)** is the standard open-source choice — a Rust/Candle server with continuous batching, Flash-Attention kernels, and an OpenAI-compatible `/embed` endpoint, deployable as `ghcr.io/huggingface/text-embeddings-inference` and serving bi-encoders, rerankers, and sequence classifiers alike. `infinity` is a comparable Python alternative, and both vLLM and SGLang can serve LLM-based encoders through their pooling/embedding APIs, which matters when your embedder is a 7B model (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)).
 
 **Embedding drift.** If the embedding model is updated (e.g., fine-tuned on domain data), all stored document embeddings become stale and must be recomputed. This "re-indexing" cost — on the order of millions of API calls or hours of GPU time — is a real operational concern in production RAG.
 
 **Token budget vs. retrieved quality.** Retrieving $k=20$ chunks provides more coverage but costs more LLM context tokens. The embedding model's precision (ratio of relevant chunks among top-$k$) directly determines whether context budget is spent on signal or noise. LLMs with long-context windows (see [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html)) relax this tension but do not eliminate it.
 
 For the next stage — indexing these embeddings and querying them efficiently at scale — see [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html). For the full RAG architecture, see [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html).
+
+**Where this lands in the capstone.** Stack-100M's narrow research agent uses a dense retriever as one of its two tools, and the accuracy decomposition there shows the *retrieval* term dominates end-to-end accuracy — which is why the agent pairs a ~100M generator with a 300–600M embedder (EmbeddingGemma-300M or Qwen3-Embedding-0.6B via `sentence-transformers`, FAISS `IndexFlatIP` for a corpus this small). Yes, the retriever ends up larger than the model it serves; that is the correct allocation when grounding is load-bearing. See [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) for the wired-up version, including the hybrid BM25 + dense fusion.
 
 !!! warning "Common pitfall: using a general embedding model on a specialized domain"
 
@@ -587,13 +685,13 @@ For the next stage — indexing these embeddings and querying them efficiently a
 !!! key "Key Takeaways"
 
     - Dense bi-encoders embed queries and documents independently; cosine similarity at retrieval time is fast and pre-computable for all documents.
-    - The InfoNCE (NT-Xent) loss treats all other documents in the mini-batch as negatives; a temperature $\tau \approx 0.05$ works well for text retrieval.
-    - Hard negatives — BM25-mined, ANN-mined, or cross-encoder-filtered — are essential to push past the plateau achieved with random in-batch negatives.
+    - The InfoNCE (NT-Xent) loss treats all other documents in the mini-batch as negatives; a temperature $\tau \approx 0.05$ works well for text retrieval. It decomposes into *alignment* (pull positives together) and *uniformity* (spread everything over the hypersphere) — the latter is what cures anisotropy.
+    - Hard negatives — BM25-mined, ANN-mined, or cross-encoder-filtered — are essential to push past the plateau achieved with random in-batch negatives, but must be denoised (skip the top ranks, cap the score) or false negatives will fight your gradients.
+    - You do not hand-roll any of this in production: `sentence-transformers` v3+ ships `mine_hard_negatives`, `MultipleNegativesRankingLoss` (= InfoNCE, `scale` = 1/$\tau$), `MatryoshkaLoss`, GradCache via `CachedMultipleNegativesRankingLoss`, and int8/binary `quantize_embeddings`; serve the trained encoder with Text Embeddings Inference (TEI).
     - Mean pooling over non-padding tokens consistently outperforms CLS pooling for sentence-level tasks; L2-normalize before computing cosine similarity.
     - Matryoshka Representation Learning trains one model to produce useful embeddings at every prefix dimension, enabling adaptive quality/cost trade-offs at inference time.
     - Instruction embeddings prepend task descriptions to queries; LLM-based encoders (E5-mistral, GTE-Qwen) yield strong zero-shot generalization by leveraging decoder-only backbone representations.
-    - MTEB is the standard benchmark; for RAG use cases, prioritize the BEIR retrieval sub-tasks (nDCG@10 on MS MARCO, NQ, HotpotQA, etc.).
-    - Embedding model drift after fine-tuning requires full re-indexing of stored document embeddings — plan for this operational cost.
+    - MTEB/MMTEB is the standard benchmark and the right *shortlist generator*; the actual choice should come from a few hundred labelled query-passage pairs from your own domain. Embedding-model drift after fine-tuning requires full re-indexing of stored document embeddings — plan for this operational cost.
     - Hybrid search (dense + BM25) consistently outperforms either method alone; use embeddings as one signal, not the only signal.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -615,9 +713,11 @@ For the next stage — indexing these embeddings and querying them efficiently a
 
     **Open-source & tools**
 
-    - [UKPLab/sentence-transformers](https://github.com/UKPLab/sentence-transformers) — the canonical Python library for training and serving bi-encoder embedding models, maintained by Hugging Face.
+    - [UKPLab/sentence-transformers](https://github.com/UKPLab/sentence-transformers) — the canonical Python library for training and serving bi-encoder embedding models, maintained by Hugging Face. v3+ ships `SentenceTransformerTrainer`, `mine_hard_negatives`, `MatryoshkaLoss`, `CachedMultipleNegativesRankingLoss`, and int8/binary `quantize_embeddings` — i.e. every technique in this chapter as a one-liner.
     - [FlagOpen/FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding) — BAAI's one-stop toolkit for BGE models, covering fine-tuning, hard-negative mining, reranking, and RAG integration.
-    - [embeddings-benchmark/mteb](https://github.com/embeddings-benchmark/mteb) — the official MTEB evaluation library; run any model against all 58 tasks with a single Python call.
+    - [huggingface/text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference) (TEI) — production embedding/reranker server in Rust with continuous batching; the standard way to serve an encoder behind an HTTP endpoint.
+    - [luyug/GradCache](https://github.com/luyug/GradCache) — reference implementation of gradient caching, the technique that makes thousand-example contrastive batches fit on one GPU.
+    - [embeddings-benchmark/mteb](https://github.com/embeddings-benchmark/mteb) — the official MTEB/MMTEB evaluation library; run any model against a named task suite with a single Python call.
 
     **Go deeper**
 
@@ -628,7 +728,10 @@ For the next stage — indexing these embeddings and querying them efficiently a
 - Reimers & Gurevych, **Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks**, EMNLP 2019 — the foundational bi-encoder fine-tuning paper.
 - Karpukhin et al., **Dense Passage Retrieval for Open-Domain Question Answering** (DPR), EMNLP 2020 — established in-batch negative training for retrieval.
 - Xiong et al., **Approximate Nearest Neighbor Negative Contrastive Estimation for Dense Text Retrieval** (ANCE), ICLR 2021 — ANN-mined hard negatives.
-- Gao et al., **Simcse: Simple Contrastive Learning of Sentence Embeddings**, EMNLP 2021 — dropout as a data augmentation for contrastive pre-training.
+- Gao et al., **SimCSE: Simple Contrastive Learning of Sentence Embeddings**, EMNLP 2021 — dropout as a data augmentation for contrastive pre-training; the standard unlabelled bootstrap.
+- Wang & Isola, **Understanding Contrastive Representation Learning through Alignment and Uniformity on the Hypersphere**, ICML 2020 — the theory behind why InfoNCE de-anisotropizes an embedding space.
+- Qu et al., **RocketQA: An Optimized Training Approach to Dense Passage Retrieval**, NAACL 2021 — cross-encoder-denoised hard negatives and cross-batch negatives.
+- Gao, Yao & Callan, **Scaling Deep Contrastive Learning Batch Size under Memory Limited Setups** (GradCache), RepL4NLP 2021 — exact large-batch contrastive training on one GPU.
 - Thakur et al., **BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models**, NeurIPS 2021 — the standard retrieval evaluation suite.
 - Muennighoff et al., **MTEB: Massive Text Embedding Benchmark**, EACL 2023 — comprehensive multi-task embedding leaderboard.
 - Kusupati et al., **Matryoshka Representation Learning**, NeurIPS 2022 — multi-granularity embedding training.

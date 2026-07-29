@@ -28,6 +28,24 @@ where $q$ is the user query and $\mathcal{D}_{q} = \{d_1, d_2, \ldots, d_k\}$ is
 
 This trades off context-window tokens for factual accuracy, freshness, and citability — a trade that is almost always worth making for knowledge-intensive tasks.
 
+### Frozen Concatenation vs. Marginalization
+
+Writing $P(y \mid q, \mathcal{D}_q)$ hides a modelling choice. The original RAG paper (Lewis et al., 2020) treats the retrieved document $z$ as a **latent variable** and marginalizes over the top-$k$ retrieved documents, in one of two ways. **RAG-Sequence** commits to a single document for the whole answer and marginalizes over sequences:
+
+$$
+p_{\text{RAG-Seq}}(y \mid q) \approx \sum_{z \in \text{top-}k(p_\eta(\cdot \mid q))} p_\eta(z \mid q) \prod_{i=1}^{|y|} p_\theta\!\left(y_i \mid q,\, z,\, y_{<i}\right)
+$$
+
+while **RAG-Token** lets every generated token draw on a different document:
+
+$$
+p_{\text{RAG-Tok}}(y \mid q) \approx \prod_{i=1}^{|y|} \; \sum_{z \in \text{top-}k} p_\eta(z \mid q)\, p_\theta\!\left(y_i \mid q,\, z,\, y_{<i}\right)
+$$
+
+Because $p_\eta(z \mid q)$ is differentiable through the query encoder, this objective trains the retriever *and* the generator jointly with only answer supervision — the document encoder and index stay frozen, since re-embedding the corpus every few steps is prohibitive. Two descendants matter: **Fusion-in-Decoder** (Izacard & Grave, 2021) encodes each of the $k$ passages separately with the query and lets the decoder cross-attend over the concatenated encoder states, which scales to far more passages than stuffing them into one encoder; **REPLUG** (Shi et al., 2023) keeps the LM a black box and ensembles its output distributions weighted by retrieval scores, training only the retriever against LM likelihood.
+
+Essentially all production RAG in 2026 uses a third, degenerate variant: **frozen concatenation** — retrieve top-$k$, paste the passages into the prompt, run a single forward pass, no marginalization and no retriever training. It is $k\times$ cheaper than RAG-Sequence (one generation pass instead of $k$), works with any API-served model, and with modern instruction-tuned generators it is usually good enough. Knowing the marginalized form still matters: it tells you exactly what you gave up — a calibrated $p_\eta(z \mid q)$ weighting, and gradient signal that would otherwise teach the retriever what the generator actually finds useful. RAFT (below) recovers part of that signal on the generator side by fine-tuning on retrieved contexts with distractors.
+
 ## The RAG Pipeline: Five Stages
 
 {{fig:rag-pipeline}}
@@ -123,8 +141,9 @@ CORPUS = [
 
     """RAG (Retrieval-Augmented Generation) was introduced by Lewis et al.
     in 2020. It combines a dense retriever (DPR) with a seq2seq generator
-    (BART) and trains both end-to-end. The retriever is frozen during
-    inference but the generator is conditioned on retrieved documents.""",
+    (BART), marginalizing over the top-k retrieved documents. The query
+    encoder and generator are trained jointly with answer supervision while
+    the document encoder and index stay frozen.""",
 
     """The Chinchilla scaling law (Hoffmann et al., 2022) showed that for a
     given compute budget, training tokens should scale roughly 1:1 with
@@ -200,7 +219,8 @@ print(f"FAISS index has {index.ntotal} vectors")
 def retrieve(query: str, k: int = 3) -> List[Tuple[str, float]]:
     """
     Encode the query and return the top-k (chunk, score) pairs.
-    Score is cosine similarity in [0, 1] because vectors are unit-normed.
+    Score is cosine similarity (inner product of unit vectors), so it lies in
+    [-1, 1] — in practice text embeddings almost always score in ~[0.0, 0.95].
     """
     q_vec = encoder.encode(
         [query],
@@ -239,7 +259,12 @@ def rag_query(query: str, k: int = 3) -> str:
     retrieved = retrieve(query, k=k)
     context_block = build_context_block(retrieved)
 
-    # Step B: generate
+    # Step B: generate.
+    # Any OpenAI-compatible endpoint works, so nothing here is tied to a vendor.
+    # To run the whole pipeline locally, serve an open-weights model yourself
+    # with vLLM or SGLang and repoint the client:
+    #   $ vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8000
+    #   client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
     client = OpenAI()  # reads OPENAI_API_KEY from env
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -252,7 +277,7 @@ def rag_query(query: str, k: int = 3) -> str:
         },
     ]
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o-mini",   # or the local model id you served above
         messages=messages,
         temperature=0.0,   # deterministic for RAG — no creativity needed
         max_tokens=512,
@@ -284,6 +309,29 @@ if __name__ == "__main__":
     **Latency budget.** An exact `IndexFlatIP` search over $10^6$ vectors at $d = 384$ takes roughly 20–50 ms on a single CPU core (FAISS is BLAS-accelerated). With an HNSW index, the same search takes under 2 ms. The embedding step for the query adds another 5–10 ms. Total retrieval latency before generation: on the order of 10–60 ms depending on index type and hardware — typically negligible compared to LLM generation time.
 
     **Reranker cost.** A cross-encoder reranker scoring 20 candidates against the query takes roughly 50–100 ms on a single GPU (batched). If you retrieve $k = 20$ for ANN and rerank to $k' = 5$, this is the dominant retrieval cost.
+
+### The Same Pipeline in a Framework
+
+You wrote the 60 lines above so you know what every stage does; in production most teams let a framework own the plumbing. **LlamaIndex** is the most direct fit for indexing-heavy work (parent-child, summary and knowledge-graph indexes, agentic retrievers), **LangChain** covers loaders/splitters/retrievers inside a broader agent-orchestration platform, and **Haystack** (deepset) offers an explicit component-graph pipeline that is pleasant to unit-test. The identical five stages collapse to:
+
+```python
+# pip install llama-index llama-index-embeddings-huggingface
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+Settings.embed_model = HuggingFaceEmbedding("BAAI/bge-small-en-v1.5")  # stage 2
+Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=64)  # stage 1
+
+docs = SimpleDirectoryReader("./corpus").load_data()
+index = VectorStoreIndex.from_documents(docs)            # stage 3 (in-memory ANN)
+engine = index.as_query_engine(similarity_top_k=5)       # stages 4 + 5
+print(engine.query("How does FlashAttention reduce memory usage?"))
+```
+
+The trade is the usual one: you get loaders for 100+ file types, vector-store adapters, and streaming/citation machinery for free, at the cost of a large dependency tree and abstractions that make it harder to see which prompt actually reached the model. A reasonable default is to prototype with a framework, then, once the design is settled, inline the two or three components you actually use. Whichever you choose, keep the retriever behind a narrow `search(query, k) -> list[(text, score)]` interface so you can swap FAISS for Qdrant, or `rank_bm25` for OpenSearch, without touching the generator.
+
+That narrow interface is exactly how the capstone wires retrieval into a 100M model: [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) exposes BM25 plus a dense encoder as a single `search` tool over a few hundred passages, and [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html) scores the resulting retrieval-QA probe. Two lessons transfer from that scale: at 100M parameters the *embedding model may legitimately be larger than the generator* (grounding is the load-bearing component, so spend there), and the corpus must be held out of the pretraining mix or the "open-book" evaluation silently becomes a memorization test.
 
 ## Naive RAG and Its Failure Modes
 
@@ -321,6 +369,8 @@ if __name__ == "__main__":
 {{fig:ragas-metric-decomposition}}
 
 Measuring whether your RAG system is working requires disaggregating the pipeline into retrieval quality and generation quality. The RAGAS framework (Es et al., 2023) defines three core metrics that cover both concerns, all computable without human labels using an LLM-as-judge.
+
+Before reaching for a judge, measure the retriever on its own with classical information-retrieval metrics — Recall@$k$, MRR, and nDCG@$k$ — on a small labelled query set; they are cheap, deterministic, and tell you whether the ceiling is set by retrieval or by generation. The `mteb` package (which subsumes the BEIR retrieval suite) gives you standardized zero-shot retrieval tasks and is the right tool for choosing an encoder; see [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html) for MTEB/BEIR and [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html) for stage-by-stage Recall@$k$/MRR measurement. RAGAS is what you add on top once retrieval is decent and the open question is whether the *generator* is using the context. Alternative open-source RAG-eval libraries with similar judge-based metric sets include `deepeval` and TruLens; whichever you pick, validate the judge against a few hundred human labels before trusting its absolute numbers ([LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html)).
 
 ### Faithfulness
 
@@ -364,35 +414,40 @@ In the LLM-as-judge variant (no ground truth), the judge is asked: "Is this chun
 ```python
 """
 Minimal RAGAS-style evaluation loop.
-Requires: pip install ragas datasets openai
+Requires: pip install ragas openai
+
+API note: ragas 0.2 renamed the dataset columns. Modern versions use
+  user_input / retrieved_contexts / response / reference
+whereas 0.1.x examples you will find online use
+  question / contexts / answer / ground_truth
+with a plain `datasets.Dataset`. Check the version you installed.
 """
 
-from ragas import evaluate
+from ragas import evaluate, EvaluationDataset
 from ragas.metrics import (
-    faithfulness,
-    answer_relevancy,
-    context_precision,
-    context_recall,
+    faithfulness,        # generation: are the answer's claims entailed by context?
+    answer_relevancy,    # generation: does the answer address the question?
+    context_precision,   # retrieval: how much of the retrieved context is useful?
+    context_recall,      # retrieval: was the needed evidence retrieved? (needs reference)
 )
-from datasets import Dataset
 
-# Build evaluation dataset in RAGAS format
-# ground_truth is optional (needed for context_recall)
 eval_data = [
     {
-        "question": "How does FlashAttention reduce memory?",
-        "answer": "FlashAttention tiles Q, K, V into SRAM blocks and avoids materializing the O(N²) attention matrix, reducing memory to O(N).",
-        "contexts": [
+        "user_input": "How does FlashAttention reduce memory?",
+        "response": "FlashAttention tiles Q, K, V into SRAM blocks and avoids materializing the O(N²) attention matrix, reducing memory to O(N).",
+        "retrieved_contexts": [
             "FlashAttention is an IO-aware exact attention algorithm. It tiles the Q, K, V matrices into blocks that fit in SRAM...",
         ],
-        "ground_truth": "FlashAttention avoids storing the full N×N attention matrix by using tiled SRAM computation.",
+        # `reference` (the gold answer) is optional; context_recall needs it.
+        "reference": "FlashAttention avoids storing the full N×N attention matrix by using tiled SRAM computation.",
     },
 ]
 
-dataset = Dataset.from_list(eval_data)
+dataset = EvaluationDataset.from_list(eval_data)
 results = evaluate(
     dataset=dataset,
     metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+    # llm=..., embeddings=...  # pass wrapped judge/embedder to pin the judge model
 )
 print(results)
 # Example output:
@@ -553,14 +608,16 @@ class HybridRetriever:
     def retrieve(self, query: str, top_n: int = 10) -> List[Tuple[Chunk, float]]:
         # BM25 ranking
         bm25_scores = self.bm25.get_scores(query.lower().split())
-        bm25_ranked = list(np.argsort(bm25_scores)[::-1][:top_n])
+        bm25_ranked = [int(i) for i in np.argsort(bm25_scores)[::-1][:top_n]]
 
         # Dense ranking
         q_vec = self.encoder.encode(
             [query], normalize_embeddings=True
         ).astype(np.float32)
         _, dense_indices = self.index.search(q_vec, top_n)
-        dense_ranked = list(dense_indices[0])
+        # FAISS pads with -1 when fewer than top_n results exist; -1 would index
+        # the LAST chunk via Python's negative indexing, so drop it explicitly.
+        dense_ranked = [int(i) for i in dense_indices[0] if i >= 0]
 
         # Fuse
         fused = self._rrf(bm25_ranked, dense_ranked, k=60)
@@ -608,13 +665,18 @@ class FaithfulnessChecker:
 
     def score(self, premise: str, hypothesis: str) -> float:
         """Returns probability of entailment."""
+        # Pass a {"text", "text_pair"} dict, NOT a manually "[SEP]"-joined string:
+        # the tokenizer must build the sentence-pair encoding (special tokens and
+        # token_type_ids) itself, or the cross-encoder sees a single malformed
+        # sequence and the entailment score is meaningless.
         result = self.nli(
-            f"{premise} [SEP] {hypothesis}",
+            {"text": premise, "text_pair": hypothesis},
             truncation=True,
             max_length=512,
             top_k=None,  # return scores for all labels, not just the top-1
         )
-        label_score = {r["label"]: r["score"] for r in result}
+        # With top_k=None the pipeline returns a list of {label, score} dicts.
+        label_score = {r["label"].lower(): r["score"] for r in result}
         return label_score.get("entailment", 0.0)
 
     def check_answer(self, answer: str, context: str, threshold: float = 0.5) -> bool:
@@ -696,6 +758,8 @@ A few operational concerns that come up in every production RAG deployment:
 
 **Multi-tenancy and access control.** Retrieved documents must respect document-level permissions. FAISS alone has no ACL support. Solutions include: metadata-filtered retrieval (Qdrant, Weaviate, Pinecone all support filter expressions), per-tenant index shards, or post-retrieval filtering.
 
+**Serving the encoder and reranker, not just the LLM.** Calling `SentenceTransformer.encode()` inside your request handler ties an ML model's lifecycle to your web process and wastes the GPU on batch-size-1 work. In production, put the encoder and the cross-encoder behind their own inference server: HuggingFace's **Text Embeddings Inference** (TEI, a Rust server with continuous batching that serves both embedding and reranker models), **Infinity**, or **vLLM**'s pooling/embedding endpoint if you already run vLLM for generation. The sparse half deserves real infrastructure too — `rank_bm25` is a teaching implementation that rescores the whole corpus in Python per query; ship **bm25s** (sparse-matrix BM25), **Pyserini** (Lucene), or an **OpenSearch/Elasticsearch** cluster when the corpus outgrows memory. See [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html).
+
 **Caching.** Embedding the same query repeatedly is wasteful. Cache query embeddings keyed by the (normalized) query string. Also cache retrieval results for frequent queries. See [Caching, Routing & Cost Control in Production](../12-production-mlops/03-caching-routing-cost.html).
 
 **Monitoring.** Log every query, retrieved chunk IDs, faithfulness scores, and user feedback. A RAGAS-style offline eval batch should run on a sample of production logs nightly. See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html).
@@ -707,6 +771,7 @@ A few operational concerns that come up in every production RAG deployment:
 
 !!! key "Key Takeaways"
     - RAG addresses three core limitations of parametric LLMs: temporal staleness, capacity limits, and lack of attribution. It conditions generation on freshly retrieved external documents rather than memorized facts.
+    - The original formulation treats the retrieved document as a latent variable and marginalizes over the top-$k$ (RAG-Sequence / RAG-Token), training the query encoder jointly with the generator. Production RAG in 2026 is the degenerate "frozen concatenation" variant — one forward pass, no marginalization, no retriever gradient — which is far cheaper and works with any API-served model.
     - The pipeline has five stages: chunk, embed, index, retrieve, and generate. Each stage is a distinct design dimension with its own failure modes.
     - Naive RAG fails due to chunking boundary issues, semantic mismatch, lost-in-the-middle generation degradation, and semantic redundancy in retrieved results.
     - Hybrid retrieval (BM25 + dense, fused by RRF) and cross-encoder reranking are the two single highest-leverage improvements over naive RAG.
@@ -738,6 +803,9 @@ A few operational concerns that come up in every production RAG deployment:
     - [explodinggradients/ragas](https://github.com/explodinggradients/ragas) — the ragas Python library implementing faithfulness, answer relevancy, and context precision; integrates with LangChain and LlamaIndex.
     - [langchain-ai/langchain](https://github.com/langchain-ai/langchain) — a dominant RAG/agent orchestration framework (now positioned as an "agent engineering platform," ~142 k GitHub stars as of 2026); provides document loaders, text splitters, retrievers, and LLM chains with hundreds of integrations.
     - [run-llama/llama_index](https://github.com/run-llama/llama_index) — LlamaIndex, specialized for advanced indexing patterns (parent-child, summary indexes, knowledge graphs) and agentic retrieval workflows.
+    - [deepset-ai/haystack](https://github.com/deepset-ai/haystack) — component-graph RAG pipelines with explicit, unit-testable wiring; a good fit when you want less framework magic than LangChain.
+    - [huggingface/text-embeddings-inference](https://github.com/huggingface/text-embeddings-inference) — TEI, a Rust inference server with continuous batching for embedding *and* reranker models; the standard way to serve the retrieval half of a RAG stack (vLLM's pooling endpoint and `michaelfeil/infinity` are the main alternatives).
+    - [xhluca/bm25s](https://github.com/xhluca/bm25s) — fast sparse-matrix BM25 in Python (orders of magnitude faster than `rank_bm25`); use **Pyserini**/Lucene or OpenSearch when the lexical index outgrows a single process.
 
 ## Further Reading
 
@@ -746,6 +814,7 @@ A few operational concerns that come up in every production RAG deployment:
 - Gao et al., **"Precise Zero-Shot Dense Retrieval without Relevance Labels"** (HyDE), ACL 2023 — hypothetical document embedding for improved query-document alignment.
 - Es et al., **"RAGAS: Automated Evaluation of Retrieval Augmented Generation"**, 2023 — defines the faithfulness, answer relevance, and context precision metrics implemented by the `ragas` library.
 - Liu et al., **"Lost in the Middle: How Language Models Use Long Contexts"**, TACL 2024 — empirical study of positional bias in long-context generation, directly relevant to multi-chunk RAG.
+- Izacard & Grave, **"Leveraging Passage Retrieval with Generative Models for Open Domain Question Answering"** (Fusion-in-Decoder), EACL 2021 — encodes each retrieved passage separately and fuses them in the decoder, scaling to far more passages than single-context concatenation.
 - Shi et al., **"REPLUG: Retrieval-Augmented Black-Box Language Models"**, NAACL 2023 — treats the LLM as a black box and trains only the retriever via LM likelihood signals.
 - Zhang et al., **"RAFT: Adapting Language Model to Domain Specific RAG"**, 2024 — fine-tuning recipe for making models better at extracting answers from retrieved context while ignoring distractor documents.
 - LangChain and LlamaIndex open-source repos — the two most widely used RAG orchestration frameworks, with extensive examples of advanced retrieval patterns.

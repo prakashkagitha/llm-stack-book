@@ -4,7 +4,7 @@ A freshly pretrained language model is a remarkable thing: it has absorbed synta
 
 This is the problem supervised fine-tuning (SFT) solves. SFT teaches the model to follow instructions, adopt a conversational format, and suppress unhelpful completions — all by showing it examples of the behavior we want. In this chapter we work through the mechanics of SFT from first principles: the objective, the data, the full-versus-partial finetuning spectrum, the risk of catastrophic forgetting, and the three-stage post-training recipe that is now standard across frontier labs. We include a complete, runnable SFT training loop.
 
-SFT is the first stage of the alignment pipeline. It is followed by preference learning ([The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)) and optionally by policy-optimization steps ([Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html) and [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html)). But none of those later stages work well without a solid SFT foundation.
+SFT is the first stage of the alignment pipeline. It is followed by preference learning ([The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)) and optionally by policy-optimization steps ([Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html) and [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html)). But none of those later stages work well without a solid SFT foundation. For this chapter's machinery applied end to end on a model you can actually train yourself, see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), which runs the SFT stage of the book's 100M-parameter capstone model.
 
 ## Why Base Models Need Fine-Tuning
 
@@ -81,6 +81,8 @@ The LIMA hypothesis is sometimes called the *superficial alignment hypothesis*: 
 
 {{fig:superficial-alignment-quality-over-quantity}}
 
+**How this scales down.** LIMA's thousand examples worked on a 65B base whose capability only needed *unlocking*. A ~100M base has far less latent skill to surface, so its SFT stage is mostly about installing the chat format, turn-taking, and stopping behavior reliably — which needs more repetitions than a 65B model does, even though the curation bar is unchanged. The capstone budgets roughly 100k curated conversations (a SmolTalk-style public mix) for three epochs at a peak LR of $2 \times 10^{-5}$; every other hyperparameter in this chapter transfers directly. See [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
 ## Data Quality > Quantity: Practical Data Engineering
 
 Given the LIMA insight, how do you build high-quality SFT data in practice?
@@ -94,6 +96,8 @@ Given the LIMA insight, how do you build high-quality SFT data in practice?
 **Deduplication.** Near-duplicate instructions with slightly different phrasings inflate dataset size while contributing almost no new learning signal. Min-hash or embedding-based deduplication is standard; see [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html).
 
 **Long-tail coverage.** Ensure examples cover rare but important topics: safety refusals, citations/uncertainty, multi-hop reasoning, code debugging. These are underrepresented in organic data but disproportionately important for the model's edge-case behavior.
+
+**The tools that do this.** None of the above needs custom code. Embed and cluster instructions with `sentence-transformers` (a MiniLM or BGE encoder) plus `scikit-learn` k-means or `faiss` for nearest-neighbour dedup; run MinHash-LSH near-duplicate removal with `huggingface/datatrove` or `ChenghaoMou/text-dedup`; generate, evolve, and LLM-judge-filter synthetic instructions with `argilla-io/distilabel` (which implements Self-Instruct, Evol-Instruct, and UltraFeedback-style pipelines as composable steps) and review the survivors in `argilla`. Store and version the resulting mix as a HuggingFace `datasets` `Dataset` so the exact revision is reproducible — the same discipline as the pretraining pipeline in [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html).
 
 ### Comparing Key SFT Datasets
 
@@ -184,6 +188,8 @@ See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignmen
     - Activations (sequence length 2048, batch 4): ~12–20 GB depending on architecture
     - **Total: ~110–120 GB** → requires 2–4 × 80 GB A100s
 
+    (This accounting assumes gradients are kept in fp32 and omits the fp32 *master* copy of the weights that some mixed-precision setups also hold, which would add another ~28 GB. Activation checkpointing trades roughly 30% extra compute for most of the activation term — see [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html).)
+
     **QLoRA (4-bit frozen base + fp32 LoRA adapters, r=64):**
     - Quantized base: 7B × 0.5 bytes ≈ 3.5 GB
     - LoRA trainable params ≈ 80M × 4 bytes ≈ 0.3 GB
@@ -251,7 +257,7 @@ import argparse
 import math
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -373,27 +379,36 @@ def collate_fn(batch: List[Dict], pad_token_id: int) -> Dict[str, torch.Tensor]:
 # 2. Loss function with explicit response masking
 # ---------------------------------------------------------------------------
 
-def compute_sft_loss(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+def compute_sft_loss(
+    logits: torch.Tensor, labels: torch.Tensor
+) -> Tuple[torch.Tensor, int]:
     """
-    Compute the causal language modeling loss over response tokens only.
+    Causal-LM loss over response tokens only.
     logits: (B, L, V)
     labels: (B, L) with IGNORE_INDEX for prompt tokens
 
     Standard next-token prediction: predict token t from context 0..t-1.
     We shift logits left by one and labels right by one.
+
+    Returns (loss_SUM, n_response_tokens) rather than a mean. The sum is what
+    lets gradient accumulation normalize by the TRUE token count of the whole
+    accumulation window -- see "Loss normalization under gradient
+    accumulation" below. Returning the count makes the denominator explicit.
     """
     # Shift so that token i predicts token i+1
     shift_logits = logits[:, :-1, :].contiguous()   # (B, L-1, V)
     shift_labels = labels[:, 1:].contiguous()         # (B, L-1)
 
+    n_tokens = int((shift_labels != IGNORE_INDEX).sum().item())
+
     # Flatten for cross-entropy; ignore_index silently skips masked positions
-    loss = F.cross_entropy(
+    loss_sum = F.cross_entropy(
         shift_logits.view(-1, shift_logits.size(-1)),
         shift_labels.view(-1),
         ignore_index=IGNORE_INDEX,
-        reduction="mean",
+        reduction="sum",
     )
-    return loss
+    return loss_sum, n_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +478,8 @@ def train(args):
     model.train()
 
     for epoch in range(args.num_epochs):
-        running_loss = 0.0
+        # Running sums for the CURRENT accumulation window.
+        window_loss, window_tokens = 0.0, 0
 
         for step, batch in enumerate(dataloader):
             # Move batch to device
@@ -478,35 +494,46 @@ def train(args):
             )
             logits = outputs.logits  # (B, L, V)
 
-            # Compute response-only loss
-            loss = compute_sft_loss(logits, labels)
+            # Compute response-only loss as a SUM plus its token count
+            loss_sum, n_tokens = compute_sft_loss(logits, labels)
 
-            # Scale loss for gradient accumulation
-            loss = loss / args.grad_accum_steps
-            loss.backward()
-
-            running_loss += loss.item()
+            if n_tokens > 0:
+                # Backward on the UNNORMALIZED sum: gradients accumulate as
+                # sums too, and we rescale ONCE at the accumulation boundary.
+                # (A microbatch with zero response tokens would give 0/0.)
+                loss_sum.backward()
+                window_loss += loss_sum.item()
+                window_tokens += n_tokens
 
             # Optimizer step every grad_accum_steps mini-batches
             if (step + 1) % args.grad_accum_steps == 0:
-                # Gradient clipping: prevents exploding gradients
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                if window_tokens > 0:
+                    # Divide the accumulated gradient by the window's true
+                    # response-token count -> the exact per-token mean
+                    # gradient over the effective batch.
+                    for p in model.parameters():
+                        if p.grad is not None:
+                            p.grad.div_(window_tokens)
 
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
+                    # Gradient clipping: prevents exploding gradients.
+                    # Done AFTER rescaling, so max_norm=1.0 means what it says.
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                global_step += 1
-                avg_loss = running_loss
-                running_loss = 0.0
+                    optimizer.step()
+                    scheduler.step()
+                    global_step += 1
 
-                if global_step % 10 == 0:
-                    lr_now = scheduler.get_last_lr()[0]
-                    print(
-                        f"Epoch {epoch+1}/{args.num_epochs} | "
-                        f"Step {global_step}/{total_steps} | "
-                        f"Loss: {avg_loss:.4f} | LR: {lr_now:.2e}"
-                    )
+                    if global_step % 10 == 0:
+                        avg_loss = window_loss / window_tokens  # nats/token
+                        lr_now = scheduler.get_last_lr()[0]
+                        print(
+                            f"Epoch {epoch+1}/{args.num_epochs} | "
+                            f"Step {global_step}/{total_steps} | "
+                            f"Loss: {avg_loss:.4f} | LR: {lr_now:.2e}"
+                        )
+
+                optimizer.zero_grad(set_to_none=True)
+                window_loss, window_tokens = 0.0, 0
 
         # ---- Save checkpoint after each epoch ----
         ckpt_path = os.path.join(args.output_dir, f"epoch_{epoch+1}")
@@ -567,6 +594,8 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
 
 **Gradient accumulation.** With `batch_size=4` and `grad_accum_steps=8`, the effective batch size is 32. Accumulation is critical for SFT because (a) individual examples vary widely in length, and (b) a larger effective batch reduces gradient noise, which matters for a small dataset.
 
+**Loss normalization under gradient accumulation.** This is the subtlest correctness issue in the whole loop, and the reason `compute_sft_loss` returns a sum rather than a mean. The naive implementation computes `F.cross_entropy(..., reduction="mean")` — the mean over *this microbatch's* response tokens — and divides by `grad_accum_steps`. That weights every microbatch equally, so a microbatch holding 40 response tokens contributes as much gradient as one holding 900. The gradient you take is then a *mean of means*, $\frac{1}{G}\sum_g \frac{L_g}{n_g}$, not the gradient of the loss over the accumulation window, $\frac{\sum_g L_g}{\sum_g n_g}$ — and changing `grad_accum_steps` silently changes the objective. Response-only masking is exactly what makes $n_g$ vary wildly, so SFT suffers far more than pretraining (where every packed window has the same number of targets). This is the gradient-accumulation normalization bug that HuggingFace and Unsloth publicized in late 2024 and subsequently fixed across `transformers` and TRL. The fix above accumulates unnormalized sums and divides the accumulated *gradient* by the window's true token count — exact, single-pass, no extra forward. Backpropagating an unnormalized sum makes raw gradients on the order of $10^3\times$ larger than a mean's, which is safe here because bf16 carries fp32's dynamic range, and we rescale *before* clipping so `max_norm=1.0` still means what it says. Under DDP, all-reduce `window_tokens` across ranks and divide by the global total instead, since DDP averages gradients across ranks. The same fix, with the same reasoning, appears in the capstone's SFT loop ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
+
 **BF16 training.** We use `torch_dtype=torch.bfloat16` for the model. BF16 has the same dynamic range as float32 (8 exponent bits) but less precision (7 mantissa bits vs. 23). This is the preferred format for SFT on modern GPUs with bf16 tensor cores — see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
 **Gradient clipping.** `clip_grad_norm_(max_norm=1.0)` is standard. SFT on a small dataset can produce occasional large gradients (long responses, unusual tokens), and clipping prevents loss spikes.
@@ -587,15 +616,59 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
     Number of optimizer steps ≈ 15,360,000 / 16,384 ≈ 937 steps.
     With warmup_steps = 3% × 937 ≈ 28 warmup steps, the learning rate climbs linearly for the first 28 steps then follows a cosine decay.
 
+### The Same Run in TRL
+
+You should write the loop above once, to know what every line does. For production you use a library, and the ecosystem default is HuggingFace **TRL** (`huggingface/trl`), whose `SFTTrainer` wraps `transformers.Trainer` with the masking, packing, PEFT, and distributed plumbing already correct — including the loss normalization discussed above. The entire script becomes:
+
+```python
+# pip install "trl>=0.15" transformers datasets peft
+from datasets import load_dataset
+from peft import LoraConfig
+from trl import SFTConfig, SFTTrainer
+
+# A dataset with "prompt"/"completion" columns is a *prompt-completion*
+# dataset: TRL builds the mask for us, so no manual IGNORE_INDEX bookkeeping.
+ds = load_dataset("json", data_files="data/sft_data.jsonl", split="train")
+ds = ds.rename_columns({"instruction": "prompt", "response": "completion"})
+
+cfg = SFTConfig(
+    output_dir="./checkpoints/sft_trl",
+    max_length=2048,
+    completion_only_loss=True,      # response-only masking (our label mask)
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=8,  # effective batch = 32 sequences
+    num_train_epochs=3,
+    learning_rate=2e-5,
+    lr_scheduler_type="cosine",
+    warmup_ratio=0.03,
+    max_grad_norm=1.0,
+    bf16=True,
+    logging_steps=10,
+)
+
+trainer = SFTTrainer(
+    model="meta-llama/Llama-2-7b-hf",
+    args=cfg,
+    train_dataset=ds,
+    # Drop peft_config for full fine-tuning; keep it for LoRA/QLoRA.
+    peft_config=LoraConfig(r=16, lora_alpha=32, task_type="CAUSAL_LM"),
+)
+trainer.train()
+```
+
+The mapping is one-to-one with what we built: `completion_only_loss` is our label mask, `gradient_accumulation_steps` is our accumulation window, `peft_config` is the LoRA branch of the memory table. Two flags worth knowing beyond this snippet: for *conversational* datasets (a `messages` column of role/content turns) use `assistant_only_loss=True` instead, which masks every non-assistant turn but requires the tokenizer's chat template to wrap assistant content in a `{% generation %}` block — if the template lacks it, the flag silently trains on everything. And `packing=True` concatenates examples to fill `max_length`, the single biggest throughput win for short SFT data; both are covered in [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html), and TRL itself in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html). Argument names do move between TRL releases — read the `SFTConfig` dataclass in the version you install rather than trusting a snippet. Above TRL sit config-driven wrappers that need no Python at all: **axolotl** (YAML), **LLaMA-Factory** (YAML + web UI), **Unsloth** (fused Triton kernels for single-GPU LoRA), and **allenai/open-instruct** (the Tulu recipes end to end). For multi-GPU full fine-tuning, TRL delegates sharding to Accelerate with DeepSpeed ZeRO-3 or PyTorch FSDP — see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
+
 ## Evaluating SFT Models
 
 Evaluating instruction-following quality is genuinely hard. There is no single-number metric that captures all the dimensions we care about. The standard suite includes:
 
-**MT-Bench (Zheng et al., 2023).** An 80-question multi-turn benchmark covering reasoning, math, coding, writing, and roleplay. Answers are scored by a judge LLM (originally GPT-4, now typically a strong frontier model or a reward model) on a 1–10 scale. MT-Bench is widely reported and gives a good first-pass quality signal.
+**IFEval (Zhou et al., 2023).** *Verifiable* instruction following: prompts carry programmatically checkable constraints ("write at least 400 words," "respond in all lowercase," "wrap your answer in double quotes"), and a script checks compliance. No judge model, no judge bias, no cost — which makes it the cheapest and most reliable regression test for whether SFT actually taught constraint-following rather than surface style. Run it first on every checkpoint.
 
-**AlpacaEval.** A single-turn benchmark that compares model responses to a reference (GPT-4 or Davinci-003) using win-rate from an LLM judge. Quick to run, good for iteration.
+**MT-Bench (Zheng et al., 2023).** An 80-question multi-turn benchmark covering reasoning, math, coding, writing, and roleplay. Answers are scored by a judge LLM (originally GPT-4, now typically a strong frontier model or a reward model) on a 1–10 scale. Historically the standard first-pass quality signal, but it saturates: strong models cluster near the ceiling, so it now discriminates poorly at the top and is best used as a floor check.
 
-**MMLU (Hendrycks et al.).** Multiple-choice knowledge benchmark across 57 subjects. Good for measuring whether SFT caused catastrophic forgetting on knowledge tasks — an MMLU drop post-SFT signals over-training.
+**AlpacaEval.** A single-turn benchmark that compares model responses to a reference using win-rate from an LLM judge. Report the **length-controlled** win rate of AlpacaEval 2.0 (Dubois et al., 2024), which regresses out the judge's well-documented preference for longer answers — an uncontrolled win rate rewards exactly the length bias this chapter warns about. **Arena-Hard-Auto** (LMSYS) is the harder companion, built from difficult real Chatbot Arena prompts and designed to correlate with human Arena rankings. See [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) for judge bias and how to calibrate around it.
+
+**MMLU (Hendrycks et al.).** Multiple-choice knowledge benchmark across 57 subjects. Good for measuring whether SFT caused catastrophic forgetting on knowledge tasks — an MMLU drop post-SFT signals over-training. Run it (and GSM8K, HellaSwag, ARC, and the harder MMLU-Pro) with EleutherAI's **`lm-evaluation-harness`**, the de-facto standard runner: `lm_eval --model hf --model_args pretrained=./checkpoints/sft_run1 --tasks mmlu,gsm8k,ifeval --batch_size auto`. Pinning the harness version matters — prompt formats and normalization change between releases, and a "regression" is often just a harness bump. See [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
 
 **Perplexity on a held-out pretraining slice.** A quick internal signal: if perplexity on general web text rises sharply after SFT, the model has drifted too far from the pretraining distribution.
 
@@ -642,6 +715,9 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
     - [hiyouga/LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) — unified fine-tuning of 100+ LLMs with a web UI; supports SFT, DPO, GRPO, LoRA, QLoRA, and full fine-tuning (ACL 2024).
     - [axolotl-ai-cloud/axolotl](https://github.com/axolotl-ai-cloud/axolotl) — YAML-driven fine-tuning framework with Flash Attention, multi-GPU support, and (as of 2025) GRPO and multimodal fine-tuning; popular for research runs.
     - [allenai/open-instruct](https://github.com/allenai/open-instruct) — AllenAI's fully open post-training codebase backing the Tulu series; covers SFT, DPO, and RLVR end-to-end.
+    - [unslothai/unsloth](https://github.com/unslothai/unsloth) — fused Triton kernels for single-GPU LoRA/QLoRA SFT; drop-in with TRL's `SFTTrainer` and the fastest path to fine-tuning on one consumer card.
+    - [argilla-io/distilabel](https://github.com/argilla-io/distilabel) — composable pipelines for synthesizing, evolving, and LLM-judge-filtering instruction data (Self-Instruct, Evol-Instruct, UltraFeedback as reusable steps).
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the standard runner for MMLU/GSM8K/IFEval and the forgetting probes you should gate every SFT checkpoint on.
 
 ## Further Reading
 
@@ -657,14 +733,14 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
 
 !!! key "Key Takeaways"
     - SFT converts a base model into an instruction follower by training on (instruction, response) pairs with **response-only loss masking** — the model is only penalized for poor replies, not for re-predicting the input.
-    - The SFT objective is identical to pretraining NLL; the only changes are data format and the loss mask.
+    - The SFT objective is identical to pretraining NLL; the only changes are data format and the loss mask. Normalize by the **total response-token count of the whole accumulation window**, not per microbatch — the mean-of-means shortcut is the classic gradient-accumulation bug, and response-only masking (which makes per-microbatch token counts vary wildly) is what makes it bite.
     - **Data quality dominates data quantity** (the LIMA finding): 1k high-quality examples often outperforms 100k noisy ones because the base model already contains the knowledge; SFT teaches access and format.
     - Landmark datasets — FLAN, Alpaca, ShareGPT, OpenHermes — each introduced a key insight: task diversity, cheap synthesis, multi-turn realism, and quality curation respectively.
     - SFT is Stage 1 of the three-stage recipe: SFT → Reward Modeling → RL alignment. A strong SFT model is a prerequisite for stable and effective RLHF/DPO.
     - **Catastrophic forgetting** is the main risk: mitigate with low learning rates (~1–5 × 10⁻⁵), short training (1–3 epochs), data mixing, and/or LoRA.
     - LoRA/QLoRA freeze base weights structurally, preventing forgetting and reducing GPU memory from ~120 GB (full 7B) to ~12–15 GB — enabling SFT on a single consumer GPU.
-    - Always evaluate SFT models on both a capability benchmark (MT-Bench) and a forgetting probe (MMLU delta from base) simultaneously.
-    - At inference time, apply exactly the chat template used during training — template mismatch is the most common cause of degraded SFT model outputs in production.
+    - Always evaluate SFT models on both a capability benchmark and a forgetting probe simultaneously: verifiable IFEval plus a length-controlled AlpacaEval 2.0 / Arena-Hard win rate for quality, MMLU delta from base for forgetting — all runnable from a pinned `lm-evaluation-harness`.
+    - Write the training loop once to understand it, then run production SFT through **TRL**'s `SFTTrainer` (`completion_only_loss` / `assistant_only_loss`, `packing`, `peft_config`) or a YAML wrapper over it (axolotl, LLaMA-Factory, Unsloth, open-instruct) — and at inference apply exactly the chat template used during training, since template mismatch is the most common cause of degraded SFT outputs in production.
 
 ## Exercises
 
@@ -753,7 +829,7 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
 
     **Reduction factor on base storage alone:** comparing the 26 GB bf16 base to the 6.5 GB quantized base gives $26 / 6.5 = 4\times$. Comparing the *full* training footprint (182 GB) to the quantized base (6.5 GB) is about $28\times$ — which is why QLoRA moves a job that needed a multi-GPU node onto one consumer card.
 
-**5.** *(Implement length-normalized loss.)* The chapter's `compute_sft_loss` calls `F.cross_entropy(..., reduction="mean")`, which averages over every response token in the batch. The "length bias trap" warning notes this lets long responses dominate the loss. Rewrite the function so that each *sequence* contributes equally regardless of its response length: compute a per-token loss, average it *within* each example over that example's own response tokens, then average those per-sequence losses across the batch. Explain in one line how the gradient weighting differs from the original.
+**5.** *(Implement length-normalized loss.)* The chapter's `compute_sft_loss` returns a *sum* over response tokens plus the token count, which the training loop turns into an exact per-**token** mean over the accumulation window. The "length bias trap" warning notes that this lets long responses dominate. Rewrite the function so that each *sequence* contributes equally regardless of its response length: compute a per-token loss, average it *within* each example over that example's own response tokens, then return the result in the same `(sum, count)` form the loop expects so it drops in unchanged. Explain in one line how the gradient weighting differs from the original.
 
 ??? note "Solution"
     Use `reduction="none"` to get a per-token loss, reshape to `(B, L-1)`, build a mask from the non-ignored labels, and reduce in two stages:
@@ -761,9 +837,12 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
     ```python
     def compute_sft_loss_length_normalized(
         logits: torch.Tensor, labels: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, int]:
         """Per-sequence-mean SFT loss: each example weighted equally,
-        regardless of how many response tokens it has."""
+        regardless of how many response tokens it has. Returns
+        (sum over sequences, number of sequences) so the chapter's
+        accumulation loop -- which divides the accumulated gradient by the
+        accumulated count -- yields an exact per-SEQUENCE mean."""
         shift_logits = logits[:, :-1, :].contiguous()   # (B, L-1, V)
         shift_labels = labels[:, 1:].contiguous()        # (B, L-1)
         B = shift_labels.size(0)
@@ -782,12 +861,12 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
         # for a (degenerate) all-masked row.
         seq_counts = mask.sum(dim=1).clamp(min=1.0)      # (B,)
         seq_loss = (per_token * mask).sum(dim=1) / seq_counts  # (B,)
-        return seq_loss.mean()                           # scalar
+        return seq_loss.sum(), B                         # (sum, count)
     ```
 
     Note that `ignore_index` already forces the loss at masked positions to 0 in the `reduction="none"` output, but multiplying by `mask` before the per-sequence sum is what makes the denominator (`seq_counts`) match the numerator exactly.
 
-    **Gradient weighting difference:** the original token-mean divides by the *total* response-token count in the batch, so a 400-token answer contributes ~8x the gradient of a 50-token answer; the per-sequence version gives every example weight $1/B$, so short and long responses pull the update equally — which is what removes the length bias.
+    **Gradient weighting difference:** the original token-mean divides by the *total* response-token count in the window, so a 400-token answer contributes ~8x the gradient of a 50-token answer; the per-sequence version gives every example weight $1/B$, so short and long responses pull the update equally — which is what removes the length bias. Note the loop needs no change: just accumulate the returned count (now a sequence count, not a token count) and divide the gradient by it at the accumulation boundary, exactly as before.
 
 **6.** *(Implement replay / data mixing.)* One mitigation for catastrophic forgetting is to blend a small fraction (the chapter suggests 5–10%) of general or pretraining-style data back into the SFT mix. Write a `Dataset` wrapper `ReplayMixedDataset(primary, replay, replay_frac)` that presents a shuffled blend in which the replay examples make up `replay_frac` of the total, drawing replay items with replacement if there are too few. It must be drop-in compatible with the chapter's `DataLoader`/`collate_fn`. What must be true about how the `replay` examples are formatted for the mix to be valid?
 

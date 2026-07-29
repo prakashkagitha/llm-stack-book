@@ -249,7 +249,16 @@ $$
 \frac{\partial \mathcal{L}}{\partial W_0} = \text{(not computed — frozen)}.
 $$
 
-Two things to notice. First, computing these requires the *activation* $x$ and the cheap intermediate $Ax$, but **not** a gradient w.r.t. the giant $W_0$, which is why the backward pass is cheap. Second, the input $x$ to the layer must still be saved for the backward of the *frozen* path's contribution to upstream layers — LoRA reduces *optimizer* and *gradient* memory dramatically but does not by itself reduce *activation* memory. For that you combine LoRA with gradient checkpointing (see [Memory-Efficient Training](../04-kernels-efficiency/10-memory-efficient-training.html)).
+Two things to notice. First, computing these requires the *activation* $x$ and the cheap intermediate $Ax$, but **not** a gradient w.r.t. the giant $W_0$, which is why the backward pass is cheap: we skip one $d\times k$ outer-product accumulation per layer. Second — and this is the part people get wrong — the gradient **w.r.t. the layer input** is still required in full,
+
+$$
+\frac{\partial \mathcal{L}}{\partial x} = W_0^\top g + s\, A^\top B^\top g,
+$$
+
+because whatever sits *below* this layer also has trainable adapters. So the backward pass still traverses the **entire depth** of the network and still touches $W_0$ (as $W_0^\top g$). LoRA does not turn the backward into a shallow pass; it only removes the weight-gradient and optimizer-state terms. Consequently **activation memory is essentially unchanged**: a LoRA-wrapped linear still has to stash its input $x$ (to form $\partial\mathcal{L}/\partial A$), and every attention and nonlinearity in between still saves its own tensors. A rough rule: LoRA cuts the *optimizer/gradient* line item by ~99% and the *activation* line item by ~0%. For activations you combine LoRA with gradient checkpointing (see [Memory-Efficient Training](../04-kernels-efficiency/10-memory-efficient-training.html)).
+
+!!! warning "Common pitfall"
+    Gradient checkpointing on a fully frozen base **silently produces no gradients**. A checkpointed block only rebuilds its graph on backward if at least one of its *inputs* requires grad; with every base weight frozen and the embedding frozen, the first block's input is a plain non-differentiable tensor, autograd prunes the segment, and your loss decreases by exactly nothing (or you get a `element 0 of tensors does not require grad` error). The fix is one line — `model.enable_input_require_grads()`, which registers a forward hook making the embedding output `requires_grad=True`. HuggingFace's `prepare_model_for_kbit_training()` does this for you, which is why QLoRA recipes always call it; if you roll your own PEFT loop with `gradient_checkpointing_enable()`, call it yourself. Also pass `gradient_checkpointing_kwargs={"use_reentrant": False}` — the non-reentrant implementation handles frozen inputs far more gracefully.
 
 ## QLoRA: fine-tuning a 65B model on one GPU
 
@@ -337,8 +346,53 @@ lora_config = LoraConfig(
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
 # -> trainable params: ~40M || all params: ~6.7B || trainable%: ~0.6
-# Train with paged optimizer:  optim="paged_adamw_8bit"  in your TrainingArguments.
 ```
+
+In a real run you hand that `LoraConfig` to **TRL**'s `SFTTrainer` rather than wrapping the model yourself — TRL calls `get_peft_model` internally and wires up the paged optimizer, and the adapter is what gets checkpointed:
+
+```python
+# The full training + save + reload path (transformers + peft + trl + bitsandbytes).
+from trl import SFTTrainer, SFTConfig
+
+trainer = SFTTrainer(
+    model=model,                      # the 4-bit base (TRL applies peft_config for you
+    train_dataset=train_ds,           #  if you pass an unwrapped model + peft_config)
+    peft_config=lora_config,
+    args=SFTConfig(
+        output_dir="out/qlora-7b",
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=8,
+        learning_rate=2e-4,           # ~10-20x a full-FT LR; see the hyperparameter guide
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.03,
+        bf16=True,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        optim="paged_adamw_8bit",     # <- the QLoRA paged optimizer
+    ),
+)
+trainer.train()
+trainer.model.save_pretrained("out/qlora-7b/adapter")   # writes ONLY the adapter
+```
+
+That `save_pretrained` produces a directory of **two files**: `adapter_config.json` (rank, alpha, dropout, `target_modules`, `use_rslora`, base-model name) and `adapter_model.safetensors` (just the `lora_A`/`lora_B` tensors) — tens of megabytes, not tens of gigabytes. Reloading is symmetric, and `merge_and_unload()` is PEFT's production-grade version of the `merge()` we wrote from scratch:
+
+```python
+from peft import PeftModel
+
+base = AutoModelForCausalLM.from_pretrained(          # bf16 base this time, not 4-bit
+    "meta-llama/Llama-2-7b-hf", dtype=torch.bfloat16, device_map="auto",
+)
+model = PeftModel.from_pretrained(base, "out/qlora-7b/adapter")  # attach adapter
+merged = model.merge_and_unload()      # fold BA into W0, return a plain transformer
+merged.save_pretrained("out/llama2-7b-tuned")          # a normal, full-size checkpoint
+
+# Or keep it unmerged and hot-swap between several adapters on one base:
+model.load_adapter("out/other-task/adapter", adapter_name="other")
+model.set_adapter("other")             # switch which adapter is active
+```
+
+Beyond raw PEFT, the LoRA/QLoRA training stacks you will actually meet are **TRL** (the reference `SFTTrainer`/`DPOTrainer` path shown above), **Axolotl** (YAML-configured fine-tuning that wraps TRL/PEFT), **Unsloth** (hand-written Triton kernels for the LoRA forward/backward, roughly 2× faster and lower-memory on a single GPU), and **torchtune** (PyTorch-native LoRA/QLoRA recipes with FSDP for multi-GPU). All of them read and write the same `adapter_config.json` + `adapter_model.safetensors` format, so adapters are portable across the ecosystem.
 
 The key mental model for QLoRA: **the frozen base is stored in NF4, but every matmul dequantizes the relevant weights to bf16 on the fly** (the `compute_dtype`). The 4-bit form is a *storage* format, not a *compute* format. The LoRA adapter is always full-precision bf16 and is where all the learning happens. Quantization error in the frozen base is "absorbed" by the adapter, which learns on top of the slightly-noisy base — this is a large part of why QLoRA matches 16-bit LoRA quality despite the aggressive compression.
 
@@ -417,6 +471,8 @@ class DoRALinear(nn.Module):
 
 At init, `delta = 0` (because `lora_B = 0`), so `V = W0`, `V_norm = ||W0||_c`, `m = ||W0||_c`, and therefore `W_eff = ||W0||_c * (W0 / ||W0||_c) = W0` — the adapter is again a perfect no-op at step 0, as it must be.
 
+One implementation detail matters for cost: as written, the column norm `V_norm` is part of the autograd graph, which makes DoRA's backward noticeably heavier than LoRA's. The DoRA paper's own trick is to **detach** the denominator — treat $\lVert V \rVert_c$ as a constant w.r.t. the gradient (`V_norm = V.norm(dim=0, keepdim=True).detach()`) — which the authors report leaves accuracy essentially unchanged while cutting the extra training memory substantially. PEFT implements this behind `use_dora=True` in `LoraConfig`, so in practice DoRA is a one-word change to a LoRA config, not a new training script. Note also that the DoRA forward reconstructs the *full* `W_eff` matrix, so DoRA over a 4-bit base is more awkward than QLoRA — check your library's support before combining them.
+
 ### VeRA — sharing frozen random matrices across layers
 
 **VeRA (Vector-based Random Matrix Adaptation;** Kopiczko et al., 2024) pushes parameter-efficiency to an extreme. Observe that in LoRA the matrices $A$ and $B$ are large; what if we *froze* a single pair of **random** $A$ and $B$ — shared across *all* layers — and only trained two tiny *scaling vectors* $d$ and $b$ that re-weight the rows/columns?
@@ -450,7 +506,26 @@ Three systems ideas make this fast:
 2. **A unified adapter memory pool.** Hold many adapters in a paged GPU buffer; the *active* ones stay resident, *cold* ones spill to CPU and page back on demand — the same paging idea as QLoRA's optimizer, applied to adapter weights at serve time.
 3. **Rank-heterogeneous batching.** Different adapters can have different ranks. A good multi-LoRA kernel pads/segments by rank so a batch can mix an $r=8$ and an $r=64$ adapter without serializing.
 
-In practice you enable this with a flag — e.g. vLLM's `enable_lora=True` plus a per-request `lora_request` — and the engine handles the gather/scatter. The result: thousands of customers, *near* base-model throughput, sub-second adapter hot-swap, and a memory bill of (one base) + (a small adapter cache). This is the economic backbone of "fine-tuned model" SaaS offerings.
+In practice you enable this with a flag and the engine handles the gather/scatter. In **vLLM** (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html), and [Multi-Tenant LoRA & Adapter Serving at Scale](../07-inference-serving/14-multi-tenant-lora-serving.html) for the full serving treatment) the offline path is:
+
+```python
+from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
+
+llm = LLM(model="meta-llama/Llama-2-7b-hf",
+          enable_lora=True,        # turn on the multi-adapter kernels
+          max_loras=8,             # how many distinct adapters may be live in one batch
+          max_lora_rank=32)        # kernels are compiled for ranks up to this
+
+sql = LoRARequest("sql-adapter", 1, "out/sql/adapter")      # (name, unique int id, path)
+support = LoRARequest("support-adapter", 2, "out/support/adapter")
+
+# Requests carrying *different* adapters coexist in one continuously-batched step.
+llm.generate(["SELECT ..."], SamplingParams(max_tokens=64), lora_request=sql)
+llm.generate(["Hi, my order..."], SamplingParams(max_tokens=64), lora_request=support)
+```
+
+and the server path is `vllm serve <base> --enable-lora --lora-modules sql=out/sql/adapter support=out/support/adapter`, after which clients simply pass `"model": "sql"` in the OpenAI-compatible request body. **SGLang** exposes an equivalent `--enable-lora` / `--lora-paths` interface; **TensorRT-LLM** supports multi-LoRA too but wants the ranks and adapter count fixed at engine-build time. Note the constraint the flags expose: `max_lora_rank` and `max_loras` are *compile-time-ish* capacity limits, so a fleet of adapters is much easier to serve if you standardize on one rank. The result: thousands of customers, *near* base-model throughput, sub-second adapter hot-swap, and a memory bill of (one base) + (a small adapter cache). This is the economic backbone of "fine-tuned model" SaaS offerings.
 
 !!! interview "Interview Corner"
     **Q:** A candidate says "LoRA reduces memory because we only store a small adapter." An interviewer pushes: *during training*, what specifically gets smaller, what does **not**, and why can QLoRA fine-tune a 65B model on one 48 GB GPU when plain LoRA cannot?
@@ -458,7 +533,7 @@ In practice you enable this with a flag — e.g. vLLM's `enable_lora=True` plus 
     **A:** LoRA's main *training* saving is on **optimizer state and gradients**, not on the base weights. Because the base is frozen, you compute no gradient for it and store no Adam moments or fp32 master copy for it — those 12–14 bytes/param vanish for the 99%+ of frozen parameters; you pay them only on the <1% trainable adapter. What does **not** shrink under plain LoRA: (1) the frozen base weights themselves still sit in memory (e.g. 13 GB in bf16 for 7B, ~130 GB for 65B), and (2) activation memory is essentially unchanged, since you still forward through the full network — that is why you combine LoRA with gradient checkpointing. QLoRA's extra move is to quantize the **frozen base to 4-bit (NF4)**, cutting the base term ~4× (130 GB → ~35 GB for 65B), with double-quantization shaving the scale overhead and a paged optimizer surviving transient activation spikes. So: plain LoRA can't fit 65B because the *base* alone overflows 48 GB; QLoRA fits because the base is now 4-bit while the adapter and its optimizer states stay tiny in bf16.
 
 !!! note "Aside: LoRA's regularization side-effect"
-    Constraining the update to rank $r$ is also a *regularizer*. On small fine-tuning datasets, full fine-tuning can over-fit and degrade the base model's general capabilities ("catastrophic forgetting"). LoRA's limited capacity often makes it *more* robust to forgetting and to small-data over-fitting — a quality benefit, not just an efficiency one. The flip side: on tasks that genuinely require large weight changes (e.g. learning a new domain from scratch, or extending to a new language), low rank can *underfit*, and full fine-tuning or a higher rank wins. Match the rank to how big the required update actually is.
+    Constraining the update to rank $r$ is also a *regularizer*. On small fine-tuning datasets, full fine-tuning can over-fit and degrade the base model's general capabilities ("catastrophic forgetting"). LoRA's limited capacity often makes it *more* robust to forgetting and to small-data over-fitting — a quality benefit, not just an efficiency one. The flip side: on tasks that genuinely require large weight changes (e.g. learning a new domain from scratch, or extending to a new language), low rank can *underfit*, and full fine-tuning or a higher rank wins. The useful framing from the *LoRA Without Regret* sweeps is one of **capacity versus dataset size**: LoRA tracks full fine-tuning as long as the information in your fine-tuning set fits inside the adapter's parameter budget, and falls behind once the dataset is large enough to demand more (continued-pretraining-scale corpora, not instruction sets). The same study reports LoRA is less tolerant of very large batch sizes than full fine-tuning, so if you are pushing batch size for throughput, watch the loss curve rather than assuming the full-FT recipe transfers. Match the rank to how big the required update actually is.
 
 ## Choosing hyperparameters in practice
 
@@ -473,6 +548,9 @@ A compact decision guide, distilled from the QLoRA ablations and broad community
 - **Upgrade path:** if LoRA underfits at your best rank, try **DoRA** (better quality per rank) before jumping to full fine-tuning.
 
 This connects directly to the data-formatting and templating choices in [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) — PEFT changes *which* parameters move, not *what* you train on, so your SFT data pipeline is identical.
+
+!!! tip "Practitioner tip: when *not* to use LoRA"
+    LoRA is a memory-and-multiplexing tool, and at small scale it buys you neither. If the model plus Adam states already fits your GPU, full fine-tuning is simpler, strictly more expressive, and often converges in fewer steps. This is exactly the call we make in the capstone: Stack-100M is fine-tuned **full-parameter**, because a 100M model in bf16 with Adam is a few gigabytes and we serve exactly one variant — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) for that reasoning worked through. Reach for LoRA when (a) the base is 7B+ and the optimizer state is what breaks you, (b) you need many task-specialized variants over one base, or (c) you want low-rank's regularization against forgetting on a small dataset. The *techniques* in this chapter still matter at 100M for one reason: they are how you would cheaply produce dozens of task adapters for the narrow agent in [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html) without storing dozens of checkpoints.
 
 !!! key "Key Takeaways"
     - **LoRA freezes the base and learns a low-rank update** $\Delta W = \frac{\alpha}{r} BA$ in parallel; only $A$ (random init) and $B$ (zero init) train, so the adapter is a no-op at step 0 and the base never moves.
@@ -505,6 +583,10 @@ This connects directly to the data-formatting and templating choices in [Chat Te
 
     - [huggingface/peft](https://github.com/huggingface/peft) — the reference implementation of LoRA, QLoRA, DoRA, rsLoRA, VeRA, and a dozen other PEFT methods; integrates directly with Transformers and TRL.
     - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — NF4/INT8 quantization primitives and 8-bit paged optimizers that power QLoRA in practice.
+    - [huggingface/trl](https://github.com/huggingface/trl) — `SFTTrainer`/`DPOTrainer` take a `peft_config` directly; the standard way to actually run a LoRA/QLoRA fine-tune.
+    - [unslothai/unsloth](https://github.com/unslothai/unsloth) — hand-written Triton kernels for the LoRA/QLoRA forward and backward; substantially faster and lower-memory on a single GPU, same adapter format.
+    - [axolotl-ai-cloud/axolotl](https://github.com/axolotl-ai-cloud/axolotl) — YAML-configured fine-tuning over TRL/PEFT; [pytorch/torchtune](https://github.com/pytorch/torchtune) — PyTorch-native LoRA/QLoRA recipes with FSDP for multi-GPU.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — production multi-LoRA serving (`--enable-lora`, `LoRARequest`) built on S-LoRA/Punica-style segmented GEMM kernels.
 
     **Go deeper**
 

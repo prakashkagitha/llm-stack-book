@@ -137,6 +137,68 @@ def extract_final_answer(trace: str) -> str:
     return trace.strip().splitlines()[-1]
 ```
 
+### Sampling N Traces in Practice: vLLM and math-verify
+
+The loop above issues $N$ sequential requests, which is the wrong shape for real work. Every serving engine exposes an $n$-samples-per-prompt parameter that prefills the prompt **once** and then decodes $N$ continuations that share that KV cache, so best-of-64 costs far less than 64 independent requests (see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)):
+
+```python
+from vllm import LLM, SamplingParams
+
+llm = LLM(model="Qwen/Qwen2.5-Math-7B-Instruct", max_model_len=4096)
+params = SamplingParams(n=64, temperature=0.8, top_p=0.95, max_tokens=1024)
+
+outputs = llm.generate([f"{question}\nThink step by step."], params)
+traces = [completion.text for completion in outputs[0].outputs]  # 64 traces
+```
+
+SGLang exposes the same knob (`n=` in its sampling parameters), and the OpenAI-compatible servers both engines ship accept `n` on `/v1/completions`.
+
+The second practical piece is grading. The regex in `extract_final_answer` is a teaching device: it will call `1/2` and `0.5` different answers, and choke on `\frac{1}{2}`. Use a symbolic checker instead — Hugging Face's `math-verify` (extracted from the open-r1 project) parses LaTeX/expressions and compares them for mathematical equivalence:
+
+```python
+from math_verify import parse, verify
+
+gold = parse("\\boxed{\\frac{1}{2}}")
+pred = parse(trace)              # extracts the boxed/final expression from the trace
+is_correct = verify(gold, pred)  # True for 0.5, 1/2, \frac{1}{2}, \dfrac12, ...
+```
+
+The same function is what you use as the *reward* in RLVR training ([RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)) — verification at test time and verification in the training loop are literally the same code path.
+
+### Coverage vs. Selection: pass@k and maj@k
+
+Repeated sampling produces two different quantities, and conflating them is the most common analysis error in test-time-compute work:
+
+- **Coverage** — `pass@k`: does *at least one* of the $k$ samples contain the correct answer? This is the ceiling any selection rule could ever reach.
+- **Selection** — `maj@k` (self-consistency), best-of-N with a reward model: can we actually *pick* the right sample without an oracle?
+
+`pass@k` must be estimated without bias. Drawing $n \ge k$ samples and observing $c$ correct ones, the unbiased estimator (Chen et al., *Evaluating Large Language Models Trained on Code* — the Codex paper, 2021) is
+
+$$
+\text{pass@}k = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}}
+$$
+
+which is far lower-variance than literally sampling $k$ traces once and checking:
+
+```python
+import math
+
+def pass_at_k(n: int, c: int, k: int) -> float:
+    """Unbiased pass@k from n samples of which c are correct (Chen et al., 2021).
+
+    1 - C(n-c, k) / C(n, k), written as a product to avoid huge binomials.
+    """
+    if n - c < k:           # fewer than k wrong samples => every k-subset has a correct one
+        return 1.0
+    return 1.0 - math.prod((n - c - i) / (n - i) for i in range(k))
+
+# 64 samples of which 5 are correct: pass@1 is 5/64 = 7.8%, but pass@16 is ~78%.
+assert abs(pass_at_k(64, 5, 1) - 5 / 64) < 1e-9
+assert round(pass_at_k(64, 5, 16), 3) == 0.775
+```
+
+Brown et al. (*Large Language Monkeys: Scaling Inference Compute with Repeated Sampling*, 2024) show that coverage keeps climbing smoothly — roughly log-linearly in $k$ — across several orders of magnitude of $k$, while `maj@k` and reward-model selection plateau far earlier. **The gap between those two curves is exactly what a verifier buys you.** Where a *sound* verifier exists (unit tests for code, a proof checker, an exact-answer grader for competition math), test-time compute converts nearly all coverage into accuracy; where it does not, selection quality — not the model's ability to ever find the answer — is the binding constraint. Report both numbers in any test-time-compute experiment: `pass@k` tells you whether to invest in a better verifier, `maj@k` tells you what you can ship today.
+
 !!! example "Worked example: self-consistency improvement"
     Suppose we have a model that answers a given math problem correctly 60 % of the time on a single sample. What accuracy do we get with majority vote over N=16 samples?
 
@@ -386,6 +448,35 @@ class ProcessRewardModel(nn.Module):
         return scores
 ```
 
+### Where Step Labels Come From
+
+The module above is useless without training data, and "who labels every step?" is the black box that stops most people from building a PRM. There are two answers.
+
+**Human annotation.** OpenAI released **PRM800K**, roughly 800K step-level labels (positive / neutral / negative) over solutions to MATH problems, collected for *Let's Verify Step by Step*. It is open and is still the standard supervised starting point — but it exists only for one domain, and you cannot afford to recreate it.
+
+**Automatic annotation by Monte-Carlo rollout.** Math-Shepherd (Wang et al., 2024) removes the human entirely: the "correctness" of a prefix is *defined* as the empirical probability that continuing from that prefix reaches the gold answer. Roll out $M$ completions from each step boundary, grade them with your verifier, and use the success fraction as the label.
+
+```python
+def mc_step_labels(rollout_fn, is_correct, problem, steps, gold, n_rollouts=8):
+    """Math-Shepherd-style automatic PRM labels.
+
+    rollout_fn(prefix, n) -> list[str]: n independent continuations (batch this on vLLM).
+    Returns one label per step: the fraction of completions from that prefix
+    that reach the gold answer. Train the PRM head with BCE against these.
+    """
+    labels, prefix = [], f"Problem: {problem}\n"
+    for step in steps:
+        prefix += f"Step: {step}\n"
+        completions = rollout_fn(prefix, n_rollouts)
+        n_ok = sum(is_correct(c, gold) for c in completions)
+        labels.append(n_ok / n_rollouts)   # soft label; hard variant = float(n_ok > 0)
+    return labels
+```
+
+Two consequences worth internalising. First, the cost: labelling one solution costs `n_rollouts × n_steps` generations, so a modest 20K-solution PRM dataset is millions of completions — expensive, but embarrassingly parallel and therefore a pure throughput problem for a vLLM fleet. Second, the semantics: an MC label is a *value function* estimate under the current policy, not ground truth about logical validity. A step that is logically wrong but that the policy usually recovers from gets a high label. This is why MC-labelled PRMs drift as the policy improves and generally need re-labelling after major policy updates.
+
+If you do not want to train one, several PRMs ship as open weights — for example `peiyi9979/math-shepherd-mistral-7b-prm` (the original MC-labelled model), Qwen's `Qwen2.5-Math-PRM-7B`, and Skywork's `Skywork-o1-Open-PRM` series. All are plain `AutoModelForCausalLM`/`AutoModel` checkpoints with a scoring head or a designated step-separator token whose logit you read; check each model card for the exact step delimiter, because feeding the wrong separator silently produces meaningless scores.
+
 ### PRM-Guided Best-of-N
 
 Given a PRM, best-of-N search becomes:
@@ -463,7 +554,7 @@ def mcts_search(
             path.append(node)
 
         # --- EXPAND ---
-        if node.N > 0 or node == root:  # expand visited nodes or root
+        if node.N > 0 or node is root:  # expand visited nodes or root (identity, not ==)
             candidates = lm_policy(node.state)  # [(thought, log_prob), ...]
             for thought, log_prob in candidates[:expansion_width]:
                 child = MCTSNode(
@@ -490,6 +581,11 @@ def mcts_search(
 
 MCTS is notably more sample-efficient than naive best-of-N: it focuses computation on promising subtrees rather than wasting samples on dead ends. The tradeoff is latency — MCTS is sequential whereas best-of-N is trivially parallelisable.
 
+!!! warning "Common pitfall: assuming PRM + MCTS is the frontier recipe"
+    The 2023–2024 literature made structured search look like the obvious path to reasoning models, and the DeepSeek-R1 report (2025) devotes a section to *unsuccessful attempts* explaining why the team abandoned both PRMs and MCTS at scale. Their stated reasons: it is hard to define what a "step" even is in free-form reasoning; step-level correctness is expensive to label and unreliable when done automatically; a learned PRM is a proxy that long RL runs will reward-hack, forcing extra retraining machinery; and unlike Go, token-level generation has an effectively unbounded branching factor, so a value model good enough to guide MCTS over it is itself very hard to train. What worked instead was scaling *outcome*-only RL on verifiable answers and letting search-like behaviour (backtracking, re-derivation, self-checking) emerge **inside** a single linear trace.
+
+    The practical reading is not "tree search is dead" — MCTS and PRM guidance remain strong for *inference-time* boosts on domains with clean step structure (formal proofs, program synthesis with intermediate tests) and for generating training data. It is that explicit search is no longer the default way to *train* a reasoning model.
+
 ## Test-Time Scaling Laws
 
 The observation that "more test-time compute improves accuracy" raises the natural question: *at what rate*? Snell et al. (*Scaling LLM Test-Time Compute Optimally*, 2024) and related work characterise this empirically.
@@ -503,6 +599,8 @@ The key findings:
 3. **PRM unlocks steeper scaling.** Best-of-N with an ORM saturates quickly (the verifier cannot discriminate among many similar wrong answers). PRM-guided search exhibits steeper and longer scaling before saturation.
 
 4. **Difficulty modulates the return.** Easy problems saturate quickly; hard problems continue to benefit from more compute. This motivates *adaptive* test-time compute: route easy queries to cheap paths, hard ones to expensive tree search.
+
+5. **Two axes: parallel vs. sequential.** You can spend a token budget *in parallel* (N independent samples, selected by a verifier) or *sequentially* (one trace that revises itself — the model reads its own draft and corrects it). Snell et al. find the better choice depends on difficulty: easy problems, where the model's first guess is nearly right, favour sequential revision; hard problems, where the model needs a different idea rather than a fix, favour parallel sampling. Sequential scaling is what long-thinking models internalise; parallel scaling is what best-of-N does externally. They compose — sample N long-thinking traces and vote.
 
 {{fig:test-time-scaling-curves}}
 
@@ -564,7 +662,14 @@ The answer is **72**.
 
 ### Budget Forcing
 
-**Budget forcing** (introduced in the Snell et al. and related work) is a test-time control mechanism: you instruct the model to use *at most* $B$ thinking tokens, or you truncate the thinking trace at $B$ tokens and force a conclusion. It allows trading off accuracy for latency in a *continuous* way:
+**Budget forcing** was introduced by Muennighoff et al. (*s1: Simple Test-Time Scaling*, 2025) and is startlingly crude for how well it works. It is decoding-time control over the length of the thinking block, in two directions:
+
+- **To cut thinking short**, force-emit the end-of-thinking delimiter (e.g. `</think>`) plus a lead-in like `Final Answer:` once the trace reaches $B$ tokens. The model then has to commit with whatever it has.
+- **To extend thinking**, do the opposite: *suppress* the end-of-thinking delimiter when the model tries to emit it and append the string `Wait` (or `Hmm`, `But`) to the trace. The model reliably picks the thread back up, often catching its own error — this is the whole mechanism, no training required.
+
+Because the "Wait" move can be repeated, thinking length becomes an actual dial rather than something you merely ask the model to respect, and accuracy on hard math climbs as you turn it up — though only so far: past some point the extended trace starts looping and the curve flattens, so budget forcing extrapolates capability, it does not create it. The s1 recipe pairs this dial with SFT on just ~1K carefully selected reasoning traces (s1K), which is the cheapest credible route to a long-thinking model of your own.
+
+Two implementation notes. Genuine budget forcing lives in the *decoding loop* (a logit processor that bans the stop token, plus injected text), so it needs a local engine — in vLLM you implement it with a `logits_processor` or by generating in segments with `SamplingParams(stop=...)` and re-issuing the continuation. The prompt-level variant below is the portable approximation that works through any hosted API, and modern APIs also expose an explicit thinking-token budget parameter (Anthropic's `budget_tokens`, Gemini's thinking budget, OpenAI's `reasoning.effort` levels) — prefer those when available:
 
 ```python
 def forced_budget_inference(
@@ -646,6 +751,9 @@ Critically, training-time and test-time scaling **compose**: a model trained wit
 
 Gains are highly task-dependent and model-dependent; treat them as order-of-magnitude intuitions, not precise figures.
 
+!!! tip "Practitioner tip: what actually works at ~100M parameters"
+    Test-time compute is not free capability — it amplifies whatever signal the base model already has, and the worked example above shows majority vote *hurting* when single-sample accuracy is below chance-of-agreement. At the scale of this book's capstone model ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)), the ordering of what pays off is: (1) self-consistency on a **narrow** task the model is already above ~50 % on — cheap, needs no extra model, and is the one technique that reliably helps; (2) a verifier where one exists, since a unit-test runner or exact-match grader costs nothing to build and converts coverage into accuracy; (3) short trained-in reasoning traces via RLVR, which do help but produce nothing resembling an o1-style 20K-token deliberation. Do **not** budget for a PRM or MCTS at 100M — you would be training a value model larger and harder to fit than the policy itself. Measure the payoff honestly with `pass@k` alongside `maj@k` as described above, using the harness in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
 !!! warning "Common pitfall: ORM reward hacking at scale"
     When you run best-of-N with an ORM for large N (e.g., N=256), the model samples increasingly improbable but "ORM-fooling" outputs. A solution that pattern-matches to correct-looking formatting can score highly even if the reasoning is circular. Switch to PRM or step-level verification once N > ~32. See [Reward Hacking, Over-Optimization & Alignment Failures](../05-posttraining-alignment/13-reward-hacking-failures.html) for the general problem.
 
@@ -670,12 +778,12 @@ Key practical points:
 !!! key "Key Takeaways"
     - Chain-of-thought prompting improves accuracy by externalising intermediate state into the context window, converting a fixed-depth circuit into a variable-depth sequential computation.
     - Self-consistency (majority vote over N samples) is a simple, highly parallelisable way to trade inference cost for accuracy; it amplifies strong signals but cannot rescue a fundamentally weak model.
+    - Always separate **coverage** (`pass@k`, measured with the unbiased $1 - \binom{n-c}{k}/\binom{n}{k}$ estimator) from **selection** (`maj@k`, best-of-N): coverage keeps rising with more samples while selection plateaus, and the gap between them is precisely the value of a sound verifier.
     - Process Reward Models score each reasoning step independently, providing a richer training and search signal than Outcome Reward Models, which only evaluate final answers.
     - Tree-of-Thoughts and MCTS extend the search to the reasoning *process* itself, pruning dead branches early and focusing compute on promising subtrees.
-    - Test-time scaling obeys an approximate power law: accuracy improves as $O(N^{-\alpha})$ diminishes, with PRM-guided search exhibiting longer and steeper scaling before saturation.
-    - o1/R1-style long-thinking models are trained (not just prompted) to produce extended reasoning traces via RL with verifiable rewards; emergent self-reflection and backtracking arise from the gradient signal.
-    - Budget forcing is a continuous knob for trading accuracy against latency: short budgets give fast answers, long budgets yield higher accuracy on hard problems.
-    - Training-time and test-time scaling *compose*: a stronger pretrained model benefits more from test-time search, so frontier models exploit both axes simultaneously.
+    - Test-time scaling obeys an approximate power law — residual error shrinking roughly as $\epsilon N^{-\alpha}$, with PRM-guided search scaling longer and steeper before saturation — and it *composes* with training-time scale, so frontier models exploit both axes at once.
+    - o1/R1-style long-thinking models are trained (not just prompted) to produce extended reasoning traces via RL with verifiable rewards; emergent self-reflection and backtracking arise from the gradient signal, and DeepSeek-R1 reports that explicit PRM/MCTS machinery was *not* what got them there.
+    - Budget forcing (s1) is a continuous knob for trading accuracy against latency, implemented by force-emitting the end-of-thinking token to stop early or suppressing it and appending "Wait" to think longer.
     - Production deployment of reasoning models requires careful KV-cache memory management and disaggregated infrastructure due to the large token footprints of thinking traces.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -694,12 +802,17 @@ Key practical points:
     - [Snell et al., *Scaling LLM Test-Time Compute Optimally* (2024)](https://arxiv.org/abs/2408.03314) — power-law characterisation of test-time scaling; shows compute-optimal frontier between model size and number of samples.
     - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — open-weights reasoning model trained with pure RL; demonstrates emergent self-reflection and backtracking. The [R1-0528 update (May 2025)](https://huggingface.co/deepseek-ai/DeepSeek-R1-0528) deepens reasoning further (e.g., AIME 2025 87.5% vs. 70%), spending ~23k reasoning tokens per question.
     - [OpenAI, *Introducing OpenAI o3 and o4-mini* (April 2025)](https://openai.com/index/introducing-o3-and-o4-mini/) — the frontier of the o-series reasoning line, later folded into the unified [GPT-5](https://openai.com/index/introducing-gpt-5/) (August 2025), which routes between fast and "thinking" modes automatically.
+    - [Brown et al., *Large Language Monkeys: Scaling Inference Compute with Repeated Sampling* (2024)](https://arxiv.org/abs/2407.21787) — the coverage-vs-selection study: `pass@k` keeps rising roughly log-linearly in $k$ while verifier-free selection plateaus.
+    - [Muennighoff et al., *s1: Simple Test-Time Scaling* (2025)](https://arxiv.org/abs/2501.19393) — budget forcing (suppress the end-of-thinking token and append "Wait") plus SFT on ~1K curated traces; the cheapest credible long-thinking recipe.
+    - [Wang et al., *Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations* (2024)](https://arxiv.org/abs/2312.08935) — Monte-Carlo rollout labelling that makes PRM training possible without a PRM800K-style human effort.
     - [Ji et al., *A Survey of Test-Time Compute: From Intuitive Inference to Deliberate Reasoning* (2025)](https://arxiv.org/abs/2501.02497) — comprehensive taxonomy covering self-correction, tree search, and process supervision across System-1 and System-2 paradigms.
 
     **Open-source & tools**
 
     - [openreasoner/openr](https://github.com/openreasoner/openr) — end-to-end framework for training reasoning models with PRM supervision and MCTS/beam search at inference.
     - [huggingface/open-r1](https://github.com/huggingface/open-r1) — Hugging Face's fully open reproduction of DeepSeek-R1, including GRPO training code and distilled reasoning datasets.
+    - [huggingface/Math-Verify](https://github.com/huggingface/Math-Verify) — the symbolic answer-equivalence checker used for grading math traces (and as the RLVR reward); `pip install math-verify`.
+    - [openai/prm800k](https://github.com/openai/prm800k) — the human step-level annotations behind *Let's Verify Step by Step*; open PRM checkpoints such as `Qwen/Qwen2.5-Math-PRM-7B` and `peiyi9979/math-shepherd-mistral-7b-prm` let you skip training one.
 
     **Go deeper**
 
@@ -714,6 +827,10 @@ Key practical points:
 - Besta et al., *Graph of Thoughts: Solving Elaborate Problems with Large Language Models*, AAAI 2024.
 - Lightman et al., *Let's Verify Step by Step*, ICLR 2024.
 - Snell et al., *Scaling LLM Test-Time Compute Optimally*, arXiv 2024.
+- Chen et al., *Evaluating Large Language Models Trained on Code* (the Codex paper), arXiv 2021 — origin of the unbiased `pass@k` estimator.
+- Brown et al., *Large Language Monkeys: Scaling Inference Compute with Repeated Sampling*, arXiv 2024.
+- Wang et al., *Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations*, ACL 2024.
+- Muennighoff et al., *s1: Simple Test-Time Scaling*, arXiv 2025.
 - DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*, arXiv 2025.
 - Schulman et al., *Proximal Policy Optimization Algorithms*, arXiv 2017 (the RL backbone for many reasoning training pipelines).
 - Silver et al., *Mastering the Game of Go without Human Knowledge* (AlphaGo Zero), Nature 2017 (MCTS/PUCT foundations).

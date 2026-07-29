@@ -2,9 +2,9 @@
 
 Retrieval-Augmented Generation (RAG) feels deceptively simple on paper: split your documents into pieces, embed them, and fetch the most similar pieces at query time. In practice, that description hides half a dozen hard sub-problems. Split too coarsely and you retrieve paragraphs that bury the relevant sentence in noise. Split too finely and no single chunk carries enough context to be useful. Use only dense retrieval and you miss documents where an exact product code or a rare proper noun is the critical signal. Use only keyword search and you miss paraphrases. Retrieve the top-k blindly and the final context window fills with redundant or marginally relevant chunks.
 
-This chapter is about the practical levers that close the gap between a toy RAG prototype and a production-grade system. We cover the full retrieval pipeline: chunking strategies, hybrid search combining BM25 and dense retrieval, reciprocal rank fusion, cross-encoder rerankers, query rewriting and HyDE, and metadata filtering. Each section explains the mechanism, shows real code, and calls out the failure modes.
+This chapter is about the practical levers that close the gap between a toy RAG prototype and a production-grade system. We cover the full retrieval pipeline: chunking strategies, hybrid search combining BM25 with dense and learned-sparse retrieval, reciprocal rank fusion, cross-encoder rerankers, query rewriting and HyDE, and metadata filtering. Each section explains the mechanism from scratch, shows real code, names the open-source library you would actually ship, and calls out the failure modes.
 
-For the broader RAG system architecture see [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html). The embedding models that power the dense retrieval leg are covered in [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html), and the ANN indexes that scale to millions of vectors are described in [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html). Advanced topics like GraphRAG and long-context alternatives appear in [Advanced RAG: GraphRAG, Agentic RAG & Long-Context vs RAG](../09-rag-retrieval/05-advanced-rag.html).
+For the broader RAG system architecture see [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html). The embedding models that power the dense retrieval leg are covered in [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html), and the ANN indexes that scale to millions of vectors are described in [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html). Advanced topics like GraphRAG, contextual retrieval and long-context alternatives appear in [Advanced RAG: GraphRAG, Agentic RAG & Long-Context vs RAG](../09-rag-retrieval/05-advanced-rag.html), and the multi-vector "late interaction" family (ColBERT, ColPali) — the architectural middle ground between the bi-encoders and cross-encoders discussed here — in [Multimodal & Visual-Document Retrieval: ColPali & Late Interaction](../09-rag-retrieval/06-multimodal-visual-retrieval.html). The capstone applies this chapter's chunker, BM25 leg and reranker to a real corpus in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html).
 
 ---
 
@@ -196,7 +196,7 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 def split_markdown(
     text: str,
     max_tokens: int = 512,
-    words_per_token: float = 0.75,  # rough approximation
+    words_per_token: float = 0.75,  # English rule of thumb: ~1.3 tokens per word
 ) -> list[dict]:
     """
     Split a Markdown document respecting heading hierarchy.
@@ -211,7 +211,10 @@ def split_markdown(
       2. If a section exceeds max_tokens, sub-split on paragraph breaks.
       3. Preserve heading as metadata for downstream metadata filtering.
     """
-    max_words = int(max_tokens / words_per_token)
+    # English text runs ~1.3 BPE tokens per whitespace word, so a 512-token
+    # budget is ~384 words. (Multiply, do not divide: dividing would let each
+    # chunk grow to ~680 words ≈ 900 tokens and silently overflow the encoder.)
+    max_words = int(max_tokens * words_per_token)
     chunks: list[dict] = []
 
     # Find all heading positions
@@ -253,6 +256,47 @@ def split_markdown(
     return chunks
 ```
 
+**The libraries you would actually ship.** Nobody writes the three chunkers above from scratch twice — you write them once to understand the trade-off, then use a maintained splitter. The two dominant ones are **LangChain** (`langchain_text_splitters`) and **LlamaIndex** (`llama_index.core.node_parser`), and both express exactly the strategies above:
+
+```python
+# real_chunkers.py — the production equivalents of §2.1–2.3
+# pip install langchain-text-splitters llama-index-core
+
+# --- LangChain: recursive character splitting (the workhorse default) ---
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+    MarkdownHeaderTextSplitter,
+)
+
+# Tries separators in order — paragraphs, then lines, then sentences, then
+# words — so it only cuts mid-sentence when it has no other option.
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=512, chunk_overlap=64,
+    separators=["\n\n", "\n", ". ", " ", ""],
+)
+document = "\n\n".join(f"Paragraph {i}. " + "word " * 100 for i in range(20))
+chunks = splitter.split_text(document)
+
+# To count in *tokens* rather than characters, bind a real tokenizer:
+#   RecursiveCharacterTextSplitter.from_huggingface_tokenizer(tok, chunk_size=512)
+#   RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=512)
+
+# --- LangChain: structure-aware (the §2.3 equivalent) ---
+# Splits on headings and attaches them as chunk metadata for later filtering.
+md_splitter = MarkdownHeaderTextSplitter(
+    headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3")]
+)
+
+# --- LlamaIndex: sentence-window and semantic (the §2.2 equivalent) ---
+from llama_index.core.node_parser import SentenceSplitter, SemanticSplitterNodeParser
+sentence_parser = SentenceSplitter(chunk_size=512, chunk_overlap=64)
+# SemanticSplitterNodeParser(embed_model=..., breakpoint_percentile_threshold=95)
+# implements §2.2's embedding-similarity boundary detection, with the threshold
+# expressed as a percentile of observed similarity drops rather than an absolute.
+```
+
+Upstream of the splitter sits **document parsing**, which is where most real corpora actually break: PDFs, scanned pages, tables and slide decks have to become text (with structure preserved) before any of this applies. **Docling** (IBM, 2024) and **unstructured** are the two open defaults — both emit Markdown-with-headings, which feeds `MarkdownHeaderTextSplitter` directly. When the layout itself carries the meaning (financial tables, forms), consider skipping OCR entirely and retrieving over page images: see [Multimodal & Visual-Document Retrieval](../09-rag-retrieval/06-multimodal-visual-retrieval.html).
+
 ### 2.4 Late Chunking
 
 Late chunking, introduced by Günther et al. (2024) and popularized in the context of `jina-embeddings-v2`, inverts the usual order of operations. Instead of chunking first and then embedding, we:
@@ -265,6 +309,8 @@ This is valuable because the attention mechanism lets every token see its full d
 {{fig:chunkrerank-late-chunking-arch}}
 
 The constraint: the full document must fit within the model's context window. For documents longer than ~8k tokens you can apply late chunking within sliding windows.
+
+Late chunking has a *generative* cousin that solves the same decontextualisation problem from the other direction: **contextual retrieval** (Anthropic, 2024) asks an LLM to write a one-sentence situating preamble for each chunk ("This excerpt is from the Q3 2024 10-K, in the segment-revenue discussion") and prepends it to the chunk text before embedding *and* before BM25 indexing. Late chunking is cheap (one encoder pass, no LLM) but needs a long-context encoder; contextual retrieval works with any encoder but costs one LLM call per chunk at index time. They compose. The mechanism, cost model and prompt are developed in [Advanced RAG](../09-rag-retrieval/05-advanced-rag.html).
 
 ```python
 # late_chunking.py — illustrative late chunking with a HuggingFace model
@@ -368,6 +414,37 @@ $$
 $$
 
 with $N$ the corpus size and $n(t)$ the number of documents containing term $t$.
+
+**Use a real BM25 engine.** The `BM25Index` we build below rescores the entire corpus in Python on every query — $O(N \cdot |q|)$ with a large constant — which is fine for teaching and fine up to a few thousand chunks, and hopeless beyond that. Real lexical retrieval uses an **inverted index**: for each query term, walk only the posting list of documents that actually contain it, so cost scales with the (usually small) number of matching documents rather than with $N$. The open-source ladder:
+
+```python
+# real_bm25.py — bm25s: sparse-matrix BM25, same math, ~100x faster
+# pip install bm25s PyStemmer
+import bm25s
+import Stemmer
+
+corpus = [
+    "Reciprocal rank fusion combines ranked lists without score normalization.",
+    "CVE-2023-44487 is the HTTP/2 Rapid Reset denial-of-service vulnerability.",
+    "BM25 weights rare terms heavily through the IDF factor.",
+]
+
+stemmer = Stemmer.Stemmer("english")                      # optional but helps recall
+corpus_tokens = bm25s.tokenize(corpus, stopwords="en", stemmer=stemmer)
+
+retriever = bm25s.BM25(method="lucene")                   # Lucene's BM25 variant
+retriever.index(corpus_tokens)                            # builds the sparse matrix
+
+query_tokens = bm25s.tokenize("HTTP/2 rapid reset CVE", stopwords="en", stemmer=stemmer)
+results, scores = retriever.retrieve(query_tokens, k=2)   # shapes: (1, k) each
+for rank in range(results.shape[1]):
+    print(f"{rank + 1}. score={scores[0, rank]:.3f}  {corpus[results[0, rank]]}")
+```
+
+- **`bm25s`** — sparse-matrix BM25 in Python; the right default for a single-process index up to millions of short chunks. (`rank_bm25` is the older, much slower equivalent.)
+- **Pyserini** — Python bindings over Lucene; the research-grade path, and what BEIR numbers are reproduced with.
+- **Elasticsearch / OpenSearch** — a real distributed inverted index when the corpus outgrows one machine; both ship native hybrid retrieval and a built-in RRF combiner, so you can push the fusion below in Section 3.1 into the search engine itself.
+- Most vector databases now do the sparse leg too: Qdrant, Weaviate and Milvus all accept a sparse vector alongside the dense one and expose server-side RRF fusion, which removes the need to keep two systems in sync.
 
 ### 3.1 Reciprocal Rank Fusion
 
@@ -532,6 +609,45 @@ def hybrid_search(
     single top-1 ranking from dominating completely; increasing $k$ makes the
     fusion more conservative and score-stable.
 
+### 3.2 Learned Sparse Retrieval (SPLADE)
+
+BM25 and dense retrieval fail in opposite directions, and there is a third architecture that tries to get both properties at once. **Learned sparse retrieval** keeps the *representation* sparse — a vector over the tokenizer's vocabulary, so it can live in an inverted index — but *learns* the weights with a transformer instead of counting term frequencies.
+
+**SPLADE** (Formal et al., *SPLADE: Sparse Lexical and Expansion Model for First Stage Ranking*, SIGIR 2021) is the canonical instance. Run the text through a masked-language-model head, which produces a logit $w_{ij}$ for every vocabulary term $j$ at every input position $i$. Then saturate and max-pool over positions:
+
+$$
+w_j \;=\; \max_{i \in \text{seq}} \; \log\!\left(1 + \operatorname{ReLU}(w_{ij})\right)
+$$
+
+The $\log(1+\cdot)$ is a saturation function borrowed from BM25's term-frequency damping, and the ReLU forces non-negativity so that most of the ~30k vocabulary entries are exactly zero. Sparsity is not a happy accident — it is *trained in*, with a FLOPS regularizer that penalizes the expected cost of the posting lists, tuned so a typical passage keeps on the order of a hundred non-zero terms.
+
+The payoff is **term expansion**: a passage about "myocardial infarction" gets non-zero weight on `heart` and `attack` even though those strings never appear, so a lexical index can now match a paraphrase. Scoring is still a sparse dot product, so it runs on the same inverted-index machinery as BM25 — and because the output dimensions *are* vocabulary items, every score is directly inspectable, which BM25 shares and dense embeddings do not.
+
+`sentence-transformers` v5 (2025) added a first-class `SparseEncoder` class for exactly this family:
+
+```python
+# splade_retrieval.py — learned sparse retrieval with sentence-transformers v5+
+# pip install "sentence-transformers>=5.0"
+from sentence_transformers import SparseEncoder
+
+model = SparseEncoder("naver/splade-v3")          # MLM head + SpladePooling
+
+corpus = [
+    "CVE-2023-44487 is the HTTP/2 Rapid Reset denial-of-service vulnerability.",
+    "Reciprocal rank fusion combines ranked lists without score normalization.",
+]
+doc_emb = model.encode_document(corpus)           # sparse tensors, |V|-dimensional
+query_emb = model.encode_query("http2 rapid reset attack")
+
+scores = model.similarity(query_emb, doc_emb)     # sparse dot product
+print(scores)
+
+# Inspect *why* a document scored: the non-zero dimensions are vocabulary terms.
+print(model.decode(doc_emb[0], top_k=8))          # e.g. [('http', 2.1), ('reset', 1.9), ...]
+```
+
+Where does it sit in the pipeline? SPLADE is a **first-stage retriever**, a drop-in replacement for (or third leg alongside) BM25 — you fuse its ranking with the dense ranking using the same RRF from Section 3.1, then rerank with a cross-encoder. Its costs are real: encoding requires a transformer forward pass at both index and query time, and the expansion terms lengthen posting lists, so query latency is meaningfully above BM25's. The honest 2026 summary is that a hybrid of BM25 + a strong dense encoder remains the pragmatic default, and learned sparse is the upgrade you reach for when exact-match recall matters *and* your queries are paraphrase-heavy — or when you need the interpretability of a lexical index without giving up semantic matching.
+
 ---
 
 ## 4. Cross-Encoder Rerankers
@@ -539,6 +655,8 @@ def hybrid_search(
 The retrieval stage (BM25 or dense) must be fast — often processing millions of documents in tens of milliseconds. Speed requires a bi-encoder architecture: query and document are embedded independently, and similarity is a cheap dot product. The downside: the query and document tokens never "see" each other during encoding, so nuanced relevance signals (especially multi-hop or contrastive relevance) can be missed.
 
 A **cross-encoder** receives the concatenation `[query; document]` as a single sequence and produces a scalar relevance score. Because every query token attends to every document token, the model can reason about fine-grained relevance at the cost of $O(N)$ forward passes (one per candidate). This makes cross-encoders unsuitable for first-stage retrieval but ideal for **reranking** a small shortlist of, say, 20–100 candidates.
+
+These are the two ends of an axis, and there is a well-defined middle: **late interaction** (ColBERT) keeps one vector per *token* rather than one per document, precomputes all document token vectors offline like a bi-encoder, and scores with a MaxSim operator that recovers much of the cross-encoder's token-level matching. It costs roughly one to two orders of magnitude more index storage in exchange for cross-encoder-like quality at first-stage speed. We develop it in full — including the visual-document variant ColPali — in [Multimodal & Visual-Document Retrieval: ColPali & Late Interaction](../09-rag-retrieval/06-multimodal-visual-retrieval.html).
 
 The two-stage pipeline:
 
@@ -551,23 +669,42 @@ from sentence_transformers import CrossEncoder
 import numpy as np
 
 
+def load_reranker(
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+) -> CrossEncoder:
+    """
+    Load a cross-encoder ONCE, at process startup.
+
+    Common 2026 choices, cheapest first:
+      - 'cross-encoder/ms-marco-MiniLM-L-6-v2'   English, 6 layers, ~ms latency
+      - 'BAAI/bge-reranker-v2-m3'                multilingual, 568M, strong default
+      - 'mixedbread-ai/mxbai-rerank-base-v2'     multilingual, instruction-aware
+      - 'Qwen/Qwen3-Reranker-0.6B'               LLM-initialized, prompt-conditioned,
+                                                 long context (needs its own API;
+                                                 see the note after this listing)
+    """
+    return CrossEncoder(model_name, max_length=512)
+
+
 def rerank(
     query: str,
     candidates: list[str],
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    model: CrossEncoder,
     top_k: int = 5,
     batch_size: int = 32,
 ) -> list[tuple[str, float]]:
     """
-    Rerank a list of candidate passages using a cross-encoder.
+    Rerank a list of candidate passages using a preloaded cross-encoder.
 
     Args:
         query:      The user query string.
         candidates: List of passage strings to rerank.
-        model_name: HuggingFace cross-encoder model. Common choices:
-                    - 'cross-encoder/ms-marco-MiniLM-L-6-v2'  (fast, strong)
-                    - 'cross-encoder/ms-marco-electra-base'    (more accurate)
-                    - 'mixedbread-ai/mxbai-rerank-large-v1'   (multilingual)
+        model:      A CrossEncoder from load_reranker(). Passing the *model*
+                    rather than a model name is deliberate: constructing a
+                    CrossEncoder pulls weights from disk and moves them to the
+                    GPU, which costs hundreds of milliseconds to seconds — far
+                    more than the reranking itself. Do it once per process,
+                    never once per query.
         top_k:      Number of top passages to return after reranking.
         batch_size: Batch size for model inference.
 
@@ -575,11 +712,15 @@ def rerank(
         List of (passage_text, relevance_score) sorted by descending score.
 
     Notes:
-        - Scores are logits (not probabilities) from the final classification head.
+        - Scores are logits (not probabilities) from the final classification
+          head, unless the model card specifies a sigmoid activation. They are
+          comparable *within* one query's candidate list and meaningless across
+          queries or across models — never threshold on a raw logit without
+          calibrating on your own data first.
         - Higher score = more relevant.
-        - For latency-sensitive applications, prefer MiniLM (6 layers) over ELECTRA.
     """
-    model = CrossEncoder(model_name, max_length=512)
+    if not candidates:
+        return []
 
     # Build (query, passage) pairs — one per candidate
     pairs = [(query, passage) for passage in candidates]
@@ -600,36 +741,70 @@ def rerank(
 #   ~400ms for the same 100 candidates
 ```
 
+!!! tip "Practitioner tip: two APIs, one job"
+    The `CrossEncoder` interface above covers every classical BERT-style reranker
+    (`ms-marco-*`, `bge-reranker-*`, `jina-reranker-*`). The 2025–2026 generation
+    of **LLM-initialized rerankers** — Qwen3-Reranker, mxbai-rerank-v2 — is
+    architecturally different: relevance is read out of a *causal* LM as the
+    logit of a "yes"/"no" token given a prompt containing an instruction, the
+    query and the document. That buys prompt conditioning ("rank by whether the
+    passage contains a numeric answer") and long context, and costs a full
+    decoder forward pass per pair. Load these with `AutoModelForCausalLM` per
+    their model card, or let a wrapper hide the difference: the **`rerankers`**
+    library (AnswerDotAI) gives one `Reranker(...).rank(query, docs)` call over
+    cross-encoders, ColBERT, LLM rerankers and hosted APIs alike, and
+    **FlagEmbedding** (BAAI) ships the reference loaders for the `bge-reranker`
+    family. In production, serve the reranker off the request path entirely —
+    HuggingFace **Text Embeddings Inference** hosts reranker models behind a
+    `/rerank` endpoint with continuous batching.
+
 ### 4.1 Training Your Own Reranker
 
-If you have domain-specific relevance labels (from click logs, human annotations, or distillation from a more powerful model), you can fine-tune a cross-encoder with a binary cross-entropy loss on (query, positive, negative) triples, or a listwise ranking loss like ListNet.
+If you have domain-specific relevance labels (from click logs, human annotations, or distillation from a more powerful model), you can fine-tune a cross-encoder with a binary cross-entropy loss on (query, positive, negative) triples, or a listwise ranking loss like LambdaLoss/ListNet.
+
+Since `sentence-transformers` v4 (2025), cross-encoder training uses a HuggingFace-`Trainer`-shaped API — `CrossEncoderTrainer` over a `datasets.Dataset`, with the loss supplied as an object. (The old `model.fit(train_dataloader=...)` call still exists as a compatibility shim, but new code should use the trainer: it inherits mixed precision, gradient accumulation, checkpointing and `wandb` logging from `transformers` for free.)
 
 ```python
-# reranker_finetune.py — pointwise cross-entropy fine-tuning sketch
-from sentence_transformers import CrossEncoder, InputExample
-from torch.utils.data import DataLoader
-
-# Training data: list of InputExample(texts=[query, passage], label=1.0 or 0.0)
-train_examples = [
-    InputExample(texts=["What is RRF?", "Reciprocal rank fusion combines..."], label=1.0),
-    InputExample(texts=["What is RRF?", "The capital of France is Paris."], label=0.0),
-    # ... many more examples from your domain
-]
-
-# CrossEncoder with a binary classification head
-model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", num_labels=1)
-
-train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=16)
-
-# Fine-tune: 1 epoch is often enough for domain adaptation
-model.fit(
-    train_dataloader=train_dataloader,
-    epochs=1,
-    warmup_steps=50,
-    output_path="./my-domain-reranker",
-    show_progress_bar=True,
+# reranker_finetune.py — domain-adapting a cross-encoder (sentence-transformers v4+)
+# pip install "sentence-transformers>=4.0" datasets
+from datasets import Dataset
+from sentence_transformers.cross_encoder import (
+    CrossEncoder,
+    CrossEncoderTrainer,
+    CrossEncoderTrainingArguments,
 )
+from sentence_transformers.cross_encoder.losses import BinaryCrossEntropyLoss
+
+# Columns are positional: (text_a, text_b, label). Names are free-form.
+train_dataset = Dataset.from_dict({
+    "query": ["What is RRF?", "What is RRF?"],
+    "passage": [
+        "Reciprocal rank fusion combines ranked lists using 1/(k+rank).",
+        "The capital of France is Paris.",
+    ],
+    "label": [1.0, 0.0],   # 1 = relevant, 0 = hard negative
+})
+
+# num_labels=1 → a single relevance logit (regression/BCE head), not classification.
+model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", num_labels=1)
+loss = BinaryCrossEntropyLoss(model)
+
+args = CrossEncoderTrainingArguments(
+    output_dir="./my-domain-reranker",
+    num_train_epochs=1,          # 1 epoch is usually enough for domain adaptation
+    per_device_train_batch_size=16,
+    learning_rate=2e-5,
+    warmup_ratio=0.1,
+    fp16=True,                   # bf16=True on Ampere+ / H100
+)
+
+trainer = CrossEncoderTrainer(model=model, args=args,
+                              train_dataset=train_dataset, loss=loss)
+trainer.train()
+model.save_pretrained("./my-domain-reranker/final")
 ```
+
+**The data matters more than the loss.** Pointwise BCE on random negatives teaches the model almost nothing, because random negatives are trivially separable. Mine **hard negatives**: run your existing first-stage retriever, take documents ranked 10–100 that are *not* labelled relevant, and use those as the zeros — they are exactly the confusions the reranker exists to fix. The usual ratio is 4–8 hard negatives per positive. If you have graded relevance or a teacher model's scores, prefer a listwise loss (`LambdaLoss`, `ListNetLoss`) over BCE: it optimizes the *ordering* of a candidate list, which is what nDCG actually measures, rather than each pair's absolute label. Distilling a large reranker's scores into a MiniLM-sized student with `MarginMSELoss` is the standard way to get most of the quality at a fraction of the latency — see [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html).
 
 ---
 
@@ -839,15 +1014,20 @@ def filtered_search(
 
     qdrant_filter = Filter(must=conditions) if conditions else None
 
-    results = client.search(
+    # `query_points` is the current unified Query API (qdrant-client >= 1.10);
+    # the older `client.search(...)` is deprecated but still functional. The
+    # same endpoint also serves hybrid retrieval: pass `prefetch=[...]` with a
+    # dense and a sparse sub-query plus `query=FusionQuery(fusion=Fusion.RRF)`
+    # to run Section 3.1's fusion server-side.
+    response = client.query_points(
         collection_name=collection_name,
-        query_vector=query_vector.tolist(),
+        query=query_vector.tolist(),
         query_filter=qdrant_filter,
         limit=top_k,
         with_payload=True,
     )
 
-    return [hit.payload for hit in results]
+    return [hit.payload for hit in response.points]
 ```
 
 ### 6.2 Parent-Child Document Retrieval
@@ -906,6 +1086,10 @@ def parent_child_retrieve(
     return parents
 ```
 
+Both frameworks ship this pattern: LangChain's `ParentDocumentRetriever` pairs a vector store of child chunks with a docstore of parents, and LlamaIndex offers two variants — `SentenceWindowNodeParser` (retrieve a sentence, return a window of $\pm k$ sentences around it) and `AutoMergingRetriever` (retrieve leaf chunks over a hierarchy, and when enough siblings hit, transparently substitute the parent). The `AutoMergingRetriever` behaviour is the one worth stealing if you build your own: returning a parent only when *several* of its children ranked highly is a much better signal than promoting on a single hit.
+
+**One thing this pattern does not fix is redundancy.** Promoting parents deduplicates by document ID, but five distinct chunks from five near-identical documents will still all survive into the prompt, spending context budget on the same fact. The standard remedy is a diversity-aware selection step — Maximal Marginal Relevance, which greedily trades query relevance against novelty relative to what has already been selected — applied *after* reranking and *before* prompt assembly. MMR is derived and implemented in [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html).
+
 ---
 
 ## 7. Putting It All Together: A Production RAG Pipeline
@@ -942,6 +1126,7 @@ class RAGConfig:
     # Reranking
     use_reranker: bool = True
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_candidates: int = 50     # fused hits actually scored by the cross-encoder
     reranker_top_k: int = 5         # final chunks passed to LLM
 
     # Metadata filter
@@ -961,9 +1146,9 @@ def run_rag_pipeline(
     query: str,
     bm25_index,           # BM25Index from Section 3
     dense_index,          # vector store with .search(embedding, top_k) -> list[tuple[int, float]]
-    embed_fn: Callable,   # str -> np.ndarray
+    embed_fn: Callable,   # list[str] -> np.ndarray of shape (N, D)
     llm_fn: Callable,     # str -> str (for HyDE / query expansion)
-    reranker,             # CrossEncoder or None
+    reranker,             # a preloaded CrossEncoder from load_reranker(), or None
     config: RAGConfig,
 ) -> RAGResult:
     """
@@ -1002,8 +1187,13 @@ def run_rag_pipeline(
 
     # ── Step 3: Reranking ──────────────────────────────────────────────────────
     if config.use_reranker and reranker is not None:
+        # Note we hand `rerank` the already-loaded model. Only the top
+        # `rerank_candidates` fused hits are scored: cross-encoder cost is
+        # linear in the candidate count, so this cap is the pipeline's main
+        # latency knob (see the Exercise 5 arithmetic).
         reranked = rerank(
-            query, candidate_texts,
+            query, candidate_texts[:config.rerank_candidates],
+            model=reranker,
             top_k=config.reranker_top_k,
         )
         final_chunks = [t for t, _ in reranked]
@@ -1030,7 +1220,8 @@ The table below summarizes empirical guidance for configuring the pipeline. Thes
 | Precise entity lookup (medical codes, SKUs, legal citations) | BM25 weight high; use hybrid with RRF; add metadata filter on document type |
 | Conversational QA over prose | Dense retrieval dominant; enable HyDE; semantic chunking |
 | Long documents with clear section structure | Structural chunking + parent-child retrieval |
-| Multilingual corpus | Use a multilingual cross-encoder reranker (e.g., `cross-encoder/ms-marco-electra-base` fine-tuned with mMARCO) |
+| Multilingual corpus | Multilingual encoder *and* reranker (e.g. `BAAI/bge-m3` + `BAAI/bge-reranker-v2-m3`, or the Qwen3-Embedding/Qwen3-Reranker pair); note BM25 needs per-language tokenization and stemming to be worth anything |
+| Paraphrase-heavy queries over technical text | Add a learned-sparse leg (SPLADE) as a third ranker in the RRF fusion (Section 3.2) |
 | Low-latency SLA (< 100ms) | Skip HyDE; use MiniLM reranker or skip reranking; pre-filter metadata |
 | High-stakes accuracy requirement | Enable all stages: HyDE + hybrid + full reranker; re-evaluate every 30 days |
 
@@ -1089,11 +1280,49 @@ def compute_mrr(
     return sum(rrs) / len(rrs)
 
 
+def compute_ndcg_at_k(
+    relevance: list[dict[str, float]],  # per-query {doc_id: graded relevance}
+    retrieved_ids: list[list[str]],
+    k: int = 10,
+) -> float:
+    """
+    nDCG@k — the metric to report when relevance is *graded* rather than binary.
+
+    DCG@k = sum_{i=1..k} (2^rel_i - 1) / log2(i + 1)
+
+    The gain is exponential in the grade (so a "perfect" hit is worth much more
+    than two "partial" ones) and the discount is logarithmic in the rank (so
+    moving a good document from position 5 to position 1 matters, but position
+    50 to 45 barely does). Dividing by the IDCG — the DCG of the ideal ordering
+    — normalizes to [0, 1] so scores are comparable across queries with
+    different numbers of relevant documents.
+
+    This is the metric BEIR reports (nDCG@10), and the one to optimize if your
+    reranker will be trained with a listwise loss.
+    """
+    import math
+
+    def dcg(grades: list[float]) -> float:
+        return sum((2.0 ** g - 1.0) / math.log2(i + 2) for i, g in enumerate(grades))
+
+    scores = []
+    for rel, ret in zip(relevance, retrieved_ids):
+        gains = [rel.get(doc_id, 0.0) for doc_id in ret[:k]]
+        ideal = sorted(rel.values(), reverse=True)[:k]
+        idcg = dcg(ideal)
+        scores.append(dcg(gains) / idcg if idcg > 0 else 0.0)
+    return sum(scores) / max(len(scores), 1)
+
+
 # Typical baseline numbers to aim for on a reasonably clean corpus:
 #   Recall@10:  > 0.85 (retrieval stage)
 #   MRR:        > 0.70
 #   After rerank, Recall@5: > 0.80
 ```
+
+**Do not hand-roll these for anything that leaves your laptop.** `ir_measures` and `pytrec_eval` wrap the reference TREC implementations, which handle the tie-breaking and unjudged-document conventions that make published numbers comparable; the **BEIR** harness (and the retrieval slice of **MTEB**) will run your retriever over 18+ standard datasets and report nDCG@10 in the same format every paper uses. Above the retrieval layer, **RAGAS** scores the generation half reference-free (faithfulness, answer relevancy, context precision/recall) — but read Section 8's ordering literally: a faithfulness score is uninterpretable until you know the relevant chunk was retrieved at all.
+
+**Build the eval set before you tune anything.** Fifty to a hundred (query, gold-chunk-id) pairs is enough to rank configurations, and you can bootstrap them cheaply: sample chunks from your own corpus, ask an LLM to write the question that chunk uniquely answers, then *filter* by having a human confirm the question is answerable from that chunk alone. Without this, every knob in `RAGConfig` is tuned by vibes.
 
 !!! interview "Interview Corner"
     **Q:** You have a RAG system where retrieval recall is high but generation
@@ -1120,13 +1349,14 @@ def compute_mrr(
 
 !!! key "Key Takeaways"
     - **Chunking strategy is the single highest-leverage RAG decision.** Fixed chunking is fast but naive; semantic and structural chunking better preserve coherence. Late chunking gives context-aware embeddings at the cost of requiring the full document to fit in the encoder.
-    - **Hybrid search (BM25 + dense) consistently outperforms either alone.** BM25 handles exact-match queries (rare terms, product codes, names); dense retrieval handles paraphrase and semantic queries. Reciprocal Rank Fusion (RRF) is a robust, parameter-light way to combine the two ranked lists.
+    - **Hybrid search (BM25 + dense) consistently outperforms either alone.** BM25 handles exact-match queries (rare terms, product codes, names); dense retrieval handles paraphrase and semantic queries. Reciprocal Rank Fusion (RRF) is a robust, parameter-light way to combine the two ranked lists. **Learned sparse retrieval (SPLADE)** is the third architecture: transformer-predicted term weights over the vocabulary, expanded with related terms, still served from an inverted index — fuse it in as a third ranker when queries are paraphrase-heavy but exact match still matters.
     - **RRF only uses rank ordinals**, not raw scores, making it immune to scale mismatches between BM25 and cosine similarities. The smoothing constant $k=60$ prevents any single top-ranked document from dominating.
     - **Cross-encoder rerankers improve precision dramatically** at the cost of latency. Run retrieval with a large top-k (40–100), rerank with a cross-encoder, and pass only the top-5 to the LLM. The two-stage pipeline amortizes the encoder cost over a small set.
     - **HyDE** shifts the retrieval problem from query-to-document to document-to-document matching, which is easier for bi-encoders. Use it when your query vocabulary diverges from document vocabulary, but never include the hypothetical document in the LLM prompt — only use its embedding.
     - **Metadata filtering** is essential for production systems with heterogeneous corpora. Pre-filtering in the vector index (via Qdrant, Weaviate, etc.) is generally more efficient than post-filtering for selective predicates.
     - **Parent-child retrieval** gives you the best of both worlds: fine-grained retrieval signal from small child chunks and rich LLM context from large parent documents.
-    - **Measure each stage independently** (Recall@k, MRR) before optimizing end-to-end RAGAS or LLM judge scores. A component that looks good in isolation may be bottlenecked by the stage before it.
+    - **Measure each stage independently** (Recall@k, MRR, nDCG@10) before optimizing end-to-end RAGAS or LLM judge scores. A component that looks good in isolation may be bottlenecked by the stage before it.
+    - **Write the mechanism once, then use the libraries.** LangChain/LlamaIndex splitters for chunking, Docling or `unstructured` for parsing, `bm25s`/Pyserini/OpenSearch for the lexical leg, `sentence-transformers` (or `rerankers`/FlagEmbedding) for bi- and cross-encoders, TEI to serve them off the request path, and `ir_measures`/BEIR/RAGAS to score the result.
 
 ---
 
@@ -1150,7 +1380,10 @@ def compute_mrr(
 
     - [huggingface/sentence-transformers](https://github.com/huggingface/sentence-transformers) — canonical Python library for bi-encoder embeddings and cross-encoder rerankers (the project moved from the UKPLab org to the Hugging Face org); includes `cross-encoder/ms-marco-MiniLM-L-6-v2` and dozens of production-ready models.
     - [jina-ai/late-chunking](https://github.com/jina-ai/late-chunking) — reference implementation and evaluation code for the late chunking method.
-    - [xhluca/bm25s](https://github.com/xhluca/bm25s) — ultrafast BM25 in pure Python backed by sparse matrices; orders of magnitude faster than rank-bm25 for large corpora.
+    - [xhluca/bm25s](https://github.com/xhluca/bm25s) — ultrafast BM25 in pure Python backed by sparse matrices; orders of magnitude faster than rank-bm25 for large corpora. Reach for [castorini/pyserini](https://github.com/castorini/pyserini) (Lucene) or an OpenSearch cluster when the lexical index outgrows one process.
+    - [AnswerDotAI/rerankers](https://github.com/AnswerDotAI/rerankers) — one small API over cross-encoders, ColBERT, LLM rerankers and hosted rerank endpoints, so you can swap reranker families without rewriting the pipeline; [FlagOpen/FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding) ships the reference BGE embedders and `bge-reranker` loaders.
+    - [naver/splade](https://github.com/naver/splade) — reference implementation of learned sparse retrieval; the `SparseEncoder` class added in `sentence-transformers` v5 (2025) makes SPLADE-style models usable with the same API as bi-encoders.
+    - [DS4SD/docling](https://github.com/DS4SD/docling) and [Unstructured-IO/unstructured](https://github.com/Unstructured-IO/unstructured) — the document-parsing layer *above* chunking: PDFs, scans, tables and slides into structure-preserving Markdown.
     - [RUC-NLPIR/FlashRAG](https://github.com/RUC-NLPIR/FlashRAG) — modular RAG research toolkit with 36 benchmark datasets and 23 RAG algorithms; excellent for ablating chunking/retrieval/reranking choices.
 
     **Go deeper**
@@ -1167,7 +1400,9 @@ def compute_mrr(
 - Liu et al., "Lost in the Middle: How Language Models Use Long Contexts" (2023) — empirical evidence that LLMs underweight information placed in the middle of long contexts; directly motivates context ordering in RAG prompts.
 - Guu et al., "REALM: Retrieval-Augmented Language Model Pre-Training" (ICML 2020) — early end-to-end trainable RAG architecture that motivates the field.
 - Ma et al., "Query Rewriting in Retrieval-Augmented Large Language Models" (EMNLP 2023) — systematic study of query rewriting strategies including multi-query expansion.
-- Sentence Transformers library (`UKPLab/sentence-transformers`) — the go-to Python package for cross-encoder models and bi-encoder fine-tuning.
+- Formal et al., "SPLADE: Sparse Lexical and Expansion Model for First Stage Ranking" (SIGIR 2021), and "From Distillation to Hard Negative Sampling: Making Sparse Neural IR Models More Effective" (SIGIR 2022) — the learned-sparse line, including the hard-negative and distillation recipes that made it competitive.
+- Khattab & Zaharia, "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT" (SIGIR 2020) — the late-interaction middle ground between bi- and cross-encoders.
+- Sentence Transformers library (`huggingface/sentence-transformers`) — the go-to Python package for cross-encoder models and bi-encoder fine-tuning; v4 introduced `CrossEncoderTrainer`, v5 added `SparseEncoder` for SPLADE-style models.
 
 ---
 
