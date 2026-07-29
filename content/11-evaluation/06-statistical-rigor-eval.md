@@ -4,7 +4,7 @@ A leaderboard says model A scores 84.2 % and model B scores 83.6 % on a 500-ques
 
 This chapter is about treating evaluation as an experiment, not a scoreboard. Every benchmark number is a *random variable*: it depends on which items you sampled, which random seeds you used, which prompts and decoding parameters you chose, and — when a model grades a model — which judge you trusted. A score reported without an interval is a measurement reported without error bars, and in any other branch of empirical science that would be unpublishable.
 
-We build the toolkit a scientist would demand: bootstrap confidence intervals on accuracy and Elo, paired significance tests (paired $t$, McNemar, Wilcoxon) for the head-to-head A-vs-B comparison that practitioners actually care about, a variance decomposition that tells you *where* your noise lives (items? seeds? judges?), and a power analysis to size a test set *before* you spend money running it. We close with item-response theory (IRT) and adaptive evaluation — how to extract more signal per item — and the single most important leaderboard-reading skill: knowing that **overlapping confidence intervals mean "no demonstrated gap."**
+We build the toolkit a scientist would demand: bootstrap confidence intervals on accuracy and Elo, paired significance tests (paired $t$, McNemar, Wilcoxon, permutation) for the head-to-head A-vs-B comparison that practitioners actually care about, a variance decomposition that tells you *where* your noise lives (items? seeds? judges?), and a power analysis to size a test set *before* you spend money running it. We close with item-response theory (IRT) and adaptive evaluation — how to extract more signal per item — and the single most important leaderboard-reading skill: knowing that **overlapping confidence intervals mean "no demonstrated gap."** Every method appears twice: once from scratch, so you understand the mechanism, and once in the library that actually ships it — `scipy.stats`, `statsmodels`, and the per-sample logs emitted by lm-evaluation-harness.
 
 This chapter is the statistical spine of Part XI. It assumes you have met the benchmark landscape in [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html), the judge paradigm in [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html), and harness mechanics in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The probability foundations live in [Probability, Statistics & Information Theory](../01-foundations/02-probability-information.html). Online A/B testing — the production cousin of everything here — is in [Online Evaluation: A/B Testing, Canaries & Guardrail Metrics](../12-production-mlops/07-online-eval-ab-testing.html).
 
@@ -276,6 +276,9 @@ Because two competent models tend to pass and fail the *same* easy/hard items, $
 | **McNemar's test** | binary pass/fail | discordant pairs equally likely either way | accuracy / pass-rate on the same items |
 | **Paired $t$-test** | continuous (judge scores, F1, log-prob) | mean difference $= 0$ | per-item numeric scores, roughly symmetric diffs |
 | **Wilcoxon signed-rank** | continuous, non-normal | median difference $= 0$ | skewed/heavy-tailed per-item diffs |
+| **Paired permutation** | anything | the A/B labels are exchangeable within each item | corpus-level metrics (BLEU, macro-F1, pass@k) where the metric is *not* a per-item mean |
+
+The last row matters more than it looks. McNemar and the paired $t$-test assume your score is an average of per-item numbers, so a per-item difference exists. Many metrics are not: corpus BLEU, macro-averaged F1, pass@k pooled across problems, and "win rate against a reference judged by GPT-class model" are all computed from the *whole* set at once. For those, the **paired permutation (randomization) test** is the general-purpose answer, and it is the test Dror et al. recommend as the NLP default: under the null that the two systems are interchangeable, you may swap A's and B's outputs on any item without changing the distribution of the metric. So flip a fair coin per item, recompute the metric difference on the swapped data $B$ times, and the p-value is the fraction of permuted differences at least as extreme as the observed one (with the standard $+1$ in numerator and denominator, which keeps the p-value from ever being exactly 0).
 
 **McNemar's test** is the right tool for the most common case — both models scored pass/fail on the same items. It looks *only* at the discordant pairs: items where exactly one model was right. Let $b$ = count where A right, B wrong, and $c$ = count where A wrong, B right. Concordant pairs (both right, both wrong) carry no information about which is better and are *discarded*. Under the null "the two models are equally good," each discordant item is a coin flip, so $b \sim \text{Binomial}(b+c, 0.5)$. The test statistic is
 
@@ -339,6 +342,27 @@ def wilcoxon_signed_rank(scores_a, scores_b):
     return {"statistic": res.statistic, "p": res.pvalue}
 
 
+def paired_permutation_test(scores_a, scores_b, metric=np.mean,
+                            n_perm=10_000, seed=0):
+    """Paired randomization test for an ARBITRARY corpus-level metric.
+
+    `metric` maps a full array of per-item outputs -> scalar (mean, but also
+    corpus BLEU, macro-F1, a pass@k pooler...). Under the null, swapping A's
+    and B's output on an item is a no-op, so we swap each item with prob 0.5.
+    """
+    rng = np.random.default_rng(seed)
+    a = np.asarray(scores_a, dtype=float)
+    b = np.asarray(scores_b, dtype=float)
+    observed = abs(metric(a) - metric(b))
+    n, count = len(a), 0
+    for _ in range(n_perm):
+        swap = rng.random(n) < 0.5           # independent coin flip per item
+        a_p = np.where(swap, b, a)
+        b_p = np.where(swap, a, b)
+        count += abs(metric(a_p) - metric(b_p)) >= observed
+    return (count + 1) / (n_perm + 1)        # +1/+1: never report p = 0
+
+
 def paired_bootstrap_diff(a_correct, b_correct, n_boot=10_000, seed=0):
     """Bootstrap CI on the accuracy DIFFERENCE, resampling item indices once
     and applying the SAME resample to both models (this preserves pairing)."""
@@ -367,6 +391,9 @@ if __name__ == "__main__":
     print(f"McNemar: b(A>B)={b}, c(B>A)={c}, p={p:.4f}")
     pt, lo, hi = paired_bootstrap_diff(a_correct, b_correct)
     print(f"paired bootstrap diff: {pt:+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]")
+    p_perm = paired_permutation_test(a_correct.astype(float),
+                                     b_correct.astype(float), n_perm=2000)
+    print(f"paired permutation p = {p_perm:.4f}")
 ```
 
 !!! example "Worked example: pairing rescues a borderline result"
@@ -406,6 +433,88 @@ def benjamini_hochberg(pvals, alpha=0.05):
     cutoff = p[order][k_max]
     return p <= cutoff
 ```
+
+### The library layer: SciPy, statsmodels, and lm-evaluation-harness logs
+
+You wrote all of the above from scratch so you know exactly what it does; in a real harness you should call the maintained implementations, which handle edge cases (ties, zero differences, degenerate resamples) you do not want to rediscover. The mapping is one-to-one:
+
+```python
+import numpy as np
+from scipy import stats
+from statsmodels.stats.contingency_tables import mcnemar
+from statsmodels.stats.multitest import multipletests
+from statsmodels.stats.power import NormalIndPower
+from statsmodels.stats.proportion import proportion_effectsize
+
+rng = np.random.default_rng(7)
+difficulty = rng.normal(0, 1, 500)                          # shared per item
+a = (rng.normal(0.45, 0.6, 500) > difficulty).astype(float) # correctness, A
+b = (rng.normal(0.30, 0.6, 500) > difficulty).astype(float) # correctness, B
+
+# 1. BCa bootstrap CI on the PAIRED accuracy difference.
+#    paired=True makes SciPy apply the same resampled indices to both arrays.
+res = stats.bootstrap(
+    (a, b),
+    lambda x, y, axis=-1: x.mean(axis=axis) - y.mean(axis=axis),
+    paired=True, vectorized=True, method="BCa",
+    n_resamples=10_000, confidence_level=0.95, random_state=0)
+print("diff CI:", res.confidence_interval, "SE:", res.standard_error)
+
+# 2. Exact / continuity-corrected McNemar from a 2x2 contingency table.
+both  = int(np.sum((a == 1) & (b == 1)));  nb = int(np.sum((a == 1) & (b == 0)))
+nc    = int(np.sum((a == 0) & (b == 1)));  neither = int(np.sum((a == 0) & (b == 0)))
+print(mcnemar([[both, nb], [nc, neither]], exact=False, correction=True))
+
+# 3. Paired permutation test for any statistic (permutation_type="samples").
+print(stats.permutation_test(
+    (a, b), lambda x, y: np.mean(x) - np.mean(y),
+    permutation_type="samples", n_resamples=10_000,
+    vectorized=False, random_state=0).pvalue)
+
+# 4. Benjamini-Hochberg across many checkpoint-vs-baseline p-values.
+reject, p_adj, _, _ = multipletests([0.001, 0.02, 0.04, 0.3],
+                                    alpha=0.05, method="fdr_bh")
+
+# 5. Power: items per arm to detect 80% vs 81% (unpaired), 80% power.
+#    Prints ~24,600 -- agreeing with the closed form worked by hand below.
+print(NormalIndPower().solve_power(proportion_effectsize(0.81, 0.80),
+                                   power=0.80, alpha=0.05, ratio=1.0))
+```
+
+The missing link in practice is getting **per-item** results out of your eval run at all — an aggregate accuracy cannot be paired with anything. [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) exposes this with `--log_samples --output_path <dir>`, which writes one JSONL record per document (containing the `doc_id`, the model's filtered response, and the per-document metric values) next to the aggregate `results.json`. Run both models with identical `--tasks`, `--num_fewshot`, and seed, then join on `doc_id`:
+
+```python
+import json, glob
+import numpy as np
+
+
+def load_per_item(samples_glob, metric="acc"):
+    """Read lm-evaluation-harness --log_samples JSONL into {doc_id: score}.
+
+    Field names shift a little across harness versions, so we key on `doc_id`
+    and read whichever metric key the task emitted (`acc`, `exact_match`,
+    `acc_norm`, ...). Always compare runs produced by the SAME harness commit.
+    """
+    out = {}
+    for path in glob.glob(samples_glob):
+        with open(path) as f:
+            for line in f:
+                rec = json.loads(line)
+                if metric in rec:
+                    out[rec["doc_id"]] = float(rec[metric])
+    return out
+
+
+def paired_vectors(dir_a, dir_b, task, metric="acc"):
+    """Align two runs on their shared doc_ids -> (a_scores, b_scores)."""
+    A = load_per_item(f"{dir_a}/**/samples_{task}_*.jsonl", metric)
+    B = load_per_item(f"{dir_b}/**/samples_{task}_*.jsonl", metric)
+    shared = sorted(set(A) & set(B))          # defensive: runs can differ
+    return (np.array([A[i] for i in shared]),
+            np.array([B[i] for i in shared]))
+```
+
+Feed those two vectors to `mcnemar_test`, `paired_bootstrap_diff`, or the SciPy equivalents above and you have a real significance verdict rather than two point estimates. Two cautions about the numbers the harness itself prints. First, lm-eval's reported `acc_stderr` is the **item-level** standard error only (computed in closed form for means, and by an internal bootstrap — sized by `bootstrap_iters` — for metrics without one); it knows nothing about prompt-template or seed variance, so it is a floor on your true uncertainty, not the whole of it. Second, it is a *marginal* SE for one model: never compare two models by checking whether $\hat p_A \pm 1.96\,\text{SE}_A$ overlaps $\hat p_B \pm 1.96\,\text{SE}_B$ when you could pair. Harness mechanics — task YAML, `--log_samples` layout, `bootstrap_iters`, and run-record hygiene — are covered in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
 
 ---
 
@@ -749,6 +858,77 @@ def item_information(theta, a, b):
 
 ---
 
+## Statistics at 100M Scale: Chance Floors and Validation Loss
+
+Everything above assumed a model good enough that accuracy is the interesting signal. When you evaluate the ~100M-parameter model built in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html), two extra statistical facts dominate, and getting them wrong is the single most common way small-model reports become nonsense.
+
+### Measure against the chance floor, not against zero
+
+A four-way multiple-choice benchmark has a **chance floor** of $p_0 = 0.25$. A 100M model that scores 27 % on such a task has demonstrated nothing: the null hypothesis is not "accuracy is 0," it is "accuracy is 0.25." Near the floor the standard error is $\sqrt{0.25 \times 0.75/n} \approx 0.43/\sqrt n$, so on $n = 1{,}000$ items the 95 % margin is about 2.7 points — you must clear roughly **27.7 %** before you may claim the model is above chance at all, and the right test is a one-sided exact binomial against $p_0$:
+
+```python
+from scipy import stats
+
+k, n, p0 = 281, 1000, 0.25        # 28.1% on a 4-way multiple-choice task
+print(stats.binomtest(k, n, p0, alternative="greater").pvalue)   # ~0.014
+
+# Report the chance-corrected score too: what fraction of the headroom
+# above the floor did the model actually capture?
+print((k / n - p0) / (1 - p0))    # ~0.041 -> 4.1% of available headroom
+```
+
+Report the chance-corrected accuracy $(\hat p - p_0)/(1 - p_0)$ alongside the raw number whenever a model sits near the floor; it makes "28 % vs 26 %" legible as "captured 4 % of the headroom vs 1.3 %," which is the honest framing. Note also that the log-likelihood scoring used by lm-evaluation-harness has *no* random-guessing behaviour — a small model always picks the highest-scoring option — so a below-chance score is a real (and informative) signal of a systematic bias toward, say, the longest option, not just noise.
+
+### At small scale, validation loss is the sensitive instrument
+
+Downstream accuracy is a coarse, saturating, near-chance measurement for a 100M model; **validation loss in bits per byte** ([Pretraining Objectives](../03-pretraining/03-pretraining-objective.html)) is not. It is continuous rather than binary, averaged over hundreds of thousands of tokens rather than a thousand items, and paired across checkpoints on the same held-out documents. That is why a change worth 0.01 bits/byte — clearly visible in a loss comparison — is completely invisible in a 1,000-item accuracy check. It is also why scaling-law fits and architecture ablations are done on loss ([Mini Scaling Laws: Fit Your Own Law Before Spending the Budget](../14-capstone/05-mini-scaling-laws.html)) rather than on benchmarks.
+
+Loss still needs an interval, and the correct one is a **cluster bootstrap over held-out documents**, because tokens within a document are strongly correlated. One subtlety makes the bootstrap the right tool rather than a closed form: bits-per-byte is a *ratio of sums* (total bits over total bytes), not a mean of per-document ratios, so the delta method is awkward while resampling is trivial.
+
+```python
+import numpy as np
+
+
+def paired_bpb_bootstrap(bits_a, bits_b, n_bytes, n_boot=10_000, seed=0):
+    """Paired cluster bootstrap on the bits-per-byte DIFFERENCE (A - B).
+
+    bits_a, bits_b : per-document total negative log-likelihood in BITS
+                     (sum over tokens of -log2 p) for two checkpoints,
+                     scored on the SAME held-out documents.
+    n_bytes        : per-document UTF-8 byte count -- the tokenizer-independent
+                     denominator (see Pretraining Objectives on bits-per-byte).
+
+    Documents are the resampling unit (tokens within a doc are correlated),
+    and the SAME resample is applied to both checkpoints to preserve pairing.
+    """
+    bits_a, bits_b = np.asarray(bits_a, float), np.asarray(bits_b, float)
+    nb = np.asarray(n_bytes, float)
+    n = len(nb)
+    rng = np.random.default_rng(seed)
+    point = bits_a.sum() / nb.sum() - bits_b.sum() / nb.sum()
+    idx = rng.integers(0, n, size=(n_boot, n))
+    # Ratio-of-sums recomputed inside every resample -- this is the whole point.
+    boot = (bits_a[idx].sum(1) / nb[idx].sum(1)
+            - bits_b[idx].sum(1) / nb[idx].sum(1))
+    lo, hi = np.percentile(boot, [2.5, 97.5])
+    return point, lo, hi
+
+
+if __name__ == "__main__":
+    rng = np.random.default_rng(0)
+    n_docs = 400
+    nb = rng.integers(500, 4000, n_docs).astype(float)   # doc byte lengths
+    hard = rng.normal(0, 0.15, n_docs)                   # shared doc difficulty
+    bits_b = nb * (1.30 + hard)                          # baseline checkpoint
+    bits_a = nb * (1.29 + hard + rng.normal(0, 0.01, n_docs))  # 0.01 bpb lower
+    pt, lo, hi = paired_bpb_bootstrap(bits_a, bits_b, nb)
+    print(f"delta bpb {pt:+.4f}  95% CI [{lo:+.4f}, {hi:+.4f}]")
+```
+
+The shared per-document difficulty term is what pairing cancels: the *marginal* CI on either checkpoint's bits-per-byte is far wider than the CI on their difference, so a 0.01 bpb gain is resolvable with a few hundred documents even though neither absolute number is known that precisely. The same paired-bootstrap machinery carries straight through the capstone's post-training stage — comparing an SFT checkpoint against DPO against RLVR in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) is a paired comparison on a fixed held-out set, not a leaderboard race.
+
+---
+
 ## Reading Leaderboards Like a Statistician
 
 Bring it together with the skill this chapter exists to instill. When you look at a leaderboard:
@@ -780,11 +960,12 @@ Bring it together with the skill this chapter exists to instill. When you look a
 !!! key "Key Takeaways"
 
     - **Every eval number is a random variable.** Report a confidence interval, never a bare point estimate. The 95 % margin near $p=0.5$ is roughly $1/\sqrt n$ — so a 500-item benchmark cannot resolve gaps smaller than about 4 points, and a 1-point claim needs tens of thousands of items.
-    - **Use the right interval.** Wilson or Clopper–Pearson for binomial accuracy (the Wald interval breaks near 0/1); **bootstrap** (prefer BCa) for any non-trivial statistic — Elo, F1, judge means, percentiles. Use a **cluster bootstrap** when items are grouped, or your CIs will be too narrow.
+    - **Use the right interval.** Wilson or Clopper–Pearson for binomial accuracy (the Wald interval breaks near 0/1); **bootstrap** (prefer BCa) for any non-trivial statistic — Elo, F1, judge means, percentiles. Use a **cluster bootstrap** when items are grouped, or your CIs will be too narrow. In production call the maintained implementations — `scipy.stats.bootstrap(..., paired=True, method="BCa")`, `scipy.stats.permutation_test`, `statsmodels`' `mcnemar` and `multipletests` — fed by the per-item vectors that lm-evaluation-harness writes under `--log_samples`.
     - **Pair whenever possible.** Evaluate A and B on the *same* items and test the per-item difference (McNemar for pass/fail, paired $t$ or Wilcoxon for scores). Pairing cancels item-difficulty variance and can be worth a 4–10× larger unpaired test set.
     - **Know where your noise lives.** Decompose variance across items, prompts, seeds, and judges. Prompt-template variance is often dominant and is *invisible* to an item-only CI — run $\ge 3$ prompts and $\ge 3$ seeds before any headline claim.
     - **Size the test set before running it.** Power analysis turns "what's the smallest gap I care about?" into "how many items do I need?" Simulate the paired test when the closed-form normal approximation is shaky.
     - **Correct for multiple comparisons.** Testing many checkpoints/benchmarks manufactures false positives; use Benjamini–Hochberg (FDR) or Bonferroni, and prefer a pre-registered headline metric.
+    - **At small scale, compare against the chance floor and prefer loss.** For a ~100M model, a multiple-choice score must be tested against $p_0 = 1/\#\text{choices}$, not against zero, and reported chance-corrected; the sensitive instrument is validation **bits per byte**, with a paired cluster bootstrap over held-out documents (bits-per-byte is a ratio of sums, so resample rather than delta-method it).
     - **IRT buys efficiency.** Items differ in discrimination and information; a calibrated item bank plus adaptive selection reaches fixed-test precision in a fraction of the items — provided the bank is uncontaminated and re-calibrated as models evolve.
     - **Overlapping CIs mean "no demonstrated gap."** On a leaderboard, rank order without separation is noise. Demand error bars, battle counts, and the prompt/harness version before believing any "new state of the art."
 
@@ -808,6 +989,7 @@ Bring it together with the skill this chapter exists to instill. When you look a
 
     - [felipemaiapolo/tinyBenchmarks](https://github.com/felipemaiapolo/tinyBenchmarks) — Python package for IRT/p-IRT/gp-IRT estimation on MMLU, GSM8K, and Open LLM Leaderboard subsets.
     - [Kaleidophon/deep-significance](https://github.com/Kaleidophon/deep-significance) — library implementing Almost Stochastic Order, bootstrap, and permutation tests for comparing deep-learning models, with power-analysis utilities.
+    - [statsmodels](https://www.statsmodels.org/) — `stats.contingency_tables.mcnemar`, `stats.multitest.multipletests` (Bonferroni/BH), and `stats.power` cover the significance and sample-sizing layer; `scipy.stats.bootstrap` (BCa, `paired=True`) and `scipy.stats.permutation_test` cover the resampling layer.
     - [rtmdrr/testSignificanceNLP](https://github.com/rtmdrr/testSignificanceNLP) — companion code for Dror et al. 2018; runs Shapiro–Wilk, t-test, Wilcoxon, and McNemar from the command line on any score files.
 
     **Go deeper**

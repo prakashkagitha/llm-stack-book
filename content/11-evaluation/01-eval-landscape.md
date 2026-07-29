@@ -2,7 +2,7 @@
 
 Measuring whether an LLM is good is surprisingly hard. Harder than training it. When a model scores 90 % on a knowledge benchmark, you want to know: does it *know* more, or does it exploit test artifacts? When a newer model beats a prior one on MMLU, should you deploy it? When a model aces GSM8K but fails on a slightly rephrased version of the same arithmetic problem, what does that tell you?
 
-This chapter builds the conceptual toolkit for evaluation literacy. We cover *why* eval is a genuinely unsolved problem, survey the major benchmarks a practitioner will encounter, dissect the failure modes (contamination, saturation, multiple-choice shortcuts), and discuss the gap between benchmark numbers and actual usefulness. The chapter that follows — [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) — covers the judge-model paradigm; [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) covers the engineering side; and [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) goes deep on code and agent evaluation.
+This chapter builds the conceptual toolkit for evaluation literacy. We cover *why* eval is a genuinely unsolved problem, survey the major benchmarks a practitioner will encounter, dissect the failure modes (contamination, saturation, multiple-choice shortcuts), and discuss the gap between benchmark numbers and actual usefulness. The chapter that follows — [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) — covers the judge-model paradigm; [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) covers the engineering side; [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) goes deep on code and agent evaluation; [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming-safety-eval.html) covers adversarial and safety evaluation; and [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html) develops properly the statistics this chapter only sketches.
 
 ---
 
@@ -86,7 +86,7 @@ where $n$ is the number of samples drawn and $c$ is the number that pass. For un
 
 **MBPP** (Mostly Basic Programming Problems, Austin et al., 2021) is 974 crowd-sourced Python problems (the commonly evaluated test split is 500 problems; a hand-verified "sanitized" subset has 427), similarly evaluated with unit tests. Both HumanEval and MBPP are now largely saturated at the frontier; models score above 90 % pass@1.
 
-**Limitations.** Only functional correctness is tested; code style, efficiency, and security are ignored. The test suites are thin — typically 3–8 tests per problem — so it is possible to pass with a solution that is logically wrong but happens to match the test values.
+**Limitations.** Only functional correctness is tested; code style, efficiency, and security are ignored. The test suites are thin — typically a handful of tests per problem — so it is possible to pass with a solution that is logically wrong but happens to match the test values. This is not hypothetical: **EvalPlus** (Liu et al., NeurIPS 2023) regenerated the test suites with an LLM-plus-mutation pipeline, producing **HumanEval+** and **MBPP+** with orders of magnitude more tests, and reported that measured pass@1 drops materially for essentially every model evaluated — the original numbers were counting wrong programs as correct. If you report HumanEval, report the `evalplus` variant; the sandboxed execution harness is `pip install evalplus` (or BigCode's `bigcode-evaluation-harness`, which additionally covers MultiPL-E, DS-1000, and APPS). Beyond these, the frontier has moved to repository-scale and contamination-resistant code evals (SWE-bench, LiveCodeBench), covered in [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html).
 
 ### Scientific Reasoning: GPQA
 
@@ -113,6 +113,35 @@ BBH is typically reported with chain-of-thought prompting, making it a measure o
 The benchmark is designed to test *fluid intelligence* — generalizing from a handful of examples to a novel rule — rather than crystallized knowledge or skill learned from large datasets. It proved very difficult for standard LLMs (scores in single digits for years); it attracted community attention during the ARC Prize challenge in 2024, where a combination of program synthesis and test-time compute approaches pushed scores meaningfully higher. After frontier reasoning systems made rapid gains on the original benchmark, the ARC Prize team released **ARC-AGI-2** (2025), a harder successor on which frontier models initially scored far below the near-ceiling human baseline.
 
 ARC-AGI is important conceptually: it is a benchmark that *resists* the standard scaling law playbook, because more parameters and more tokens do not straightforwardly help if the capability is principled rule induction rather than pattern completion.
+
+### Small-Model Signal: Bits-per-Byte and the Zero-Shot Suite
+
+Every benchmark above is built to discriminate *at the frontier*. Point them at the ~100M-parameter model you just trained and they all return chance or zero: MMLU ≈ 25 %, GPQA ≈ 25 %, GSM8K ≈ 0 %, HumanEval ≈ 0 %. That is not a verdict on your model — those benchmarks have no resolution in that regime (see "Floor Effects" below). Two other families of metric do carry signal at small scale, and they are what you should actually track while pretraining.
+
+**Held-out likelihood.** The primary number for a small model is the loss on a held-out shard of the *same* distribution you trained on, plus a few out-of-distribution shards. Perplexity is tokenizer-dependent, so a model with a 32k vocabulary and one with a 50k vocabulary cannot be compared by perplexity even on identical text. The tokenizer-independent version is **bits-per-byte** (BPB): the total cross-entropy of the held-out text, converted to bits and divided by the number of UTF-8 *bytes* rather than tokens,
+
+$$
+\text{BPB} = \frac{1}{N_{\text{bytes}} \ln 2} \sum_{t=1}^{N_{\text{tokens}}} \bigl(-\log p_\theta(x_t \mid x_{<t})\bigr)
+$$
+
+which equals $\frac{N_{\text{tokens}}}{N_{\text{bytes}}} \cdot \frac{\text{mean NLL per token}}{\ln 2}$. BPB is the honest cross-model, cross-tokenizer comparison metric and is what serious small-scale leaderboards report; `lm_eval` computes it for the `wikitext` and Pile-style perplexity tasks, and AI2's Paloma suite exists specifically to report held-out fit across many domains rather than one. See [Probability, Statistics & Information Theory](../01-foundations/02-probability-information.html) for the bits/nats conversion and [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) for the loss itself.
+
+**The zero-shot multiple-choice suite.** The second family is the set of small, pre-instruction-tuning benchmarks that the EleutherAI/Pythia and OLMo model suites report: HellaSwag (commonsense sentence completion), PIQA (physical commonsense), WinoGrande (pronoun coreference), ARC-Easy and ARC-Challenge (grade-school science), OpenBookQA, BoolQ, SciQ, and LAMBADA (last-word prediction). These are scored by **length-normalized log-likelihood over the answer options**, not by generation, so a base model that cannot follow an instruction or emit "Answer: C" still produces a usable number. In published small-model sweeps the easier members (SciQ, PIQA, ARC-Easy, LAMBADA, then HellaSwag) typically lift above chance first, while ARC-Challenge and WinoGrande hug chance until roughly the 1B-parameter scale — so at 100M, expect a handful of moving needles and several flat ones, and choose your tracking set accordingly.
+
+You do not re-implement any of this. The reference implementation is EleutherAI's `lm-evaluation-harness`:
+
+```bash
+pip install "lm-eval[vllm]"
+
+# Zero-shot base-model battery for a ~100M checkpoint in HF layout.
+lm_eval --model hf \
+  --model_args pretrained=./stack-100m,dtype=bfloat16 \
+  --tasks sciq,piqa,arc_easy,arc_challenge,hellaswag,winogrande,openbookqa,lambada_openai \
+  --num_fewshot 0 --batch_size 16 \
+  --output_path results/stack100m/
+```
+
+The mechanics of that harness — how it builds prompts, computes the log-likelihoods, and normalizes them — are the subject of [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). Part XIV's [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html) chapter applies this ordering to Stack-100M: held-out perplexity first as the one number you can trust, then a small hand-inspected capability battery, with both reported honestly rather than averaged into a single headline.
 
 ---
 
@@ -173,6 +202,8 @@ def flag_contaminated(
         contaminated.append(overlap >= threshold)
     return contaminated
 ```
+
+In practice you do not run that quadratic loop. `lm-evaluation-harness` ships a decontamination module implementing the 13-gram overlap protocol, and at corpus scale the job is folded into the deduplication pass you already run over pretraining data: Bloom-filter deduplicators such as the one in AI2's **Dolma** toolkit, or the dedup stages in HuggingFace **`datatrove`**, will drop any training document that overlaps a "seen" set — so you seed that set with your evaluation suites *before* the pass rather than trying to detect contamination afterwards. This is a step you own when you build your own model: see [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) for the machinery and [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) for where it lands in the Stack-100M pipeline.
 
 **Memorization probes.** A stronger test presents the first half of a benchmark example and asks the model to complete it. If it produces the exact second half verbatim, that is strong evidence of memorization. Carlini et al. (2021, 2022) formalized this kind of training-data extraction and showed memorization grows with model scale and with how often a string is duplicated in the corpus; Oren et al. (2023) proposed an exchangeability test — a benchmark's examples are exchangeable, so a model that assigns systematically higher likelihood to the benchmark's canonical ordering than to shuffled orderings has likely seen the exact set; and Golchin & Surdeanu (2024) use guided prompting to coax verbatim continuations out of a suspected-contaminated model. The `completion_probe` below implements the simplest of these.
 
@@ -498,6 +529,8 @@ Different harnesses make different choices here, making cross-harness comparison
 
     Moral: **a difference smaller than about 1 % on the full MMLU set is not statistically significant without multiple runs or a stricter significance test.** On smaller subsets (e.g., a 500-question domain slice), the CI is roughly $\pm 3.5$ points, so differences below 7 % are noise.
 
+Note that this calculation is deliberately conservative. Treating the two scores as independent throws away the fact that both models answered the *same* questions: the per-item outcomes are correlated (both models get the easy items right and the hard items wrong), and the correct test conditions on that pairing. McNemar's test looks only at the discordant items — those one model gets right and the other wrong — and typically detects differences two to three times smaller than the unpaired interval above suggests. Always evaluate both models on the identical item set and use a paired test; [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html) derives it, along with bootstrap intervals and power analysis for sizing a test set in advance.
+
 ---
 
 ## The Gap Between Benchmarks and Usefulness
@@ -575,17 +608,19 @@ Reproducibility is a live problem. The same model evaluated with different harne
 
 | Benchmark | Domain | Format | Questions | Primary Metric | Saturation? |
 |---|---|---|---|---|---|
-| MMLU | Knowledge (57 domains) | 4-choice | ~14,000 | Accuracy | Approaching |
+| MMLU | Knowledge (57 domains) | 4-choice | ~14,000 | Accuracy | Yes (by 2025–26) |
 | MMLU-Pro | Knowledge (harder) | 10-choice | ~12,000 | Accuracy | No |
 | GSM8K | Grade-school math | Open answer | 8,500 | Exact match | Yes |
 | MATH | Competition math | Open answer | 12,500 | Exact match | Partial |
 | AIME | Hard competition math | Integer answer | 15/yr | Exact match | No |
 | HumanEval | Python coding | Code gen + unit tests | 164 | pass@1 | Yes |
 | MBPP | Python coding | Code gen + unit tests | 974 (500 test) | pass@1 | Yes |
-| GPQA | PhD science | 4-choice | ~450 | Accuracy | No |
+| GPQA | PhD science | 4-choice | ~450 | Accuracy | Partial (cracked by reasoning models) |
 | BBH | Complex reasoning | Open/4-choice | 6,511 | Accuracy | Partial |
 | IFEval | Instruction following | Open (rule-checked) | 541 | Prompt/instr accuracy | No |
 | ARC-AGI | Visual rule induction | Grid matching | 400 | Accuracy | No |
+| HellaSwag / PIQA / ARC-E/C / WinoGrande | Commonsense & science, base models | Multi-choice, log-likelihood scored | ~0.5k–10k each | Length-normalized accuracy | Yes at the frontier — but this is the informative band at ≤1B |
+| Held-out corpus | Language-modeling fit | Free text | any | Bits-per-byte / perplexity | Never saturates |
 
 ---
 
@@ -608,6 +643,7 @@ Reproducibility is a live problem. The same model evaluated with different harne
     - Multiple-choice benchmarks introduce artifacts: positional bias, sensitivity to answer formatting, and inflation from guessing. Log-likelihood scoring reduces extraction noise but introduces length-normalization choices.
     - High benchmark scores are necessary but not sufficient for usefulness: capability does not equal behavior, benchmarks sample a fixed distribution, and Goodhart's Law applies as soon as a benchmark becomes a leaderboard target.
     - Critical benchmark literacy means checking: which version, which prompting strategy, which harness, contamination protocol, statistical significance, and what was *not* reported.
+    - Frontier benchmarks have no resolution below ~1B parameters. For a small model, track held-out **bits-per-byte** (tokenizer-independent, never saturates) plus the log-likelihood-scored zero-shot suite (SciQ, PIQA, ARC-Easy, LAMBADA, HellaSwag), and run all of it through `lm-evaluation-harness` rather than re-implementing it.
     - ARC-AGI is qualitatively distinct: it tests fluid rule induction from a handful of examples, which resists the standard scaling-law solution and requires principled generalization.
 
 ---
@@ -634,7 +670,11 @@ Reproducibility is a live problem. The same model evaluated with different harne
 
     **Open-source & tools**
 
-    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — de facto standard eval framework backing the HuggingFace Open LLM Leaderboard; supports 60+ benchmarks across HuggingFace, vLLM, and API backends.
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — de facto standard eval framework; supports 60+ benchmarks across HuggingFace, vLLM, and API backends, computes bits-per-byte for perplexity tasks, and ships a 13-gram decontamination module.
+    - [huggingface/lighteval](https://github.com/huggingface/lighteval) — HuggingFace's lighter-weight harness, used for the Open LLM Leaderboard v2 task set; integrates with `accelerate`, `nanotron`, and vLLM backends.
+    - [evalplus/evalplus](https://github.com/evalplus/evalplus) — HumanEval+ / MBPP+: the same problems with far larger, sandboxed test suites; the honest way to report either benchmark. [bigcode-project/bigcode-evaluation-harness](https://github.com/bigcode-project/bigcode-evaluation-harness) adds MultiPL-E, DS-1000, and APPS.
+    - [stanford-crfm/helm](https://github.com/stanford-crfm/helm) — reference implementation of the multi-metric, multi-scenario HELM methodology (accuracy plus calibration, robustness, bias, efficiency).
+    - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the UK AI Safety Institute's eval framework, designed around agentic and tool-using evaluations with solvers, scorers, and full transcript logging.
 
 ## Further Reading
 
@@ -649,6 +689,8 @@ Reproducibility is a live problem. The same model evaluated with different harne
 - Wang et al., *MMLU-Pro: A More Robust and Challenging Multi-Task Language Understanding Benchmark*, 2024.
 - Liang et al., *Holistic Evaluation of Language Models* (HELM), 2022.
 - Chiang et al., *Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference*, 2024.
+- Liu et al., *Is Your Code Generated by ChatGPT Really Correct? Rigorous Evaluation of Large Language Models for Code Generation* (EvalPlus / HumanEval+), 2023.
+- Magnusson et al., *Paloma: A Benchmark for Evaluating Language Model Fit*, 2023.
 - EleutherAI, *lm-evaluation-harness* (GitHub repository).
 
 ---
@@ -798,3 +840,35 @@ Reproducibility is a live problem. The same model evaluated with different harne
     The spread is $0.74 - 0.55 = 0.19$, i.e. 19 percentage points — a large position bias favouring answer "A," exactly the "bias toward the first option" the chapter describes.
 
     Post-hoc shuffling of `(prediction, gold)` pairs could never produce these numbers because reordering the list of already-generated predictions leaves every individual pred/gold pairing unchanged; accuracy is invariant under permuting examples. Detecting position bias requires **fresh model calls**: you must re-render each question with the options permuted (`make_position_bias_variants`) and query the model again for each ordering, because the bias lives in *how the model responds* to a given ordering, not in the static scoring of fixed outputs.
+
+**7.** You train two ~100M models with different tokenizers and evaluate both on the *same* held-out shard of 4,000,000 UTF-8 bytes. Model A's tokenizer emits 1,000,000 tokens for that text and A reaches a mean cross-entropy of 3.10 nats/token. Model B's tokenizer emits 800,000 tokens and B reaches 3.30 nats/token. Compute each model's perplexity and each model's bits-per-byte. Which model fits the text better, and what does the disagreement tell you about reporting perplexity across tokenizers?
+
+??? note "Solution"
+    Perplexity is $\exp(\text{mean NLL per token})$, so $\text{PPL}_A = e^{3.10} \approx 22.20$ and $\text{PPL}_B = e^{3.30} \approx 27.11$. By perplexity, A looks clearly better.
+
+    Bits-per-byte divides the *total* cross-entropy (in bits) by the number of bytes, so the tokenizer cancels out:
+
+    $$
+    \text{BPB} = \frac{N_{\text{tokens}} \times \text{NLL}_{\text{tok}}}{N_{\text{bytes}} \ln 2}
+    $$
+
+    $$
+    \text{BPB}_A = \frac{10^6 \times 3.10}{4 \times 10^6 \times 0.6931} \approx 1.118,
+    \qquad
+    \text{BPB}_B = \frac{8 \times 10^5 \times 3.30}{4 \times 10^6 \times 0.6931} \approx 0.952
+    $$
+
+    ```python
+    import math
+
+    def bits_per_byte(mean_nll_per_token: float, n_tokens: int, n_bytes: int) -> float:
+        """Total cross-entropy in bits, per UTF-8 byte. Tokenizer-independent."""
+        return (n_tokens * mean_nll_per_token) / (n_bytes * math.log(2))
+
+    assert abs(bits_per_byte(3.10, 1_000_000, 4_000_000) - 1.1181) < 1e-4
+    assert abs(bits_per_byte(3.30,   800_000, 4_000_000) - 0.9522) < 1e-4
+    ```
+
+    **B fits the text better.** B spends 0.95 bits per byte of real text where A spends 1.12 — B compresses the held-out shard by about 15 % more. A only *looked* better because its tokenizer chops the text into more, individually easier-to-predict pieces (4 bytes/token versus 5), which mechanically lowers per-token loss without predicting the underlying text any better.
+
+    The lesson: **perplexity is only comparable between models that share a tokenizer.** Any cross-tokenizer comparison — your own vocab-size ablations included — must be made in bits-per-byte (or equivalently, total nats over the same byte string).

@@ -4,7 +4,7 @@ Human evaluation of LLM outputs is the gold standard — but it is slow, expensi
 
 The insight behind **LLM-as-a-Judge** (LLMaaJ) is simple: a sufficiently capable language model can replicate many of the judgments a human makes about quality, correctness, and helpfulness — and it can do so at the speed of inference. Since roughly 2023, this approach has become the backbone of nearly every large-scale automated evaluation pipeline, including the reward modeling loop described in [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html).
 
-This chapter is a rigorous treatment of the machinery: how to prompt a judge, which biases infect its scores, how to calibrate and audit it against human labels, and how to build the Chatbot Arena Elo system from scratch.
+This chapter is a rigorous treatment of the machinery: how to prompt a judge, which biases infect its scores, how to calibrate and audit it against human labels, how to serve an open judge locally with vLLM, and how to build the Chatbot Arena ranking — both the online Elo update and the Bradley-Terry maximum-likelihood fit the live leaderboard actually computes — from scratch. In the capstone, this machinery does two jobs: it mines the on-policy preference pairs that DPO consumes ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)) and it grades the open-ended half of the final capability report ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)).
 
 ---
 
@@ -240,7 +240,7 @@ $$
 
 where $p_o$ is observed agreement and $p_e$ is expected agreement under the null hypothesis that both raters assign labels randomly according to their marginals.
 
-For a binary (A wins / B wins / tie) pairwise task, if the judge labels A=60%, B=30%, tie=10% and humans label A=50%, B=35%, tie=15%, the expected agreement $p_e$ is the dot product of the marginals, and $\kappa$ will typically be in the 0.5–0.7 range for a good judge.
+For a three-way (A wins / B wins / tie) pairwise task, if the judge labels A=60%, B=30%, tie=10% and humans label A=50%, B=35%, tie=15%, the expected agreement $p_e$ is the dot product of the marginals, and $\kappa$ will typically be in the 0.5–0.7 range for a good judge.
 
 ### Spearman's Rank Correlation
 
@@ -407,6 +407,61 @@ if __name__ == "__main__":
     # A well-calibrated judge should penalize verbosity here
 ```
 
+### Running the Judge Locally: vLLM + an Open Judge Model + Constrained JSON
+
+Nothing above requires a proprietary API. The standard open-source deployment is to serve an **open judge model** behind vLLM's OpenAI-compatible HTTP server (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)) and point the exact same client at `localhost`. For a from-scratch build this matters twice over: judging is the single highest-volume LLM call in an eval pipeline, and it is the one you least want metered.
+
+```bash
+pip install vllm
+# Prometheus-2 is a purpose-trained open judge (absolute + pairwise grading).
+# Any strong instruct model of the same size works too; what matters is that
+# the judge is NOT the model under test (self-preference bias).
+vllm serve prometheus-eval/prometheus-7b-v2.0 --port 8000 --max-model-len 4096
+```
+
+The second win is **structured decoding**. Rather than sampling freely and retrying on `JSONDecodeError`, we constrain the decode to a JSON schema, so a syntactically valid object is guaranteed by construction. vLLM implements this with a grammar backend (`xgrammar` by default; `outlines` and `lm-format-enforcer` are also selectable) that masks the logits of any token which cannot continue a legal parse — see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for the mechanism.
+
+```python
+from openai import OpenAI
+
+# Same client class, different base_url. Nothing else in the judge changes.
+local_judge = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+
+CRITERIA = ["correctness", "helpfulness", "conciseness", "safety"]
+CRITERION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rationale": {"type": "string"},
+        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+    },
+    "required": ["rationale", "score"],
+}
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {c: CRITERION_SCHEMA for c in CRITERIA},
+    "required": CRITERIA,
+}
+
+def judge_local(question: str, response: str, model: str) -> dict:
+    completion = local_judge.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+            {"role": "user",   "content": f"QUESTION:\n{question}\n\nRESPONSE:\n{response}"},
+        ],
+        temperature=0.0,
+        max_tokens=512,
+        # vLLM-specific knob. Recent vLLM also accepts the OpenAI-style
+        # response_format={"type": "json_schema", "json_schema": {...}}.
+        extra_body={"guided_json": JUDGE_SCHEMA},
+    )
+    return json.loads(completion.choices[0].message.content)
+```
+
+!!! warning "Common pitfall"
+
+    Grammar-constrained decoding guarantees the *shape* of the output, not its *semantics*. Backends enforce the JSON grammar and the enumerated keys reliably, but numeric bounds like `"minimum": 1, "maximum": 5` are not all expressible in a context-free grammar and may be ignored. Keep the range assertions from `judge_response` — you have deleted the parse-failure retry loop, not the validation. And note the second-order effect: masking logits changes the distribution the judge samples from, so a schema-constrained judge must be re-calibrated against your gold set, exactly as if you had swapped judge models.
+
 ---
 
 ## Chatbot Arena and the Elo Rating System
@@ -447,7 +502,8 @@ from collections import defaultdict
 class EloRanker:
     """
     Maintains Elo ratings for a set of LLM models.
-    Ratings start at 1000 (chess convention baseline).
+    Ratings start at 1000 (the Arena convention; chess itself starts new
+    players near 1500 — the offset is arbitrary, only differences matter).
     """
     
     def __init__(self, k: float = 32.0, base: float = 10.0, scale: float = 400.0):
@@ -551,6 +607,80 @@ def run_automated_arena(
 
 {{fig:elo-battles-to-ranking}}
 
+### From Online Elo to the Bradley-Terry MLE
+
+Online Elo has a defect that matters once you publish a leaderboard: **it depends on the order the battles arrive in**. Shuffle the same battle log and you get different final ratings, because each update uses only the ratings known so far. A model whose first hundred opponents happened to be weak carries an inflated rating for a long time, and $K$ trades responsiveness against variance with no principled setting.
+
+The fix is to stop treating the ratings as a running average and instead fit them **all at once by maximum likelihood**. Elo's logistic curve *is* the Bradley-Terry (BT) model: give each model a latent strength $w_i$ and let
+
+$$
+P(i \succ j) = \sigma(w_i - w_j), \qquad \sigma(z) = \frac{1}{1 + e^{-z}}
+$$
+
+Over a battle log $\mathcal{B}$ of triples $(i, j, y)$ with $y = 1$ if $i$ won, the log-likelihood is
+
+$$
+\ell(w) = \sum_{(i,j,y) \in \mathcal{B}} \Big[\, y \log \sigma(w_i - w_j) + (1-y) \log\big(1 - \sigma(w_i - w_j)\big) \Big]
+$$
+
+This is exactly the log-likelihood of a **logistic regression with no intercept** whose design row for a battle is $+1$ in column $i$, $-1$ in column $j$, and $0$ elsewhere. It is concave in $w$, so the optimum is unique up to the one unidentifiable degree of freedom (adding a constant to every $w_i$ changes nothing), which we fix by centering. Ratings are then mapped onto the familiar Elo scale by matching the two parameterizations — $10^{\Delta\theta/400} = e^{\Delta w}$ gives $\theta = \frac{400}{\ln 10} w + 1000 \approx 173.7\,w + 1000$.
+
+This is what LMArena publishes, and it is also where **style control** enters: append extra columns to the design matrix holding per-battle style *differences* (A minus B) — answer length, number of markdown headers, bold spans, list items — and fit them jointly. The style coefficients soak up the part of the preference explained by presentation, and the model coefficients that remain are style-controlled ratings.
+
+```python
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+
+def fit_bradley_terry(battle_log, style_features=None,
+                      scale=400.0, base=10.0, init_rating=1000.0):
+    """
+    Order-invariant MLE alternative to the online EloRanker above.
+
+    battle_log:     [{"model_a": str, "model_b": str, "outcome": "A"|"B"|"tie"}, ...]
+    style_features: optional list (same length/order as battle_log) of dicts of
+                    A-minus-B style covariates, e.g.
+                    {"len_diff": (len_a - len_b) / 1000, "header_diff": ...}.
+                    Pass them to get STYLE-CONTROLLED ratings; omit for raw ones.
+
+    Returns {model_name: elo_rating}.
+    """
+    models = sorted({m for b in battle_log for m in (b["model_a"], b["model_b"])})
+    idx = {m: i for i, m in enumerate(models)}
+    style_keys = sorted(style_features[0]) if style_features else []
+    n_col = len(models) + len(style_keys)
+
+    rows, ys, ws = [], [], []
+    for t, b in enumerate(battle_log):
+        x = np.zeros(n_col)
+        x[idx[b["model_a"]]] = +1.0      # the +1 / -1 contrast IS the BT model
+        x[idx[b["model_b"]]] = -1.0
+        for k, key in enumerate(style_keys):
+            x[len(models) + k] = style_features[t][key]
+
+        if b["outcome"] == "tie":
+            # A tie is half a win each way: duplicate the row with weight 0.5.
+            rows += [x, x]; ys += [1, 0]; ws += [0.5, 0.5]
+        else:
+            rows.append(x); ys.append(1 if b["outcome"] == "A" else 0); ws.append(1.0)
+
+    # fit_intercept=False: only rating DIFFERENCES are identifiable.
+    # The default C=1.0 is a mild L2 prior — not cosmetic: it keeps ratings
+    # finite for a model that is undefeated (perfect separation => w -> inf).
+    clf = LogisticRegression(fit_intercept=False, max_iter=1000)
+    clf.fit(np.vstack(rows), np.array(ys), sample_weight=np.array(ws))
+
+    w = clf.coef_[0][:len(models)]
+    w = w - w.mean()                                  # fix the gauge freedom
+    theta = w * (scale / np.log(base)) + init_rating  # -> Elo scale
+    return {m: round(float(theta[i]), 1) for m, i in idx.items()}
+```
+
+Two practical notes. First, the bootstrap in `bootstrap_elo_ci` below carries over directly: replace the inner `EloRanker` loop with a single `fit_bradley_terry(sample)` call and accumulate the returned `{model: rating}` dict. Resampling the *battle log* this way is the standard route to the confidence intervals LMArena reports. Second, you do not have to write this yourself: LMArena open-sourced its leaderboard methodology as **`arena-rank`** (`pip install arena-rank`), whose `BradleyTerry(...).compute_ratings_and_cis(dataset, significance_level=0.05)` reproduces the published pipeline including the CI machinery.
+
+!!! note "Aside"
+
+    Online Elo and the BT MLE agree in the large-sample limit — online Elo is a stochastic-approximation scheme for the same stationary point. Use the online update when ratings must be live after every battle (and for intuition); use the MLE whenever you are reporting a ranking, because it is order-invariant, has no $K$ to tune, and admits covariates like style control.
+
 ---
 
 ## Reward Models as Judges
@@ -584,28 +714,38 @@ class RewardModelJudge:
     Model must output a scalar logit (or use a single-logit head).
     """
     
-    def __init__(self, model_name: str = "OpenAssistant/reward-model-deberta-v3-large-v2"):
+    def __init__(
+        self,
+        model_name: str = "Skywork/Skywork-Reward-V2-Qwen3-4B",
+        device: str = "cuda",
+    ):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
-        self.model.eval()
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            num_labels=1,                # single scalar head
+            dtype=torch.bfloat16,        # `torch_dtype=` on transformers < 4.56
+        ).to(device).eval()
+        self.device = device
     
     @torch.no_grad()
     def score(self, question: str, response: str) -> float:
         """
         Returns a reward scalar. Higher = better.
-        The model expects a concatenated [question, response] input
-        in a specific format (model-dependent).
         """
-        # Format as the model expects (typically question + sep + response)
-        text = f"{question}\n\n{response}"
+        conv = [{"role": "user",      "content": question},
+                {"role": "assistant", "content": response}]
+        # Modern open RMs are trained ON THE CHAT TEMPLATE of their base model.
+        # Feeding a bare f"{question}\n\n{response}" string is the single most
+        # common way to get scores that look plausible and mean nothing.
+        text = self.tokenizer.apply_chat_template(conv, tokenize=False)
         tokens = self.tokenizer(
             text,
             return_tensors="pt",
             truncation=True,
-            max_length=512,
-        )
+            max_length=4096,
+        ).to(self.device)
         logits = self.model(**tokens).logits  # shape: (1, 1) for scalar head
-        return logits.squeeze().item()
+        return logits[0][0].item()
     
     def pairwise_judge(self, question: str, resp_a: str, resp_b: str) -> str:
         """Returns 'A', 'B', or 'tie' based on reward scores."""
@@ -613,10 +753,19 @@ class RewardModelJudge:
         score_b = self.score(question, resp_b)
         margin = abs(score_a - score_b)
         
-        if margin < 0.05:   # Small margin → call it a tie
+        # RM outputs are unnormalized logits whose scale is model-specific
+        # (one RM's "0.05" is another's "5"). Calibrate this threshold on your
+        # gold set: pick the margin at which judge/human agreement peaks.
+        if margin < 0.05:
             return "tie"
         return "A" if score_a > score_b else "B"
 ```
+
+### Choosing (or Training) the Reward Model
+
+You do not pick an open RM by vibes. **RewardBench** (Lambert et al., 2024; `allenai/reward-bench`, now in a v2 edition) is the standard meta-evaluation: it scores an RM on how often it ranks a known-good response above a known-bad one across chat, reasoning, and safety splits, and it is the leaderboard the modern open RM families — Skywork-Reward-V2, and the reward models shipped alongside open post-training stacks — are tuned against. `JudgeBench` plays the same role for *generative* judges. Run the benchmark for the split that matches your domain, not the headline average.
+
+If nothing off the shelf fits your task, training your own RM is a short job: TRL's `RewardTrainer` takes a dataset of `(prompt, chosen, rejected)` and an `AutoModelForSequenceClassification` with `num_labels=1` and optimizes exactly the Bradley-Terry loss derived in [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) — the same likelihood we just fit for arena ratings, with a network in place of a lookup table of strengths. OpenRLHF and veRL wrap the same objective for multi-node scale.
 
 ### Reward Model Calibration Issues
 
@@ -748,7 +897,63 @@ For a daily evaluation run of 10,000 examples using a mid-tier frontier judge (o
 - Total tokens: 10,000 × 650 = 6.5M tokens
 - Rough cost: on the order of USD 30–50 per run
 
-For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Haiku) for daily monitoring and reserve GPT-4o or Claude Opus for milestone evaluations. Always validate that the smaller judge maintains acceptable calibration.
+For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Haiku) for daily monitoring and reserve GPT-4o or Claude Opus for milestone evaluations. Always validate that the smaller judge maintains acceptable calibration. A locally served open judge (previous section) moves the bill from USD-per-run to GPU-hours, which is usually the right trade once you are judging daily.
+
+### Don't Rebuild the Harness
+
+Everything above is worth writing once so you understand it, but in production you will mostly configure an existing harness — see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) for how these fit together. The three that matter for judging:
+
+```bash
+pip install alpaca-eval          # length-controlled win rate vs a reference model
+alpaca_eval --model_outputs my_outputs.json \
+            --annotators_config weighted_alpaca_eval_gpt4_turbo
+```
+
+```python
+# deepeval: pytest-style assertions with a G-Eval judge metric.
+from deepeval.metrics import GEval
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+
+correctness = GEval(
+    name="Correctness",
+    criteria="Is every factual claim in the output accurate and supported?",
+    evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
+)
+correctness.measure(LLMTestCase(input=q, actual_output=r_good))
+print(correctness.score, correctness.reason)
+```
+
+The third, EleutherAI's **lm-evaluation-harness**, is *not* a judge framework — it scores log-likelihood and exact-match benchmarks — but it is the harness the same pipeline uses for the closed-ended half of an eval suite, so keep both and report them side by side.
+
+### The Judge as a Data Generator
+
+A pairwise judge is not only an evaluator: it is how you turn unlabeled model samples into preference data. Sample $k$ responses per prompt from your own model, judge them against each other, and emit the winner/loser as a `(prompt, chosen, rejected)` pair — this is the mining step that makes DPO **on-policy**, which the post-training literature identifies as the dominant factor in whether preference optimization helps at all.
+
+```python
+def mine_preference_pairs(judge_fn, prompts, sample_fn, k: int = 4):
+    """
+    sample_fn(prompt, k) -> list[str] of k on-policy samples.
+    Emits (prompt, chosen, rejected) using best-vs-worst by pairwise judging.
+    """
+    pairs = []
+    for prompt in prompts:
+        cands = sample_fn(prompt, k)
+        n = len(cands)
+        wins = [0] * n
+        for i in range(n):
+            for j in range(i + 1, n):
+                # Order-swapped judging: never mine pairs off a biased verdict.
+                out = pairwise_judge_debiased(judge_fn, prompt, cands[i], cands[j])
+                if out == "A": wins[i] += 1
+                elif out == "B": wins[j] += 1
+        best = max(range(n), key=lambda i: wins[i])
+        worst = min(range(n), key=lambda i: wins[i])
+        if wins[best] > wins[worst]:          # drop prompts where the judge is indifferent
+            pairs.append({"prompt": prompt, "chosen": cands[best], "rejected": cands[worst]})
+    return pairs
+```
+
+The capstone uses exactly this loop — a larger open model judging Stack-100M's own samples — to build its DPO set; see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html). One caution specific to small models: **never let a 100M model judge itself.** It is both the weakest available judge and maximally self-preferring, and where the task admits a programmatic checker (arithmetic, unit tests, format), a verifiable reward beats any judge outright — that is the argument for RLVR over judge-based rewards at small scale.
 
 !!! interview "Interview Corner"
 
@@ -763,11 +968,11 @@ For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Hai
     - LLM-as-a-Judge (LLMaaJ) enables scalable automated evaluation at inference speed, but must be treated as an approximate human proxy — not ground truth.
     - Pointwise evaluation is efficient (O(N) queries) and good for monitoring; pairwise is more calibrated for head-to-head comparisons but costs O(N²) and has strong position bias.
     - The five principal biases are: position, verbosity, self-preference, sycophancy, and instruction-following bias — each has a specific mitigation (run both orderings, explicit anti-length instructions, use different model family, neutral prompts, separate rubric criteria).
-    - Rubric-based multi-criteria evaluation (e.g., correctness, helpfulness, conciseness, safety weighted separately) provides more diagnostic signal than a single aggregate score.
-    - Chain-of-thought before scoring (G-Eval style) significantly improves calibration versus asking for a bare score.
-    - The Elo rating system converts pairwise win/loss outcomes into a global ranking; bootstrap resampling gives confidence intervals around ratings.
-    - Reward models are faster judges (10–50 ms vs. 1–5 s) suitable for training-loop reward signals; chat judges are more flexible and interpretable for offline evaluation.
-    - Always validate any judge — LLM or RM — against a gold human-labeled calibration set and track Spearman ρ and bias profile before trusting it in production.
+    - Rubric-based multi-criteria evaluation (correctness, helpfulness, conciseness, safety weighted separately) gives more diagnostic signal than a single aggregate score, and chain-of-thought before scoring (G-Eval style) significantly improves calibration versus asking for a bare score.
+    - The Elo rating system converts pairwise win/loss outcomes into a global ranking, but the online update is order-dependent; the Bradley-Terry MLE (a no-intercept logistic regression on ±1 contrast rows) is what leaderboards actually fit, and appending style covariates to that design matrix is exactly how style control works. Bootstrap the battle log for confidence intervals.
+    - You can run the whole pipeline open-source and offline: an open judge model (Prometheus-2 or a strong instruct model) served by vLLM with grammar-constrained JSON decoding, plus an open reward model chosen on RewardBench — no proprietary API anywhere.
+    - A pairwise judge doubles as a preference-data generator: sample $k$ on-policy responses, judge them against each other, and emit (chosen, rejected) pairs for DPO.
+    - Reward models are faster judges (10–50 ms vs. 1–5 s) suitable for training-loop reward signals while chat judges are more flexible and interpretable offline — but validate either against a gold human-labeled calibration set, tracking Spearman ρ and bias profile, before trusting it in production.
     - Cache judge outputs deterministically (hash of judge model + prompt + inputs) to make evaluations cheap, reproducible, and diffable.
 
 ---
@@ -795,6 +1000,10 @@ For cost-sensitive pipelines, use a smaller judge model (GPT-4o-mini, Claude Hai
     - [tatsu-lab/alpaca_eval](https://github.com/tatsu-lab/alpaca_eval) — AlpacaEval harness with length-controlled win-rate; achieves 0.98 Spearman correlation with Chatbot Arena at under $10 per run.
     - [LMArena Style Control](https://arena.ai/blog/style-control) — how the live leaderboard debiases length and markdown formatting by adding them as Bradley-Terry regression covariates; length is the dominant style factor.
     - [confident-ai/deepeval](https://github.com/confident-ai/deepeval) — production-ready pytest-style LLM evaluation framework with 40+ built-in metrics including G-Eval, RAG faithfulness, and hallucination detection.
+    - [lmarena/arena-rank](https://github.com/lmarena/arena-rank) — LMArena's own ranking methodology, open-sourced: `pip install arena-rank`, then `BradleyTerry(...).compute_ratings_and_cis(...)` reproduces the published leaderboard fit including confidence intervals.
+    - [allenai/reward-bench](https://github.com/allenai/reward-bench) — the standard meta-evaluation for reward models (v2 edition adds harder, less saturated splits); use it to pick an RM instead of guessing.
+    - [SkyworkAI/Skywork-Reward-V2](https://github.com/SkyworkAI/Skywork-Reward-V2) — an open reward-model family (roughly 0.6B–8B, Qwen3 and Llama-3.1 backbones) reporting state-of-the-art results across RewardBench v1/v2, PPE, RM-Bench and JudgeBench; a practical default when you need a fast scalar judge.
+    - [vLLM structured outputs](https://docs.vllm.ai/en/latest/features/structured_outputs/) — `guided_json` / `response_format` with the xgrammar backend; the standard way to make a locally served judge emit parseable JSON by construction.
 
 ## Further Reading
 

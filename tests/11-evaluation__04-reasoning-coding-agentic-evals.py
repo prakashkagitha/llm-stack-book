@@ -24,7 +24,7 @@ blocks can rely on names defined by earlier blocks:
       "import resource, sys" stays at 8-space indent -- an
       IndentationError before the generated script can even run. Fixed by
       building the template at column 0 and dropping dedent entirely.
-  #3 (line ~263, 48 lines)  - math_answers_equivalent (sympy symbolic
+  #4 (line ~297, 48 lines)  - math_answers_equivalent (sympy symbolic
       equivalence). sympy is not in the CI-guaranteed import set, so the
       import is guarded; the block is defined-and-called only if sympy
       imports successfully. Additionally, its symbolic-equality path
@@ -35,19 +35,26 @@ blocks can rely on names defined by earlier blocks:
       importable; otherwise it's defined-not-called with an explicit
       SKIP (see below). This is an environment/dependency gap, not a
       bug in the book's logic.
-  #5 (line ~381, 123 lines) - minimal agentic eval harness: AgentTask,
+  #8 (line ~456, 123 lines) - minimal agentic eval harness: AgentTask,
       TrajectoryStep, Trajectory, AgentEnvironment (ABC), AgentModel (ABC),
       collect_trajectory, evaluate_agent (asyncio). We supply tiny concrete
       subclasses (a scripted echo environment + a scripted agent) so the
       abstract classes and the full async loop actually execute.
-  #6 (line ~542, 55 lines)  - majority_vote_accuracy (self-consistency /
+  #9 (line ~617, 55 lines)  - majority_vote_accuracy (self-consistency /
       majority voting over k samples)
-  #7 (line ~629, 56 lines)  - detects_hardcoded_solution (unit-test-hacking
+  #10 (line ~704, 56 lines) - detects_hardcoded_solution (unit-test-hacking
       heuristic detector using ast + re)
 
 Blocks explicitly SKIPPED (per the harness's heuristic classification):
-  #1 = non-python (sandbox architecture figure placeholder / prose).
-  #4 = non-python (plain-text SWE-bench instance schema block).
+  #1 = non-python (expected stdout of block #0).
+  #3, #7 = bash (evalplus / bigcode-evaluation-harness CLI; SWE-bench
+      official harness CLI). Both install and run third-party packages
+      and are illustrative usage, not CPU-runnable in CI.
+  #5 = python but requires the third-party `math-verify` package, which
+      is not in the CI-guaranteed import set. It is three calls into a
+      library API (`parse` / `verify`), so there is no book-authored
+      logic to regression-test here.
+  #6 = non-python (plain-text SWE-bench instance schema block).
 
 No network or external API calls occur anywhere in this file. The only
 "process" spawned is a local `python3` subprocess (block #2), which is the
@@ -96,7 +103,7 @@ if _HAVE_SYMPY:
 
 
 # ============================================================================
-# Block #0 (line ~47): Pass@k unbiased estimator
+# Block #0 (line ~49): Pass@k unbiased estimator
 # ============================================================================
 
 def pass_at_k(n: int, c: int, k: int) -> float:
@@ -196,7 +203,7 @@ print("[ok] block #0 pass_at_k / aggregate_pass_at_k")
 
 
 # ============================================================================
-# Block #2 (line ~135): A minimal sandbox in Python
+# Block #2 (line ~144): A minimal sandbox in Python
 # ============================================================================
 
 @dataclass
@@ -325,7 +332,7 @@ print("[ok] block #2 run_in_sandbox / ExecutionResult")
 
 
 # ============================================================================
-# Block #3 (line ~263): math_answers_equivalent (sympy symbolic equivalence)
+# Block #4 (line ~297): math_answers_equivalent (sympy symbolic equivalence)
 # ============================================================================
 
 if _HAVE_SYMPY:
@@ -381,7 +388,7 @@ if _HAVE_SYMPY:
 
     if _HAVE_ANTLR4:
         _test_block3()
-        print("[ok] block #3 math_answers_equivalent")
+        print("[ok] block #4 math_answers_equivalent")
     else:
         # math_answers_equivalent is defined and reachable above (so the
         # block's logic exists in the module), but its symbolic-equality
@@ -392,16 +399,16 @@ if _HAVE_SYMPY:
         # so we cannot honestly assert on parse_latex's output -- doing so
         # would just be testing "does antlr4 exist", not the book's logic.
         print(
-            "[skip] block #3 math_answers_equivalent -- "
+            "[skip] block #4 math_answers_equivalent -- "
             "antlr4-python3-runtime unavailable (required by "
             "sympy.parsing.latex.parse_latex, not a CI-guaranteed import)"
         )
 else:
-    print("[skip] block #3 math_answers_equivalent -- sympy unavailable")
+    print("[skip] block #4 math_answers_equivalent -- sympy unavailable")
 
 
 # ============================================================================
-# Block #5 (line ~381): Minimal agentic eval harness
+# Block #8 (line ~456): Minimal agentic eval harness
 # ============================================================================
 
 @dataclass
@@ -583,11 +590,11 @@ def _test_block5():
 
 
 _test_block5()
-print("[ok] block #5 agentic eval harness (AgentTask/Trajectory/collect_trajectory/evaluate_agent)")
+print("[ok] block #8 agentic eval harness (AgentTask/Trajectory/collect_trajectory/evaluate_agent)")
 
 
 # ============================================================================
-# Block #6 (line ~542): majority_vote_accuracy (self-consistency)
+# Block #9 (line ~617): majority_vote_accuracy (self-consistency)
 # ============================================================================
 
 def majority_vote_accuracy(
@@ -669,11 +676,11 @@ def _test_block6():
 
 
 _test_block6()
-print("[ok] block #6 majority_vote_accuracy")
+print("[ok] block #9 majority_vote_accuracy")
 
 
 # ============================================================================
-# Block #7 (line ~629): detects_hardcoded_solution (unit-test hacking check)
+# Block #10 (line ~704): detects_hardcoded_solution (unit-test hacking check)
 # ============================================================================
 
 def detects_hardcoded_solution(code: str, test_inputs: list) -> bool:
@@ -741,7 +748,7 @@ def two_sum(nums, target):
 
 
 _test_block7()
-print("[ok] block #7 detects_hardcoded_solution")
+print("[ok] block #10 detects_hardcoded_solution")
 
 
 print("\nAll 11-evaluation/04-reasoning-coding-agentic-evals.md blocks executed successfully.")

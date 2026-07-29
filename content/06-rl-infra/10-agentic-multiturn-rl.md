@@ -4,7 +4,7 @@ Everything in Part VI up to this point has assumed a comfortably simple RL setti
 
 Agentic RL breaks that assumption in the most consequential way possible. Now the model does not emit a single answer — it emits an **action**, the action hits an **environment** (a Python interpreter, a search engine, a web browser, a shell, a game state), the environment emits an **observation**, and the model must condition on that observation to decide its next action. The episode is a *trajectory* of interleaved model tokens and environment tokens, possibly dozens of turns long, and the reward may not arrive until the very end. This is the regime that produces tool-using coding agents, deep-research agents, and computer-use agents — and it is where almost every hard problem in RL infrastructure shows up at once.
 
-This chapter is about the mechanics of doing RL when the rollout is a *conversation with an environment* rather than a single generation. We will build the trajectory data structure from scratch, work out exactly which tokens get a loss and which do not (the single most common source of silent bugs in agentic RL), derive turn-level versus trajectory-level credit assignment, walk through an environment in the RAGEN/ReAct style, and confront the genuinely hard problems: long-horizon credit assignment, partial rollouts, and the brutal throughput tax of interleaving generation with environment execution. The downstream payoff — what these agents actually *do* — is the subject of [Part VIII](../08-agents-harness/02-agentic-loop.html); here we focus on how to *train* them.
+This chapter is about the mechanics of doing RL when the rollout is a *conversation with an environment* rather than a single generation. We will build the trajectory data structure from scratch, work out exactly which tokens get a loss and which do not (the single most common source of silent bugs in agentic RL), derive turn-level versus trajectory-level credit assignment, walk through an environment in the RAGEN/ReAct style, confront the genuinely hard problems (long-horizon credit assignment, partial rollouts, and the brutal throughput tax of interleaving generation with environment execution), and finally map every piece onto the real open-source systems that implement it — veRL's multi-turn rollout, TRL, and the environment libraries the field is converging on. The downstream payoff — what these agents actually *do* — is the subject of [Part VIII](../08-agents-harness/02-agentic-loop.html); here we focus on how to *train* them.
 
 ## From Single-Turn to Multi-Turn: The Trajectory as the Unit
 
@@ -153,11 +153,13 @@ def rollout(policy_engine, tokenizer, env: Environment, task,
     return traj
 ```
 
-Three details deserve emphasis.
+Four details deserve emphasis.
 
 **Stop strings define turn boundaries.** The policy engine must stop generation exactly when the model emits a complete tool call (`</tool_call>`) or decides to give a final answer (EOS). This is why agentic RL is sensitive to the inference engine's stop-string handling — a missed stop string means the model keeps "generating" what should have been an observation, which poisons the trajectory. In practice you co-design the chat template, the tool-call format, and the stop strings together.
 
 **Observations can themselves be enormous.** A single web-page fetch or a verbose stack trace can be thousands of tokens. Those tokens consume context budget and inference FLOPs on every subsequent turn but never receive a gradient. This is the agentic version of the context-management problem and connects directly to [Context Engineering & Management](../08-agents-harness/04-context-engineering.html); for RL it means trajectories have wildly variable, observation-dominated lengths.
+
+**Carry token ids, not strings.** The loop above threads `running_text` for readability, but a production rollout should feed the engine the accumulated **token ids** (`vllm.TokensPrompt(prompt_token_ids=ids)`; SGLang's generate accepts `input_ids`). The reason is that BPE merges span segment boundaries, so `encode(a + b)` is *not* guaranteed to equal `encode(a) + encode(b)` — a `>` or newline at the end of an observation happily merges with the first characters of the next action. If the engine sampled under one tokenization of the conversation while the trainer teacher-forces the concatenated per-segment ids, your log-probs, your advantages, and your mask are all shifted by a token or two at every seam, and the importance ratios are silently wrong. Tokenize once, at the segment level, and thread ids end-to-end. The same argument applies to the chat template: render each turn's delta yourself and append it, rather than re-running `apply_chat_template` over a growing message list every turn, which can re-normalize earlier turns and change tokens you have already recorded.
 
 **The same engine that serves inference must report log-probs.** In single-turn RL you can sometimes get away with recomputing log-probs in the trainer. In multi-turn RL, recomputation must replay the *exact* interleaving — same observations, same boundaries — or the ratios are wrong. Storing the rollout log-probs per action token (as we do in `Segment.logprobs`) and reconciling them against a recomputed forward pass is the safe pattern; see the discussion of inference/training log-prob mismatch in [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
 
@@ -225,7 +227,7 @@ def masked_grpo_loss(logits, token_ids, loss_mask, advantages,
 
     The most insidious masking bug is *off-by-one*. Because of the next-token shift, the loss at position $i$ trains the prediction of token $i{+}1$. If your mask marks "this token is an action," but you apply it *before* the shift, you will (a) compute a loss on the last system/observation token that precedes the first action token's first prediction, and (b) drop a loss on the boundary between the last action token of a turn and the first observation token. Always shift the mask the same way you shift the targets, and unit-test it: feed a trajectory where you *know* exactly which positions should be live, and assert `mask.sum()` equals your hand count.
 
-A second, subtler masking issue is the **loss-normalization denominator**. Should you divide by the number of action tokens in the *trajectory*, in the *batch*, or in the *turn*? Dividing by the per-trajectory token count gives every trajectory equal weight regardless of length; dividing by the batch total gives every *token* equal weight, which over-weights long trajectories. This is the exact same length-bias controversy discussed for single-turn GRPO in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), but it bites harder here because trajectory lengths vary by an order of magnitude (a 1-turn success versus an 8-turn flailing failure). Most production systems normalize per-trajectory and then average over trajectories, which neutralizes length bias.
+A second, subtler masking issue is the **loss-normalization denominator**. Should you divide by the number of action tokens in the *trajectory*, in the *batch*, or in the *turn*? Dividing by the per-trajectory token count gives every trajectory equal weight regardless of length; dividing by the batch total gives every *token* equal weight, which over-weights long trajectories. This is the exact same length-bias controversy discussed for single-turn GRPO in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), but it bites harder here because trajectory lengths vary by an order of magnitude (a 1-turn success versus an 8-turn flailing failure). Practice is genuinely split. Per-trajectory normalization followed by an average over trajectories neutralizes length bias and is the safe default; DAPO-style **token-level** normalization instead sums the surrogate over every action token in the batch and divides by the batch's total action-token count, so each token contributes equally and a long trajectory is not outvoted by a lucky one-turn success; Dr. GRPO divides by a fixed constant instead, removing the length-dependent scaling altogether. Whichever you pick, pick it deliberately and log mean action-tokens-per-trajectory: a denominator that floats with realized episode lengths makes the loss scale — and hence the effective learning rate — drift as the policy's episode length drifts during training, which in agentic RL it always does.
 
 ## Credit Assignment: Trajectory-Level vs Turn-Level
 
@@ -373,6 +375,8 @@ This tiny class encodes several environment-design lessons that matter enormousl
 
 **Safety and isolation.** A code-execution or shell environment runs *model-generated code*. During RL the model will, with certainty, eventually generate `rm -rf /`, an infinite loop, or a fork bomb — not maliciously but because it is exploring. Every such environment must run in a sandbox (container, gVisor, firejail, ephemeral VM) with CPU/memory/time limits and no network unless required. This is non-negotiable infrastructure; see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html) and [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html).
 
+The capstone's narrow auto-research agent is exactly this environment shape — a tiny retriever, a safe calculator, and an exact-match verifier over a small fact corpus. It is worth being explicit about the ordering there, because it generalizes: at ~100M parameters the honest recipe is to **distill** the ReAct behaviour first ([A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html)) and keep RL single-turn ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)). A policy that cannot yet emit a well-formed tool call almost never reaches a terminal reward, so every trajectory in the group scores 0, the group-relative advantage is identically zero, and the run learns nothing at all. Multi-turn RL sharpens a behaviour that already exists; it is a poor way to create one. The masking and trajectory bookkeeping in this chapter are what you add *on top of* a distilled agent once its format-following is reliable enough that rewards are non-degenerate.
+
 ### Statefulness and reset semantics
 
 Single-turn environments are stateless: each `step` is independent. Agentic environments are **stateful** — a filesystem accumulates edits, a database accumulates writes, a browser accumulates history. This has two consequences for the RL system. First, `reset` must truly reset: a leaked file from a previous episode is a silent source of reward leakage and non-reproducibility. Second, for group sampling (GRPO with $G$ rollouts of the same task) you need $G$ *independent* environment instances, because the rollouts interact with their own copy of the world. A single shared environment would let trajectory 3's writes corrupt trajectory 4's reads. The cost of $G$ parallel sandboxes is a real budget line in agentic RL.
@@ -400,6 +404,8 @@ In single-turn RL, the GPU generates continuously. In agentic RL, every turn the
 {{fig:rollout-throughput-sync-vs-async}}
 
 The standard fix is **asynchronous, decoupled rollout**: run many environment instances concurrently so that while one trajectory waits on its tool, the GPU generates the next action for another trajectory. This requires an async rollout engine (vLLM's and SGLang's async APIs) feeding a pool of environment workers, with a scheduler that interleaves their requests. Architecturally this is the colocated-vs-disaggregated question of [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html) applied to environments: you want the inference engine saturated by a *fan-out* of environments, not blocked on any one of them.
+
+The second, less obvious tax is **re-prefill**. Every turn resubmits the entire conversation so far, so a naive $T$-turn episode prefills a growing prefix $T$ times — quadratic in context length over the episode, and the observations (which never receive a gradient) usually dominate that context. The fix is free if you ask for it: vLLM's automatic prefix caching and SGLang's RadixAttention keep the KV of the shared prefix resident, so turn $t$ only prefills the tokens added since turn $t-1$ ([Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html), [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)). Agentic RL is close to the ideal workload for it: appending an observation *extends* a prefix rather than forking it, and the $G$ group rollouts of one task all share the system prompt and task statement. Two caveats. First, the cache is invalidated by every weight update, so a partial rollout that survives a policy sync must re-prefill from scratch — budget for it. Second, prefix-cache hits change the numerics of the recomputed prefill slightly relative to an uncached run, which is one more small contributor to the log-prob mismatch discussed below; it is a reason to compute training log-probs in the trainer rather than trusting engine-side recomputation.
 
 !!! tip "Practitioner tip"
 
@@ -503,6 +509,75 @@ def masked_token_kl(logits, ref_logits, token_ids, loss_mask):
 
 Read this against the single-turn GRPO loop in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html). The algorithm is the same — group baseline, clipped surrogate, KL to reference. Everything that is *new* is bookkeeping: the trajectory data structure, the loss mask that survives flattening and padding, the broadcast of one advantage onto many action tokens across many turns, and the storage/alignment of rollout-time log-probs across segment boundaries. That bookkeeping is where agentic RL implementations live or die.
 
+## Doing This With Real Frameworks
+
+You should write the loop above once, to know what is in the box — and then use a framework, because the production version adds sequence packing, sharding, weight sync, and failure recovery. The open-source stack for agentic RL splits into three layers that you choose independently: the **trainer**, the **rollout engine**, and the **environment library**.
+
+**Trainer + rollout engine: veRL.** veRL has the most complete open-source multi-turn path. It drives SGLang (and increasingly vLLM) as the rollout engine and turns multi-turn on through configuration rather than code, so the tool loop runs *inside* the rollout worker where the KV cache and the loss mask already live. Roughly (exact flag names track the release — check `examples/sglang_multiturn/` in the version you install):
+
+```bash
+python3 -m verl.trainer.main_ppo \
+  algorithm.adv_estimator=grpo \
+  actor_rollout_ref.rollout.name=sglang \
+  actor_rollout_ref.rollout.multi_turn.enable=True \
+  actor_rollout_ref.rollout.multi_turn.max_assistant_turns=8 \
+  actor_rollout_ref.rollout.multi_turn.tool_config_path=$PWD/tools.yaml \
+  actor_rollout_ref.rollout.n=8 \
+  data.train_batch_size=256
+```
+
+where `tools.yaml` registers the tools the model may call, each with an OpenAI-style JSON schema that is rendered into the chat template so the model knows the calling convention:
+
+```yaml
+tools:
+  - class_name: "my_project.tools.SearchTool"   # your class: async execute(...) -> str
+    config:
+      retrieval_url: "http://localhost:8000/retrieve"
+      topk: 3
+    tool_schema:
+      type: "function"
+      function:
+        name: "search"
+        description: "Search the corpus and return the top passages."
+        parameters:
+          type: "object"
+          properties:
+            query: {type: "string", description: "The search query."}
+          required: ["query"]
+```
+
+The worker then does precisely what our `rollout()` does — generate until a tool-call stop token, execute the registered tool, append its result as an observation, record which spans are assistant-authored — and veRL's policy-loss function consumes that `loss_mask` exactly as `masked_grpo_loss` does. Reading its multi-turn rollout code after writing your own is the fastest way to see which of your simplifications production cannot afford.
+
+**TRL** is the other end of the ergonomics spectrum: its `GRPOTrainer` is single-turn by default, and recent versions expose a hook for supplying your own rollout function (name and contract track the release) so you can run an agentic loop and hand back per-sequence `prompt_ids`, `completion_ids`, and `logprobs`. If you take that route, the trainer no longer knows where your turn boundaries are, so you own the mask — which is the whole lesson of this chapter.
+
+**Environment libraries.** The environments are increasingly a separate, shareable artifact rather than trainer-internal code. The convergent interface is Gymnasium's, and adapting a text environment like our `SearchQAEnv` to it takes a dozen lines — worth doing, because it is the contract RAGEN, SkyRL-Gym, `verifiers`, and the OpenEnv standardization effort all sit close to:
+
+```python
+class GymAdapter:
+    """Wrap a text env in the Gymnasium 5-tuple contract that agentic-RL
+    environment libraries converge on, adding a turn budget on top for
+    environments that do not enforce one themselves. The split that matters
+    for RL: terminated (the task really ended) vs truncated (budget ran out)."""
+
+    def __init__(self, env, max_turns: int = 6):
+        self.env, self.max_turns, self.turns = env, max_turns, 0
+
+    def reset(self, task) -> tuple[str, dict]:
+        self.turns = 0
+        return self.env.reset(task), {"task": task}
+
+    def step(self, action_text: str) -> tuple[str, float, bool, bool, dict]:
+        obs, reward, done = self.env.step(action_text)
+        self.turns += 1
+        truncated = (not done) and self.turns >= self.max_turns
+        # terminated == the environment decided; truncated == budget ran out.
+        return obs, reward, bool(done), truncated, {"turns": self.turns}
+```
+
+Keeping `terminated` and `truncated` distinct is not pedantry: a *terminated* episode's terminal reward is the real return, while a *truncated* episode's return is merely a lower bound on what the policy would have achieved, and bootstrapping or advantage computation should treat the two differently (this is the same distinction that motivated Gymnasium's API change). It is also the flag your metrics need in order to tell "the agent is failing" apart from "the agent is running out of turns" — two problems with opposite fixes.
+
+Concretely, as of 2026: **RAGEN** ships ~10 Gym-compatible environments with the StarPO trainer; **SkyRL-Gym** targets long-horizon tool-use and software-engineering environments; **`verifiers`** packages environments as installable Python modules (each bundling a dataset, an interaction protocol, and a rubric) that plug into GRPO trainers and are shared through a public environments hub; and **OpenEnv** (PyTorch/Hugging Face) is the effort to standardize the environment API and distribute environments on the Hub the way models and datasets already are. The through-line: an environment is becoming a versioned, pip-installable dependency with its own tests, and your RL run's reproducibility depends on pinning it as tightly as you pin your model.
+
 !!! interview "Interview Corner"
 
     **Q:** You are training a tool-using agent with GRPO. Your reward steadily climbs, but when you deploy the model it has *stopped calling tools* and just hallucinates plausible-looking tool outputs inline. Training reward looks great. What most likely went wrong, and how would you diagnose and fix it?
@@ -514,16 +589,17 @@ Read this against the single-turn GRPO loop in [TRL: HuggingFace's RL Library](.
 !!! key "Key Takeaways"
 
     - In multi-turn agentic RL the unit of data is a **trajectory** of interleaved model actions and environment observations; the model authored only the action tokens, and those are the only tokens that get a policy-gradient loss.
-    - The **loss mask** (1 on action tokens, 0 on observations/system) is the single most important and most bug-prone object; mask the surrogate loss, the KL, and the importance ratio, normalize over action tokens only, and watch the next-token off-by-one.
+    - The **loss mask** (1 on action tokens, 0 on observations/system) is the single most important and most bug-prone object; mask the surrogate loss, the KL, and the importance ratio, normalize over action tokens only, and watch the next-token off-by-one. Thread **token ids**, not re-encoded strings, through the rollout so BPE merges at segment boundaries cannot silently shift the mask against the log-probs.
     - **Credit assignment** ranges from trajectory-level (one terminal reward broadcast to all actions, robust but high-variance) to turn-level/process rewards (discounted returns-to-go or branched group baselines, lower variance but needs an intermediate signal).
     - Use **group-relative (GRPO-style) baselines** to cut variance for free; reach for turn-level credit only when the environment exposes honest intermediate progress.
     - **Environment design is the lever**: errors should be observations not exceptions (so format-following emerges), every code/shell environment must be sandboxed, and group sampling needs $G$ *independent* environment instances to avoid state leakage.
     - The hard problems are **long-horizon credit assignment**, **partial rollouts / length skew** (straggler-dominated, heavy-tailed lengths), the **throughput tax** of GPUs idling on environment latency, and a **compounded inference/training distribution mismatch** across turns.
     - The biggest practical wins are usually infrastructural — pooled/pre-warmed sandboxes, async decoupled rollout to hide environment latency, partial rollouts to bound step time — not algorithmic cleverness.
+    - **Use the ecosystem**: veRL's multi-turn rollout (SGLang/vLLM backend, tools declared in config, mask produced by the rollout worker) is the reference trainer, and environments are converging on the Gymnasium contract while shipping as versioned packages (RAGEN, SkyRL-Gym, `verifiers`, OpenEnv) — pin the environment as tightly as you pin the model.
     - The training algorithm is the same GRPO/PPO as single-turn RL; what is new is the trajectory bookkeeping, the mask, and the credit broadcast. The downstream agent behavior these methods produce is the subject of [Part VIII](../08-agents-harness/02-agentic-loop.html).
 
 !!! sota "State of the Art & Resources (2026)"
-    Agentic and multi-turn RL has advanced rapidly since 2023: frameworks such as veRL, RAGEN, and TRL now ship production-ready multi-turn trainers, and the field has converged on trajectory-level GRPO with masked policy gradients as the baseline recipe while actively pushing turn-level credit assignment, stability diagnostics, and async rollout architectures. SWE-bench Verified remains the canonical coding-agent leaderboard but is now near-saturated at the frontier, driving harder successors such as SWE-bench Pro and terminal-native suites like Terminal-Bench; on the tool-use side τ²-bench's dual-control setting has superseded the original τ-bench.
+    Agentic and multi-turn RL has advanced rapidly since 2023: frameworks such as veRL, RAGEN, and TRL now ship production-ready multi-turn trainers, and the field has converged on trajectory-level GRPO with masked policy gradients as the baseline recipe while actively pushing turn-level credit assignment, stability diagnostics, and async rollout architectures. The environments themselves are becoming a first-class shareable artifact — versioned, installable modules bundling a dataset, an interaction protocol, and a rubric, distributed through community hubs and pushed toward a common Gymnasium-style API by efforts such as OpenEnv — instead of code buried inside a particular trainer. SWE-bench Verified remains the canonical coding-agent leaderboard but is now near-saturated at the frontier, driving harder successors such as SWE-bench Pro and terminal-native suites like Terminal-Bench; on the tool-use side τ²-bench's dual-control setting has superseded the original τ-bench.
 
     **Foundational work**
 
@@ -544,6 +620,8 @@ Read this against the single-turn GRPO loop in [TRL: HuggingFace's RL Library](.
 
     - [verl-project/verl](https://github.com/verl-project/verl) — production RL post-training library (HybridFlow) with multi-turn rollout support, integrates FSDP, Megatron-LM, vLLM, and SGLang.
     - [mll-lab-nu/RAGEN](https://github.com/mll-lab-nu/RAGEN) — StarPO-based multi-turn agentic RL framework with 10 built-in Gym-compatible environments; its 2026 V2 adds SNR-adaptive rollout filtering and reasoning-collapse diagnostics for training stability.
+    - [willccbb/verifiers](https://github.com/willccbb/verifiers) — packages an environment as an installable module bundling dataset, multi-turn interaction protocol, and rubric, so environments become versioned dependencies shared through a public hub rather than trainer-internal code.
+    - [NovaSky-AI/SkyRL](https://github.com/NovaSky-AI/SkyRL) — modular RL stack whose SkyRL-Gym targets long-horizon tool-use and software-engineering environments, with async/pipelined rollout for straggler-heavy agentic workloads.
 
     **Go deeper**
 

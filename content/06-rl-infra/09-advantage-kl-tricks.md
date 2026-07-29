@@ -236,6 +236,8 @@ $$
 
 This is the GRPO formulation. The KL is a clean regularizer on the policy with its own gradient, not laundered through the advantage. Its advantage: clean separation, the KL coefficient means exactly what you think, and there's no interaction with advantage whitening. Its subtlety: you backpropagate through the KL term, so you need a *differentiable* KL estimate (k3 is differentiable in `logp_policy`), whereas KL-in-reward only needs the *value* of the KL (it's a constant added to the reward, no gradient through it).
 
+One further subtlety worth knowing before an interviewer springs it on you: even though $k_3$ is an unbiased estimator of the KL *value*, differentiating it the way every implementation does — backprop through $\log\pi_\theta$ only — gives a **biased** estimator of $\nabla_\theta D_{\mathrm{KL}}$, because the sampling distribution $\pi_\theta$ also depends on $\theta$ and the corresponding score-function term $\mathbb{E}[k_3\,\nabla_\theta\log\pi_\theta]$ is silently dropped. In practice this is fine (the term is small when the policy is near the reference, which is exactly the regime KL control targets), but it means "unbiased estimator" is a claim about the value, not about the gradient.
+
 ```python
 def policy_loss_kl_in_loss(logp, logp_old, logp_ref, advantages, mask,
                            clip_eps=0.2, beta=0.04):
@@ -299,6 +301,8 @@ The `min` is the asymmetry that makes PPO work. Walk through the four cases — 
 
 
 The clip only ever *removes* incentive to move further in a direction you've already moved a lot — it never reverses the sign. When $A_t>0$ and the ratio has already grown past $1+\varepsilon$, the gradient is zeroed so you don't keep inflating that token's probability on stale data.
+
+**When does the clip actually fire?** It is worth being blunt about this, because it is a common source of confusion: if you take exactly *one* gradient step per rollout batch on fresh, on-policy data, then $\pi_\theta = \pi_{\theta_{\text{old}}}$ at the moment the ratio is formed, so $\rho_t \equiv 1$ for every token, the clip never binds, and the whole surrogate degenerates to plain REINFORCE-with-a-baseline. Clipping only earns its keep once one of three things is true: (a) you take multiple minibatch or epoch updates per rollout batch, (b) you run asynchronously against stale weights ([Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)), or (c) the rollout engine and the trainer disagree numerically about $\log\pi_{\theta_{\text{old}}}$. Case (c) is the treacherous one: it makes $\rho_t \ne 1$ at *zero* staleness, so a nonzero clip fraction on the very first inner epoch over fresh rollouts is a **bug signature**, not a training signal.
 
 ### Clip-higher (decoupled clipping)
 
@@ -398,7 +402,11 @@ $$
 \mathcal{L}_{\text{seq}} = \frac{1}{N}\sum_i \frac{\sum_t m_{i,t}\ell_{i,t}}{L_i}.
 $$
 
-The difference is *how much a long sequence contributes*. Under token-mean, a 600-token response contributes 6x the gradient of a 100-token one — so **token-mean rewards length** when advantages are positive, and is implicated in the length-explosion failure mode of GRPO. Under sequence-mean, every response counts once, so per-token gradients in long sequences are *down-weighted* — which can under-train the very long reasoning chains you care about. DAPO's "token-level loss" and the surrounding discussion argue for token-mean (with a fixed global denominator) precisely to give long correct reasoning its due weight, while controlling length through *other* means (explicit length penalties, dynamic sampling). A parallel 2025–2026 development, **GSPO** (Group Sequence Policy Optimization, Zheng et al., 2025), pushes this token-vs-sequence granularity debate into the *importance ratio* itself: it replaces GRPO's per-token ratio with a single sequence-level ratio (the length-normalized geometric mean of per-token ratios) and clips at the sequence level, which sharply reduces the length-accumulated variance of token-level importance sampling and stabilizes long-response and Mixture-of-Experts RL — it was used to train the Qwen3 models.
+The difference is *how much a long sequence contributes*. Under token-mean, a 600-token response contributes 6x the gradient of a 100-token one — so **token-mean rewards length** when advantages are positive, and is implicated in the length-explosion failure mode of GRPO. Under sequence-mean, every response counts once, so per-token gradients in long sequences are *down-weighted* — which can under-train the very long reasoning chains you care about. DAPO's "token-level loss" and the surrounding discussion argue for token-mean (with a fixed global denominator) precisely to give long correct reasoning its due weight, while controlling length through *other* means (explicit length penalties, dynamic sampling).
+
+Dr. GRPO attacks the same knob from the opposite side, and the two critiques are worth holding in your head together. The original GRPO objective normalizes each sequence by *its own* length ($1/|o_i|$ — i.e. sequence-mean), and Liu et al. point out that this makes the per-token *penalty* on a wrong answer shrink as the answer gets longer: with a fixed negative sequence-level advantage, each token in a 1000-token wrong response feels one-tenth the gradient of each token in a 100-token wrong response, so one of the cheapest ways for the policy to soften a punishment is to pad wrong answers out. Their fix is to divide by a *constant* (e.g. the maximum generation length) rather than $|o_i|$ — the `token_mean_fixed` branch below. So DAPO's "long correct answers dominate" and Dr. GRPO's "long wrong answers are under-punished" are two faces of the same length-dependent denominator, and they agree on the remedy: make the denominator independent of the individual sequence's length, and control length explicitly (length penalty, overlong filtering) rather than as a side effect of the reduction.
+
+A parallel 2025–2026 development, **GSPO** (Group Sequence Policy Optimization, Zheng et al., 2025), pushes this token-vs-sequence granularity debate into the *importance ratio* itself: it replaces GRPO's per-token ratio with a single sequence-level ratio (the length-normalized geometric mean of per-token ratios) and clips at the sequence level, which sharply reduces the length-accumulated variance of token-level importance sampling and stabilizes long-response and Mixture-of-Experts RL — it was used to train the Qwen3 models.
 
 ```python
 def aggregate_loss(per_token_loss, mask, mode="token_mean"):
@@ -436,7 +444,7 @@ def aggregate_loss(per_token_loss, mask, mode="token_mean"):
 Beyond the big three (advantage, KL, clip), production RL leans on a long tail of smaller tricks. Here is the working engineer's checklist, each with the one-line reason it exists.
 
 - **Importance-ratio sanity clamp.** Clamp `logp - logp_old` to e.g. $[-20, 20]$ before `exp` so a numerical blip can't produce `inf` ratios. Cheap insurance.
-- **Recompute old logprobs with the *training* engine.** Rollouts come from vLLM/SGLang; the training forward pass uses a different kernel/precision. The `logp_old` used in the ratio must be consistent — either recompute it under the trainer, or correct for the train/inference logprob mismatch. This mismatch is a leading cause of "my GRPO ratio is systematically off 1.0." See [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
+- **Recompute old logprobs with the *training* engine.** Rollouts come from vLLM/SGLang; the training forward pass uses a different kernel/precision. The `logp_old` used in the ratio must be consistent — either recompute it under the trainer, or correct for the train/inference logprob mismatch with **truncated importance sampling** (multiply the surrogate by $\min(\pi_{\text{train}}/\pi_{\text{rollout}},\,C)$ for a cap $C$ of a few units). This mismatch is a leading cause of "my GRPO ratio is systematically off 1.0." See [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html) and, for the TIS correction in detail, [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html).
 - **Gradient clipping by global norm.** `clip_grad_norm_(params, max_norm=1.0)` after backward; a single bad batch can produce a huge gradient that one clip absorbs. Log the *pre-clip* grad norm — sudden spikes are your earliest warning of instability (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)).
 - **Reward / advantage clipping.** Clip raw rewards to a sane range (e.g. $[-10, 10]$) so a reward-function bug or an outlier verifier score can't dominate.
 - **Mask everything consistently.** Prompt tokens, padding, and (for multi-turn) tool-output tokens must be masked out of the loss, the KL, the entropy, *and* the advantage normalization. An inconsistent mask between these is a silent, slow-bleeding bug.
@@ -479,6 +487,49 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
                   "entropy": ent.item(), "ratio_mean": ratio.mean().item()}
 ```
 
+This is exactly the update used for the book's from-scratch model: the Stack-100M RLVR stage runs group size $G=8$–$16$ on a verifiable task, $\beta=0$ (no KL, no reference model resident — a real memory saving at small scale), clip-higher, a single inner epoch (so $\rho_t\equiv1$ and the clip is a safety net rather than an active constraint), token-mean with a fixed denominator, global-norm gradient clipping at 1.0, and a learning rate an order of magnitude below the SFT one. Small models make one thing harder: their pass rate on any given prompt is low, so all-wrong groups (zero advantage) are common and dynamic sampling / curriculum filtering matters more than it does at 7B. The full recipe, with the prompt set and the reward function, is in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
+### The same knobs in verl and TRL
+
+You will rarely write the loop above from scratch in production; you will set flags. The value of having written it is that every flag now has a referent. The mapping below covers the two frameworks you are most likely to meet — `verl` (YAML config, keys shown relative to their config section) and TRL's `GRPOConfig`. Both projects move fast and rename things, so treat this as a decoder ring for the *concepts*, and confirm the spelling against the version you have installed.
+
+| Concept (this chapter) | `verl` config key | TRL `GRPOConfig` argument |
+|---|---|---|
+| Advantage estimator | `algorithm.adv_estimator` (`gae`, `grpo`, `rloo`, `reinforce_plus_plus`, …) | fixed: `GRPOTrainer` is group-relative by construction |
+| Group size $G$ | `actor_rollout_ref.rollout.n` | `num_generations` |
+| Drop the group-std divisor (Dr. GRPO) | `algorithm.norm_adv_by_std_in_grpo: false` | `scale_rewards=False` |
+| Clip-higher $\varepsilon_{\text{low}}\ne\varepsilon_{\text{high}}$ | `actor.clip_ratio_low` / `actor.clip_ratio_high` | `epsilon` / `epsilon_high` |
+| Dual-clip constant $c$ | `actor.clip_ratio_c` | not exposed |
+| KL-in-loss (coefficient, estimator) | `actor.use_kl_loss`, `actor.kl_loss_coef`, `actor.kl_loss_type` (`low_var_kl` is k3) | `beta` (k3) |
+| KL-in-reward + adaptive controller | `algorithm.use_kl_in_reward`, `algorithm.kl_ctrl.{type,kl_coef,horizon}` | not exposed (use `PPOTrainer`) |
+| Loss aggregation | `actor.loss_agg_mode` (`token-mean`, `seq-mean-token-sum`, `seq-mean-token-mean`, …) | `loss_type` (`"grpo"`, `"bnpo"`, `"dr_grpo"`, …) |
+| Sequence-level importance ratio (GSPO) | sequence-level policy-loss mode | `importance_sampling_level="sequence"` |
+| Inner epochs per rollout batch ($\rho\ne1$) | `actor.ppo_epochs` (with `ppo_mini_batch_size`) | `num_iterations` |
+| Entropy bonus | `actor.entropy_coeff` | not exposed as a bonus (entropy is logged) |
+| Truncated / overlong generations | DAPO recipe's overlong reward shaping | `mask_truncated_completions=True` |
+
+Concretely, the recipe encoded in `grpo_train_step` above — Dr. GRPO normalization, clip-higher, no KL, one inner epoch — is a handful of TRL flags:
+
+```python
+from trl import GRPOConfig
+
+cfg = GRPOConfig(
+    output_dir="./grpo-run",
+    num_generations=8,          # G: group size (the baseline's sample count)
+    scale_rewards=False,        # Dr. GRPO: subtract the group mean, do NOT divide by std
+    epsilon=0.2,                # eps_low
+    epsilon_high=0.28,          # eps_high  -> clip-higher (DAPO)
+    beta=0.0,                   # no KL term: verifiable reward, nothing to hack
+    num_iterations=1,           # one inner update per rollout batch -> on-policy, ratio == 1
+    loss_type="dr_grpo",        # length-independent denominator (see aggregation above)
+    max_grad_norm=1.0,          # global-norm gradient clipping
+    learning_rate=1e-6,
+    bf16=True,
+)
+```
+
+Read the logged metrics with the same decoder ring: TRL's `clip_ratio` and verl's `actor/pg_clipfrac` are the `clipfrac` computed above, and `kl` is the masked mean of k3. The whole point of writing the loop by hand once is that when `pg_clipfrac` climbs to 0.5 you know precisely which line of which formula is misbehaving.
+
 !!! interview "Interview Corner"
 
     **Q:** In a GRPO run your reward climbs steadily for 300 steps, then collapses, generations become repetitive, and KL to the reference spikes. The clip fraction has crept from 10% to 55%. Walk me through your diagnosis and the *minimal* set of changes you'd try, in order.
@@ -497,8 +548,9 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
     - Always normalize/whiten advantages over the **masked** (non-pad) tokens, in fp32, ideally globally across data-parallel ranks. Be deliberate about *shifting* the mean more than once — RLOO/GRPO already subtract a baseline. Dr. GRPO argues for dropping the group-std divisor to remove a difficulty-weighting bias.
     - Use the **k3** KL estimator $e^r-1-r$ by default: unbiased *and* non-negative. k1 is unbiased but can go negative; k2 ($\frac12 r^2$) is biased but stable when distributions are close.
     - **KL-in-reward** (per-token, flows through GAE) and **KL-in-loss** (explicit differentiable term) are not equivalent; GRPO uses KL-in-loss. For *verifiable* rewards, dropping KL entirely ($\beta=0$) is now common; keep KL when the reward is a *learned* RM that can be hacked.
-    - PPO clipping is asymmetric by design (the `min`): it only removes incentive to over-move, never reverses sign. **Clip-higher** ($\varepsilon_{\text{high}}>\varepsilon_{\text{low}}$) restores exploration on low-probability tokens; **dual-clip** floors the surrogate for large-ratio negative-advantage tokens.
-    - **Loss aggregation silently changes the objective**: token-mean rewards length (long sequences dominate the gradient), sequence-mean weights each response equally. Pick deliberately; it drives the length-inflation failure mode.
+    - PPO clipping is asymmetric by design (the `min`): it only removes incentive to over-move, never reverses sign. **Clip-higher** ($\varepsilon_{\text{high}}>\varepsilon_{\text{low}}$) restores exploration on low-probability tokens; **dual-clip** floors the surrogate for large-ratio negative-advantage tokens. With one inner epoch on fresh rollouts $\rho_t\equiv1$ and the clip never binds — so a nonzero clip fraction on the first inner epoch means engine/trainer logprob mismatch, not learning.
+    - You will set these as flags, not write them: `algorithm.adv_estimator`, `actor.clip_ratio_low/high`, `actor.kl_loss_type`, and `actor.loss_agg_mode` in **verl**; `num_generations`, `epsilon(_high)`, `scale_rewards`, `beta`, and `loss_type` in **TRL**'s `GRPOConfig`. The value of having built the loop by hand is knowing exactly what each flag moves.
+    - **Loss aggregation silently changes the objective**: token-mean rewards length (long sequences dominate the gradient), while sequence-mean's per-sequence $1/|o_i|$ denominator under-punishes *long wrong* answers (Dr. GRPO's length bias). Both point to a length-independent denominator plus explicit length control; the choice drives the length-inflation failure mode either way.
     - Monitor `clip_fraction` (healthy ~5–20%), KL, entropy, and pre-clip grad norm every step. A clip fraction climbing past ~40% with collapsing entropy is the canonical "trust region breached" signature — respond with lower LR, fewer inner epochs, and entropy/KL pressure before anything fancier.
     - The unglamorous tricks carry the run: ratio clamping before `exp`, global-norm grad clipping, reward clipping, consistent masking across loss/KL/entropy/normalization, and reconciling rollout-engine vs trainer logprobs.
 

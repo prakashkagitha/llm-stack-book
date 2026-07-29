@@ -80,7 +80,7 @@ In a toy script the rollout engine is `model.generate()`. In a real system it is
 The **reward model** assigns a scalar (or vector) score to each response. This is the component with the most *variety* in the whole system, because "reward" can be almost anything that returns a number:
 
 - A **learned reward model** (RM): a transformer with a scalar head trained on human preferences, run as a frozen forward pass over each response. This is classic RLHF ([The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)). It is a fourth large model on the cluster.
-- A **rule-based verifier**: parse the boxed answer, compare to gold, return 0/1. Cheap, CPU-bound, uncheatable in the usual RM sense. This is the heart of RLVR ([RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)).
+- A **rule-based verifier**: parse the boxed answer, compare to gold, return 0/1. Cheap, CPU-bound, uncheatable in the usual RM sense. This is the heart of RLVR ([RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)). In practice you rarely write the parser yourself: HuggingFace's `math-verify` handles LaTeX/answer-equivalence checking for math, and environment libraries such as `verifiers` package prompt sets, parsers and rubrics into reusable, framework-agnostic reward environments.
 - A **code sandbox**: actually *execute* the generated program against unit tests in an isolated container and return pass-rate. Now your reward path includes process isolation, timeouts, and security — a whole subsystem ([Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html)).
 - An **LLM-as-judge**: another model grading the response ([LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html)).
 
@@ -106,6 +106,19 @@ The **reference model** $\pi_{\text{ref}}$ is a **frozen** copy of the policy (u
 The **experience buffer** is the *dataset that does not exist on disk*. It holds the rollouts produced this iteration: for each response, the token ids, behavior log-probs, reward, computed advantage, prompt/response masks. The learner draws minibatches from it.
 
 In LLM RL the buffer is usually **small and short-lived** compared to classic deep-RL replay buffers (DQN-style). Most algorithms are "near-on-policy": you generate a batch, take a handful of gradient epochs on *that* batch (PPO's `ppo_epochs`, GRPO's reuse), then **throw it away** and generate fresh, because the data goes stale as $\theta$ moves away from $\theta_{\text{old}}$. The buffer is more of a *staging area* than a long-term memory. The interesting design choices are: how many gradient steps before data is too off-policy to trust (the "staleness budget"); whether to keep a small mix of older data (off-policy RL, async RL — [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)); and how to lay the buffer out across the cluster so the learner's data-parallel ranks each get a balanced shard.
+
+These six roles are not merely pedagogical: they are, almost one-for-one, the objects you configure in real frameworks. Reading a strange RL config becomes easy once you can point at which component each key belongs to (names below are for the current major releases — always check against your installed version):
+
+| Component | TRL (`GRPOTrainer`) | veRL | OpenRLHF |
+|---|---|---|---|
+| Actor / policy | `model=` arg | `actor_rollout_ref.model` | `--pretrain` |
+| Rollout engine | `use_vllm=True`, `vllm_mode` | `actor_rollout_ref.rollout` (`name: vllm` or `sglang`) | `--vllm_num_engines` |
+| Reward / verifier | `reward_funcs=[fn, ...]` | `reward_model.*` or a custom reward function | `--reward_pretrain`, or a remote reward endpoint |
+| Learner | `GRPOConfig` + Accelerate/DeepSpeed backend | `actor_rollout_ref.actor` (FSDP or Megatron strategy) | DeepSpeed `--zero_stage` |
+| Reference model | implicit; disabled by `beta=0.0` | `actor_rollout_ref.ref` | implicit; disabled by zero KL coefficient |
+| Experience buffer | in-memory, per generation batch | Ray `DataProto` batches passed between worker pools | `Experience` / replay-buffer objects |
+
+Notice the shape of the table: TRL keeps everything inside one trainer object (multi-controller, one process per GPU running the same script); veRL gives each component its own named config subtree because each is a separately-placed Ray worker pool; OpenRLHF exposes them as CLI flags over Ray actors. Same six nouns, three different placements. We dissect each framework in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html), [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html), and [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html).
 
 !!! tip "Practitioner tip: name the four model copies in your config"
     A recurring source of confusion (and OOMs) is losing track of which models are resident. Write your config so it is explicit: `policy` (trainable, FSDP-sharded), `policy_inference` (the vLLM replica), `reference` (frozen, maybe CPU-offloaded), `reward` (frozen, or `null` if rule-based). If you can't point at each on a GPU memory map, you don't yet understand your own system — and you will discover this the hard way at step 1 when CUDA reports out-of-memory.
@@ -205,13 +218,14 @@ def rollout(prompts, golds):
     old_lp, mask = token_logprobs(policy, input_ids, resp_mask)
     return input_ids, mask, old_lp.detach(), rewards
 
-def token_logprobs(model, input_ids, resp_mask):
-    """Per-token logπ of the SAMPLED tokens under `model`, plus the shifted mask."""
+def token_logprobs(model, input_ids, resp_mask=None):
+    """Per-token logπ of the SAMPLED tokens under `model`, plus the shifted mask.
+    Pass resp_mask=None when the caller already holds the shifted mask."""
     logits = model(input_ids).logits[:, :-1, :]                 # predict t+1 from t
     lp = F.log_softmax(logits.float(), dim=-1)
     tgt = input_ids[:, 1:]
     tok_lp = lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)        # (B, T-1)
-    return tok_lp, resp_mask[:, 1:]
+    return tok_lp, (None if resp_mask is None else resp_mask[:, 1:])
 
 # ------------------- ADVANTAGE: group-relative (GRPO) ----------------------
 def grpo_advantage(rewards, group_size):
@@ -221,8 +235,7 @@ def grpo_advantage(rewards, group_size):
 
 # --------------------- COMPONENT 4: the LEARNER ----------------------------
 def learner_step(input_ids, mask, old_lp, advantage, ref_lp):
-    new_lp, _ = token_logprobs(policy, input_ids, mask.shape and input_ids)  # current θ
-    new_lp, _ = token_logprobs(policy, input_ids, torch.ones_like(input_ids, dtype=torch.float))
+    new_lp, _ = token_logprobs(policy, input_ids)                 # current θ: ratio numerator
     A = advantage.unsqueeze(1)                                    # broadcast over tokens
     ratio   = (new_lp - old_lp).exp()                            # π_θ / π_old
     surr    = -torch.min(ratio * A,
@@ -245,7 +258,7 @@ def rl_iteration(prompts, golds):
     advantage = grpo_advantage(rewards, G)
     # reference log-probs are fixed for this batch; cache once
     with torch.no_grad():
-        ref_lp, _ = token_logprobs(reference, input_ids, mask) if KL_BETA > 0 \
+        ref_lp, _ = token_logprobs(reference, input_ids) if KL_BETA > 0 \
                     else (torch.zeros_like(old_lp), None)
     # (f) learn: E epochs over the same rollouts
     for _ in range(PPO_EPOCHS):
@@ -262,10 +275,26 @@ def rl_iteration(prompts, golds):
 #     print(it, "mean_reward", round(mean_r, 3), "loss", round(loss, 4))
 ```
 
-Read that loop until the six components and the seven dataflow stages are obvious. The single most important thing the toy hides is stage (g): **here weight sync is free because generation and training share one set of weights on one GPU.** That is the colocated, synchronous design — perfect for understanding, and genuinely used for small models. Everything in Part VI past this chapter is about what happens to this loop when you can *no longer* afford that simplicity: when the model is too big to colocate, when generation idle time is too expensive, when the reward is a remote sandbox, when you have 512 GPUs and a Ray cluster.
+Read that loop until the six components and the seven dataflow stages are obvious. The single most important thing the toy hides is stage (g): **here weight sync is free because generation and training share one set of weights on one GPU.** That is the colocated, synchronous design — perfect for understanding, and genuinely used for small models. At the ~100M scale of this book's capstone it is not a simplification at all but the *correct production choice*: policy + reference + inference replica + optimizer state together fit in a couple of GB, so one GPU holds all four copies and the weight-sync arrow really is a no-op — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), which runs essentially this loop with a real verifier and a real prompt set. Everything in Part VI past this chapter is about what happens to this loop when you can *no longer* afford that simplicity: when the model is too big to colocate, when generation idle time is too expensive, when the reward is a remote sandbox, when you have 512 GPUs and a Ray cluster.
 
 !!! note "Aside: the controller is a real component too"
     We listed six components, but the *controller* — the thing running the outer loop — is the seventh, and frameworks differ most here. In TRL it is a plain Python `for` loop in your training script (the "multi-controller" style: every GPU runs the same program). In veRL it is a **single-controller** Ray driver that issues commands to worker pools ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)). In async systems it is a scheduler juggling overlapping generate/train stages. Who holds the loop, and whether that holder is one process or every process, is the central architectural axis of Part VI.
+
+### Three batch sizes, and the staleness they buy
+
+Newcomers reading a real RL config are ambushed by the fact that there is no single "batch size." There are three *nested* ones, and conflating them is how people accidentally train far more off-policy than they intended.
+
+1. **Rollout batch** — how many *prompts* the controller hands to the generation engine per outer iteration (veRL `data.train_batch_size`, OpenRLHF `--rollout_batch_size`, TRL `generation_batch_size`). Multiplied by the group size $G$ (veRL `actor_rollout_ref.rollout.n`, OpenRLHF `--n_samples_per_prompt`, TRL `num_generations`) it gives the number of responses generated before *any* weight update. Larger is better for generation throughput (more concurrency for continuous batching) and lowers advantage variance, but stretches the interval between updates.
+2. **Mini-batch** — how much of that rollout batch is consumed per *optimizer step* (veRL `actor_rollout_ref.actor.ppo_mini_batch_size`, OpenRLHF `--train_batch_size`). This is the knob that decides on-policyness. If mini-batch equals rollout batch you take exactly one optimizer step per rollout and the update is **fully on-policy** ($r_{i,t}\equiv 1$, clipping never fires). If it is smaller you take several steps on data generated by weights that are already stale by the time you reach the last one.
+3. **Micro-batch** — how much fits in GPU memory at once (veRL `ppo_micro_batch_size_per_gpu`, OpenRLHF `--micro_train_batch_size`, TRL `per_device_train_batch_size` with `gradient_accumulation_steps`). Micro-batches are gradient-accumulated into one mini-batch, so this is a pure *memory* knob with **no** effect on the math — changing it must not change your loss curve, which makes it a good sanity check on an implementation.
+
+Combine these with the number of gradient epochs over the same rollouts (PPO's `ppo_epochs`, TRL's `num_iterations`, `PPO_EPOCHS` in the toy code above) and you get an explicit staleness budget: the final gradient step of an iteration is
+
+$$
+n_{\text{stale}} = \text{epochs} \times \frac{\text{rollout batch}}{\text{mini-batch}} - 1
+$$
+
+optimizer steps removed from the policy that produced its data. When $n_{\text{stale}}=0$ the importance ratio and clip are decoration; when it is 8 or 16 they are the only things holding the run together. That number — not the algorithm's name — tells you how off-policy your "on-policy" method really is.
 
 ## Why this is uniquely hard: three structural tensions
 
@@ -384,7 +413,7 @@ Three load-bearing ideas to carry forward:
     - **Three structural tensions.** (1) Generation and training want *opposite* hardware (bandwidth-bound decode vs compute-bound training) and use *incompatible* software/weight layouts. (2) Serial stages create large **GPU idle time** (a relay race), fixed by colocation or asynchrony. (3) **Weight sync** must move tens-to-hundreds of GB between two parallelism layouts every step.
     - **Memory is dominated by model-copy multiplicity** (policy + optimizer state + reference + inference replica + maybe reward + maybe critic). The optimizer state is often the single largest line item — a reason GRPO (no critic) and LoRA-RL (tiny optimizer state) win.
     - **Wall-clock is dominated by generation** (often ~70–80% of a step). In RL, *generation is the budget*; optimize it (or hide it behind training) before anything else.
-    - **The off-policy gap is the price of the loop.** Multi-epoch reuse, async generation, and stale sync all make the trainer's $\theta$ drift from the generator's $\theta_{\text{old}}$; the importance ratio and clip are what keep that honest, and a sampler-vs-trainer log-prob mismatch is the classic silent bug.
+    - **The off-policy gap is the price of the loop.** Multi-epoch reuse, async generation, and stale sync all make the trainer's $\theta$ drift from the generator's $\theta_{\text{old}}$; the importance ratio and clip are what keep that honest, and a sampler-vs-trainer log-prob mismatch is the classic silent bug. The rollout-batch / mini-batch / micro-batch hierarchy makes the gap *quantifiable*: $n_{\text{stale}} = \text{epochs}\times(\text{rollout}/\text{mini}) - 1$ optimizer steps.
     - **To locate any framework in the design space, ask four questions:** colocated or disaggregated? single- or multi-controller? synchronous or async? how is weight sync done? Everything else is detail.
 
 !!! sota "State of the Art & Resources (2026)"

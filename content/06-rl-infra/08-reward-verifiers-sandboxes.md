@@ -35,7 +35,7 @@ Consider: `1/2`, `0.5`, `\frac{1}{2}`, `50\%`, and `0.50` all represent the same
 {{fig:math-equivalence-ladder}}
 
 ```python
-"""
+r"""
 math_verifier.py — robust math answer checker for RL training.
 
 Handles:
@@ -55,11 +55,43 @@ from sympy.parsing.latex import parse_latex
 from sympy import simplify, N
 
 
+def match_braces(s: str, open_idx: int) -> Optional[int]:
+    """
+    Given the index of a '{' in s, return the index of its matching '}'.
+
+    Brace matching (not regex) is mandatory here: competition answers nest
+    braces, so a lazy regex over a boxed group stops at the FIRST '}' and
+    turns \\boxed{\\frac{1}{2}} into the garbage string '\\frac{1'. That
+    single bug is a common cause of a phantom accuracy ceiling in RLVR runs.
+    """
+    depth = 0
+    for i in range(open_idx, len(s)):
+        if s[i] == '{':
+            depth += 1
+        elif s[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+    return None  # unbalanced (truncated generation)
+
+
+def strip_boxed(s: str) -> str:
+    """Replace the first \\boxed{...} with its (brace-balanced) contents."""
+    m = re.search(r'\\boxed\s*\{', s)
+    if not m:
+        return s
+    open_idx = m.end() - 1
+    close_idx = match_braces(s, open_idx)
+    if close_idx is None:
+        return s
+    return s[:m.start()] + s[open_idx + 1:close_idx] + s[close_idx + 1:]
+
+
 def normalize_latex_number(s: str) -> str:
     """Strip LaTeX boilerplate that doesn't change value."""
     s = s.strip()
-    # Remove \boxed{...}
-    s = re.sub(r'\\boxed\{(.+?)\}', r'\1', s)
+    # Remove \boxed{...} (brace-balanced, so \boxed{\frac{1}{2}} survives)
+    s = strip_boxed(s)
     # Remove dollar signs
     s = s.replace('$', '').strip()
     # Normalize whitespace
@@ -152,10 +184,14 @@ def extract_answer_from_completion(completion: str) -> str:
     Expects the model to write \\boxed{answer} or <answer>...</answer>.
     Returns empty string if not found.
     """
-    # Try \boxed{...} (LaTeX math)
-    m = re.search(r'\\boxed\{([^}]+)\}', completion)
-    if m:
-        return m.group(1).strip()
+    # Try \boxed{...} (LaTeX math). Search the LAST \boxed{}: models often
+    # restate the format in their reasoning before committing to an answer.
+    starts = [m.start() for m in re.finditer(r'\\boxed\s*\{', completion)]
+    for start in reversed(starts):
+        open_idx = completion.index('{', start)
+        close_idx = match_braces(completion, open_idx)
+        if close_idx is not None:
+            return completion[open_idx + 1:close_idx].strip()
     # Try <answer>...</answer> tag
     m = re.search(r'<answer>(.*?)</answer>', completion, re.DOTALL)
     if m:
@@ -169,8 +205,8 @@ def extract_answer_from_completion(completion: str) -> str:
 
 def math_reward(prompt: str, completion: str, gold_answer: str) -> float:
     """
-    Main entry point: return reward in {0.0, 1.0} for a math response.
-    A partial reward of 0.5 is returned when the format is correct
+    Main entry point: return reward in {0.0, 0.1, 1.0} for a math response.
+    A small partial reward of 0.1 is returned when the format is correct
     but the answer is wrong, to encourage the model to use \boxed{}.
     """
     pred = extract_answer_from_completion(completion)
@@ -187,6 +223,33 @@ def math_reward(prompt: str, completion: str, gold_answer: str) -> float:
 !!! warning "Floating-point equality traps"
     Never use `pred == gold` on raw strings. `"0.333"` and `"1/3"` are mathematically the same. `"3.0"` and `"3"` differ as strings. Always normalize before comparing, and use a tolerance for floats (relative tolerance around $10^{-6}$ works for competition math).
 
+### Use the Library: `math-verify`
+
+Writing the normalizer above is the right way to *understand* the problem, and you should be able to write it from scratch. In production, use [`math-verify`](https://github.com/huggingface/Math-Verify) (`pip install math-verify`) — HuggingFace's extraction-plus-equivalence library, the grader used by `lighteval` and by the Open-R1 reproduction of DeepSeek-R1's math rewards. It supersedes the hand-copied `hendrycks_math` normalizers that most eval harnesses used to vendor.
+
+```python
+# pip install math-verify
+from math_verify import parse, verify
+
+gold = parse(r"$\frac{1}{2}$")                      # list of candidate readings
+pred = parse(r"So the answer is $\boxed{0.5}$.")    # extraction + parsing in one call
+print(verify(gold, pred))                           # True: 1/2 == 0.5
+```
+
+`parse()` performs the extraction step (`\boxed{}`, `$...$`, "the answer is …") and deliberately returns *several* candidate interpretations of the same string; `verify(gold, pred)` reports whether any predicted candidate matches any gold candidate, using sympy for symbolic forms and set/interval-aware comparison for answers like `{1,2}` or `(0,\infty)`. Because it is a maintained library, its edge-case fixes accrue to you instead of rotting in your repo.
+
+!!! warning "Silent verifier death: the sympy LaTeX backend"
+    `sympy.parsing.latex.parse_latex` needs an optional parser backend — the `antlr4-python3-runtime` package (or `backend="lark"` with `lark` installed). If it is missing, `try_sympy` raises inside its `except Exception` and returns `None` for *every* input, so the symbolic branch never fires and you are silently running a numeric-only verifier. Assert on a known symbolic pair (e.g. `math_equivalent(r"\sqrt{4}", "2")`) in a unit test so this fails loudly at CI time rather than as a mysterious accuracy plateau at step 400.
+
+### How Good Is Your Verifier? Measuring False Negatives
+
+A verifier is a classifier, so it has a precision/recall profile, and you should measure it before spending GPU-hours on it. Build a small audit set — 200–500 (gold, model-answer) pairs sampled from real rollouts and labelled by hand — and report two numbers: the **false-negative rate** (correct answers scored 0, usually a formatting or parser gap) and the **false-positive rate** (wrong answers scored 1, usually an over-eager substring match).
+
+False negatives are the more damaging failure in group-relative RL. Consider a GRPO group of $G = 8$ completions where 4 are genuinely correct. With a perfect verifier the rewards are four 1s and four 0s, $\mu = 0.5$, and every correct rollout gets a positive advantage. Now let the verifier reject one correct answer: rewards become three 1s and five 0s, $\mu = 0.375$, and that rejected-but-correct rollout receives advantage $(0 - 0.375)/\sigma \approx -0.77$. The gradient does not merely ignore a good solution — it actively pushes the policy *away* from it, and away from whatever answer format triggered the parse failure. Huang et al. (2025), cited in the SoTA box, show this rate is not static: rule-based false negatives *grow* as the policy improves and starts emitting more exotic-but-valid forms, which is why verifier auditing is a recurring task, not a one-time setup step.
+
+!!! tip "Cheap continuous audit"
+    Log, for every training step, the fraction of completions where the answer *extractor* returned an empty string but the completion is long and terminated normally. That statistic needs no labels, costs nothing, and spikes exactly when the policy drifts into a format your extractor does not parse.
+
 ### Code Execution Verifiers
 
 For coding tasks, the verifier runs unit tests inside a sandbox and returns pass/fail. The reward can be binary (all tests pass = 1.0) or proportional (fraction of tests passed).
@@ -199,6 +262,7 @@ This module orchestrates sandboxed execution (see sandboxes section)
 and returns a float reward based on test outcomes.
 """
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -295,6 +359,22 @@ print(json.dumps(results))
             return TestResult(0, 1, False, f"JSON decode error: {e}")
 
 
+def extract_code_block(completion: str) -> str:
+    """
+    Pull the code out of a chat completion. Models wrap solutions in markdown
+    fences; take the LAST fenced block, since a model often shows a failed
+    attempt first and the final block is the one it stands behind.
+    Falls back to the raw completion if there is no fence.
+    """
+    # Build the fence pattern from a variable rather than writing three
+    # literal backticks: this file is itself embedded in markdown, and a
+    # literal fence inside a fence terminates the block early.
+    fence = "`" * 3
+    pattern = fence + r"(?:python|py)?\n(.*?)" + fence
+    blocks = re.findall(pattern, completion, re.DOTALL)
+    return blocks[-1] if blocks else completion
+
+
 def code_reward(
     prompt: str,
     completion: str,
@@ -307,11 +387,7 @@ def code_reward(
       k/n  if partial_credit and k of n tests pass
       0.0  if syntax error, timeout, or all tests fail
     """
-    # Strip markdown code fences if present
-    code = completion
-    m = __import__("re").search(r"```(?:python)?\n(.*?)```", completion, __import__("re").DOTALL)
-    if m:
-        code = m.group(1)
+    code = extract_code_block(completion)
 
     result = run_tests_in_subprocess(code, test_suite)
 
@@ -343,6 +419,18 @@ A production sandbox must enforce: **no network access, no filesystem writes out
 
 
 For training at scale (on the order of thousands of completions per second), Docker-per-sample is too slow. The standard approach is a warm pool of microVMs or containers that are snapshotted after initialization, then restored to a clean state between runs.
+
+You do not have to build the isolation layer yourself; each rung of the ladder has a real, well-maintained implementation:
+
+| Isolation layer | Open-source tool | Cost per run | What it stops |
+|---|---|---|---|
+| In-process guards | `openai/human-eval`'s `reliability_guard` in `execution.py` | ~0 | Accidental `os.remove`, `os.kill`, `shutil.rmtree`; **not** a security boundary |
+| Namespaces + seccomp | `google/nsjail`, `containers/bubblewrap` (`bwrap`) | ~1–10 ms | Filesystem, network, PID escapes; syscall surface |
+| Container | Docker / Podman with `--network=none --read-only --pids-limit` | ~100–300 ms cold | Everything above, plus resource limits via cgroups |
+| Userspace kernel | `google/gvisor` (`docker run --runtime=runsc …`) | ~100–300 ms cold | Kernel-exploit escapes: syscalls hit gVisor's Go kernel, not the host's |
+| microVM | `firecracker-microvm/firecracker`, and [E2B](https://github.com/e2b-dev/E2B) which wraps it behind an SDK | ~150 ms boot, snapshot-restore faster | Hardware-virtualization boundary; strongest practical isolation |
+
+The pragmatic 2026 default for an RLVR run is gVisor or Firecracker underneath a warm pool: keep the pool code below exactly as written and change only the `docker run` line (`--runtime=runsc`) or swap the subprocess for an E2B `Sandbox` handle. Do not skip the layer entirely — the `reliability_guard` approach is deliberately shipped commented-out in `human-eval` precisely because monkey-patching `os` inside the same interpreter is trivially reversible by generated code.
 
 ### Building a Sandboxed Execution Service
 
@@ -468,9 +556,12 @@ class SandboxPool:
             line = worker.proc.stdout.readline()
             return json.loads(line)
         except Exception as e:
-            # Worker is dead; replace it
+            # Worker is dead (or wedged); kill and replace it, keeping the
+            # registry in sync so shutdown can reap every live container.
             worker.proc.kill()
+            self._all_workers.remove(worker)
             worker = self._spawn()
+            self._all_workers.append(worker)
             return {"passed": 0, "total": 1, "error": str(e)}
         finally:
             worker.last_used = time.time()
@@ -511,13 +602,28 @@ A good judge prompt:
 """
 llm_judge.py — LLM-as-a-judge reward for open-ended tasks.
 
-Uses an OpenAI-compatible API. Replace with your preferred provider.
+Speaks the OpenAI chat-completions API, which is also what vLLM, SGLang and
+TGI expose. Default here is a *local* judge: `vllm serve <model> --port 8000`
+gives you an OpenAI-compatible /v1 endpoint, so an RL run can call a judge
+thousands of times per step at zero marginal cost and with no rate limits.
+Point JUDGE_BASE_URL at a hosted provider instead if you want a frontier judge.
 """
 
+import os
 import re
 import asyncio
 import openai
 from typing import Optional
+
+
+# One client per process. Constructing an AsyncOpenAI inside the request path
+# creates (and leaks) a fresh connection pool on every judged completion.
+JUDGE_BASE_URL = os.environ.get("JUDGE_BASE_URL", "http://localhost:8000/v1")
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "local-judge")  # --served-model-name
+_client = openai.AsyncOpenAI(
+    base_url=JUDGE_BASE_URL,
+    api_key=os.environ.get("OPENAI_API_KEY", "EMPTY"),  # vLLM ignores the key
+)
 
 
 JUDGE_SYSTEM = """
@@ -558,15 +664,13 @@ async def judge_single(
     problem: str,
     response: str,
     reference: str,
-    judge_model: str = "gpt-4o-mini",
+    judge_model: str = JUDGE_MODEL,
     temperature: float = 0.0,
 ) -> float:
     """
     Returns a normalized reward in [0, 1] for a single (problem, response) pair.
     Calls the judge LLM asynchronously.
     """
-    client = openai.AsyncOpenAI()
-    
     messages = [
         {"role": "system", "content": JUDGE_SYSTEM},
         {"role": "user", "content": JUDGE_USER_TEMPLATE.format(
@@ -576,7 +680,7 @@ async def judge_single(
         )},
     ]
     
-    resp = await client.chat.completions.create(
+    resp = await _client.chat.completions.create(
         model=judge_model,
         messages=messages,
         temperature=temperature,
@@ -602,7 +706,7 @@ async def batch_judge(
     problems: list[str],
     responses: list[str],
     references: list[str],
-    judge_model: str = "gpt-4o-mini",
+    judge_model: str = JUDGE_MODEL,
     concurrency: int = 32,
 ) -> list[float]:
     """
@@ -865,6 +969,63 @@ class MultiObjectiveReward:
     
     4. **KL penalty is too strong.** If the KL coefficient against the reference policy is large, the policy cannot move far enough from the SFT model to find new correct solutions. Check the KL term in the loss; see [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
 
+## Plugging a Reward Function Into Real Trainers
+
+None of the code above is useful until a trainer calls it. The two libraries you are most likely to use — TRL and veRL, covered in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html) and [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html) — expose almost the same contract, and knowing it is the difference between "I have a verifier" and "I have a training run."
+
+**TRL.** `GRPOTrainer` takes a list of plain Python callables in `reward_funcs`. Each is called once per generation batch with keyword arguments `prompts`, `completions`, and *every extra column of your dataset* (so a `gold_answer` column arrives as a `gold_answer=` kwarg), and must return one float per completion. Multiple functions are combined with `GRPOConfig(reward_weights=[...])` — that is where the multi-objective weighting of the previous section actually lives, and TRL logs each component separately so you can watch format and correctness decouple.
+
+```python
+from datasets import Dataset
+from trl import GRPOConfig, GRPOTrainer
+from math_verifier import math_reward, extract_answer_from_completion
+
+def correctness_reward(completions, gold_answer, **kwargs) -> list[float]:
+    """One float per completion. `gold_answer` comes from the dataset column."""
+    texts = [c[0]["content"] if isinstance(c, list) else c for c in completions]
+    return [math_reward("", t, g) for t, g in zip(texts, gold_answer)]
+
+def format_reward(completions, **kwargs) -> list[float]:
+    texts = [c[0]["content"] if isinstance(c, list) else c for c in completions]
+    return [1.0 if extract_answer_from_completion(t) else 0.0 for t in texts]
+
+ds = Dataset.from_dict({
+    "prompt": ["What is 1/2 + 1/2?"],
+    "gold_answer": ["1"],
+})
+
+cfg = GRPOConfig(
+    output_dir="grpo-math",
+    num_generations=8,              # group size G for the group-relative baseline
+    reward_weights=[1.0, 0.1],      # correctness weight 1.0, format weight lambda_f
+    max_completion_length=1024,
+)
+trainer = GRPOTrainer(
+    model="HuggingFaceTB/SmolLM2-135M-Instruct",
+    reward_funcs=[correctness_reward, format_reward],
+    args=cfg,
+    train_dataset=ds,
+)
+# trainer.train()
+```
+
+**veRL.** Instead of passing callables, you point config at a file: `custom_reward_function.path=/path/to/reward.py` and `custom_reward_function.name=compute_score`. veRL calls it per sample with the fields it carries through the dataset, conventionally `compute_score(data_source, solution_str, ground_truth, extra_info=None)`, returning a float (or a dict with a `"score"` key plus extra metrics to log). The `data_source` argument is what lets one run mix math, code, and instruction-following prompts through a single dispatching verifier:
+
+```python
+# reward.py — veRL-style per-sample scorer
+from math_verifier import math_reward
+from code_verifier import code_reward
+
+def compute_score(data_source, solution_str, ground_truth, extra_info=None):
+    if data_source.startswith("math"):
+        return math_reward("", solution_str, ground_truth)
+    if data_source.startswith("code"):
+        return code_reward("", solution_str, ground_truth)  # ground_truth = tests
+    raise ValueError(f"no verifier registered for data_source={data_source}")
+```
+
+Two practical notes. First, both trainers call your function **on the driver process, synchronously, inside the training step** — a 2-second C++ compile per completion will stall every GPU in the run, which is the entire motivation for the reward server in the next section. Second, if you want ready-made environments rather than bare reward functions, [`willccbb/verifiers`](https://github.com/willccbb/verifiers) packages prompts, rollout logic, and rubric-style multi-criterion scoring behind one interface, and plugs into GRPO-style trainers directly.
+
 ## Reward Server Architecture
 
 A reward server decouples reward computation from training, allowing:
@@ -889,17 +1050,16 @@ Deploy behind a load balancer; run multiple instances for throughput.
 import asyncio
 import hashlib
 import json
-from functools import lru_cache
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from math_verifier import math_reward
-from code_verifier import code_reward, SandboxPool
+from code_verifier import extract_code_block
+from sandbox_pool import SandboxPool
 from llm_judge import batch_judge
-
-app = FastAPI(title="Reward Server")
 
 # Global sandbox pool — initialized once at startup
 _sandbox_pool: Optional[SandboxPool] = None
@@ -907,10 +1067,22 @@ _sandbox_pool: Optional[SandboxPool] = None
 _cache: dict[str, float] = {}
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Startup/shutdown hook. Use lifespan, not @app.on_event("startup"):
+    the on_event decorators have been deprecated since FastAPI 0.93.
+    Warming the pool here means the first training step does not pay
+    container boot latency.
+    """
     global _sandbox_pool
     _sandbox_pool = SandboxPool(pool_size=16, timeout=10.0)
+    yield
+    for w in _sandbox_pool._all_workers:
+        w.proc.kill()
+
+
+app = FastAPI(title="Reward Server", lifespan=lifespan)
 
 
 class RewardRequest(BaseModel):
@@ -953,10 +1125,14 @@ async def compute_reward(req: RewardRequest):
 
     elif req.task_type == "code":
         tests = req.metadata.get("test_suite", "")
-        r = await asyncio.get_event_loop().run_in_executor(
-            None,  # Default thread pool
-            lambda: code_reward(req.prompt, req.completion, tests)
+        code = extract_code_block(req.completion)
+        # SandboxPool.execute() blocks on a pipe to a container, so hand it to
+        # the default thread pool; otherwise one slow test suite freezes the
+        # event loop and every other in-flight reward request with it.
+        out = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _sandbox_pool.execute(code, tests)
         )
+        r = out["passed"] / max(out["total"], 1)
         breakdown["code_tests"] = r
         total = r
 
@@ -997,7 +1173,7 @@ Reward hacking occurs when the model finds a high-reward policy that does not co
 
 ## Putting It Together: A Complete Reward Pipeline
 
-Here is how the components connect in a real RLVR system:
+Here is how the components connect in a real RLVR system. This is precisely the pipeline the capstone runs: the narrow GRPO stage of Stack-100M in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) uses a correctness verifier plus a small format reward exactly as below, and the tool-call reward for its research agent — did the agent emit a well-formed call, and did the call return usable evidence — is built the same way in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html). At 100M parameters the verifier's false-negative rate matters more than at frontier scale, because the true pass rate is low enough that losing one correct rollout per group can wipe out the entire positive signal for that prompt.
 
 ```python
 """
@@ -1007,6 +1183,7 @@ This orchestrates: rollout → reward computation → advantage normalization.
 Intended to run on the CPU reward server, called from the training loop.
 """
 
+import re
 import asyncio
 import numpy as np
 from typing import NamedTuple
@@ -1059,7 +1236,7 @@ async def compute_rewards_for_batch(
         zip(flat_prompts, flat_completions, flat_golds)
     ):
         # Format reward: 1 if \boxed{} is present, 0 otherwise
-        has_boxed = bool(__import__("re").search(r'\\boxed\{', comp))
+        has_boxed = bool(re.search(r'\\boxed\s*\{', comp))
         format_r[i] = 1.0 if has_boxed else 0.0
         # Correctness reward
         correctness[i] = math_reward(prompt, comp, gold)
@@ -1087,13 +1264,14 @@ async def compute_rewards_for_batch(
 
 !!! key "Key Takeaways"
     - Rule-based verifiers (math equivalence, code unit tests) are the gold standard for RLVR: deterministic, free at inference time, and hard to hack compared to learned reward models.
-    - Math verifiers must do symbolic/numeric normalization, not string equality. Sympy with a numeric fallback handles most competition math formats correctly.
+    - Math verifiers must do symbolic/numeric normalization, not string equality, and must match braces rather than regex `\boxed{...}`. Sympy with a numeric fallback handles most competition math; in production reach for `math-verify`.
+    - A verifier is a classifier: audit its false-negative rate on labelled rollouts — in group-relative RL a rejected-but-correct completion gets a *negative* advantage, actively training the policy away from a valid solution — and keep watching it with fuzzing, hold-out test suites, and within-group reward variance.
+    - Trainers consume rewards through a narrow contract — TRL's `reward_funcs` callables (weighted via `GRPOConfig.reward_weights`) and veRL's `custom_reward_function.compute_score` — and they run it synchronously in the training step, which is why heavy verifiers belong behind a reward server.
     - Code verifiers need sandboxed execution to prevent reward hacking via filesystem or process manipulation. Warm container or microVM pools eliminate per-sample startup overhead.
     - LLM-judge rewards are necessary for open-ended tasks but introduce positional and verbosity bias; mitigate by swapping order, using cross-family judges, and normalizing within batches.
     - Format rewards (small $\lambda \approx 0.1$) solve the cold-start problem by encouraging structured output before correctness rewards become dense; too large a $\lambda$ invites gaming.
     - Multi-objective rewards should be combined on similar scales and normalized per prompt group (GRPO-style) to produce zero-mean advantages independent of absolute reward magnitude.
     - The reward server is a critical piece of RL infrastructure: decouple it from training, cache results, and size your sandbox pool to match rollout throughput (workers = throughput / per-worker capacity, plus 2-3x headroom).
-    - Monitor reward hacking via verifier fuzzing, hold-out test suites, and within-group reward variance throughout training.
 
 !!! sota "State of the Art & Resources (2026)"
     Reward engineering for RLVR has matured rapidly since DeepSeek-R1 demonstrated that rule-based verifiers alone—without any learned reward model—can drive state-of-the-art reasoning. The active frontier now spans more robust symbolic verifiers, step-level process reward models that scale test-time compute, and production-grade sandboxing infrastructure for safe code execution at training throughput.
@@ -1114,7 +1292,10 @@ async def compute_rewards_for_batch(
     **Open-source & tools**
 
     - [verl-project/verl](https://github.com/verl-project/verl) — flexible, high-throughput RL post-training framework (PPO, GRPO, DAPO) with pluggable reward functions; used to reproduce and extend DeepSeek-R1.
+    - [huggingface/Math-Verify](https://github.com/huggingface/Math-Verify) — the standard answer-extraction and equivalence library for math RLVR and evals (`pip install math-verify`); used by `lighteval` and Open-R1, and the maintained replacement for vendored `hendrycks_math` normalizers.
+    - [willccbb/verifiers](https://github.com/willccbb/verifiers) — environment + rubric abstraction for RLVR: packages prompt, rollout, and multi-criterion scoring behind one interface that GRPO-style trainers can consume directly.
     - [e2b-dev/E2B](https://github.com/e2b-dev/E2B) — open-source Firecracker-backed cloud sandbox SDK for safely executing AI-generated code; Python and TypeScript APIs.
+    - [google/gvisor](https://github.com/google/gvisor) — userspace kernel that gives container-speed startup with a much smaller host syscall surface; drop-in via `docker run --runtime=runsc`.
     - [openai/prm800k](https://github.com/openai/prm800k) — 800 K step-level correctness labels on MATH solutions plus the SymPy-based answer-grading logic from "Let's Verify Step by Step."
     - [opendilab/awesome-RLVR](https://github.com/opendilab/awesome-RLVR) — curated, actively updated reading list of RLVR papers, codebases, and tutorials (2024–2026).
 
@@ -1131,7 +1312,8 @@ async def compute_rewards_for_batch(
 - Guo et al., *Deepseek-Coder: When the Large Language Model Meets Programming* (2024) — discusses code-execution reward pipelines at scale.
 - Zheng et al., *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena* (2023) — systematic analysis of LLM judge biases and calibration.
 - Shen et al., *Loose lips sink ships: Mitigating Length Bias in Reinforcement Learning from Human Feedback* (2023) — reward shaping to control response length.
-- `google/evals`, `openai/evals` — open-source eval harness libraries with reward function implementations.
+- `openai/human-eval` — reference sandboxed execution harness (`execution.py`, `reliability_guard`) for code-correctness rewards; `openai/evals` for general eval scaffolding.
+- `huggingface/Math-Verify` — the maintained math answer extraction/equivalence library used by `lighteval` and Open-R1.
 
 ## Exercises
 

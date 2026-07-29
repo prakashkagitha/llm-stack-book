@@ -101,7 +101,7 @@ $$
 w_t = \min\!\left(\frac{\pi_\theta^{\text{train}}(o_t)}{\pi_{\theta_{\text{old}}}^{\text{infer}}(o_t)},\; C\right), \qquad C \in [2, 10] \text{ typically.}
 $$
 
-This single correction, highlighted by veRL/AReaL practitioners, is frequently the difference between a stable async run and one that silently collapses — the engine-mismatch bias is real and accumulates.
+The *rigorous* form separates the two mismatches rather than folding them together. The engine gap is a property of the **behavior weights alone**, so if you can afford one extra trainer-side forward pass at $\theta_{\text{old}}$ you compute a **detached** correction factor $w_t^{\text{TIS}} = \min\big(\pi^{\text{train}}_{\theta_{\text{old}}}(o_t)/\pi^{\text{infer}}_{\theta_{\text{old}}}(o_t),\, C\big)$ and multiply it into the PPO surrogate, leaving the PPO ratio itself as the pure trainer-vs-trainer quantity $\pi_\theta^{\text{train}}/\pi^{\text{train}}_{\theta_{\text{old}}}$. That keeps the trust region and the engine correction from fighting each other. In a *fully* async system you usually do not have $\theta_{\text{old}}$ resident in the trainer anymore, so the practical shortcut — the one implemented below — is to use the single mixed ratio $\pi_\theta^{\text{train}}/\pi^{\text{infer}}_{\theta_{\text{old}}}$ and cap it. This single correction, highlighted by veRL/AReaL practitioners, is frequently the difference between a stable async run and one that silently collapses — the engine-mismatch bias is real and accumulates.
 
 **3. Sequence-level masking / regularized IS.** Some systems (e.g. GSPO-style sequence-level objectives) avoid the multiplicative product entirely by using a *geometric-mean* or length-normalized sequence ratio, or by simply **dropping** rollouts whose sequence-level ratio falls outside a trust band. Dropping is crude but robust: a rollout that is wildly off-policy contributes more noise than signal, so discard it.
 
@@ -252,6 +252,8 @@ How fast can the trainer go before it starves? Let the inference fleet produce r
 
     **Speedup** $\approx 34 / 14 \approx 2.4\times$, with trainer utilization near 100%. The straggler tax and the weight-sync stall both vanish because nothing is on the critical path but the trainer's own compute. This is exactly the 2–4× regime async systems report — and note the savings come *entirely* from eliminating idle time, not from any algorithmic change.
 
+**Does async pay off at 100M scale?** Run the same arithmetic before you build any of it. In [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), Stack-100M's RLVR stage generates short, length-capped completions (hundreds of tokens, not thousands) from a single colocated vLLM instance, and a training step on a 100M model is seconds at most. Both the straggler tail and $T_{\text{sync}}$ are small relative to $T_{\text{train}}$, so the synchronous barrier costs tens of percent, not multiples — and one process is far easier to debug than three. Take the sync path there. What you *should* port down to 100M regardless of scale is the **diagnostics**: log the inference-engine behavior log-prob alongside the trainer-recomputed one and watch `approx_kl` on fresh rollouts. The engine-mismatch bias is a numerics phenomenon, not a scale phenomenon — a 100M policy served by vLLM and trained under FSDP/bf16 will still disagree with itself, and catching that on a cheap run is how you learn to recognize it on an expensive one.
+
 ## Prime Intellect's prime-rl and decentralized RL
 
 ### What changes when the workers leave the data center
@@ -262,13 +264,32 @@ Three properties of async RL make decentralization tractable where synchronous R
 
 1. **Loose coupling tolerates latency.** A rollout that takes an extra 500 ms to traverse the WAN just arrives a little later and carries slightly more staleness — which the importance-sampling correction already handles. A *synchronous* barrier across the internet would be catastrophic; an async queue barely notices.
 2. **Generation is the parallel, fault-tolerant part.** Inference workers are stateless w.r.t. each other. One dropping offline mid-rollout costs you one rollout. The trainer — the stateful, hard-to-replicate part — stays centralized on reliable hardware. This is the same disaggregation logic as [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html), pushed to a global scale.
-3. **Weight broadcast is infrequent and one-way.** Publishing weights every $N$ steps over the internet is a bandwidth problem, not a latency problem, and it is solvable with sharding, quantized weight deltas, and BitTorrent-style fan-out.
+3. **Weight broadcast is infrequent and one-way.** Publishing weights every $N$ steps over the internet is a bandwidth problem, not a latency problem, and it is solvable with sharding, quantized weight deltas, and BitTorrent-style fan-out. Prime Intellect's **SHARDCAST** is exactly that: an HTTP-based broadcast that splits a checkpoint into shards and propagates them through a tree of intermediate relay nodes, so the origin never has to serve every worker directly and a joining worker can pull the newest complete version from whichever relay is nearest. It is what pushed INTELLECT-2's 32B checkpoints to a permissionless fleet; inside a data center the same role is played by an NCCL/RDMA broadcast or a CUDA-IPC handoff (see [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html)).
 
 This is the lineage of the **INTELLECT** models. **INTELLECT-1** (a ~10B-parameter base model) demonstrated globally-distributed *pretraining* across continents using Prime Intellect's **OpenDiLoCo** (an open implementation of DeepMind's DiLoCo — Distributed Low-Communication training), which performs many *local* optimizer steps between rare global synchronizations to slash communication. **INTELLECT-2** (a 32B model, mid-2025) then applied the same decentralized philosophy to **RL**: globally-distributed, asynchronous reinforcement learning for a reasoning model, where permissionless, geographically-spread inference nodes contribute rollouts. prime-rl is the framework that orchestrates that RL. By late 2025 prime-rl had matured into a general async-RL stack — fully asynchronous, agentic (multi-turn, tool-use), scaling to trillion-parameter Mixture-of-Experts — and Prime Intellect used it to train **INTELLECT-3**, a 106B-parameter (~12B-active) MoE reasoning model post-trained from GLM-4.5-Air with large-scale RL. Tellingly, INTELLECT-3 ran on a *centralized* 512×H200 cluster rather than the permissionless network: the async architecture earns its keep inside a single data center too, and the decentralized-trust machinery below is what you add *on top* when the workers become untrusted.
 
 
 {{fig:primerl-decentralized-trust-pipeline}}
 
+
+### Running prime-rl in practice
+
+prime-rl is a real, installable framework, and its process layout is the queue architecture above made concrete. A run is **three long-lived processes** that communicate over HTTP and a shared checkpoint path rather than living inside one Python driver:
+
+- an **inference** service — vLLM behind an OpenAI-compatible endpoint, serving whatever policy weights it currently holds;
+- an **orchestrator** — owns the prompt stream and the environment: it calls the inference service for completions, scores them, and hands finished rollouts (tokens, behavior log-probs, reward, policy version) to the trainer;
+- a **trainer** — FSDP2 (see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)) — consumes rollouts, steps the optimizer, and writes new weights for the inference service to load.
+
+Each process is configured by its own TOML file and has its own entrypoint, with a single launcher that brings up all three for a one-node run. Flag names move fast, so treat the shape below as representative and check the repository for specifics:
+
+```bash
+# Representative shape of a prime-rl launch (consult the repo for exact flags).
+uv run inference    @ configs/my-run/infer.toml   # vLLM policy server
+uv run orchestrator @ configs/my-run/orch.toml    # prompts -> completions -> rewards -> rollouts
+uv run trainer      @ configs/my-run/train.toml   # FSDP2 async off-policy trainer
+```
+
+Notice what is *not* in that list: the task itself. Environments — the prompt set, the tool sandbox, the reward functions — are not hard-coded into prime-rl. They come from the separate **`verifiers`** library, whose `Environment` abstraction (a rollout method plus a *rubric* of reward functions) is what the orchestrator drives, and whose environments are packaged and shared through Prime Intellect's Environments Hub. That is the same separation of concerns as [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html), and it is why multi-turn, tool-using RL ([Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html)) is a matter of writing an environment rather than patching the trainer: the trainer only ever sees tokens, log-probs, advantages, and a version stamp.
 
 ### The new problem: you cannot trust the workers
 
@@ -414,7 +435,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     - **Off-policy means importance sampling.** Reweight each token by $\rho_t = \pi_\theta/\pi_{\theta_{\text{old}}}$. Tame the variance with **PPO clipping** (the per-step trust region), **truncated importance sampling** (caps the behavior-side ratio — critical because the inference and training engines compute different log-probs), and dropping wildly off-policy rollouts.
     - **One step of staleness is nearly free; $s_{\max}\in\{1,2,4\}$ buys ~2–4× throughput** at matched quality. The win is *eliminating idle time*, not any algorithmic change.
     - **Pipeline at the sample level, not the batch level.** Stream individual finished rollouts through a bounded queue (with backpressure) so stragglers never block short samples; swap weights only at request boundaries, never mid-generation.
-    - **Decentralized RL (prime-rl, INTELLECT-2) exploits loose coupling.** Only prompts, rollouts, and infrequent weight broadcasts cross the WAN — none latency-critical — so stateless generation can run on permissionless, globally-distributed GPUs while the stateful trainer stays centralized.
+    - **Decentralized RL (prime-rl, INTELLECT-2) exploits loose coupling.** Only prompts, rollouts, and infrequent weight broadcasts (Prime Intellect's relay-tree **SHARDCAST**) cross the WAN — none latency-critical — so stateless generation can run on permissionless, globally-distributed GPUs while the stateful trainer stays centralized. Concretely, prime-rl is three processes — vLLM **inference**, an **orchestrator** that runs `verifiers` environments and scores rollouts, and an FSDP2 **trainer** — with the task living in the environment, not the trainer.
     - **Untrusted workers create two new attacks.** *Reward forgery* is killed by recomputing rewards on a trusted **verifier**; *inference forgery* (wrong model/precision/fabricated tokens) is caught by **TOPLOC**, a locality-sensitive commitment to top-$k$ activations that re-verifies via a cheap batched prefill — robust to benign GPU numerics, sensitive to real model changes.
     - **Monitor staleness, `approx_kl` on fresh data, `clipfrac`, and TOPLOC reject rate.** A drifting `approx_kl` on the first epoch over fresh rollouts is the signature of engine mismatch — the most common silent async bug. Bring the run up synchronously, then dial $s_{\max}$ up.
 
@@ -438,6 +459,8 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     **Open-source & tools**
 
     - [PrimeIntellect-ai/prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) — async RL training framework behind INTELLECT-2 and INTELLECT-3; FSDP2 + vLLM, fully-async agentic RL (multi-turn, tool use), FP8 inference and PD disaggregation, scaling from one node to 1000+ GPUs and up to trillion-parameter MoE models (v0.6.0, 2026).
+    - [PrimeIntellect-ai/verifiers](https://github.com/PrimeIntellect-ai/verifiers) — the RL *environment* library prime-rl drives: an `Environment` interface (rollout + rubric of reward functions) with single-turn, multi-turn, and tool-use base classes, packaged and shared via Prime Intellect's Environments Hub.
+    - [PrimeIntellect-ai/toploc](https://github.com/PrimeIntellect-ai/toploc) — reference implementation of the locality-sensitive activation commitments used to verify untrusted inference.
     - [inclusionAI/AReaL](https://github.com/inclusionAI/AReaL) — production async RL system from Ant Group / Tsinghua IIIS; flexible, sample-level streaming with staleness control.
     - [verl-project/verl](https://github.com/verl-project/verl) — widely-used HybridFlow-based RL post-training library integrating FSDP/FSDP2, Megatron, vLLM, and SGLang, with an experimental fully-async policy path; 22k+ GitHub stars.
 

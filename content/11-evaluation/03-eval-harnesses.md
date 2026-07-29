@@ -2,7 +2,7 @@
 
 Every claimed benchmark score has a story behind it: which prompt template, which few-shot examples, whether the answer was extracted from a generation or scored as log-likelihood, how ties were broken, and whether the random seed was fixed. Get any of these wrong and your numbers become incomparable to everyone else's — even on the same dataset. This chapter is the engineering manual for that story.
 
-We cover the two dominant open-source harnesses (lm-evaluation-harness and HELM), dissect the mechanics that separate correct from incorrect evaluations, show you how to build a custom eval from scratch, and close with the statistics you need to know whether a difference in accuracy is real or noise.
+We cover the dominant open-source harnesses — lm-evaluation-harness and HELM in depth, plus lighteval and Inspect AI for the niches they own — dissect the mechanics that separate correct from incorrect evaluations, show you how to score both a Hub model and your own from-scratch checkpoint, build a custom eval end to end, and close with the statistics you need to know whether a difference in accuracy is real or noise.
 
 Related chapters provide necessary context: [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html) surveys what we are measuring, [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) covers neural judges as an alternative to harness-based scoring, and [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) extends these ideas to more complex task types.
 
@@ -56,7 +56,18 @@ lm_eval \
     --num_fewshot 0 \
     --batch_size 32 \
     --output_path results/llama3-70b
+
+# Evaluate a model that is already being *served* (vLLM or SGLang exposing an
+# OpenAI-compatible endpoint). The harness talks HTTP instead of owning the GPU,
+# so one server can back many concurrent eval jobs.
+lm_eval \
+    --model local-completions \
+    --model_args model=my-model,base_url=http://localhost:8000/v1/completions,num_concurrent=16,tokenized_requests=False \
+    --tasks arc_easy \
+    --output_path results/served
 ```
+
+Three backends, one task definition: `hf` (single-process PyTorch, best for debugging), `vllm` (paged-attention batching, the default for anything above ~7B), and `local-completions` / `local-chat-completions` (any OpenAI-compatible server — vLLM, SGLang, TGI, or a hosted API). Note that a served backend usually cannot return log-probabilities over arbitrary continuations, so log-likelihood tasks may be unavailable or approximate over HTTP; generation tasks always work. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for the serving side.
 
 ### How Log-Likelihood Scoring Works
 
@@ -69,13 +80,15 @@ $$
 = \sum_{t=1}^{|c_i|} \log p_\theta(w_t \mid \text{context}, w_{1:t-1})
 $$
 
-The predicted answer is the choice with the highest score. This is sometimes called **length-normalized** log-likelihood: because longer answers accumulate more log-probability mass, many harnesses divide by the token length of each choice:
+The predicted answer is the choice with the highest score. Because every additional token contributes another negative term, longer answers are systematically penalized under this raw sum — so harnesses also report a **length-normalized** variant that divides by the length of each choice:
 
 $$
-\text{score}_{\text{norm}}(c_i) = \frac{\log p_\theta(c_i \mid \text{context})}{|c_i|_{\text{tokens}}}
+\text{score}_{\text{norm}}(c_i) = \frac{\log p_\theta(c_i \mid \text{context})}{|c_i|}
 $$
 
 The harness exposes `acc` (raw argmax) and `acc_norm` (length-normalized) as separate metrics, and you need to know which one is being reported before comparing to a third-party result.
+
+Mind the denominator. Our from-scratch harness below divides by the **token** count, which is the intuitive choice but is a property of *your* tokenizer: the same answer string may be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models. lm-evaluation-harness therefore normalizes by the **byte length of the choice string** (`len(choice)` over the raw text), which is tokenizer-independent — the same reasoning that makes bits-per-byte the portable version of perplexity (see [Pretraining Objectives](../03-pretraining/03-pretraining-objective.html)). The two denominators usually agree on the winner, but not always, and a third option exists: normalizing by the *unconditional* likelihood of the choice, $\log p(c_i \mid \text{context}) - \log p(c_i \mid \text{“Answer:”})$, a pointwise-mutual-information score that cancels out choices which are simply common strings. lm-eval exposes this as the `acc_mutual_info` metric. Whichever you use, name it next to the number.
 
 !!! example "Worked example: MMLU scoring"
 
@@ -98,6 +111,12 @@ The harness exposes `acc` (raw argmax) and `acc_norm` (length-normalized) as sep
     - D: $-1.5 / 3 = -0.50$
 
     With normalization, choice D wins. If D is correct, `acc` and `acc_norm` disagree, and the reported accuracy will differ by at least this one example. At scale across thousands of questions, these differences can easily amount to 1–3 percentage points on MMLU.
+
+### MCQ Scoring vs. Cloze Scoring
+
+There is a second, deeper formulation choice hiding inside "multiple choice," and it is a frequent source of irreproducible MMLU numbers. In the **MCQ (symbol) formulation**, all four options are printed in the prompt and the continuations being scored are just the letters `" A"`, `" B"`, `" C"`, `" D"` — the model must map its knowledge onto a symbol. This is what lm-eval's default MMLU config does, and it is what the from-scratch harness later in this chapter implements. In the **cloze formulation**, the options are *not* printed; each full answer string is appended to the question in turn and scored as a continuation. This is how HellaSwag, PIQA, ARC and LAMBADA are scored in the harness.
+
+The two measure different things. MCQ scoring requires the model to have learned that a lettered list implies "emit the letter" — a formatting competence that base models acquire late, which is why a weak base model can sit at exactly chance under MCQ scoring while showing real signal under cloze scoring on the same questions. Cloze scoring, on the other hand, is the one that needs length normalization, because the choices are strings of different lengths (under MCQ scoring every continuation is one token, so `acc` and `acc_norm` coincide). A third variant asks the model to *generate* the letter and extracts it with a regex, which additionally measures instruction-following and answer-extraction robustness. Three protocols, three different numbers, one dataset name. For a small model — including the ~100M capstone model — prefer cloze scoring; see [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html).
 
 ### Generation Scoring
 
@@ -251,7 +270,7 @@ print(templated_prompt)
 # <|start_header_id|>assistant<|end_header_id|>
 ```
 
-The lm-evaluation-harness exposes `--apply_chat_template` for exactly this reason. Enable it for instruction-tuned models and disable it for base models.
+The lm-evaluation-harness exposes `--apply_chat_template` for exactly this reason. Enable it for instruction-tuned models and disable it for base models. Its companion `--fewshot_as_multiturn` decides *how* the K examples are laid out under a chat template: as alternating user/assistant turns (matching how a chat model saw dialogue in training) rather than concatenated into one giant user message. The two flags interact and both move the score, so both belong in the run record alongside `num_fewshot`.
 
 ### Normalization
 
@@ -433,6 +452,48 @@ class MedNERTask(ConfigurableTask):
     def higher_is_better(self):
         return {"entity_f1": True}
 ```
+
+### Evaluating a Checkpoint You Trained Yourself
+
+Every command so far assumed a model on the Hugging Face Hub. When you are training your own model, you need two more things: evaluating a *live, in-memory* model between training steps, and evaluating a model class the harness has never heard of.
+
+For the first, wrap the objects you already have in `HFLM` and call the harness as a library rather than a CLI:
+
+```python
+# eval_probe.py -- run a fast benchmark probe from inside the training loop
+import lm_eval
+from lm_eval.models.huggingface import HFLM
+
+# `model` is a live nn.Module (already on GPU, in eval mode); `tokenizer` is its
+# tokenizer. Nothing is written to disk, so this works on an unsaved checkpoint.
+lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=16)
+
+out = lm_eval.simple_evaluate(
+    model=lm,
+    tasks=["hellaswag", "piqa", "arc_easy", "winogrande", "lambada_openai"],
+    num_fewshot=0,
+    limit=500,           # subsample: a probe, not a leaderboard run
+    bootstrap_iters=0,   # skip bootstrap stderr; it dominates runtime at limit=500
+)
+for task, metrics in out["results"].items():
+    # metric keys are "<name>,<filter>", e.g. "acc,none" / "acc_norm,none"
+    print(task, {k: round(v, 4) for k, v in metrics.items()
+                 if isinstance(v, float) and k.startswith("acc")})
+```
+
+For the second — a model that is not a `PreTrainedModel` at all, such as the from-scratch transformer built in Part XIV — implement the `LM` interface. The harness only ever asks a model three questions, and two of them cover nearly all static evaluation:
+
+| Method | What it must return | Used by |
+|---|---|---|
+| `loglikelihood(requests)` | for each `(context, continuation)` pair: the summed log-probability of the continuation given the context, plus an `is_greedy` flag | all multiple-choice / cloze tasks |
+| `loglikelihood_rolling(requests)` | total log-probability of a whole document, sliding over the context window | perplexity, `bits_per_byte` |
+| `generate_until(requests)` | generated string, stopped at the first of the task's stop sequences | GSM8K, HumanEval, open-ended QA |
+
+Subclass `lm_eval.api.model.LM` and implement those three (the `TemplateLM` base class handles request grouping and batching so you only supply token-level scoring), then pass your instance to `simple_evaluate` exactly as above. `loglikelihood` is the same computation as `score_choices` below, and `generate_until` is your sampling loop with a stop-string check — which is why porting a from-scratch model into the harness is usually an afternoon, not a rewrite.
+
+!!! tip "Which tasks give signal at 100M parameters?"
+
+    Do not put MMLU, MMLU-Pro or GSM8K on a ~100M model's dashboard: they sit at the chance floor for the entire run, so they report noise and you will waste days chasing it. The benchmarks that move earliest at this scale are the cloze-scored commonsense set (HellaSwag, PIQA, ARC-easy, WinoGrande) and next-word prediction (LAMBADA) — and, moving earliest of all, `bits_per_byte` on a held-out slice via `loglikelihood_rolling`, which is continuous rather than thresholded and therefore the best early training signal. Track bits-per-byte every few hundred steps and the accuracy suite every few thousand. The full Stack-100M eval suite is built in [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html).
 
 ### Rolling Your Own Lightweight Harness
 
@@ -855,9 +916,9 @@ MUST record for every eval run:
   ✓ Task version numbers (each task has a VERSION field)
   ✓ num_fewshot and the exact few-shot seed
   ✓ Prompt template (or YAML hash)
-  ✓ Whether apply_chat_template was used
-  ✓ Scoring mode: loglikelihood vs generation
-  ✓ Length normalization: yes / no
+  ✓ Whether apply_chat_template / fewshot_as_multiturn were used
+  ✓ Scoring mode: MCQ-loglikelihood vs cloze-loglikelihood vs generation
+  ✓ Length normalization: none / bytes / tokens
   ✓ Random seed for sampling (--gen_kwargs seed=X)
   ✓ Hardware (GPU model, driver, CUDA version)
   ✓ Floating-point format (BF16 vs FP16 vs FP32)
@@ -1071,6 +1132,13 @@ When running a model on 50+ benchmarks and cherry-picking the best ones, you inf
 
 For most production use cases, lm-evaluation-harness is the right starting point. Use HELM when you need detailed multi-axis analysis or want to align with Stanford CRFM benchmarking methodology.
 
+Two more open-source harnesses are worth knowing by 2026, because each owns a niche the two above handle less well:
+
+- **`lighteval`** (Hugging Face, `pip install lighteval`) — a smaller, more hackable codebase with first-class custom-task and custom-model entry points, and vLLM / accelerate / inference-endpoint backends. Reach for it when you want your own metric without forking a large framework; it is what several HF training recipes score with.
+- **`inspect_ai`** (UK AI Security Institute, `pip install inspect-ai`) — built for *agentic* and safety evaluation rather than static multiple choice. Its unit is a `Task` composed of a dataset, a chain of **solvers** (the agent scaffold, including tool use in a sandboxed container), and **scorers**; it logs a full per-step trace and ships a viewer. When an agent eval outgrows a single script, port it here rather than reinventing a trace format — see [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html).
+
+Rule of thumb: static log-likelihood benchmarks → lm-eval; multi-axis capability profiling → HELM; a bespoke metric on your own data → lighteval; anything with tools, environments, or multi-turn rollouts → Inspect AI.
+
 ## Continuous Evaluation in CI/CD
 
 A mature LLM development workflow runs evals automatically on every significant model checkpoint, not just at release time. Here is a practical CI/CD integration pattern.
@@ -1129,7 +1197,9 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
 
 !!! key "Key Takeaways"
     - Eval harnesses standardize prompt formatting, scoring mode, few-shot sampling, and normalization — without them, cross-model comparisons are meaningless.
-    - lm-evaluation-harness uses log-likelihood scoring for multiple-choice tasks (computing $\sum \log p(\text{choice} \mid \text{context})$); length normalization by token count changes which answer wins and must be reported explicitly.
+    - lm-evaluation-harness uses log-likelihood scoring for multiple-choice tasks (computing $\sum \log p(\text{choice} \mid \text{context})$); length normalization changes which answer wins and must be reported explicitly — and note the denominator, since lm-eval's `acc_norm` divides by the choice's **byte** length, not its token count.
+    - MCQ (score the letters " A".." D") and cloze (score the full answer strings) scoring of the same dataset produce different numbers; small or base models often sit at chance under MCQ while showing real signal under cloze.
+    - Evaluate your own checkpoint by wrapping it in `HFLM` and calling `lm_eval.simple_evaluate`, or by implementing `loglikelihood` / `loglikelihood_rolling` / `generate_until` on an `LM` subclass — those three primitives span nearly all static evaluation.
     - HELM adds multi-dimensional scoring (accuracy + calibration + fairness + efficiency) and structured reproducibility artifacts; lm-eval is faster and has broader task coverage.
     - Chat-templated models must be evaluated with `apply_chat_template`; using raw concatenation sends them out-of-distribution and can suppress performance by several points.
     - A 1-point accuracy difference is only statistically significant at typical MMLU scale (~14k examples) if $z = \Delta / \text{SE}_{diff} > 2$; compute standard errors and report them alongside every number.
@@ -1159,6 +1229,7 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
     - [stanford-crfm/helm](https://github.com/stanford-crfm/helm) — HELM's official Python package; multi-axis leaderboards covering capabilities, safety, MedHELM, and long-context evaluation.
     - [openai/evals](https://github.com/openai/evals) — OpenAI's eval framework and open-source benchmark registry; useful reference for generation-based and LLM-as-judge eval patterns.
     - [Inspect AI](https://inspect.aisi.org.uk/) — open-source eval framework from the UK AI Security Institute and Meridian Labs, with 200+ pre-built evals, agent sandboxing, and multi-provider model support; particularly strong for agentic and safety evaluations.
+    - [huggingface/lighteval](https://github.com/huggingface/lighteval) — lightweight, hackable harness with first-class custom-task and custom-model entry points and vLLM/accelerate/endpoint backends; the pragmatic choice when you need your own metric on your own data.
 
     **Go deeper**
 

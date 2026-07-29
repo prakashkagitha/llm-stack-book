@@ -89,6 +89,23 @@ for step in range(num_steps):
     sync_weights(trainer, rollout_engine)
 ```
 
+Those `wake_up()`/`sleep()` calls are not pseudocode — they are the real API surface. vLLM implements **sleep mode**: construct the engine with `enable_sleep_mode=True`, then `llm.sleep(level=1)` discards the paged KV-cache pool and offloads the weights to host RAM (`level=2` discards the weights too, for when you will overwrite them anyway), and `llm.wake_up()` rebuilds the pool. SGLang's equivalent requires `--enable-memory-saver` at launch and exposes `release_memory_occupation()` / `resume_memory_occupation()`, both as Python calls and as HTTP endpoints on the server.
+
+```python
+from vllm import LLM, SamplingParams
+
+# Colocated rollout engine: cap it at a fraction of HBM so the trainer has room.
+llm = LLM(model="Qwen/Qwen2.5-7B", enable_sleep_mode=True,
+          gpu_memory_utilization=0.35, tensor_parallel_size=2)
+
+outs = llm.generate(prompts, SamplingParams(n=8, max_tokens=4096))
+llm.sleep(level=1)   # KV pool freed + weights to CPU; HBM returns to the allocator
+# ... trainer now runs fwd/bwd/optimizer.step() using the reclaimed memory ...
+llm.wake_up()        # rebuild the KV pool for the next rollout phase
+```
+
+The frameworks wrap this. TRL runs vLLM inside the trainer process with `GRPOConfig(use_vllm=True, vllm_mode="colocate", vllm_gpu_memory_utilization=0.3)`; veRL's hybrid engine is `actor_rollout_ref.hybrid_engine=True` together with `actor_rollout_ref.rollout.free_cache_engine=True` (release the KV cache after generation) and `actor_rollout_ref.actor.fsdp_config.param_offload` / `optimizer_offload` for the trainer side; OpenRLHF exposes flags in the same spirit (`--colocate_all_models`, `--vllm_enable_sleep`). Flag names drift between releases — the *mechanism* they toggle is the one above.
+
 The beauty of time-slicing is **GPU utilization**: every GPU is busy in every phase, because there is only one pool. The cost is **latency** — the phases are strictly serial, so the rollout GPUs are doing inference work while the (same) training capability sits idle, and vice versa. There is no overlap. For a run where rollout dominates wall-clock (long reasoning traces), this means your expensive training-capable cluster spends most of its time doing memory-bound decode at low FLOP utilization.
 
 ### Offloading
@@ -107,7 +124,7 @@ The offload transfer is not free. A 7B model's Adam state is $12 \times 7\text{e
 
 ### Memory partitioning (true simultaneous colocation)
 
-The third option is to *not* time-slice at all: carve the GPU's HBM into a training partition and an inference partition that coexist. This is rare in pure RL because the combined footprint rarely fits, but it appears in two guises: (a) very small models or heavily LoRA-fied policies where $16P$ is tiny, and (b) **multiplexing via MPS** (NVIDIA Multi-Process Service) or MIG, where two processes share SMs and memory under a hardware scheduler. The win is true overlap; the risk is that the two contend for HBM bandwidth and *both* slow down. In practice, time-slicing + offload dominates for full-parameter RL; partitioning shows up mainly with LoRA-based RL where the policy delta is small.
+The third option is to *not* time-slice at all: carve the GPU's HBM into a training partition and an inference partition that coexist. This is rare in pure RL because the combined footprint rarely fits, but it appears in two guises: (a) very small models or heavily LoRA-fied policies where $16P$ is tiny, and (b) **multiplexing via MPS** (NVIDIA Multi-Process Service) or MIG, where two processes share SMs and memory under a hardware scheduler. The win is true overlap; the risk is that the two contend for HBM bandwidth and *both* slow down. In practice, time-slicing + offload dominates for full-parameter RL; partitioning shows up mainly with LoRA-based RL where the policy delta is small. LoRA also collapses the *sync* problem: only the adapter matrices change, so you move tens of megabytes instead of gigabytes, and because vLLM and SGLang can load and swap LoRA adapters at runtime (vLLM's `LoRARequest` / `--enable-lora` path), "weight sync" degenerates to an adapter reload. That is why LoRA RL is attractive on modest hardware even when full-parameter RL would fit.
 
 ## Disaggregated: Separate Pools for Training and Rollout
 
@@ -196,7 +213,13 @@ class WeightSyncGroup:
             dist.broadcast(buf, src=self.src_rank)     # buf filled in place
 ```
 
-In real systems (vLLM's `RLHFWorker` / collective-RPC interface, SGLang's weight-update API, OpenRLHF's `vllm_engine.update_weight`) this is wrapped so the trainer calls one RPC and the inference workers receive into their internal parameter storage. The transfer runs at NVLink/IB bandwidth: 14 GB of bf16 weights over a 900 GB/s NVLink 4 fabric (H100) is $14 / 900 \approx 16$ ms — three orders of magnitude faster than NFS reload. On Blackwell (B200/GB200), NVLink 5 roughly doubles that to ~1.8 TB/s per GPU, halving the already-negligible sync cost. This is why NCCL broadcast is the default in-band sync for every serious RL framework.
+!!! warning "The process group you already have is not the one you need"
+
+    The sketch above hides a real trap. Your trainer has *already* called `init_process_group` for FSDP/Megatron; you cannot re-initialize the default group to add the inference ranks, and if you did fold the rollout workers into the trainer's group, every training collective would then have to wait on processes that are busy decoding. The fix is a **second, independent communicator** dedicated to weight sync. vLLM ships exactly this: `StatelessProcessGroup` performs a rendezvous over a plain TCP store while ignoring `torch.distributed`'s global state, and `PyNcclCommunicator` builds an NCCL communicator on top of it, so the side channel coexists with — and never blocks — the trainer's own process group. Build the sync group once at startup, not per step; NCCL communicator creation costs hundreds of milliseconds and leaks if you churn it.
+
+In real systems this side channel is wrapped so the trainer makes one call per push. In vLLM you supply a **worker extension** (`LLM(..., worker_extension_cls="my_rl_utils.WeightSyncExtension")`) whose methods become invocable on every worker through `llm.collective_rpc("init_weight_update_group", args=...)` and `llm.collective_rpc("update_weight", args=(name, dtype, shape))`; each worker receives the broadcast into a scratch tensor and hands it to `self.model_runner.model.load_weights([(name, tensor)])`. SGLang exposes the same protocol as first-class endpoints — `init_weights_update_group` followed by `update_weights_from_distributed(names, dtypes, shapes, group_name)`, with `update_weights_from_tensor` for the same-process case and `update_weights_from_disk` as the checkpoint fallback. OpenRLHF's `vllm_engine.update_weight` and veRL's resharding manager are thin layers over these primitives.
+
+The transfer runs at NVLink/IB bandwidth: 14 GB of bf16 weights over a 900 GB/s NVLink 4 fabric (H100) is $14 / 900 \approx 16$ ms of ideal transfer time. A real broadcast tree achieves a fraction of peak, so budget tens of milliseconds — still three orders of magnitude faster than an NFS reload. On Blackwell (B200/GB200), NVLink 5 roughly doubles the fabric to ~1.8 TB/s per GPU, halving the already-negligible sync cost. This is why NCCL broadcast is the default in-band sync for every serious RL framework.
 
 Two practical wrinkles. First, **bf16 vs fp32**: broadcast in the dtype the inference engine consumes (usually bf16), halving the bytes versus fp32 master weights. Second, **bucketing**: broadcasting thousands of tiny tensors one at a time is latency-bound by kernel-launch and handshake overhead; frameworks flatten parameters into large contiguous buckets and broadcast a few big buffers instead, which is bandwidth-bound and far faster.
 
@@ -241,9 +264,33 @@ The decision tree:
 | Same/multi node, GPUs reachable by NCCL | NCCL broadcast | ~10–50 ms |
 | Cross-cluster, no NCCL path, or recovery | Checkpoint reload | seconds–minutes |
 
+!!! tip "The 100M case: sync is one function call"
+
+    At Stack-100M scale the entire system is one process on one GPU, and the trainer's `nn.Module` *is* the rollout engine — `model.generate(...)` reads the very tensors `optimizer.step()` just wrote, so there is no sync step at all. That is why the GRPO loop in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) is correct without any of this machinery. The first rung up the ladder is an in-process vLLM engine on the same device, where sync is still a single call and no network is involved:
+
+    ```python
+    import torch
+
+    # `WeightLoader` is OUR class, passed as LLM(..., worker_extension_cls="my_rl.WeightLoader").
+    # Its methods run INSIDE each vLLM worker and are reachable via collective_rpc.
+    class WeightLoader:
+        def load_from_trainer(self, named_tensors):
+            # vLLM's per-architecture load_weights() already knows this model's
+            # fusion rules (qkv_proj, gate_up_proj) and TP split, so it does the
+            # fuse + reshard for us -- PROVIDED the names are HF-style.
+            self.model_runner.model.load_weights(named_tensors)
+
+    def sync_in_process(model, llm):
+        torch.cuda.synchronize()                    # the optimizer step must be complete
+        named = [(k, v) for k, v in model.state_dict().items()]
+        llm.collective_rpc("load_from_trainer", args=(named,))
+    ```
+
+    The lesson generalizes: if your trainer keeps HuggingFace-style parameter names, you get the fusion and TP-splitting logic of the next section for free from the engine's own loader. You only hand-write the resharding pipeline when your trainer's names or layout are non-HF (Megatron, custom fused kernels) or when the tensors are FSDP-flattened and must be gathered first.
+
 !!! warning "Common pitfall: name and shape mismatch"
 
-    NCCL broadcast and IPC both assume the trainer's parameter you send and the inference buffer you receive into have the **same name, shape, and dtype**. They very often do not, because the inference engine fuses QKV projections, fuses gate+up in the MLP, transposes for its kernels, or uses a different tensor-parallel split. If you broadcast a 4096×4096 `q_proj` into an engine that expects a fused 12288×4096 `qkv_proj`, you get silent garbage (or a crash). A correct sync layer maintains an explicit **name+shape mapping** and reshapes/concatenates on the trainer side *before* the broadcast. This is the resharding problem, next.
+    NCCL broadcast and IPC both assume the trainer's parameter you send and the inference buffer you receive into have the **same name, shape, and dtype**. They very often do not, because the inference engine fuses QKV projections, fuses gate+up in the MLP, transposes for its kernels, or uses a different tensor-parallel split. If you broadcast a 4096×4096 `q_proj` into an engine that expects a fused 12288×4096 `qkv_proj`, you get silent garbage (or a crash). A correct sync layer either delegates to the engine's own loader (vLLM's `load_weights`, which knows the architecture's fusion rules) or maintains an explicit **name+shape mapping** and reshapes/concatenates on the trainer side *before* the broadcast. This is the resharding problem, next.
 
 ## The Resharding Problem: Training vs Inference Layouts
 

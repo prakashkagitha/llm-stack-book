@@ -4,7 +4,7 @@ Evaluating a model's raw language modeling performance — perplexity, BLEU, or 
 
 We build from first principles: why exact-match is insufficient, how Pass@k turns stochastic generation into a reliable probability estimate, how sandboxed execution verifies correctness without trusting the model, how reasoning traces are evaluated rather than just answers, and how modern agentic harnesses turn long multi-step tasks into reproducible benchmarks. We close with test-time-compute-aware evaluation and a rigorous treatment of reward hacking in eval contexts.
 
-Related background: the broader benchmark landscape is covered in [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html), LLM-as-a-Judge methodology lives in [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html), and how to build a general eval harness is in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The RL machinery that trains reasoning models — and why its reward signal must be trustworthy — is covered in [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html) and [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html).
+Related background: the broader benchmark landscape is covered in [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html), LLM-as-a-Judge methodology lives in [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html), and how to build a general eval harness is in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The RL machinery that trains reasoning models — and why its reward signal must be trustworthy — is covered in [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html) and [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html). Agent-specific benchmarks and trajectory-scoring methodology get a full treatment in [Agent Evaluation & Benchmarks](../08-agents-harness/08-agent-evaluation.html); the confidence intervals and significance tests you need before claiming one Pass@k beats another are in [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html). Everything here is applied at small scale, on a model you built yourself, in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
 
 ## Pass@k: Measuring Coding Ability as a Probability
 
@@ -21,6 +21,8 @@ $$
 $$
 
 This avoids the naive estimator $1 - (1 - c/n)^k$, which is biased when $c/n$ is estimated from finite samples. The combinatorial form is mathematically exact: it computes the probability that a random draw of $k$ samples from the $n$ generated contains zero passing samples, then subtracts from one.
+
+It is worth being precise about *what* is unbiased and *under what assumption*. Model the $n$ samples as i.i.d. draws that each pass with unknown probability $p$, so $c \sim \text{Binomial}(n, p)$ and the estimand is $\text{Pass@}k = 1 - (1-p)^k$. The ratio $\binom{n-c}{k}/\binom{n}{k}$ satisfies $\mathbb{E}\!\left[\binom{n-c}{k}/\binom{n}{k}\right] = (1-p)^k$ exactly, so the combinatorial form is an unbiased estimator of $\text{Pass@}k$ for every finite $n \geq k$. The plug-in form is not: because $x \mapsto (1-x)^k$ is convex, Jensen's inequality gives $\mathbb{E}[(1-\hat{p})^k] \geq (1-p)^k$, so $1 - (1-\hat{p})^k$ is biased *downward* — it systematically understates Pass@k, exactly the direction you see in the worked example below. The i.i.d. assumption is not free: it holds when you sample independently at a fixed temperature, and breaks if you use beam search, diverse-decoding heuristics, or a rejection loop that conditions later samples on earlier failures. Unbiasedness also says nothing about *variance*: a Pass@k estimate from $n=20$ samples on 164 problems still carries a standard error of a few percentage points, which is why comparisons need the interval machinery of [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html).
 
 !!! example "Worked Example: Pass@k Numerics"
     Suppose you generate $n = 20$ samples for a problem and $c = 6$ pass all tests.
@@ -133,7 +135,9 @@ Running untrusted model-generated code on the host machine is a security catastr
 {{fig:rcae-sandbox-architecture}}
 
 
-**Docker + seccomp** is the most common approach for research harnesses. For production-quality isolation (used by platforms like Leetcode Discuss and Kaggle competitions), **gVisor** (Google's user-space kernel) or **Firecracker microVMs** (AWS Lambda's substrate) are preferred because they provide stronger isolation without a full VM boot overhead (Firecracker boots in under 125 ms).
+**Docker + seccomp** is the most common approach for research harnesses — SWE-bench, for instance, ships one Docker image *per benchmark instance* so that a repo's dependency pins can never leak across tasks. For stronger isolation, **gVisor** (Google's user-space kernel, which intercepts syscalls before they reach the host kernel) and **Firecracker microVMs** (the substrate under AWS Lambda, which boots a microVM in on the order of 100 ms) give VM-grade boundaries without a full VM's boot cost.
+
+Below the container layer, the real open-source primitives are worth naming because you will reach for them directly when Docker-per-execution is too slow: **`nsjail`** (Google) and **`bubblewrap`** (the sandbox under Flatpak) both wrap Linux namespaces, cgroups, and seccomp-BPF filters behind a single command line, so you can spawn a locked-down `python3` in a few milliseconds rather than a few hundred; `firejail` is a lighter-weight alternative. For hosted execution — the usual choice when eval or RL rollouts need thousands of concurrent sandboxes and you do not want to operate the fleet — **E2B**, **Modal**, and **Daytona** expose per-execution microVM sandboxes behind a Python SDK. The same sandbox pool typically serves both eval and RLVR training, which is precisely why its correctness matters twice over; see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html).
 
 ### A Minimal Sandbox in Python
 
@@ -254,6 +258,26 @@ print(f"Passed: {result.passed}, exit={result.exit_code}")
 
 The seminal **HumanEval** benchmark (Chen et al., 2021) contains 164 Python programming problems with unit tests, designed so solutions cannot be looked up from training data. **MBPP** (Mostly Basic Python Problems, Austin et al., 2021) covers 374 crowd-sourced problems. Both are now considered partially contaminated — frontier models were trained on code from the web that likely contains solutions.
 
+Contamination is not their only weakness. **EvalPlus** (Liu et al., 2023) showed that HumanEval's hand-written test suites are so thin that many "passing" solutions are simply wrong on untested inputs; it augments each problem with automatically generated inputs (roughly two orders of magnitude more tests) to produce **HumanEval+** and **MBPP+**, on which reported pass rates typically drop by several points. If you report HumanEval at all in 2026, report the plus variants — they are the same problems with an honest oracle.
+
+You should not hand-roll the runner for any of these. The standard open-source tooling:
+
+```bash
+# EvalPlus: generate + execute against the augmented test suites.
+pip install "evalplus[vllm]"
+evalplus.evaluate --model "Qwen/Qwen2.5-Coder-7B-Instruct" \
+  --dataset humaneval --backend vllm --greedy   # reports pass@1 for HumanEval and HumanEval+
+
+# BigCode's harness: many code benchmarks (HumanEval, MBPP, MultiPL-E,
+# DS-1000) behind one CLI, with containerized execution.
+# `--n_samples`/`--temperature` are what let it report pass@k for k > 1.
+accelerate launch bigcode-evaluation-harness/main.py \
+  --model bigcode/starcoder2-7b --tasks humaneval \
+  --n_samples 20 --temperature 0.2 --allow_code_execution
+```
+
+EleutherAI's `lm-evaluation-harness` also carries code tasks and is the right choice when you want code numbers in the same run as everything else (see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)); note that all of these require an explicit opt-in flag before they will execute model output, which is the correct default.
+
 **LiveCodeBench** (Jain et al., 2024) addresses contamination by continuously adding new problems from competitive programming platforms (Leetcode, Codeforces, AtCoder) *after* each model's training cutoff. This makes it a living benchmark where contamination is structurally impossible for recent additions.
 
 **SWE-bench** (Jimenez et al., 2023) is qualitatively different: it presents real GitHub issues from open-source Python repositories and asks the model to produce a patch that makes the failing CI tests pass. The sandbox here is the project's own test suite, and success is measured by the fraction of tests that flip from red to green. This is far harder than HumanEval and requires navigating real codebases, reading documentation, and multi-file edits.
@@ -320,6 +344,26 @@ for a, b in pairs:
     print(f"  '{a}' == '{b}': {math_answers_equivalent(a, b)}")
 ```
 
+Two practical notes on that function. First, `sympy.parsing.latex.parse_latex` needs the optional `antlr4-python3-runtime` package installed; without it the LaTeX branch raises and control falls through to the string-normalization fallback, which silently turns real matches into false negatives. Second — and more important — **do not ship this**. Hand-rolled graders are where math evals quietly lose several points of accuracy: they mishandle `\boxed{}` extraction, units, intervals, sets, matrices, tuples, and `\%`, and every research group's version differs, which is a large part of why published MATH/AIME numbers are hard to reproduce.
+
+The 2026 default is HuggingFace's **`math-verify`**, a dedicated answer-checking library that grew out of the Open-R1 effort and is the grader behind `lighteval`. It parses both LaTeX and plain expressions, extracts the final answer, and compares with sympy under the hood, with the edge cases already handled:
+
+```python
+# pip install math-verify
+from math_verify import parse, verify
+
+# `parse` returns a list of candidate interpretations (most-specific first);
+# `verify(gold, answer)` is True if ANY gold form matches ANY answer form.
+gold = parse("${1,3} \\cup {2,4}$")
+answer = parse("${1,2,3,4}$")
+print(verify(gold, answer))          # True — set-valued answers just work
+
+print(verify(parse("$\\frac{1}{2}$"), parse("$0.5$")))       # True
+print(verify(parse("$\\boxed{2}$"),   parse("$\\sqrt{4}$")))  # True
+```
+
+The same library is the natural reward function for math RLVR, which is the point made in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html): eval verifier and training verifier should be *the same code path*, so a grading bug shows up as a flat reward curve rather than as a phantom capability. Whatever grader you use, log the **parse-failure rate separately from accuracy** — "wrong answer" and "unparseable output" demand opposite fixes.
+
 ### Benchmarks: MATH, GSM8K, AMC/AIME, MMLU-Pro
 
 **GSM8K** (Cobbe et al., 2021) contains 8,500 grade-school math word problems. Every problem has a step-by-step solution and a final numeric answer. It was saturated by frontier models around 2024 — many models exceed 90% accuracy, making it a poor discriminator at the top.
@@ -328,7 +372,7 @@ for a, b in pairs:
 
 **AIME** (American Invitational Mathematics Examination) is now commonly used as a frontier discriminator. It is scored out of 15 (each problem worth 1 point), with no partial credit. The short integer answer format makes verification trivial while the mathematical depth is substantial. By 2025–2026 the strongest reasoning models score near the top of the scale on AIME — approaching saturation, a level previously only top human competitors reached — so each year's fresh contest (e.g., AIME 2025) is used as a contamination-controlled discriminator, and evaluators are increasingly moving to newer, harder olympiad sets as headroom on AIME disappears.
 
-**Olympiad-level benchmarks** (FrontierMath, OlympiadBench) push further, collecting unpublished research-level problems to prevent data contamination.
+**Olympiad-level benchmarks** (FrontierMath, OlympiadBench) push further, collecting unpublished research-level problems to prevent data contamination. Beyond math specifically, **Humanity's Last Exam** (Phan et al., 2025) assembles a few thousand expert-written questions across many disciplines with the explicit design goal of resisting saturation; it, FrontierMath, and fresh contest sets are the current generation of frontier discriminators, and each of them will in turn be saturated — the honest lesson is that a benchmark's useful life is now measured in months, so *how you rotate* benchmarks matters more than which one you pick today.
 
 **Formal-proof benchmarks** are a categorically different kind of math eval. Every benchmark above (GSM8K, MATH, AIME, FrontierMath, OlympiadBench) is *informal*: the model writes natural-language reasoning and the grader checks only the final answer, which is why the whole symbolic-equivalence machinery earlier in this chapter is necessary — and why it fails on set-valued answers, multiple solutions, or expressions `sympy` cannot parse, producing false negatives even when the model is correct. **miniF2F** (Zheng et al., 2021; ~488 olympiad and textbook problems), **ProofNet** (Azerbayev et al., 2023; undergraduate pure-math theorems), and **PutnamBench** (Tsoukalas et al., 2024; Putnam competition problems) sidestep that problem entirely. Here the "answer" is not a number but a complete formal proof written in a proof assistant such as Lean 4 (Isabelle and Coq variants also exist), and the verifier is the assistant's own type-checker/kernel: a proof either type-checks against the formal statement or it does not. There is no equivalence heuristic and therefore no false-negative equivalence-checking problem — the same property that makes formally verified rewards attractive for RLVR (see the cross-links above). The tradeoff is upfront cost: each problem's statement must first be *formalized* into the proof assistant's language, which is labor-intensive and can itself introduce statement-level errors, so these benchmarks are far smaller than their informal counterparts and measure a narrower, harder skill (autoformalization plus proof search) rather than everyday numeric reasoning.
 
@@ -378,13 +422,34 @@ The harness must:
 
 This pipeline is containerized per-instance to avoid cross-contamination. The Docker image for each repo is built once and cached. The resolved rate (fraction of issues fixed) is the primary metric.
 
+You run the official harness rather than reimplementing it, because the environment setup (exact dependency pins, which tests count as FAIL_TO_PASS vs. PASS_TO_PASS) *is* the benchmark. Your agent's only job is to emit a JSONL file of predictions:
+
+```bash
+pip install swebench
+# predictions.jsonl: one object per instance —
+#   {"instance_id": "django__django-11099",
+#    "model_name_or_path": "my-agent-v3",
+#    "model_patch": "diff --git a/... "}
+python -m swebench.harness.run_evaluation \
+  --dataset_name princeton-nlp/SWE-bench_Verified \
+  --predictions_path predictions.jsonl \
+  --max_workers 8 --run_id my-agent-v3
+# -> my-agent-v3.json with resolved_ids / unresolved_ids and per-instance logs
+```
+
+Note the split of responsibilities: the harness scores patches, it does not produce them. Generating `model_patch` is the agent's problem, and the agent-computer interface you wrap around the model dominates the resulting score — the same model can move by tens of points depending on its edit format and search tools, which is the argument developed in [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html). Open-source reference agents (SWE-agent, OpenHands, Aider) exist precisely so that a *model* comparison is not silently a *scaffold* comparison; always report which scaffold produced a SWE-bench number.
+
 ### WebArena, OSWorld, and τ-Bench
 
 **WebArena** (Zhou et al., 2023) evaluates agents on realistic web tasks: booking a flight, submitting a form, finding information in a CMS. The agent controls a real browser (Playwright) inside a sandbox, and success is measured by final page state or database content — not by what the agent said it did.
 
 **OSWorld** extends this to full desktop environments: the agent interacts with a virtual machine via screenshot + keyboard/mouse, performing tasks in real applications (LibreOffice, Chrome, terminal).
 
-**τ-bench** (Yao et al., 2024) focuses on tool-augmented agents in retail and airline domains, with a simulated database and user simulator. The key metric is *task completion rate across multi-turn conversations* rather than single-step accuracy.
+**τ-bench** (Yao et al., 2024) focuses on tool-augmented agents in retail and airline domains, with a simulated database and user simulator. The key metric is *task completion rate across multi-turn conversations* rather than single-step accuracy; τ-bench also popularized **pass^k** (pass-*hat*-k: the fraction of tasks solved in *all* $k$ independent trials), which measures *reliability* rather than *coverage* and is the strictly harder sibling of Pass@k — an agent you would actually deploy needs pass^8 to be high, not just Pass@8.
+
+Two more families are worth knowing. **GAIA** (Mialon et al., 2023) tests general assistants on questions that are easy for humans but require multi-step tool use, web browsing, and file handling; **terminal-bench** (2025) scores agents on end-to-end tasks inside a real terminal container. SWE-bench itself has grown variants — Lite (a cheap subset), Multimodal, and Multilingual — so "SWE-bench score" without a split name is not a number. The full landscape, including trajectory-level scoring and harness-effect analysis, is in [Agent Evaluation & Benchmarks](../08-agents-harness/08-agent-evaluation.html).
+
+On the tooling side, the framework most worth adopting for agentic evals is **Inspect AI** (UK AI Security Institute): it models an eval as a `Task` with a dataset, a `solver` (which may be a full tool-using agent loop), and a `scorer`, and it ships first-class sandboxing (`sandbox="docker"`) so tool calls execute inside a per-sample container without your writing any of the plumbing in the next section by hand. Build the harness below once to understand the mechanism; use Inspect AI (or the benchmark's own official harness) when you need numbers other people will believe.
 
 ### Building a Custom Agentic Eval Harness
 
@@ -710,7 +775,7 @@ Every decision in this stack affects the reported number. Running a reasoning mo
 
 ### Calibration and Human Baselines
 
-A benchmark is only interpretable when we have a human baseline. For AIME, the human baseline is well-established: the top 5% of high school math students qualify for AIME, and median AIME scores for qualifiers hover around 5–7. For SWE-bench Verified, the human baseline (a skilled software engineer given the same issue and repo, without context on the fix) is high — professional developers routinely resolve such issues, suggesting the benchmark is not at the boundary of human capability but is a meaningful proxy for junior-developer-level coding.
+A benchmark is only interpretable when we have a human baseline. For AIME, the human baseline is well-established: qualification requires scoring in roughly the top few percent of AMC 10/12 takers, and typical qualifier scores sit in the low-to-middle single digits out of 15. For SWE-bench Verified, the human baseline (a skilled software engineer given the same issue and repo, without context on the fix) is high — professional developers routinely resolve such issues, suggesting the benchmark is not at the boundary of human capability but is a meaningful proxy for junior-developer-level coding.
 
 ### Contamination Detection
 
@@ -730,7 +795,7 @@ Contamination detection methods include:
 
     2. **Which metric?** Pass@1 at temperature 0 (greedy) vs. Pass@1 averaged over multiple temperatures vs. Pass@10 are all "accuracy" but measure different things. Greedy Pass@1 can be inflated by a model that memorizes rather than generalizes.
 
-    3. **Test suite quality**: HumanEval's unit tests are intentionally simple and sometimes have false positives — a solution can pass all tests without correctly solving the problem. Did they cross-check against stricter private test suites?
+    3. **Test suite quality**: HumanEval's unit tests are intentionally simple and admit false positives — a solution can pass all tests without correctly solving the problem. Did they report **HumanEval+ / MBPP+** (EvalPlus, ~80× more generated test inputs), where scores typically drop by several points? A model that holds up under the plus variants is making a much stronger claim.
 
     4. **How does it compare on harder tasks?** SWE-bench Verified (real repo issue fixing) and APPS (competitive programming) are far harder discriminators. A model that plateaus at 92% HumanEval may score 10% on SWE-bench.
 
@@ -746,6 +811,9 @@ Evals are not just a reporting mechanism — they are an active signal in the de
 
 The data flywheel for reasoning models is: hard evals reveal failure modes → new training data targets those modes → improved model → harder evals needed → repeat. This is described in the context of production systems in [Data Flywheels & Continuous Improvement](../12-production-mlops/05-data-flywheel.html).
 
+!!! note "Aside: what this chapter looks like at 100M parameters"
+    Almost every benchmark named above is *unusable* on a model you train yourself on one GPU. A ~100M-parameter model scores at or near zero on HumanEval, AIME, and SWE-bench, and a floor-level number carries no signal at all: you cannot tell an improvement from noise when both runs score 0/164. The machinery still transfers, but you must re-scope the tasks to the model's capability band. Concretely, for the capstone's Stack-100M: keep the *methodology* — execution-based grading in a sandbox, a symbolic answer checker rather than exact match, Pass@k with the unbiased estimator and several samples per problem, stratification by difficulty, ground-truth oracles for the agent — and swap the *tasks* for narrow ones the model was actually mid-trained and RLVR'd on (templated arithmetic in the exact `####` answer format RLVR rewarded, cloze-scored multiple choice, retrieval-QA exact match, and end-to-end success rate of the ReAct agent's tool calls). Two rules keep it honest: the eval split must never have been touched by any RLVR iteration, and the verifier used at eval must be the same code as the training reward, or you are measuring two different things. [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) builds exactly this battery, including the step most small-model projects skip — re-running it *after* int4 quantization, because quantization is a model edit and every model edit is an untested hypothesis about quality.
+
 !!! warning "Common pitfall: Temperature 0 eval for stochastic reasoning models"
     Frontier reasoning models (those with extended thinking / chain-of-thought) are typically sampled at temperature > 0 because their reasoning traces are inherently stochastic. Running them at temperature 0 (greedy decoding) can artificially reduce scores by collapsing the diversity of approaches the model would use at higher temperature. Always check whether the model was designed for greedy or sampled decoding, and match the eval sampling strategy to the model's intended use.
 
@@ -753,9 +821,9 @@ The data flywheel for reasoning models is: hard evals reveal failure modes → n
     When running a coding or math eval, always stratify results by difficulty tier. Reporting a single average accuracy hides the shape of the distribution. A model that scores 95% on easy, 60% on medium, and 5% on hard is very different from one that scores 70% across all tiers — even if they tie on mean accuracy. Stratified reporting is the only way to track whether training is making progress on the hard tail.
 
 !!! key "Key Takeaways"
-    - **Pass@k** uses the unbiased combinatorial estimator $1 - \binom{n-c}{k}/\binom{n}{k}$ rather than the naive $(1-(c/n))^k$ formula; the difference matters for small sample sizes.
+    - **Pass@k** uses the unbiased combinatorial estimator $1 - \binom{n-c}{k}/\binom{n}{k}$ rather than the naive plug-in $1-(1-c/n)^k$, which Jensen's inequality makes downward-biased; Pass@k measures *coverage*, while pass^k (solved in all $k$ trials) measures the *reliability* a deployed agent actually needs.
     - **Code execution in sandboxes** (Docker, gVisor, Firecracker) is non-negotiable for correct code eval — string matching fails on equivalent programs and is insecure.
-    - **Math verification** requires symbolic equivalence (e.g., via sympy), not string matching; separate process reward models (PRMs) evaluate chain quality, not just final answers.
+    - **Math verification** requires symbolic equivalence, not string matching — use a maintained checker (HuggingFace `math-verify`) rather than a hand-rolled sympy grader, and log parse failures separately from wrong answers; separate process reward models (PRMs) evaluate chain quality, not just final answers.
     - **Agentic evals** require ground-truth environment oracles (test suites, database state) rather than self-report; partial-credit metrics and trajectory-level analysis are richer than binary pass/fail.
     - **Test-time-compute-aware eval** plots accuracy as a function of token budget and is essential for comparing reasoning models; single-number reporting is misleading when models have variable thinking budgets.
     - **Benchmark contamination** is the silent killer of eval validity; mitigate via temporal holdout (LiveCodeBench), N-gram overlap checks, and canary insertion.
@@ -782,7 +850,11 @@ The data flywheel for reasoning models is: hard evals reveal failure modes → n
 
     - [swe-bench/SWE-bench](https://github.com/swe-bench/SWE-bench) — official harness and dataset for SWE-bench and SWE-bench Verified; Docker-containerized per-instance evaluation.
     - [LiveCodeBench/LiveCodeBench](https://github.com/LiveCodeBench/LiveCodeBench) — official toolkit for contamination-controlled code evaluation across LeetCode, AtCoder, and Codeforces.
-    - [sierra-research/tau-bench](https://github.com/sierra-research/tau-bench) — τ-bench harness for tool-augmented agents in retail/airline domains with simulated user interactions.
+    - [sierra-research/tau-bench](https://github.com/sierra-research/tau-bench) — τ-bench harness for tool-augmented agents in retail/airline domains with simulated user interactions; source of the pass^k reliability metric.
+    - [evalplus/evalplus](https://github.com/evalplus/evalplus) — HumanEval+/MBPP+ with automatically generated test augmentation; the honest way to report HumanEval-family numbers.
+    - [huggingface/Math-Verify](https://github.com/huggingface/Math-Verify) — dedicated math answer parser/checker behind `lighteval` and Open-R1; use instead of a hand-rolled sympy grader for both eval and RLVR reward.
+    - [Inspect AI](https://inspect.aisi.org.uk/) — UK AISI's eval framework; `Task`/`solver`/`scorer` abstraction with built-in Docker sandboxing for agentic and tool-using evals.
+    - [bigcode-project/bigcode-evaluation-harness](https://github.com/bigcode-project/bigcode-evaluation-harness) — many code benchmarks (HumanEval, MBPP, MultiPL-E, DS-1000) behind one CLI with containerized execution and pass@k reporting.
 
     **Go deeper**
 
@@ -793,6 +865,8 @@ The data flywheel for reasoning models is: hard evals reveal failure modes → n
 
 - **Chen et al., "Evaluating Large Language Models Trained on Code" (HumanEval), 2021** — introduced Pass@k with the unbiased estimator and the HumanEval benchmark.
 - **Austin et al., "Program Synthesis with Large Language Models" (MBPP), 2021** — the Mostly Basic Python Problems benchmark and few-shot synthesis evaluation.
+- **Liu et al., "Is Your Code Generated by ChatGPT Really Correct?" (EvalPlus), 2023** — test-suite augmentation exposing false positives in HumanEval/MBPP; source of HumanEval+ and MBPP+.
+- **Yao et al., "τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains", 2024** — multi-turn tool-agent evaluation and the pass^k reliability metric.
 - **Hendrycks et al., "Measuring Mathematical Problem Solving with the MATH Dataset", 2021** — the MATH benchmark and analysis of difficulty tiers.
 - **Cobbe et al., "Training Verifiers to Solve Math Word Problems" (GSM8K), 2021** — grade-school math benchmark and the use of verifier models.
 - **Wang et al., "Self-Consistency Improves Chain of Thought Reasoning in Language Models", 2022** — majority voting as a test-time compute strategy.

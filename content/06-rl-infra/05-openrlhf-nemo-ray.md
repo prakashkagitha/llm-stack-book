@@ -18,7 +18,7 @@ Ray exposes three primitives:
 
 1. **Remote functions** (`@ray.remote` decorated): stateless tasks that execute on any available worker.
 2. **Actors** (`@ray.remote` decorated classes): stateful processes with their own GPU, CPU, and memory allocations, addressable by handle.
-3. **Object store**: shared memory backed by Apache Plasma. Objects put into the store are zero-copy readable by any process on the same node.
+3. **Object store**: a per-node shared-memory store (originally Arrow's Plasma, since Ray 1.x an in-tree implementation). Objects put into the store are zero-copy readable by any process on the same node.
 
 The key insight for RL training is that **actors map perfectly onto the roles in RLHF**: the rollout engine is one actor (or a group), the critic is another, the reference model is a third. Each actor owns its model shards and optimizer state. The controller — typically a small CPU process — choreographs them by submitting tasks and awaiting futures.
 
@@ -88,16 +88,30 @@ ray.get(pg.ready())           # wait for allocation
 class TPShard:
     """One shard of a tensor-parallel model."""
     def __init__(self, rank: int, world_size: int):
+        self.rank, self.world_size = rank, world_size
+
+    def rendezvous_endpoint(self):
+        """Rank 0 publishes an address the other ranks can dial."""
+        import socket
+        import ray
+        s = socket.socket()
+        s.bind(("", 0))                     # ask the OS for a free port
+        port = s.getsockname()[1]
+        s.close()
+        return ray.util.get_node_ip_address(), port
+
+    def init_pg(self, master_addr: str, master_port: int):
+        """Form the NCCL communicator. Ray sets no launcher env vars, so
+        `init_method="env://"` would hang here — we must pass the address
+        explicitly. This rendezvous-then-init split is exactly what
+        OpenRLHF and vLLM do when wiring GPU groups under Ray."""
         import torch.distributed as dist
         dist.init_process_group(
             backend="nccl",
-            init_method="env://",   # env vars set by launcher
-            rank=rank,
-            world_size=world_size,
+            init_method=f"tcp://{master_addr}:{master_port}",
+            rank=self.rank,
+            world_size=self.world_size,
         )
-        self.rank = rank
-
-    def ping(self):
         return f"shard {self.rank} alive"
 
 shards = [
@@ -109,14 +123,16 @@ shards = [
     ).remote(rank=i, world_size=8)
     for i in range(8)
 ]
-print(ray.get([s.ping.remote() for s in shards]))
+addr, port = ray.get(shards[0].rendezvous_endpoint.remote())
+# All 8 must call init_process_group concurrently — it is a collective.
+print(ray.get([s.init_pg.remote(addr, port) for s in shards]))
 # ['shard 0 alive', 'shard 1 alive', ..., 'shard 7 alive']
 ray.shutdown()
 ```
 
 ### Object Store and Zero-Copy Tensors
 
-A critical performance property of Ray's object store is **zero-copy reads for numpy arrays and tensors on the same node**. When rollout tokens and log-probabilities are serialized into the object store, the training worker can read them directly from shared memory without a copy. For a batch of 1024 sequences of length 2048, the logprob tensor is approximately:
+A critical performance property of Ray's object store is **zero-copy reads for numpy arrays on the same node**. When rollout tokens and log-probabilities are placed in the object store, a training worker on that node maps the shared-memory pages directly instead of copying. The caveat, and the source of a warning message every RLHF engineer eventually sees: the mapped buffer is **read-only**, so `torch.from_numpy(ray.get(ref))` yields a tensor you must `.clone()` before writing to (PyTorch emits "The given NumPy array is not writable" otherwise). Torch tensors themselves round-trip through numpy in Ray's serializer, and CUDA tensors are always copied to host memory first — so keep experience batches on CPU as numpy, and never route GPU tensors through the object store. For a batch of 1024 sequences of length 2048, the per-token logprob array is approximately:
 
 $$
 1024 \times 2048 \times 4 \text{ bytes} \approx 8 \text{ GB}
@@ -124,7 +140,7 @@ $$
 
 Eliminating even one copy of that tensor per step saves gigabytes of PCIe or NVLink bandwidth per iteration.
 
-Across nodes, Ray serializes via Apache Arrow and ships over TCP, so cross-node object transfers should be minimized — keep rollout workers and training workers co-located when possible.
+Across nodes there is no such trick: Ray serializes the object (cloudpickle, with numpy buffers handled out-of-band) and copies it over the network, so cross-node object transfers should be minimized — keep rollout workers and the training workers that consume their output on the same node when possible.
 
 ---
 
@@ -140,17 +156,98 @@ Across nodes, Ray serializes via Apache Arrow and ships over TCP, so cross-node 
 
 The key design insight: **the vLLM engine holds a *read-only copy* of policy weights for generation**. After each PPO update, the policy training actor must push its updated weights to the vLLM engine. This weight-sync step is where OpenRLHF differs from single-process approaches.
 
-### Weight Synchronization via Distributed Checkpointing
+### Weight Synchronization: the Object-Store Path and the NCCL Path
 
-OpenRLHF implements weight sync by having the policy actor broadcast updated parameters directly to the vLLM workers using NCCL collectives or shared-memory copies, bypassing disk entirely. The mechanism:
+There are two ways to get updated parameters from the training actor into the vLLM engine, and the difference between them is the single most important performance decision in a Ray-based RLHF system.
 
-1. Policy actor finishes a gradient step and calls `sync_weights_to_vllm()`.
-2. For each parameter tensor, the actor puts it into the Ray object store.
-3. vLLM workers pull the tensors and call `model.load_state_dict(...)` in-place.
-4. vLLM's KV cache is not invalidated by weight changes (generation restarts fresh).
+**Path A — through the Ray object store.** The training actor gathers its ZeRO-3 shards, moves them to CPU, `ray.put()`s them, and the vLLM workers `load_weights()` from the materialized dict. Simple, backend-agnostic, works across nodes with no extra setup — but every byte makes a GPU→CPU→(serialize)→CPU→GPU round trip. OpenRLHF's `--vllm_sync_backend gloo` is the CPU-collective cousin of this: same host-memory detour, without the serialization.
+
+**Path B — direct NCCL broadcast (`--vllm_sync_backend nccl`, the default in practice).** At startup, the training ranks and the vLLM workers join a *second, dedicated* process group. At sync time the training rank broadcasts each tensor GPU-to-GPU; the vLLM worker receives into a pre-allocated buffer and calls `load_weights` on it. Nothing touches CPU or the object store. Ray is used only to *name* the participants and to invoke the RPC — the bytes travel over NVLink/InfiniBand.
+
+Path B is what every serious framework does today. Modern vLLM exposes exactly the hooks needed for it: you attach a **worker extension class** to the engine and drive it with **`collective_rpc`**, which runs a named method on *every* vLLM worker rank simultaneously (see vLLM's `examples/offline_inference/rlhf.py`, the reference implementation that OpenRLHF, veRL and NeMo-RL all mirror).
 
 ```python
-# Simplified weight-sync routine (OpenRLHF-style)
+# --- vLLM side: a worker extension, loaded into every vLLM worker rank ---
+# (saved as e.g. rlhf_utils.py so vLLM can import it by string name)
+import torch
+from vllm.distributed.utils import stateless_init_process_group
+
+
+class WeightSyncExtension:
+    """Methods here become callable on every vLLM worker via collective_rpc.
+    `self` is the vLLM Worker, so `self.model_runner.model` is the live model."""
+
+    def init_weight_update_group(self, master_addr, master_port,
+                                 rank_offset, world_size):
+        # vLLM worker i takes global rank `rank_offset + i`; the trainer holds
+        # rank 0. This is a SEPARATE process group from vLLM's own TP group.
+        my_rank = torch.distributed.get_rank() + rank_offset
+        self.weight_update_group = stateless_init_process_group(
+            master_addr, master_port, my_rank, world_size,
+            torch.device(f"cuda:{torch.cuda.current_device()}"),
+        )
+
+    def update_weight(self, name, dtype, shape):
+        """Receive ONE parameter by broadcast and load it in place."""
+        buf = torch.empty(shape, dtype=dtype, device="cuda")
+        self.weight_update_group.broadcast(buf, src=0, stream=torch.cuda.current_stream())
+        self.model_runner.model.load_weights(weights=[(name, buf)])
+        del buf   # vLLM copied it into the model's own storage
+
+
+# --- Driver side: the engine must live in a Ray actor, not in this process ---
+import ray
+from vllm import LLM
+
+
+@ray.remote(num_gpus=0)   # the engine's own workers claim the GPUs
+class VLLMEngineActor:
+    def __init__(self):
+        self.llm = LLM(
+            model="meta-llama/Meta-Llama-3-8B-Instruct",
+            tensor_parallel_size=2,
+            distributed_executor_backend="ray",
+            enforce_eager=True,                 # weights change every step
+            worker_extension_cls="rlhf_utils.WeightSyncExtension",
+        )
+
+    def rpc(self, method, *args):
+        return self.llm.collective_rpc(method, args=args)
+
+    def reset_prefix_cache(self):
+        return self.llm.reset_prefix_cache()
+
+
+engine = VLLMEngineActor.remote()
+
+# Once, at startup: trainer is rank 0, the 2 vLLM workers are ranks 1 and 2.
+ray.get(engine.rpc.remote("init_weight_update_group",
+                          master_addr, master_port, 1, 1 + 2))
+# ...and the trainer joins the SAME group as rank 0 (world_size=3), symmetrically.
+
+def push_weights(model, engine, weight_update_group):
+    """Broadcast every parameter, one at a time, trainer -> vLLM workers."""
+    for name, p in model.named_parameters():
+        # Fire the RPC WITHOUT waiting: the workers must be sitting in their
+        # matching `broadcast` when we call ours, or both sides deadlock.
+        # This is why the engine has to be a Ray actor — a plain in-process
+        # `LLM.collective_rpc` blocks, and the broadcast below never happens.
+        handle = engine.rpc.remote("update_weight", name, p.dtype, p.shape)
+        torch.distributed.broadcast(p.data, src=0, group=weight_update_group)
+        ray.get(handle)                        # now the recv is complete
+    ray.get(engine.reset_prefix_cache.remote())  # old-weight prefixes must go
+```
+
+Three details that bite people:
+
+1. **Parameters must be un-sharded before broadcast.** Under ZeRO-3 (or FSDP) each rank holds a slice. The trainer wraps the loop in DeepSpeed's `GatheredParameters` (or FSDP's `summon_full_params`) so that rank 0 has the full tensor, one parameter at a time — which is why sync is a *parameter-by-parameter* loop and not one giant broadcast, and why peak extra memory is only the size of the largest tensor (usually the embedding matrix).
+2. **The KV cache is fine; the prefix cache is not.** Blocks holding KV for in-flight requests are dropped when generation finishes, so nothing stale survives. But vLLM's *automatic prefix caching* persists KV across requests, and those blocks were computed with the old weights — reusing them silently mixes two policies into one rollout. Reset it after every sync.
+3. **`enforce_eager=True`** (or careful use of CUDA graphs) — captured graphs bake in weight pointers; in-place `load_weights` into the same storage is safe, but reallocating is not.
+
+For reference, here is the same two-actor skeleton at the level of Ray plumbing, using the simpler object-store path:
+
+```python
+# Simplified weight-sync routine, object-store path (Path A)
 import ray
 import torch
 from typing import Dict
@@ -185,12 +282,13 @@ class VLLMRolloutActor:
         here — calling `ray.get()` on an already-resolved dict raises a
         ValueError.
         """
-        # vLLM exposes model.llm_engine.model_executor.driver_worker.model_runner.model
-        model = self.engine.llm_engine.model_executor.driver_worker \
-                           .model_runner.model
-        missing, unexpected = model.load_weights(state_dict.items())
-        assert not missing and not unexpected, \
-            f"Weight mismatch: missing={missing}, unexpected={unexpected}"
+        # Reach the live model on every worker rank. Do NOT poke at
+        # `llm_engine.model_executor.driver_worker` — that path only existed in
+        # vLLM's legacy V0 engine, where the driver ran in-process. Since V1 the
+        # workers are separate processes and `collective_rpc` is the only
+        # supported way in.
+        self.engine.collective_rpc("load_weights_from_dict", args=(state_dict,))
+        self.engine.reset_prefix_cache()
         return "weights_loaded"
 
     def rollout(self, prompts, sampling_params):
@@ -218,10 +316,11 @@ from typing import List
 class ExperienceBatch:
     prompts: List[str]
     responses: List[str]
-    rewards: List[float]
-    advantages: List[float]
-    old_logprobs: List[float]    # from vLLM at generation time
-    ref_logprobs: List[float]    # from reference model
+    # All four below are per-token, ragged: outer list = batch, inner = time.
+    rewards: List[List[float]]
+    advantages: List[List[float]]
+    old_logprobs: List[List[float]]   # from vLLM at generation time
+    ref_logprobs: List[List[float]]   # from reference model
 
 
 def run_ppo_training(
@@ -284,16 +383,26 @@ def build_experience_batch(rollouts, rewards, ref_logps, values, gamma, lam):
     Compute GAE advantages (lambda-return) and pack into ExperienceBatch.
     See: Schulman et al. 'High-Dimensional Continuous Control Using
          Generalized Advantage Estimation', 2015.
+
+    Shapes: rewards[i] and values[i] are per-TOKEN sequences of length T_i for
+    rollout i (the RM score lands on the final token, the KL penalty on every
+    token). GAE recurses along the time axis *inside* one sequence and never
+    across the batch: separate rollouts are independent episodes, so
+    bootstrapping sequence i+1's value into sequence i is simply wrong —
+    a classic bug when a batch tensor is flattened before this loop.
     """
     advantages = []
-    last_gae = 0.0
-    T = len(rewards)
-    # For language model RL the 'value' is typically a scalar per sequence
-    for t in reversed(range(T)):
-        next_val = values[t + 1] if t + 1 < T else 0.0
-        delta = rewards[t] + gamma * next_val - values[t]
-        last_gae = delta + gamma * lam * last_gae
-        advantages.insert(0, last_gae)
+    for r_seq, v_seq in zip(rewards, values):
+        T = len(r_seq)
+        adv_seq = [0.0] * T
+        last_gae = 0.0
+        for t in reversed(range(T)):
+            # Past EOS there is no successor state, so V(s_{T}) = 0.
+            next_val = v_seq[t + 1] if t + 1 < T else 0.0
+            delta = r_seq[t] + gamma * next_val - v_seq[t]
+            last_gae = delta + gamma * lam * last_gae
+            adv_seq[t] = last_gae
+        advantages.append(adv_seq)
     return ExperienceBatch(
         prompts=[r[0] for r in rollouts],
         responses=[r[1] for r in rollouts],
@@ -306,43 +415,62 @@ def build_experience_batch(rollouts, rewards, ref_logps, values, gamma, lam):
 
 ### Practical Configuration: OpenRLHF Launch Script
 
+OpenRLHF is not a library you import — it is a set of CLI entrypoints under `openrlhf.cli`, launched as a **Ray job** so that the driver itself runs inside the cluster. The distinctive feature of the interface is that *GPU allocation per role is an explicit command-line argument*: you literally spell out how many nodes and GPUs the actor, critic, reference and reward models each get.
+
 ```bash
 #!/bin/bash
 # Launch OpenRLHF PPO training on 4 nodes, 8 GPUs each (32 GPUs total)
 # Policy: LLaMA-3-70B  |  RM: LLaMA-3-8B  |  Rollout: vLLM
+#
+# GPU accounting (this MUST sum to <= 32, and it is easy to get wrong):
+#   actor  2 nodes x 8 = 16   <- reference COLOCATED here, +0 GPUs
+#   critic 1 node  x 8 =  8   <- reward model COLOCATED here, +0 GPUs
+#   vLLM   2 engines x TP=4 = 8
+#   total = 32
+# Colocated roles must declare the SAME node/GPU counts as their host role,
+# which is why --ref_* mirrors --actor_* and --reward_* mirrors --critic_*.
 
-# Start Ray cluster (typically done via Kubernetes or Slurm integration)
+pip install openrlhf[vllm]
+
+# Start Ray cluster (typically done via Kubernetes/KubeRay or a Slurm prolog)
 ray start --head --num-gpus=8 --num-cpus=64
+# On worker nodes:  ray start --address=<head_ip>:6379 --num-gpus=8
 
-# On worker nodes:
-# ray start --address=<head_ip>:6379 --num-gpus=8
-
-python train_ppo.py \
+ray job submit --address="http://127.0.0.1:8265" \
+  --runtime-env-json='{"working_dir": "."}' \
+  -- python3 -m openrlhf.cli.train_ppo_ray \
   --pretrain meta-llama/Meta-Llama-3-70B-Instruct \
   --reward_pretrain meta-llama/Meta-Llama-3-8B \
   --save_path ./checkpoints/llama3-70b-ppo \
+  --prompt_data OpenRLHF/prompt-collection-v0.1 \
+  --input_key context_messages --apply_chat_template \
   --num_episodes 1 \
+  --prompt_max_len 1024 --generate_max_len 1024 \
   --rollout_batch_size 1024 \
   --micro_rollout_batch_size 8 \
-  --num_rollout_workers 4 \
-  --vllm_num_engines 4 \
-  --vllm_tensor_parallel_size 2 \
-  --actor_num_nodes 2 \
-  --actor_num_gpus_per_node 8 \
-  --critic_num_nodes 1 \
-  --critic_num_gpus_per_node 8 \
-  --ref_num_nodes 1 \
-  --ref_num_gpus_per_node 8 \
-  --reward_num_nodes 1 \
-  --reward_num_gpus_per_node 2 \
+  --train_batch_size 128 \
+  --micro_train_batch_size 4 \
+  --vllm_num_engines 2 \
+  --vllm_tensor_parallel_size 4 \
+  --vllm_sync_backend nccl \
+  --actor_num_nodes 2 --actor_num_gpus_per_node 8 \
+  --critic_num_nodes 1 --critic_num_gpus_per_node 8 \
+  --ref_num_nodes 2   --ref_num_gpus_per_node 8 \
+  --reward_num_nodes 1 --reward_num_gpus_per_node 8 \
+  --colocate_actor_ref --colocate_critic_reward \
   --zero_stage 3 \
-  --bf16 \
-  --learning_rate 5e-7 \
-  --kl_target 0.05 \
+  --bf16 --flash_attn --gradient_checkpointing \
+  --actor_learning_rate 5e-7 \
+  --critic_learning_rate 9e-6 \
   --init_kl_coef 0.01 \
   --normalize_reward \
   --adam_offload      # offload optimizer state to CPU to save GPU memory
 ```
+
+Two switches on this command line are worth more than the rest combined:
+
+- **`--colocate_actor_ref` / `--colocate_critic_reward` / `--colocate_all_models`.** These place two roles in the *same* placement-group bundles, time-slicing the GPUs rather than dedicating separate ones. The reference model is idle except for one forward pass per batch, so colocating it with the actor typically buys you a whole node back at a few percent throughput cost. `--colocate_all_models` goes further and puts the vLLM engines on the training GPUs too, offloading each model's weights while the other runs — the "colocated" regime analysed in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html).
+- **`--advantage_estimator`.** The default `gae` is the critic-based PPO described above. Setting it to `group_norm` switches to **GRPO**-style group-relative advantages, and `reinforce_baseline` to REINFORCE++ — both of which are *critic-free*. That is not a small algorithmic knob: it deletes an entire actor group from the topology. In the 32-GPU layout above, dropping `--critic_num_nodes` frees 8 GPUs and removes the critic's parameters, gradients and optimizer state from the memory budget. Since 2025 most reasoning-RL runs take this path (see [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)), which is why the "four-role" picture is increasingly a *three*-role picture.
 
 ---
 
@@ -355,24 +483,23 @@ Understanding how OpenRLHF allocates memory across its four actor groups is esse
     **Model size:** 70B parameters at bf16 = $70 \times 10^9 \times 2$ bytes = 140 GB.
 
     **Policy training actor (16 GPUs, ZeRO-3):**
-    - Model parameters: $140 / 16 = 8.75$ GB per GPU
-    - Gradients (same size as params with ZeRO-3): $8.75$ GB per GPU
-    - Optimizer state (Adam: 2 moments, fp32): $140 \times 2 \times 4 / 16 = 70$ GB across 16 GPUs = $4.375$ GB per GPU in fp32 (but Adam can be offloaded to CPU)
+    - Model parameters (bf16, sharded): $140 / 16 = 8.75$ GB per GPU
+    - Gradients (bf16, also sharded by ZeRO-3): $8.75$ GB per GPU
+    - Optimizer state (Adam $m$ and $v$ in fp32, plus the fp32 master copy of the weights): $70\times10^9 \times (4+4+4) = 840$ GB total, i.e. $840/16 = 52.5$ GB per GPU. This single term is larger than everything else combined and *does not fit* alongside the rest on an 80 GB card — which is exactly why `--adam_offload` (DeepSpeed's CPU Adam) is not optional at this scale. Offloaded, the GPU cost of this term is ~0.
     - Activations (per micro-batch=8, len=2048): roughly $2-4$ GB per GPU with gradient checkpointing
-    - **Total per GPU (with CPU Adam offload):** ~14–18 GB on an 80 GB A100. Comfortable.
+    - **Total per GPU (with CPU Adam offload):** $8.75 + 8.75 + \sim3 \approx 20$–$22$ GB on an 80 GB A100/H100. Comfortable — but note the host now needs 840 GB of pinned CPU RAM across the 2 nodes, and every step pays a PCIe round trip for the optimizer update.
 
-    **vLLM rollout engine (8 GPUs, TP=2, 4 engines × 2 GPUs):**
-    - Model weights loaded as bfloat16: $140 / 4$ engines = 35 GB per engine = 17.5 GB per GPU
-    - KV cache (remaining ~60 GB): supports ~100k tokens in flight per engine
-    - **Total per GPU:** ~18 GB weights + KV cache fills the rest. Tight on 40 GB, comfortable on 80 GB.
+    **vLLM rollout engine (8 GPUs, 2 engines × TP=4):**
+    - Each engine holds a **full copy** of the weights, sharded only across its own TP group — not $1/n$ of them. So the per-GPU weight cost is $140 / \text{TP}$, independent of how many engines you run. This is the single most common sizing error: with TP=2 the figure would be 70 GB per GPU, leaving nothing for KV cache on an 80 GB card. TP=4 gives $140/4 = 35$ GB per GPU and fits.
+    - KV cache (remaining ~40 GB per GPU after weights and workspace): LLaMA-3-70B uses GQA with 8 KV heads × 128 dims over 80 layers, so one token of KV costs $2 \times 80 \times 8 \times 128 \times 2 = 0.33$ MB across the whole model, or ~82 KB per GPU at TP=4. That is roughly $40\,\text{GB} / 82\,\text{KB} \approx 490$k tokens in flight per engine — a couple of hundred concurrent 2k-token rollouts, enough to keep generation throughput-bound rather than concurrency-starved.
 
-    **Reference actor (8 GPUs, ZeRO-3, no optimizer):**
-    - Parameters only: $140 / 8 = 17.5$ GB per GPU. No gradient storage needed.
+    **Reference actor (4 GPUs, ZeRO-3, no optimizer, no gradients):**
+    - Parameters only: $140 / 4 = 35$ GB per GPU. Frozen, so no gradient or optimizer storage — this is the cheapest role per parameter, and the natural candidate for `--colocate_actor_ref`.
 
     **Reward model (2 GPUs, 8B params at bf16):**
     - $8 \times 10^9 \times 2 / 2 = 8$ GB per GPU. Very comfortable.
 
-    **Total cluster GPU memory used:** roughly $8 \times 18.75 + 8 \times 17.5 + 8 \times 17.5 + 2 \times 8 \approx$ 437 GB across 26 GPUs. On 32 × 80 GB = 2560 GB total, there is substantial headroom for batch sizes, long contexts, or larger models.
+    **Roll-up:** 16 (policy) + 8 (vLLM) + 4 (reference) + 2 (RM) = **30 of the 32 GPUs**, holding roughly $16 \times 21 + 8 \times 35 + 4 \times 35 + 2 \times 8 \approx 770$ GB of *resident* state out of the cluster's 2560 GB. The remaining ~1.8 TB is not slack to celebrate — it is KV-cache and activation headroom, and a well-tuned run consumes most of it. Note also what is missing from this budget: the **critic**, which under PPO is a second 70B model with its own gradients and optimizer state and would need another 16 GPUs. On 32 GPUs a 70B PPO run with a 70B critic does not fit; you either shrink the critic, or switch to `--advantage_estimator group_norm` (GRPO) and delete it.
 
 ---
 
@@ -513,7 +640,7 @@ The two frameworks represent different points in a fundamental design space. Let
 | Orchestration | Ray actors + Python controller | Megatron-LM 3D parallelism + NCCL |
 | Rollout engine | vLLM (PagedAttention) | TRT-LLM (compiled TensorRT engine) |
 | Gradient backend | DeepSpeed ZeRO-1/2/3 | Megatron-LM native (with ZeRO-1 optional) |
-| Weight sync method | Ray object store + in-place load | NCCL broadcast between process groups |
+| Weight sync method | NCCL broadcast over a side process group via vLLM `collective_rpc` (object store as fallback) | NCCL broadcast between Megatron process groups |
 | Flexibility | High (swap any actor, add roles) | Lower (fixed Megatron topology) |
 | Communication overhead | Higher (Python coordination + serialization) | Lower (direct NCCL, pinned buffers) |
 | Multi-model (actor ≠ critic model) | First-class support | Supported but same parallelism config |
@@ -775,14 +902,15 @@ In any Ray-based RLHF system, throughput is determined by the slowest stage in t
 Three strategies used in practice:
 
 1. **Lazy sync:** only sync every $N$ PPO epochs rather than every step. Trades off staleness of the rollout policy for reduced communication cost.
-2. **Differential sync:** track which parameter blocks changed since the last sync (using gradient sparsity in ZeRO-3) and only transfer modified shards.
-3. **In-place NCCL broadcast:** instead of going through the Ray object store, use a direct NCCL broadcast from training GPU ranks to vLLM GPU ranks. Requires pre-established NCCL communicators at startup — the approach NeMo-Aligner uses natively.
+2. **Sync only what changes:** with full fine-tuning every parameter is dirty after every Adam step, so there is nothing to skip. But under **LoRA** only the adapter matrices are trainable — a few hundred MB rather than 140 GB — and vLLM can serve them through its LoRA path or merge them on receipt. OpenRLHF exposes this via `--lora_rank`; it turns weight sync from a first-order cost into a rounding error, at the price of the capacity limits discussed in [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html).
+3. **In-place NCCL broadcast:** instead of going through the Ray object store, use a direct NCCL broadcast from training GPU ranks to vLLM GPU ranks (`--vllm_sync_backend nccl`, Path B above). Requires pre-established communicators at startup — the approach NeMo-Aligner uses natively, and now the default everywhere.
+4. **Overlap sync with the next rollout's prefill.** The broadcast is a parameter-by-parameter loop; vLLM cannot start generating until the *last* tensor lands, but the trainer's other ranks are idle throughout. Frameworks hide most of this by issuing the broadcast on a side CUDA stream while the controller assembles the next prompt batch.
 
 ### Async Rollout Pipelines
 
-An advanced optimization (covered more fully in [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)) is to decouple rollout from training: while the policy is being updated on one batch, the vLLM engine generates the *next* batch of rollouts using the previous policy weights. This "off-policy" approach introduces staleness but can nearly double throughput by keeping both GPU pools busy.
+An advanced optimization (covered more fully in [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)) is to decouple rollout from training: while the policy is being updated on one batch, the vLLM engine generates the *next* batch of rollouts using the previous policy weights. This "off-policy" approach introduces staleness but keeps both GPU pools busy; Noukhovitch et al. (2024) report roughly 40% wall-clock savings at one step of staleness.
 
-OpenRLHF supports this via the `--async_rollout` flag, which launches rollout as a background Ray task while training proceeds:
+OpenRLHF supports this through an asynchronous-training mode that launches rollout as a background Ray task while training proceeds (the flag has been spelled differently across releases — check `python3 -m openrlhf.cli.train_ppo_ray --help` for the one your version exposes). The controller pattern is the same regardless:
 
 ```python
 # Conceptual async pipeline
@@ -825,12 +953,19 @@ Here is a practical guide for selecting between OpenRLHF, NeMo-Aligner, and alte
 
 | Scenario | Recommendation |
 |----------|----------------|
+| ~100M–1B model, single GPU, GRPO/RLVR | No framework — a single-process loop with an in-process vLLM engine |
 | Research prototype, 7B–13B model, single node | TRL (simplest, no Ray needed) |
 | Research, 70B+ model, heterogeneous roles | OpenRLHF (flexible Ray decomposition) |
 | Production, NVIDIA DGX cluster, 70B+ model | NeMo-RL (Megatron Core kernels + Ray; successor to NeMo-Aligner) |
 | Custom RL algorithm with unique role topology | veRL (HybridFlow, explicit resource pools) |
 | Async / decentralized training across commodity | Prime-RL (see Chapter 6.6) |
 | GRPO or critic-free RL | TRL or veRL (no critic actor needed) |
+
+!!! tip "When you do *not* need any of this"
+
+    Every mechanism in this chapter exists to solve one problem: the policy, critic, reference and reward models do not fit on one GPU together. Below roughly 1B parameters they do. For **Stack-100M** — our ~100M-parameter capstone model — the policy is ~200 MB in bf16, the reference is another 200 MB, and a verifiable reward function is a Python assertion with no parameters at all. Everything lives in one process on one card: you instantiate a vLLM `LLM` for generation and a `nn.Module` for training in the same script, and "weight sync" is a `load_weights` call on a state dict that never leaves the GPU. No Ray, no placement groups, no NCCL rendezvous. The capstone's GRPO loop does exactly this — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
+    Read this chapter for the *shape* of the problem, not because you need Ray at 100M. The value of knowing it is that the single-process loop and the 32-GPU OpenRLHF job are the **same five phases** — generate, score, estimate advantage, update, sync — and the moment your model outgrows one GPU, each phase becomes an actor in the diagram above. Ray's overhead (10–50 ms of Python coordination per step) is invisible when a step takes 30 s and ruinous when it takes 200 ms, which is precisely the regime a 100M model runs in.
 
 The choice between OpenRLHF and NeMo-Aligner is often less about algorithmic capability and more about **operational familiarity**: teams already running Megatron-LM pretraining will find NeMo-Aligner's configuration files familiar; teams comfortable with Ray (e.g., those using Ray Serve for inference) will find OpenRLHF's programming model more natural.
 
@@ -840,7 +975,7 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
 
     **Q:** You need to run PPO on a 70B policy and a 70B critic simultaneously. Both require ZeRO-3. Your cluster has 64 × H100 80 GB GPUs. How would you lay out the actors in OpenRLHF, and what is the main engineering risk?
 
-    **A:** A reasonable layout: 16 GPUs for the policy training actor (ZeRO-3, ~8.75 GB params per GPU), 16 GPUs for the critic (same), 8 GPUs for the reference model (no optimizer, ~17.5 GB per GPU), 8 GPUs across 4 vLLM engines (2 GPU TP each), 2 GPUs for the reward model (8B). Total: 50 GPUs, leaving 14 spare for headroom or a second RM instance.
+    **A:** A reasonable layout: 16 GPUs for the policy training actor (ZeRO-3 + CPU Adam offload, ~8.75 GB params + ~8.75 GB grads per GPU), 16 GPUs for the critic (same), 8 GPUs for the reference model (frozen, no optimizer or grads, ~17.5 GB per GPU), 8 GPUs for two vLLM engines at TP=4 (35 GB of weights per GPU — TP=2 would put 70 GB on each card and leave no room for KV cache, which is the trap in this question), 2 GPUs for the reward model (8B). Total: 50 GPUs, leaving 14 spare for headroom or a second RM instance.
 
     The main engineering risk is **weight synchronization latency**: after each PPO epoch, 140 GB of bf16 parameters must transfer from the policy training actor to the vLLM engines. Over InfiniBand or NVLink this takes on the order of 0.5–2 seconds per sync — tolerable if PPO updates take 10+ seconds, but a significant fraction of runtime for small batches. The mitigation is to sync less frequently (every N update epochs) or to pre-establish direct NCCL communicators between training and vLLM ranks to bypass the Ray object store.
 
@@ -853,8 +988,9 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
     - **Weight synchronization** (from training actor to rollout engine) is a key engineering cost. On a 70B model, even NVLink sync takes ~0.2 seconds; PCIe can take 2+ seconds. Sync frequency should be tuned to balance policy staleness against communication overhead.
     - Ray's **placement groups** with `STRICT_PACK` are essential for multi-GPU actors: they guarantee that all shards of a tensor-parallel group land on the same node, enabling fast NVLink communication within the group.
     - The **object store** provides zero-copy reads for co-located processes — critical for large experience batches (rollout tokens + log-probs) that can reach 8+ GB per batch.
-    - NeMo-Aligner is the better choice when your cluster is NVIDIA DGX-based, your models are homogeneous in size, and you want NVIDIA's kernel optimizations and TRT-LLM throughput. OpenRLHF is the better choice when you need flexibility, fast iteration, or heterogeneous actor sizes.
-    - Both frameworks support **async rollout pipelines** where generation and training overlap, roughly doubling end-to-end throughput at the cost of off-policy staleness.
+    - The Megatron-native design (NeMo-Aligner, now succeeded by **NeMo-RL**) is the better choice when your cluster is NVIDIA DGX-based, your models are homogeneous in size, and you want NVIDIA's kernel optimizations and TRT-LLM throughput. OpenRLHF is the better choice when you need flexibility, fast iteration, or heterogeneous actor sizes.
+    - Switching `--advantage_estimator` from `gae` to `group_norm` (**GRPO**) or `reinforce_baseline` (REINFORCE++) deletes the critic actor entirely — a topology change, not just an algorithm change, freeing an entire model's worth of parameters, gradients and optimizer state. This is why most 2026 reasoning-RL runs are critic-free.
+    - Both frameworks support **async rollout pipelines** where generation and training overlap; published results report on the order of 40% wall-clock reduction, at the cost of off-policy staleness.
 
 ---
 
@@ -939,19 +1075,19 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
     $$
     So $N = 4$ suffices (overhead $= 2.19/(2.19 + 24) = 8.4\%$; $N=3$ gives $10.8\%$, just over). The cost is that the rollout policy is now up to 4 update phases stale — more off-policy data, the trade-off the "Reducing Weight Sync Overhead" section flags.
 
-**4.** The Worked Memory Example places the 70B policy training actor on **16** GPUs (ZeRO-3, Adam offloaded to CPU) and reports ~14-18 GB per 80 GB GPU. Suppose you instead give the policy only **8** GPUs, keeping ZeRO-3 and CPU Adam offload. Estimate per-GPU memory for parameters, partitioned gradients, and activations, give a total, and say whether it still fits and how "comfortable" it is compared with the 16-GPU layout.
+**4.** The Worked Memory Example places the 70B policy training actor on **16** GPUs (ZeRO-3, Adam offloaded to CPU) and reports ~20-22 GB per 80 GB GPU. Suppose you instead give the policy only **8** GPUs, keeping ZeRO-3 and CPU Adam offload. Estimate per-GPU memory for parameters, partitioned gradients, and activations, give a total, and say whether it still fits and how "comfortable" it is compared with the 16-GPU layout.
 
 ??? note "Solution"
     ZeRO-3 shards parameters and gradients evenly across the data-parallel group, so halving the GPU count doubles each shard.
 
     - **Parameters (bf16):** $140\,\text{GB} / 8 = 17.5$ GB per GPU (was $140/16 = 8.75$).
     - **Gradients (bf16, ZeRO-3 partitioned, same size as params):** $17.5$ GB per GPU (was $8.75$).
-    - **Optimizer state (Adam):** offloaded to CPU, so $\approx 0$ GB on the GPU (same as the 16-GPU case — offload makes this term independent of GPU count).
+    - **Optimizer state (Adam):** offloaded to CPU, so $\approx 0$ GB on the GPU (same as the 16-GPU case — offload makes this term vanish from the GPU budget regardless of GPU count). Note what happens *without* offload: the $m$, $v$ and fp32 master copies total 840 GB, which is $840/8 = 105$ GB per GPU — more than the whole card. On 8 GPUs, offload is not a tuning knob, it is the only thing that makes the layout possible at all.
     - **Activations (micro-batch 8, len 2048, gradient checkpointing):** the chapter's ~2-4 GB per GPU still applies; call it ~3 GB.
 
     **Total:** $17.5 + 17.5 + 3 \approx 38$ GB per GPU.
 
-    It still fits on an 80 GB A100/H100 with room to spare, but it is markedly less comfortable than the 16-GPU layout (~14-18 GB). You have roughly doubled the per-GPU footprint (~18 GB → ~38 GB), cutting free headroom from ~62 GB to ~42 GB (about a third less), which directly shrinks the room for larger micro-batches, longer contexts, or activation memory spikes. The parameter and gradient shards scale as $1/(\text{\#GPUs})$; the offloaded optimizer term does not scale, which is exactly why CPU Adam offload is what keeps the 8-GPU layout viable at all.
+    It still fits on an 80 GB A100/H100 with room to spare, but it is markedly less comfortable than the 16-GPU layout (~21 GB). You have nearly doubled the per-GPU footprint (~21 GB → ~38 GB), cutting free headroom from ~59 GB to ~42 GB (about 29% less), which directly shrinks the room for larger micro-batches, longer contexts, or activation memory spikes. The parameter and gradient shards scale as $1/(\text{\#GPUs})$; the offloaded optimizer term does not scale, which is exactly why CPU Adam offload is what keeps the 8-GPU layout viable at all.
 
 **5.** Modify the minimal Ray RLHF loop (Section 6.5.6) to use **lazy weight sync**: pass a `sync_every=K` argument to `main()` so the policy weights are pushed to the rollout actor only every $K$ steps instead of every step. Show the changed `main()` loop, and explain in one or two sentences what becomes stale and why the `old_logprobs` used inside `ppo_step` are still the correct ones to use.
 

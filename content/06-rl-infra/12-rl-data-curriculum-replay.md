@@ -26,6 +26,17 @@ This is a downward parabola, maximized at $p = 0.5$ where $\operatorname{Var}(r)
 
 The practical consequence: **you want to spend rollout compute on prompts whose current pass rate is near 0.5.** A prompt at $p=0.9$ gives variance $0.09$; a prompt at $p=0.5$ gives $0.25$ — roughly $2.8\times$ the signal per rollout. A prompt at $p=0.99$ gives $0.0099$, essentially nothing. This is the quantitative heart of curriculum learning in RL, and it is why "difficulty" is not a soft pedagogical nicety but the master variable controlling your estimator's efficiency.
 
+??? note "Optional: what dividing by the group std does to this argument"
+    The clean $p(1-p)$ law is exact for the **unnormalized** advantage $A_i = r_i - \bar r$ used by Dr. GRPO and DAPO ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)): with $k$ successes out of $G$ and $\hat p = k/G$, the total advantage mass in the group is
+
+    $$
+    \sum_i |A_i| = k(1-\hat p) + (G-k)\hat p = 2G\,\hat p(1-\hat p).
+    $$
+
+    With vanilla GRPO's std division, each success gets $A_i = \sqrt{(1-\hat p)/\hat p}$ and each failure $-\sqrt{\hat p/(1-\hat p)}$, so the mass becomes $\sum_i |A_i| = 2G\sqrt{\hat p(1-\hat p)}$ — a **square root**, which is much flatter. At $\hat p = 0.1$ versus $\hat p = 0.5$ the unnormalized group carries $0.09/0.25 = 36\%$ of the mass, the std-normalized one $0.3/0.5 = 60\%$. That amplification of extreme-difficulty prompts is the "difficulty bias" Dr. GRPO objects to (it is not the gradient of any objective) and that others defend as a free curriculum.
+
+    Either way the *targeting* conclusion survives, for a reason independent of magnitude: at finite $G$ a prompt only contributes at all if its group is non-degenerate, which happens with probability $1 - p^G - (1-p)^G$. That function — the survival probability you will meet again under dynamic sampling — collapses at both ends no matter how the advantage is scaled. Extreme prompts are not merely quiet; most of the time they are silent.
+
 There is a subtlety the variance argument hides. Pass rate is **non-stationary**: it is a property of the *prompt and the current policy together*, and the policy moves every step. A prompt that sits at $p=0.5$ at step 0 may be at $p=0.95$ by step 200 because the model learned it. A static difficulty label computed once, offline, decays. The whole architecture of online difficulty-targeted selection exists to track this moving target.
 
 !!! note "Aside: why not just always train at p=0.5?"
@@ -63,15 +74,25 @@ class RLTask:
         return hashlib.sha256(norm.encode()).hexdigest()[:16]
 
 
+# Do NOT hand-roll math answer matching. `math-verify` (HuggingFace,
+# `pip install math-verify`) is the de-facto open-source checker: `parse` pulls the
+# answer out of \boxed{...}/LaTeX/plain text and `verify` compares them with a
+# SymPy-backed equivalence test, so 0.5 == 1/2 and (x+1)^2 == x^2+2x+1 instead of
+# being scored wrong by string equality. (API tracks the current release.)
+from math_verify import parse, verify
+
+
 def make_checker(task: RLTask) -> Callable[[str], float]:
     """Return a verifier closure. In production the code path runs in a sandbox;
     here we sketch the math path. The checker MUST be robust to extraction noise."""
     if task.domain == "math":
-        gold = normalize_math(task.answer)
+        gold = parse(f"${task.answer}$")              # parse gold once, reuse per rollout
         def check(completion: str) -> float:
-            pred = extract_boxed_answer(completion)   # parse \boxed{...}
-            return 1.0 if pred is not None and math_equal(pred, gold) else 0.0
+            pred = parse(completion)                  # extraction is part of the reward
+            return 1.0 if pred and verify(gold, pred) else 0.0
         return check
+    # For domain == "code", the checker executes `task.tests` against the extracted
+    # program inside a resource-limited sandbox — see the verifiers chapter.
     raise NotImplementedError(f"no checker for domain {task.domain}")
 ```
 
@@ -79,17 +100,19 @@ A few rules that separate a usable RL corpus from a frustrating one:
 
 1. **Verifiability over volume.** Ten thousand prompts with airtight checkers beat a million with flaky ones. A checker that returns a false positive 2% of the time teaches the policy to *find* that 2% — RL is an adversary against your verifier. Audit checkers on known-good and known-bad completions before trusting them.
 
-2. **Answer extraction is part of the reward.** If your checker only accepts `\boxed{}` and the model writes "The answer is 42," you will mislabel correct completions as failures, depressing pass rates and corrupting your difficulty estimates. Make extraction permissive *for grading correctness* but be careful it cannot be gamed.
+2. **Answer extraction is part of the reward.** If your checker only accepts `\boxed{}` and the model writes "The answer is 42," you will mislabel correct completions as failures, depressing pass rates and corrupting your difficulty estimates. Make extraction permissive *for grading correctness* but be careful it cannot be gamed. This is precisely why you use `math-verify` rather than a regex.
 
-3. **Decontaminate against evals — twice.** Run n-gram and embedding-level overlap checks between your prompt pool and every benchmark you will report on. Then do it again after any synthetic augmentation. Contamination inflates eval and is the most common cause of "great training curve, flat real-world gains." This mirrors pretraining decontamination ([Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html)).
+3. **Decontaminate against evals — twice.** Run n-gram (e.g. 13-gram) and embedding-level overlap checks between your prompt pool and every benchmark you will report on. Then do it again after any synthetic augmentation. Contamination inflates eval and is the most common cause of "great training curve, flat real-world gains." This mirrors pretraining decontamination ([Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html)) — and the tooling is the same: HuggingFace **`datatrove`**'s MinHash and n-gram-decontamination pipelines at corpus scale, or **`datasketch`**'s `MinHashLSH` for a pool small enough to fit in memory.
 
-4. **Dedup near-duplicates inside the pool.** Two prompts that differ only in variable names are one prompt's worth of signal but two prompts' worth of compute. MinHash/LSH or embedding clustering collapses them.
+4. **Dedup near-duplicates inside the pool.** Two prompts that differ only in variable names are one prompt's worth of signal but two prompts' worth of compute. MinHash/LSH or embedding clustering collapses them. RLVR pools are small enough (10<sup>4</sup>–10<sup>6</sup> prompts) that a single-machine `datasketch` pass over shingled prompt text takes minutes; there is no excuse for skipping it.
 
 5. **Track provenance.** Keep `domain`, source, and a difficulty prior per task. You will want to re-weight domains later, exactly as in pretraining data mixing ([Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html)).
 
 ### Where the prompts come from
 
 Most strong RLVR runs blend several sources: curated competition/benchmark-style problems with known answers; **synthetically generated** variants (a stronger model or a generator produces new problems plus checkable answers, then a solver filters for solvability — see [Synthetic Data for Pre- and Post-Training](../03-pretraining/15-synthetic-data.html)); and **mined** failures from a previous policy (prompts the last checkpoint got wrong become the next run's curriculum, a data flywheel — [Data Flywheels & Continuous Improvement](../12-production-mlops/05-data-flywheel.html)). For agentic tasks the "prompt" is a whole environment seed (a repo state, a browser task, a tool sandbox), and construction means building reproducible, resettable environments ([Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html)).
+
+The 2026 packaging convention for all of this is the **environment**: prompt set plus parser plus a rubric of reward functions, behind one interface that several trainers can consume. [`willccbb/verifiers`](https://github.com/willccbb/verifiers) is the reference implementation and the emerging unit of exchange — you `pip install` (or write) an environment and hand it to a TRL- or veRL-style trainer instead of shipping a bespoke `.jsonl` plus a bespoke grader. Prefer it over hand-rolling: an environment carries its checker with it, which is exactly the coupling that keeps difficulty estimates meaningful. On disk, the pool itself is best kept as a HuggingFace `datasets` parquet table keyed by `task_id` so that the online difficulty state below can be checkpointed as a small sidecar against the same keys.
 
 ## Difficulty estimation: offline priors and online truth
 
@@ -149,6 +172,8 @@ $$
 
 with $\alpha$ around $0.1$–$0.3$. The EMA tracks the moving policy: a prompt that was hard becomes easy as the policy learns, and the EMA follows. A cleaner Bayesian alternative is a **Beta–Bernoulli** posterior per task: maintain counts $(s, f)$ of successes and failures (optionally discounted over time so old observations decay), and the posterior pass rate is $\text{Beta}(s+1, f+1)$ with mean $\frac{s+1}{s+f+2}$. The Beta view gives you not just a point estimate but a *credible interval*, which is exactly what you need to decide whether a prompt is "near 0.5" with confidence or just under-sampled — and it plugs naturally into a Thompson-sampling selection policy (below).
 
+This state is small and you must **checkpoint it with the model**. Three floats per task ($s$, $f$, `n_groups`) keyed by `task_id` is a few megabytes for a million-prompt pool — write it as a parquet/JSON sidecar next to every model checkpoint. If you do not, a preempted run resumes with a warm policy and a cold curriculum: the selector spends its first hundred steps re-discovering difficulties it already paid to measure, and (worse) re-samples the mastered prompts you had correctly stopped selecting.
+
 !!! warning "Common pitfall: stale difficulty labels"
     The most common difficulty-curriculum bug is computing pass rates *once* and treating them as fixed. Within a few hundred steps a well-chosen 50%-band collapses toward 100% as the policy masters it, and if you keep sampling the same "medium" bucket you are now training on solved prompts — zero gradient, wasted compute, and a training curve that mysteriously plateaus. Difficulty MUST be re-estimated online (EMA or decayed Beta). The whole point is that difficulty is a function of the *current* policy, which is a moving target.
 
@@ -179,12 +204,16 @@ $$
 
 The benefit is that **every** gradient step now operates on a batch where every prompt contributes signal — no dead weight diluting the update, no wasted optimizer step. The cost is *throughput*: you must oversample. If a fraction $\rho$ of generated groups survive the filter, you must generate $B_{\text{keep}}/\rho$ groups to fill the batch — and $\rho$ shrinks as the policy improves and more prompts saturate to $p=1$. This is the throughput-vs-statistics tension flagged in the scaling chapter ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)): dynamic sampling is *cheap on an async, oversubscribed generation layer* and *brutal on a synchronous one*, where the extra rollouts serialize against training.
 
+It is worth being precise about what dynamic sampling does and does not do to the estimator, because "we filter the batch" sounds like it should bias something. *Dropping* a zero-variance group is exactly gradient-neutral: that group's contribution was already the zero vector, so removing it changes only the denominator you average over — the direction of the update is untouched, and the loss stops being diluted. The bias enters through the **refill**: the prompts you generate to replace the discards are, by construction, drawn conditional on being informative, so you are optimizing a *difficulty-reweighted* objective — expected reward under a prompt distribution tilted toward mid-difficulty — rather than uniform expected reward over the pool. That is almost always what you want, but it means your training reward curve is not comparable across runs with different filters, and it is why you must evaluate on a fixed, unfiltered held-out set ([Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)) rather than reading progress off the training reward.
+
 Difficulty-targeted selection is the throughput rescue for dynamic sampling: by feeding the generator prompts that are *already likely* to be in-band, you raise the survival fraction $\rho$, so you oversample less to fill the batch. The two are complementary — selection raises $\rho$, dynamic sampling guarantees correctness when $\rho<1$.
+
+**Where these knobs live in the real libraries.** You will rarely write the filter loop yourself. In **veRL** ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) the DAPO recipe turns dynamic sampling on with an `algorithm.filter_groups` block (enable it, name the metric it filters on — the per-group accuracy — and cap how many generation batches it may consume before giving up), together with a `data.gen_batch_size` set *larger* than `data.train_batch_size`: that ratio is the oversampling factor $1/\rho$ made into a config field, and the cap is what stops a saturated pool from spinning forever. **OpenRLHF** exposes an equivalent group-filtering flag on its GRPO/REINFORCE++ path. **TRL**'s `GRPOConfig` ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)) gives you the group and clipping knobs (`num_generations` = $G$, `epsilon`/`epsilon_high`, `scale_rewards`) but leaves *prompt selection* to you — the natural hook is a custom `Sampler` over the training `Dataset` that reads the difficulty sidecar and yields the in-band `task_id`s, which is precisely the `select_candidates` function below. Field names drift between releases; read the config dataclass in the version you install. At the other end of the scale ladder, the capstone implements the whole filter inline in a single-GPU loop, because at 100M parameters generation is cheap enough that oversampling costs seconds ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
 
 !!! example "Worked example: the oversampling tax, with and without targeting"
     Suppose you want a training batch of $B_{\text{keep}} = 256$ informative prompts, $G = 8$ samples each.
 
-    **Naive uniform sampling (mid-training).** Your pool's pass-rate distribution, *under the current policy*, is roughly: 40% of prompts at $p\approx0.95$ (nearly mastered), 25% at $p\approx0.05$ (nearly impossible), 35% spread in $[0.2,0.8]$. What survives the zero-variance filter? A group at $p=0.95$ comes back all-correct with probability $0.95^8 \approx 0.66$, i.e. it is *dead* 66% of the time, surviving only 34%. A group at $p=0.05$ is dead $0.95^8\approx0.66$ of the time too (all-wrong), surviving 34%. The in-band prompts survive almost always ($1 - 0.8^8 - 0.2^8 \approx 0.83$ at $p=0.5$; higher near the band edges is similar). Survival fraction:
+    **Naive uniform sampling (mid-training).** Your pool's pass-rate distribution, *under the current policy*, is roughly: 40% of prompts at $p\approx0.95$ (nearly mastered), 25% at $p\approx0.05$ (nearly impossible), 35% spread in $[0.2,0.8]$. What survives the zero-variance filter? A group at $p=0.95$ comes back all-correct with probability $0.95^8 \approx 0.66$, i.e. it is *dead* 66% of the time, surviving only 34%. A group at $p=0.05$ is dead $0.95^8\approx0.66$ of the time too (all-wrong), surviving 34%. The in-band prompts survive far more often: $1 - 0.5^8 - 0.5^8 \approx 0.99$ at the center, falling to $1 - 0.8^8 - 0.2^8 \approx 0.83$ at the band edge $p=0.8$ — take $\approx 0.83$ as a conservative average across the band. Survival fraction:
 
     $$
     \rho \approx 0.40(0.34) + 0.25(0.34) + 0.35(0.83) \approx 0.136 + 0.085 + 0.29 \approx 0.51.
@@ -367,6 +396,23 @@ def rl_step(tasks, engine, B_keep=64, G=8, target_p=0.5,
 if __name__ == "__main__":
     # A pool spanning the full difficulty range, incl. the dead tails we must avoid.
     pool = [TaskState(i, true_p=rng.uniform(0.02, 0.98)) for i in range(4000)]
+
+    # OFFLINE PASS: k rollouts per task, used to (a) seed each Beta posterior with
+    # real pseudo-counts and (b) prune the dead tails. Do NOT skip this. Without
+    # it every posterior starts at the uninformative Beta(1,1), Thompson draws are
+    # pure noise, and selection is no better than uniform sampling -- for this pool
+    # the uniform baseline is E[1 - p^8 - (1-p)^8] ~= 0.81, which is essentially
+    # what an unseeded run scores. The offline pass is what buys the edge.
+    K_OFFLINE = 8
+    for t in pool:
+        succ = int(rng.binomial(K_OFFLINE, t.true_p))     # a real run calls the engine
+        t.s += succ
+        t.f += K_OFFLINE - succ
+    n_raw = len(pool)
+    pool = [t for t in pool if 0 < (t.s - 1.0) < K_OFFLINE]   # drop 0/k and k/k
+    print(f"offline pass: kept {len(pool)}/{n_raw} tasks "
+          f"({100 * (1 - len(pool) / n_raw):.0f}% pruned as dead tails)")
+
     for step in range(8):
         stats = rl_step(pool, FakeEngine(), B_keep=64, G=8, target_p=0.5)
         print(f"step {step:2d} | rho={stats['survival_rho']:.2f} "
@@ -374,7 +420,9 @@ if __name__ == "__main__":
               f"| buckets[0.0-1.0]={stats['bucket_counts']}")
 ```
 
-Two behaviors to watch when you run this. First, the **survival fraction $\rho$** is well above the uniform-sampling baseline because Thompson selection feeds in-band prompts — that is the oversampling-tax saving from the worked example, made mechanical. Second, the **kept-difficulty histogram concentrates around the middle buckets** (near $p=0.5$): even though the pool spans $[0.02, 0.98]$, the batch you actually train on is the informative middle, by construction. As `learn_drift` pushes mastered tasks toward $p=1$, the Beta posteriors follow, those tasks stop being selected, and harder tasks rotate into the band — the emergent curriculum, in code.
+Three behaviors to watch when you run this. First, the **survival fraction $\rho$** sits around $0.9$ (oversampling factor $\approx1.1\times$) against a uniform-sampling baseline of $\mathbb{E}[1 - p^8 - (1-p)^8] \approx 0.81$ for this pool — that is the oversampling-tax saving from the worked example, made mechanical. Second, the **kept-difficulty histogram concentrates in the middle buckets** (typically $\approx 80\%$ of kept groups in buckets 1–3): even though the pool spans $[0.02, 0.98]$, the batch you actually train on is the informative middle, by construction. (Read buckets 1–3 *together*: at $G=8$ the middle bucket $[0.4, 0.6)$ contains only the single realizable value $\hat p = 0.5$, so its count is structurally low — a discretization artifact, not a dip in the band.) Third, as `learn_drift` pushes mastered tasks toward $p=1$, the Beta posteriors follow, those tasks stop being selected, and harder tasks rotate into the band — the emergent curriculum, in code.
+
+There is an honest caveat worth measuring yourself. Swap the Thompson draw for the deterministic posterior mean (Exercise 5's `select_band_greedy`) and $\rho$ climbs to $\approx 0.97$. Thompson sampling pays an **exploration tax**, and the tax is worse the larger the candidate pool: picking the top 4% of 3200 tasks by a *sampled* pass rate selects partly on posterior noise, so some genuinely-easy tasks ride a lucky draw into the batch. That exploration is not wasted — it is what re-checks stale estimates as the policy drifts, which greedy selection never does — but the trade is real. The practical compromise is to restrict Thompson to a *shortlist* (greedy-filter to a few hundred plausible tasks, then sample within it), or to widen the offline $k$ so the posteriors are sharp enough that the draws are not noise.
 
 ```python
 # Bolt-on: a prioritized PROMPT buffer (PER at the task level). Priority = how
@@ -413,7 +461,7 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
 ## Key Takeaways
 
 !!! key "Key Takeaways"
-    - **Difficulty is the master variable.** For a binary verifiable reward, gradient signal per prompt scales as $p(1-p)$, peaking at pass rate $p=0.5$ and vanishing at both ends — so a prompt's *current* pass rate decides its worth.
+    - **Difficulty is the master variable.** For a binary verifiable reward, gradient signal per prompt scales as $p(1-p)$ — exactly so for the unnormalized Dr. GRPO/DAPO advantage, as $\sqrt{p(1-p)}$ if you keep GRPO's std division — peaking at pass rate $p=0.5$ and vanishing at both ends, so a prompt's *current* pass rate decides its worth.
     - **Pass rate is non-stationary.** It's a property of the prompt *and the current policy*; a static difficulty label decays as the policy learns. Estimate difficulty **online** (EMA or a decayed Beta–Bernoulli posterior), never once-and-forever.
     - **Construction and QC dominate validity.** Verifiable checkers, eval decontamination, and near-duplicate removal matter more in RL than SFT because RL adversarially exploits any reward defect; prune the $0/k$ and $k/k$ tails before training to delete prompts that can never contribute.
     - **Difficulty-targeted online selection** (greedy-to-target or Thompson sampling on the Beta posterior) keeps realized groups near a $p\approx0.5$ *band*, raising the dynamic-sampling survival fraction $\rho$ and cutting the oversampling tax — often a ~20–30% end-to-end win, free.
@@ -421,6 +469,7 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
     - **Curriculum is emergent, not authored:** with online targeting, the band's contents drift from easy to hard automatically as the policy masters material; regret/learning-progress weighting pushes compute to the competence frontier.
     - **Three buffers, three jobs:** a prioritized *prompt* buffer (on-policy, free, the curriculum); a *shallow staleness* buffer of completions with stored log-probs for async overlap (off-policy, importance-corrected, half-life of a few steps); and a *success/hard-case* buffer for anti-forgetting on sparse agentic tasks.
     - **Trajectory replay has a half-life:** stored completions go stale as the policy drifts; importance weights blow up and clipping zeroes their gradient, so evict beyond a staleness bound and monitor the clipped-token fraction.
+    - **Use the real tools:** `math-verify` for math checking (never a regex), `datatrove`/`datasketch` for pool dedup and decontamination, `verifiers`-style environments as the packaging unit, and veRL's `algorithm.filter_groups` + oversized `data.gen_batch_size` (or OpenRLHF's equivalent) for dynamic sampling — TRL gives you $G$ and the clipping knobs but leaves prompt selection to a custom sampler.
 
 !!! sota "State of the Art & Resources (2026)"
     Data-side RL has converged on a recognizable stack: verifiable corpora with aggressive decontamination, offline difficulty bucketing to prune dead tails, online difficulty tracking, difficulty-targeted selection toward a ~50%-pass band, and DAPO-style dynamic sampling as default practice. The frontier is automatic curriculum (learning-progress/regret weighting) and principled off-policy replay for fully-async, agentic RL.
@@ -442,6 +491,9 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
 
     - [verl-project/verl](https://github.com/verl-project/verl) and [OpenRLHF/OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) — production RL frameworks with dynamic sampling, dataset/curriculum hooks, and async replay.
     - [PrimeIntellect-ai/prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) — fully-async agentic RL where shallow staleness replay and importance correction are first-class.
+    - [willccbb/verifiers](https://github.com/willccbb/verifiers) — RLVR *environments* (prompt set + parser + reward rubric, single- or multi-turn) behind one interface; the 2026 packaging unit for the prompt pools this chapter manages.
+    - [huggingface/Math-Verify](https://github.com/huggingface/Math-Verify) — `parse` + `verify`, SymPy-backed answer equivalence. The checker quality that your difficulty estimates are only as good as.
+    - [huggingface/datatrove](https://github.com/huggingface/datatrove) and [ekzhu/datasketch](https://github.com/ekzhu/datasketch) — MinHash/LSH dedup and n-gram decontamination for the prompt pool, before a single rollout is spent.
 
 ## Further reading
 

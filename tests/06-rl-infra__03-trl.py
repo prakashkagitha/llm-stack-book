@@ -24,7 +24,7 @@ SKIPPED blocks (see chapter for full code):
   #0  SFTTrainer example                    - needs-gpu/needs-net (downloads Qwen2.5-7B-Instruct + ultrachat_200k)
   #1  RewardTrainer example                 - needs-net (downloads Qwen2.5-7B + Anthropic/hh-rlhf)
   #2  DPOTrainer example                    - needs-net (downloads Qwen2.5-7B-Instruct + ultrafeedback_binarized)
-  #3  PPOTrainer example                    - needs-net (downloads gpt2 + lvwerra/distilbert-imdb, runs a generate loop)
+  #3  PPOTrainer example (trl.experimental) - needs-net (downloads pythia-160m x4 + trl-lib/tldr)
   #4  GRPOTrainer main example              - needs-net (downloads Qwen2.5-7B-Instruct; requires flash-attn)
   #5  `accelerate launch ...`               - shell
   #6  `my_accelerate.yaml`                  - non-python (YAML)
@@ -160,6 +160,7 @@ def test_grpo_config_vllm_backend():
 
     grpo_config = GRPOConfig(
         use_vllm=True,
+        vllm_mode="server",
         vllm_server_host="localhost",    # host running the vLLM inference server
         vllm_server_port=8000,
         vllm_server_timeout=120,         # seconds to wait for server readiness
@@ -169,6 +170,7 @@ def test_grpo_config_vllm_backend():
     )
 
     assert grpo_config.use_vllm is True
+    assert grpo_config.vllm_mode == "server"
     assert grpo_config.vllm_server_host == "localhost"
     assert grpo_config.vllm_server_port == 8000
     assert grpo_config.vllm_server_timeout == 120

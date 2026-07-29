@@ -106,6 +106,7 @@ engine = LLM(
     dtype="bfloat16",
     gpu_memory_utilization=0.5,   # leave room for the trainer if COLOCATED
     enable_prefix_caching=True,   # reuse the shared prompt prefix across the group
+    enable_sleep_mode=True,       # lets us free the engine's KV cache during training
     max_model_len=4096,
 )
 
@@ -146,18 +147,49 @@ def sync_weights_to_engine(engine, state_dict):
     """
     Push freshly-trained weights into the live vLLM engine without a restart.
     `state_dict` maps param name -> bf16 tensor (e.g. policy.state_dict()).
-    In colocated setups this is an in-process update of the model's parameters;
-    veRL/OpenRLHF wrap this so the named tensors map correctly onto vLLM's
-    (possibly differently-sharded) internal layout.
+
+    In current vLLM the engine core runs in its own process, so you do NOT reach
+    into internals; the supported entry point is the public `collective_rpc`,
+    which invokes a named method on every worker. You make `load_weights`
+    callable by passing `worker_extension_cls="mypkg.MyWorkerExt"` when
+    constructing the LLM (see vLLM's RLHF example under
+    `examples/offline_inference/`). veRL/OpenRLHF wrap this so the named tensors
+    map correctly onto vLLM's (possibly tensor-parallel-sharded) layout, and for
+    multi-node they broadcast the tensors over NCCL rather than pickling them.
     """
-    # vLLM exposes a collective_rpc / load_weights path on its workers:
-    engine.llm_engine.model_executor.collective_rpc(
-        "load_weights", args=(list(state_dict.items()),)
-    )
+    engine.collective_rpc("load_weights", args=(list(state_dict.items()),))
     # After this, the next engine.generate() samples from the NEW policy.
 ```
 
+In a **colocated** setup (engine and trainer on the same GPUs) there is one more move that matters as much as the transfer itself: the engine's KV cache is a large, statically reserved pool, and it is dead weight while the trainer runs. vLLM's sleep mode releases it — `engine.sleep(level=1)` before Phase 3/4 frees the KV blocks (level 2 also offloads the weights) and `engine.wake_up()` re-allocates before the next rollout — which is what lets a single 80 GB GPU host both an inference engine and an FSDP trainer without either being memory-starved.
+
 The details (NCCL broadcast for multi-GPU engines, parameter name remapping, handling tensor-parallel sharding) are exactly what libraries like veRL ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) and OpenRLHF ([OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html)) exist to handle robustly. The conceptual point is unchanged: **one persistent inference engine, weights hot-swapped each step.** Tearing down and rebuilding the engine per step would cost more than the rollout itself.
+
+### The same five phases, in a real library
+
+You would not hand-write the above for a production run. TRL's `GRPOTrainer` is the shortest path to exactly the loop of this chapter, and its config surface is a useful glossary of the knobs we have been naming ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)):
+
+```python
+from trl import GRPOTrainer, GRPOConfig
+
+def reward_correct(completions, answer, **kwargs):           # Phase 2, verifiable
+    return [1.0 if extract_final(c) == a else 0.0 for c, a in zip(completions, answer)]
+
+cfg = GRPOConfig(
+    num_generations=8,            # G: group size for the group-relative baseline
+    max_completion_length=1024,   # caps the L_g long tail that gates a sync step
+    num_iterations=1,             # "ppo_epochs": gradient passes per rollout batch
+    beta=0.0,                     # KL-to-reference coefficient; 0 => skip the ref forward
+    epsilon=0.2, epsilon_high=0.28,   # asymmetric ("decoupled") clip, DAPO-style
+    use_vllm=True,                # Phase 1 goes through vLLM, not model.generate
+    vllm_mode="colocate",         # engine shares the trainer's GPUs ("server" = disaggregated)
+    per_device_train_batch_size=4, gradient_accumulation_steps=8,
+)
+GRPOTrainer(model="Qwen/Qwen2.5-1.5B-Instruct", reward_funcs=reward_correct,
+            args=cfg, train_dataset=ds).train()
+```
+
+TRL handles Phases 1–5 internally: it drives vLLM for the rollout, calls your reward functions, recomputes the old/reference log-probs, runs the clipped-surrogate minibatch loop, and syncs weights back into the engine each step. Reading `trl/trainer/grpo_trainer.py` alongside this chapter is the single best way to see the abstractions land on real code. `vllm_mode="server"` (backed by the `trl vllm-serve` CLI) is the disaggregated variant, where the engine lives on separate GPUs and the trainer talks to it over HTTP.
 
 !!! warning "Common pitfall: trusting the sampler's logprobs blindly"
     The behavior log-probs returned by vLLM are computed in the inference engine's numerics (its kernels, its attention implementation, possibly a different dtype or a quantized path). The trainer recomputes log-probs in *its* numerics (FSDP, full bf16, a different attention kernel). These will **not be bitwise identical**, and on long sequences the discrepancy compounds. If you feed the sampler's logprobs as the ratio denominator and the trainer's as the numerator, even at step 0 (where they "should" both be the current policy and the ratio should be exactly 1) you will see ratios drifting from 1.0. The robust fix most libraries use: **recompute the "old" logprobs on the trainer with a `torch.no_grad()` forward pass** and use *those* as the denominator, so numerator and denominator share numerics. The sampler's logprobs are then used only for diagnostics or for a true off-policy correction term. This is a favorite source of silent RL bugs.
@@ -296,6 +328,17 @@ def grpo_advantages(rewards, group_size, normalize_std=True, eps=1e-4):
     return adv.reshape(-1)                               # (B,)
 ```
 
+Now notice what happens when every completion in a group earns the *same* reward — all $G$ correct on an easy prompt, or all $G$ wrong on an impossible one. The centered advantage is identically zero, so that group contributes **no gradient at all**, having burned $G$ full generations: the most expensive resource in the loop. On a mismatched prompt set this can silently void a large fraction of every batch. DAPO's **dynamic sampling** fixes it at the loop level: over-sample prompts, discard the degenerate groups, and keep drawing until the batch is full of groups that actually carry signal — an effective-batch-size guarantee bought with a variable number of generations per step.
+
+```python
+def informative_groups(rewards, group_size, min_std=1e-6):
+    """Boolean mask over GROUPS: True where the group's rewards have variance."""
+    g = rewards.view(-1, group_size)
+    return g.std(dim=1) > min_std        # False => advantage is 0 => no gradient
+```
+
+Logging the surviving fraction (the "effective group rate") is one of the most informative curves in an RLVR run: if it collapses toward zero your prompts have been solved and the curriculum needs harder problems ([RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html)).
+
 The result is a flat experience batch: `input_ids, resp_mask, old_lp, ref_lp, advantages`. Everything downstream is the minibatch loop.
 
 ## Minibatch updates: the inner loop
@@ -309,6 +352,7 @@ def minibatch_update_loop(input_ids, resp_mask, old_lp, ref_lp, advantages,
     """The Phase-4 inner loop: ppo_epochs x n_minibatches clipped-surrogate steps."""
     B = input_ids.size(0)
     A = advantages.unsqueeze(1)                          # (B,1), broadcast over tokens
+    micro = 0                                            # counts minibatches for grad accum
 
     for epoch in range(ppo_epochs):
         perm = torch.randperm(B, device=input_ids.device)    # reshuffle each epoch
@@ -341,8 +385,16 @@ def minibatch_update_loop(input_ids, resp_mask, old_lp, ref_lp, advantages,
                 approx_kl = (old_lp[mb] - new_lp).mul(mask).sum() / mask.sum()
             # if clip_frac is huge or approx_kl spikes -> you're too off-policy.
 
-        torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-        opt.step(); opt.zero_grad()
+            # Step every `grad_accum` minibatches. NOTE the placement: the optimizer
+            # must step INSIDE the minibatch loop, not once per epoch. That is what
+            # makes the *later* minibatches genuinely off-policy w.r.t. `old_lp` --
+            # i.e. what gives the clip something to do. Stepping once per epoch would
+            # turn `n_minibatches` into plain gradient accumulation over one big
+            # on-policy batch, which is a different (and much weaker) algorithm.
+            micro += 1
+            if micro % grad_accum == 0:
+                torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+                opt.step(); opt.zero_grad(set_to_none=True)
     return loss.item(), clip_frac, approx_kl.item()
 ```
 
@@ -461,7 +513,9 @@ def rl_outer_step(prompts, golds, *, engine, policy, ref, opt, tok, group_size=8
             "gen_len_mean": resp_mask.sum(1).mean().item()}
 ```
 
-Read top to bottom, this is the entire RL-for-LLM training loop. Every other chapter in this Part is an elaboration of one of these five lines: which engine serves Phase 1 ([vLLM](../07-inference-serving/03-vllm-internals.html)/[SGLang](../07-inference-serving/04-sglang-radixattention.html)), how Phase 2's verifiers are built ([Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html)), how Phase 4's advantages and KL are stabilized ([Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html)), how Phase 5's weight sync works across nodes ([Colocated vs Disaggregated RL](../06-rl-infra/07-colocated-vs-disaggregated.html)), and how to overlap them all for throughput ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)).
+Read top to bottom, this is the entire RL-for-LLM training loop. This is also, almost line for line, the loop that gives Stack-100M its narrow RLVR stage: at 100M parameters the whole thing is *colocated on a single GPU* — one vLLM engine at `gpu_memory_utilization≈0.3` with sleep mode, $G=8$, short $L_g$, `num_iterations=1`, $\beta=0$, and a synchronous rung-0 schedule, because the model is small enough that generation is cheap and simplicity beats overlap ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
+
+Every other chapter in this Part is an elaboration of one of these five lines: which engine serves Phase 1 ([vLLM](../07-inference-serving/03-vllm-internals.html)/[SGLang](../07-inference-serving/04-sglang-radixattention.html)), how Phase 2's verifiers are built ([Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html)), how Phase 4's advantages and KL are stabilized ([Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html)), how Phase 5's weight sync works across nodes ([Colocated vs Disaggregated RL](../06-rl-infra/07-colocated-vs-disaggregated.html)), and how to overlap them all for throughput ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)).
 
 !!! interview "Interview Corner"
     **Q:** You profile a GRPO run on a 7B model and find each step takes 30 seconds: 22 s in rollout generation, 5 s recomputing old/reference log-probs, 2 s in the backward/update, and 1 s in reward + weight sync. Your manager asks you to cut step time in half. Where do you look, in what order, and what are the correctness tradeoffs?

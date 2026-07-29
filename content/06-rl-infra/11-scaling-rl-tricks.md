@@ -14,6 +14,14 @@ Before optimizing anything, write down where the seconds go. A synchronous (on-p
 
 For reasoning workloads the generation phase dominates — frequently 70–85% of step time — because you generate long sequences autoregressively (memory-bandwidth bound, one token per forward pass) but train on them in a few large, compute-bound matmuls. So the single highest-leverage question in scaling RL is: **what fraction of generation wall-clock is useful work?**
 
+Write the whole budget down before you optimize any one term:
+
+$$
+T_{\text{step}} \;=\; T_{\text{gen}} \;+\; T_{\text{reward}} \;+\; T_{\text{train}} \;+\; T_{\text{sync}}
+$$
+
+The last term is the one people forget. After the optimizer step, the updated parameters must reach the rollout engines — and because the trainer's layout (FSDP/Megatron shards) differs from the engine's (inference tensor parallelism), that is a *resharding plus broadcast*, not a memcpy ([Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html)). A colocated hybrid engine doing in-place NCCL/CUDA-IPC updates keeps $T_{\text{sync}}$ down to roughly a second for a few-billion-parameter model over NVLink; a naive "write a checkpoint, have vLLM reload it" sync can cost tens of seconds *every step* and quietly dominate everything else in this chapter. Measure it once before you tune anything else.
+
 Define, for a single generation phase processing a batch of $N$ prompts each sampled $G$ times (so $B = NG$ sequences):
 
 $$
@@ -114,9 +122,13 @@ The trick is that a partially generated sequence is not wasted — it is a *chec
 
 {{fig:scalingrl-partial-rollout}}
 
-The subtlety is **off-policyness**: a trajectory resumed at step $k+3$ has a prefix sampled by the weights at step $k$. The continuation is on newer weights. This is exactly the partial-trajectory staleness async RL must handle, and you correct for it with the per-token importance ratio just as PPO does — each token is reweighted by $\pi_{\text{new}}(a_t)/\pi_{\text{behavior}}(a_t)$. In practice you store, per resumed token, the log-prob under the *behavior* policy that produced it, and use that as the denominator. Partial rollout without that correction silently biases the gradient.
+The subtlety is **off-policyness**: a trajectory resumed at step $k+3$ has a prefix sampled by the weights at step $k$. The continuation is on newer weights. This is exactly the partial-trajectory staleness async RL must handle, and you correct for it with the per-token importance ratio just as PPO does — each token is reweighted by $\pi_{\text{new}}(a_t)/\pi_{\text{behavior}}(a_t)$. In practice you store, per resumed token, the log-prob under the *behavior* policy that produced it, and use that as the denominator. Partial rollout without that correction silently biases the gradient. One extra trap: those stored log-probs come from the *inference* engine (vLLM/SGLang, possibly FP8, fused kernels), whose numerics differ from the trainer's, so there is a second, engine-level ratio sitting underneath the policy ratio — bound it with truncated importance sampling and monitor the sampler-vs-trainer log-prob gap, as detailed in [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html).
 
 ```python
+from dataclasses import dataclass
+
+GLOBAL_MAX = 16384  # absolute cap on generated tokens across all phases
+
 @dataclass
 class PartialTrajectory:
     prompt_ids: list[int]
@@ -307,7 +319,7 @@ This unifies the chapter's two halves: the *infra* trick (dynamic sampling) and 
     Setup: GRPO on a 7B reasoning model. Per step we want $N = 256$ useful prompt-groups, $G = 8$ samples each, so the target is $256 \times 8 = 2{,}048$ trained sequences. Inference fleet: 4 H100s running vLLM (the other 4 train, colocated time-sliced). Trace lengths are heavy-tailed: median 1,500 tokens, mean 2,200, max outliers ~14,000. Assume an effective decode rate of ~2,500 tokens/s per H100 at this batch concurrency.
 
     **Baseline — static-ish synchronous, no oversubscription, no filtering.**
-    Generation runs until the longest of 2,048 sequences finishes. With per-engine concurrency = 512 and 4 engines, the engines drain to the tail. Effective generation efficiency $\eta_{\text{gen}} = \bar L / L_{\max} = 2200 / 14000 \approx 0.157$. Real token-work $= 2048 \times 2200 = 4.5\text{M}$ tokens, but the phase runs as if $2048 \times 14000 = 28.7\text{M}$ token-times across the fleet. At $4 \times 2500 = 10{,}000$ tok/s fleet decode, the *wall-clock* is gated by the tail engine: roughly $14000 / 2500 \approx 5.6$ s just to drain the outlier, plus the bulk $\approx 4.5\text{M}/10{,}000 = 450$ s for real work — but because the tail engine cannot parallelize one sequence, total $\approx 450 / \eta_{\text{effective}}$. Take a measured stand-in: **generation ≈ 200 s**, training ≈ 60 s, **step ≈ 260 s**, train GPUs idle during all 200 s of generation.
+    Generation runs until the longest of 2,048 sequences finishes. With per-engine concurrency = 512 and 4 engines, the engines drain to the tail. Effective generation efficiency $\eta_{\text{gen}} = \bar L / L_{\max} = 2200 / 14000 \approx 0.157$. Real token-work $= 2048 \times 2200 = 4.5\text{M}$ tokens, but the phase runs as if $2048 \times 14000 = 28.7\text{M}$ token-times across the fleet. At $4 \times 2500 = 10{,}000$ tok/s fleet decode, the bulk of the real work is $\approx 4.5\text{M}/10{,}000 = 450$ s — but the *tail* is gated by something much slower. That 2,500 tok/s is an **aggregate** rate across many concurrent sequences; a single stream on a 7B model is memory-bandwidth bound and decodes at order 50–100 tok/s, and you cannot parallelize one sequence across the fleet. So once the batch has drained to its last 14k-token outlier, that one sequence alone takes on the order of two to three minutes while 4 engines sit nearly empty. Take a measured stand-in: **generation ≈ 200 s**, training ≈ 60 s, **step ≈ 260 s**, train GPUs idle during all 200 s of generation.
 
     **+ Continuous batching & oversubscription (Lever 1).** Deep queue keeps all engines full until the final tail. Bubble shrinks to the last handful of long sequences: generation ≈ **120 s** (≈1.7× faster).
 
@@ -325,10 +337,24 @@ The 2024–2026 open-source consensus stack for scaling RL on reasoning models l
 
 {{fig:scalingrl-sota-recipe-stack}}
 
+**These are flags, not rewrites.** Every lever above is a config key in the two frameworks that dominate open RL training: **veRL** for multi-node runs ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) and HuggingFace **TRL** for single-node ones ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)). The *objective* knobs (clip-higher, token-level loss, dropping $/\operatorname{std}$) are tabulated in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html); these are the *throughput* ones:
+
+| Lever in this chapter | veRL config key | TRL `GRPOConfig` |
+|---|---|---|
+| Oversubscribe the engines (Lever 1) | `data.gen_batch_size` $>$ `data.train_batch_size`; `actor_rollout_ref.rollout.max_num_batched_tokens`, `.gpu_memory_utilization` | `generation_batch_size` / `steps_per_generation` — generate one big batch, consume it over several optimizer steps |
+| Rollout backend & placement | `actor_rollout_ref.rollout.name` (`vllm` / `sglang`), `.tensor_model_parallel_size`, `actor_rollout_ref.hybrid_engine` for colocation | `use_vllm=True`, `vllm_mode="colocate"` or `"server"` (with a separate `trl vllm-serve` fleet) |
+| Overlap generation with training (Lever 3) | `actor_rollout_ref.rollout.mode=async` plus one-step-off-policy / agent-loop recipes | TRL is synchronous by design; `num_iterations` $>1$ buys sample reuse but not overlap — true async is veRL / prime-rl / AReaL territory |
+| Dynamic sampling (DAPO) | `algorithm.filter_groups.enable=True`, `.metric`, `.max_num_gen_batches` (the role our `max_oversample_factor` plays) | no first-class flag — filter in the data/reward layer, or use veRL's DAPO recipe |
+| Over-long handling | `reward_model.overlong_buffer.*` (soft, length-graded penalty) | `mask_truncated_completions=True` (hard mask, DAPO's over-long filtering) |
+| Length cap / partial rollout | `data.max_response_length`; interrupt-and-resume is an engine feature (Kimi k1.5-style, AReaL's interruptible rollout), not a stock flag | `max_completion_length` |
+| Weight sync cost ($T_{\text{sync}}$) | colocated hybrid engine does in-place NCCL/CUDA-IPC updates instead of checkpoint reload | handled inside the vLLM integration |
+
+Key *names* drift between releases, so pin a version and read veRL's `ppo_trainer.yaml` (plus its `recipe/dapo/` configs) and TRL's `GRPOConfig` docstring — but the concepts, and which number to move when a given metric misbehaves, are stable. Scaled all the way *down*, most of this collapses: at the capstone's ~100M-parameter, single-GPU scale the tail bubble is mild (short verifiable answers), so the levers that actually matter are $G$, degenerate-group filtering, and colocated vLLM generation — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+
 The meta-point: **throughput in RL is won by overlap and by not wasting samples, not by faster kernels.** Kernel-level speedups (FlashAttention, FP8, CUDA graphs — Part IV) matter, but they shave the *useful* work; the order-of-magnitude wins come from eliminating bubbles (overlap, oversubscription, partial rollout) and from eliminating *useless* work (dynamic sampling, over-long filtering, curriculum). Get the scheduling right first.
 
 !!! tip "Practitioner tip: instrument the bubble before you optimize"
-    Log, per step: total generated tokens, $\bar L$, $L_{\max}$, $\eta_{\text{gen}} = \bar L/L_{\max}$, the fraction of degenerate (all-same-reward) groups, train-GPU idle %, and infer-GPU idle %. These six numbers tell you *which* lever to pull. High $L_{\max}/\bar L$ → partial rollout. High train-GPU idle → overlap. High degenerate-group fraction → dynamic sampling. Most teams optimize blind; a one-screen dashboard of these is worth a week of guesswork.
+    Log, per step: total generated tokens, $\bar L$, $L_{\max}$, $\eta_{\text{gen}} = \bar L/L_{\max}$, the fraction of degenerate (all-same-reward) groups, train-GPU idle %, infer-GPU idle %, $T_{\text{sync}}$, policy entropy, and the sampler-vs-trainer log-prob gap (`approx_kl` on *fresh* rollouts, which should be $\approx 0$). Each number names a lever. High $L_{\max}/\bar L$ → partial rollout. High train-GPU idle → overlap. High degenerate-group fraction → dynamic sampling. $T_{\text{sync}}$ a large share of the step → you are reloading checkpoints instead of broadcasting weights. Collapsing entropy → raise $\varepsilon_{\text{high}}$ (clip-higher). Nonzero fresh-data `approx_kl` → engine-numerics mismatch, not a scheduling problem at all. Most teams optimize blind; a one-screen dashboard of these is worth a week of guesswork.
 
 !!! interview "Interview Corner"
     **Q:** Your GRPO run on reasoning data gets only ~30% GPU utilization and step time keeps creeping up as training proceeds. Walk me through diagnosing and fixing it.
@@ -343,6 +369,7 @@ The meta-point: **throughput in RL is won by overlap and by not wasting samples,
     - **DAPO's dynamic sampling** discards all-same-reward groups (zero gradient) and oversamples to a full *useful* batch — a statistics fix that is only cheap on an async, oversubscribed generation layer.
     - **Dr. GRPO** removes two silent biases: per-sequence length normalization (which incentivizes longer wrong answers) and std-normalization of the advantage (which over-weights low-variance prompts). Be deliberate about your loss normalizer.
     - **DAPO's clip-higher** decouples the PPO clip bounds to preserve exploration; **VAPO** shows a hardened value model (length-adaptive GAE, warmup) can beat critic-free RL at the cost of a second network.
+    - **Budget the whole step and use the flags you already have:** $T_{\text{step}} = T_{\text{gen}} + T_{\text{reward}} + T_{\text{train}} + T_{\text{sync}}$ (a checkpoint-reload weight sync can cost more than every bubble you just fixed), and each lever is a config key — veRL `data.gen_batch_size`, `rollout.mode=async`, `algorithm.filter_groups`; TRL `generation_batch_size`, `vllm_mode`, `mask_truncated_completions`.
     - **Curriculum and dynamic sampling are the same idea** — spend the rollout budget on prompts near pass-rate 0.5, where reward variance $p(1-p)$ and thus gradient signal is maximal.
 
 !!! sota "State of the Art & Resources (2026)"

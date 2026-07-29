@@ -17,39 +17,41 @@ Blocks covered (all 4 heuristically CPU-runnable blocks the task named):
   #3 (line ~379) - prompt_priority() / sample_from_buffer() (prioritized
                     prompt buffer bolt-on)
 
-No block touches the network, GPU, or any third-party package outside the
-allowed list (numpy + stdlib only), so nothing is skipped.
+No block touches the network or GPU. Block #0 imports `math_verify`
+(HuggingFace's `math-verify`), which is NOT in requirements-test.txt, so the
+import is try/except-guarded below and falls back to a minimal local
+`parse`/`verify` shim -- block #0's own logic still runs verbatim either way.
+Everything else is numpy + stdlib, so nothing is skipped.
 
-GLUE note: block #0's `make_checker` calls three helper functions the prose
-explicitly says are only "sketched" for the math path --
-`normalize_math`, `extract_boxed_answer`, `math_equal` -- and are never
-defined anywhere in the chapter. Minimal, honest stand-in implementations are
-provided below (regex \\boxed{} extraction + string-normalized equality) so
-`make_checker`'s own logic (unchanged, verbatim) actually executes end to end.
+GLUE note: `math-verify`'s real `parse` returns a list of parsed candidate
+answers (falsy when nothing parsed) and `verify(gold, pred)` does a
+SymPy-backed equivalence check. The fallback shim below reproduces just that
+contract with a regex \\boxed{} extraction plus normalized string equality,
+which is enough for `make_checker`'s control flow to execute end to end.
 """
 
 import random
 import re
 
 # ===========================================================================
-# GLUE: stand-in implementations for the chapter's "sketched" math-checker
-# helpers (normalize_math / extract_boxed_answer / math_equal). The chapter
-# says "here we sketch the math path" and never defines these; this is the
-# minimal honest glue needed so block #0's make_checker() can run.
+# GLUE: `math-verify` is optional (not in requirements-test.txt). Use the real
+# package when it is installed; otherwise fall back to a shim that honors the
+# same contract: parse() -> falsy-or-list-of-candidates, verify(gold, pred) -> bool.
 # ===========================================================================
-def normalize_math(ans):
-    if ans is None:
-        return ans
-    return ans.strip().replace(" ", "")
+try:
+    from math_verify import parse, verify           # the real thing, if available
+except ImportError:                                 # hermetic fallback shim
+    def _norm(ans):
+        return ans.strip().strip("$").replace(" ", "")
 
+    def parse(text):
+        m = re.search(r"\\boxed\{([^}]*)\}", text)
+        candidate = m.group(1) if m else text
+        candidate = _norm(candidate)
+        return [candidate] if candidate else []
 
-def extract_boxed_answer(completion):
-    m = re.search(r"\\boxed\{([^}]*)\}", completion)
-    return m.group(1) if m else None
-
-
-def math_equal(a, b):
-    return normalize_math(a) == normalize_math(b)
+    def verify(gold, pred):
+        return bool(gold) and bool(pred) and gold[0] == pred[0]
 
 
 # ===========================================================================
@@ -78,15 +80,19 @@ class RLTask:
         return hashlib.sha256(norm.encode()).hexdigest()[:16]
 
 
+# (The chapter's `from math_verify import parse, verify` is hoisted into the
+#  guarded import above so this file loads without the optional package.)
 def make_checker(task: RLTask) -> Callable[[str], float]:
     """Return a verifier closure. In production the code path runs in a sandbox;
     here we sketch the math path. The checker MUST be robust to extraction noise."""
     if task.domain == "math":
-        gold = normalize_math(task.answer)
+        gold = parse(f"${task.answer}$")              # parse gold once, reuse per rollout
         def check(completion: str) -> float:
-            pred = extract_boxed_answer(completion)   # parse \boxed{...}
-            return 1.0 if pred is not None and math_equal(pred, gold) else 0.0
+            pred = parse(completion)                  # extraction is part of the reward
+            return 1.0 if pred and verify(gold, pred) else 0.0
         return check
+    # For domain == "code", the checker executes `task.tests` against the extracted
+    # program inside a resource-limited sandbox — see the verifiers chapter.
     raise NotImplementedError(f"no checker for domain {task.domain}")
 
 
@@ -315,6 +321,23 @@ def rl_step(tasks, engine, B_keep=64, G=8, target_p=0.5,
 if __name__ == "__main__":
     # A pool spanning the full difficulty range, incl. the dead tails we must avoid.
     pool = [TaskState(i, true_p=rng.uniform(0.02, 0.98)) for i in range(4000)]
+
+    # OFFLINE PASS: k rollouts per task, used to (a) seed each Beta posterior with
+    # real pseudo-counts and (b) prune the dead tails. Do NOT skip this. Without
+    # it every posterior starts at the uninformative Beta(1,1), Thompson draws are
+    # pure noise, and selection is no better than uniform sampling -- for this pool
+    # the uniform baseline is E[1 - p^8 - (1-p)^8] ~= 0.81, which is essentially
+    # what an unseeded run scores. The offline pass is what buys the edge.
+    K_OFFLINE = 8
+    for t in pool:
+        succ = int(rng.binomial(K_OFFLINE, t.true_p))     # a real run calls the engine
+        t.s += succ
+        t.f += K_OFFLINE - succ
+    n_raw = len(pool)
+    pool = [t for t in pool if 0 < (t.s - 1.0) < K_OFFLINE]   # drop 0/k and k/k
+    print(f"offline pass: kept {len(pool)}/{n_raw} tasks "
+          f"({100 * (1 - len(pool) / n_raw):.0f}% pruned as dead tails)")
+
     for step in range(8):
         stats = rl_step(pool, FakeEngine(), B_keep=64, G=8, target_p=0.5)
         print(f"step {step:2d} | rho={stats['survival_rho']:.2f} "
@@ -322,6 +345,9 @@ if __name__ == "__main__":
               f"| buckets[0.0-1.0]={stats['bucket_counts']}")
         assert stats["kept"] == 64
         assert 0.0 < stats["survival_rho"] <= 1.0
+        # The chapter's claim: seeded Thompson selection beats the ~0.81 uniform
+        # baseline for this pool. Assert a loose floor so a regression is caught.
+        assert stats["survival_rho"] > 0.82
 
 
 # ===========================================================================

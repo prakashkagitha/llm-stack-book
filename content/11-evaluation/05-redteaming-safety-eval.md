@@ -67,6 +67,14 @@ A **jailbreak** is a prompt that bypasses a model's safety training to elicit be
 
 {{fig:redteam-jailbreak-attack-space-tree}}
 
+Attacks cluster into five families, and a serious evaluation samples from all of them, because defenses almost never generalize across families:
+
+- **Manual / persona attacks** — hand-written role-play, "DAN"-style personas, hypothetical or fictional framings. Cheap, highly transferable between models, and the family real users actually deploy.
+- **Encoding and distribution shift** — Base64, leetspeak, ciphers, or low-resource languages that move the prompt off the distribution where safety fine-tuning data was concentrated.
+- **Long-context attacks** — *many-shot jailbreaking* (Anil et al., Anthropic, 2024) fills the context window with hundreds of fabricated dialogue turns in which the assistant cheerfully complies; attack effectiveness scales predictably (power-law-like) with the number of in-context demonstrations. Every context-length extension is therefore also a safety regression to re-measure.
+- **Optimization attacks** — GCG (white-box, gradient-guided), AutoDAN (genetic search over *readable* prompts), PAIR/TAP (black-box LLM attacker). These are the ones you automate in CI.
+- **Weight-level attacks** — fine-tuning an aligned open-weight model on as few as a hundred harmful examples strips most refusal behavior, and even benign fine-tuning degrades it (Qi et al., 2023). Safety measured on the checkpoint you release says little about safety after a user's LoRA run, so anything published under an open licence should be evaluated in this threat model too.
+
 ### The GCG Attack: Mechanism
 
 The Greedy Coordinate Gradient (GCG) attack (Zou et al., *Universal and Transferable Adversarial Attacks on Aligned Language Models*, 2023) appends a suffix $s$ to a prompt $x_0$ and optimizes $s$ to maximize the probability that the model begins its response with a target string (e.g., "Sure, here is..."):
@@ -75,7 +83,74 @@ $$
 \min_{s \in \mathcal{V}^k} \; \mathcal{L}(x_0 \oplus s) = -\log p_\theta(\text{target} \mid x_0 \oplus s)
 $$
 
-where $\mathcal{V}$ is the vocabulary and $k$ is suffix length. The greedy coordinate descent replaces one token at a time using the gradient $\nabla_{e_i} \mathcal{L}$ over one-hot embedding vectors, evaluating top candidate substitutions. The discovered suffixes transfer across open-weight models and have some transferability to black-box APIs.
+where $\mathcal{V}$ is the vocabulary and $k$ is suffix length. The discovered suffixes transfer across open-weight models and have some transferability to black-box APIs.
+
+The mechanism is worth building once, because it is the only place in safety evaluation where you differentiate *through* the model. Discrete tokens are not differentiable, so GCG relaxes each suffix position to a one-hot vector, takes the gradient of the loss with respect to that relaxation, and reads off which vocabulary entries would most decrease the loss under a *first-order* approximation. That approximation is unreliable — swapping a token changes every downstream activation — so it is used only as a proposal distribution: sample candidate swaps from the top-$k$ per position, then score them **exactly** with a batched forward pass and keep the single best. Gradient for proposals, exact forward for selection.
+
+```python
+import torch
+import torch.nn.functional as F
+
+def gcg_step(model, embed_matrix, prefix_ids, suffix_ids, target_ids,
+             top_k: int = 256, n_candidates: int = 512, batch_size: int = 64):
+    """One Greedy Coordinate Gradient step (Zou et al., 2023).
+
+    model        : a HF causal LM in eval mode, params frozen
+    embed_matrix : model.get_input_embeddings().weight, shape (V, d)
+    prefix_ids   : (P,) the fixed request, already chat-templated
+    suffix_ids   : (L,) the adversarial suffix being optimized
+    target_ids   : (T,) the forced response opening, e.g. "Sure, here is"
+    Returns an updated suffix with loss <= the current loss.
+    """
+    V = embed_matrix.shape[0]
+    start = prefix_ids.numel() + suffix_ids.numel()   # index of first target token
+
+    # --- 1. Gradient of the target loss w.r.t. a relaxed one-hot suffix ---
+    one_hot = F.one_hot(suffix_ids, V).to(embed_matrix.dtype)   # (L, V)
+    one_hot.requires_grad_(True)
+    suffix_emb = one_hot @ embed_matrix                          # (L, d)
+    full_emb = torch.cat([embed_matrix[prefix_ids],
+                          suffix_emb,
+                          embed_matrix[target_ids]], dim=0).unsqueeze(0)
+
+    logits = model(inputs_embeds=full_emb).logits[0]             # (P+L+T, V)
+    # Position i predicts token i+1, so the target tokens are predicted
+    # by the logits at positions start-1 ... end-2.
+    loss = F.cross_entropy(logits[start - 1:-1], target_ids)
+    loss.backward()
+    grad = one_hot.grad                                          # (L, V)
+
+    # --- 2. Proposal set: per position, the top-k tokens the linear model
+    #        says would most *decrease* the loss (hence -grad). ---
+    topk_ids = (-grad).topk(top_k, dim=1).indices                # (L, top_k)
+
+    # --- 3. Sample random (position, replacement) swaps and score exactly. ---
+    device = suffix_ids.device
+    pos = torch.randint(0, suffix_ids.numel(), (n_candidates,), device=device)
+    pick = torch.randint(0, top_k, (n_candidates,), device=device)
+    cands = suffix_ids.repeat(n_candidates, 1)                   # (B, L)
+    cands[torch.arange(n_candidates, device=device), pos] = topk_ids[pos, pick]
+
+    losses = []
+    with torch.no_grad():
+        for chunk in cands.split(batch_size):                    # keep memory bounded
+            b = chunk.shape[0]
+            ids = torch.cat([prefix_ids.repeat(b, 1),
+                             chunk,
+                             target_ids.repeat(b, 1)], dim=1)
+            lg = model(input_ids=ids).logits[:, start - 1:-1]     # (b, T, V)
+            per_tok = F.cross_entropy(lg.reshape(-1, V),
+                                      target_ids.repeat(b, 1).reshape(-1),
+                                      reduction="none")
+            losses.append(per_tok.view(b, -1).mean(dim=1))
+    losses = torch.cat(losses)
+
+    # --- 4. Greedy accept: only move if the exact loss actually improved. ---
+    best = int(losses.argmin())
+    return cands[best] if losses[best] < loss.item() else suffix_ids
+```
+
+Run this for a few hundred steps (initializing the suffix to `! ! ! ! ...`) and the loss on "Sure, here is" typically collapses, at which point the suffix jailbreaks the model it was optimized on. Two practical consequences fall out of the mechanism. First, cost: each step is one backward plus `n_candidates / batch_size` forwards, so a single behavior on a 7B model is on the order of a GPU-hour — GCG is a *research* attack, not something you run on 500 behaviors nightly. Use the maintained `GraySwanAI/nanoGCG` implementation (multi-prompt and multi-model objectives, early stopping) rather than re-deriving it. Second, detectability: nothing in the objective rewards fluency, so GCG suffixes have enormous perplexity, and a simple windowed-perplexity filter catches most of them. That is exactly why AutoDAN and PAIR — which produce *readable* prompts — matter more for evaluating a deployed system.
 
 ### The PAIR Attack: LLM-as-Attacker
 
@@ -153,6 +228,8 @@ $$
 $$
 
 where $B$ is the set of target behaviors, $a(b)$ is the attacker's best prompt for behavior $b$, and Judge is the grading function.
+
+ASR is a binomial proportion over a small $|B|$, so report it with an interval, not as a bare number. With the 50 behaviors of a typical HarmBench subset and an observed ASR of $0.10$, the 95% normal-approximation half-width is $1.96\sqrt{0.1 \times 0.9 / 50} \approx 0.083$ — an 8-point band around a 10-point estimate. Two attacks separated by 5 points on such a suite are indistinguishable, and leaderboard tables that rank them are reading noise. See [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html) for the Wilson interval (better behaved near 0, where ASR usually lives) and for paired tests across a shared behavior set.
 
 !!! warning "Metric gaming"
     A model that outputs a very long refusal followed by the requested content will fool keyword-match detectors but not human evaluators. Always use a robust judge, and spot-check judge agreement with human raters.
@@ -653,7 +730,7 @@ Here is the full toolkit organized by evaluation stage.
 │ Bias / fairness       │ BBQ, WinoBias, StereoSet                │
 │                       │ Counterfactual data augmentation        │
 ├───────────────────────┼─────────────────────────────────────────┤
-│ Jailbreak / adversar. │ HarmBench, GCG, PAIR, AutoDAN          │
+│ Jailbreak / adversar. │ HarmBench, GCG, PAIR, AutoDAN           │
 │                       │ JailbreakBench, StrongREJECT classifier │
 ├───────────────────────┼─────────────────────────────────────────┤
 │ Over-refusal          │ XSTest, FPR on use-case datasets        │
@@ -666,12 +743,50 @@ Here is the full toolkit organized by evaluation stage.
 ├───────────────────────┼─────────────────────────────────────────┤
 │ Automated red-teaming │ PAIR, TAP, Rainbow Teaming              │
 │                       │ Red-team LLM (Perez et al.)             │
+├───────────────────────┼─────────────────────────────────────────┤
+│ Frameworks (runners)  │ garak, PyRIT, promptfoo redteam         │
+│                       │ Inspect AI, HarmBench, lm-eval-harness  │
+├───────────────────────┼─────────────────────────────────────────┤
+│ Open grader models    │ HarmBench-Llama-2-13b-cls, WildGuard,   │
+│                       │ Llama Guard family, Detoxify            │
 └───────────────────────┴─────────────────────────────────────────┘
 ```
 
+### The Open-Source Red-Teaming Stack
+
+You should almost never hand-roll the runner. A handful of open frameworks cover the space, and they compose — garak for broad scanning, HarmBench for comparable ASR, Inspect AI for anything agentic, lm-evaluation-harness for the cheap static slices:
+
+```bash
+# 1. garak (NVIDIA) — a probe-based LLM vulnerability scanner, closest in spirit
+#    to nmap: many small probes, each with its own detector, one HTML/JSONL report.
+pip install garak
+python -m garak --model_type huggingface --model_name gpt2 \
+    --probes dan,encoding,realtoxicityprompts --report_prefix baseline
+
+# 2. HarmBench (CAIS) — the standardized ASR pipeline: {attack method} x {target
+#    model} x {official classifier}, so numbers are comparable across papers.
+git clone https://github.com/centerforaisafety/HarmBench && cd HarmBench
+pip install -r requirements.txt   # configs/ selects method, model, and grader
+
+# 3. Inspect AI (UK AI Security Institute) — Task/solver/scorer framework with
+#    first-class Docker sandboxing; the agentic safety evals live here.
+pip install inspect-ai
+pip install "git+https://github.com/UKGovernmentBEIS/inspect_evals"
+inspect eval inspect_evals/agentharm --model openai/gpt-4o
+
+# 4. lm-evaluation-harness — the static, log-likelihood-scored safety tasks
+#    (no generation, no judge, cheap enough to run on every checkpoint).
+lm_eval --model hf --model_args pretrained=checkpoints/latest \
+        --tasks toxigen,crows_pairs,wmdp --batch_size 16
+```
+
+**PyRIT** (Microsoft's Python Risk Identification Toolkit) fills a different niche: it models an attack as an *orchestrator* driving *converters* (encoders, translators, obfuscators) and *scorers*, which makes multi-turn and multi-modal attack campaigns scriptable rather than one-off. **promptfoo**'s `redteam` subcommand is the most CI-friendly of the set and is covered on the defense side in [Security: Prompt Injection, Jailbreaks & Defenses](../12-production-mlops/06-security-prompt-injection.html).
+
+The other thing you should not hand-roll is the **grader**. The keyword detector in the PAIR code above is a teaching device; production evaluations use an open classifier checkpoint so that results are reproducible and the judge itself can be audited: `cais/HarmBench-Llama-2-13b-cls` (HarmBench's official behavior-completion classifier), `allenai/wildguard` (one model covering prompt harmfulness, response harmfulness, *and* refusal detection — convenient because over-refusal and ASR then share a grader), and the Llama Guard family, whose serving-side use is detailed in [Safety, Guardrails & Content Moderation](../12-production-mlops/04-safety-guardrails.html). For toxicity, `pip install detoxify` gives you an offline, API-key-free substitute for Perspective API — important when your eval runs in CI without network egress. Whichever you pick, pin the checkpoint revision: a grader silently upgrading underneath you invalidates every historical comparison, exactly as described in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
+
 ### StrongREJECT: A Better Grading Model
 
-A recurring problem in jailbreak evaluation is that naive string-matching (looking for "I cannot" or "I'm sorry") is easily gamed. **StrongREJECT** (Souly et al., 2024) is a trained grader that evaluates both the quality of a refusal and the presence of harmful content, addressing cases where a model refuses in a preamble but then complies in the response body.
+A recurring problem in jailbreak evaluation is that naive string-matching (looking for "I cannot" or "I'm sorry") is easily gamed. **StrongREJECT** (Souly et al., 2024) is a rubric-based grader — available both as a prompted LLM judge and as a fine-tuned evaluator — that scores both the quality of a refusal and the presence and usefulness of any harmful content, addressing cases where a model refuses in a preamble but then complies in the response body.
 
 ### Running a Safety Eval Suite
 
@@ -790,6 +905,14 @@ jobs:
           path: results/safety_${{ github.sha }}.json
 ```
 
+### Sizing the Suite: What to Run for Stack-100M
+
+At ~100M parameters the risk profile differs in kind, not just degree, and copying a frontier-lab eval plan wastes your entire budget. A 100M model scores near the multiple-choice chance floor on WMDP and cannot execute a multi-step exploit, so dangerous-capability elicitation is theater at this scale — run it once to document the floor, then stop. Three things genuinely matter for the capstone model:
+
+1. **Toxic continuation from the pretraining corpus.** This is a *data* property, not an alignment property, and it is the one safety number that moves when you change your filtering thresholds. Score a few thousand RealToxicityPrompts continuations with Detoxify offline; it is cheap enough to run at every mid-training checkpoint ([Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html)).
+2. **Refusal calibration across post-training stages.** SFT on an instruct mixture and then DPO on preference data can swing the over-refusal rate by tens of points in either direction — DPO in particular amplifies whatever refusal tendency the preference pairs encode. Run XSTest's 250 safe prompts as a regression gate after *each* stage, not only at the end ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
+3. **An honest scope statement.** Keyword-based refusal detection is defensible at this scale — a jailbroken 100M model produces incoherent text rather than usefully harmful text — but write that reasoning into the model card instead of leaving the reader to assume you used a trained grader. Report the numbers alongside the capability benchmarks in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
 ---
 
 ## 11.5.10 Evaluation Pitfalls and Best Practices
@@ -813,7 +936,8 @@ jobs:
     - Safety evaluation covers at least six distinct axes: toxicity, bias, jailbreaks/ASR, over-refusal, robustness to perturbation, and dangerous capability — you need separate tools for each.
     - The fundamental tradeoff is between harm rate (TPR on harmful content) and over-refusal rate (FPR on benign content); always report both.
     - Curated benchmarks like RealToxicityPrompts, ToxiGen, HarmBench, and WMDP measure default behavior; dangerous-capability evals measure *maximum* capability under adversarial elicitation — both are necessary.
-    - Automated red-teaming (GCG, PAIR, taxonomy-guided generation) scales coverage beyond what human testers can achieve; diversity in attack strategies is more important than sheer volume.
+    - Automated red-teaming (GCG, PAIR, taxonomy-guided generation) scales coverage beyond what human testers can achieve; diversity in attack *families* — persona, encoding, many-shot, optimization, fine-tuning — matters more than sheer volume, because defenses rarely generalize across families.
+    - Do not hand-roll the runner or the grader: garak, PyRIT, HarmBench, and Inspect AI cover the attack side, and pinned open classifiers (`cais/HarmBench-Llama-2-13b-cls`, `allenai/wildguard`, Detoxify) make the scoring side reproducible and auditable.
     - Over-refusal evaluation (XSTest and use-case-specific benign datasets) is just as important as harm detection; a model that refuses medical questions is not safe, it is miscalibrated.
     - Safety evaluations should be integrated into the CI/CD pipeline and run on every candidate checkpoint, not only at major release milestones.
     - LLM judges for grading harm require their own calibration and human-agreement validation; keyword-matching graders are insufficient for adversarial settings.
@@ -843,11 +967,15 @@ jobs:
     **Open-source & tools**
 
     - [centerforaisafety/HarmBench](https://github.com/centerforaisafety/HarmBench) — end-to-end pipeline for running 18 red-teaming methods against any HuggingFace or API-accessible LLM; includes adversarial training.
-    - [llm-attacks/llm-attacks](https://github.com/llm-attacks/llm-attacks) — reference implementation of GCG suffix optimization with demo notebooks and multi-model transfer experiments.
+    - [llm-attacks/llm-attacks](https://github.com/llm-attacks/llm-attacks) — reference implementation of GCG suffix optimization with demo notebooks and multi-model transfer experiments; [GraySwanAI/nanoGCG](https://github.com/GraySwanAI/nanoGCG) is the maintained, pip-installable successor.
+    - [NVIDIA/garak](https://github.com/NVIDIA/garak) — probe-and-detector LLM vulnerability scanner covering jailbreaks, encoding attacks, toxicity, and data leakage, with HuggingFace/OpenAI/local model backends and a single consolidated report.
+    - [Azure/PyRIT](https://github.com/Azure/PyRIT) — Microsoft AI Red Team's automation framework; orchestrator + converter + scorer abstractions make multi-turn and multi-modal attack campaigns scriptable.
+    - [UKGovernmentBEIS/inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) — the community eval collection for Inspect AI, including AgentHarm and WMDP, with Docker sandboxing for agentic safety tasks.
+    - [allenai/wildguard](https://huggingface.co/allenai/wildguard) — one open checkpoint that scores prompt harmfulness, response harmfulness, and refusal, so ASR and over-refusal can share a grader.
 
     **Go deeper**
 
-    - [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) — live documentation of ASL capability thresholds and required safety/security standards that gate model deployment; updated to v3.4, effective July 2026.
+    - [Anthropic Responsible Scaling Policy](https://www.anthropic.com/responsible-scaling-policy) — living documentation of the ASL capability thresholds and the safety/security standards that gate model deployment; it is revised periodically, so cite the version number in force when you run your evaluation rather than a remembered one.
 
 ## Further Reading
 
@@ -858,6 +986,8 @@ jobs:
 - **Perez et al.**, "Red Teaming Language Models with Language Models," arXiv:2202.03286, 2022.
 - **Röttger et al.**, "XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models," NAACL 2024.
 - **Li et al.**, "The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning," arXiv:2403.03218, 2024.
+- **Anil et al.**, "Many-shot Jailbreaking," Anthropic, 2024. (long-context in-context attack)
+- **Qi et al.**, "Fine-tuning Aligned Language Models Compromises Safety, Even When Users Do Not Intend To!", ICLR 2024.
 - **Ribeiro et al.**, "Beyond Accuracy: Behavioral Testing of NLP Models with CheckList," ACL 2020.
 - **Parrish et al.**, "BBQ: A Hand-Built Bias Benchmark for Question Answering," ACL Findings, 2022.
 - **Anthropic**, "Claude's Model Specification and Responsible Scaling Policy," https://www.anthropic.com/index/anthropics-responsible-scaling-policy (public, no specific quote).

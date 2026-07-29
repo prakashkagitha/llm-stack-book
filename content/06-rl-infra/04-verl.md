@@ -331,7 +331,10 @@ Put the pieces together and you can state precisely *why* veRL scales where a TR
 
 ### What still bottlenecks veRL
 
-No system is free. The dominant cost in synchronous veRL is the **generation stage's tail latency**: a batched group rollout finishes only when its *slowest, longest* sample finishes, so a few very long responses stall the whole step ("straggler" or "long-tail" effect). Mitigations include the async and disaggregated designs of [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html) and load-balancing tricks in [Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html). veRL has steadily added asynchronous rollout and partial-rollout features to attack exactly this. The second cost is the **train/inference numerical mismatch**: vLLM's generation kernels and the trainer's forward pass compute log-probs with different code paths, so the `old_log_prob` used in the importance ratio can disagree with what the sampler actually used. veRL recomputes `old_log_prob` under the *training* engine (step 2 of the driver loop) to keep the ratio self-consistent; this is a subtle but load-bearing correctness detail discussed in [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
+No system is free. The dominant cost in synchronous veRL is the **generation stage's tail latency**: a batched group rollout finishes only when its *slowest, longest* sample finishes, so a few very long responses stall the whole step ("straggler" or "long-tail" effect). Mitigations include the async and disaggregated designs of [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html) and load-balancing tricks in [Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html). veRL has steadily added asynchronous and server-mode rollout (`rollout.mode=async`, where vLLM/SGLang runs as an OpenAI-compatible server the driver talks to, which is also what makes multi-turn agentic rollouts practical — see [Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html)) to attack exactly this. The second cost is the **train/inference numerical mismatch**: vLLM's generation kernels and the trainer's forward pass compute log-probs with different code paths, so the `old_log_prob` used in the importance ratio can disagree with what the sampler actually used. veRL recomputes `old_log_prob` under the *training* engine (step 2 of the driver loop) to keep the ratio self-consistent; this is a subtle but load-bearing correctness detail discussed in [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
+
+!!! note "Aside: recomputation makes the ratio consistent, but the data is still off-policy"
+    Recomputing `old_log_prob` in the trainer fixes the *ratio* (it equals 1 before the first inner epoch, so clipping behaves), but it does not fix the *sampling* distribution: the tokens were actually drawn from vLLM's numerics $\pi_{\text{rollout}}$, not from the trainer's $\pi_{\text{train}}$. Even with identical weights, kernel and precision differences make these two distributions slightly different, so every veRL step is quietly a little off-policy — and the gap widens with MoE models, low-precision rollout, and long sequences, where it has been implicated in mid-run collapses. The 2025–2026 fix that has become standard practice is to *keep* the rollout log-probs (veRL exposes an option along the lines of `actor_rollout_ref.rollout.calculate_log_probs=True`) and apply a **truncated importance-sampling (TIS)** correction, weighting each token's loss by $\min\!\big(\pi_{\text{train}}/\pi_{\text{rollout}},\, C\big)$ for a cap $C$ of order 2–10. Truncation keeps the estimator's variance finite at the cost of a small bias. Check your installed version for the exact flag names; the principle — *correct for the engine you actually sampled from* — is the durable part.
 
 ## A worked example: writing a custom reward and advantage in veRL
 
@@ -352,7 +355,10 @@ def math_verifiable_reward(data, tokenizer, **kwargs):
     for resp, gold in zip(responses, golds):
         m = re.search(r"\\boxed\{([^}]*)\}", resp)     # parse the boxed answer
         pred = m.group(1).strip() if m else None
-        correct = (pred is not None) and is_math_equiv(pred, gold)  # symbolic check
+        # `is_math_equiv` = symbolic equivalence, NOT string equality ("1/2" == "0.5").
+        # In practice use HuggingFace's `math-verify` package (`from math_verify
+        # import parse, verify`) or veRL's bundled `verl.utils.reward_score` scorers.
+        correct = (pred is not None) and is_math_equiv(pred, gold)
         fmt = 1.0 if ("<think>" in resp and "</think>" in resp) else 0.0
         rewards.append(1.0 * correct + 0.1 * fmt)      # correctness dominates
     return torch.tensor(rewards, dtype=torch.float32)
@@ -371,13 +377,52 @@ def grpo_group_advantage(rewards, group_size, eps=1e-6, normalize_std=False):
     return adv.reshape(-1)                             # one scalar advantage / sample
 # (See chapter 5.8 for the full GRPO/RLOO/Dr.GRPO derivations and trade-offs.)
 
-# 3) Wiring: in the YAML config you point veRL at these. The driver loop's
-#    step 4 (reward) and step 6 (advantage) call them; steps 1/2/5/7 (the heavy
-#    SPMD stages) are untouched. You changed the algorithm without writing a single
-#    line of torch.distributed code. THAT is the HybridFlow productivity win.
+# 3) Wiring. Recent veRL exposes a `custom_reward_function.path` /
+#    `custom_reward_function.name` config pair that imports YOUR module; the
+#    conventional per-sample scorer signature is
+#        compute_score(data_source, solution_str, ground_truth, extra_info) -> float
+#    and the batch-level `reward_fn` above is the RewardManager that wraps it. The
+#    advantage estimator is chosen with `algorithm.adv_estimator` (gae, grpo, rloo,
+#    reinforce_plus_plus, ...); a new one is a function added to verl's advantage
+#    registry. Either way steps 1/2/5/7 — the heavy SPMD stages — are untouched:
+#    you changed the algorithm without writing a single line of torch.distributed
+#    code. THAT is the HybridFlow productivity win.
 ```
 
 Compare the effort: in a pure multi-controller system, changing the advantage estimator means editing SPMD code, getting the group reductions right with collectives, and worrying about which rank holds which sample. In veRL, it is the function above, run once on the driver over a `(B,)` tensor. The heavy lifting (generation across 8 GPUs, FSDP backward across 8 GPUs) is unchanged and invisible to you.
+
+### Actually launching a run
+
+veRL is configured with Hydra, and the entrypoint is a module, not a script you edit. Installation pulls in a *matched* vLLM/SGLang and PyTorch (version skew between veRL and the rollout engine is the single most common install failure — prefer the pinned extras or the official Docker image):
+
+```bash
+pip install verl                 # or: git clone https://github.com/verl-project/verl && pip install -e .
+                                 # add the matching rollout backend, e.g. `pip install "verl[vllm]"`
+
+# A single-node 8-GPU GRPO run on GSM8K. Every key below is a Hydra override of
+# verl/trainer/config/ppo_trainer.yaml — the same tree sketched earlier.
+python3 -m verl.trainer.main_ppo \
+    algorithm.adv_estimator=grpo \
+    data.train_files=$HOME/data/gsm8k/train.parquet \
+    data.val_files=$HOME/data/gsm8k/test.parquet \
+    data.train_batch_size=1024 \
+    data.max_prompt_length=512 \
+    data.max_response_length=1024 \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-0.5B-Instruct \
+    actor_rollout_ref.actor.strategy=fsdp \
+    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=256 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+    actor_rollout_ref.rollout.n=8 \
+    custom_reward_function.path=$PWD/my_reward.py \
+    custom_reward_function.name=compute_score \
+    trainer.n_gpus_per_node=8 trainer.nnodes=1 trainer.total_epochs=1
+```
+
+Data is Parquet with one row per prompt (a chat-formatted `prompt` field plus a `reward_model` dict carrying the `ground_truth`); veRL ships preprocessing scripts under `examples/data_preprocess/` that emit exactly this schema. Multi-node runs are the same command submitted to an existing Ray cluster (`ray start --head` on the first node, then `ray job submit -- python3 -m verl.trainer.main_ppo ... trainer.nnodes=N`) — the driver code does not change, only the `ResourcePool` shape. Exact key names do drift between releases, so check `verl/trainer/config/ppo_trainer.yaml` in the version you installed.
 
 !!! tip "Practitioner tip: match the rollout TP degree to your decode shape, not your train shape"
     A common veRL misconfiguration is setting the rollout `tensor_model_parallel_size` equal to whatever the trainer uses. They are independent knobs. The rollout TP degree should be chosen for *decode efficiency and KV-cache headroom*: too high and you pay all-reduce latency on every decode step for a model that already fits; too low and the KV cache can't hold your group-of-$G$ long generations. Start with the smallest TP that fits the model plus a generous KV budget, and let the 3D-HybridEngine handle the train→rollout regroup. Watching the vLLM "KV cache usage" and "preemption" metrics tells you immediately if TP is too small.
@@ -399,6 +444,8 @@ It helps to place veRL on the same map as the other frameworks in this Part.
 
 The throughline: TRL optimizes for *velocity at modest scale* by keeping everything in one process; veRL optimizes for *scale with flexibility* by separating the single-controller dataflow from multi-controller SPMD computation and bridging layouts with the 3D-HybridEngine. If you outgrow TRL because you need Megatron-scale training *and* a different vLLM rollout layout *and* 70B policies, veRL is where you go. If you need fully asynchronous or geographically distributed training, you reach further to the systems in [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html).
 
+For the book's capstone this cuts the other way, and it is worth being honest about it: **Stack-100M does not need veRL.** A 100M-parameter policy, its reference copy, and a vLLM rollout engine all fit on one consumer GPU, so there is exactly one data-parallel rank, no TP-degree mismatch, nothing to reshard, and no driver to bottleneck — the single-process TRL-style loop of [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) is strictly simpler and just as fast. The crossover comes when *any one* of three things is true: the policy no longer fits in one GPU's training state, you want the trainer and the rollout engine on different parallel layouts, or you need more than one node. What you take from this chapter into the capstone is the *shape* of the loop — the seven driver steps above are literally the steps our 100M GRPO trainer runs, just with the `WorkerGroup` calls collapsed into local function calls — plus the two correctness details (recompute `old_log_prob` in the trainer; budget for the max, not the sum, of rollout and training peaks) that bite at every scale.
+
 !!! interview "Interview Corner"
     **Q:** Explain HybridFlow's "single-controller + multi-controller" hybrid. Why is *neither* extreme good enough on its own, and give one concrete operation that lives on each side of the boundary.
 
@@ -417,7 +464,8 @@ The throughline: TRL optimizes for *velocity at modest scale* by keeping everyth
     - **Ray provides placement groups and addressable workers**, enabling colocation of the actor, critic, reference, and rollout engine on the *same* GPUs (time-sliced). This maximizes GPU utilization. NCCL still does the fast collectives inside each worker group.
     - **veRL scales because** no large data crosses the driver, parallelisms compose freely across stages, colocation eliminates idle GPUs, resharding is in-memory, and best-of-breed engines (vLLM, FSDP, Megatron) are orchestrated unmodified.
     - **Customizing reward and advantage is plain local Python on tiny tensors** — the single-controller payoff. Changing the algorithm requires zero `torch.distributed` code, unlike a multi-controller system.
-    - **Known bottlenecks:** synchronous rollout tail-latency (stragglers) and the train/inference log-prob mismatch (mitigated by recomputing `old_log_prob` under the training engine). Async and disaggregated designs address the former.
+    - **Known bottlenecks:** synchronous rollout tail-latency (stragglers) and the train/inference log-prob mismatch. Recomputing `old_log_prob` under the training engine makes the ratio self-consistent but leaves the data mildly off-policy; the modern fix adds a truncated importance-sampling correction against the rollout engine's own log-probs. Async, server-mode, and disaggregated rollout address the stragglers.
+    - **You drive veRL from the config, not the source:** `python3 -m verl.trainer.main_ppo` with Hydra overrides (`algorithm.adv_estimator`, `actor_rollout_ref.rollout.*`, `custom_reward_function.path`), Parquet prompt files carrying `ground_truth`, and the same command submitted to a Ray cluster for multi-node. At ~100M scale you do not need any of this — see the capstone's single-GPU GRPO loop.
 
 !!! sota "State of the Art & Resources (2026)"
     veRL / HybridFlow has become the dominant open-source substrate for serious RL-for-LLM work; its single-controller + multi-controller hybrid and 3D-HybridEngine are now the reference architecture, with the Megatron backend scaling to 671B-class MoE models (DeepSeek-671B, Qwen3-235B) on hundreds of GPUs as of 2026.
