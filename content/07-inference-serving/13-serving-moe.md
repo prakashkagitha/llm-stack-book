@@ -109,7 +109,57 @@ y = moe_ep_layer(x, rw, w1, w2, k, G)
 print(y.shape)   # torch.Size([12, 16])
 ```
 
-The `mask.nonzero` step is the heart of the cost model: its length on each rank is **how many tokens that rank must process**, and it varies wildly with routing. In a real distributed kernel, steps 2 and 4 are `torch.distributed.all_to_all_single` calls with per-rank split sizes computed from the router output. The grouped GEMM in step 3 is a single fused kernel (e.g., CUTLASS grouped GEMM, or Triton's `grouped_matmul`) that runs all local experts' matmuls with one launch, padding or masking ragged group sizes.
+The `mask.nonzero` step is the heart of the cost model: its length on each rank is **how many tokens that rank must process**, and it varies wildly with routing. The grouped GEMM in step 3 is a single fused kernel (e.g., CUTLASS grouped GEMM, Triton's grouped-GEMM tutorial kernel, MegaBlocks' block-sparse kernels, or DeepSeek's FP8 **DeepGEMM**) that runs all local experts' matmuls with one launch, padding or masking ragged group sizes.
+
+Steps 2 and 4 in a real deployment are `torch.distributed.all_to_all_single` calls. It is worth writing that out once, because the variable-length version has a subtlety the in-process simulation hides: **you must exchange the counts before you can exchange the payload.**
+
+```python
+# real_ep_alltoall.py — the actual collective. Run with:
+#   torchrun --nproc_per_node=2 real_ep_alltoall.py
+import torch
+import torch.distributed as dist
+
+dist.init_process_group("nccl" if torch.cuda.is_available() else "gloo")
+rank, G = dist.get_rank(), dist.get_world_size()
+if torch.cuda.is_available():
+    torch.cuda.set_device(rank)
+dev = f"cuda:{rank}" if torch.cuda.is_available() else "cpu"
+
+T, d, E, k = 8, 16, 8, 2
+experts_per_rank = E // G
+x    = torch.randn(T, d, device=dev)                        # this rank's local tokens
+topi = torch.randint(0, E, (T, k), device=dev)              # stand-in for router output
+
+# --- 1. Permute so tokens for the same DESTINATION RANK are contiguous ---
+flat_tok = torch.arange(T, device=dev).repeat_interleave(k)  # (T*k,) home token id
+flat_eid = topi.reshape(-1)                                  # (T*k,) chosen expert id
+dst_rank = flat_eid // experts_per_rank                      # which GPU owns that expert
+order    = torch.argsort(dst_rank)                           # group rows by destination
+send_buf = x[flat_tok[order]].contiguous()                   # (T*k, d) payload, permuted
+send_counts = torch.bincount(dst_rank, minlength=G)          # rows destined for each rank
+
+# --- 2. METADATA all-to-all: every rank must learn how much it will RECEIVE ---
+recv_counts = torch.empty_like(send_counts)
+dist.all_to_all_single(recv_counts, send_counts)              # fixed-size, one int per rank
+sc, rc = send_counts.tolist(), recv_counts.tolist()           # <-- device->host SYNC
+
+# --- 3. DISPATCH: the payload all-to-all-v, variable splits on both sides ---
+recv_buf = torch.empty(sum(rc), d, device=dev, dtype=x.dtype)
+dist.all_to_all_single(recv_buf, send_buf,
+                       output_split_sizes=rc, input_split_sizes=sc)
+
+# ... local grouped GEMM over recv_buf (each rank's own experts) goes here ...
+
+# --- 4. COMBINE: mirror image — swap the split sizes, send results home ---
+back = torch.empty_like(send_buf)
+dist.all_to_all_single(back, recv_buf,
+                       output_split_sizes=sc, input_split_sizes=rc)
+# back[i] belongs to local token flat_tok[order][i]; scatter-add with its gate weight.
+print(f"rank {rank}: sent {sc}, received {rc}")
+dist.destroy_process_group()
+```
+
+Two things in that listing are the reason production stacks do not just call NCCL. First, the **metadata collective is a second round trip** on the critical path — two barriers per MoE layer instead of one. Second, `send_counts.tolist()` is a **device-to-host synchronization**: the CPU must wait for the router to finish on the GPU before it can even size the receive buffer or launch the next kernel, which drains the pipeline and makes the step impossible to capture in a CUDA graph. Removing both is a central design goal of the kernels in the next section.
 
 ### The Two Costs: Bytes Moved and the Barrier
 
@@ -134,10 +184,11 @@ DeepEP provides two families of kernels:
 
 {{fig:moe-serving-alltoall-overlap-timeline}}
 
-Two further tricks matter:
+Three further tricks matter:
 
 1. **FP8 dispatch.** DeepEP can quantize the dispatched activations to FP8 (E4M3) on the fly, halving the bytes moved versus BF16. The combine comes back in BF16 (gate-weighted sums are precision-sensitive). This nearly halves dispatch latency at negligible quality cost — the same logic as FP8 KV cache.
 2. **Communication–computation overlap via the SM-free design.** The low-latency kernels are designed to use few or no streaming multiprocessors for the RDMA path (the NIC does the work), leaving the SMs free to compute experts on already-arrived tokens. The classic DeepSeek serving picture is a software pipeline where, at any instant, one micro-batch's tokens are *in flight* over RDMA while another micro-batch's experts are *computing*.
+3. **Fixed-size buffers, so no host sync and no metadata round trip.** The low-latency path pre-allocates a communication buffer sized by a configured *maximum dispatch tokens per rank* and pads to it, rather than sizing receives from live counts. That removes both problems we hit in the raw `all_to_all_single` listing above — the extra metadata collective and the device-to-host sync — and, because every kernel now has static shapes, it lets the whole decode step (attention → dispatch → grouped GEMM → combine) be captured in a **CUDA graph** ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)), collapsing per-layer launch overhead that at decode batch sizes can rival the collective itself. The natural partner on the compute side is **DeepGEMM**, DeepSeek's FP8 grouped-GEMM library, whose "masked" layout is designed to consume exactly these padded ragged buffers without a shape-dependent relaunch.
 
 ```python
 # Sketch of the low-latency decode pattern DeepEP enables (pseudo-API).
@@ -173,7 +224,7 @@ Routing is never perfectly uniform, and uniformity is harder to guarantee at inf
 
 **First, no auxiliary loss is acting.** During training, a load-balancing loss (or DeepSeek's auxiliary-loss-free bias-correction) actively pushes the router toward balance. At inference the weights are frozen; whatever imbalance the deployment-time traffic induces is simply *suffered*. Worse, real traffic is not the training distribution: a burst of code requests, or one language, or one prompt template repeated across a batch (think a RAG system with a fixed system prompt) can correlate routing decisions and spike a few experts.
 
-**Second, decode batches are small, so the law of large numbers does not save you.** With $B=2048$ tokens spread over $E=256$ experts, expected tokens per expert is $\sim 8B \cdot k/E$ and the *relative* fluctuation is small. With a low-latency decode batch of $B=64$, a single popular expert can receive several times the mean, and the all-to-all barrier waits for it.
+**Second, decode batches are small, so the law of large numbers does not save you.** With $B=2048$ tokens spread over $E=256$ experts at $k=8$, the expected load per expert is $Bk/E = 2048\cdot 8/256 = 64$ tokens, and the *relative* fluctuation ($\propto 1/\sqrt{64}$) is small. With a low-latency decode batch of $B=64$ the mean is just $2$ tokens per expert, so a single popular expert can receive several times the mean, and the all-to-all barrier waits for it.
 
 **Third, every step is a barrier.** In prefill you process thousands of tokens per request; skew averages out over the prompt and the cost is amortized over a big GEMM. In decode you cross the all-to-all once per token per layer; a hot expert taxes *every single step*.
 
@@ -271,7 +322,7 @@ This asymmetry is the core argument for **disaggregating** prefill and decode on
 
     **EP layout.** Place 256 experts over 16 GPUs $\Rightarrow$ 16 experts/GPU. Attention runs DP (each GPU owns its requests' MLA KV); MoE runs EP=16 with all-to-all.
 
-    **All-to-all per layer (decode, BF16 dispatch).** Per token, dispatch moves $k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}$. With FP8 dispatch, ~57 KB. For a decode batch of $B=128$ tokens that is $\approx 7.3\text{ MB}$ out per MoE layer; over 58 MoE layers, $\approx 423\text{ MB}$ moved per decode step (dispatch) and similar for combine. At an effective ~150 GB/s usable bidirectional RDMA per GPU after overlap, the *exposed* (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.
+    **All-to-all per layer (decode).** Per token, BF16 dispatch moves $k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}$; FP8 dispatch halves that to ~57 KB. Taking the FP8 path, a decode batch of $B=128$ tokens sends $\approx 7.3\text{ MB}$ out per MoE layer; over 58 MoE layers, $\approx 423\text{ MB}$ moved per decode step (dispatch), with combine returning a comparable volume in BF16. At an effective ~150 GB/s usable bidirectional RDMA per GPU after overlap, the *exposed* (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.
 
     **KV budget.** MLA compresses KV to a small latent (on the order of ~70 KB/token across all layers in FP8, vs. hundreds of KB for vanilla MHA). With ~38 GB/GPU free, one GPU holds $\sim 38\text{e}9 / 70\text{e}3 \approx 540{,}000$ tokens of KV — i.e., hundreds of concurrent long-context requests *per GPU*, times 16 GPUs. KV capacity is plentiful precisely because MLA + attention-DP avoids replication.
 
@@ -362,6 +413,29 @@ A production MoE serving stack (vLLM, SGLang, TensorRT-LLM all converge here) as
 6. **Memory tiering.** If HBM is tight, LRU expert caching / offload — but only for low-QPS or batch workloads; interactive low-latency serving needs experts resident.
 7. **Measure the right thing.** Report $\eta$ (dense-equivalent efficiency), p99 TPOT, and the routing imbalance factor on *replayed production traffic*, not synthetic uniform routing.
 
+In practice you do not implement any of this: you select it with launch flags. Both mainstream open-source engines expose the same four decisions — EP on/off, the all-to-all backend, DP attention, and redundant experts:
+
+```bash
+# --- vLLM: attention-DP + expert-EP across 2 nodes (16 GPUs), DeepEP low-latency backend.
+# The EP degree is data_parallel_size x tensor_parallel_size; --enable-expert-parallel
+# switches the MoE sublayer from TP-sharded to EP-sharded on those same ranks.
+VLLM_ALL2ALL_BACKEND=deepep_low_latency \
+vllm serve deepseek-ai/DeepSeek-V3 \
+  --data-parallel-size 16 --tensor-parallel-size 1 \
+  --enable-expert-parallel \
+  --enable-eplb          # Expert Parallel Load Balancer: redundant + periodically rebalanced experts
+
+# --- SGLang: the same layout, DeepEP low-latency kernels, 32 redundant expert replicas.
+python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-V3 \
+  --tp 16 --dp 16 --enable-dp-attention \
+  --enable-deepep-moe --deepep-mode low_latency \
+  --ep-num-redundant-experts 32
+```
+
+Flag *spellings* move between releases (check the vLLM and SGLang docs linked below); the four *concepts* they select are the stable part, and each maps to a section of this chapter. For prefill pools, flip the backend to the high-throughput kernel (`deepep_high_throughput` / `--deepep-mode normal`) and use a smaller EP degree, then wire the two pools together with the KV transfer described in [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
+
+**Scope note.** None of this machinery is needed at capstone scale: a ~100M-parameter model fits on one GPU, so a small MoE variant of Stack-100M ([Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html)) keeps every expert resident on a single device and this whole chapter collapses to step 3 of the reference implementation — a grouped GEMM, with no all-to-all at all. Expert parallelism is what you reach for when the expert weights stop fitting in one device's (then one node's) HBM; everything above starts to bind at that threshold, not before.
+
 ```python
 def ep_decode_step_pipeline(batch, layers, ep, sched):
     """
@@ -392,7 +466,7 @@ Every line of that loop is a decision this chapter argued for: local attention b
 
     - **MoE serving is a memory and movement problem, not an arithmetic one.** Per-token FLOPs equal a small dense model, but all experts must stay resident (a modest decode batch touches ~85%+ of experts), and every MoE layer needs two all-to-all collectives.
     - **The all-to-all is a barrier.** Decode crosses dispatch+combine once per token per layer; the step finishes only when the slowest, most-overloaded rank does. Latency, not bandwidth, is the enemy at decode.
-    - **DeepEP-style kernels are the enabler:** high-throughput (NVLink+RDMA forwarding) for prefill, low-latency hook-overlap (pure RDMA, FP8 dispatch) for decode. The goal is *zero exposed all-to-all* on the decode critical path.
+    - **DeepEP-style kernels are the enabler:** high-throughput (NVLink+RDMA forwarding) for prefill, low-latency hook-overlap (pure RDMA, FP8 dispatch) for decode. The goal is *zero exposed all-to-all* on the decode critical path — which also means fixed-size padded buffers, so no metadata round trip, no device-to-host sync, and a CUDA-graph-capturable step. In practice you select all of this with launch flags (`--enable-expert-parallel` + `VLLM_ALL2ALL_BACKEND` in vLLM; `--enable-dp-attention --enable-deepep-moe` in SGLang), not by writing kernels.
     - **Hot-expert skew is a tail-latency weapon at inference** (no auxiliary loss acting, small batches, per-step barrier). Counter with redundant replicas of hot experts, dynamic rebalancing, shared experts, and replication-over-dropping.
     - **The modern layout is hybrid: attention-DP (local KV, no replication, zero attention collective) + expert-EP.** It requires balancing tokens-in-flight across attention-DP ranks, coupling scheduling to the parallelism layout.
     - **Prefill and decode want opposite EP configs:** prefill = smaller EP + throughput kernels; decode = *large* EP + latency kernels. This argues for disaggregating the two onto separate pools.
@@ -422,7 +496,9 @@ Every line of that loop is a decision this chapter argued for: local attention b
     **Open-source & tools**
 
     - [deepseek-ai/DeepEP](https://github.com/deepseek-ai/DeepEP) — purpose-built EP communication library: high-throughput NVLink+RDMA-forwarding kernels for prefill, low-latency hook-overlap RDMA kernels for decode, and FP8 dispatch.
+    - [deepseek-ai/DeepGEMM](https://github.com/deepseek-ai/DeepGEMM) — FP8 grouped-GEMM kernels for MoE experts, with "contiguous" (prefill) and "masked" (decode, CUDA-graph-friendly) layouts that pair with DeepEP's dispatch buffers.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance serving framework with native large-scale EP, DeepEP integration, EPLB load rebalancing, and disaggregated prefill/decode for MoE models.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — `--enable-expert-parallel` with pluggable all-to-all backends (`VLLM_ALL2ALL_BACKEND`: naive, DeepEP high-throughput/low-latency) plus the EPLB expert load balancer.
 
     **Go deeper**
 

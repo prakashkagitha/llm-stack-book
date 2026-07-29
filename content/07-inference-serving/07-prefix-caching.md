@@ -4,7 +4,7 @@ Every token the decoder emits costs one full forward pass through the model's at
 
 At small scale this is a pleasant micro-optimization. At production scale — where a system-prompt of 2,000 tokens is prepended to every conversation, or where a 64-shot RAG document forms the head of every retrieval request — prefix caching is a first-order economic lever. It can reduce time-to-first-token (TTFT) for subsequent requests by 80–95 % and cut total GPU compute proportionally.
 
-This chapter develops prefix caching from first principles: the algebra of KV materialization, hash-based block identification, the two major implementations (SGLang's RadixAttention and vLLM's Automatic Prefix Caching), eviction policy, cross-request sharing semantics, and the concrete deployment patterns where shared prefixes appear at scale. We close with a worked numerical cost model and practical configuration guidance.
+This chapter develops prefix caching from first principles: the algebra of KV materialization, hash-based block identification, the two major implementations (SGLang's RadixAttention and vLLM's Automatic Prefix Caching), the cascade attention kernels that turn a shared prefix into shared *bandwidth*, eviction policy, cross-request sharing and tenant-isolation semantics, and the concrete deployment patterns where shared prefixes appear at scale. We close with a worked numerical cost model and practical configuration guidance — including how to get prefix reuse with nothing but `transformers` and a single GPU.
 
 For the low-level anatomy of the KV cache itself and the paged memory allocator that makes per-request caching tractable, first read [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).
 
@@ -60,7 +60,9 @@ The engine then runs prefill only for blocks 2 and 3 (32 tokens), using the cach
 
 ### Hash collision risk
 
-SHA-256 truncated to 64 bits provides ample collision resistance for any realistic serving workload. However, some systems (e.g., vLLM's internal implementation) use simpler 64-bit hashes for speed. A hash collision would cause a request to receive incorrect KV tensors, producing subtly wrong output. In practice, the probability of a collision in a fleet serving billions of requests is negligible, but safety-critical deployments may want to add a lightweight token-ID equality check on hash hits.
+SHA-256 truncated to 64 bits provides ample collision resistance for any realistic serving workload. However, engines default to cheaper hashes for speed: vLLM V1 keys blocks with Python's built-in `hash()` over a tuple of `(prev_hash, token_ids, extra_keys)`, and exposes `--prefix-caching-hash-algo` so you can switch to SHA-256 (or a canonical CBOR-serialised SHA-256 variant) when you want a deterministic, cross-process-stable digest. A hash collision would cause a request to receive incorrect KV tensors, producing subtly wrong output. In practice, the probability of a collision in a fleet serving billions of requests is negligible, but safety-critical deployments may want to add a lightweight token-ID equality check on hash hits.
+
+Note the `extra_keys` slot in that tuple. A block hash must cover *everything* that the KV tensors depend on, not just token IDs: a multimodal request's image embeddings, the LoRA adapter ID a request is routed to (see [Multi-Tenant LoRA & Adapter Serving at Scale](../07-inference-serving/14-multi-tenant-lora-serving.html)), and any per-tenant cache salt all become part of the key. Forgetting one of these is the classic way to build a prefix cache that silently returns another request's activations.
 
 ---
 
@@ -248,7 +250,10 @@ class APCBlockAllocator:
     def _compute_block_hash(self, prev_hash: int, token_ids: list[int]) -> int:
         """Chain the previous block hash with current token IDs."""
         import hashlib
-        data = prev_hash.to_bytes(8, 'little') + bytes(token_ids)
+        # Encode each token id in 4 bytes. (`bytes(token_ids)` would raise for
+        # any id > 255, and real vocabularies run to 32k-256k entries.)
+        packed = b"".join(t.to_bytes(4, 'little') for t in token_ids)
+        data = prev_hash.to_bytes(8, 'little') + packed
         return int.from_bytes(hashlib.sha256(data).digest()[:8], 'little')
 
     def allocate_or_reuse(
@@ -321,6 +326,20 @@ class APCBlockAllocator:
 
 Both systems share the same fundamental guarantee: **only complete blocks that are fully written (all token IDs fixed) are eligible for caching**. A partially-filled block at the trailing edge of a prefix cannot be placed in the cache because its hash would change as more tokens are appended.
 
+### The kernel side: cascade (shared-prefix) attention
+
+Everything above is *memory-management* work: the block table now points many requests at the same physical pages. But the attention kernel still does redundant work. During decode, each of the $N$ requests in a batch issues its own paged-attention pass, and each pass streams the entire shared prefix's K and V out of HBM — so the same physical pages are read $N$ times per step. Decode is memory-bandwidth bound (see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)), so with a long shared prefix this re-reading, not the prefill you saved, becomes the dominant cost.
+
+**Cascade attention** removes it. Split the attention for each query into two disjoint key ranges — the shared prefix and the request's private suffix — compute each separately, and merge. The shared-prefix pass is run *once for the whole batch* as a multi-query kernel (all $N$ queries against one contiguous KV region, so the prefix is read from HBM exactly once), while the suffix pass stays per-request and paged. Merging is exact, not an approximation, because softmax decomposes over a partition of the keys. If pass $i$ returns partial output $O_i$ and its log-sum-exp $s_i = \log \sum_{j \in \mathcal{K}_i} e^{q \cdot k_j / \sqrt{d}}$, then
+
+$$
+O = \sigma O_1 + (1 - \sigma) O_2, \qquad \sigma = \frac{e^{s_1}}{e^{s_1} + e^{s_2}}
+$$
+
+which is precisely the online-softmax rescaling FlashAttention already performs across tiles ([FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)) — cascade attention just exposes it as a public operation over separately-computed partials.
+
+The library that implements this is **FlashInfer**: `MultiLevelCascadeAttentionWrapper` takes a radix-tree-shaped set of shared levels (a global system prompt, then a per-tenant few-shot header, then per-request tokens) and merges them level by level with its `merge_state` primitive. vLLM's FlashInfer and FlashAttention backends enable cascade attention automatically when the scheduler observes a long-enough prefix shared by enough requests in the current batch (it is a throughput heuristic — with only two or three sharers the extra kernel launch is not worth it); SGLang applies the same trick for its radix-tree hits. ChunkAttention (Ye et al., 2024) is the same idea with a different data layout.
+
 ---
 
 ## 7.7.5 Cache Eviction and Memory Pressure
@@ -371,7 +390,9 @@ This design is sometimes called **copy-on-write semantics**: the cached prefix i
 
 Most implementations cache across sessions — two entirely separate HTTP requests from different users share blocks if they have the same prefix. Within a single multi-turn conversation, caching is even simpler because the serving framework can explicitly pin the turn history in the cache.
 
-The **security implication** is real: if two users share the same system-prompt block in GPU memory and the KV data leaks via a side channel, information about the system prompt could be recovered. In practice, the system prompt is already visible to anyone who can query the endpoint, so this is not usually a concern. For multi-tenant deployments with confidential system prompts per tenant, consider running separate model instances or using per-tenant prefix isolation.
+The **security implication** is real, and it is a *timing* channel more than a memory channel: because a cache hit is dramatically faster than a miss, an attacker who can measure TTFT can test guesses about another tenant's prefix one block at a time, learning whether their guessed 16 tokens were already in the cache. In practice, a system prompt is usually visible to anyone who can query the endpoint anyway, so this rarely matters — but it does matter when the prefix contains retrieved documents or user PII.
+
+The standard mitigation is **cache salting**: mix a per-tenant secret into the seed of the hash chain, so tenant A's blocks can never collide with tenant B's even for identical tokens. vLLM exposes this as a per-request `cache_salt` field (the salt is folded into the first block's hash, and the chain carries it forward), which gives you tenant isolation without the cost of running separate model replicas. Reuse within a tenant is preserved; reuse across tenants is made impossible by construction.
 
 ---
 
@@ -438,7 +459,7 @@ For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): 
 | Multi-agent tool definitions | Tool schemas + examples | 1,000–10,000 tokens |
 | Batch classification | Rubric + calibration examples | 500–5,000 tokens |
 
-The agent use case (see [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html)) deserves particular attention. In a ReAct loop, each new turn prepends the entire conversation history. After $k$ turns with average turn length $L$, the prefix is $k \cdot L$ tokens. Without prefix caching, total prefill cost scales as $O(k^2 L)$; with caching and a warm trie, each new turn costs only $O(L)$ for the suffix, so total cost scales as $O(kL)$ — a qualitative improvement in long-horizon agent tasks.
+The agent use case (see [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html)) deserves particular attention. In a ReAct loop, each new turn prepends the entire conversation history. After $k$ turns with average turn length $L$, the prefix is $k \cdot L$ tokens. Without prefix caching, total prefill cost scales as $O(k^2 L)$; with caching and a warm trie, each new turn costs only $O(L)$ for the suffix, so total cost scales as $O(kL)$ — a qualitative improvement in long-horizon agent tasks. This is also why a "context compaction" step that rewrites earlier turns is so expensive: it invalidates the whole trie path from the edit point onward, forcing a full re-prefill. Prefer appending over editing, and when you must compact, do it rarely and at a block boundary. The narrow research agent in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) is built on exactly this append-only discipline.
 
 {{fig:prefixcache-agent-turn-growth}}
 
@@ -485,6 +506,51 @@ python -m sglang.launch_server \
 # Metrics available at http://localhost:30000/get_server_info
 ```
 
+### Prefix reuse without a serving engine
+
+You do not need vLLM to get the benefit — and for a ~100M model served on one GPU or a laptop, you probably should not run vLLM at all. The mechanism is available directly in `transformers` through `past_key_values`: prefill the shared prefix once, keep the resulting `Cache` object, and hand a *copy* of it to every request. This is exactly the pattern used to serve Stack-100M in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
+```python
+# Minimal prefix cache with plain HF transformers: the mechanism vLLM/SGLang
+# industrialise, in ~15 lines. Good enough for a single-GPU 100M-class model.
+import copy
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"  # stand-in for your own 100M model
+tok = AutoTokenizer.from_pretrained(MODEL)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL, torch_dtype=torch.bfloat16, device_map="auto").eval()
+
+SYSTEM = "You are a terse research assistant. Answer in one sentence.\n\n"
+sys_ids = tok(SYSTEM, return_tensors="pt").input_ids.to(model.device)
+
+with torch.no_grad():
+    # ONE prefill of the shared prefix. `past_key_values` is a Cache object
+    # holding K and V for every layer at every prefix position.
+    PREFIX_CACHE = model(sys_ids, use_cache=True).past_key_values
+
+def answer(user_text: str, max_new_tokens: int = 48) -> str:
+    # deepcopy is mandatory: generation APPENDS the new tokens' KV in place,
+    # so a shared cache would be corrupted by the first request that used it.
+    past = copy.deepcopy(PREFIX_CACHE)
+    full = torch.cat(
+        [sys_ids, tok(user_text, return_tensors="pt").input_ids.to(model.device)],
+        dim=1)
+    # Pass the FULL prompt plus the warm cache: generate() sees that the cache
+    # already covers the first sys_ids.shape[1] positions and prefills only the
+    # remaining suffix.
+    out = model.generate(full, past_key_values=past, use_cache=True,
+                         max_new_tokens=max_new_tokens, do_sample=False)
+    return tok.decode(out[0, full.shape[1]:], skip_special_tokens=True)
+
+print(answer("What is a radix tree?"))
+```
+
+The `deepcopy` is the whole reason paged allocators exist: it costs a full copy of the prefix KV *per concurrent request*, which is precisely the $O(N \cdot P)$ memory blow-up that PagedAttention's shared read-only pages eliminate. For a handful of concurrent requests against a 100M model this is fine; past a few dozen it is not, and that is your cue to move to vLLM or SGLang.
+
+At the GGUF end of the stack, `llama.cpp`'s `llama-server` does the same thing per slot: it keeps the previous prompt for each slot and reuses their longest common prefix (the `cache_prompt` request option, on by default in recent builds), and `--slot-save-path` lets you save and restore a slot's KV state to disk so a long system prompt survives a restart — the KV cache being stored in whatever `--cache-type-k/-v` format you chose (see [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html)).
+
 ### Maximising hit rate: best practices
 
 ```python
@@ -522,6 +588,9 @@ def build_prompt_bad(user_code: str, timestamp: str) -> str:
 
 **Alignment to block boundaries.** Because the cache operates on full blocks, prompts that are aligned to multiples of `block_size` tokens get the best coverage. If your system prompt is 1,020 tokens and `block_size=16`, the last partial block (4 tokens) will never be cached. Pad the system prompt to 1,024 tokens to get full coverage.
 
+!!! warning "Pad with real text, not with `<pad>`"
+    The "padding" here sits *inside* the context, between the system prompt and the user turn — the model attends to it and cannot mask it out (a causal decoder has no padding mask for interior positions, and removing the tokens would shift every subsequent RoPE position). So do not literally emit `pad_token_id`, which the model has probably never seen mid-sequence during training and which will perturb the output. Pad with innocuous in-distribution text instead — trailing newlines, a separator rule like `\n---\n`, or a sentence of harmless boilerplate — and check the token count with your tokenizer until it lands on a multiple of `block_size`. The `pad_to_block_boundary` helper below shows the arithmetic; substitute a real filler-token ID for `pad_token_id` in production.
+
 ```python
 def pad_to_block_boundary(token_ids: list[int],
                            block_size: int,
@@ -543,7 +612,7 @@ When chunked prefill is enabled (see [Disaggregated Prefill/Decode & Chunked Pre
 
 ### Interaction with speculative decoding
 
-Speculative decoding (see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)) accelerates the decode phase, not prefill. Prefix caching accelerates prefill. They are largely orthogonal and can be combined: enable both for workloads that have a large shared prefix followed by a multi-token generation step.
+Speculative decoding (see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)) accelerates the decode phase; prefix caching primarily accelerates prefill (and, via cascade attention, the HBM traffic of decode). They are largely orthogonal and can be combined: enable both for workloads that have a large shared prefix followed by a multi-token generation step. One interaction to know: rejected speculative tokens must not be committed to the prefix cache, since their KV blocks correspond to token IDs that were never actually accepted into the sequence — engines handle this by only hashing and publishing blocks after the accepted-length is known.
 
 ---
 
@@ -557,7 +626,9 @@ The engineering challenge is cache invalidation: if the model weights change (e.
 
 ### Multi-model and cross-layer caching
 
-All the caching described so far applies to a single model instance. In a serving cluster running multiple replicas of the same model, caching can be extended across replicas: one node holds the "canonical" KV cache for a popular system prompt, and other nodes pull the cache over the network (RDMA or NVLink) rather than recomputing it. This is sometimes called **distributed prefix caching** or **remote KV caching**. The bandwidth requirement is on the order of seconds for a typical system-prompt KV block, so this pattern is practical only for very-high-value long prefixes.
+All the caching described so far applies to a single model instance. In a serving cluster running multiple replicas of the same model, caching can be extended across replicas: one node holds the "canonical" KV cache for a popular system prompt, and other nodes pull the cache over the network (RDMA or NVLink) rather than recomputing it. This is sometimes called **distributed prefix caching** or **remote KV caching**.
+
+The arithmetic favours transfer more than intuition suggests. Take the 1,024-token, 335 MB prefix from the worked example above: moving it over a 200 Gb/s RDMA link (≈25 GB/s achieved) takes on the order of 13 ms, whereas *recomputing* it costs roughly $2 \times (70 \times 10^9) \times 1024 \approx 1.4 \times 10^{14}$ FLOPs — several hundred milliseconds on one accelerator at realistic prefill efficiency. Fetching wins by an order of magnitude whenever the link is fast, which is why "KV-cache-centric" cluster designs have become mainstream: **LMCache** layers GPU/CPU/disk/S3 tiers under vLLM and SGLang, and Moonshot's **Mooncake** architecture makes a disaggregated, cluster-wide KV store the primary scheduling object (see [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html)). The design question shifts from "should we transfer?" to "is the KV store's hit rate high enough to justify the extra tier of memory," and to cache-aware routing — a load balancer that sends a request to the replica already holding its prefix (SGLang's router and vLLM's production stack both support this) converts a cluster-wide miss into a local hit for free.
 
 ### Quantized KV caches
 
@@ -588,7 +659,8 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
     - KV tensors are a pure function of token IDs and model weights, making any shared prefix's KV blocks exactly reusable across requests.
     - Content-based hashing of fixed-size blocks enables O(1) cache lookup per block; chaining hashes ensures positional correctness.
     - SGLang's RadixAttention models the prefix cache as a trie, naturally capturing multi-turn chains and partial prefix overlap. vLLM's APC takes a simpler flat-hash approach layered on top of the PagedAttention allocator.
-    - LRU eviction balances warm-cache hit rate against memory pressure; reference counting prevents eviction of blocks in active use.
+    - LRU eviction balances warm-cache hit rate against memory pressure; reference counting prevents eviction of blocks in active use, and a per-request cache salt keeps tenants from sharing — or timing-probing — each other's blocks.
+    - A cache hit removes prefill compute but not decode-time HBM traffic; cascade (shared-prefix) attention, as in FlashInfer's multi-level wrapper, reads the shared prefix once per batch and merges the partial outputs exactly via their log-sum-exps.
     - Prefix caching is most valuable for long, stable shared prefixes: system prompts, few-shot headers, RAG documents, and multi-turn agent histories.
     - For maximum hit rate: place shared content at the front of every prompt, avoid injecting dynamic data into shared prefixes, and pad system prompts to block-size boundaries.
     - Prefix caching (prefill savings) and speculative decoding (decode acceleration) are largely orthogonal and can be combined.
@@ -613,9 +685,11 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
 
     **Open-source & tools**
 
-    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — production LLM serving engine; enable Automatic Prefix Caching with `--enable-prefix-caching`.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — production LLM serving engine; Automatic Prefix Caching is on by default on the V1 engine (`--no-enable-prefix-caching` to disable, `--prefix-caching-hash-algo` to choose the digest, per-request `cache_salt` for tenant isolation).
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — high-performance serving framework with RadixAttention on by default; disable with `--disable-radix-cache`.
+    - [flashinfer-ai/flashinfer](https://github.com/flashinfer-ai/flashinfer) — the attention kernel library behind vLLM/SGLang; provides `MultiLevelCascadeAttentionWrapper` and `merge_state` for shared-prefix (cascade) attention.
     - [LMCache/LMCache](https://github.com/LMCache/LMCache) — drop-in vLLM/SGLang extension for multi-tier distributed KV cache offloading and peer-to-peer sharing.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — `Cache`/`DynamicCache` and the `past_key_values` argument to `generate()` give you hand-rolled prefix reuse without a serving engine.
 
     **Go deeper**
 
@@ -650,7 +724,7 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
 
     **(b)** `remainder = 1020 % 16 = 12`, which is nonzero, so `padding = 16 - 12 = 4`. The prompt is padded to $1020 + 4 = 1024$ tokens. Now $1024 / 16 = 64$ complete blocks, **all cacheable** — the previously stranded 12 tokens plus 4 pad tokens now form a full, hashable 64th block.
 
-    **(c)** The downside is that the 4 pad tokens add a small amount of prefill compute and KV memory the first time the prefix is materialized (and slightly change the attention over the prompt if the pad token is not masked). But it is a one-time cost paid once and then reused on every hit; in exchange the trailing 12 real tokens of the system prompt become cacheable on every subsequent request, so for a high-traffic static prompt the padding pays for itself almost immediately.
+    **(c)** The downside is that the 4 pad tokens add a small amount of prefill compute and KV memory the first time the prefix is materialized, and — because interior positions cannot be masked out in a causal decoder — the model genuinely reads them, so they must be innocuous in-distribution text (newlines, a separator) rather than a literal `<pad>` token. But it is a one-time cost paid once and then reused on every hit; in exchange the trailing 12 real tokens of the system prompt become cacheable on every subsequent request, so for a high-traffic static prompt the padding pays for itself almost immediately.
 
 **3.** *(Quantitative.)* A model has **80 layers**, uses GQA with **8 KV heads**, head dimension **128**, and stores the KV cache in **bfloat16** (2 bytes). A shared prefix is **512 tokens** long. (a) Compute the bytes of KV per token per layer, then the total KV footprint of the cached prefix. (b) The endpoint receives **300 requests/second**, all sharing this prefix. Without prefix caching, how many tokens of prefix prefill are recomputed per second, and how many *bytes* of redundant KV are produced per second? (c) With caching, how many copies of the prefix KV are stored in GPU memory, regardless of concurrency?
 
@@ -694,7 +768,8 @@ that returns the number of *leading tokens* already cached, by segmenting `token
 
     def _compute_block_hash(prev_hash: int, token_ids: list[int]) -> int:
         """Chain the previous block hash with current token IDs (as in the chapter)."""
-        data = prev_hash.to_bytes(8, "little") + bytes(token_ids)
+        packed = b"".join(t.to_bytes(4, "little") for t in token_ids)
+        data = prev_hash.to_bytes(8, "little") + packed
         return int.from_bytes(hashlib.sha256(data).digest()[:8], "little")
 
     def longest_cached_prefix(

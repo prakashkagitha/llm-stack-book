@@ -186,7 +186,7 @@ $$
 I = \frac{\text{FLOPs}}{\text{bytes moved}} \quad \left[\frac{\text{FLOP}}{\text{byte}}\right]
 $$
 
-A GPU has two relevant peak rates: compute throughput (FLOP/s) and memory bandwidth (bytes/s). The **ridge point** is their ratio, $I^\* = \text{FLOP/s} \div \text{bytes/s}$. If a kernel's intensity $I > I^\*$ it is **compute-bound** (limited by the math units); if $I < I^\*$ it is **memory-bound** (limited by how fast you can feed data from HBM). For a modern data-center GPU the ridge point is on the order of a few hundred FLOP/byte. An A100 delivers roughly 312 TFLOP/s of bf16 tensor-core compute against roughly 2.0 TB/s of HBM bandwidth, giving a ridge near $\sim$150 FLOP/byte. An H100 is higher on both axes but the ridge is in the same ballpark. Hold that "~100–300 FLOP/byte" number in your head.
+A GPU has two relevant peak rates: compute throughput (FLOP/s) and memory bandwidth (bytes/s). The **ridge point** is their ratio, $I^\* = \text{FLOP/s} \div \text{bytes/s}$. If a kernel's intensity $I > I^\*$ it is **compute-bound** (limited by the math units); if $I < I^\*$ it is **memory-bound** (limited by how fast you can feed data from HBM). For a modern data-center GPU the ridge point is on the order of a few hundred FLOP/byte. An A100 delivers roughly 312 TFLOP/s of bf16 tensor-core compute against roughly 2.0 TB/s of HBM bandwidth, giving a ridge near $\sim$150 FLOP/byte. An H100 (on the order of 990 TFLOP/s dense bf16 against ~3.3 TB/s of HBM3) sits nearer $\sim$300, and Blackwell-generation parts raise both axes together — HBM3e bandwidth on the order of 8 TB/s alongside proportionally more tensor-core throughput — so the ridge stays in the same few-hundred range. Hold that "~100–300 FLOP/byte" number in your head: every hardware generation has moved the numerator and the denominator together, which is exactly why the conclusion we are about to draw has not changed in five years.
 
 ### The decisive quantity: tokens per forward pass
 
@@ -212,6 +212,22 @@ $$
 
 
 This is why **batching helps decode enormously but barely helps prefill.** Prefill already saturates compute, so cramming more sequences in does not raise per-token throughput much (and can even hurt latency). Decode, by contrast, reads the *same weights* regardless of how many sequences share the step — so if you decode $B$ sequences together, you read $W$ once and reuse it across all $B$ tokens, lifting $N$ from $1$ to $B$ and intensity from $\approx 2/P$ to $\approx 2B/P$. Batching decode is essentially free FLOPs riding on memory traffic you were paying for anyway. **This single insight is the entire reason continuous batching exists** — see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html).
+
+### The catch: batching amortizes weights, not the KV cache
+
+There is an asymmetry hidden in that argument, and missing it is the most common error in napkin models of decode. Batching amortizes the **weight** read — one copy of $W$ serves all $B$ tokens — but it cannot amortize the **KV-cache** read, because every sequence owns a private cache that no other sequence in the batch can reuse. Count the attention work in one decode step, per layer, per sequence: reading $K$ and $V$ costs $2 \cdot S \cdot H_{kv} \cdot d_h \cdot P$ bytes, while the two matmuls ($q K^\top$ and $\text{attn}\,V$) cost about $4 \cdot S \cdot H_q \cdot d_h$ FLOPs. The arithmetic intensity of decode attention is therefore
+
+$$
+I_{\text{attn}} \approx \frac{4 S H_q d_h}{2 S H_{kv} d_h P} = \frac{2 H_q}{H_{kv} P}
+$$
+
+which is a small constant that **does not grow with batch size at all** — the $S$ cancels, and $B$ never appears. For a Llama-3-8B-style model ($H_q = 32$, $H_{kv} = 8$, bf16) that is $2 \cdot 32 / (8 \cdot 2) = 4$ FLOP/byte; for full MHA ($H_q = H_{kv}$) it collapses to $2/P = 1$. Three consequences follow, and they justify a large fraction of Part VII:
+
+- **Decode attention is permanently memory-bound**, no matter how large the batch. Only the weight matmuls escape into the compute-bound regime as $B$ grows.
+- **GQA/MLA speed up decode, not just shrink it.** Cutting $H_{kv}$ by the group size $g$ raises $I_{\text{attn}}$ by exactly $g$ *and* cuts the bytes streamed by $g$ — a benefit beyond the capacity argument of the last section. Reading the same key once for $g$ query heads is only possible if the kernel is GQA-aware, which modern FlashAttention/FlashDecoding kernels are.
+- **At long context the KV traffic overtakes the weight traffic**, and the "weights / bandwidth" ceiling below becomes an over-estimate. Exercise 5 works this out numerically: at $B=32$, $S=8192$ the cache read is roughly twice the weight read for an 8B model.
+
+Batch-1 long-context decode has a further problem: a single query row against one cache gives the GPU almost no parallelism to fill its SMs. **FlashDecoding** fixes this by splitting the KV cache along the sequence axis, attending in parallel chunks, and combining the partial softmax statistics — the same online-softmax rescaling trick used in training, applied along a different axis. See [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html).
 
 ### A measurement you can run
 
@@ -249,7 +265,7 @@ On real hardware you will see the per-token time barely move from $B=1$ to $B=16
 
 ## The Tokens-Per-Second Ceiling
 
-Because single-stream decode is memory-bound, we can compute a remarkably tight upper bound on generation speed using nothing but the model size and the GPU's memory bandwidth. Every decode step must read **every weight** of the model from HBM at least once (each weight participates in some matmul for the new token). So the time for one decode step is bounded below by the time to stream all the weights:
+Because single-stream decode is memory-bound, we can compute a remarkably tight upper bound on generation speed using nothing but the model size and the GPU's memory bandwidth. Every decode step must read **every weight** of the model from HBM at least once (each weight participates in some matmul for the new token). For a Mixture-of-Experts model, replace "every weight" with "every *active* weight" — the dense trunk plus only the experts routed to this step's tokens — which is precisely why a sparse model decodes far faster than a dense model of the same total parameter count, and why nearly every 2026 frontier model is an MoE; see [Serving Mixture-of-Experts](../07-inference-serving/13-serving-moe.html). For a dense model the time for one decode step is bounded below by the time to stream all the weights:
 
 $$
 t_{\text{step}} \;\ge\; \frac{\text{model bytes}}{\text{memory bandwidth}}
@@ -329,6 +345,24 @@ def measure_streaming_latency(stream_fn, prompt):
         "decode_tps": (n_tokens - 1) / sum(itls) if itls else float("nan"),
     }
 ```
+
+In practice you rarely write that timing harness yourself, because the serving engines ship one that already reports exactly this vocabulary. vLLM's benchmark client drives an OpenAI-compatible endpoint at a chosen arrival rate and prints TTFT, TPOT and ITL percentiles alongside aggregate throughput:
+
+```bash
+# Terminal 1: start the engine (OpenAI-compatible server on :8000).
+vllm serve meta-llama/Llama-3.2-1B-Instruct --max-model-len 8192
+
+# Terminal 2: load-test it and get the metrics defined in the table above.
+# (Recent vLLM exposes this as `vllm bench serve`; older releases ship the
+#  same tool as benchmarks/benchmark_serving.py. Check --help for your
+#  version, since flag names move between releases.)
+vllm bench serve \
+  --model meta-llama/Llama-3.2-1B-Instruct \
+  --dataset-name random --random-input-len 1024 --random-output-len 256 \
+  --request-rate 4 --num-prompts 200
+```
+
+Sweeping `--request-rate` from well below saturation to well above it and plotting p99 TTFT against achieved throughput draws the **latency–throughput curve** for your deployment; the knee of that curve is the operating point you are actually choosing when you set a batch size. SGLang ships an equivalent harness (`python -m sglang.bench_serving`), and the two are close enough in interface that you can benchmark both engines with nearly the same command line.
 
 When you benchmark a serving system, you report these as **distributions, not point values** — p50 and p99 TTFT, p50 and p99 TPOT — because tail latency under load is what breaks SLAs. A system with great median TPOT but a terrible p99 (caused by, say, a giant prompt prefill blocking the decode batch) feels janky and stutters. This is exactly the pathology chunked prefill was designed to cure.
 
@@ -422,6 +456,46 @@ def generate(model, tokenizer, prompt, max_new_tokens=256,
 
 Three things to internalize from this skeleton. First, **prefill runs once, decode runs hundreds of times** — for a typical chat turn with a 1,000-token prompt and a 300-token answer, almost all wall-clock time is in the decode loop even though prefill touches more tokens, because decode is the slow, memory-bound part repeated 300 times. Second, **the cache (`past`) is the entire state** — its size is the formula we derived, and managing it is the hardest part of real serving. Third, **the only input to each decode step is one token plus the cache** — which is exactly why many sequences can share a decode step (continuous batching) and why the weight read can be amortized across them.
 
+### From toy loop to real engines: the `Cache` API and CUDA graphs
+
+The loop above is the real thing, but the object it passes around has evolved. Modern `transformers` returns a `Cache` object rather than the legacy tuple-of-tuples, and *which subclass* you pick is a performance decision, not a formality:
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+
+name = "meta-llama/Llama-3.2-1B-Instruct"
+tok = AutoTokenizer.from_pretrained(name)
+model = AutoModelForCausalLM.from_pretrained(
+    name, torch_dtype=torch.bfloat16).to("cuda").eval()
+
+past = DynamicCache()          # grows by concatenation -- exactly our toy cache
+ids = tok("The capital of France is", return_tensors="pt").to("cuda")
+
+with torch.no_grad():
+    out = model(**ids, past_key_values=past, use_cache=True)        # PREFILL
+    next_id = out.logits[:, -1:, :].argmax(-1)                      # [B, 1]
+    for _ in range(32):                                             # DECODE
+        # `past` is updated in place by the Cache object each step.
+        out = model(input_ids=next_id, past_key_values=past, use_cache=True)
+        next_id = out.logits[:, -1:, :].argmax(-1)
+
+print(past.get_seq_length())   # tokens currently cached, per layer
+```
+
+`DynamicCache` is the right default for a research loop and the wrong one for a latency-critical server: it reallocates and copies on every step, and its ever-changing tensor shapes defeat graph capture. `StaticCache` instead preallocates a buffer of `max_cache_len` and writes each new key/value **in place** at the step's `cache_position`, so every decode step is the *same fixed-shape graph*. That is what lets `model.generate(..., cache_implementation="static")` compose with `torch.compile(model, mode="reduce-overhead")`, which captures the step as a CUDA graph and replays it — see [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html). vLLM and SGLang arrive at the same design from the other direction: their KV cache is a preallocated block pool (never a `torch.cat`) and their decode step is a captured graph, which is why a first-principles PyTorch loop typically leaves a large factor on the table against them even at batch 1.
+
+!!! example "Worked example: for a 100M model the ceiling is not the bottleneck"
+    Apply the tokens/sec ceiling to Stack-100M, the ~100M-parameter model built in [Part XIV](../14-capstone/01-overview-and-landscape.html). Its bf16 weights are about $10^8 \times 2 = 0.2$ GB, so on a 2.0 TB/s GPU the bandwidth floor per decode step is
+
+    $$
+    t_{\text{step}} \ge \frac{0.2 \times 10^{9}}{2.0 \times 10^{12}} = 100\ \mu\text{s},
+    $$
+
+    an apparent ceiling near 10,000 tokens/sec. You will not observe anything close to it from an eager PyTorch loop. Stack-100M is deliberately deep and thin (30 layers of $d_{\text{model}} = 512$), so a single decode step issues *hundreds* of tiny kernel launches; at a few microseconds of Python-plus-launch overhead each, the *CPU* becomes the bottleneck while the GPU idles waiting for work.
+
+    Small models are **launch-overhead-bound, not bandwidth-bound**, and the remedy is not a bigger GPU: it is CUDA graphs (`torch.compile(..., mode="reduce-overhead")` over a `StaticCache`), which collapse the whole step into one replayable graph, or moving to a runtime that fuses aggressively. This is exactly why the capstone serves Stack-100M through a compiled loop on GPU and a GGUF/`llama.cpp` int4 build on CPU rather than the naive loop above — see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html). The general lesson: the roofline gives a *lower* bound on step time, and whenever that bound falls below your framework's fixed per-step overhead, overhead is what you are actually measuring.
+
 !!! tip "Practitioner tip: profile the split before optimizing"
     Before reaching for any fancy technique, measure how your real traffic divides between prefill and decode. A retrieval-augmented or long-document workload with 8k-token prompts and 200-token answers is **prefill-heavy** — your wins come from chunked prefill, prefix caching, and prefill FLOPs. A chatty agent loop with short prompts and long reasoning traces is **decode-heavy** — your wins come from batching, weight quantization, and speculative decoding. The same GPU, the same model, two completely different optimization playbooks. The ratio $S : T$ in your traffic tells you which knobs matter, and it is the first thing a good serving engineer measures.
 
@@ -431,7 +505,8 @@ Three things to internalize from this skeleton. First, **prefill runs once, deco
     - LLM inference has **two phases with opposite characteristics**: prefill processes the whole prompt in parallel and is **compute-bound**; decode generates one token at a time and is **memory-bandwidth-bound**. The flip comes entirely from the per-pass token count $N$ collapsing from $S$ to $1$.
     - The **KV cache** stores keys and values for all past tokens so they need not be recomputed each step, trading memory for compute. Its size is $2 \cdot B \cdot S \cdot L \cdot H_{kv} \cdot d_h \cdot P$ bytes — linear in batch and sequence length, and the usual *binding constraint* on how many users you can serve.
     - Decode's arithmetic intensity is $\approx 2N/P$ FLOP/byte; at $N=1$ it sits ~100× below a data-center GPU's ridge point, so the tensor cores idle while HBM streams the weights. **Batching raises $N$ and is therefore nearly free throughput** — the foundation of continuous batching.
-    - The single-stream **decode speed ceiling** is $\text{BW} / (N_{\text{params}} \cdot P)$ — model weight bytes divided by memory bandwidth. This is why big models feel slow and why quantization (smaller $P$) primarily buys decode speed.
+    - **Batching amortizes the weight read but not the KV read**, since each sequence owns its cache. Decode attention's intensity is $\approx 2H_q/(H_{kv}P)$ — independent of both $B$ and $S$ — so attention stays memory-bound at any batch size. This is why GQA/MLA make decode *faster*, not merely smaller, and why FlashDecoding splits the cache to fill the GPU at batch 1.
+    - The single-stream **decode speed ceiling** is $\text{BW} / (N_{\text{params}} \cdot P)$ (active weights only, for an MoE) — model weight bytes divided by memory bandwidth. This is why big models feel slow and why quantization (smaller $P$) primarily buys decode speed. For small models the ceiling is unreachable in eager mode: per-step kernel-launch overhead dominates, and CUDA graphs are the fix.
     - The latency vocabulary: **TTFT** (prefill-bound, the responsiveness the user feels first), **TPOT/ITL** (decode-bound, the typing cadence), and **E2E** $\approx$ TTFT $+ (T-1)\cdot$TPOT. Always report distributions (p50/p99), not point values.
     - **Throughput and per-user latency are in tension.** Larger batches and longer scheduling windows raise aggregate tokens/sec but worsen tail latency; pick the operating point for your workload.
     - **Little's law** ties it together: throughput $\approx$ (max concurrent sequences) / (avg time per sequence) — numerator set by KV-cache capacity, denominator by decode bandwidth. Every Part VII optimization attacks one of these two terms.

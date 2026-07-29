@@ -351,6 +351,7 @@ These trade off: a bigger drafter raises $\alpha$ but also raises $c$. The sweet
 - **Distilled drafter.** Train a small model specifically to mimic the target via [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html). Distilling on the target's *own* outputs (sequence-level or logit-level KD) maximizes TV-closeness and thus $\alpha$ — far better than an off-the-shelf small model.
 - **Self-drafting heads.** Medusa and EAGLE (below) attach lightweight heads to the target itself, eliminating the separate model entirely and getting the drafter's features "for free" from the target's own hidden states.
 - **Native multi-token-prediction (MTP) heads.** Some frontier models now *ship* with a drafter built in: they are pretrained with extra multi-token-prediction heads — popularized by DeepSeek-V3 — that the serving engine reuses directly for self-speculation, with no separate drafter to train or align. DeepSeek-V3's single MTP head accepts on the order of 85–90% of its second-token proposals, and vLLM and SGLang expose it as a first-class `method: mtp` speculator.
+- **Early-exit / layer-skipping self-drafting.** Run only the *first* $k$ layers of the target (plus its LM head) as the drafter, then verify with the full stack. No extra parameters at all, and the draft shares the target's KV cache for the layers it does compute. It needs a model whose intermediate layers are trained to be decodable through the final head — LayerSkip-style training with early-exit losses — otherwise the shallow logits are too far off to accept. Hugging Face exposes this as `assistant_early_exit=k`.
 - **Retrieval / n-gram drafters.** No neural drafter at all: propose continuations from the prompt itself or a corpus via string matching (prompt lookup decoding). Astonishingly effective for tasks with high input-output overlap — summarization, code editing, RAG where the answer quotes the context. Acceptance on copied spans can approach 1.
 
 !!! tip "Practitioner tip: match the drafter to the workload"
@@ -470,7 +471,11 @@ print(pos.tolist())          # [0, 1, 1, 2, 2, 2, 2]  (depths)
 # in ONE forward pass; then verify each root->leaf path with accept/reject.
 ```
 
-After the single masked forward pass, you have the target's distribution at every node. You verify paths from the root: walk down, applying the accept/reject test at each edge, and take the longest accepted path; append the bonus token from the deepest accepted node. The verification cost is one target pass over $n$ tree nodes — and because decode is memory-bound, $n$ on the order of tens of nodes still costs roughly one token's worth of weight movement. The art is choosing the tree shape (depth, branching, total node budget) so the marginal node keeps paying for itself; EAGLE-2's dynamic, confidence-driven trees are the state of the art here.
+After the single masked forward pass, you have the target's distribution at every node. You verify paths from the root: walk down, applying the accept/reject test at each edge, and take the longest accepted path; append the bonus token from the deepest accepted node.
+
+One subtlety the greedy case hides: when a node has **several** children, testing each sibling independently against the same $p$ is *not* the exact rule — it would over-emit tokens the drafter over-covers. The correct generalization is **multi-round (recursive) rejection sampling**, introduced by SpecInfer (Miao et al., 2023) and implemented by the tree verifiers in vLLM and SGLang: test the first child $x_1 \sim q$ with the usual $\min(1, p(x_1)/q(x_1))$; if it is rejected, replace the target distribution by the residual $p \leftarrow (p-q)_+ / \lVert (p-q)_+ \rVert_1$ (renormalizing $q$ over the remaining candidates if the siblings were drawn without replacement) and test the next sibling against *that* updated $p$; if all $k$ children are rejected, sample the replacement token from the final residual. Every round is the single-candidate rule applied to a fresh $(p,q)$ pair, so the proof above carries over verbatim and the tree remains exactly lossless — while the chance that *some* child is accepted is strictly higher than with one candidate, which is the entire point of branching.
+
+The verification cost is one target pass over $n$ tree nodes — and because decode is memory-bound, $n$ on the order of tens of nodes still costs roughly one token's worth of weight movement. The art is choosing the tree shape (depth, branching, total node budget) so the marginal node keeps paying for itself; EAGLE-2's dynamic, confidence-driven trees are the state of the art here.
 
 ## Lookahead Decoding: Drafting Without a Drafter
 
@@ -489,6 +494,77 @@ Trade-offs versus drafter-based methods:
 
 - **Pro:** zero extra models, zero training, drop-in. Great when you can't or won't train a drafter.
 - **Con:** the extra Jacobi/verification positions consume FLOPs and KV-cache slots, so at large batch sizes — where the GPU is already compute-saturated and *not* memory-bound — the spare FLOPs vanish and lookahead can *hurt*. This is the general rule for **all** speculative methods: they convert spare compute into fewer sequential steps, and they only help when there is spare compute, i.e., at small-to-moderate batch sizes where decode is memory-bound.
+
+## Turning It On: Speculation in Real Engines
+
+You will almost never ship the loop we wrote above — you will *configure* it. The value of having built it from scratch is that every flag below, and every acceptance metric these engines emit, now means something concrete.
+
+**Hugging Face Transformers** calls it *assisted generation*. It is slow relative to a real engine, but it is the fastest way to measure a candidate drafter's acceptance rate $\alpha$ on your own prompts before committing to a serving config:
+
+```python
+# pip install "transformers>=4.46" torch
+# reuses `target`, `draft`, `tok` from the from-scratch listing above.
+inputs = tok("The future of machine learning is", return_tensors="pt").to("cuda")
+
+# (1) Draft-model speculation — the exact rule of this chapter, batched internally.
+out = target.generate(**inputs, assistant_model=draft, max_new_tokens=128,
+                      do_sample=True, temperature=0.8)
+
+# (2) Prompt-lookup (n-gram) drafting: no second model, no training, near-free.
+out = target.generate(**inputs, prompt_lookup_num_tokens=10, max_new_tokens=128)
+
+# (3) Dynamic draft length: stop drafting early when the drafter is unconfident,
+#     i.e. adapt gamma per step instead of fixing it.
+out = target.generate(**inputs, assistant_model=draft, num_assistant_tokens=8,
+                      assistant_confidence_threshold=0.4, max_new_tokens=128)
+
+# (4) Universal assisted generation: drafter from a DIFFERENT family/tokenizer.
+#     Transformers re-tokenizes between the two models, lifting the shared-vocab
+#     requirement at the cost of some overhead.
+# out = target.generate(**inputs, assistant_model=other_family_draft,
+#                       tokenizer=tok, assistant_tokenizer=other_tok,
+#                       max_new_tokens=128)
+print(tok.decode(out[0], skip_special_tokens=True))
+```
+
+**vLLM and SGLang** are where speculation actually earns its keep, because they fuse drafting, tree verification, and rollback into the paged-KV scheduler ([vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html), [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)). In vLLM (V1) everything goes through a single `--speculative-config` JSON blob; the `method` field selects the drafter family described in this chapter:
+
+```bash
+# A) Separate draft model (same tokenizer family).
+vllm serve meta-llama/Llama-3.1-70B-Instruct \
+  --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct",
+                         "num_speculative_tokens": 5}'
+
+# B) n-gram / prompt-lookup drafting — zero extra weights.
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-config '{"method": "ngram", "num_speculative_tokens": 5,
+                         "prompt_lookup_min": 2, "prompt_lookup_max": 4}'
+
+# C) EAGLE-3 self-speculation: point at a released EAGLE-3 head for your target
+#    (see the SafeAILab/EAGLE repo for the checkpoint matching your model).
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-config '{"method": "eagle3", "model": "'"$EAGLE3_DRAFT"'",
+                         "num_speculative_tokens": 5}'
+
+# D) Native multi-token-prediction heads that ship inside the checkpoint
+#    (DeepSeek-V3-style): no drafter to fetch at all.
+vllm serve deepseek-ai/DeepSeek-V3 --trust-remote-code \
+  --speculative-config '{"method": "mtp", "num_speculative_tokens": 1}'
+
+# SGLang exposes the same ideas as explicit tree knobs: how many drafter steps
+# (depth), how wide each level branches, and the total node budget per pass.
+python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-algorithm EAGLE3 --speculative-draft-model-path "$EAGLE3_DRAFT" \
+  --speculative-num-steps 5 --speculative-eagle-topk 8 \
+  --speculative-num-draft-tokens 32
+```
+
+Read those SGLang flags against the Tree Attention section: `--speculative-num-steps` is the tree *depth*, `--speculative-eagle-topk` the *branching factor* per level, and `--speculative-num-draft-tokens` the total node budget $n$ verified in one target pass — exactly the three quantities whose product determines verification cost. TensorRT-LLM offers the same menu through its `speculative_config` / draft-target engine build ([TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html)), and llama.cpp does it on CPU/edge with `llama-server -m model.gguf -md draft.gguf --draft-max 8 --draft-min 2` (shared vocabulary required).
+
+The one number to watch in production is the **acceptance rate**, which every engine reports: vLLM exposes Prometheus counters for drafted and accepted speculative tokens (their ratio is $\alpha$, and accepted-per-step is the $\mathbb{E}[\text{tokens per step}]$ of the next section), and SGLang logs an average accept length. If accepted-per-step drifts toward 1 on your traffic, speculation is pure overhead and should be switched off — which is exactly what the economics below quantify.
+
+!!! tip "Practitioner tip: at 100M parameters, speculate with n-grams or not at all"
+    For the capstone model of [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html), drafter-based speculation is a bad trade: a drafter 10–50× smaller than a 100M model is a 2–10M model, far too weak to accept often, and the target's weights are only ~57 MB at `Q4_K_M`, so the per-step weight movement that speculation amortizes is small to begin with. What *does* pay at that scale is **prompt-lookup drafting** — free, and the narrow research agent of [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html) quotes its retrieved context heavily, which is precisely the copy-heavy regime where n-gram acceptance approaches 1.
 
 ## Acceptance Rate, Speedup & When It Pays Off
 
@@ -545,7 +621,8 @@ A second, system-level caveat the formula hides: **batch size.** All these speed
     - Expected acceptance is $\alpha = \sum_x \min(p,q) = 1 - \mathrm{TV}(p,q)$: a drafter close to the target in total-variation distance accepts more.
     - **Separate draft models** (10–50× smaller, same tokenizer/family, ideally distilled from the target) are the classic recipe; **prompt-lookup/n-gram** drafting is near-free and excellent for copy-heavy workloads.
     - **Medusa** adds parallel prediction heads to the frozen target (cheap to train, but each head predicts in isolation); **EAGLE/EAGLE-2/3** do autoregression in **feature space** conditioned on drafted tokens, achieving much higher acceptance, with dynamic confidence-driven draft trees.
-    - **Tree attention** verifies many candidate continuations in one pass via an ancestor-only mask and depth-based position ids, raising accepted tokens per step.
+    - **Tree attention** verifies many candidate continuations in one pass via an ancestor-only mask and depth-based position ids, raising accepted tokens per step; sibling branches need **multi-round rejection sampling** (SpecInfer) to stay exact.
+    - In practice you *configure* speculation rather than write it: `assistant_model` / `prompt_lookup_num_tokens` in Transformers, `--speculative-config '{"method": ...}'` in vLLM, `--speculative-algorithm/-num-steps/-eagle-topk/-num-draft-tokens` in SGLang, `-md` in llama.cpp — then watch the reported acceptance rate.
     - **Lookahead decoding** needs no drafter or training — it uses Jacobi iteration to generate and verify n-grams in the target's own parallel passes; lossless for greedy decoding.
     - Speedup $= (1-\alpha^{\gamma+1})/[(1-\alpha)(1+\gamma c)]$: there is an optimal draft length $\gamma^\*$, and all methods only help while decode is **memory-bound** (small/moderate batch). Gate speculation on batch size.
 
@@ -583,7 +660,9 @@ A second, system-level caveat the formula hides: **batch size.** All these speed
 - Cai et al., *Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads* (2024) — parallel heads, tree attention, typical acceptance.
 - Li et al., *EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty* (2024), plus the **EAGLE-2** (dynamic draft trees) and **EAGLE-3** (multi-layer feature fusion, training-time test) follow-ups.
 - Fu et al., *Break the Sequential Dependency of LLM Inference Using Lookahead Decoding* (2024) — Jacobi-iteration drafting without a draft model.
+- Miao et al., *SpecInfer: Accelerating Generative LLM Serving with Speculative Inference and Token Tree Verification* (2023) — token-tree verification and the multi-round rejection sampling that makes branching exact.
 - Stern, Shazeer & Uszkoreit, *Blockwise Parallel Decoding for Deep Autoregressive Models* (2018) — an early precursor to multi-token prediction and verification.
+- Elhoushi et al., *LayerSkip: Enabling Early Exit Inference and Self-Speculative Decoding* (2024) — training for decodable intermediate layers so the target can draft for itself.
 - The **vLLM** and **TensorRT-LLM** repositories — production implementations of draft-model, Medusa, and EAGLE speculation; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html).
 
 ## Exercises

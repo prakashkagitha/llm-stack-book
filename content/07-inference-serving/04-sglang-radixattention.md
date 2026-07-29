@@ -355,6 +355,8 @@ How does `fork` know the prefix statically? SGLang can **trace** the program (`l
 
     RadixAttention is a property of the **runtime**, so the plain OpenAI-compatible endpoint (`/v1/chat/completions`) already reuses shared prefixes across independent requests with no code changes. Use the `gen`/`fork` frontend when you want *guaranteed* co-scheduled sharing and parallel branching (agents, tree search, batch evaluation). For a stateless chat proxy, just point your existing OpenAI client at the SGLang server and enjoy free prefix caching.
 
+    This is also where the project's own centre of gravity sits. The DSL is SGLang's original interface and still ships, but most 2026 traffic arrives through the OpenAI-compatible server or the in-process `Engine` (both shown under *The runtime*, below), with the *runtime* — radix cache, overlap scheduler, grammar backend — doing all the work described in this chapter. Learn the DSL for what it teaches about making structure visible to a scheduler; reach for it when you genuinely need `fork`/`join`.
+
 ## Constrained decoding: making the model obey a grammar
 
 A recurring production need is *structured output*: valid JSON, a value from an enum, a number, a date. SGLang's frontend exposes this through `gen(..., regex=...)`, `gen(..., json_schema=...)`, and `select(...)`, backed by a fast constrained-decoding engine in `python/sglang/srt/constrained/`.
@@ -393,6 +395,59 @@ python -m sglang.launch_server \
 ```
 
 Internally the runtime mirrors the architecture from [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html): a **tokenizer manager** (HTTP front), a **scheduler** (`srt/managers/scheduler.py`) that batches requests and drives the model, and a **detokenizer manager** that streams text back. The scheduler owns the `RadixCache`, runs continuous batching, applies chunked prefill, and decides — every step — which requests to prefill, which to decode, and which to wait. Its admission/eviction logic lives in `srt/managers/schedule_policy.py`, which is *cache-aware*: it prefers to schedule requests that hit long cached prefixes, because those are cheap to admit.
+
+### Three ways to drive the runtime — and how to prove the cache is working
+
+The HTTP server is one of three entry points, and for someone building a system the other two matter just as much:
+
+1. **OpenAI-compatible server** — `python -m sglang.launch_server`, then point any OpenAI client at it. Nothing to change; RadixAttention is on by default.
+2. **Offline `Engine`** — `sgl.Engine(model_path=...)` runs the whole runtime *inside your Python process*: no separate server, no HTTP serialization round-trip. This is the API that RL stacks embed to produce rollouts and then hand the GPU back to the trainer (see [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html) and [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)), and it is the right choice for offline batch jobs: synthetic SFT data generation, or scoring an eval set.
+3. **Frontend DSL** — `@sgl.function` with `gen`/`fork`, driven against either backend.
+
+```python
+import sglang as sgl
+
+# Loads weights and starts the scheduler in-process. No server, no HTTP.
+llm = sgl.Engine(model_path="meta-llama/Llama-3.1-8B-Instruct")
+
+SYSTEM = "You are a terse assistant. Answer in one word.\n"   # identical on every prompt
+prompts = [SYSTEM + q for q in ("Capital of France?", "Capital of Japan?", "Capital of Peru?")]
+
+outs = llm.generate(prompts, {"temperature": 0.0, "max_new_tokens": 8})
+for o in outs:
+    # meta_info tells you how many PROMPT tokens were served from the radix cache.
+    print(o["meta_info"]["cached_tokens"], "cached |", o["text"].strip())
+
+llm.shutdown()
+```
+
+`meta_info["cached_tokens"]` is the number to watch, and the single best debugging tool in this whole chapter: the first prompt reports a cold `0` and the rest report roughly the length of the shared `SYSTEM` prefix (rounded down to `page_size`). If all three land in one prefill step the split is ambiguous, so issue the same `generate` call twice — the second call reads cleanly, since the tree is now warm. On the OpenAI-compatible endpoint the same quantity comes back as `usage.prompt_tokens_details.cached_tokens`. If that number stays at zero when you expect sharing, your prompts are not byte-identical — a timestamp, a shuffled tool list, or a per-user ID smuggled into the system prompt is the usual culprit, and moving it *after* the shared block restores the hit.
+
+To quantify the win on your own hardware rather than trusting the worked example below, SGLang ships a load generator with a dataset built precisely for this experiment:
+
+```bash
+# `generated-shared-prefix` synthesizes N groups of prompts that share a long system prompt.
+python -m sglang.bench_serving --backend sglang --host 127.0.0.1 --port 30000 \
+    --dataset-name generated-shared-prefix \
+    --gsp-num-groups 8 --gsp-prompts-per-group 64 \
+    --gsp-system-prompt-len 2048 --gsp-question-len 128 --gsp-output-len 64
+
+# Now relaunch the server with --disable-radix-cache and rerun: the delta in
+# throughput and TTFT (time-to-first-token) IS the value of RadixAttention on your traffic.
+```
+
+**One replica is not enough.** The radix tree lives inside a single server process, so behind a round-robin load balancer with $N$ replicas a request has roughly a $1/N$ chance of landing where its prefix is already cached. SGLang ships a separate high-performance router (`pip install sglang-router`; source lives under `sgl-model-gateway/` in the main repo) that keeps an approximate prefix tree of what each worker has recently served and routes on it:
+
+```bash
+# Route across two existing workers, blending prefix locality with load.
+python -m sglang_router.launch_router \
+    --worker-urls http://w1:30000 http://w2:30000 --policy cache_aware
+
+# Or co-launch router + a data-parallel fleet in one command:
+python -m sglang_router.launch_server --model meta-llama/Llama-3.1-8B-Instruct --dp-size 4
+```
+
+`cache_aware` deliberately blends cache locality with load balancing, so a hot tenant's traffic sticks to one worker without hot-spotting it. Its tree is an *approximation* of what each worker holds — it is not synchronized with the workers' real caches — so treat routing as a strong hint, not a guarantee, and keep watching `cached_tokens` end to end.
 
 ### The "zero-overhead" scheduler
 
@@ -521,7 +576,11 @@ states = classify_and_explain.run_batch(
     [{"review": r} for r in reviews], progress_bar=True
 )
 for st in states:
-    print(st["label"], "::", st["reasons"][0])
+    # run_batch syncs each state before returning, so the function's return value
+    # is available as `st.ret_value`. (`st["label"]` also works: `label` is a gen
+    # variable, and __getitem__ blocks until that variable's event fires.)
+    out = st.ret_value
+    print(out["label"], "::", out["reasons"][0])
 ```
 
 What happens under the hood, end to end:
@@ -533,13 +592,15 @@ What happens under the hood, end to end:
 
 You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the runtime exploited all three properties automatically.
 
+This is not a toy pattern reserved for large deployments. When we build Stack-100M's narrow research agent in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html), the distillation step asks a large teacher for thousands of ReAct trajectories that all begin with the *same* tool-description preamble and few-shot exemplars — the archetypal RadixAttention workload, and the reason to run that teacher through an in-process `sgl.Engine` rather than one HTTP request at a time. The serving side of the capstone ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)) makes the opposite trade — a 100M model on CPU via GGUF/llama.cpp, where the model is small enough that engine sophistication buys little — which is itself the lesson: RadixAttention pays off in proportion to how much prefill you were repeating.
+
 !!! interview "Interview Corner"
 
     **Q:** You're serving a chatbot where every request shares a 1,500-token system prompt, but user messages and conversations are all different. Walk me through how you'd cache KV across requests, and what data structure you'd use. What breaks at scale, and how do you bound memory?
 
     **A:** I'd use a **radix tree (compressed prefix trie) over token IDs**, exactly SGLang's RadixAttention. Each node owns the KV-cache slot indices for the tokens on its incoming edge; a path from root spells a cached token sequence. On a new request I run `match_prefix` to find the longest cached prefix, reuse those KV slots, and only prefill the divergent suffix — so the 1,500-token system prompt is prefilled **once** and shared by all requests, splitting nodes when prompts diverge mid-edge.
 
-    To bound memory I store KV in a **paged pool** and let the tree hold indices, not tensors, so one block can be referenced by many nodes. I **reference-count** nodes (`lock_ref`): a node is pinned while any running request uses its path, and becomes evictable when all finish. Under memory pressure I **evict LRU over evictable leaves** — peeling cold suffixes from the tips inward, never orphaning a live prefix, never reclaiming locked KV. The hot system prompt has a fresh access time and survives. What breaks at scale: with all-unique prompts the tree degenerates to a flat leaf list and reuse vanishes (you pay normal prefill plus tiny overhead); and the CPU bookkeeping per step can starve the GPU — which is why SGLang overlaps scheduling with compute. For a final tier I'd offload evicted prefixes to host/CPU memory so a falling-out prefix can be paged back faster than recomputed.
+    To bound memory I store KV in a **paged pool** and let the tree hold indices, not tensors, so one block can be referenced by many nodes. I **reference-count** nodes (`lock_ref`): a node is pinned while any running request uses its path, and becomes evictable when all finish. Under memory pressure I **evict LRU over evictable leaves** — peeling cold suffixes from the tips inward, never orphaning a live prefix, never reclaiming locked KV. The hot system prompt has a fresh access time and survives. What breaks at scale: with all-unique prompts the tree degenerates to a flat leaf list and reuse vanishes (you pay normal prefill plus tiny overhead); the CPU bookkeeping per step can starve the GPU — which is why SGLang overlaps scheduling with compute; and once I scale past one replica, a round-robin balancer gives each request only a $1/N$ chance of landing on the worker that holds its prefix, so I'd front the fleet with a **cache-aware router** that tracks approximately what each worker has cached. For a final tier I'd offload evicted prefixes to host/CPU memory so a falling-out prefix can be paged back faster than recomputed. Throughout, I'd instrument the *observed* hit rate (SGLang reports `cached_tokens` per request) rather than assume the cache is working — the usual bug is a timestamp or user ID injected into the "shared" system prompt, which makes every prompt unique.
 
 !!! key "Key Takeaways"
 
@@ -549,6 +610,7 @@ You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the ru
     - The **frontend DSL** — `gen`, `select`, `fork`, `join` — lets you express branchy multi-call programs so the runtime can *guarantee* prefix sharing and co-schedule parallel branches, instead of relying on lucky cache hits.
     - **Constrained decoding** masks logits against a grammar/FSM; SGLang's **compressed FSM + jump-forward** emits forced token runs in one step, slashing decode cost for JSON/regex outputs, while `select` scores a fixed choice list.
     - The **zero-overhead (overlap) scheduler** runs CPU batch preparation *under* the GPU forward pass, removing scheduling bubbles; with CUDA graphs the decode loop becomes near-pure GPU work.
+    - **Drive it three ways** — OpenAI-compatible server, in-process `sgl.Engine` (what RL rollout and offline-batch jobs use), or the DSL — and **verify** reuse with `meta_info["cached_tokens"]` / `usage.prompt_tokens_details.cached_tokens`; across replicas, a **cache-aware router** (`sglang-router`) is what stops round-robin from throwing your hit rate away.
     - **Versus vLLM:** the engines have converged; SGLang's edge is branchy/agentic programs, heavy shared prefixes, and structured output, while vLLM leads on breadth of models/hardware. Benchmark both on your own traffic.
     - The savings are real and bounded by your sharing: a long shared prefix can cut prefill compute by an order of magnitude or more; all-unique prompts see little benefit.
 
@@ -570,7 +632,8 @@ You wrote a branchy, constrained, prefix-sharing program in ~20 lines and the ru
 
     **Open-source & tools**
 
-    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — the main SGLang repo; see `srt/mem_cache/radix_cache.py` for RadixAttention and `lang/api.py` for the frontend DSL.
+    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — the main SGLang repo; see `srt/mem_cache/radix_cache.py` for RadixAttention, `srt/entrypoints/engine.py` for the in-process `Engine`, `lang/api.py` for the frontend DSL, and `python/sglang/bench_serving.py` for the load generator (including the `generated-shared-prefix` dataset used above).
+    - `sglang-router` / **SGLang Model Gateway** (`sgl-model-gateway/` in the same repo) — the cache-aware router that extends prefix locality across a fleet of replicas; see the *Model Gateway* page of the docs for its policies.
     - [mlc-ai/xgrammar](https://github.com/mlc-ai/xgrammar) — the XGrammar structured generation engine used by SGLang, vLLM, and TensorRT-LLM.
 
     **Go deeper**

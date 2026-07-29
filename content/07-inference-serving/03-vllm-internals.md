@@ -216,7 +216,9 @@ Around the scheduler sits the request-handling and execution machinery. From the
 
 {{fig:vllm-engine-executor-stack}}
 
-- **LLMEngine / EngineCore** is the orchestrator. It owns the scheduler and the block manager, accepts requests, drives the step loop, runs the tokenizer/detokenizer, and streams outputs. In V1 the heavy loop runs in a dedicated **EngineCore** process so Python overhead (tokenization, HTTP, scheduling) overlaps with GPU execution.
+- **API server / `AsyncLLM`** is the outermost layer when you run `vllm serve`: a FastAPI app implementing the OpenAI `/v1/completions`, `/v1/chat/completions`, `/v1/embeddings` and `/metrics` routes, backed by the asynchronous engine wrapper (`AsyncLLM` in V1, `AsyncLLMEngine` in V0) that turns each HTTP request into a per-request async generator of output tokens. It applies the chat template, runs the tokenizer, and — for JSON-schema or grammar-constrained requests — attaches the logit-processing backend covered in [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html). In offline mode the `LLM` class replaces this layer with a synchronous loop over a list of prompts.
+
+- **LLMEngine / EngineCore** is the orchestrator. It owns the scheduler and the block manager, accepts requests, drives the step loop, runs the tokenizer/detokenizer, and streams outputs. In V1 the heavy loop runs in a dedicated **EngineCore** process, talking to the front end over a ZeroMQ IPC channel, so Python overhead (tokenization, HTTP, detokenization, scheduling) overlaps with GPU execution.
 
 - **Executor** abstracts *where and how* the model runs: a single process for one GPU, a multiprocessing or Ray-based executor for tensor/pipeline parallelism across GPUs and nodes. It broadcasts the `ExecuteModelRequest` to every worker and gathers results. Multi-GPU details are in [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html).
 
@@ -380,7 +382,7 @@ from vllm.lora.request import LoRARequest
 
 # Base model loaded once; enable LoRA with a max rank and a cap on
 # how many distinct adapters may be active in a single batch.
-llm = LLM(model="meta-llama/Llama-3-8b",
+llm = LLM(model="meta-llama/Meta-Llama-3-8B",
           enable_lora=True,
           max_loras=4,        # distinct adapters per *batch*
           max_lora_rank=16,   # must be >= rank of any adapter you load
@@ -414,7 +416,7 @@ Adapters themselves are **paged like the KV cache**: a pool of GPU adapter slots
 from vllm import LLM, SamplingParams
 
 llm = LLM(
-    model="meta-llama/Llama-3-8b-instruct",
+    model="meta-llama/Meta-Llama-3-8B-Instruct",
     tensor_parallel_size=2,          # shard across 2 GPUs (TP)
     gpu_memory_utilization=0.90,     # fraction of GPU for weights + KV
     max_model_len=8192,              # caps KV per request; lower = more concurrency
@@ -430,20 +432,106 @@ for o in llm.generate(["Explain PagedAttention in one sentence."], params):
 
 ```bash
 # Launch an OpenAI-compatible HTTP server.
-vllm serve meta-llama/Llama-3-8b-instruct \
+vllm serve meta-llama/Meta-Llama-3-8B-Instruct \
     --tensor-parallel-size 2 \
     --gpu-memory-utilization 0.90 \
     --max-model-len 8192 \
     --max-num-seqs 256 \
-    --enable-chunked-prefill \
+    --max-num-batched-tokens 8192 \
     --port 8000
+# (chunked prefill and prefix caching are already on by default under V1.)
 
 # Then call it exactly like the OpenAI API:
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"meta-llama/Llama-3-8b-instruct",
+  -d '{"model":"meta-llama/Meta-Llama-3-8B-Instruct",
        "messages":[{"role":"user","content":"Hello!"}]}'
+
+# Scheduler and cache health, as Prometheus counters:
+curl -s http://localhost:8000/metrics | grep -E 'preemption|prefix_cache|kv_cache_usage'
 ```
+
+### Serving a model vLLM has never seen
+
+Everything above assumes vLLM already knows your architecture. When you have trained your *own* model — as we do in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for Stack-100M — you have two options: emit a checkpoint whose `config.json` declares an architecture vLLM already supports (`LlamaForCausalLM` is the pragmatic choice, since a standard pre-norm/RoPE/SwiGLU/GQA model is weight-compatible with it), or register your architecture out of tree.
+
+The registration path is worth understanding because it exposes the model-side contract of the whole paged design. The crucial point: **your model never touches the KV cache.** You instantiate `vllm.attention.Attention` layers; vLLM allocates their KV blocks in the profiling pass and injects the slot mapping and block tables through a per-step forward context, so the same module works for a prefill chunk, a decode step, or any mix of the two.
+
+```python
+# stack100m_vllm.py — teach vLLM an architecture it has never seen.
+import torch
+from torch import nn
+from vllm import ModelRegistry
+from vllm.attention import Attention          # the paged-KV attention layer
+
+
+class Stack100MAttention(nn.Module):
+    def __init__(self, cfg, prefix: str = ""):
+        super().__init__()
+        self.n_q, self.n_kv, self.d_h = cfg.n_heads, cfg.n_kv_heads, cfg.head_dim
+        self.qkv = nn.Linear(cfg.hidden, (self.n_q + 2 * self.n_kv) * self.d_h, bias=False)
+        self.o_proj = nn.Linear(self.n_q * self.d_h, cfg.hidden, bias=False)
+        # vLLM owns this layer's KV cache: the block manager sizes and allocates
+        # it, and the ModelRunner supplies slot_mapping / block_tables via the
+        # forward context. We only hand it q, k, v.
+        self.attn = Attention(num_heads=self.n_q, head_size=self.d_h,
+                              scale=self.d_h ** -0.5, num_kv_heads=self.n_kv,
+                              prefix=f"{prefix}.attn")
+
+    def forward(self, positions: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        splits = [self.n_q * self.d_h, self.n_kv * self.d_h, self.n_kv * self.d_h]
+        q, k, v = self.qkv(hidden).split(splits, dim=-1)
+        q, k = apply_rope(positions, q, k)                  # your RoPE
+        return self.o_proj(self.attn(q, k, v))              # paged attention
+
+
+class Stack100MForCausalLM(nn.Module):
+    """Three methods are the contract vLLM calls."""
+
+    def __init__(self, *, vllm_config, prefix: str = ""):
+        super().__init__()
+        self.config = vllm_config.model_config.hf_config
+        ...                                                  # build the stack
+
+    # Flat token tensors, NOT [batch, seq]: the ModelRunner concatenates every
+    # scheduled sequence's tokens into one ragged 1-D batch.
+    def forward(self, input_ids, positions, intermediate_tensors=None,
+                inputs_embeds=None) -> torch.Tensor:
+        ...                                                  # -> hidden states
+
+    def compute_logits(self, hidden_states, sampling_metadata=None):
+        ...                                                  # -> [num_seqs, vocab]
+
+    def load_weights(self, weights):
+        """Consume an iterator of (checkpoint_name, tensor) and copy into params,
+        handling any fused/sharded layouts (e.g. q,k,v -> one qkv matrix)."""
+        ...
+
+
+ModelRegistry.register_model("Stack100MForCausalLM", Stack100MForCausalLM)
+```
+
+Two practical notes. First, registration must happen **before the engine starts and in every worker process** — importing the module in your script works for a single process, but for tensor parallelism (which spawns workers) package it as a plugin exposed through the `vllm.general_plugins` entry point so each worker imports it too. Second, set `"architectures": ["Stack100MForCausalLM"]` in your checkpoint's `config.json` so vLLM looks the class up. The exact `forward`/`compute_logits` signatures drift between releases; the honest way to get them right is to copy the structure of `vllm/model_executor/models/llama.py` from the version you have installed.
+
+### vLLM inside an RL loop: sleep mode and weight sync
+
+RL post-training ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html), and [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)) alternates between *generating* rollouts and *training* on them. Both phases want the whole GPU, and after each update the rollout engine is holding stale weights. vLLM exposes two mechanisms for exactly this, and they are why veRL, OpenRLHF and TRL's online trainers can co-locate the actor and the sampler on one device:
+
+```python
+from vllm import LLM
+
+llm = LLM(model="./stack100m-sft", enable_sleep_mode=True)
+
+rollouts = llm.generate(prompts, params)      # generation phase
+llm.sleep(level=1)                            # free the KV pool, offload weights to CPU
+# ... trainer now owns the GPU: compute GRPO advantages, backprop, step ...
+llm.wake_up()                                 # weights back on GPU, KV pool re-carved
+
+# Push the freshly updated policy into every TP worker without restarting:
+llm.collective_rpc("update_weights", args=(handles,))
+```
+
+`sleep(level=1)` offloads weights to CPU and discards the KV cache (level 2 discards the weights too, for when the trainer will supply them anyway); `wake_up()` restores. `collective_rpc` broadcasts a method call to all workers, and frameworks register the receiving method by passing a `worker_extension_cls` at construction — typically one that copies tensors in place from the trainer's sharded parameters, often over NCCL or CUDA IPC handles rather than through disk. **Invalidate the prefix cache after a weight update**: cached blocks hold KV computed by the *old* policy, and the block hash covers token IDs, not weights. Frameworks handle this by resetting the prefix cache (`llm.reset_prefix_cache()`) as part of the sync; if you build your own loop, do it explicitly or you will silently mix policy versions inside a single rollout.
 
 ### The knobs that actually matter
 
@@ -464,7 +552,7 @@ A practical tuning loop:
 1. **Pick `max_model_len` honestly.** This single number sets the worst-case KV per request. Cutting an unnecessary 32k cap down to 8k can multiply concurrency.
 2. **Push `gpu_memory_utilization` up** until you see activation OOMs, then back off a notch.
 3. **Decide your objective.** Throughput-first: large `max_num_batched_tokens`, large `max_num_seqs`. Latency-first (low inter-token latency for chat): smaller `max_num_batched_tokens` with chunked prefill so long prefills don't stall decodes.
-4. **Watch the metrics.** vLLM logs/Prometheus expose KV-cache utilization, running/waiting/swapped counts, `num_preemptions`, prefix-cache hit rate, and throughput. If preemptions are nonzero in steady state, you're oversubscribed — lower `max_num_seqs` or `max_model_len`, or quantize to enlarge the pool.
+4. **Watch the metrics, and measure with a load generator.** The server's `/metrics` endpoint exports Prometheus counters and histograms: KV-cache utilization, running/waiting counts, `num_preemptions`, prefix-cache hit rate, time-to-first-token and time-per-output-token distributions. If preemptions are nonzero in steady state, you're oversubscribed — lower `max_num_seqs` or `max_model_len`, or quantize to enlarge the pool. Do not tune by eyeballing single requests: drive the server with vLLM's own harness (`vllm bench serve` in recent versions, or `benchmarks/benchmark_serving.py` in the repo) against a real request-rate and length distribution, which reports throughput alongside TTFT/TPOT percentiles so you can see the latency cost of every throughput gain.
 5. **Quantize to buy concurrency.** FP8/INT4 weights and an FP8 KV cache both enlarge the effective KV pool; for many workloads that concurrency gain outweighs the tiny quality cost. Inference economics — the latency/throughput/cost trade-off you are navigating — is the subject of [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
 
 !!! warning "Common pitfall: `max_model_len` left at the model maximum"
@@ -480,7 +568,8 @@ vLLM is not the only serving engine — [SGLang: RadixAttention & Structured Pro
     - **V1** isolates the engine loop in its own process to overlap CPU and GPU work, defaults to `torch.compile` + piecewise CUDA graphs, and enables **prefix caching** out of the box.
     - **Automatic prefix caching** hashes full KV blocks (including LoRA id and a tenant salt) to reuse shared prefixes across requests — a massive win for system prompts, agents, and RL rollouts.
     - **Speculative decoding** and **multi-LoRA** bolt onto the paged core: speculation verifies $k$ drafted tokens in one target pass (output distribution preserved), and multi-LoRA serves many adapters over one base model via batched gathered low-rank matmuls, with adapters paged like KV blocks.
-    - Tune via `gpu_memory_utilization`, an honest `max_model_len`, `max_num_seqs`, and `max_num_batched_tokens`; quantizing weights and the KV cache buys concurrency, and the preemption/cache-hit metrics tell you whether you're oversubscribed.
+    - The model-side contract is small: build your network out of `vllm.attention.Attention` layers, implement `forward` / `compute_logits` / `load_weights`, and `ModelRegistry.register_model` it — your code never touches the KV cache, because vLLM injects slot mappings and block tables around it. For an RL loop, `sleep()`/`wake_up()` and `collective_rpc` weight sync (plus a prefix-cache reset) let the trainer and the rollout engine share one GPU.
+    - Tune via `gpu_memory_utilization`, an honest `max_model_len`, `max_num_seqs`, and `max_num_batched_tokens`; quantizing weights and the KV cache buys concurrency, and the `/metrics` preemption/cache-hit counters plus a real load generator (`vllm bench serve`) tell you whether you're oversubscribed.
 
 !!! sota "State of the Art & Resources (2026)"
     vLLM has become the dominant open-source LLM serving engine, with its V1 architecture (2025) now the default: an isolated EngineCore process, unified token-budget scheduler, prefix caching on by default, and `torch.compile` + piecewise CUDA graphs — delivering up to 1.7× higher throughput than V0. By 2026 the frontier of vLLM development has shifted to **large-scale serving**: production multi-node deployment on NVIDIA Blackwell (GB200/B200) with wide expert parallelism (WideEP) and elastic scaling, disaggregated prefill/decode over fast KV connectors, and nightly performance tracking against frontier open models (DeepSeek V3.2, Qwen, Kimi). Active work also continues on multi-backend speculative decoding (EAGLE, MTP, n-gram) and KV offload to CPU under memory pressure.
@@ -504,8 +593,8 @@ vLLM is not the only serving engine — [SGLang: RadixAttention & Structured Pro
 
     **Go deeper**
 
-    - [vLLM V1: A Major Upgrade to vLLM's Core Architecture (vLLM Blog, Jan 2025)](https://vllm.ai/blog/2025-01-27-v1-alpha-release) — the official design writeup for V1: EngineCore isolation, unified scheduler, torch.compile path, and what changed from V0.
-    - [vLLM Official Documentation](https://docs.vllm.ai/en/stable/) — production deployment guide, tuning knobs, hardware support matrix, and the V1 migration guide.
+    - [vLLM V1: A Major Upgrade to vLLM's Core Architecture (vLLM Blog, Jan 2025)](https://blog.vllm.ai/2025/01/27/v1-alpha-release.html) — the official design writeup for V1: EngineCore isolation, unified scheduler, torch.compile path, and what changed from V0.
+    - [vLLM Official Documentation](https://docs.vllm.ai/en/stable/) — production deployment guide, tuning knobs, hardware support matrix, the "Adding a New Model" guide for out-of-tree architectures, and the V1 migration guide.
 
 ## Further reading
 

@@ -7,16 +7,18 @@ the claims the prose/comments make about the results. Run directly:
 `python3 tests/07-inference-serving__07-prefix-caching.py`
 
 Blocks in this chapter:
-  - block #0 (line ~87, 130 lines): RadixNode / RadixTree (SGLang RadixAttention)
-  - block #1 (line ~235, 73 lines): APCBlockAllocator (vLLM Automatic Prefix Caching)
-  - block #2 (line ~451, bash)   -> SKIP(shell): `python -m vllm...` launch command, not Python.
-  - block #3 (line ~463, python) -> SKIP(network): `requests.get("http://localhost:8000/metrics")`
+  - block #0 (line ~89, 130 lines): RadixNode / RadixTree (SGLang RadixAttention)
+  - block #1 (line ~237, 76 lines): APCBlockAllocator (vLLM Automatic Prefix Caching)
+  - block #2 (line ~472, bash)   -> SKIP(shell): `python -m vllm...` launch command, not Python.
+  - block #3 (line ~484, python) -> SKIP(network): `requests.get("http://localhost:8000/metrics")`
                                      against a live vLLM server — real network call, forbidden in CI.
-  - block #4 (line ~478, bash)   -> SKIP(shell): `python -m sglang.launch_server ...`, not Python.
-  - block #5 (line ~490, python) -> SKIP(out-of-scope): `build_prompt`/`build_prompt_bad` string-
+  - block #4 (line ~499, bash)   -> SKIP(shell): `python -m sglang.launch_server ...`, not Python.
+  - block #5 (line ~513, python) -> SKIP(network/weights): HF `transformers` prefix-reuse demo — needs
+                                     to download SmolLM2-135M and run a forward pass, forbidden in CI.
+  - block #6 (line ~556, python) -> SKIP(out-of-scope): `build_prompt`/`build_prompt_bad` string-
                                      formatting example. It is actually CPU-safe (no network/GPU), but
                                      is not one of the 2 blocks assigned for this chapter's test.
-  - block #6 (line ~525, python) -> SKIP(out-of-scope): `pad_to_block_boundary` helper. Also CPU-safe,
+  - block #7 (line ~594, python) -> SKIP(out-of-scope): `pad_to_block_boundary` helper. Also CPU-safe,
                                      also not one of the 2 assigned blocks for this chapter's test.
 """
 # The book's block #0 opens with `from __future__ import annotations`, which
@@ -208,7 +210,10 @@ def block_apc_allocator():
         def _compute_block_hash(self, prev_hash: int, token_ids: list[int]) -> int:
             """Chain the previous block hash with current token IDs."""
             import hashlib
-            data = prev_hash.to_bytes(8, 'little') + bytes(token_ids)
+            # Encode each token id in 4 bytes. (`bytes(token_ids)` would raise for
+            # any id > 255, and real vocabularies run to 32k-256k entries.)
+            packed = b"".join(t.to_bytes(4, 'little') for t in token_ids)
+            data = prev_hash.to_bytes(8, 'little') + packed
             return int.from_bytes(hashlib.sha256(data).digest()[:8], 'little')
 
         def allocate_or_reuse(
@@ -323,8 +328,9 @@ def main():
         "  #2 (bash)   - SKIP(shell): vLLM server launch command, not Python\n"
         "  #3 (python) - SKIP(network): requests.get() against a live vLLM metrics endpoint\n"
         "  #4 (bash)   - SKIP(shell): SGLang server launch command, not Python\n"
-        "  #5 (python) - SKIP(out-of-scope): CPU-safe but not one of the 2 assigned blocks\n"
-        "  #6 (python) - SKIP(out-of-scope): CPU-safe but not one of the 2 assigned blocks"
+        "  #5 (python) - SKIP(network/weights): HF transformers demo downloads model weights\n"
+        "  #6 (python) - SKIP(out-of-scope): CPU-safe but not one of the 2 assigned blocks\n"
+        "  #7 (python) - SKIP(out-of-scope): CPU-safe but not one of the 2 assigned blocks"
     )
 
 

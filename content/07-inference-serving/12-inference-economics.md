@@ -77,6 +77,40 @@ $$
 
 {{fig:econ-cost-per-token-hyperbola}}
 
+### Measuring $T_{\text{sustained}}$ Instead of Guessing It
+
+Every number in the formula above except $T_{\text{sustained}}$ is known exactly: you read $R$ off your cloud invoice. $T_{\text{sustained}}$ is the one term you must *measure*, at your own request-rate, prompt-length and output-length distribution — analytical models like the ones in this chapter set expectations, they do not replace a load test. Both production serving engines ship a load generator for exactly this.
+
+```bash
+# 1. Start the server (vLLM). Two flags here move the cost needle directly:
+#    --gpu-memory-utilization raises the HBM given to KV cache (larger B_eff),
+#    --enable-prefix-caching stops you re-paying for shared system prompts.
+vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.92 \
+  --enable-prefix-caching
+
+# 2. Drive it with a realistic open-loop arrival process and measure.
+#    'vllm bench serve' is the modern CLI; older releases ship the same tool
+#    as benchmarks/benchmark_serving.py in the repo.
+#    --request-rate is in requests/s; sweep it to trace the SLO frontier.
+vllm bench serve \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --dataset-name random \
+  --random-input-len 1024 --random-output-len 256 \
+  --request-rate 8 \
+  --num-prompts 500
+
+# SGLang exposes an equivalent harness:
+#   python -m sglang.bench_serving --backend sglang --num-prompts 500 --request-rate 8
+```
+
+The report gives you output-token throughput plus mean/median/p99 TTFT, TPOT (time per output token) and ITL (inter-token latency). Sweep `--request-rate` upward and you trace the *SLO frontier*: throughput climbs, then TTFT and TPOT cross your SLO. The last rate that still satisfies the SLO is your **goodput**, and the $T_{\text{sustained}}$ you should put in the cost formula is the output-token rate at that point — not the unconstrained maximum, which corresponds to an operating point no user would tolerate. This distinction is the central argument of the DistServe paper cited at the end of the chapter.
+
+!!! warning "Common pitfall"
+
+    Benchmarking closed-loop (a fixed pool of $N$ clients, each sending the next request only after the previous one returns) reports a flattering throughput number that no real traffic will reproduce. Closed-loop load self-throttles: when the server slows down, the offered load drops with it, so queues never build and p99 latency never blows up. Always use an open-loop generator with a target arrival rate (`--request-rate`), which is what `vllm bench serve` and `sglang.bench_serving` do by default. `--request-rate inf` reverts to the flattering saturation number — useful for offline batch sizing, misleading for interactive SLOs.
+
 ### Input Tokens vs. Output Tokens
 
 Output tokens are expensive because they require an autoregressive decode step — one weight-loading pass per token. Input (prefill) tokens are cheap relative to output because they are processed in parallel. As a rough rule of thumb, at large batch sizes and typical prompt/completion ratios, output tokens cost roughly 3–5× more in wall-clock GPU-time — and hence dollars — per token than input tokens (the exact ratio depends on sequence lengths and batch size). Note the asymmetry is *not* about arithmetic: the FLOPs per token are essentially identical (~2P, where P is the parameter count) for a prefill token and a decode token. It is about bandwidth. A decode step reads the entire weight matrix from HBM to emit a single token, so it is memory-bound and poorly utilized; parallel prefill reads those same weights once and amortizes them across every prompt token at near-peak FLOP utilization. Output tokens are expensive because each one pays for its own weight-loading pass, not because it does more math.
@@ -195,7 +229,95 @@ Below $B^* \approx 295$ the decode step time is flat at ~42 ms per step (bandwid
 
 {{fig:econ-decode-step-time-knee}}
 
-The practical lesson: on a single H100 serving a 70B BF16 model, you can pack up to ~295 concurrent decoding sequences before latency starts climbing. That is the regime where `tokens/s/GPU` is maximized.
+The practical lesson: on an H100-class bandwidth budget serving a 70B BF16 model *at negligible context length*, you can pack up to ~295 concurrent decoding sequences before latency starts climbing. That is the regime where `tokens/s/GPU` is maximized. But this model has a missing term, and at realistic context lengths that term dominates everything else in this chapter.
+
+### The Missing Term: KV-Cache Reads
+
+The model above counts only the bytes of *weights* streamed per decode step. It ignores the fact that attention must also read every active sequence's KV cache from HBM, every single step. Weights are shared across the batch; KV caches are not. The honest bandwidth-bound decode model is:
+
+$$
+t_{\text{decode}}(B, S) \approx \max\!\left(\frac{2P + B \cdot \text{kv}(S)}{\text{BW}},\ \frac{B\,(2P + F_{\text{attn}}(S))}{\text{FLOP/s}}\right)
+$$
+
+where $\text{kv}(S) = 2\, n_{\text{kv}}\, d\, L\, S \cdot b$ bytes is the per-sequence KV cache (the formula derived later in this chapter, with $b$ bytes per element) and $F_{\text{attn}}(S) = 4\, n_q\, d\, L\, S$ FLOPs is the per-sequence attention work — two matmuls ($QK^\top$ and $AV$), each $2 n_q d L S$ FLOPs across all $n_q$ query heads and $L$ layers.
+
+Now compute the arithmetic intensity of the *attention* part on its own, in BF16 ($b = 2$):
+
+$$
+\frac{F_{\text{attn}}(S)}{\text{kv}(S)} = \frac{4\, n_q\, d\, L\, S}{4\, n_{\text{kv}}\, d\, L\, S} = \frac{n_q}{n_{\text{kv}}}
+$$
+
+For Llama-3 70B ($n_q = 64$ query heads, $n_{\text{kv}} = 8$ GQA key/value heads) that is exactly **8** — independent of $S$, and, crucially, independent of $B$. Batching amortizes weight reads across sequences, but it does *not* amortize KV reads, because every sequence carries its own cache. The attention component of decode is therefore pinned at an arithmetic intensity of 8, hopelessly below the H100's $\text{AI}^\ast \approx 295$, no matter how well you batch. **This is the real reason MQA, GQA and MLA exist** (see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)): the only levers on that ratio are shrinking $n_{\text{kv}}$ or, as in MLA, compressing the cache into a low-rank latent.
+
+Three consequences follow, and they overturn the naive picture:
+
+1. **The compute-bound knee never arrives.** Setting the two branches equal and solving for $B$ yields a *negative* root for any $S > 0$ on H100/70B: the KV term in the bandwidth branch grows faster in $B$ than the compute branch does. Decode does not transition from bandwidth-bound to compute-bound; it transitions from *weight*-bandwidth-bound to *KV*-bandwidth-bound.
+2. **Batching stops being free at $B_{1/2} = 2P / \text{kv}(S)$** — the batch size at which KV reads equal weight reads and step time has already doubled. This, not $B^\ast$, is the number your scheduler actually collides with.
+3. **Per-node decode throughput has a hard ceiling of $\text{BW} / \text{kv}(S)$ tokens/s** as $B \to \infty$. No amount of batching beats it, because in the limit every step is pure KV streaming.
+
+| Context $S$ | $\text{kv}(S)$ per sequence | $B_{1/2} = 2P/\text{kv}(S)$ | Throughput ceiling $\text{BW}/\text{kv}(S)$ |
+|---|---|---|---|
+| 2,048 | 0.67 GB | ~209 | ~4,990 tok/s |
+| 8,192 | 2.68 GB | ~52 | ~1,250 tok/s |
+| 32,768 | 10.7 GB | ~13 | ~310 tok/s |
+
+At 32k context the useful batch size is not 295 but roughly a dozen, and node throughput saturates around 300 tokens/s — a **16× collapse** in tokens/s/dollar relative to the short-context regime, purely from KV traffic. (Tensor parallelism splits both weights and KV heads across GPUs, so $B_{1/2}$ is unchanged while the ceiling scales with the group's aggregate bandwidth.)
+
+```python
+# Extend the decode model with the KV-cache read term and attention FLOPs.
+# Reuses H100_FLOPS, H100_BW and N_PARAMS from the block above.
+
+def kv_bytes_per_seq(seq_len, n_kv=8, head_dim=128, n_layers=80, bytes_per_elt=2):
+    """K and V, for every layer, for every cached token. Llama-3 70B defaults."""
+    return 2 * n_kv * head_dim * n_layers * seq_len * bytes_per_elt
+
+
+def attn_flops_per_seq(seq_len, n_q=64, head_dim=128, n_layers=80):
+    """Decode attention: two matmuls (QK^T and AV), 2 FLOPs per MAC, all query heads."""
+    return 2 * (2 * n_q * head_dim * n_layers * seq_len)
+
+
+def decode_step_time_ms_v2(n_params, batch_size, seq_len,
+                           flops_per_sec, bandwidth_bytes_per_sec,
+                           bytes_per_param=2):
+    """Decode step time including per-sequence KV-cache traffic.
+
+    Weights are read once per step for the whole batch; KV caches are read
+    once per step *per sequence*. That asymmetry is the whole story.
+    """
+    bytes_moved = n_params * bytes_per_param + batch_size * kv_bytes_per_seq(seq_len)
+    flops = batch_size * (2 * n_params + attn_flops_per_seq(seq_len))
+    return max(bytes_moved / bandwidth_bytes_per_sec, flops / flops_per_sec) * 1000.0
+
+
+for S in (2048, 8192, 32768):
+    kvb = kv_bytes_per_seq(S)
+    print(f"S={S:6d}  kv/seq={kvb/1e9:5.2f} GB  "
+          f"B_half={2*N_PARAMS/kvb:6.1f}  ceiling={H100_BW/kvb:7.0f} tok/s")
+    for B in (1, 16, 64, 256):
+        t = decode_step_time_ms_v2(N_PARAMS, B, S, H100_FLOPS, H100_BW)
+        print(f"    B={B:4d}  step={t:7.2f} ms  node throughput={B/(t/1000):7.0f} tok/s")
+```
+
+```text
+S=  2048  kv/seq= 0.67 GB  B_half= 208.6  ceiling=   4992 tok/s
+    B=   1  step=  41.99 ms  node throughput=     24 tok/s
+    B=  16  step=  45.00 ms  node throughput=    356 tok/s
+    B=  64  step=  54.61 ms  node throughput=   1172 tok/s
+    B= 256  step=  93.07 ms  node throughput=   2750 tok/s
+S=  8192  kv/seq= 2.68 GB  B_half=  52.2  ceiling=   1248 tok/s
+    B=   1  step=  42.59 ms  node throughput=     23 tok/s
+    B=  16  step=  54.61 ms  node throughput=    293 tok/s
+    B=  64  step=  93.07 ms  node throughput=    688 tok/s
+    B= 256  step= 246.92 ms  node throughput=   1037 tok/s
+S= 32768  kv/seq=10.74 GB  B_half=  13.0  ceiling=    312 tok/s
+    B=   1  step=  45.00 ms  node throughput=     22 tok/s
+    B=  16  step=  93.07 ms  node throughput=    172 tok/s
+    B=  64  step= 246.92 ms  node throughput=    259 tok/s
+    B= 256  step= 862.32 ms  node throughput=    297 tok/s
+```
+
+This single term explains most of the interventions in the rest of this chapter: prefix caching (don't rebuild caches you already paid for), KV quantization (halve $\text{kv}(S)$, double the ceiling), MLA and GQA (shrink $n_{\text{kv}}$), sliding-window and hybrid attention (cap the $S$ in $\text{kv}(S)$), and paged allocation (stop wasting the capacity you do have — see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)).
 
 ## GPU Selection and the Hardware Cost Function
 
@@ -233,6 +355,19 @@ The all-reduce adds a fixed per-step communication overhead (typically a few ms 
 
 For very large models (>70B), TP is often mandatory to fit in memory. The key point is that **TP does not improve tokens/s/dollar beyond what's needed to fit the model** — it just allows serving. Sequence parallelism and disaggregated architectures are needed for further scaling (see [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html)).
 
+### The Other End of the Curve: Serving a ~100M Model
+
+Everything above assumes weight streaming is the dominant cost. For a small model it simply is not, and the economics invert in a way that is worth internalizing — not least because it is the regime the capstone model of [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) lives in.
+
+Take Stack-100M: 100M parameters, 0.2 GB in BF16. The bandwidth floor on an H100 is $0.2\,\text{GB} / 3.35\,\text{TB/s} \approx 60\ \mu\text{s}$ per decode step. But a small transformer still launches on the order of a hundred CUDA kernels per forward pass, and each launch plus the Python scheduling around it costs a few microseconds. **The fixed per-step overhead is now an order of magnitude larger than the physics.** The consequences:
+
+- **CUDA Graphs and `torch.compile` are the dominant optimization, not quantization.** Capturing the decode step as a graph collapses hundreds of launches into one replay; vLLM does this by default (it is what `--enforce-eager` turns *off*, which is why eager mode is so much slower on small models). See [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html).
+- **The arithmetic-intensity breakeven is trivially reachable.** $B^\ast \approx 295$ sequences of a 100M model cost almost no HBM, so you should batch aggressively; per-token cost falls until the CPU-side scheduler, tokenizer, and HTTP layer become the bottleneck. At this scale a meaningful share of the bill is *CPU*, not GPU.
+- **The GPU may be the wrong hardware entirely.** Quantized to 4-bit GGUF, Stack-100M is roughly 55 MB of weights. On a laptop with ~80 GB/s of DDR5 bandwidth the weight-streaming floor is under a millisecond per token, so `llama.cpp` on CPU delivers interactive speeds at zero marginal GPU cost. Marginal-cost-per-token analysis is the wrong frame here; total cost of ownership is dominated by whether you need a GPU at all.
+- **Fixed costs dominate at low volume.** A model this small serves so many tokens per GPU-hour that the $\$/1M$ figure becomes a rounding error next to the engineering time, the eval harness, and the one always-warm replica. The capstone's full ledger — training plus serving — is worked through in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html).
+
+The transferable lesson is that the roofline method, not any particular number, is what generalizes: recompute $2P/\text{BW}$ and $\text{kv}(S)/\text{BW}$ for *your* model on *your* memory system (HBM, DDR, or unified memory), compare against the fixed per-step overhead, and optimize whichever term is largest.
+
 ## Why Decode-Heavy Workloads Are Expensive
 
 Reasoning models, coding assistants, and long-form generation are all examples of decode-heavy workloads: the ratio of output tokens to input tokens is high (sometimes 10:1 or more). This matters economically for three reasons:
@@ -251,7 +386,7 @@ $$
 \text{KV bytes} = 2 \times 8 \times 128 \times 80 \times 32768 \times 2 = 10.7 \text{ GB per sequence}
 $$
 
-A single 80GB H100 serving 70B at TP=2 (40 GB available for KV after weights) can hold at most about 3–4 concurrent long-context sequences. Batch size is severely limited.
+A TP=2 node of two 80 GB H100s has 160 GB of HBM; 140 GB goes to BF16 weights and a few more GB to activations and CUDA workspace, leaving on the order of 15–20 GB for KV cache. That is **one or two** concurrent 32k-context sequences. Batch size is not limited by the arithmetic-intensity knee here — it is limited by capacity, long before you get near it. Going to TP=4 (320 GB) or FP8 weights (70 GB) is what buys back the batch.
 
 3. **Speculative decoding helps but has limits.** Speculative decoding (see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)) can recover 2–3× speed for predictable outputs (code, factual answers) by verifying multiple tokens per step, but the draft model adds HBM bandwidth overhead and is less effective for creative or reasoning-heavy outputs.
 
@@ -556,26 +691,31 @@ At large scale (> \$1M/month), negotiated reserved instance pricing, custom sili
 
 A good inference cost dashboard tracks these key metrics in real time:
 
+You do not have to invent most of this. vLLM and SGLang both expose a Prometheus `/metrics` endpoint out of the box (`--disable-log-stats` turns vLLM's off), so scraping the engine gets you the raw series; your job is the derived cost layer on top. The right-hand column below names the upstream vLLM series each dashboard panel should be built from.
+
 ```python
-# Reference metrics to instrument in your serving stack (e.g., via Prometheus)
-# Each metric name maps to a Prometheus gauge/histogram.
+# Reference metrics to instrument in your serving stack (e.g., via Prometheus).
+# The comment on each line names the upstream vLLM series it derives from —
+# scrape http://<host>:8000/metrics and build these on top rather than
+# re-instrumenting from scratch. (Series names track vLLM's current metrics
+# schema; confirm against your deployed version.)
 
 INFERENCE_METRICS = {
-    # Throughput
-    "output_tokens_per_second":   "gauge",    # Overall system output rate
-    "input_tokens_per_second":    "gauge",    # Overall system prefill rate
+    # Throughput  <- rate() over vllm:generation_tokens_total / vllm:prompt_tokens_total
+    "output_tokens_per_second":   "gauge",    # rate(vllm:generation_tokens_total[5m])
+    "input_tokens_per_second":    "gauge",    # rate(vllm:prompt_tokens_total[5m])
 
-    # Latency
-    "ttft_p50_ms":                "gauge",    # Median time to first token
-    "ttft_p99_ms":                "gauge",    # p99 time to first token
-    "tbt_p50_ms":                 "gauge",    # Median time between tokens
-    "tbt_p99_ms":                 "gauge",    # p99 time between tokens
+    # Latency  <- histogram_quantile() over the engine's latency histograms
+    "ttft_p50_ms":                "gauge",    # vllm:time_to_first_token_seconds
+    "ttft_p99_ms":                "gauge",    # vllm:time_to_first_token_seconds
+    "tbt_p50_ms":                 "gauge",    # vllm:time_per_output_token_seconds
+    "tbt_p99_ms":                 "gauge",    # vllm:time_per_output_token_seconds
 
     # Efficiency
-    "gpu_utilization_pct":        "gauge",    # Per-GPU utilization
-    "kv_cache_utilization_pct":   "gauge",    # KV cache fill rate (via vLLM metrics)
-    "batch_size_mean":            "gauge",    # Average active batch size
-    "batch_size_p99":             "gauge",    # p99 active batch size
+    "gpu_utilization_pct":        "gauge",    # DCGM exporter (not the engine)
+    "kv_cache_utilization_pct":   "gauge",    # vllm:gpu_cache_usage_perc
+    "batch_size_mean":            "gauge",    # vllm:num_requests_running
+    "batch_size_p99":             "gauge",    # vllm:num_requests_running
 
     # Cost
     "cost_per_1m_output_tokens":  "gauge",    # Derived: $/1M output tokens
@@ -584,7 +724,7 @@ INFERENCE_METRICS = {
 
     # Quality proxy
     "generation_errors_per_min":  "gauge",    # Truncations, OOM aborts, timeouts
-    "queue_depth_tokens":         "gauge",    # Pending tokens in request queue
+    "queue_depth_tokens":         "gauge",    # vllm:num_requests_waiting (as a proxy)
 }
 
 def compute_cost_per_1m_tokens(
@@ -600,6 +740,23 @@ def compute_cost_per_1m_tokens(
     return (gpu_cost_per_hour * 1e6) / (output_tokens_per_second * 3600.0)
 ```
 
+The same formula as a single PromQL expression, so the headline number is a live panel rather than a spreadsheet:
+
+```text
+# $/1M output tokens, computed directly from vLLM's counters.
+# gpu_cluster_cost_per_hour is a constant you record (a recording rule or a
+# static series); everything else comes from the engine's /metrics endpoint.
+(gpu_cluster_cost_per_hour * 1e6)
+  / (sum(rate(vllm:generation_tokens_total[5m])) * 3600)
+
+# KV-cache pressure — the leading indicator of preemption and of the
+# KV-bandwidth wall from earlier in this chapter:
+max(vllm:gpu_cache_usage_perc)
+
+# Goodput proxy: request rate that met a 500 ms TTFT SLO over the window.
+sum(rate(vllm:time_to_first_token_seconds_bucket{le="0.5"}[5m]))
+```
+
 Alert thresholds to set:
 - `cost_per_1m_output_tokens` > 2× your baseline → something is wrong (traffic spike, failed GPU, KV cache thrashing).
 - `kv_cache_utilization_pct` > 90% → risk of request preemption/OOM; scale out or reduce max context.
@@ -609,6 +766,8 @@ Alert thresholds to set:
 !!! key "Key Takeaways"
 
     - The latency–throughput–cost triangle is governed by the roofline: decode is bandwidth-bound until batch size exceeds $B^* = \text{FLOP/s} / \text{BW}$ (roughly 295 for H100 serving a 70B BF16 model). Below $B^*$, adding concurrent sequences improves throughput at zero latency cost.
+    - That knee is a short-context idealization. Weights are shared across the batch but KV caches are not, so the honest model adds a $B \cdot \text{kv}(S) / \text{BW}$ term. Decode attention has arithmetic intensity $n_q / n_{\text{kv}}$ (8 for Llama-3 70B GQA) regardless of batch size, so it never becomes compute-bound: batching stops being free at $B_{1/2} = 2P/\text{kv}(S)$ (~52 at 8k context, ~13 at 32k) and node throughput saturates at $\text{BW}/\text{kv}(S)$.
+    - $T_{\text{sustained}}$ is the only term in the cost formula you must measure. Use an *open-loop* load generator (`vllm bench serve`, `sglang.bench_serving`), sweep the request rate, and take the throughput at the last rate that still meets your TTFT/TPOT SLO — goodput, not saturation throughput.
     - Cost per million output tokens is $\text{\$/1M} = (R \times 10^6) / (T_{\text{sustained}} \times 3600)$. The dominant lever is sustained throughput, which is maximized by keeping GPU utilization near the saturation point.
     - Output tokens are 3–5× more expensive per token than input tokens — but in wall-clock GPU-time and dollars, not FLOPs: per-token compute (~2P) is the same for prefill and decode. The gap is bandwidth: each decode token pays for its own full weight read from HBM (memory-bound, low utilization), whereas parallel prefill amortizes one weight read across the whole prompt. Reasoning models that produce long chains-of-thought carry a significant cost multiplier.
     - FP8 and INT8 quantization are the single highest-leverage optimization: they halve or quarter decode bandwidth consumption with minimal quality degradation on modern hardware.
@@ -709,7 +868,7 @@ Alert thresholds to set:
 
     Ratio: $36 / 6 = 6\times$. The reasoning trace is billed exactly like answer tokens (each thinking token still pays for its own full weight-loading pass through decode), so the 6:1 token ratio maps directly onto a 6:1 dollar ratio. This is the chain-of-thought tax from the chapter: the quality premium of test-time reasoning has a concrete, linear cost tag.
 
-**4.** (Quantitative) Using the chapter's Llama-3 70B KV-cache parameters ($n_{\text{kv}} = 8$ GQA heads, head dim $d = 128$, $L = 80$ layers, BF16 = 2 bytes), compute the KV-cache size for one sequence at $S = 8{,}192$ tokens. A TP=2 deployment leaves 40 GB of HBM per node for KV cache after weights. How many such sequences fit concurrently in BF16? How many if the KV cache is quantized to INT8?
+**4.** (Quantitative) Using the chapter's Llama-3 70B KV-cache parameters ($n_{\text{kv}} = 8$ GQA heads, head dim $d = 128$, $L = 80$ layers, BF16 = 2 bytes), compute the KV-cache size for one sequence at $S = 8{,}192$ tokens. A TP=2 node (2 × 80 GB = 160 GB) holding 140 GB of BF16 weights plus activations and workspace leaves roughly 20 GB for KV cache. How many such sequences fit concurrently in BF16? How many if the KV cache is quantized to INT8?
 
 ??? note "Solution"
     The chapter's KV-cache formula (factor of 2 for both K and V, factor of 2 for BF16 bytes):
@@ -722,19 +881,19 @@ Alert thresholds to set:
     = 2 \times 8 \times 128 \times 80 \times 8192 \times 2 = 2{,}684{,}354{,}560 \text{ bytes} \approx 2.68 \text{ GB per sequence}
     $$
 
-    Concurrent sequences in 40 GB, BF16:
+    Concurrent sequences in 20 GB, BF16:
 
     $$
-    \left\lfloor \frac{40}{2.68} \right\rfloor = \lfloor 14.9 \rfloor = 14 \text{ sequences}
+    \left\lfloor \frac{20}{2.68} \right\rfloor = \lfloor 7.45 \rfloor = 7 \text{ sequences}
     $$
 
     With INT8 KV cache (1 byte instead of 2), each sequence needs $2.68 / 2 = 1.34$ GB:
 
     $$
-    \left\lfloor \frac{40}{1.34} \right\rfloor = \lfloor 29.8 \rfloor = 29 \text{ sequences}
+    \left\lfloor \frac{20}{1.34} \right\rfloor = \lfloor 14.9 \rfloor = 14 \text{ sequences}
     $$
 
-    INT8 KV-cache quantization roughly doubles concurrent long-context capacity (14 to 29), exactly the effect described in the chapter's KV-cache quantization section. Note that even 14 concurrent sequences is far below the $B^* \approx 295$ decode breakeven — at long context, **KV-cache capacity, not the arithmetic-intensity knee, is the binding constraint on batch size.**
+    INT8 KV-cache quantization roughly doubles concurrent long-context capacity (7 to 14), exactly the effect described in the chapter's KV-cache quantization section. Note that even 14 concurrent sequences is far below the $B^* \approx 295$ decode breakeven — at long context, **KV-cache capacity, not the arithmetic-intensity knee, is the binding constraint on batch size.** And per the chapter's KV-read analysis, the *time* model agrees: at $S = 8{,}192$ the batch size at which KV traffic already doubles step time is $B_{1/2} = 2P/\text{kv}(S) = 140/2.68 \approx 52$, so capacity binds first and bandwidth binds second — the compute knee is never reached at all.
 
 **5.** (Quantitative) Your API sees peak traffic of 30 requests/second, each generating an average of 500 output tokens. You serve a 13B model at TP=1 on A100 80GB GPUs that sustain 6,000 decode tokens/second each. Targeting 70% utilization for headroom, how many GPUs do you need? At \$3.50/GPU-hour, what does the peak cluster cost per hour?
 

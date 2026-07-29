@@ -44,6 +44,56 @@ def sample_token(
 
 Everything in this chapter is a specialisation of this loop. Let's build each piece.
 
+### The Gumbel-Max Trick: Sampling as a Perturbed Argmax
+
+`torch.multinomial` is convenient but it is *not* what high-throughput engines run. Internally it normalises, builds a cumulative distribution over the whole vocabulary, and does a search — awkward on GPU for a 128k-entry vector, and it allocates in a way that is unfriendly to CUDA graphs. There is an exact, sort-free alternative.
+
+Let $g_1,\ldots,g_{|V|}$ be i.i.d. samples from the standard **Gumbel** distribution, obtained from uniforms as $g = -\log(-\log u)$ with $u \sim \mathrm{Uniform}(0,1)$. Then
+
+$$
+\arg\max_t \left( z_t + g_t \right) \;\sim\; \operatorname{softmax}(\mathbf{z})
+$$
+
+*exactly*. Sketch: $z_t + g_t$ is Gumbel with location $z_t$, and $P(\max_t \{z_t+g_t\} \le y) = \prod_t \exp(-e^{z_t - y}) = \exp(-e^{\log \sum_t e^{z_t} - y})$, so the max is itself Gumbel with location $\log\sum_t e^{z_t}$; carrying the same algebra through the argmax gives $P(\arg\max = k) = e^{z_k}/\sum_t e^{z_t}$. Note this works on the *unnormalised* logits — no softmax, no partition function, no sort. Three consequences matter in practice:
+
+1. **It is one fused elementwise kernel plus an argmax reduction**, with static shapes — exactly what a CUDA-graph-captured decode step wants.
+2. **Truncation composes for free.** Tokens masked to $-\infty$ stay at $-\infty$ after adding finite noise, so top-k/top-p/min-p masks work unchanged.
+3. **Temperature is just a pre-scale**: $\arg\max_t(z_t/T + g_t)$ samples from $P_T$. And $T \to 0$ recovers greedy, which is why greedy is the zero-noise limit rather than a separate code path.
+
+An algebraically equivalent form — the *exponential race* — divides probabilities by i.i.d. $\mathrm{Exponential}(1)$ noise instead, which is how engines such as vLLM implement random sampling:
+
+```python
+import torch
+
+def gumbel_sample(logits: torch.Tensor, generator=None) -> torch.Tensor:
+    """
+    Exact sample from softmax(logits) with no sort and no cumsum.
+    logits: (..., vocab). Returns integer token ids of shape (...).
+    """
+    u = torch.rand(logits.shape, device=logits.device, generator=generator)
+    u = u.clamp_min(1e-20)                  # torch.rand is [0,1); guard log(0)
+    g = -torch.log(-torch.log(u))           # inverse-CDF sample from Gumbel(0,1)
+    return (logits + g).argmax(dim=-1)
+
+
+def exponential_race_sample(probs: torch.Tensor, generator=None) -> torch.Tensor:
+    """Equivalent form used in production samplers: argmax_t p_t / E_t, E_t ~ Exp(1)."""
+    q = torch.empty_like(probs).exponential_(1.0, generator=generator)
+    return probs.div(q).argmax(dim=-1)
+
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    logits = torch.tensor([2.0, 1.0, 0.0, -1.0])
+    target = torch.softmax(logits, dim=-1)
+    draws = gumbel_sample(logits.expand(200_000, -1))
+    empirical = torch.bincount(draws, minlength=4).float() / draws.numel()
+    print("target   :", target.tolist())
+    print("empirical:", [round(x, 3) for x in empirical.tolist()])  # matches to ~1e-3
+```
+
+The trick also buys **per-request reproducibility under continuous batching**: give each sequence its own `torch.Generator` seed and its token stream no longer depends on which other requests happen to share the batch. (Bitwise determinism additionally requires batch-invariant matmul/attention kernels, since a different batch composition changes reduction order in the *model*, not just the sampler — see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html).) Speculative decoding is the one place you still need explicit normalised probabilities, because its accept/reject rule compares $p(t)$ and $q(t)$ numerically — see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html).
+
 ## Greedy Decoding and Its Failure Modes
 
 Greedy decoding picks the most probable token at every step:
@@ -455,7 +505,6 @@ def dola_logits(
     model,
     input_ids: torch.Tensor,
     premature_layer: int,         # e.g. layer 16 in a 32-layer model
-    final_layer: int = -1,        # -1 = last layer
     alpha: float = 0.1,           # mixing coefficient
 ) -> torch.Tensor:
     """
@@ -472,10 +521,16 @@ def dola_logits(
         )
     hidden_states = outputs.hidden_states   # tuple of (batch, seq, d_model)
 
-    # Project intermediate hidden state through the LM head
+    # Intermediate hidden states are NOT normalised, so we must apply the
+    # model's final norm before the LM head — the head was trained on
+    # normalised activations, and skipping this makes the premature-layer
+    # distribution garbage (the classic logit-lens / DoLa re-implementation bug).
+    # In HuggingFace, hidden_states[-1] is already post-norm, so the final-layer
+    # logits are just outputs.logits.
+    norm = model.model.norm            # LLaMA-style; adjust for other architectures
     lm_head = model.lm_head
-    premature_logits = lm_head(hidden_states[premature_layer][:, -1, :])
-    final_logits     = lm_head(hidden_states[final_layer][:, -1, :])
+    premature_logits = lm_head(norm(hidden_states[premature_layer][:, -1, :]))
+    final_logits     = outputs.logits[:, -1, :]
 
     # Contrastive combination
     dola_log_probs = (
@@ -510,6 +565,16 @@ The ideal point depends on the task:
 | Distillation soft targets | Temperature 2.0–5.0, no truncation |
 
 One important empirical finding: for most instruction-tuned models, the training process implicitly calibrates the output distribution for temperature around 0.7–1.0. Going significantly below 0.3 causes the model to confidently hallucinate because the distribution was not trained to be sharp; going above 1.5 on instruction models often causes grammatical collapse.
+
+!!! tip "Practitioner tip: decoding a ~100M-parameter model"
+
+    Small models sit in a different part of this tradeoff surface, and the defaults you copy from an 8B chat model will disappoint you. A 100M model has genuinely higher per-token entropy — it is less sure of the next token because it knows less — so a nucleus of $p = 0.95$ sweeps in a much longer tail of plausible-looking nonsense, and it degenerates into loops far more readily. Practical starting points when you decode the Stack-100M model built in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html):
+
+    - **Benchmarks and anything scored**: greedy. It is reproducible, and at this scale sampling mostly adds variance, not quality. Run the harness at a fixed batch size and report it.
+    - **Free-form chat**: `temperature=0.8` with `min_p=0.05`–`0.1` rather than top-p — the peak-relative floor is much more forgiving of a flat, poorly-calibrated distribution.
+    - **Tool calls and structured output**: greedy plus a grammar mask (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)); a 100M model will not reliably close a JSON brace on probability alone. This is what the narrow agent in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) relies on.
+    - **RLVR / GRPO rollouts**: `temperature=1.0`, no truncation, `n=8`–`16` samples per prompt. Truncating rollouts biases the importance ratios (the sampled distribution is no longer the policy you are computing log-probs under) — see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+    - Expect to need a `repetition_penalty` of about 1.1–1.2, higher than you would use at 7B. If you need much more than that, the problem is the training data, not the sampler.
 
 ## Logit Processor Pipelines in Practice
 
@@ -571,7 +636,53 @@ def build_logits_processor_list(
     return procs
 ```
 
+Recent `transformers` also ships `MinPLogitsWarper` (and `EpsilonLogitsWarper` / `TypicalLogitsWarper`), so min-p and typical sampling are one-liners rather than custom code; the `LogitsWarper` base class was folded into `LogitsProcessor`, but the concrete classes above kept their names. In normal use you never build this list by hand — you pass the knobs to `model.generate(..., do_sample=True, temperature=0.8, top_p=0.9)` and `transformers` assembles the same list for you; you construct it explicitly only when you need a *custom* processor in the chain (`generate(..., logits_processor=procs)`).
+
 The `min_tokens_to_keep=1` argument is critical: it prevents cases where the filter masks *all* tokens (which would cause a nan after softmax), by always keeping at least the top token.
+
+### The Same Knobs in Real Serving Engines
+
+Every production engine exposes the same conceptual pipeline under slightly different names. Knowing the mapping is most of the job.
+
+```python
+# vLLM: sampling parameters travel with the request, not with the engine,
+# so different requests in one continuous batch can use different settings.
+from vllm import LLM, SamplingParams
+
+llm = LLM(model="Qwen/Qwen3-1.7B", max_model_len=8192)
+
+chat = SamplingParams(
+    temperature=0.7,        # exactly 0.0 is special-cased to greedy
+    top_p=0.95,             # set to 1.0 to disable
+    top_k=-1,               # -1 disables here; HuggingFace uses 0
+    min_p=0.0,              # peak-relative floor; 0.0 disables
+    repetition_penalty=1.0, # CTRL-style multiplicative
+    frequency_penalty=0.0,  # OpenAI-style additive, per occurrence
+    presence_penalty=0.0,   # OpenAI-style additive, binary
+    max_tokens=512,
+    stop=["</answer>"],     # string stop sequences (detokenised, not token ids)
+    seed=1234,              # per-request RNG -> reproducible regardless of batchmates
+    logprobs=5,             # return top-5 logprobs per step (for eval / debugging)
+)
+
+# RL rollouts and best-of-n: n>1 shares the prompt's KV cache across samples.
+rollout = SamplingParams(n=8, temperature=1.0, top_p=1.0, max_tokens=1024, seed=None)
+
+for out in llm.generate(["Explain nucleus sampling in one sentence."], chat):
+    print(out.outputs[0].text)
+```
+
+Three engine-specific details worth memorising:
+
+- **vLLM** applies penalties before temperature, matching the HuggingFace order, and treats `temperature=0.0` as a request for greedy rather than as a division by zero. Its sampler is fully vectorised over the batch: penalties are applied with a `scatter_add_`-built count matrix rather than the Python `for` loops in this chapter's teaching code, and truncation is a batched sort. Never ship a per-token Python loop over the vocabulary in a serving path — at 128k vocab and 50 requests it dominates the decode step.
+- **SGLang** takes the same fields on its `sampling_params` dict (`temperature`, `top_p`, `top_k`, `min_p`, `frequency_penalty`, `presence_penalty`, `repetition_penalty`) and additionally lets a *program* change them mid-generation — low temperature inside a JSON block, higher outside. See [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
+- **llama.cpp** (the GGUF/laptop path) models decoding literally as a **sampler chain** built from `llama_sampler_init_*` pieces — `top_k`, `top_p`, `min_p`, `typical`, `temp` / `temp_ext`, `penalties`, `dist` — pushed onto a `llama_sampler_chain` in the order you want them applied, with `dist` (the multinomial draw) or `greedy` last. It is the cleanest existing implementation of exactly the abstraction this chapter builds — and the one you will use to run a quantized model on a laptop (see [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html)).
+
+Both OpenAI-compatible servers (vLLM, SGLang, TGI) accept `temperature`, `top_p`, `frequency_penalty`, `presence_penalty`, `seed` and `logprobs` on `/v1/chat/completions`; `top_k`, `min_p` and `repetition_penalty` are non-standard extensions passed via an `extra_body` field, which is the usual reason a min-p setting silently does nothing when you switch clients.
+
+!!! warning "Reproducibility is not free"
+
+    Setting `seed` fixes the *sampler's* randomness, not the model's arithmetic. Under continuous batching the same prompt can still yield different logits run to run, because batch size changes the reduction order inside matmul and attention kernels, and floating-point addition is not associative. A difference of 1e-6 in a logit occasionally flips an argmax, and autoregression amplifies the divergence. Genuinely bitwise-reproducible serving needs batch-invariant kernels (fixed split sizes / deterministic reductions) plus a fixed seed — vLLM and SGLang have both been adding this capability, usually at some throughput cost. For evaluation, prefer greedy plus a fixed batch size, and report the sampling settings alongside the score.
 
 ### Custom Logit Processors
 
@@ -694,8 +805,12 @@ class ProductionSampler:
         if self.temperature != 1.0:
             logits = logits / self.temperature
 
+        # Remember the pre-truncation argmax: it is both the greedy answer and
+        # the only safe fallback if the filters below mask every token.
+        best_token = int(logits.argmax())
+
         if not self.do_sample:
-            return int(logits.argmax())
+            return best_token
 
         # 4. Top-k filter
         if self.top_k > 0:
@@ -718,10 +833,11 @@ class ProductionSampler:
             threshold = self.min_p * probs.max()
             logits = logits.masked_fill(probs < threshold, float('-inf'))
 
-        # 7. Safety: ensure at least one valid token
-        if torch.all(logits == float('-inf')):
-            # Fallback: revert to the temperature-scaled greedy token
-            return int((logits.clone().fill_(1.0)).argmax())
+        # 7. Safety: ensure at least one valid token. An all -inf vector would
+        # softmax to nan and crash torch.multinomial; this is the equivalent of
+        # HuggingFace's min_tokens_to_keep=1 guard.
+        if bool(torch.isinf(logits).all()):
+            return best_token
 
         # 8. Sample
         probs = F.softmax(logits, dim=-1)
@@ -759,6 +875,8 @@ if __name__ == "__main__":
 
     - Every decoding strategy converts raw logits to a token via a pipeline of *logit processors* (transforms) followed by a *sampler* (multinomial draw or argmax). Processors compose; their order matters.
     - **Greedy decoding** is deterministic but finds the locally optimal token, not the globally most probable sequence. It causes repetitive, low-entropy text.
+    - The **Gumbel-max trick** ($\arg\max_t z_t + g_t$ with $g \sim$ Gumbel) samples exactly from the softmax with no sort, no cumsum and no normalisation — it is how production samplers draw, and a per-request seed makes a sequence independent of its batchmates.
+    - Real engines expose the same pipeline under different spellings: vLLM/SGLang `SamplingParams`, HuggingFace `LogitsProcessorList`, llama.cpp's `llama_sampler_chain`. Know the gotchas (top-k's "disabled" sentinel differs; `min_p`/`top_k`/`repetition_penalty` are non-standard extensions on OpenAI-compatible endpoints).
     - **Temperature** is the master dial: dividing logits by $T < 1$ sharpens the distribution (less diverse, higher confidence); $T > 1$ flattens it (more diverse, potentially incoherent). Models are calibrated for $T \approx 1$.
     - **Top-k** cuts the long tail with a fixed count; **top-p** (nucleus) adapts to the distribution shape by cutting by cumulative mass — typically superior. **Min-p** cuts relative to the peak probability.
     - **Repetition penalty** discounts logits for previously seen tokens; **frequency penalty** discounts proportional to count. Both prevent loops; both interact with temperature (apply penalty before temperature scaling).
@@ -787,7 +905,9 @@ if __name__ == "__main__":
     **Open-source & tools**
 
     - [vllm-project/vllm](https://github.com/vllm-project/vllm) — production inference engine; implements the full logit-processor pipeline (temperature, top-k, top-p, min-p, penalties) with PagedAttention and continuous batching.
-    - [voidism/DoLa](https://github.com/voidism/DoLa) — official reference implementation of layer-contrastive decoding, compatible with LLaMA-family models.
+    - [sgl-project/sglang](https://github.com/sgl-project/sglang) — same sampling knobs, plus program-level control that lets a single generation switch sampling parameters between spans.
+    - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — the `llama_sampler_chain` API is an explicit, composable sampler pipeline (`top_k`, `top_p`, `min_p`, `typical`, `temp`, `penalties`, `dist`) and the reference implementation for local/GGUF inference.
+    - [voidism/DoLa](https://github.com/voidism/DoLa) — official reference implementation of layer-contrastive decoding, compatible with LLaMA-family models; DoLa is also available directly in HuggingFace `generate()` via the `dola_layers` argument.
 
     **Go deeper**
 

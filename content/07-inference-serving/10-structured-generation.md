@@ -203,7 +203,7 @@ For a typical JSON schema, on the order of 95%+ of tokens fall into the context-
 
 The combined mask computation at each step is:
 
-```
+```text
 mask = precomputed_rule_mask[current_rule] | evaluate_context_dependent(stack)
 ```
 
@@ -218,6 +218,82 @@ The key numbers to internalize:
 - Mask application is a GPU kernel operating on the $|\mathcal{V}|$-dimensional logit vector. For $|\mathcal{V}| = 128{,}000$ tokens stored as fp16 (2 bytes each), one logit vector is 256 KB. Setting $-\infty$ on invalid indices is a simple write operation — a handful of microseconds.
 - For batched inference with batch size $B$, each sequence has its own automaton state and its own mask. Mask application is embarrassingly parallel.
 - FSM compilation from a typical JSON Schema takes on the order of tens of milliseconds on CPU, done once at request time or pre-cached per schema.
+
+### Using XGrammar Directly
+
+Because XGrammar is the default backend inside vLLM, SGLang, TensorRT-LLM, and MLC-LLM, its Python API is worth knowing directly — it is also the cleanest way to bolt grammar enforcement onto your own decode loop (including the one you write in the capstone). The API has exactly three objects: a `TokenizerInfo` (how token IDs decode to bytes), a `GrammarCompiler` that turns a schema into a reusable `CompiledGrammar`, and a per-sequence `GrammarMatcher` holding the live PDA state.
+
+```python
+"""
+xgrammar_demo.py — Constrained decoding with the real XGrammar engine.
+pip install xgrammar transformers torch
+"""
+import json
+import torch
+import xgrammar as xgr
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"   # any small causal LM works
+tokenizer = AutoTokenizer.from_pretrained(MODEL)
+model = AutoModelForCausalLM.from_pretrained(MODEL)
+model.eval()
+
+# 1) Describe the tokenizer to XGrammar. IMPORTANT: pass the *logits width*
+#    (model.config.vocab_size), not len(tokenizer). Many models pad the
+#    embedding matrix to a multiple of 64/128, so the logit vector is wider
+#    than the tokenizer; a mismatch here silently misaligns the whole mask.
+tokenizer_info = xgr.TokenizerInfo.from_huggingface(
+    tokenizer, vocab_size=model.config.vocab_size
+)
+
+# 2) Compile the grammar ONCE. Cache CompiledGrammar objects by schema hash —
+#    this is the expensive step (tens of ms), and it is what vLLM's LRU caches.
+compiler = xgr.GrammarCompiler(tokenizer_info)
+schema = {
+    "type": "object",
+    "properties": {
+        "city":   {"type": "string"},
+        "temp_c": {"type": "integer"},
+    },
+    "required": ["city", "temp_c"],
+}
+compiled = compiler.compile_json_schema(json.dumps(schema))
+# Also available: compiler.compile_builtin_json_grammar()  (any valid JSON)
+#                 compiler.compile_grammar(ebnf_string)    (EBNF / GBNF-style)
+
+# 3) One matcher per in-flight sequence: it *is* the pushdown automaton state.
+matcher = xgr.GrammarMatcher(compiled)
+# Bitmask is a packed int32 tensor of shape [batch, ceil(vocab/32)].
+bitmask = xgr.allocate_token_bitmask(1, tokenizer_info.vocab_size)
+
+prompt = "Return JSON with the weather in Paris: "
+input_ids = tokenizer.encode(prompt, return_tensors="pt")
+past, generated = None, []
+
+for _ in range(64):
+    with torch.no_grad():
+        out = model(input_ids, past_key_values=past, use_cache=True)
+    past = out.past_key_values
+    logits = out.logits[:, -1, :]                  # [1, vocab_size]
+
+    # Fill the mask for the current PDA state (CPU work; in a real server this
+    # runs on a side thread overlapped with the next forward pass).
+    matcher.fill_next_token_bitmask(bitmask)
+    # Sets every disallowed logit to -inf, in place, with a fused kernel.
+    xgr.apply_token_bitmask_inplace(logits, bitmask.to(logits.device))
+
+    next_id = int(torch.argmax(logits, dim=-1).item())   # greedy for determinism
+    assert matcher.accept_token(next_id)                 # advances the PDA
+    generated.append(next_id)
+    if matcher.is_terminated():                          # grammar reached accept + EOS
+        break
+    input_ids = torch.tensor([[next_id]])
+
+print(tokenizer.decode(generated))
+# matcher.reset() lets you reuse the matcher for the next request on this slot.
+```
+
+Three details generalize to every engine integration. First, `accept_token` returns `False` if the token is illegal — a sampler bug or a mask/vocab misalignment — so assert on it during development. Second, the bitmask is *packed* (32 tokens per int32), which is why the mask transfer is ~16 KB rather than 512 KB for a 128k vocabulary. Third, `matcher` objects are cheap and independent — one per sequence, a few hundred bytes each — which is exactly what makes the heterogeneous batches discussed below straightforward.
 
 ## llguidance: Microsoft's Production Engine
 
@@ -491,7 +567,7 @@ if __name__ == "__main__":
     reducing per-step cost to a single table lookup costing microseconds.
     The code above is pedagogically correct; use Outlines or XGrammar in real deployments.
 
-## Using Outlines in Production
+## Structured Generation in Production: Outlines and the Server APIs
 
 Outlines provides a clean high-level API that wraps any HuggingFace or vLLM model with structured generation:
 
@@ -558,6 +634,69 @@ sentiment = classifier("The food was absolutely fantastic! Sentiment: ")
 print(f"Sentiment: {sentiment}")  # One of the three options, guaranteed.
 ```
 
+!!! warning "Pin your Outlines version"
+
+    Outlines' public API was reorganized at the 1.0 release: model construction moved
+    to `outlines.from_transformers(...)` / `outlines.from_vllm(...)` and generation to a
+    single `outlines.Generator(model, output_type)` object, where `output_type` is a
+    Pydantic model, a `JsonSchema`, or a regex type. The `outlines.models.transformers`
+    + `outlines.generate.json/regex/choice` surface shown above is the 0.x API. The
+    *concepts* are identical — schema in, guaranteed-valid text out — but the symbols
+    differ, so pin an explicit version in `requirements.txt` and check the docs for the
+    one you installed rather than copying snippets across major versions.
+
+### The Server-Side Path
+
+In practice you rarely drive the guide yourself: you send a schema to a server and it configures XGrammar for you. Every major engine — vLLM, SGLang, TensorRT-LLM, and `llama-server` from llama.cpp — exposes this through the OpenAI-compatible `response_format` field, which makes it the most portable way to ask for structured output:
+
+```python
+"""
+Structured output against any OpenAI-compatible LLM server.
+Start one first, e.g.:
+  vllm serve Qwen/Qwen3-1.7B --port 8000
+  python -m sglang.launch_server --model-path Qwen/Qwen3-1.7B --port 8000
+  llama-server -hf unsloth/Qwen3-1.7B-GGUF --port 8000
+pip install openai pydantic
+"""
+from openai import OpenAI
+from pydantic import BaseModel
+
+class Weather(BaseModel):
+    city: str
+    temp_c: int
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+
+resp = client.chat.completions.create(
+    model="Qwen/Qwen3-1.7B",
+    messages=[{"role": "user", "content": "Weather in Paris right now?"}],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "Weather",
+            "schema": Weather.model_json_schema(),
+            "strict": True,           # engines map this to hard grammar masking
+        },
+    },
+)
+weather = Weather.model_validate_json(resp.choices[0].message.content)
+print(weather)
+
+# Engine-specific constraints (regex, EBNF, choice) ride along in extra_body.
+# vLLM historically named these guided_json / guided_regex / guided_grammar and
+# has been consolidating them under a structured-outputs config, so check the
+# version you deployed:
+resp = client.completions.create(
+    model="Qwen/Qwen3-1.7B",
+    prompt="Customer service number: ",
+    max_tokens=24,
+    extra_body={"guided_regex": r"\([0-9]{3}\) [0-9]{3}-[0-9]{4}"},
+)
+print(resp.choices[0].text)
+```
+
+The rule of thumb: use `response_format` with a JSON Schema when you want portability across engines and vendors, and drop to `extra_body` (or the engine's native `SamplingParams`) only when you need a regex, an EBNF grammar, or a choice list that JSON Schema cannot express.
+
 ## Tool-Call Enforcement and Function Calling
 
 Function calling (tool use) is the highest-stakes application of structured generation. When an LLM selects and parameterizes a tool, the call must match the tool's schema exactly: the function name must be one of the registered tools, and the arguments must conform to the parameter schema.
@@ -577,7 +716,7 @@ This is more complex than pure JSON generation because the grammar is *partially
 {{fig:structgen-toolcall-constrained-flow}}
 
 
-SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) implements this via its `constrained_decode` primitive, which can be composed with its programmatic generation API. The vLLM serving stack exposes several selectable backends — as of 2026 XGrammar is the default (with `auto` backend selection), and guidance/llguidance, Outlines, and lm-format-enforcer remain available — activated per-request when structured-output parameters such as `guided_json` or `guided_regex` are set.
+SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) exposes constraints directly in its frontend DSL — `sgl.gen("call", json_schema=...)` or `sgl.gen("id", regex=...)` inside a `@sgl.function` — with the engine-wide backend selected at launch via `--grammar-backend {xgrammar,llguidance,outlines}`. Because each `gen` call is its own constrained region, a program can alternate free text and grammar-locked spans without any extra machinery. The vLLM serving stack exposes several selectable backends — as of 2026 XGrammar is the default (with `auto` backend selection), and guidance/llguidance, Outlines, and lm-format-enforcer remain available — activated per-request when structured-output parameters such as `guided_json` or `guided_regex` are set.
 
 !!! note "Tool name as a vocabulary restriction"
 
@@ -586,6 +725,10 @@ SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inferenc
     trivially small FSM (one state per character position in each name, with
     branches for each valid name). Performance is negligible compared to
     generating the arguments, which may require the full JSON schema machinery.
+
+### Why This Matters Most at Small Scale
+
+Everything above is a convenience for a frontier model and a *necessity* for a small one. A 100M-parameter model has not memorized the shape of your tool schemas; left unconstrained it will invent field names, close objects early, and hallucinate tool names at a rate that makes an agent loop unusable. Grammar masking converts that failure mode into a hard guarantee, which is why the narrow research agent in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) puts every Stack-100M tool call behind an XGrammar-compiled schema: the model only has to choose *which* tool and *what* arguments, never *how to spell JSON*. This is also a meaningful capability transfer — constraining the name field to the registered tool set removes an entire class of error that would otherwise need thousands of SFT examples to train away. When you take the same model to a laptop via `llama.cpp` in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html), the equivalent lever is a GBNF grammar file — covered in the grammar-formats section below.
 
 ## Performance Deep Dive: XGrammar's Overlap With Sampling
 
@@ -643,6 +786,37 @@ Different tools accept different input formats for expressing the constraint. Un
 
 JSON Schema is the most practically important format because it bridges directly to OpenAPI specs (tool schemas) and Pydantic model serialization.
 
+### GBNF: Grammars in the llama.cpp Ecosystem
+
+The one format worth writing by hand is **GBNF** (GGML BNF), llama.cpp's grammar dialect — it is how you get constrained generation on a laptop, on CPU, with no Python in the loop. GBNF is EBNF with a mandatory `root` rule, double-quoted literals, character classes, and `*` / `+` / `?` repetition:
+
+```text
+# toolcall.gbnf — a tool call restricted to exactly two registered functions
+root    ::= "{\"name\": " name ", \"arguments\": " args "}"
+name    ::= "\"get_weather\"" | "\"search_papers\""
+args    ::= "{\"query\": " string "}"
+string  ::= "\"" ([^"\\] | "\\" ["\\/bfnrt])* "\""
+```
+
+Point the CLI or the server at it — llama.cpp ships ready-made grammars (including `grammars/json.gbnf`) and can also convert a JSON Schema for you:
+
+```bash
+# Direct grammar file
+llama-cli -m model.gguf -p "Look up the RoPE paper. " --grammar-file toolcall.gbnf
+
+# Or generate GBNF from a JSON Schema (script shipped in the repo)
+python examples/json_schema_to_grammar.py schema.json > schema.gbnf
+
+# The server accepts a grammar per request, and also OpenAI-style response_format
+llama-server -m model.gguf --port 8000
+curl -s localhost:8000/completion -d '{
+  "prompt": "Look up the RoPE paper. ",
+  "grammar": "root ::= \"{\\\"name\\\": \\\"search_papers\\\"}\""
+}'
+```
+
+Under the hood llama.cpp implements the same idea as the rest of this chapter — a stack of grammar-rule positions advanced per *byte*, used to reject candidate tokens during sampling — and recent versions can delegate to llguidance when built with that backend enabled. See [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html) for the surrounding GGUF story.
+
 !!! interview "Interview Corner"
 
     **Q:** A candidate claims that constrained decoding "doesn't change what the
@@ -667,6 +841,34 @@ JSON Schema is the most practically important format because it bridges directly
     output can crash a downstream service.
 
 ## Edge Cases, Pitfalls, and Practical Advice
+
+### Local Masking Is Not Global Conditioning
+
+This is the single most misunderstood property of constrained decoding, and it explains the recurring folklore that "grammars make models dumber." Let $L$ be the target language and $\mathrm{Pre}(L)$ the set of sequences that are *live* prefixes of some string in $L$. Masked decoding samples from
+
+$$
+q(y) = \prod_{t} \frac{p(y_t \mid y_{<t})\,\mathbb{1}[y_{\le t} \in \mathrm{Pre}(L)]}{Z_t},
+\qquad
+Z_t = \sum_{v \in \mathcal{V}} p(v \mid y_{<t})\,\mathbb{1}[y_{<t}v \in \mathrm{Pre}(L)]
+$$
+
+where $Z_t$ is the probability mass that survives the mask at step $t$. What we usually *want* is the model conditioned on producing a valid string:
+
+$$
+p(y \mid y \in L) = \frac{p(y)\,\mathbb{1}[y \in L]}{\sum_{y' \in L} p(y')}.
+$$
+
+These are not equal. Since $p(y) = q(y)\prod_t Z_t$ for any $y \in L$, we have $p(y \mid y \in L) \propto q(y) \prod_t Z_t$. Local masking is *greedy* renormalization: it throws away the factor $\prod_t Z_t$, so it systematically over-weights sequences that pass through states where the model wanted to leave the grammar and had most of its mass deleted. A concrete failure: if at some step the model puts 0.99 on prose and 0.01 spread over legal JSON tokens, masking happily commits to that branch as if it were the model's belief — the sequence's low *global* plausibility is invisible to the local sampler. This is why constrained models sometimes produce schema-valid but semantically worse answers, and why "let the model reason freely, then constrain only the final answer block" is such an effective mitigation.
+
+The principled fix is to treat $\prod_t Z_t$ as an importance weight and run many partial sequences in parallel, resampling proportionally — sequential Monte Carlo (SMC) steering, introduced by Lew et al. (2023) and extended to syntactic/semantic control by Loula et al. (2025). SMC recovers the correct posterior asymptotically at the cost of maintaining $K$ particles per request, which is why production engines still ship the cheap local approximation by default. Knowing the gap exists is what lets you diagnose quality regressions instead of blaming the grammar.
+
+!!! tip "Practitioner tip: constrain late, not early"
+
+    Because the distortion compounds multiplicatively over steps, the cheapest quality
+    win is to shorten the constrained span. Let the model emit free-form reasoning
+    (or a `<think>` block) unconstrained, then activate the grammar only for the final
+    JSON or tool call. XGrammar-2's TagDispatch and SGLang's per-region constraints
+    exist precisely to make this mid-response switching cheap.
 
 ### Tokenization Boundary Mismatches
 
@@ -757,13 +959,17 @@ For a working engineer deploying constrained generation today, the decision tree
       pushdown automata (PDAs) are needed for context-free languages like JSON.
     - The core algorithm: pre-compute a `state × token_id` boolean mask matrix;
       at each decode step, look up the current state's row and zero out forbidden logits.
-    - Outlines introduced the foundational token-level FSM index; XGrammar extended
-      this to context-free grammars with the context-independent/context-dependent
-      token split, achieving sub-5% overhead for large models.
-    - llguidance uses an incremental Earley parser to avoid DFA state explosion for
-      complex grammars while maintaining practical throughput.
+    - Outlines introduced the foundational token-level FSM index; XGrammar extended it
+      to context-free grammars with the context-independent/context-dependent token
+      split and is now the default backend in vLLM, SGLang and TensorRT-LLM; llguidance
+      uses an incremental Earley parser to avoid DFA state explosion; llama.cpp's GBNF
+      brings the same mechanism to CPU/GGUF deployments.
     - Constrained decoding changes the conditional distribution over valid tokens
       (renormalization), not just the set of generated sequences.
+    - Local per-step masking is *not* the same as conditioning the model on the grammar:
+      it discards the surviving-mass factor $\prod_t Z_t$. Constrain the shortest span
+      you can (free reasoning, then a locked answer block), and reach for sequential
+      Monte Carlo only when you genuinely need the true posterior.
     - Apply grammar masking first, then top-k/top-p, to avoid scenarios where all
       valid tokens fall below the top-p threshold.
     - Token boundary mismatches are the most common implementation bug: always
@@ -802,9 +1008,11 @@ For a working engineer deploying constrained generation today, the decision tree
 
 - **Willard & Louf, "Efficient Guided Generation for Large Language Models" (2023)** — the foundational Outlines paper; introduces the token-level FSM index and the Outlines library.
 - **Dong et al., "XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models" (2024)** — the context-independent/context-dependent token classification and overlap-with-sampling design.
-- **Microsoft Research, llguidance (GitHub: microsoft/llguidance)** — open-source Earley-parser-based constrained generation engine with Rust core.
+- **llguidance (GitHub: guidance-ai/llguidance)** — open-source Earley-parser-based constrained generation engine with a Rust core, originating at Microsoft Research.
+- **Lew et al., "Sequential Monte Carlo Steering of Large Language Models using Probabilistic Programs" (2023)** — recasts constrained decoding as posterior inference and shows why greedy local masking is only an approximation.
+- **Loula et al., "Syntactic and Semantic Control of Large Language Models via Sequential Monte Carlo" (2025)** — practical SMC-based control that recovers the correctly-conditioned distribution under grammar and semantic constraints.
 - **Peng et al., "LMQL: Programming Large Language Models" (2022)** — an early declarative constraint language for LLM queries; pioneered the idea of in-flight constraint enforcement.
-- **llama.cpp GGUF grammar specification (GitHub: ggerganov/llama.cpp, `grammars/` directory)** — practical EBNF grammar format used by the llama.cpp ecosystem; good reference for JSON/SQL grammar construction.
+- **llama.cpp GBNF grammar specification (GitHub: ggml-org/llama.cpp, `grammars/` directory)** — practical EBNF grammar format used by the llama.cpp ecosystem, plus `examples/json_schema_to_grammar.py`; good reference for JSON/SQL grammar construction.
 - **Guidance (GitHub: guidance-ai/guidance)** — an alternative structured generation approach using a domain-specific templating language; predates Outlines and useful for understanding the design space.
 - **Koo et al., "Automata-based Constraints for Language Model Decoding" (2024)** — a theoretical treatment of the expressiveness and complexity of automaton-based constraints for LLM decoding.
 

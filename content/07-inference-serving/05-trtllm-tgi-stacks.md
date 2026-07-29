@@ -8,7 +8,7 @@ Before diving in, make sure you are comfortable with how the prefill and decode 
 
 ## The Performance Hierarchy
 
-Before benchmarking any serving framework, it helps to understand the ceiling imposed by hardware. The roofline model (see [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)) says decode throughput is bounded by memory bandwidth: each decode step reads the full model weight matrix for every generated token. For an A100-80 GB with ~2 TB/s of HBM bandwidth and a 70 B parameter model stored in FP16 (140 GB — so sharded across multiple GPUs), each token costs on the order of 70 GB of reads. That gives a raw ceiling of roughly 14 tokens/second per GPU — before batching amortizes those reads across requests.
+Before benchmarking any serving framework, it helps to understand the ceiling imposed by hardware. The roofline model (see [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)) says decode throughput is bounded by memory bandwidth: each decode step reads the full set of model weights for every generated token. Take a 70 B model stored in FP16 (140 GB) sharded across two A100-80 GBs with ~2 TB/s of HBM bandwidth each. Every decode step streams all 140 GB — 70 GB out of each GPU's HBM, in parallel — so one token takes at least $70\ \text{GB} / 2\ \text{TB/s} = 35\ \text{ms}$, a ceiling near 29 tokens/second at batch size 1, before tensor-parallel all-reduces eat into it and before batching amortizes those same weight reads across concurrent requests.
 
 $$
 \text{tokens\_per\_sec} \leq \frac{\text{HBM bandwidth (bytes/s)}}{\text{model size (bytes per token read)}}
@@ -45,6 +45,9 @@ python tensorrt_llm/examples/llama/convert_checkpoint.py \
 # Step 2: Build the TensorRT engine
 # max_batch_size and max_input_len are compile-time constants —
 # choose them to match your production workload envelope.
+# (Flag names drift between releases: recent trtllm-build versions fold
+#  --max_input_len/--max_output_len into a single --max_seq_len. Always
+#  check `trtllm-build --help` for the version you installed.)
 trtllm-build \
     --checkpoint_dir ./llama-2-7b-trtllm \
     --output_dir ./llama-2-7b-engine \
@@ -73,6 +76,30 @@ print(outputs)
 ```
 
 The `--gemm_plugin` and `--gpt_attention_plugin` flags activate NVIDIA's hand-tuned GEMM and attention kernels, which are substantially faster than the TensorRT auto-scheduler can find on its own.
+
+### The 1.0 Path: the `LLM` API and `trtllm-serve`
+
+On the PyTorch backend you skip Steps 1–2 entirely. The `LLM` class takes a HuggingFace checkpoint directly, and `trtllm-serve` puts an OpenAI-compatible endpoint in front of it — the same ergonomics as `vllm serve`, which is the point:
+
+```python
+from tensorrt_llm import LLM, SamplingParams
+
+# No convert_checkpoint.py, no trtllm-build: weights are loaded at startup
+# and executed with TensorRT-LLM's tuned attention/GEMM kernels.
+llm = LLM(model="meta-llama/Llama-3.1-8B-Instruct", tensor_parallel_size=1)
+outputs = llm.generate(
+    ["Explain the KV cache in one sentence."],
+    SamplingParams(max_tokens=64, temperature=0.0),
+)
+print(outputs[0].outputs[0].text)
+```
+
+```bash
+# Same thing as a server; speaks /v1/chat/completions and /v1/completions
+trtllm-serve meta-llama/Llama-3.1-8B-Instruct --host 0.0.0.0 --port 8000
+```
+
+Reach for the AOT engine path when you have a fixed workload envelope and want the last few percent; reach for the `LLM` API when you are iterating on models or want a Triton-free deployment.
 
 ### In-Flight Batching in TensorRT-LLM
 
@@ -153,13 +180,15 @@ TensorRT-LLM supports tensor parallelism and pipeline parallelism at build time.
 
 ### The Triton Inference Server Integration
 
-NVIDIA's standard production path is to serve TensorRT-LLM engines via Triton Inference Server using the `tensorrtllm_backend`. Triton handles HTTP/gRPC front-end, dynamic batching at the server layer, health checks, and metrics. TensorRT-LLM handles the GPU-side scheduling and execution.
+NVIDIA's long-standing production path is to serve TensorRT-LLM engines via Triton Inference Server using the `tensorrtllm_backend`. Triton handles HTTP/gRPC front-end, dynamic batching at the server layer, health checks, and metrics. TensorRT-LLM handles the GPU-side scheduling and execution.
+
+Two things have changed by 2026. For a single-node deployment, `trtllm-serve` (above) removes the need for Triton at all. For multi-node fleets, NVIDIA Dynamo has become the orchestration layer of choice: it sits *above* the engine — TensorRT-LLM, vLLM, or SGLang — and adds KV-aware request routing, disaggregated prefill/decode pools, and tiered KV offload to CPU/SSD. See [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
 
 {{fig:trtllm-triton-serving-pipeline}}
 
 ### TensorRT-LLM: What You Give Up
 
-The engine is platform-specific and must be rebuilt for each GPU SKU (A100 vs H100 vs L40S). Build times for large models can be 30–60 minutes. The `max_batch_size` and `max_input_len` are fixed at build time — you cannot exceed them at runtime. If your traffic suddenly shifts to very long prompts, you need a different engine. These constraints mean TensorRT-LLM is most suitable for dedicated GPU fleets with predictable workloads.
+Everything in this subsection is the price of the *AOT engine path*; the PyTorch-backend `LLM`/`trtllm-serve` flow above pays none of it (and gives up a few percent of throughput in exchange). The engine is platform-specific and must be rebuilt for each GPU SKU (A100 vs H100 vs L40S). Build times for large models can be 30–60 minutes. The `max_batch_size` and `max_input_len` are fixed at build time — you cannot exceed them at runtime. If your traffic suddenly shifts to very long prompts, you need a different engine. These constraints mean TensorRT-LLM is most suitable for dedicated GPU fleets with predictable workloads.
 
 ---
 
@@ -296,6 +325,26 @@ print(f"70B Q5_K_M: {gguf_size_gb(70, 5.5):.1f} GB")   # ~49 GB
 print(f"13B Q4_K_M: {gguf_size_gb(13, 4.5):.1f} GB")   # ~7.7 GB
 ```
 
+### Running llama.cpp Directly
+
+The repository builds a set of small binaries; three of them are the whole workflow from a trained checkpoint to a served endpoint:
+
+```bash
+# Build (CUDA backend; omit -DGGML_CUDA for a CPU/Metal-only build)
+cmake -B build -DGGML_CUDA=ON && cmake --build build -j
+
+# Convert an HF checkpoint to GGUF, then quantize it
+python convert_hf_to_gguf.py ./my-model-hf --outfile my-model-f16.gguf --outtype f16
+./build/bin/llama-quantize my-model-f16.gguf my-model-q4_k_m.gguf Q4_K_M
+
+# Serve an OpenAI-compatible endpoint with 4 concurrent slots, all layers on GPU
+./build/bin/llama-server -m my-model-q4_k_m.gguf --port 8080 --parallel 4 -ngl 99
+```
+
+`llama-server` does continuous batching and prompt-prefix reuse across its slots, but its memory model is not paged: the context budget is *partitioned* statically across `--parallel` slots, so a slot's usable context is roughly `--ctx-size / --parallel` and one long request cannot borrow blocks from an idle neighbour. That is the concrete price of not having a PagedAttention-style block manager, and it is why concurrency scales far worse here than in vLLM or TensorRT-LLM even when single-stream speed is competitive.
+
+This same three-command path is exactly how Stack-100M gets from a trained checkpoint to a laptop demo — see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html), which also covers the pre-tokenizer-hash trap that silently corrupts the GGUF of a model whose tokenizer the converter has never seen.
+
 ### Ollama: A Developer-Friendly Frontend
 
 Ollama wraps llama.cpp in a REST server with a model registry, automatic download, and a simple CLI. It is the fastest path from "zero" to running a local LLM. (Since 2025 Ollama has also shipped its own GGML-based engine for newer and multimodal architectures, so it no longer routes every model through llama.cpp — though llama.cpp still powers much of the local-inference ecosystem, including tools like LM Studio.)
@@ -420,13 +469,13 @@ MLC is the right choice when you need to deploy to heterogeneous hardware (a fle
 | Use Case | Recommended Stack |
 |---|---|
 | Production NVIDIA fleet, SLA-critical | TensorRT-LLM + Triton |
-| Cloud deployment, mixed GPU fleet | TGI or vLLM |
+| Cloud deployment, mixed GPU fleet | vLLM (or SGLang) |
 | On-premise single-node A100/H100 | vLLM or LMDeploy |
 | Apple Silicon local / developer | Ollama (llama.cpp) |
 | Consumer NVIDIA GPU, developer | Ollama or llama.cpp directly |
 | Heterogeneous or browser deployment | MLC-LLM / WebLLM |
 | RL rollout engine (speed is key) | vLLM or TensorRT-LLM |
-| Low-latency streaming chat | TGI (good streaming UX) |
+| Low-latency streaming chat | vLLM or SGLang (TGI where already deployed) |
 
 ### Portability vs Peak Performance: The Core Tension
 
@@ -438,6 +487,29 @@ The fundamental constraint is this: the more a runtime commits to a specific har
 Every step away from that specificity costs performance. TGI's PyTorch-based model runner dispatches CUDA kernels at runtime (some overhead) but works on any HuggingFace model on any CUDA GPU. llama.cpp's AVX2 kernels work on CPUs but obviously cannot exploit tensor cores.
 
 The quantitative gap is real but often overstated in marketing: well-tuned vLLM or TGI on A100s typically reaches 85–95% of TensorRT-LLM's throughput at matched batch sizes, while being far simpler to deploy and maintain. The remaining 5–15% matters at scale (thousands of dollars per day) but is often dominated by other system costs (networking, load balancing, tokenization) at moderate scale.
+
+### Measuring It Yourself
+
+Never take a number like "85–95%" — including this chapter's — on faith for *your* workload. Every stack ships a load generator, and any OpenAI-compatible endpoint can be driven by a shared one:
+
+```bash
+# TensorRT-LLM: engine/backend throughput sweep over a prompt dataset
+trtllm-bench --model meta-llama/Llama-3.1-8B-Instruct throughput --dataset prompts.jsonl
+
+# vLLM: online serving benchmark against a running server (TTFT/ITL percentiles)
+vllm bench serve --model meta-llama/Llama-3.1-8B-Instruct \
+    --dataset-name sharegpt --request-rate 8
+
+# NVIDIA GenAI-Perf: engine-agnostic; drives any OpenAI-compatible endpoint
+# (trtllm-serve, vLLM, SGLang, TGI, llama-server) through the same harness
+genai-perf profile -m meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat --streaming --url localhost:8000
+
+# llama.cpp: single-process prefill (-p) and decode (-n) microbenchmark
+llama-bench -m my-model-q4_k_m.gguf -p 512 -n 128
+```
+
+Three rules make such comparisons honest. Fix the *input and output length distribution* across stacks (a stack that emits shorter completions "wins" on tokens/second for free). Sweep **request rate**, not batch size — production systems are open-loop, and the interesting number is the arrival rate at which p99 TTFT crosses your SLO. And report TTFT and inter-token latency as **percentiles**, since the eviction and preemption policies discussed above show up almost entirely in the tail. The cost model that turns these curves into dollars per million tokens is [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html). (Benchmark CLIs move fast; check `--help` for the version you installed.)
 
 ---
 
@@ -541,13 +613,13 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
 ---
 
 !!! key "Key Takeaways"
-    - TensorRT-LLM achieves peak NVIDIA GPU throughput through AOT compilation: kernels are selected and fused at build time, eliminating runtime dispatch overhead. The cost is hardware-specific engines and 30–60 minute build times.
+    - TensorRT-LLM achieves peak NVIDIA GPU throughput through AOT compilation: kernels are selected and fused at build time, eliminating runtime dispatch overhead. The cost is hardware-specific engines and 30–60 minute build times — which is why the 1.0 release makes a PyTorch backend the default and ships `LLM`/`trtllm-serve` as a build-free path that keeps the tuned kernels.
     - TGI provides a production-grade HTTP/gRPC server with continuous batching, custom FlashAttention kernels, and wide HuggingFace model support — no build step required. It pioneered the `transformers`-native serving architecture that vLLM and SGLang later adopted; as of 2026 it is in maintenance mode, with Hugging Face pointing new deployments at those successors.
     - llama.cpp / Ollama democratize LLM inference on commodity hardware. GGUF's block quantization (Q4_K_M, Q5_K_M) trades a small quality loss for 4–8× memory reduction, enabling 70B models to run on a laptop or a single consumer GPU.
     - LMDeploy's TurboMind engine is a practical middle ground: custom CUDA kernels and blocked KV cache without the full AOT compilation step of TensorRT-LLM.
     - MLC-LLM uses TVM's compiler infrastructure to target heterogeneous hardware (CUDA, ROCm, Metal, Vulkan, WebGPU) from a single codebase — the right choice for browser deployment via WebLLM or mixed-hardware fleets.
     - The KV cache is the primary memory budget constraint at serving time. INT8 KV quantization roughly doubles the number of concurrent sequences you can hold, often improving throughput more than any single kernel optimization.
-    - The portability vs peak performance trade-off is real but often modest: well-tuned TGI or vLLM reaches 85–95% of TensorRT-LLM's throughput in most workloads. The remaining gap matters most at very large scale (thousands of dollars/day in GPU cost) or tight latency SLOs.
+    - The portability vs peak performance trade-off is real but often modest: well-tuned TGI or vLLM reaches 85–95% of TensorRT-LLM's throughput in most workloads. The remaining gap matters most at very large scale (thousands of dollars/day in GPU cost) or tight latency SLOs. Verify it for your own traffic with the stacks' own harnesses — `trtllm-bench`, `vllm bench serve`, `genai-perf`, `llama-bench` — sweeping request rate and reporting TTFT/ITL percentiles, not vendor charts.
     - For production deployments, the serving stack is just one component: request routing, prefix caching, speculative decoding, and disaggregated prefill/decode can each contribute as much to end-to-end efficiency as the choice of framework.
 
 ---
@@ -573,6 +645,7 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
     - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — canonical C/C++ runtime for GGUF-quantized models; targets CPU, CUDA, Metal, Vulkan, and ROCm with no external ML dependencies.
     - [mlc-ai/mlc-llm](https://github.com/mlc-ai/mlc-llm) — TVM-based universal LLM compiler targeting NVIDIA, AMD, Apple Metal, Vulkan, WebGPU, and Android from a single codebase.
     - [InternLM/lmdeploy](https://github.com/InternLM/lmdeploy) — TurboMind C++/CUDA engine with blocked KV cache and AWQ quantization; strong mid-tier option between TGI and TensorRT-LLM.
+    - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA's datacenter-scale orchestration layer *above* the engines (TensorRT-LLM, vLLM, SGLang): KV-aware routing, disaggregated prefill/decode pools, tiered KV offload; the multi-node successor to the Triton + `tensorrtllm_backend` pattern.
 
     **Go deeper**
 

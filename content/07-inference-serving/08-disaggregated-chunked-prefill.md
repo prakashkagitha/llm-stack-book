@@ -18,13 +18,13 @@ $$
 I_\text{prefill} = \frac{2 \cdot B \cdot T_p \cdot d \cdot d'}{(B \cdot T_p \cdot d + d \cdot d') \cdot \text{bytes\_per\_element}}
 $$
 
-For large $T_p$, the numerator grows quadratically in $T_p$ (for attention, $O(T_p^2)$ through the $QK^\top$ product) while the weight loading cost is constant, so the operation is firmly compute-bound.
+Dividing through, this rearranges to $I_\text{prefill} = \dfrac{2}{\text{bytes\_per\_element} \cdot \left(1/d' + 1/(B T_p)\right)}$: intensity rises with the token count $B \cdot T_p$ and saturates at $2 d' / \text{bytes\_per\_element}$. In BF16 with $d' = 4096$, a batch of $B T_p = 512$ tokens gives $\approx 455$ FLOP/byte — comfortably above an H100's ridge point of $\approx 295$ FLOP/byte (989 TFLOP/s dense BF16 divided by 3.35 TB/s HBM), so the GEMM is firmly compute-bound. Attention contributes a further $O(T_p^2)$ term on top, which only pushes prefill deeper into the compute-bound regime as prompts grow. Keep that ridge point in mind: it reappears in the chunk-size analysis below, where a chunk that is *too small* drops the same GEMMs back below it.
 
 ### Decode: Memory-Bandwidth-Bound Vector-Matrix Multiplications
 
 During decode, we generate one token at a time. The batch dimension is the number of concurrent sequences, $B_d$. Each layer executes a matrix-vector multiply: shape $[B_d, d_\text{model}]$ times $[d_\text{model}, d']$. Unless $B_d$ is in the hundreds, this is entirely memory-bandwidth-bound: we stream gigabytes of weights from HBM every step just to do a handful of FLOPs per byte.
 
-For a 70B parameter model in BF16 (140 GB of weights), each decode step reads roughly 140 GB from HBM regardless of batch size. On an A100 SXM with HBM bandwidth of roughly 2 TB/s, that's on the order of 70 ms of pure bandwidth time per step — leaving essentially no room for compute to hide. An H100 (3.35 TB/s bandwidth) gets this to around 40 ms in theory, and a 2026-frontier Blackwell B200 (8 TB/s HBM3e) to roughly 17 ms — but the decode phase stays bandwidth-bound on every generation of hardware.
+For a 70B parameter model in BF16 (140 GB of weights), each decode step reads roughly 140 GB of weights from HBM regardless of batch size — plus the KV cache of every sequence in the batch, which unlike the weights *does* grow with batch size and context length, and eventually dominates at long context. On an A100 SXM with HBM bandwidth of roughly 2 TB/s, that's on the order of 70 ms of pure bandwidth time per step — leaving essentially no room for compute to hide. An H100 (3.35 TB/s bandwidth) gets this to around 40 ms in theory, and a 2026-frontier Blackwell B200 (8 TB/s HBM3e) to roughly 17 ms — but the decode phase stays bandwidth-bound on every generation of hardware.
 
 The key insight: **prefill wants to be compute-bound and loves big batches; decode wants high bandwidth and is bottlenecked by memory, not FLOPs.** These constraints point toward different hardware configurations: fewer, faster GPUs (or GPUs with high TFLOP/s) for prefill, and more, bandwidth-rich GPUs for decode.
 
@@ -71,10 +71,10 @@ $$
 $$
 
 $$
-= 80 \times 2 \times 4096 \times 8 \times 128 \times 2\ \text{bytes} = 1,073,741,824\ \text{bytes} \approx 1\ \text{GB}
+= 80 \times 2 \times 4096 \times 8 \times 128 \times 2\ \text{bytes} = 1{,}342{,}177{,}280\ \text{bytes} = 1.25\ \text{GiB} \approx 1.34\ \text{GB}
 $$
 
-Transferring 1 GB at NVLink4 speeds (~900 GB/s bidirectional between two H100s) takes about 1 ms. Over InfiniBand HDR100 (100 Gb/s ≈ 12.5 GB/s), it takes about 80 ms — nearly as long as the prefill itself for large prompts. The transfer mechanism fundamentally shapes the architecture:
+Transferring that at NVLink4 speeds (~900 GB/s between two H100s on the same NVSwitch fabric) takes about 1.5 ms. Over InfiniBand HDR100 (100 Gb/s ≈ 12.5 GB/s), it takes over 100 ms — longer than the prefill itself for many prompts. The transfer mechanism fundamentally shapes the architecture:
 
 | Interconnect | Bandwidth | 1 GB KV transfer time | Notes |
 |---|---|---|---|
@@ -82,14 +82,15 @@ Transferring 1 GB at NVLink4 speeds (~900 GB/s bidirectional between two H100s) 
 | NVLink4 (H100 NVSwitch) | ~900 GB/s | ~1 ms | On the same NVSwitch fabric |
 | NVLink3 (A100 NVSwitch) | ~600 GB/s | ~1.7 ms | |
 | PCIe 5.0 x16 | ~64 GB/s | ~16 ms | Cross-node CPU path |
-| InfiniBand HDR (100 Gb/s) | ~12.5 GB/s | ~80 ms | Long-haul cross-node |
-| InfiniBand NDR (400 Gb/s) | ~50 GB/s | ~20 ms | State-of-the-art IB |
+| InfiniBand HDR100 (100 Gb/s) | ~12.5 GB/s | ~80 ms | Long-haul cross-node |
+| InfiniBand NDR (400 Gb/s) | ~50 GB/s | ~20 ms | Common in 2024–2025 clusters |
+| InfiniBand XDR (800 Gb/s) | ~100 GB/s | ~10 ms | 2026 frontier IB / equivalent 800G RoCE |
 
 For real deployments, the recommendation is: keep prefill and decode workers on the same NVSwitch fabric (same node or adjacent nodes connected via NVSwitch) to keep transfer latency under a few milliseconds. If that is not possible, pipeline the transfer with decode (start decoding even as later layers' KV caches arrive) to overlap transfer and computation.
 
 ### Layer-Wise Pipelining
 
-A practical optimization is to transfer KV caches layer by layer as they are computed during prefill, not as a single bulk transfer at the end. The decode worker can start generating once it has received all layers. With layer-wise pipelining, the decode worker can begin as soon as the last layer's KV cache arrives, reducing end-to-end latency by overlapping network transfer with later prefill layers.
+A practical optimization is to transfer KV caches layer by layer as they are computed during prefill, not as a single bulk transfer at the end. The decode worker still cannot start its first step until layer $L$'s cache has arrived, so the win is not that decode starts earlier in the layer order — it is that the transfers of layers $1 \ldots L-1$ are hidden *underneath* the prefill compute of layers $2 \ldots L$. With bulk transfer the exposed cost is the whole $L$-layer cache; with layer-wise streaming it is only the last layer's slice, roughly $1/L$ of it, provided the per-layer transfer time is shorter than the per-layer prefill time. Concretely, for the 70B/4K example above ($1.34$ GB over 80 layers $\approx 17$ MB per layer), NVLink4 moves one layer's slice in roughly 19 µs, while that layer's prefill compute — about $2 \times 875\text{M} \times 4096 \approx 7.2$ TFLOPs, spread over an 8-way tensor-parallel group — is on the order of a millisecond. Transfer is two orders of magnitude cheaper, so it disappears entirely. On IB HDR100 the same slice takes about 1.3 ms, i.e. *comparable to* the per-layer compute: the link saturates, pipelining buys you little, and the transfer becomes a first-order cost. That ratio — per-layer transfer time versus per-layer prefill time — not the pipelining trick itself, is what decides whether cross-node disaggregation is viable.
 
 ```python
 # Pseudocode: layer-wise KV transfer from prefill worker to decode worker
@@ -194,6 +195,10 @@ The chunk size $C$ is a critical knob:
 - **Too large:** each iteration still stalls decode sequences for too long. If $C = 4096$, the P99 ITL spikes are only 4x better than without chunking.
 - **Too small:** the prefill is broken into so many chunks that the total time to complete prefill (TTFT) grows. Each chunk incurs per-iteration overhead (kernel launches, scheduling, KV-cache bookkeeping). Additionally, attention kernels are less efficient on shorter sequences — you leave FLOP/s on the table.
 
+"Too small" has a sharp quantitative meaning, and it is the roofline calculation from the opening section. Every prefill iteration re-reads the model's weight matrices from HBM, so splitting a prompt into $n = T_p / C$ chunks streams the full weight set $n$ times instead of once. That is only free if each iteration is still compute-bound — i.e. if the per-iteration token count (the chunk's $C$ tokens *plus* the decode tokens piggybacked into the same batch) keeps the GEMMs above the hardware's ridge point of a few hundred FLOP/byte. Using the earlier formula, that means a few hundred tokens per iteration on an H100 in BF16. Go below that and prefill itself becomes bandwidth-bound, and you pay the penalty on *every* chunk. This is precisely why Sarathi-Serve schedules against a **token budget** per iteration rather than a fixed chunk count: it packs all pending decode tokens into the batch first, then tops up with prefill tokens until the budget is reached, so every batch sits at or above the saturation point. In vLLM that budget is exactly `max_num_batched_tokens`.
+
+A second subtlety: chunks are *not* equally expensive. Chunk $k$ runs the same GEMMs as every other chunk but attends over $kC$ already-cached tokens, so its attention cost grows linearly in $k$. Summed over all chunks the attention work is $\sum_{k} C \cdot (k{+}1) C \approx T_p^2/2$ — identical to a monolithic prefill, so chunking adds no asymptotic work — but the last chunk of a 32K prompt is far more expensive than the first. A fixed $C$ therefore produces ITL spikes that *grow* through a long prefill. Production schedulers respond either by shrinking $C$ as a prompt progresses or by budgeting on estimated chunk *time* rather than token count.
+
 In practice, production systems tune $C$ per deployment based on their latency SLOs. Values in the range $C \in [256, 2048]$ are common. The scheduler can also make $C$ dynamic: use large chunks when the decode batch is empty (no one is waiting) and small chunks when many decode sequences are active.
 
 !!! example "Worked Example: Chunked Prefill Latency"
@@ -202,7 +207,7 @@ In practice, production systems tune $C$ per deployment based on their latency S
 
     **Without chunked prefill:** The prefill runs as one monolithic forward pass. Empirically, a 13B model prefill over 8K tokens on an A100 takes roughly 800 ms (this varies with implementation; the order of magnitude is correct). During this time, all 32 decode sequences are stalled — their ITL spikes by 800 ms. If the SLO is P99 ITL ≤ 100 ms, this is an 8x violation.
 
-    **With chunked prefill, $C = 512$:** The 8K prompt is split into 16 chunks of 512 tokens. Each chunk takes roughly $800 / 16 = 50$ ms to process (prefill scales roughly linearly in prompt length for transformer attention, $O(T_p)$ for causal self-attention over the new tokens). Each iteration, decode sequences incur ~50 ms of ITL overhead from the chunk — right at the 100 ms SLO boundary (they add their own ~10–20 ms of decode compute on top). TTFT increases from 800 ms to 16 × 50 ms + scheduling overhead ≈ 850 ms — almost unchanged.
+    **With chunked prefill, $C = 512$:** The 8K prompt is split into 16 chunks of 512 tokens. Each chunk takes roughly $800 / 16 = 50$ ms to process on average (the GEMM cost per chunk is constant, so to first order the per-chunk cost is linear in $C$; as noted above the later chunks are somewhat more expensive because their attention runs over a longer cached prefix, so 50 ms is the mean, not the max). Each iteration, decode sequences incur ~50 ms of ITL overhead from the chunk — right at the 100 ms SLO boundary (they add their own ~10–20 ms of decode compute on top). TTFT increases from 800 ms to 16 × 50 ms + scheduling overhead ≈ 850 ms — almost unchanged.
 
     **Tradeoff:** Chunked prefill kept P99 ITL within SLO by paying a modest 6% TTFT penalty.
 
@@ -276,7 +281,7 @@ def chunked_prefill_attention(
 
 3. **Implemented KV transfer via RDMA** with layer-wise pipelining to overlap transfer with computation, achieving near-zero transfer overhead on NVLink-connected nodes.
 
-4. **Demonstrated SLO attainment:** under tight latency SLOs, disaggregated serving can serve 2–4x more requests per second than mixed serving while keeping P99 TTFT and P99 ITL within SLO bounds.
+4. **Demonstrated SLO attainment:** under tight latency SLOs, disaggregated serving sustains substantially more requests per second than mixed serving while keeping P99 TTFT and P99 ITL within bounds — the paper reports up to 7.4× on its most favourable workload; 2–4× is the more typical range practitioners report on mixed production traffic.
 
 The optimization problem DistServe solves is (informally):
 
@@ -288,7 +293,7 @@ where $r_P$ and $r_D$ are the number of replicas (GPU groups) allocated to prefi
 
 ## Splitwise: Heterogeneous Hardware for Each Phase
 
-**Splitwise** (Patel et al., 2023, Microsoft Research) takes disaggregation one step further: it argues that because prefill is compute-bound and decode is memory-bandwidth-bound, you should use *different GPU models* for the two pools. Specifically:
+**Splitwise** (Patel et al., ISCA 2024, Microsoft Research; arXiv preprint 2023) takes disaggregation one step further: it argues that because prefill is compute-bound and decode is memory-bandwidth-bound, you should use *different GPU models* for the two pools. Specifically:
 
 - **Prefill workers:** use high-FLOP/s, moderately-bandwidth GPUs. In an H100/A100 world, this often means fewer GPUs with aggressive compute configurations.
 - **Decode workers:** use high-bandwidth-memory GPUs — or even CPUs with large memory for small batches (CPU offloading). High-HBM parts shine here, from the H100's 3.35 TB/s HBM3 up to the Blackwell B200's ~8 TB/s HBM3e.
@@ -349,20 +354,68 @@ Both vLLM and SGLang have shipped production-quality chunked prefill implementat
 
 ### vLLM's Chunked Prefill
 
-vLLM introduced chunked prefill (often called **"prefill chunking"** in its documentation) as a scheduler-level feature. The key parameters:
+vLLM introduced chunked prefill (often called **"prefill chunking"** in its documentation) as a scheduler-level feature. In the V0 engine it was an opt-in flag; in the V1 engine — the default since vLLM 0.8 — the scheduler is *unified*: there is no separate "prefill batch" and "decode batch" at all, only a per-iteration token budget that mixed prefill chunks and decode tokens draw from. Chunked prefill is therefore on by default, and the knob you actually tune is the budget:
 
 ```yaml
 # vllm serve configuration (YAML or CLI flags)
-enable_chunked_prefill: true
 max_num_batched_tokens: 2048   # total tokens (prefill chunks + decode) per iteration
 max_num_seqs: 256              # max concurrent sequences
+# enable_chunked_prefill: true  # V0-era flag; implicit in the V1 scheduler
 ```
 
-Internally, the `Scheduler` class in vLLM's `vllm/core/scheduler.py` maintains a queue of "prefill sequences" with a `num_computed_tokens` counter. Each scheduling round, it allocates up to `max_num_batched_tokens - num_decode_tokens` tokens toward prefill — splitting them across waiting sequences as needed.
+Internally, the V1 `Scheduler` (`vllm/v1/core/sched/scheduler.py`) tracks a `num_computed_tokens` counter per request and, each round, hands out tokens from the budget: one per running sequence that needs a decode step, and the remainder as prefill chunks for requests that still have prompt left. A request needs no special "prefill vs decode" state — it is simply a sequence with `num_computed_tokens < num_prompt_tokens` or not. This is the same design as the `ChunkedPrefillScheduler` sketched below, and it is why the V1 rewrite made chunked prefill essentially free to support.
+
+`max_num_batched_tokens` is the single most important latency/throughput dial in a vLLM deployment: raise it for throughput (bigger, more efficient GEMMs, faster TTFT), lower it for tighter P99 ITL. vLLM's own defaults differ by mode — a large budget when optimizing throughput, a smaller one when optimizing latency — so set it explicitly rather than inheriting whatever the release picked.
 
 ### SGLang's RadixAttention and Chunking
 
 SGLang (see [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) combines chunked prefill with its RadixAttention prefix cache. A chunked prefill step can reuse prefix cache hits from earlier chunks, meaning that if two requests share a common prefix, their prefill work is shared at the chunk boundary — a multiplicative efficiency win.
+
+### Actually Running a Disaggregated Deployment
+
+The pseudocode earlier in this chapter shows the *mechanism*; in 2026 you do not implement it yourself. Three open-source layers exist, and it is worth knowing which does what:
+
+- **The transfer engine.** [NIXL](https://github.com/ai-dynamo/nixl) (NVIDIA Inference Xfer Library) is the emerging common abstraction over RDMA/InfiniBand, NVLink, and local copies; [Mooncake's Transfer Engine](https://github.com/kvcache-ai/Mooncake) plays the same role and additionally backs a distributed KV *store* over DRAM/SSD; [LMCache](https://github.com/LMCache/LMCache) adds a tiered KV cache (GPU → CPU → disk) usable both for cross-instance transfer and for prefix reuse.
+- **The engine-side connector.** vLLM exposes these through its `KVConnector` interface (`NixlConnector`, `LMCacheConnectorV1`, `MooncakeConnector`, …), configured with `--kv-transfer-config`. SGLang exposes them via `--disaggregation-mode` plus a transfer backend.
+- **The orchestrator.** [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo) supplies the piece neither engine provides: independently scalable prefill and decode pools, a KV-aware router that sends a request to the worker most likely to already hold its prefix, and pool rebalancing.
+
+A minimal two-process vLLM deployment on one node — prefill on GPU 0, decode on GPU 1:
+
+```bash
+# Terminal 1 — prefill worker (KV producer)
+CUDA_VISIBLE_DEVICES=0 vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --port 8100 \
+  --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}'
+
+# Terminal 2 — decode worker (KV consumer)
+CUDA_VISIBLE_DEVICES=1 vllm serve meta-llama/Llama-3.1-8B-Instruct \
+  --port 8200 \
+  --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer"}'
+
+# Terminal 3 — proxy: send the prompt to :8100 with max_tokens=1 to build the KV
+# cache, then forward the same request to :8200, which pulls the KV blocks over
+# NIXL and streams the remaining tokens. vLLM ships worked proxy examples under
+# examples/online_serving/disaggregated_serving/ in the repo.
+```
+
+The SGLang equivalent launches two servers with explicit roles and a small load balancer that pairs them:
+
+```bash
+# Prefill server
+python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B-Instruct \
+  --disaggregation-mode prefill --port 30000
+
+# Decode server
+python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B-Instruct \
+  --disaggregation-mode decode  --port 30001
+
+# A router/load-balancer process then pairs prefill and decode instances and
+# presents a single OpenAI-compatible endpoint to clients.
+```
+
+!!! warning "Common pitfall"
+
+    Disaggregation flag names, connector names, and proxy entry points are the fastest-moving surface in both projects — they have changed across several releases. Treat the commands above as the *shape* of the deployment (producer role, consumer role, transfer backend, pairing proxy) and check the "Disaggregated Prefilling" page of the vLLM docs or SGLang's PD-disaggregation docs for the exact spelling in your installed version. Two further footguns that do not change: both instances must run the **same model with the same tensor-parallel degree and the same KV dtype** (the blocks are transferred raw, so any layout mismatch is silent corruption or a hard failure), and if the decode pool has no free KV pages the prefill worker will block — you need back-pressure, not an unbounded queue.
 
 ### A Minimal End-to-End Chunked Prefill Scheduler
 
@@ -524,6 +577,10 @@ Disaggregation is warranted when:
 - You operate a large enough cluster that dedicating separate GPU pools is economically justifiable.
 - You can place prefill and decode workers on the same NVSwitch fabric (same node or adjacent nodes) to keep KV transfer below ~5 ms.
 
+!!! tip "Scale check: what applies at 100M parameters"
+
+    When you serve the Stack-100M model from Part XIV ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)), disaggregation is **not** something you should build: the whole model is a few hundred MB, it fits on one GPU many times over, and there is no second pool to disaggregate onto. The half of this chapter that does transfer down is chunked prefill. Run the model under `vllm serve` and set `max_num_batched_tokens` explicitly — with a 100M model the weights stream from HBM in under a millisecond, so decode iterations are extremely fast and a monolithic 8K-token prefill is proportionally an *enormous* ITL spike for anyone already generating. The token-budget scheduler is doing real work even at this scale. The mechanisms in the disaggregation half of the chapter are what you would reach for on the path to 1B+ described in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html), not at 100M.
+
 ### Monitoring Key Metrics
 
 ```python
@@ -571,11 +628,12 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
     - **Prefill-decode interference** occurs in continuous batching when a long prefill stalls in-flight decode sequences, causing bursty P99 inter-token latency spikes.
     - **Chunked prefill** breaks long prompts into sub-chunks of size $C$ (typically 256–2048 tokens) interleaved with decode steps, bounding P99 ITL inflation to the chunk compute time with minimal TTFT overhead.
     - **Disaggregated prefill/decode** separates the two phases onto dedicated GPU pools, eliminating interference entirely at the cost of a KV cache transfer over the interconnect. NVLink/NVSwitch is preferred (sub-millisecond transfer); InfiniBand is viable for bulk long-context workloads.
-    - KV cache transfer size scales as $O(L \times T_p \times n_\text{kv} \times d_\text{head})$; for a 70B model with a 4K-token prompt, this is on the order of 1 GB — transferable in ~1 ms on NVLink4.
+    - KV cache transfer size scales as $O(L \times T_p \times n_\text{kv} \times d_\text{head})$; for a 70B model with a 4K-token prompt this is about 1.34 GB — ~1.5 ms on NVLink4, but over 100 ms on 100 Gb/s InfiniBand. The decision criterion is per-layer transfer time versus per-layer prefill time, since layer-wise streaming can only hide the former under the latter.
     - **DistServe** (Zhong et al., 2024) formally analyzed disaggregation and showed 2–4x throughput improvement under tight SLOs. **Splitwise** (Patel et al., 2023) extended this to heterogeneous hardware, routing each phase to cost-optimal GPU types.
     - Chunked prefill and disaggregation are complementary: a disaggregated system can still chunk large prefills within the prefill pool to improve batching efficiency.
     - Chunk size $C$ should be tuned dynamically: large chunks when the decode queue is empty (to minimize TTFT), small chunks under high decode load (to protect ITL SLOs).
-    - Both vLLM and SGLang support chunked prefill in production today; full disaggregation requires orchestration infrastructure but is increasingly supported via project-level extensions.
+    - Chunk size has a hard lower bound set by the roofline: each iteration re-streams the model weights, so the per-iteration token count must stay above the hardware's ridge point (a few hundred tokens on an H100 in BF16) or prefill itself goes bandwidth-bound. Sarathi-Serve's token budget — vLLM's `max_num_batched_tokens` — is the practical form of this constraint.
+    - Chunked prefill is on by default in vLLM's V1 unified scheduler; disaggregation is now first-class too, via `--kv-transfer-config` with a `KVConnector` (NIXL, LMCache, Mooncake) on vLLM, `--disaggregation-mode` on SGLang, and NVIDIA Dynamo as the pool orchestrator and KV-aware router above them.
 
 !!! sota "State of the Art & Resources (2026)"
     Disaggregated prefill/decode has moved from research into production infrastructure: every major serving framework (vLLM, SGLang, NVIDIA Dynamo — now at 1.0 and production-ready, orchestrating vLLM/SGLang/TensorRT-LLM backends) now supports separate prefill and decode pools, while chunked prefill is enabled by default in most deployments. On rack-scale Blackwell (GB200 NVL72, 72 GPUs on one NVLink5 fabric), disaggregation is the default topology rather than an optimization. The key open challenges are optimizing KV-cache transfer cost across cluster topologies and dynamic pool rebalancing under bursty traffic.
@@ -596,6 +654,8 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
     - [vllm-project/vllm — Disaggregated Prefilling docs](https://docs.vllm.ai/en/latest/features/disagg_prefill/) — official vLLM guide to running separate prefill and decode instances with connector-based KV transfer; covers configuration, benchmarking, and supported interconnects.
     - [microsoft/sarathi-serve](https://github.com/microsoft/sarathi-serve) — reference implementation of Sarathi-Serve (chunked prefill + stall-free scheduler); clean codebase for studying scheduling logic.
     - [kvcache-ai/Mooncake](https://github.com/kvcache-ai/Mooncake) — production KV-cache transfer engine (RDMA/CXL/NVMe-oF) integrated with vLLM and SGLang; useful for cross-node KV migration at scale.
+    - [ai-dynamo/nixl](https://github.com/ai-dynamo/nixl) — NVIDIA Inference Xfer Library: a uniform API over RDMA, NVLink, and local memory for moving KV blocks; the backend behind vLLM's `NixlConnector`.
+    - [LMCache/LMCache](https://github.com/LMCache/LMCache) — tiered KV cache (GPU/CPU/disk) and cross-instance KV sharing layer; plugs into vLLM as `LMCacheConnectorV1` and doubles as a prefix-cache extension.
     - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA's open-source datacenter-scale inference stack; provides independently scalable P/D pools, KV-aware routing, and multi-tier caching on top of vLLM/SGLang/TRT-LLM.
 
     **Go deeper**
@@ -637,7 +697,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
     40 \times 2 \times 2048 \times 8 \times 128 \times 2 = 335{,}544{,}320\ \text{bytes}.
     $$
 
-    Dividing by $1{,}048{,}576$ gives exactly $320$ MB (equivalently $\approx 0.3125$ GB). Note this is smaller than the chapter's 70B example (1 GB) because this model has fewer layers and a shorter prompt.
+    Dividing by $1{,}048{,}576$ gives exactly $320$ MiB (equivalently $\approx 0.34$ GB). Note this is about a quarter of the chapter's 70B/4K example (1.34 GB) because this model has half the layers and half the prompt length.
 
     (b) Transfer time $=$ size $/$ bandwidth (bytes over bytes-per-second):
 

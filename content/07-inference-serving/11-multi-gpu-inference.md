@@ -19,7 +19,11 @@ Serving a large model across $N$ devices decomposes into four independent (and c
 | Expert parallelism | EP | MoE expert weights spread across devices | Enables enormous MoE capacity at constant compute |
 | Data parallel replicas | DP | Full (or TP/PP) model replicated | Pure throughput scaling; latency unchanged |
 
-The total GPU count satisfies $N = \text{TP} \times \text{PP} \times \text{DP}$, plus any EP expansion on top of TP. Each axis interacts differently with the two phases of inference — prefill (compute-bound, processes the full prompt in one pass) and decode (memory-bandwidth-bound, processes one token per step). We cover both phases throughout.
+The total GPU count satisfies $N = \text{TP} \times \text{PP} \times \text{DP}$. EP is *not* an extra multiplier on top of that: expert-parallel ranks are drawn from GPUs the deployment already owns, and in vLLM and SGLang the expert-parallel group size is exactly $\text{EP} = \text{TP} \times \text{DP}$ within one model instance — the same devices, regrouped for the MoE layers only. A fifth axis, **context parallelism** (CP), shards the *sequence* rather than the weights; it is a long-context tool and we return to it at the end of the chapter.
+
+Each axis interacts differently with the two phases of inference — prefill (compute-bound, processes the full prompt in one pass) and decode (memory-bandwidth-bound, processes one token per step). We cover both phases throughout.
+
+None of this is needed for the ~100M-parameter model built in Part XIV — it fits in a fraction of one GPU, and the only axis that applies is DP replicas behind a load balancer (see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)). Everything below is what changes once the model no longer fits on one device.
 
 {{fig:four-parallelism-axes}}
 
@@ -96,6 +100,60 @@ class RowParallelLinear(torch.nn.Module):
         return partial
 ```
 
+### Running It For Real: `torchrun` and NCCL
+
+The two classes above are inert until something creates a process group. In PyTorch that is `torch.distributed`, and the collective implementation underneath — the library that actually moves the bytes over NVLink, PCIe, or InfiniBand — is NVIDIA's **NCCL** (backend `"nccl"`; use `"gloo"` if you only have CPUs). Every serving stack in this chapter, vLLM and SGLang and TensorRT-LLM alike, ultimately calls NCCL for its TP all-reduces. The script below is a complete, runnable check that a column-then-row sharded MLP reproduces the unsharded result:
+
+```python
+# tp_mlp_check.py — run with: torchrun --nproc_per_node=2 tp_mlp_check.py
+import torch
+import torch.distributed as dist
+import torch.nn.functional as F
+
+
+def main():
+    dist.init_process_group(backend="nccl")  # "gloo" for a CPU-only machine
+    rank, world = dist.get_rank(), dist.get_world_size()
+    torch.cuda.set_device(rank)
+    dev = torch.device("cuda", rank)
+
+    # Identical seed on every rank => every rank materializes the SAME full
+    # weights, so we can compare the sharded result against a local reference.
+    torch.manual_seed(0)
+    d_model, d_ff, B = 512, 2048, 8
+    W_up = torch.randn(d_ff, d_model, device=dev) / d_model**0.5
+    W_down = torch.randn(d_model, d_ff, device=dev) / d_ff**0.5
+    x = torch.randn(B, d_model, device=dev)  # replicated input, as TP requires
+
+    # Reference: the full, unsharded MLP.
+    ref = F.gelu(x @ W_up.T) @ W_down.T
+
+    # Sharded: column-parallel up-projection, row-parallel down-projection.
+    assert d_ff % world == 0
+    s = d_ff // world
+    W_up_local = W_up[rank * s : (rank + 1) * s, :]     # this rank's d_ff columns
+    W_down_local = W_down[:, rank * s : (rank + 1) * s]  # this rank's d_ff rows
+
+    h = F.gelu(x @ W_up_local.T)   # (B, d_ff/world) — elementwise, so NO comm here
+    out = h @ W_down_local.T       # (B, d_model) — a PARTIAL sum, not the answer
+    dist.all_reduce(out, op=dist.ReduceOp.SUM)  # the one and only collective
+
+    err = (out - ref).abs().max().item()
+    if rank == 0:
+        print(f"world={world}  max abs error vs unsharded = {err:.2e}")  # ~1e-5 in fp32
+    dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The error is pure floating-point reassociation noise, which is the point: TP is an exact refactoring of the same arithmetic, not an approximation. Two environment variables are worth knowing when this goes wrong on a real cluster — `NCCL_DEBUG=INFO` prints the topology NCCL discovered and the ring/tree algorithm it chose, and `NCCL_P2P_DISABLE=1` / `NCCL_IB_DISABLE=1` force it off NVLink or InfiniBand respectively, which is the standard way to confirm that a "slow TP" problem really is a fabric problem.
+
+!!! tip "Practitioner tip: custom all-reduce for tiny decode messages"
+
+    Decode all-reduces are small (tens of kilobytes), and at that size NCCL's ring algorithm is latency-bound rather than bandwidth-bound. vLLM therefore ships its own one-shot NVLink all-reduce kernel that beats NCCL below a size threshold and falls back to NCCL above it; `--disable-custom-all-reduce` turns it off. If you see TP=8 decode that is slower than TP=4, check this path (and CUDA graphs) before blaming the model.
+
 ### TP in the Decode Loop
 
 During decode, the batch size is typically small (often 1 to a few hundred). A single all-reduce on a BF16 tensor of shape `[B, 1, d_model]` transfers roughly $2 \times d_{\text{model}} \times B$ bytes per rank over NVLink. For Llama-3 70B with $d_{\text{model}} = 8192$ and $B = 64$:
@@ -108,7 +166,7 @@ At a NVLink bandwidth of around 900 GB/s between two H100s, that is about **1 µ
 
 ### Latency vs. Throughput Impact
 
-TP reduces the per-GPU memory footprint of weights by a factor of $T$ and reduces the per-layer compute time by approximately $T$ (each GPU does $1/T$ of the matmul). For a latency-sensitive workload (single user, small batch), TP can deliver near-linear speedup up to the NVLink bandwidth wall. For a throughput-sensitive workload, TP is less efficient than data parallelism because the all-reduces do not scale with batch size — you pay the same communication cost regardless.
+TP reduces the per-GPU memory footprint of weights by a factor of $T$ and reduces the per-layer compute time by approximately $T$ (each GPU does $1/T$ of the matmul). For a latency-sensitive workload (single user, small batch), TP can deliver near-linear speedup up to the NVLink bandwidth wall. For a throughput-sensitive workload, TP is less efficient than data parallelism, because the all-reduce volume grows *linearly* with batch size: the cost per token is fixed and never amortizes, unlike weight loading, which is the one cost batching does amortize. DP replicas pay no such tax at all.
 
 !!! example "TP memory saving for Llama-3 70B"
 
@@ -125,6 +183,8 @@ TP reduces the per-GPU memory footprint of weights by a factor of $T$ and reduce
     $$\text{KV cache per token} = 2 \times 8 \times 128 \times 80 \times 2 = 327\,680 \text{ bytes} \approx 320 \text{ KB/token}$$
 
     So the remaining 45 GB supports roughly $45 \times 10^9 / 327{,}680 \approx 137{,}000$ tokens of context. For a maximum context of 8 K tokens, that accommodates about 17 concurrent requests — a reasonable serving batch.
+
+    This is the *conservative* count: it charges every GPU the full 320 KB/token. In reality TP shards the KV heads too, so with 8 KV heads at TP = 4 each GPU stores only 2 of them and the true capacity is about 4x larger. Exercise 3 works that arithmetic through.
 
 ---
 
@@ -230,13 +290,13 @@ $$
 \text{all-to-all volume (bytes)} = B \times d_{\text{model}} \times \text{dtype\_bytes} \times k
 $$
 
-For a batch of 512 tokens, $d_{\text{model}} = 7168$ (DeepSeek-V3 style), $k = 2$ experts, BF16:
+For a batch of 512 tokens, $d_{\text{model}} = 7168$ (DeepSeek-V3 style), $k = 8$ routed experts, BF16:
 
 $$
-512 \times 7168 \times 2 \times 2 = 14.7 \text{ MB per all-to-all}
+512 \times 7168 \times 2 \times 8 = 58.7 \text{ MB per all-to-all}
 $$
 
-With two all-to-alls (dispatch and gather) per MoE layer, and 61 MoE layers in DeepSeek-V3, that is about 1.8 GB of network traffic per forward pass — significant but manageable on InfiniBand HDR/NDR at 400 Gb/s.
+With two all-to-alls (dispatch and combine) per MoE layer, and 58 MoE layers in DeepSeek-V3 (the first 3 of its 61 layers use a dense FFN), that is on the order of 6.8 GB leaving each rank per forward pass — a serious amount of traffic, and the single reason wide-EP is hard. Two things cut it in practice: dispatching activations in **FP8** rather than BF16 (halving the volume, which DeepEP supports natively) and overlapping the transfer with expert compute so it never appears on the critical path.
 
 {{fig:expert-parallel-scatter-gather}}
 
@@ -244,7 +304,7 @@ With two all-to-alls (dispatch and gather) per MoE layer, and 61 MoE layers in D
 
 DeepSeek-V3 introduced the concept of **wide EP** in the context of serving their 671B MoE model. Standard practice places EP within a single node (using NVLink for all-to-all). Wide-EP extends EP across *multiple nodes*, using InfiniBand for inter-node all-to-all, allowing a far larger EP degree.
 
-DeepSeek-V3 has $E = 256$ fine-grained experts per MoE layer (plus 1–2 shared experts activated every step), with $k = 8$ routed expert activations per token. Wide-EP allows EP = 64 or more, spreading all 256 experts across many GPU nodes. The routing then dispatches tokens across the cluster via RDMA.
+DeepSeek-V3 has $E = 256$ fine-grained routed experts per MoE layer, plus one *shared* expert that every token uses (and which therefore never needs an all-to-all — it is replicated on every rank), with $k = 8$ routed expert activations per token. Wide-EP allows EP degrees in the tens or hundreds, spreading all 256 experts across many GPU nodes so that each rank holds only a handful. The routing then dispatches tokens across the cluster via RDMA.
 
 Key trade-offs of wide-EP:
 
@@ -336,6 +396,29 @@ Router collapse (all tokens routed to a few "hot" experts) kills EP performance:
 3. **Expert duplication**: replicate popular experts on multiple GPUs at inference time, then route with load awareness.
 4. **Dynamic expert offloading**: for CPU-offloaded MoE inference (useful when GPU count is limited), pre-fetch the next likely experts based on previous routing statistics.
 
+### DP Attention: Why Wide-EP Deployments Do Not Use Wide TP
+
+A detail that surprises people the first time they read a production MoE serving config: the attention blocks and the MoE blocks use *different* parallelism on the *same* GPUs.
+
+The reason is the KV cache. TP shards the KV cache by attention head, so it only shrinks the per-GPU footprint while TP $\le n_{\text{kv\_heads}}$; beyond that the heads must be *replicated*, and every extra TP rank costs a full duplicate copy of the cache. Multi-head Latent Attention (MLA) makes this worse — its compressed latent KV behaves like a single head, so any TP degree above 1 replicates it outright. Meanwhile the MoE layers want a very large EP degree, because that is what makes each rank's expert weights small.
+
+The resolution is **DP attention**: run attention data-parallel, with each rank owning a disjoint set of *requests* and its own private KV cache, while the MoE layers regroup the identical set of GPUs into one large expert-parallel group. At the boundary of each MoE layer the ranks exchange their local tokens (an all-gather or, in the fused kernels, the dispatch all-to-all itself), run the experts, and scatter the results back to the owning rank. The KV cache is never duplicated, per-rank batch stays large enough to escape the small-batch trap, and EP can be as wide as the cluster.
+
+Both major open engines expose this directly:
+
+```bash
+# SGLang: DP attention + expert parallelism on 8 GPUs
+python -m sglang.launch_server --model-path deepseek-ai/DeepSeek-V3 \
+    --tp 8 --dp-size 8 --enable-dp-attention --enable-ep-moe --trust-remote-code
+
+# vLLM: the data-parallel dimension is applied to attention; MoE layers use
+# an expert-parallel group of size (data_parallel_size x tensor_parallel_size)
+vllm serve deepseek-ai/DeepSeek-V3 \
+    --tensor-parallel-size 1 --data-parallel-size 8 --enable-expert-parallel
+```
+
+Note what `--data-parallel-size` means here: unlike the independent replicas of the next section, these DP ranks are *one* model instance and must step in lockstep through the shared MoE layers — vLLM keeps them synchronized with dummy forward passes when one rank has no work. Flag names and defaults in both projects move quickly; check `--help` against your installed version rather than trusting a config copied from a blog post.
+
 ---
 
 ## Data Parallel Replicas
@@ -414,10 +497,10 @@ The decode step is uniquely sensitive to communication latency because it proces
 For TP degree $T$ and hidden size $d$, the all-reduce each layer transfers $2d$ bytes per rank (send $d$ bytes, receive $d$ bytes in BF16). With $L$ layers and $A$ all-reduces per layer ($A = 2$ for standard TP):
 
 $$
-\text{total TP comm per decode step} = 2 \times d \times L \times A \times \text{dtype\_bytes}
+\text{total TP comm per decode step} = 2 \times d \times L \times A \times \text{dtype\_bytes} \times B
 $$
 
-For Llama-3 70B ($d = 8192$, $L = 80$, $A = 2$, 2 bytes):
+For Llama-3 70B at batch $B = 1$ ($d = 8192$, $L = 80$, $A = 2$, 2 bytes):
 
 $$
 2 \times 8192 \times 80 \times 2 \times 2 = 5.2 \text{ MB}
@@ -460,7 +543,9 @@ The right combination depends on your SLO (service-level objective), model size,
 | PP | No | No | Yes (enables larger model) | Very low |
 | EP (intra-node) | No | No | Yes (enables larger MoE) | Low |
 | EP (wide, inter-node) | No | Negative at low batch | Yes at high batch | Medium |
-| DP | No | No | Linear | None |
+| DP (independent replicas) | No | No | Linear | None |
+| DP attention (+ EP) | No | No | Yes (avoids KV duplication) | Low (lockstep sync) |
+| CP (context parallel) | Yes for very long prompts | Indirectly (more KV fits) | Yes at long context | Medium |
 
 TTFT = time to first token; TPOT = time per output token.
 
@@ -511,20 +596,24 @@ where $D$ is the DP replica count and MFU (Model FLOP Utilization) is the fracti
 
     **Step 2: Latency check**
 
-    Decode TPOT for Llama-3 70B at batch size 100:
-    FLOPs per token ≈ $2 \times 70 \times 10^9 = 140$ GFLOPs (weight loading dominates).
-    H100 memory bandwidth: 3.35 TB/s. Weight bytes to load per token: 140 GB (all weights).
+    Decode is memory-bandwidth-bound, so model the step as *bytes that must cross HBM*, not FLOPs. The key point is that TP divides those bytes: the four GPUs read their shards **concurrently**, so the wall-clock step time uses per-GPU bytes over per-GPU bandwidth, not the whole 140 GB.
 
-    $$\text{TPOT} \approx \frac{140 \times 10^9}{3.35 \times 10^{12}} \approx 42 \text{ ms}$$
+    - Weights per GPU: $140 / 4 = 35$ GB.
+    - KV bytes read per step: with 8 KV heads at TP = 4, each GPU holds 2 of them, i.e. 80 KB/token. At 100 requests × 512 tokens of context that is $51{,}200 \times 80\,\text{KB} \approx 4.1$ GB per GPU.
 
-    This meets the 50 ms budget. But this is a single-token-at-a-time estimate; continuous batching with 100 concurrent requests amortizes weight loading, achieving better effective TPOT.
+    $$\text{TPOT}_{\text{ideal}} \approx \frac{(35 + 4.1) \times 10^9}{3.35 \times 10^{12}} \approx 12 \text{ ms}$$
+
+    Real kernels sustain roughly 60–75% of peak HBM bandwidth once you include attention, the sampler, and residual launch overhead, so budget **15–20 ms** — comfortably inside the 50 ms SLO, with room to grow the batch. (Had we naively charged all 140 GB to one GPU we would have gotten 42 ms and concluded, wrongly, that the config barely fits.)
 
     **Step 3: Throughput target**
 
-    100 users × 512 tokens / (42 ms/token) ≈ 1,219 tokens/s from one replica.
-    If the traffic SLO requires 5,000 tokens/s, deploy DP = 4 replicas (16 GPUs total).
+    Continuous batching produces 100 tokens per decode step — one per in-flight request — so throughput is $B / \text{TPOT}$:
 
-    **Final configuration**: 16 × H100 GPUs, TP = 4 per replica, DP = 4 replicas.
+    $$\frac{100}{0.018\ \text{s}} \approx 5{,}500 \text{ tokens/s from one replica}$$
+
+    That nominally meets a 5,000 tokens/s SLO, but with zero headroom for traffic spikes, prefill stealing decode time, or a failed node. Deploy **DP = 2** replicas (8 GPUs) for a 2x margin and single-replica fault tolerance, and add replicas from there as traffic grows.
+
+    **Final configuration**: 8 × H100 GPUs, TP = 4 per replica, DP = 2 replicas — then scale DP linearly with traffic.
 
 ### Practical vLLM / SGLang Configuration
 
@@ -575,7 +664,7 @@ python -m vllm.entrypoints.openai.api_server \
     --port 8000
 ```
 
-For MoE models like Mixtral 8×22B or DeepSeek-V3 on SGLang:
+For MoE models like Mixtral 8×22B or DeepSeek-V3 on SGLang, the simplest configuration keeps everything inside one node (the multi-node, DP-attention variant is the one shown earlier):
 
 ```bash
 # SGLang launch for a large MoE (DeepSeek-V3-style)
@@ -600,6 +689,12 @@ For wide-EP across nodes, vLLM and SGLang now build on DeepSeek's open-source **
 
 When TP shards the attention heads, the KV cache is naturally sharded too: each GPU stores only the KV entries for its subset of heads. This is one reason TP improves effective KV cache capacity — the per-GPU KV footprint shrinks by factor $T$ for MHA models. GQA (Grouped-Query Attention) complicates this: if the number of KV heads is smaller than TP degree, some GPUs duplicate KV heads rather than sharding them. See [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html) for the head-count arithmetic.
 
+### Context Parallelism: The Fifth Axis
+
+Head-count sharding hits a wall, and long context is where it hurts. A model with 8 KV heads gets no further KV reduction past TP = 8, and MLA gets none past TP = 1. **Context parallelism** (CP, also called sequence parallelism in this setting) sidesteps this by partitioning along the *sequence* dimension instead: rank $i$ owns tokens $[i \cdot S/C, (i+1) \cdot S/C)$ of the KV cache for *all* heads. Attention then becomes a distributed reduction — each rank computes partial attention over its own KV shard and the ranks combine partial outputs using the same log-sum-exp rescaling that makes FlashAttention's online softmax work, the same trick that makes FlashAttention's tiled softmax exact (see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)) and, applied across devices in a ring, gives Ring Attention. The training-side treatment is in [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html) and [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html).
+
+For prefill this also parallelizes the quadratic attention compute over very long prompts; for decode it is purely a memory play, letting the per-GPU KV footprint keep shrinking past the KV-head limit and so raising the maximum context or concurrency a cluster can hold. vLLM exposes a decode-context-parallel size as a separate knob from TP for precisely this case; because the feature set here is moving fast in both vLLM and SGLang, verify what your installed version supports before designing a deployment around it.
+
 ### Disaggregated Prefill and Decode
 
 A complementary approach to multi-GPU parallelism is running prefill and decode on separate GPU pools, which allows each pool to be sized independently. This is covered in [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html). In practice, TP degree may differ between the prefill cluster (benefits from larger TP due to compute-bound nature) and the decode cluster (benefits from smaller TP to avoid over-paying all-reduce cost at small batch).
@@ -616,14 +711,14 @@ When using speculative decoding (see [Speculative Decoding: Draft Models, Medusa
 
 ## DeepSeek-V3 Wide-EP: A Case Study
 
-DeepSeek-V3 (671B MoE, 37B active parameters per token, 256 routed experts) uses a novel "multi-head latent attention" (MLA) design that dramatically compresses the KV cache, combined with aggressive wide-EP to distribute experts efficiently. The production serving configuration reported by the DeepSeek team uses:
+DeepSeek-V3 (671B MoE, 37B active parameters per token, 256 routed experts) uses a "multi-head latent attention" (MLA) design that dramatically compresses the KV cache, combined with aggressive wide-EP to distribute experts efficiently. The deployment described in the DeepSeek-V3 technical report is the clearest published example of every idea in this chapter used at once — and, importantly, it uses **different configurations for prefill and decode**, which are served on separate GPU pools:
 
-- **TP = 8** within each 8-GPU NVLink island.
-- **EP = 64** across 64 GPU groups (512 GPUs for a single model instance).
-- **Compute–communication overlap**: while each GPU computes expert FFNs on received tokens, the next all-to-all is pre-issued using asynchronous NCCL primitives.
-- **Batch size**: very large batches (hundreds to thousands of requests) are required to keep all 256 × 64 / 8 = 2048 GPU-expert slots busy simultaneously.
+- **Prefill unit**: 4 nodes / 32 GPUs. Attention runs TP = 4 with sequence parallelism, replicated DP = 8; the MoE layers regroup the same 32 GPUs into EP = 32. Redundant copies of high-load experts are deployed on top, and the expert-placement is refreshed periodically from measured routing statistics.
+- **Decode unit**: 40 nodes / 320 GPUs — far wider. Attention again runs TP = 4 but with DP = 80, so each rank owns its own requests and its own KV cache; the MoE layers form a single EP = 320 group, which is roughly one expert per GPU plus capacity for redundant and shared experts.
+- **Compute–communication overlap**: the report's decode strategy splits the in-flight batch into two micro-batches and overlaps one micro-batch's all-to-all with the other's expert compute, so the network time is hidden rather than added. (The training-side analogue is DualPipe.)
+- **Batch size**: very large batches are required — with EP = 320 and $k = 8$, a small batch would leave most of the 320 GPUs holding experts that no token selected.
 
-The wide-EP approach trades per-request latency for massive cluster-level throughput, which suits DeepSeek's API traffic patterns. For latency-sensitive workloads, a smaller EP degree on a single node would be preferred.
+Notice how the pieces fit: attention is data-parallel because MLA's latent KV cannot be usefully sharded further; TP is capped at 4 and stays inside one NVLink island; EP is the axis that gets stretched across 40 nodes because expert weights are the memory problem. The wide-EP approach trades per-request latency for cluster-level throughput, which suits high-volume API traffic. For latency-sensitive workloads, a smaller EP degree on a single node is preferable.
 
 !!! interview "Interview Corner"
 
@@ -648,6 +743,7 @@ The wide-EP approach trades per-request latency for massive cluster-level throug
     - **Pipeline parallelism** splits layers across devices, requires only activation pass between stages, is latency-neutral for decode, and is primarily a memory-capacity tool for very large models.
     - **Expert parallelism** routes MoE tokens to GPU-resident experts via all-to-all collectives. Wide-EP extends EP across nodes using InfiniBand, enabling massive MoE capacity at the cost of small-batch efficiency.
     - **Data parallel replicas** are the purest throughput scaling mechanism — identical model copies, independently serving requests, with no communication overhead.
+    - **DP attention + EP** is the standard wide-EP layout: attention runs data-parallel so the KV cache is never duplicated (TP cannot shard KV past $n_{\text{kv\_heads}}$, and not at all for MLA), while the same GPUs regroup into one large expert-parallel group for the MoE layers. **Context parallelism** shards the sequence itself and is the axis to reach for when long context, not weight size, is the memory constraint.
     - **Decode is memory-bandwidth-bound**: the all-reduce cost of TP at NVLink speeds is negligible, but TP across InfiniBand can introduce measurable per-token latency.
     - **Communication volume**: TP all-reduce ≈ 2 × d_model bytes per rank per layer; EP all-to-all ≈ B × k × d_model bytes per rank per MoE layer. Both must fit within the per-token time budget.
     - **Sizing rule of thumb**: allocate enough TP to fit model weights with 40–60% GPU memory headroom for KV cache, then add DP replicas until the throughput SLO is met.
@@ -707,11 +803,11 @@ The wide-EP approach trades per-request latency for massive cluster-level throug
 
     - **DP** replicas are fully independent copies of the model. Different requests go to different replicas, and no tensor is ever exchanged *between* replicas during inference. There is no collective on the decode critical path at all, so the interconnect between replicas is irrelevant — they can be in different datacenters. DP buys linear throughput with zero communication cost; the flip side is that it does nothing for the latency of a single request (each replica is still a full model).
 
-**2.** Consider a dense transformer with $d_{\text{model}} = 5120$ and $L = 40$ layers served at TP with the standard $A = 2$ all-reduces per layer in BF16. (a) Compute the total TP all-reduce volume per decode step, per rank. (b) Estimate the wall-clock communication time if the TP group is on NVLink at 900 GB/s. (c) Estimate it if the group is forced across PCIe at 32 GB/s. (d) What does the comparison tell you about placement?
+**2.** Consider a dense transformer with $d_{\text{model}} = 5120$ and $L = 40$ layers served at TP with the standard $A = 2$ all-reduces per layer in BF16, decoding at batch size $B = 1$. (a) Compute the total TP all-reduce volume per decode step, per rank. (b) Estimate the wall-clock communication time if the TP group is on NVLink at 900 GB/s. (c) Estimate it if the group is forced across PCIe at 32 GB/s. (d) What does the comparison tell you about placement?
 
 ??? note "Solution"
 
-    Use the chapter's formula $\text{total TP comm per step} = 2 \times d \times L \times A \times \text{dtype\_bytes}$.
+    Use the chapter's formula $\text{total TP comm per step} = 2 \times d \times L \times A \times \text{dtype\_bytes} \times B$, with $B = 1$.
 
     **(a)** With $d = 5120$, $L = 40$, $A = 2$, dtype = 2 bytes:
 

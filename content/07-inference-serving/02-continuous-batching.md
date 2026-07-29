@@ -91,6 +91,9 @@ Each iteration, the scheduler answers: *which requests run this step, and do I n
 
 2. **Per-iteration token budget.** To bound iteration latency you cap the number of tokens processed per step, `max_num_batched_tokens` (and often a separate `max_num_seqs`, a cap on the number of concurrent requests). Prefill tokens are the expensive ones; a 4000-token prompt arriving in one shot would blow a latency target, which is exactly why chunked prefill exists — it splits that prefill across several iterations so each step stays under budget. The scheduler decides how much prefill work to admit per iteration against this budget.
 
+!!! tip "Practitioner tip: at 100M parameters the binding constraint flips"
+    "KV memory always binds" is a large-model statement. Run the arithmetic for the capstone's Stack-100M (30 layers, GQA with 2 KV heads, `head_dim` 64, bf16): KV per token is $2 \times 30 \times 2 \times 64 \times 2\ \text{B} = 15{,}360$ B $= 15$ KiB. Weights are only $101.4\text{M} \times 2\ \text{B} \approx 0.2$ GB, so on a 24 GB card roughly 20 GiB is free for KV — about **1.4 million cached tokens**, or ~1,300 concurrent 1k-token conversations. Long before you get there you hit `max_num_seqs` and the per-iteration token budget, and at $B$ in the high hundreds decode has stopped being memory-bound at all: you are on the flat part of the curve, limited by compute and by per-iteration CPU overhead. So when you serve the capstone model ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)), raise `max_num_seqs` aggressively and stop worrying about preemption — the failure mode that dominates a 70B deployment barely exists at 100M.
+
 ### A throughput model for the scheduler
 
 It helps to have a back-of-envelope model. Let the GPU sustain a decode step of $B$ requests in time $\tau_{\text{dec}}(B)$. Because decode is memory-bound, $\tau_{\text{dec}}(B) \approx \tau_0 + \beta B$ where $\tau_0$ (the fixed cost of streaming weights once) dominates and $\beta$ (the small marginal per-request cost) is tiny until you approach compute saturation. Token throughput is
@@ -102,6 +105,18 @@ $$
 The curve rises steeply with $B$ at first (you are amortizing the fixed $\tau_0$ over more requests) and then flattens toward the compute roofline $1/\beta$ (see [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)). The scheduler's job is to keep $B$ as large as the KV-cache budget allows, so you operate on the flat, high-throughput part of the curve rather than the starved low-$B$ part. Static batching keeps $B$ *high on average but low at the tail* (the batch drains down to one straggler running at $B=1$); continuous batching keeps $B$ pinned near the maximum continuously by backfilling. That gap is where the throughput multiplier comes from.
 
 {{fig:contbatch-throughput-vs-batchsize}}
+
+### Little's Law: the concurrency your traffic actually demands
+
+The throughput curve tells you what a batch size *buys*; **Little's Law** tells you what batch size your traffic *requires*. For any stable queueing system, the mean number of items resident equals arrival rate times mean residence time:
+
+$$
+L = \lambda W .
+$$
+
+For a serving engine, $L$ is the mean number of requests inside the engine (RUNNING plus WAITING), $\lambda$ the request arrival rate, and $W$ the mean end-to-end latency. Take the device from the worked example below, which sustains $B_{\max} = 64$ streams at ~30 tokens/sec each. Suppose $\lambda = 20$ requests/sec arrive, each generating 500 tokens: at that per-stream rate $W = 500/30 \approx 16.7$ s, so $L = 20 \times 16.7 \approx 333$ requests must be resident *simultaneously*. Only 64 can be RUNNING, so ~270 sit in WAITING — and then $W$ is not 16.7 s at all; it inflates without bound.
+
+The stability check is a token-rate inequality, and you should run it before touching any scheduler knob: offered load $\lambda \times \bar{L}_{\text{out}} = 20 \times 500 = 10{,}000$ tokens/sec, versus the ~1951 tokens/sec that device delivers. The system is oversubscribed ~5×. No scheduling policy repairs that — FCFS, priority, and shortest-job-first merely redistribute *whose* latency explodes. The fixes are capacity (more replicas), cheaper tokens (quantization, speculative decoding), or **admission control**: cap in-flight requests and shed the rest with an explicit 429 rather than letting the WAITING queue absorb overload invisibly. This is why every serving engine exposes both a concurrency cap and a queue-depth metric, and why load balancing and autoscaling on those signals belong to [Designing an LLM Serving System](../12-production-mlops/01-serving-system-design.html).
 
 ## A toy continuous-batching scheduler, from scratch
 
@@ -431,9 +446,48 @@ Every production engine is a continuous-batching scheduler with different emphas
 
 - **Orca** introduced iteration-level scheduling and selective batching — the blueprint.
 - **vLLM** pairs continuous batching with **PagedAttention** so the KV cache is non-contiguous blocks, making admission/eviction a block-allocation problem and enabling near-zero memory fragmentation; its scheduler does FCFS with preemption (recompute or swap). The 2025 **V1** engine rewrite made this the default execution model and replaced the old prefill/decode split with a single *unified* scheduler that hands every request a slice of one shared token budget (`{request_id: num_tokens}`), so chunked prefill, prefix caching, and speculative decoding all fall out of one policy — decodes first, then prefill chunks backfill the remainder. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
-- **TGI** (HuggingFace Text Generation Inference) calls it *continuous batching* and exposes a `waiting_served_ratio` and token-budget knobs.
-- **TensorRT-LLM** calls it **in-flight batching** and fuses it with NVIDIA's optimized kernels.
-- **SGLang** adds **RadixAttention** for prefix-cache reuse on top of continuous batching, so shared prompt prefixes don't re-prefill — see [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
+- **TGI** (HuggingFace Text Generation Inference) calls it *continuous batching*; its launcher exposes the same three constants under different names — `--max-concurrent-requests` (slot cap), `--max-batch-prefill-tokens` and `--max-batch-total-tokens` (token budgets), plus `--waiting-served-ratio`, a knob that decides how eagerly waiting requests interrupt ongoing decodes to be prefilled.
+- **TensorRT-LLM** calls it **in-flight batching** and fuses it with NVIDIA's optimized kernels; its C++ batch manager exposes the same policy space (a max-batch-size cap, a max-num-tokens budget, and a choice between recompute and KV-block reuse on eviction).
+- **SGLang** adds **RadixAttention** for prefix-cache reuse on top of continuous batching, so shared prompt prefixes don't re-prefill — and correspondingly offers *cache-aware* queue ordering (`--schedule-policy`, with longest-prefix-match ordering rather than plain FCFS) alongside `--max-running-requests` and `--chunked-prefill-size`. See [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html).
+- **llama.cpp** proves the idea is not GPU-datacenter-specific: `llama-server -np 8` opens eight parallel *slots* and batches their decode steps together, with continuous batching on by default in current builds. The difference is memory management — slots statically partition one fixed KV context rather than paging it, so llama.cpp trades vLLM's near-zero fragmentation for a far simpler allocator. That is the right trade on a laptop, and it is how the capstone model is served on CPU in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
+### Driving and watching a real scheduler
+
+The three constants in our toy are literally command-line flags on a real engine. Start a server with them set explicitly:
+
+```bash
+# vLLM: the toy's MAX_NUM_SEQS / MAX_BATCHED_TOKENS / TOTAL_BLOCKS, as flags.
+#   --max-num-seqs            cap on the running set                 (MAX_NUM_SEQS)
+#   --max-num-batched-tokens  per-iteration token budget             (MAX_BATCHED_TOKENS)
+#   --gpu-memory-utilization  fraction of HBM the engine may claim; whatever is left
+#                             after weights + activations becomes KV blocks (TOTAL_BLOCKS)
+#   --scheduling-policy       fcfs, or `priority` — clients then attach a per-request
+#                             priority that the WAITING queue sorts on
+vllm serve Qwen/Qwen3-8B \
+  --max-num-seqs 256 \
+  --max-num-batched-tokens 2048 \
+  --gpu-memory-utilization 0.90 \
+  --scheduling-policy fcfs
+```
+
+Then generate load with a known arrival rate — recent vLLM ships a `vllm bench serve` subcommand, and the equivalent script `benchmarks/benchmark_serving.py` lives in the repo:
+
+```bash
+vllm bench serve --model Qwen/Qwen3-8B --dataset-name random \
+  --random-input-len 1024 --random-output-len 256 \
+  --request-rate 20 --num-prompts 1000     # 20 req/s = the Little's Law example above
+```
+
+While it runs, the server's log line and its Prometheus endpoint (`/metrics`) expose exactly the scheduler state our toy logs in `iter_log`. The gauges to watch — names as exported by current vLLM releases — are `vllm:num_requests_running`, `vllm:num_requests_waiting`, `vllm:gpu_cache_usage_perc`, and `vllm:num_preemptions_total`, alongside the `vllm:time_to_first_token_seconds` and `vllm:time_per_output_token_seconds` histograms. Read them as a diagnosis:
+
+| Pattern | Diagnosis | Action |
+| --- | --- | --- |
+| `running` pinned near `max_num_seqs`, `waiting` ≈ 0, cache usage high but < 100% | Healthy: $B$ is on the flat part of the throughput curve | Nothing |
+| `running` low, `waiting` low, cache usage low | Under-loaded — you are paying $\tau_0$ per step for few tokens | Send more traffic, or consolidate replicas |
+| `waiting` growing monotonically | Offered load exceeds capacity (the Little's Law check failed) | Admission control / more replicas — *not* a knob |
+| `num_preemptions_total` climbing steadily | Thrashing: admitted past the KV headroom | Lower `max_num_seqs` or `gpu_memory_utilization`, shorten `max_model_len` |
+
+That last row is the thrashing pitfall from the previous section, made observable. Note also a small-model wrinkle: the scheduler is CPU work that must finish before the GPU can launch the next step, so for a *tiny* model — where a decode step is well under a millisecond — the Python scheduler itself can become the bottleneck. That is one reason vLLM's V1 engine runs its core in a separate process and overlaps scheduling with execution, and why CUDA graphs matter so much at small scale.
 
 The common skeleton is identical to our toy: a per-iteration `schedule()` that (1) reserves a decode token + block for each running request (preempting under pressure), (2) admits/chunks prefill into the remaining token budget, (3) runs one fused forward pass with ragged attention, and (4) retires finished requests immediately. Master the toy and you understand all of them. The end-to-end serving design that wraps this scheduler — admission control, autoscaling, routing — is the subject of [Designing an LLM Serving System](../12-production-mlops/01-serving-system-design.html), and the latency/throughput/cost trade-offs it implies are quantified in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
 
@@ -448,6 +502,7 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
     - **Continuous batching = iteration-level scheduling (Orca).** Re-derive the running set every forward pass: retire finished requests and backfill waiting ones immediately. This removes both leaks and is the basis of vLLM, TGI, TensorRT-LLM, and SGLang.
     - **Selective batching makes heterogeneous batches possible:** flatten all tokens for position-independent GEMMs (QKV, MLP), and run attention per-request via ragged/`cu_seqlens` kernels. This is also what enables chunked prefill.
     - **The two binding constraints are KV-cache memory (track free blocks; PagedAttention makes it block allocation) and the per-iteration token budget** (`max_num_batched_tokens`) that bounds latency.
+    - **Check Little's Law ($L = \lambda W$) before touching a knob.** It tells you how many requests must be *resident* to sustain your arrival rate; if offered tokens/sec exceeds the engine's tokens/sec, no policy helps — only admission control or more capacity. Then diagnose from the engine's own gauges: running / waiting / KV-cache-usage / preemption counters distinguish healthy saturation from overload from thrashing.
     - **Prefill and decode interfere at the scheduler.** A big prefill stalls ongoing decodes; chunked prefill (and ultimately disaggregation) smooths inter-token latency by spreading prefill across iterations under the token budget — schedule decodes first, then backfill prefill chunks.
     - **Preemption is the teeth behind priority and the safety valve under memory pressure** — evict a victim's KV (recompute or swap-out), return it to WAITING, resume later. Guard against thrashing with watermarks, headroom, and hysteresis; guard against starvation with aging or per-tenant quotas.
     - **The throughput multiplier is workload-dependent:** the heavier the output-length tail, the worse static batching's idling and the larger continuous batching's win (commonly several-fold, more under extreme variance).
@@ -469,7 +524,7 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
 
     **Open-source & tools**
 
-    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the reference continuous-batching serving engine; PagedAttention, chunked prefill, and preemption all in one codebase; read the `Scheduler` class directly. Its [V1 architecture rewrite (2025)](https://vllm.ai/blog/2025-01-27-v1-alpha-release) unifies prefill and decode under one token-budget scheduler for ~1.7× throughput over V0.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) — the reference continuous-batching serving engine; PagedAttention, chunked prefill, and preemption all in one codebase; read the `Scheduler` class directly (in the V1 engine it lives under `vllm/v1/core/sched/`). Its [V1 architecture rewrite (2025)](https://vllm.ai/blog/2025-01-27-v1-alpha-release) unifies prefill and decode under one token-budget scheduler for ~1.7× throughput over V0.
     - [sgl-project/sglang](https://github.com/sgl-project/sglang) — SGLang's high-performance runtime with RadixAttention prefix caching; strong performance on multi-turn and structured-output workloads.
     - [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — NVIDIA Dynamo, a datacenter-scale orchestration layer *above* vLLM/TensorRT-LLM/SGLang that adds disaggregated prefill/decode, KV-aware routing, and multi-tier KV caching across nodes; the productionized form of the DistServe direction.
 

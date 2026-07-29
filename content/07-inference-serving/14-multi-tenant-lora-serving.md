@@ -4,7 +4,7 @@ Imagine you run a platform where every customer fine-tunes their own model. A le
 
 The escape hatch is **Low-Rank Adaptation (LoRA)**. Each tenant's fine-tune is not a fresh 26 GB of weights — it is a handful of tiny low-rank matrices, often 10–200 MB, layered *on top of* a single shared base model. If we can keep one copy of the base resident on the GPU and swap in the right small adapter per request, we can serve hundreds-to-thousands of distinct fine-tuned models from a single base deployment. The catch: a production batch contains requests for *many different adapters at once*. Serving them efficiently — without looping over adapters one at a time and destroying GPU utilization — is the central systems problem of this chapter.
 
-This chapter assumes you understand LoRA's math from [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) and the inference anatomy from [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html) and [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html). We build up from the LoRA forward pass, derive the batched heterogeneous-adapter kernel (Punica's SGMV), study the S-LoRA / LoRAX architectures and their adapter registries, hot-swapping and tiered storage, unified vs. disaggregated execution, cross-model prefix-cache reuse, and the throughput/SLO/fairness trade-offs that govern real deployments. We close with a from-scratch batched multi-adapter forward in PyTorch.
+This chapter assumes you understand LoRA's math from [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) and the inference anatomy from [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html) and [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html). We build up from the LoRA forward pass, derive the batched heterogeneous-adapter kernel (Punica's SGMV), study the S-LoRA / LoRAX architectures and their adapter registries, hot-swapping and tiered storage, adapter sharding under tensor parallelism, unified vs. disaggregated execution, cross-model prefix-cache reuse, and the throughput/SLO/fairness trade-offs that govern real deployments. We close with a from-scratch batched multi-adapter forward in PyTorch.
 
 ---
 
@@ -134,7 +134,7 @@ When a request arrives for adapter $a$, the scheduler checks whether $a$ is GPU-
 
 ### Hot-swapping and the prefetch pipeline
 
-The art is **overlapping** adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch's needed adapters into GPU pages while the current batch is still executing on the compute stream. Because adapters are small (tens of MB) and PCIe/NVLink bandwidth is large (tens to hundreds of GB/s), an adapter swap from CPU DRAM typically takes well under a millisecond — comfortably hidden behind a decode step for small adapters, though large or high-rank adapters can still dominate TTFT if loaded on the critical path. By 2026 this overlap has become a first-class, opt-in engine feature rather than a hand-rolled stream — SGLang's `--enable-lora-overlap-loading` (§7.14.6) is one such implementation.
+The art is **overlapping** adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch's needed adapters into GPU pages while the current batch is still executing on the compute stream. Get a feel for the magnitude: a rank-16 adapter on $q,k,v,o$ of a 40-layer, $d{=}5120$ model holds $40 \times 4 \times 2 \times 16 \times 5120 \approx 26$M parameters $\approx 52$ MB in bf16; over a PCIe Gen4 x16 link at an effective ~20 GB/s that is roughly **2–3 ms** — a few decode steps' worth of time. That is small enough to hide completely *if you prefetch*, and far too large to pay on the critical path of a single request (and a rank-64 adapter, or one that also adapts the MLP, is 4–8× worse). By 2026 this overlap has become a first-class, opt-in engine feature rather than a hand-rolled stream (see §7.14.6 for SGLang's and vLLM's flags).
 
 ```python
 # Sketch: overlap adapter prefetch with the current forward pass.
@@ -209,6 +209,15 @@ The default architecture — vLLM, SGLang, LoRAX, S-LoRA — is **unified**: bas
 {{fig:lora-serving-unified-forward-sgmv}}
 
 
+### Sharding adapters under tensor parallelism
+
+A 13B+ base is usually served with tensor parallelism (TP), so each adapted linear layer is already sharded across GPUs (see [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html)). How do $A$ and $B$ follow? The answer falls out of linearity, and it differs by layer type:
+
+- **Column-parallel base** ($q,k,v$, `gate`/`up` — sharded along $d_\text{out}$). Every rank sees the full input $x$, so it can compute the full $v = A x$ with a **replicated** $A$, then multiply by its own shard $B^{(k)} \in \mathbb{R}^{(d_\text{out}/\text{TP}) \times r}$ to produce its slice of the correction. **No extra collective** — the LoRA path adds nothing to the communication schedule.
+- **Row-parallel base** ($o$, `down` — sharded along $d_\text{in}$). Each rank holds only a slice of $x$, so $A$ is **sharded along $d_\text{in}$** and each rank computes a *partial* $v^{(k)} = A^{(k)} x^{(k)}$. Because $B\left(\sum_k v^{(k)}\right) = \sum_k B v^{(k)}$, each rank can apply a replicated $B$ to its partial $v$ and add the result into the base layer's partial output — the correction then rides the **base's existing all-reduce**. Again no extra collective.
+
+The cost of this default is memory: the replicated matrix ($A$ for column-parallel, $B$ for row-parallel) is stored TP times over, which matters when you are holding hundreds of adapters resident. **Fully-sharded LoRA** (from S-LoRA, exposed in vLLM as `--fully-sharded-loras`) shards *both* matrices on every layer and pays a small extra collective on the rank-$r$ intermediate instead. Since $r \ll d$, that all-gather/reduce moves $O(Br)$ elements versus the base's $O(Bd)$ — typically well under 1% of the layer's traffic — so at TP $\ge 4$ with a large adapter pool it is usually the right trade: you buy back a factor of TP in adapter memory for a nearly free collective.
+
 ### Disaggregated execution
 
 A **disaggregated** design separates concerns across machines or pools. There are two distinct axes, easily conflated:
@@ -251,25 +260,44 @@ Designing adapters to avoid the $k,v$ projections (when accuracy permits) is the
 
 ---
 
-## 7.14.6 The vLLM & SGLang Multi-LoRA Paths
+## 7.14.6 The vLLM, SGLang & TensorRT-LLM Multi-LoRA Paths
 
-Both leading open-source engines ship production multi-LoRA support built on the Punica/S-LoRA lineage.
+Every major open-source engine now ships production multi-LoRA support built on the Punica/S-LoRA lineage; they differ mainly in how dynamic the adapter set is allowed to be.
 
 **vLLM** exposes LoRA as a first-class serving feature. You launch with `--enable-lora`, set `--max-loras` (max distinct adapters per *batch/step*) and `--max-cpu-loras` (the CPU warm-pool size), and bound rank with `--max-lora-rank`. Adapters can be registered statically at launch (`--lora-modules name=path ...`) or **loaded dynamically at runtime** via the API, which is what makes a true multi-tenant platform possible — tenants upload adapters and route to them by name without restarting the server. Internally vLLM uses Punica-style SGMV/BGMV kernels (and Triton variants), the paged allocator holds adapter weights, and an LRU manager handles GPU↔CPU residency. Requests carry a `LoRARequest(name, id, path)` so the scheduler knows which adapter each belongs to.
 
-**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the cross-model prefix-reuse story above is native). It exposes `--max-loras-per-batch` (the adapter-cardinality cap of §7.14.4, default 8) and, since early 2026, an opt-in `--enable-lora-overlap-loading` prefetcher that streams adapter weights on a side CUDA stream to hide cold-adapter transfer — cutting median TTFT by up to ~78% on large-adapter workloads (at the cost of occasionally fragmenting multi-adapter prefill batches). Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
+**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the cross-model prefix-reuse story above is native). You launch with `--lora-paths name=path ...`, cap adapter cardinality with `--max-loras-per-batch` (the knob of §7.14.4), bound rank with `--max-lora-rank`, and select the kernel backend with `--lora-backend` (a Triton SGMV implementation is the default). Adapters can also be added and removed at runtime through `/load_lora_adapter` and `/unload_lora_adapter` HTTP endpoints. Recent releases add an opt-in **overlapped adapter loading** mode that streams adapter weights on a side CUDA stream to hide cold-adapter transfer behind compute (§7.14.3), reported to cut median TTFT substantially on large-adapter workloads at the cost of occasionally fragmenting multi-adapter prefill batches — check `python -m sglang.launch_server --help` for the current flag name, since these LoRA server args are still moving. Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
+
+**TensorRT-LLM** supports multi-LoRA too, but with an ahead-of-time twist worth internalizing: because the engine is *compiled*, the LoRA plugin, the set of target modules, and the **maximum rank** must be declared at `trtllm-build` time and are baked into the engine. Adapter *weights* are still dynamic at runtime (its LoRA manager keeps GPU and CPU adapter caches, sized like vLLM's `max_loras`/`max_cpu_loras`), but a tenant who trains a rank-128 adapter for an engine built at rank 64, or who adapts the MLP when only attention modules were compiled in, cannot be served without rebuilding. If you run a fine-tuning SaaS on TensorRT-LLM, publish the supported rank ceiling and target-module set as part of your product contract. See [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html).
 
 ```bash
 # vLLM: serve a base model with multi-LoRA, dynamic loading enabled.
-vllm serve meta-llama/Llama-2-13b-hf \
+#   --max-loras 8       : up to 8 distinct adapters per scheduler step (§7.14.4)
+#   --max-lora-rank 64  : kernels/slots sized for ranks up to 64
+#   --max-cpu-loras 256 : CPU warm pool, 256 adapters resident off-GPU
+#   --enable-prefix-caching : share base-prefix KV where adapters allow (§7.14.5)
+# NOTE: keep comments on their own lines — a `#` after a trailing `\` silently
+# breaks the line continuation and the rest of the flags become bogus commands.
+VLLM_ALLOW_RUNTIME_LORA_UPDATING=1 vllm serve meta-llama/Llama-2-13b-hf \
   --enable-lora \
-  --max-loras 8 \           # up to 8 distinct adapters per scheduler step
-  --max-lora-rank 64 \      # kernel sized for ranks up to 64
-  --max-cpu-loras 256 \     # CPU warm pool: 256 adapters resident off-GPU
-  --enable-prefix-caching   # share base-prefix KV where adapters allow
+  --max-loras 8 \
+  --max-lora-rank 64 \
+  --max-cpu-loras 256 \
+  --enable-prefix-caching
 
-# Register / route to an adapter at request time (OpenAI-compatible API):
-#   "model": "acme-contracts-v3"   where that name maps to a loaded LoRA.
+# Register a tenant's adapter at runtime — no restart, the key to multi-tenancy.
+curl -s http://localhost:8000/v1/load_lora_adapter \
+  -H 'Content-Type: application/json' \
+  -d '{"lora_name": "acme-contracts-v3", "lora_path": "/adapters/acme-v3"}'
+
+# Then route to it exactly like a model name on the OpenAI-compatible API:
+curl -s http://localhost:8000/v1/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "acme-contracts-v3", "prompt": "Summarize clause 4:", "max_tokens": 64}'
+
+# ...and release it when the tenant churns (frees the CPU/GPU pool entry):
+curl -s http://localhost:8000/v1/unload_lora_adapter \
+  -H 'Content-Type: application/json' -d '{"lora_name": "acme-contracts-v3"}'
 ```
 
 ```python
@@ -292,6 +320,19 @@ prompts = [
 outs = llm.generate([p for p, _ in prompts], sp,
                     lora_request=[lr for _, lr in prompts])
 ```
+
+!!! tip "You can do heterogeneous batches in plain `peft` too — just not fast"
+    Hugging Face `peft` itself supports mixed-adapter batches: load several adapters into one `PeftModel` with `load_adapter(path, adapter_name=...)`, then pass a per-row `adapter_names` list to `forward`/`generate`, using the reserved name `"__base__"` for rows that should skip the LoRA path entirely (the same convention as slot 0 in §7.14.7).
+
+    ```python
+    from peft import PeftModel
+    model = PeftModel.from_pretrained(base, "/adapters/contracts", adapter_name="contracts")
+    model.load_adapter("/adapters/game-lore", adapter_name="game-lore")
+    out = model.generate(**batch,   # one batch, three different behaviours
+                         adapter_names=["contracts", "game-lore", "__base__"])
+    ```
+
+    Under the hood `peft` loops over the distinct adapters in the batch and applies each to its row slice — exactly the `forward_grouped` of Exercise 5, in Python. It is correct and perfect for offline evaluation of many adapters, but it has no fused SGMV kernel, no paged adapter pool, and no continuous batching, so it is not a serving path. Use `peft` to *produce and validate* adapters; use vLLM/SGLang/LoRAX to *serve* them.
 
 ---
 
@@ -471,6 +512,85 @@ if __name__ == "__main__":
 
 Running this prints max errors on the order of $10^{-6}$ — float rounding — confirming that the single batched forward over a heterogeneous mix of adapters is *exactly* equivalent to merging each adapter and running it alone, but at a fraction of the cost and with one shared base in memory. The `forward_segmented` path shows the scheduler trick of sorting by adapter; the registry shows GPU-slot LRU eviction with a CPU warm pool and a reserved base-only slot.
 
+### What a tenant actually uploads: the adapter artifact
+
+The registry above was handed bare `A`/`B` tensors. In a real platform the tenant uploads a **PEFT adapter directory** — the de-facto interchange format that `peft`, vLLM, SGLang, LoRAX and TensorRT-LLM all read:
+
+```text
+  /adapters/acme-contracts-v3/
+    adapter_config.json        # rank, alpha, target_modules, base model id, variant flags
+    adapter_model.safetensors  # the A/B matrices, one pair per adapted linear layer
+```
+
+The weight keys follow PEFT's wrapped-module naming, and the shapes are exactly the $A \in \mathbb{R}^{r \times d_\text{in}}$, $B \in \mathbb{R}^{d_\text{out} \times r}$ of §7.14.1:
+
+```text
+  base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight   [r, d_in]
+  base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight   [d_out, r]
+  base_model.model.model.layers.0.self_attn.v_proj.lora_A.weight   ...
+```
+
+Parsing this — and *validating* it before it reaches a kernel — is the unglamorous half of the control plane:
+
+```python
+import json, os, re, torch
+
+def load_peft_adapter(path, max_rank=64, allowed_modules=("q_proj", "k_proj",
+                                                          "v_proj", "o_proj")):
+    """Parse a PEFT adapter dir into {(layer_idx, module): (A, B, scale)}.
+
+    Returns tensors in the exact layout the SGMV kernel wants, plus the
+    per-adapter scale so the kernel never has to know about alpha or rsLoRA.
+    """
+    from safetensors.torch import load_file          # imported lazily
+    cfg = json.load(open(os.path.join(path, "adapter_config.json")))
+
+    # --- Admission validation: reject before allocating a GPU slot. ---------
+    if cfg.get("peft_type", "LORA") != "LORA":
+        raise ValueError(f"unsupported peft_type {cfg.get('peft_type')}")
+    if cfg.get("use_dora") or cfg.get("bias", "none") != "none":
+        # DoRA adds a per-column magnitude vector and bias-tuning adds a bias
+        # term: neither is a pure additive low-rank correction, so a plain
+        # SGMV path cannot serve them. Check your engine before accepting.
+        raise ValueError("DoRA / bias tuning not supported by this SGMV path")
+    r, alpha = int(cfg["r"]), float(cfg["lora_alpha"])
+    if r > max_rank:
+        raise ValueError(f"rank {r} exceeds engine ceiling {max_rank}")
+    bad = set(cfg["target_modules"]) - set(allowed_modules)
+    if bad:
+        raise ValueError(f"adapter adapts unsupported modules: {sorted(bad)}")
+
+    # rsLoRA rescales by alpha/sqrt(r) instead of alpha/r. Getting this wrong
+    # silently changes the adapter's effective strength -- a real serving bug.
+    scale = alpha / (r ** 0.5) if cfg.get("use_rslora") else alpha / r
+
+    sd = load_file(os.path.join(path, "adapter_model.safetensors"))
+    pat = re.compile(r"layers\.(\d+)\..*\.(\w+_proj)\.lora_(A|B)\.weight")
+    out = {}
+    for k, v in sd.items():
+        m = pat.search(k)
+        if m is None:                       # e.g. embedding/lm_head adapters
+            continue
+        layer, module, which = int(m.group(1)), m.group(2), m.group(3)
+        out.setdefault((layer, module), [None, None, scale])
+        out[(layer, module)][0 if which == "A" else 1] = v.to(torch.float16)
+    for key, (A, B, _) in out.items():
+        assert A is not None and B is not None, f"incomplete LoRA pair at {key}"
+        assert A.shape[0] == B.shape[1] == r, f"rank mismatch at {key}"
+    return out
+
+# Usage (guarded so this file runs with or without a real adapter on disk):
+ADAPTER_DIR = "/adapters/acme-contracts-v3"
+if os.path.isdir(ADAPTER_DIR):
+    weights = load_peft_adapter(ADAPTER_DIR)
+    # Each (layer, module) pair goes into that layer's A_all/B_all slot:
+    #   layer_stack[(l, mod)].set_adapter(slot, A, B, alpha=scale * r)
+    print(f"loaded {len(weights)} adapted projections, "
+          f"{sum(A.numel() + B.numel() for A, B, _ in weights.values())/1e6:.1f}M params")
+```
+
+Two of these checks are the ones that bite in production. **Rank ceiling**: engines size their kernels and adapter slots for `max_lora_rank` at startup (or, for TensorRT-LLM, at build time), so an over-rank adapter must be rejected at *upload* with a clear error, not at first request. **rsLoRA**: `use_rslora` changes the scaling from $\alpha/r$ to $\alpha/\sqrt{r}$; a server that ignores the flag serves a silently mis-scaled model that evaluates worse than the tenant's own local test — one of the nastiest support tickets in this business.
+
 To turn this toy into the real thing you would: (1) replace the `einsum` gather with a fused SGMV/BGMV Triton or CUDA kernel that never materializes the gathered `A`/`B` tensors; (2) apply it to all adapted projections in every transformer block, not one layer; (3) move the registry's CPU↔GPU copies onto a side stream for overlap; and (4) wire the adapter index through the continuous-batching scheduler so it is rebuilt every step as requests join and leave.
 
 !!! warning "Don't materialize the gathered weights"
@@ -494,6 +614,9 @@ Multi-tenant LoRA serving is a throughput-per-dollar machine, but it is not free
 
 For the broader economics of latency vs. throughput vs. cost that frame these decisions, see [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) and the system-design view in [Designing an LLM Serving System](../12-production-mlops/01-serving-system-design.html).
 
+!!! note "Scale check: does this apply to Stack-100M?"
+    The capstone model of Part XIV is ~100M parameters — about 200 MB in bf16 — and it is post-trained with several small task adapters ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)). Everything mechanical in this chapter still applies, and vLLM's `--enable-lora` path works unchanged on a 100M base, which makes it an excellent place to *learn* multi-LoRA serving cheaply: you can hold twenty adapters resident on a laptop-class GPU and watch `max_loras` move throughput. But be honest about the economics at that scale — the argument for a *shared* base is weakest here, because a full merged copy per task costs only 200 MB, so N merged models may simply be simpler and faster than one multi-LoRA deployment. Multi-tenant LoRA earns its complexity when the base is 100–1000× larger than the adapters, not 4×. See [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for how the capstone is actually served.
+
 ---
 
 !!! key "Key Takeaways"
@@ -503,8 +626,10 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
     - S-LoRA's Unified Paging puts adapters in the same paged DRAM pool as the KV cache; tiered storage (GPU→CPU→SSD→object store) keeps only active adapters on the GPU, with async prefetch hiding swaps behind compute.
     - The adapter registry is the control plane: name→weights mapping, residency tier, ref-counting, and LRU/LFU eviction (never evict a `ref_count>0` adapter).
     - Cold adapters create the p99 TTFT cliff; defend with a CPU warm pool, side-stream prefetch, pinned top-K adapters, and capping adapters-per-step (`max_loras`).
+    - Under tensor parallelism the LoRA path needs **no extra collective**: replicate $A$ for column-parallel layers, shard $A$ for row-parallel ones and let the partial correction ride the base's all-reduce; `--fully-sharded-loras` trades a tiny rank-$r$ collective for a factor-of-TP saving in adapter memory.
+    - A tenant uploads a PEFT adapter directory (`adapter_config.json` + `adapter_model.safetensors`); validate rank ceiling, target modules, and `use_rslora` scaling at upload time, not at first request.
     - Cross-tenant prefix-cache reuse is possible when the adapter does *not* touch the $k,v$ projections — co-design the fine-tune to keep KV base-computed and share system-prompt KV across all tenants.
-    - vLLM (`--enable-lora`, `--max-loras`, `--max-cpu-loras`) and SGLang ship Punica/S-LoRA-style multi-LoRA with dynamic runtime adapter loading — the foundation of a real fine-tuning SaaS.
+    - vLLM (`--enable-lora`, `--max-loras`, `--max-cpu-loras`, `/v1/load_lora_adapter`) and SGLang ship Punica/S-LoRA-style multi-LoRA with dynamic runtime adapter loading — the foundation of a real fine-tuning SaaS; TensorRT-LLM serves adapters too but bakes the rank ceiling and target modules into the compiled engine.
 
 ---
 
@@ -528,7 +653,8 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
     - [punica-ai/punica](https://github.com/punica-ai/punica) — reference SGMV/BGMV CUDA kernels and multi-LoRA serving system from the Punica paper.
     - [predibase/lorax](https://github.com/predibase/lorax) — production-ready multi-LoRA inference server with dynamic adapter loading, tiered weight caching, and OpenAI-compatible API.
     - [vLLM — LoRA Adapters](https://docs.vllm.ai/en/latest/features/lora/) — official docs for `--enable-lora`, `--max-loras`, `--max-cpu-loras`, and dynamic runtime adapter registration (including runtime `/v1/load_lora_adapter` / `/v1/unload_lora_adapter` endpoints).
-    - [SGLang — LoRA Serving](https://docs.sglang.io/docs/advanced_features/lora) — multi-LoRA over RadixAttention: `--max-loras-per-batch` and the 2026 `--enable-lora-overlap-loading` side-stream prefetcher that hides cold-adapter TTFT.
+    - [SGLang — LoRA Serving](https://docs.sglang.io/docs/advanced_features/lora) — multi-LoRA over RadixAttention: `--max-loras-per-batch`, `--lora-backend`, runtime `/load_lora_adapter`, and the overlapped adapter-loading path that hides cold-adapter TTFT.
+    - [huggingface/peft](https://github.com/huggingface/peft) — produces the `adapter_config.json` + `adapter_model.safetensors` artifact every engine consumes, and supports mixed-adapter batches via `adapter_names` (correct, but unfused — a reference, not a serving path).
 
     **Go deeper**
 
