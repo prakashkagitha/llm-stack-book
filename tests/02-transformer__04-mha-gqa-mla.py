@@ -11,6 +11,8 @@ Blocks tested (chapter order):
     #0 (line ~42)  - MultiHeadAttention (MHA) module + smoke test
     #1 (line ~202) - repeat_kv() + GroupedQueryAttention (unifies MHA/GQA/MQA)
                       + spectrum-verification loop (n_kv in 8, 2, 1)
+    #1b            - GQA-native SDPA (enable_gqa=True, with a repeat_kv fallback
+                      for PyTorch < 2.5)
     #2 (line ~331) - MultiHeadLatentAttentionCore (simplified MLA) + smoke test
 
 All three blocks are self-contained nn.Module definitions with tiny CPU
@@ -109,9 +111,15 @@ def repeat_kv(x, n_rep):
     x: (B, n_kv, L, d_h). Repeat each KV head n_rep times along the head axis,
     producing (B, n_kv * n_rep, L, d_h) = (B, n_heads, L, d_h).
 
-    This is a memory-cheap expand (no data copy until the kernel reads it):
-    head order becomes [kv0, kv0, ..., kv1, kv1, ...], so query head j uses
+    Head order becomes [kv0, kv0, ..., kv1, kv1, ...], so query head j uses
     KV group j // n_rep. Mirrors Llama's reference implementation.
+
+    Cost note: `expand` itself is free (a stride-0 view), but the `reshape`
+    that follows CANNOT stay a view, so it materializes a transient tensor
+    n_rep times larger. The *cache* is unaffected — it still holds only n_kv
+    heads, which is where the memory win lives — but GQA-aware kernels
+    (FlashAttention, SDPA's enable_gqa, vLLM's paged attention) skip this
+    copy entirely by reading the narrow K/V directly. See below.
     """
     B, n_kv, L, d_h = x.shape
     if n_rep == 1:
@@ -193,6 +201,32 @@ for n_kv in (8, 2, 1):                            # MHA, GQA(g=2), MQA
 assert 2 * 8 * (d_model // n_heads) * 2 == 256
 assert 2 * 2 * (d_model // n_heads) * 2 == 64
 assert 2 * 1 * (d_model // n_heads) * 2 == 32
+
+
+# ---------------------------------------------------------------------------
+# Block #1b: GQA-native SDPA (the "GQA in the real libraries" section).
+# ---------------------------------------------------------------------------
+
+# The cache holds NARROW K/V: n_kv_heads, not n_heads. Feed it to the kernel as-is.
+torch.manual_seed(0)
+B, Hq, Hkv, L, Dh = 2, 8, 2, 7, 16
+q = torch.randn(B, Hq,  L, Dh)     # 8 query heads
+k = torch.randn(B, Hkv, L, Dh)     # 2 KV heads  <- this is what you cache
+v = torch.randn(B, Hkv, L, Dh)
+
+try:
+    # PyTorch >= 2.5: the kernel broadcasts KV heads internally. No copy.
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
+    native = True
+except (TypeError, RuntimeError):
+    # Older PyTorch: fall back to the explicit (copying) broadcast.
+    n_rep = Hq // Hkv
+    out = F.scaled_dot_product_attention(
+        q, repeat_kv(k, n_rep), repeat_kv(v, n_rep), is_causal=True)
+    native = False
+
+print(f"native GQA kernel: {native}, out {tuple(out.shape)}")   # (2, 8, 7, 16)
+assert out.shape == (B, Hq, L, Dh)
 
 
 # ---------------------------------------------------------------------------

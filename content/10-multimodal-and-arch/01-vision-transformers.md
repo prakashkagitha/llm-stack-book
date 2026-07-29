@@ -89,9 +89,17 @@ def patchify(images: torch.Tensor, patch_size: int = 16) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 class PatchEmbed(nn.Module):
     """
-    Equivalent to a Conv2d with kernel_size=stride=patch_size, but implemented
-    as a matrix multiply for clarity. In practice, nn.Conv2d is often used
-    because it can be more cache-efficient on hardware.
+    Mathematically the same operation as a Conv2d with kernel_size=stride=
+    patch_size, but implemented as a matrix multiply for clarity. Real
+    implementations (timm, HF `transformers`, open_clip) all use
+    `nn.Conv2d(in_chans, embed_dim, kernel_size=P, stride=P)` because cuDNN
+    fuses the gather-and-project into one pass.
+
+    Caveat if you ever port weights: Conv2d flattens each patch in (C, P, P)
+    order, whereas the einops pattern below flattens in (P, P, C) order, so the
+    two weight matrices differ by a permutation of the input columns. Either
+    ordering trains fine — but you cannot load one checkpoint into the other
+    without permuting.
     """
     def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
         super().__init__()
@@ -194,7 +202,12 @@ class MultiHeadSelfAttention(nn.Module):
             return t.view(B, N, H, self.head_dim).transpose(1, 2)
         q, k, v = reshape(q), reshape(k), reshape(v)  # each (B, H, N, head_dim)
 
-        # Scaled dot-product attention
+        # Scaled dot-product attention, written out explicitly so you can see
+        # the (B, H, N, N) matrix. In production, replace these four lines with
+        #   out = F.scaled_dot_product_attention(q, k, v, dropout_p=...)
+        # which dispatches to the FlashAttention kernel — same math, no N×N
+        # matrix ever materialized. That swap is what makes 1024-patch (512px)
+        # and 4096-patch (1024px) ViTs affordable.
         attn = (q @ k.transpose(-2, -1)) / self.scale   # (B, H, N, N)
         attn = attn.softmax(dim=-1)
         attn = self.dropout(attn)
@@ -329,6 +342,94 @@ if __name__ == "__main__":
 
 ---
 
+## Training a ViT: The Regularization That Makes It Work
+
+The block above is faithful to the paper, and if you train it on ImageNet-1k from scratch with a standard ResNet recipe it will *lose* to a ResNet-50. This is the single most important practical fact about ViTs: without the locality and translation-equivariance priors baked into convolutions, a ViT has to *learn* those priors from data, and with only 1.3M images it instead memorizes. The original paper sidestepped the problem by pre-training on JFT-300M. DeiT (Touvron et al., 2021) then showed you can match CNNs on ImageNet-1k alone — by replacing the missing inductive bias with aggressive augmentation and regularization.
+
+Three architectural pieces do most of the stabilization work and are present in essentially every modern ViT (DeiT III, DINOv2/DINOv3, EVA, SigLIP):
+
+- **Stochastic depth (drop-path)** — randomly drop an entire residual branch for a sample, with the drop probability ramped linearly from 0 at the first block to ~0.1–0.4 at the last. This is the highest-value regularizer for deep ViTs; without it, ViT-L and deeper overfit or diverge.
+- **LayerScale** (CaiT, Touvron et al., 2021) — a per-channel learnable gain $\gamma$ on each residual branch, initialized to something tiny like $10^{-5}$ (or $10^{-6}$ for very deep models). At init, every block is nearly the identity, so the residual stream starts well-conditioned and depth costs nothing; the model then "switches on" the branches it needs.
+- **QK-norm** — LayerNorm (or RMSNorm) applied to $Q$ and $K$ before the dot product, introduced for ViT-22B to stop attention-logit blow-up. See [Modern Architecture Improvements & Design Choices](../02-transformer/10-modern-arch-improvements.html) for the same trick in LLMs.
+
+```python
+import torch
+import torch.nn as nn
+
+
+class DropPath(nn.Module):
+    """Stochastic depth: zero the *whole* residual branch for some samples."""
+    def __init__(self, p: float = 0.0):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.p == 0.0 or not self.training:
+            return x
+        keep = 1.0 - self.p
+        # One Bernoulli draw per sample, broadcast over (N, D)
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        mask = x.new_empty(shape).bernoulli_(keep)
+        return x * mask / keep          # rescale so E[output] is unchanged
+
+
+class LayerScale(nn.Module):
+    """Per-channel learnable gain on a residual branch (CaiT). Init near zero."""
+    def __init__(self, dim: int, init_value: float = 1e-5):
+        super().__init__()
+        self.gamma = nn.Parameter(init_value * torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.gamma
+
+
+class RegularizedViTBlock(nn.Module):
+    """ViTBlock + LayerScale + DropPath — the block deep ViTs actually use."""
+    def __init__(self, embed_dim: int, num_heads: int, mlp_ratio: float = 4.0,
+                 drop_path: float = 0.0, ls_init: float = 1e-5):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.attn = MultiHeadSelfAttention(embed_dim, num_heads)
+        self.ls1, self.dp1 = LayerScale(embed_dim, ls_init), DropPath(drop_path)
+
+        self.norm2 = nn.LayerNorm(embed_dim)
+        hidden = int(embed_dim * mlp_ratio)
+        self.mlp = nn.Sequential(nn.Linear(embed_dim, hidden), nn.GELU(),
+                                 nn.Linear(hidden, embed_dim))
+        self.ls2, self.dp2 = LayerScale(embed_dim, ls_init), DropPath(drop_path)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # residual = x + DropPath(LayerScale(Branch(LN(x))))
+        x = x + self.dp1(self.ls1(self.attn(self.norm1(x))))
+        x = x + self.dp2(self.ls2(self.mlp(self.norm2(x))))
+        return x
+
+
+if __name__ == "__main__":
+    depth, max_dp = 12, 0.1
+    # Linearly ramped drop-path rate: shallow blocks survive, deep blocks drop
+    dpr = [max_dp * i / (depth - 1) for i in range(depth)]
+    blocks = nn.ModuleList([RegularizedViTBlock(768, 12, drop_path=p) for p in dpr])
+
+    x = torch.randn(2, 197, 768)
+    for blk in blocks:
+        x = blk(x)
+    print(x.shape, f"drop-path ramp: {dpr[0]:.3f} → {dpr[-1]:.3f}")
+```
+
+!!! tip "Practitioner tip: the DeiT-style ImageNet-1k recipe"
+    A ViT-B/16 trained from scratch on ImageNet-1k with roughly this configuration reaches CNN-competitive top-1, and the same ingredients transfer to any from-scratch ViT you train:
+
+    - **Optimizer** AdamW, weight decay 0.05, $\beta = (0.9, 0.999)$; **no** weight decay on `cls_token`, `pos_embed`, biases, or norm parameters.
+    - **LR** peak $\approx 10^{-3}$ at a global batch of 1024, scaled linearly with batch size, 5 epochs of linear warmup then cosine decay to ~0 over ~300 epochs.
+    - **Augmentation** RandAugment, mixup + CutMix, random erasing, random-resized-crop and horizontal flip.
+    - **Regularization** label smoothing 0.1, stochastic depth 0.1 (ViT-B) to 0.4 (ViT-L/H), and — critically — grad-clip at 1.0.
+    - **EMA** of the weights for evaluation; it typically buys a few tenths of a point.
+
+    All of these are one-flag options in `timm`'s `train.py`, which is the fastest way to reproduce a ViT training run rather than rebuilding the recipe yourself. For the optimizer and schedule mechanics behind these numbers, see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) and [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
+
+---
+
 ## Positional Embeddings in ViT
 
 ViT uses **learned** 1D positional embeddings by default — one embedding vector per patch position (0 to $N$, including CLS). This contrasts with the sinusoidal scheme in the original Transformer (see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)).
@@ -384,6 +485,61 @@ def interpolate_pos_embed(pos_embed: torch.Tensor,
 
     return torch.cat([cls_pos, patch_pos], dim=1)  # (1, new_N+1, D)
 ```
+
+### 2D RoPE and Native-Resolution ViTs
+
+Interpolation is a patch over a design flaw: a *table* of learned positions hard-codes one grid shape. The 2025–2026 encoders increasingly drop the table for **2D rotary embeddings (axial RoPE)**. Split each head's dimensions in half; rotate one half by the patch's row index and the other half by its column index, exactly as RoPE rotates by token index in a language model (see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)). Because the phase is a *function of the coordinate* rather than a lookup, a 14×14 grid and a 64×48 grid use the same parameters — there is nothing to resize — and attention scores depend only on the relative offset between two patches.
+
+```python
+import torch
+
+def build_2d_rope(h: int, w: int, head_dim: int, theta: float = 100.0):
+    """
+    Axial 2D RoPE cache for an h x w patch grid.
+
+    Half of head_dim rotates by the ROW index, the other half by the COLUMN
+    index, so a patch's phase encodes (row, col). theta is much smaller than
+    the 10000 used for text because patch grids are short in each axis.
+
+    Returns cos, sin of shape (h*w, head_dim), in rotate_half convention.
+    """
+    assert head_dim % 4 == 0, "head_dim must be divisible by 4 for axial 2D RoPE"
+    d_axis = head_dim // 2                       # dims allocated to each axis
+    inv_freq = 1.0 / (theta ** (torch.arange(0, d_axis, 2).float() / d_axis))
+
+    ys, xs = torch.meshgrid(torch.arange(h).float(),
+                            torch.arange(w).float(), indexing="ij")
+    ang_y = ys.reshape(-1, 1) * inv_freq         # (h*w, d_axis/2)
+    ang_x = xs.reshape(-1, 1) * inv_freq         # (h*w, d_axis/2)
+    ang = torch.cat([ang_y, ang_x], dim=-1)      # (h*w, head_dim/2)
+    ang = torch.cat([ang, ang], dim=-1)          # duplicate for rotate_half
+    return ang.cos(), ang.sin()
+
+
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    x1, x2 = x.chunk(2, dim=-1)
+    return torch.cat([-x2, x1], dim=-1)
+
+
+def apply_2d_rope(q: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+    """q: (B, H, N, head_dim) — PATCH tokens only; CLS/registers are left alone."""
+    return q * cos + rotate_half(q) * sin
+
+
+if __name__ == "__main__":
+    head_dim = 64
+    for (gh, gw) in [(14, 14), (32, 24)]:     # 224x224 and 512x384 at P=16
+        cos, sin = build_2d_rope(gh, gw, head_dim)
+        q = torch.randn(2, 12, gh * gw, head_dim)
+        out = apply_2d_rope(q, cos, sin)
+        # A rotation preserves norms — a good invariant to assert in tests
+        assert torch.allclose(out.norm(dim=-1), q.norm(dim=-1), atol=1e-5)
+        print(f"grid {gh}x{gw}: {tuple(out.shape)}, same weights, no interpolation")
+```
+
+The CLS and register tokens have no spatial coordinate, so they are excluded from the rotation and simply pass through — a small bookkeeping detail that is easy to get wrong.
+
+Once positions are resolution-free, the remaining obstacle is batching images of *different* shapes. **NaViT** ("Patch n' Pack", Dehghani et al., 2023) solves it the same way LLM training packs variable-length documents: concatenate the patch sequences of several images into one long sequence and use a **block-diagonal attention mask** so no image attends to another (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) for the identical mechanism on text). The result is that images keep their native aspect ratio and resolution — no distorting square resize — and training throughput rises because no compute is wasted on padding. This is now mainstream: SigLIP 2 ships **NaFlex** variants that accept variable aspect ratio and sequence length, and Qwen2-VL / Qwen2.5-VL encode images at native dynamic resolution with multimodal RoPE. The complementary *tiling* approach used on the VLM side (AnyRes) is covered in [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html).
 
 ---
 
@@ -502,8 +658,8 @@ While CLIP and SigLIP rely on paired image-text data, DINOv2 (Oquab et al., Meta
 
 1. **A curated dataset** (LVD-142M) filtered for high-quality, diverse images using embedding-space deduplication.
 2. **A student-teacher distillation setup**: a student ViT processes augmented crops; a teacher ViT (EMA of the student weights) processes a larger crop. The student is trained to match the teacher's patch-level features.
-3. **DINO + iBOT objectives**: DINO aligns the CLS tokens (global features); iBOT (image BERT) masks random patches and predicts the teacher's patch representations, learning local spatial features.
-4. **Register tokens**: Newly introduced learnable tokens appended to the sequence (discussed below).
+3. **DINO + iBOT objectives**: DINO aligns the CLS tokens (global features); iBOT (image BERT) masks random patches and predicts the teacher's patch representations, learning local spatial features. Both are added on top of a **Sinkhorn-Knopp centering / sharpening** step that prevents the classic self-distillation failure mode — collapse to a constant output — by keeping the teacher's assignment distribution near-uniform across the batch.
+4. **Register tokens**: added in a follow-up release of the DINOv2 checkpoints (`*_reg4` weights) after Darcet et al. identified the artifact-token problem — see below.
 
 DINOv2 models (ViT-S, ViT-B, ViT-L, ViT-G/14) produce exceptionally clean spatial features: patch attention maps reveal semantic regions without any dense annotation. In 2025 Meta released **DINOv3** (Siméoni et al.), which scales this self-supervised recipe to a 7B-parameter ViT trained on 1.7B images and adds a *Gram anchoring* technique to keep dense feature maps sharp over long training; it matches or beats specialized supervised systems on segmentation and depth *without fine-tuning*, and ships distilled ViT-B/L and ConvNeXt variants for deployment.
 
@@ -652,7 +808,89 @@ if __name__ == "__main__":
 ```
 
 !!! warning "Common pitfall: wrong normalization statistics"
-    Using ImageNet statistics for a CLIP model (or vice versa) is a frequent source of bugs that can silently degrade downstream performance by several percent. Always check which normalization constants a checkpoint was trained with. Some models (e.g., SigLIP) use image-specific mean/std; others use a simple $[-1, 1]$ rescaling with mean=0.5, std=0.5. Store preprocessing alongside the model checkpoint.
+    Using ImageNet statistics for a CLIP model (or vice versa) is a frequent source of bugs that can silently degrade downstream performance by several percent. Always check which normalization constants a checkpoint was trained with. Some models (e.g., SigLIP) use image-specific mean/std; others use a simple $[-1, 1]$ rescaling with mean=0.5, std=0.5. Store preprocessing alongside the model checkpoint. The robust fix is never to hand-write the transform: `timm` and HF `transformers` both ship the exact preprocessing config *with* the weights, as shown next.
+
+---
+
+## The Real Toolchain: timm, transformers & open_clip
+
+You will almost never train a vision encoder from scratch — you will load one. Three libraries cover essentially the whole ecosystem, and each owns a different job.
+
+**`timm` (huggingface/pytorch-image-models)** is the reference implementation and weight zoo for vision backbones: ViT, DeiT, EVA, SigLIP towers, DINOv2/DINOv3. Its killer feature for correctness is `resolve_model_data_config`, which returns the checkpoint's own mean/std/crop settings so the normalization pitfall above cannot happen.
+
+```python
+# pip install timm
+import timm
+import torch
+
+# `num_classes=0` strips the classification head and returns pooled features.
+# Names follow "<arch>.<pretrain_tag>"; run timm.list_models('*dinov2*', pretrained=True)
+# to see the exact tags available in your installed version.
+model = timm.create_model("vit_base_patch14_reg4_dinov2.lvd142m",
+                          pretrained=True, num_classes=0)
+model.eval()
+
+# The checkpoint carries its own preprocessing config — never hand-roll it.
+cfg = timm.data.resolve_model_data_config(model)
+transform = timm.data.create_transform(**cfg, is_training=False)
+print(cfg["input_size"], cfg["mean"], cfg["std"])
+
+x = torch.randn(1, *cfg["input_size"])           # stand-in for transform(pil_image)
+with torch.no_grad():
+    pooled = model(x)                            # (1, D) global feature
+    tokens = model.forward_features(x)           # (1, 1 + R + N, D) all tokens
+print(pooled.shape, tokens.shape)
+```
+
+`forward_features` is the entry point you want for dense tasks and for VLMs: it returns the full token sequence (CLS, registers, then the $N$ patch tokens) instead of a pooled vector. That sequence is exactly what gets projected into a language model's embedding space in [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html).
+
+**HF `transformers`** wraps the same encoders behind `AutoProcessor` / `AutoModel`, which is what you want when the encoder is one component of a multimodal pipeline:
+
+```python
+# pip install transformers pillow
+from transformers import AutoModel, AutoProcessor
+from PIL import Image
+import torch
+
+ckpt = "google/siglip-so400m-patch14-384"        # see also the facebook/dinov3-* collection
+model = AutoModel.from_pretrained(ckpt).eval()
+processor = AutoProcessor.from_pretrained(ckpt)  # resize + normalize + tokenize
+
+image = Image.new("RGB", (640, 480), color=(120, 90, 60))
+labels = ["a photo of a cat", "a photo of a dog", "a photo of a wall"]
+inputs = processor(text=labels, images=image,
+                   padding="max_length", return_tensors="pt")
+
+with torch.no_grad():
+    out = model(**inputs)
+
+# SigLIP was trained with a per-pair sigmoid, so score each label INDEPENDENTLY
+# with sigmoid — using softmax here (the CLIP habit) mis-calibrates the scores.
+probs = torch.sigmoid(out.logits_per_image)      # (1, num_labels)
+print({l: round(p, 4) for l, p in zip(labels, probs[0].tolist())})
+```
+
+That sigmoid-vs-softmax line is the most common SigLIP bug in the wild: SigLIP's logits are calibrated as independent binary decisions, so several labels can score high (or all can score low, which is a *useful* "none of the above" signal that CLIP's softmax cannot express). Note also that HF vision models accept `interpolate_pos_encoding=True` in `forward`, which applies the bicubic trick from earlier in this chapter on the fly if you feed a non-native resolution.
+
+**`open_clip` (mlfoundations)** is the training codebase: it is how the open community reproduced CLIP on LAION-2B and DataComp, and it implements both the InfoNCE and the sigmoid (SigLIP) losses, distributed sharded contrastive training, and evaluation.
+
+```python
+# pip install open_clip_torch
+import open_clip
+import torch
+
+model, _, preprocess = open_clip.create_model_and_transforms(
+    "ViT-B-32", pretrained="laion2b_s34b_b79k")
+tokenizer = open_clip.get_tokenizer("ViT-B-32")
+
+with torch.no_grad():
+    text = tokenizer(["a diagram", "a dog", "a cat"])
+    text_features = model.encode_text(text)
+    text_features /= text_features.norm(dim=-1, keepdim=True)  # L2-normalize
+print(text_features.shape)                        # (3, 512)
+```
+
+To train rather than load, `open_clip` exposes a distributed training entrypoint (invoked as a module, e.g. `python -m open_clip_train.main` in recent versions; older releases use `src/training/main.py`) taking WebDataset shards of image–caption pairs, `--model`, `--batch-size`, and `--siglip` to switch the loss. Reproducing CLIP ViT-B/32 on LAION-400M is a multi-GPU-days job — but fine-tuning an existing checkpoint on a domain corpus of a few hundred thousand pairs is an afternoon on a single node, and is the usual way teams adapt an encoder to medical images, satellite imagery, or product photos.
 
 ---
 
@@ -664,12 +902,14 @@ if __name__ == "__main__":
 | ViT-L/14 | Supervised (JFT-300M) | ViT | Scale | High-accuracy backbone |
 | CLIP ViT-L/14 | Image-text contrastive | ViT + text Transformer | Zero-shot, joint embedding | VLMs, zero-shot retrieval |
 | SigLIP-So400M/14 | Image-text sigmoid loss | ViT-So400M | No global softmax, small batches | Gemini/PaliGemma backbone |
+| SigLIP 2 (incl. NaFlex) | Sigmoid + captioning + self-supervised, multilingual | ViT / NaFlex | Native aspect ratio & variable seq length | Default open contrastive backbone |
 | DINOv2 ViT-G/14 | Self-supervised distillation | ViT + registers | Dense spatial features, no labels | Segmentation, depth, VLMs |
+| DINOv3 ViT-7B (+ distilled B/L) | Self-supervised at 1.7B images | ViT + registers | Gram anchoring keeps dense maps sharp | Frozen dense prediction |
 | EVA-CLIP | Image-text + masked prediction | ViT-E | Scalable vision encoder | Open-source VLMs |
 
 !!! note "ViT-G vs ViT-H vs ViT-E: a quick size guide"
-    ViT-B (86M) < ViT-L (307M) < ViT-H (632M) < ViT-G (1.1B) < ViT-22B (22B).
-    The naming is not perfectly consistent across papers; always check `embed_dim` and `depth` rather than the letter designation alone.
+    ViT-B (~86M) < ViT-L (~300M) < ViT-H (~630M) < ViT-g (~1B) < ViT-G (~1.8B) < ViT-e/E (~4B) < ViT-22B (22B), with DINOv3's 7B backbone sitting between the last two.
+    The naming is not consistent across papers — lowercase `g` and uppercase `G` are different models, and "So400M" denotes a *shape-optimized* 400M tower whose width/depth/MLP ratio were searched rather than taken from the letter ladder. Always check `embed_dim` and `depth` rather than the letter designation alone.
 
 ---
 
@@ -688,18 +928,20 @@ if __name__ == "__main__":
 !!! key "Key Takeaways"
     - ViT divides an image into non-overlapping $P \times P$ patches, flattens each to a vector, and linearly projects them — treating patches exactly like word tokens. For ViT-B/16 on 224×224 images this gives 196 tokens of dimension 768.
     - A learned CLS token is prepended; its final output serves as the global image representation for classification. Alternatively, the patch tokens can be averaged (patch-avg pooling) or used as spatial features for dense tasks.
-    - Positional embeddings in ViT are learned, not sinusoidal. When changing resolution, the 2D grid must be bicubically interpolated to generate embeddings for the new number of patches.
+    - Positional embeddings in ViT are learned, not sinusoidal. When changing resolution, the 2D grid must be bicubically interpolated to generate embeddings for the new number of patches. Modern encoders sidestep this with **2D axial RoPE** plus NaViT-style patch-n-pack, which handle native resolutions and aspect ratios with one set of weights.
+    - A ViT trained from scratch on ImageNet-1k without heavy regularization loses to a ResNet: **stochastic depth, LayerScale, RandAugment, mixup/CutMix and AdamW with wd 0.05** are what substitute for the convolutional inductive bias. `timm` implements the whole DeiT recipe behind flags.
     - CLIP trains an image encoder and a text encoder jointly with symmetric InfoNCE contrastive loss on 400M+ image-text pairs, enabling zero-shot classification by comparing image embeddings to text prompt embeddings.
     - SigLIP replaces CLIP's softmax loss with sigmoid binary cross-entropy applied per pair, eliminating the need for large batch sizes and global gather operations — preferred in modern large-scale training pipelines.
     - DINOv2 learns rich spatial features with no text supervision by distilling a teacher ViT into a student, jointly optimizing CLS-level (DINO) and patch-level (iBOT) objectives.
     - Register tokens (Darcet et al., 2023) add $R$ extra learnable positions to absorb global "scratch" information, eliminating the artifact tokens that appear in plain ViT attention maps. Registers are discarded at the output.
-    - Image preprocessing (resize, crop, normalize) must match the training pipeline exactly. CLIP and ImageNet models use different normalization constants; mixing them silently degrades performance.
+    - Image preprocessing (resize, crop, normalize) must match the training pipeline exactly. CLIP and ImageNet models use different normalization constants; mixing them silently degrades performance — let `timm.data.resolve_model_data_config` or an HF `AutoProcessor` supply the transform rather than hand-writing it.
+    - In practice you load rather than train encoders: **`timm`** for backbones and dense `forward_features`, **`transformers`** (`AutoProcessor`/`AutoModel`) for pipeline integration, **`open_clip`** for actually training or fine-tuning a CLIP/SigLIP model. Score SigLIP logits with `sigmoid`, not `softmax`.
     - These image encoders are the building block for the [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html) discussed in the next chapter, where patch token sequences are fused into a language model's context.
 
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Vision Transformers are the dominant image encoder architecture across classification, dense prediction, and multimodal systems; the field has shifted from supervised ImageNet training toward large-scale contrastive (CLIP → SigLIP → SigLIP 2) and self-supervised (DINOv2 → DINOv3) pre-training, with encoder scale now reaching 7B parameters for self-supervised models (DINOv3) and 22B for supervised ViTs.
+    Vision Transformers are the dominant image encoder architecture across classification, dense prediction, and multimodal systems; the field has shifted from supervised ImageNet training toward large-scale contrastive (CLIP → SigLIP → SigLIP 2) and self-supervised (DINOv2 → DINOv3) pre-training, with encoder scale now reaching 7B parameters for self-supervised models (DINOv3) and 22B for supervised ViTs. The other structural shift is away from fixed 224×224 square inputs: 2D RoPE and NaViT-style patch-n-pack let a single encoder serve native resolutions and aspect ratios, which is what SigLIP 2's NaFlex variants and the Qwen-VL encoders do.
 
     **Foundational work**
 
@@ -712,6 +954,7 @@ if __name__ == "__main__":
     - [Tschannen et al. (Google), *SigLIP 2: Multilingual Vision-Language Encoders* (2025)](https://arxiv.org/abs/2502.14786) — adds captioning, self-supervised, and multilingual objectives to the sigmoid recipe; beats SigLIP at every scale with much stronger dense/localization features.
     - [Oquab et al. (Meta AI), *DINOv2: Learning Robust Visual Features without Supervision* (2023)](https://arxiv.org/abs/2304.07193) — self-supervised distillation on 142M curated images yields all-purpose spatial features that outperform weakly-supervised encoders.
     - [Siméoni et al. (Meta AI), *DINOv3* (2025)](https://arxiv.org/abs/2508.10104) — scales self-supervised pre-training to a 7B ViT on 1.7B images with Gram anchoring for sharp dense features; matches specialized supervised systems on dense tasks without fine-tuning.
+    - [Dehghani et al. (Google), *Patch n' Pack: NaViT, a Vision Transformer for any Aspect Ratio and Resolution* (2023)](https://arxiv.org/abs/2307.06304) — packs variable-resolution images into one sequence behind a block-diagonal mask; the basis of SigLIP 2's NaFlex variants and of native-resolution VLM encoders.
     - [Darcet et al. (Meta AI), *Vision Transformers Need Registers* (2023)](https://arxiv.org/abs/2309.16588) — identifies high-norm artifact tokens in ViT attention maps and fixes them with learnable register tokens, improving dense-prediction quality.
     - [Dehghani et al. (Google), *Scaling Vision Transformers to 22 Billion Parameters* (2023)](https://arxiv.org/abs/2302.05442) — ViT-22B shows LLM-like scaling laws in vision with parallel layers and QK-norm for training stability.
 
@@ -733,7 +976,11 @@ if __name__ == "__main__":
 - Oquab et al. (Meta AI), "DINOv2: Learning Robust Visual Features without Supervision" (2023).
 - Darcet et al. (Meta AI), "Vision Transformers Need Registers" (2023) — register tokens.
 - Fang et al., "EVA: Exploring the Limits of Masked Visual Representation Learning at Scale" (2022) — EVA-CLIP.
-- Touvron et al., "Training data-efficient image transformers & distillation through attention" (DeiT, 2021) — training ViT with limited data via distillation.
+- Touvron et al., "Training data-efficient image transformers & distillation through attention" (DeiT, 2021) — training ViT with limited data via distillation; see also "DeiT III: Revenge of the ViT" (2022) for the modern simplified recipe.
+- Touvron et al., "Going deeper with Image Transformers" (CaiT, 2021) — the LayerScale trick that makes deep ViTs trainable.
+- Steiner et al., "How to train your ViT? Data, Augmentation, and Regularization in Vision Transformers" (AugReg, 2021) — the systematic study behind timm's default ViT recipes.
+- Dehghani et al., "Patch n' Pack: NaViT" (2023) — native-resolution, variable-aspect-ratio ViT training via sequence packing.
+- Heo et al., "Rotary Position Embedding for Vision Transformer" (2024) — a careful study of 1D vs axial vs mixed 2D RoPE for ViTs.
 - timm library (Ross Wightman) — the de facto PyTorch hub for pretrained vision models; includes ViT, DeiT, DINOv2, EVA-CLIP, and many variants: `github.com/huggingface/pytorch-image-models`.
 
 ---

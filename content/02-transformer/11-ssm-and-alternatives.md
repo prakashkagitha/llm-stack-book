@@ -370,7 +370,7 @@ $$
 y(t) = C x(t) + D u(t)
 $$
 
-where $A \in \mathbb{R}^{N \times N}$, $B \in \mathbb{R}^{N \times 1}$, $C \in \mathbb{R}^{1 \times N}$, and $D$ is a skip connection scalar. The Structured State Space Sequence model (S4), introduced by Gu et al. (2021), discretizes this system and makes $A$ efficiently structured (specifically, a Hippo matrix designed to preserve long-range history) so that the entire sequence can be computed as a convolution in $O(N \log N)$ time during training, or as a recurrence in $O(1)$ per step during inference.
+where $A \in \mathbb{R}^{N \times N}$, $B \in \mathbb{R}^{N \times 1}$, $C \in \mathbb{R}^{1 \times N}$, and $D$ is a skip connection scalar. The Structured State Space Sequence model (S4), introduced by Gu et al. (2021), discretizes this system and makes $A$ efficiently *structured*: the HiPPO matrix that preserves long-range history is *normal plus low-rank*, and S4 conjugates it into a **diagonal-plus-low-rank (DPLR)** form whose convolution kernel can be evaluated in the frequency domain with a Cauchy kernel rather than by materializing $\bar A^k$ for every $k$. With that structure, the entire sequence can be computed as a convolution in $O(N \log N)$ time during training, or as a recurrence in $O(1)$ per step during inference. (Later variants — DSS, S4D, and Mamba — showed a *purely diagonal* $A$ with a good initialization recovers most of the quality at a fraction of the implementation complexity, which is why every model after S4 in this chapter uses diagonal state matrices.)
 
 ### Discretization
 
@@ -741,7 +741,7 @@ This recurrence runs in $O(1)$ per step with $O(d)$ state — vastly smaller sta
 | RWKV-4 | Original architecture; WKV + channel-mixing |
 | RWKV-5 | Multi-head WKV; matrix-valued state per head |
 | RWKV-6 | Input-dependent time decay (dynamic $w_t$); closer to Mamba |
-| RWKV-7 | Revised gating; drops the explicit $u$ bonus; further SSM alignment |
+| RWKV-7 | Generalized *delta rule* with vector-valued, data-dependent gating ("dynamic state evolution"); drops the explicit $u$ bonus |
 
 RWKV-6 and RWKV-7 introduce *data-dependent* decays, similar to Mamba's selectivity, and represent a convergence of the two design philosophies.
 
@@ -893,7 +893,7 @@ $N_s$ denotes SSM state dimension (e.g., 16 in Mamba). Note that Mamba/SSM state
 
 ## Hybrid Architectures: Jamba, Zamba & Beyond
 
-Pure SSM models have one well-documented weakness: they struggle at tasks requiring **precise in-context retrieval** — looking up an exact value from the context, copying specific tokens, or doing multi-hop reasoning across distant facts. This is because the fixed-size SSM state is a lossy compression of the history, while softmax attention can attend to exact past tokens.
+Pure SSM models have one well-documented weakness: they struggle at tasks requiring **precise in-context retrieval** — looking up an exact value from the context, copying specific tokens, or doing multi-hop reasoning across distant facts. This is because the fixed-size SSM state is a lossy compression of the history, while softmax attention can attend to exact past tokens. The limit is quantitative, not just qualitative: a recurrent layer carries a fixed budget of roughly $d \cdot N_s$ scalars, so once the number of key–value associations the context asks it to hold exceeds what that budget can encode, recall *must* degrade. The Zoology/Based line of work (Arora et al., 2024) measured exactly this **recall–memory tradeoff**, finding associative-recall accuracy improving smoothly as the recurrent state is enlarged. A transformer escapes the bound only by letting its state — the KV cache — grow with $N$, which is precisely why it is expensive.
 
 The natural solution is to combine attention and SSM layers in the same model.
 
@@ -915,7 +915,7 @@ The general design space for hybrids can be parameterized by:
 
 ### Production Hybrids (2025-2026)
 
-What was a research demo with Jamba has become the default recipe for a wave of shipped, general-purpose 2025 models. NVIDIA's **Nemotron-H** (2025) replaces the majority of self-attention layers in an 8B/56B transformer with Mamba-2 layers, reporting up to ~3x faster inference at accuracy on par with similarly-sized Qwen-2.5 and Llama-3.1 models. IBM's **Granite 4.0** (October 2025) ships a Mamba-2 + attention + MoE stack (roughly 4 attention to 36 Mamba-2 layers) as a mainstream enterprise model line. On the token-mixer side, the **gated delta rule** (Gated DeltaNet, Yang et al., 2025) augments Mamba-2's gating with the delta update rule — gating erases memory quickly while the delta rule makes targeted edits — and its kernels now underpin several of these production hybrids. The through-line is unchanged from Jamba: a few attention layers for exact retrieval, many recurrent/SSM layers for cheap long-context memory.
+What was a research demo with Jamba has become the default recipe for a wave of shipped, general-purpose 2025 models. NVIDIA's **Nemotron-H** (2025) replaces the majority of self-attention layers in an 8B/56B transformer with Mamba-2 layers, reporting up to ~3x faster inference at accuracy on par with similarly-sized Qwen-2.5 and Llama-3.1 models. IBM's **Granite 4.0** (October 2025) ships a Mamba-2 + attention + MoE stack (roughly 4 attention to 36 Mamba-2 layers) as a mainstream enterprise model line. On the token-mixer side, the **gated delta rule** (Gated DeltaNet, Yang et al., 2025 — derived below) augments Mamba-2's gating with the delta update rule, and its kernels now underpin several of these production hybrids: Alibaba's **Qwen3-Next** (2025) interleaves gated-DeltaNet layers with a minority of gated full-attention layers (roughly three recurrent layers per attention layer) on top of a sparse MoE. The through-line is unchanged from Jamba: a few attention layers for exact retrieval, many recurrent/SSM layers for cheap long-context memory.
 
 ### A Minimal Hybrid Model
 
@@ -1019,6 +1019,111 @@ if __name__ == "__main__":
     print(f"Output shape: {logits.shape}")  # (2, 128, 32000)
 ```
 
+### From Scratch to Production: The Real Libraries
+
+Everything above is written out so the mechanism is visible; nobody *trains* with a Python `for t in range(L)` loop. Four rungs of the real stack — reference blocks, portable kernels, pretrained checkpoints, serving — and the package that owns each:
+
+- **`state-spaces/mamba`** — the reference Mamba/Mamba-2 blocks with their fused CUDA kernels: `selective_scan_fn` (Mamba-1's hardware-aware scan) and `mamba_chunk_scan_combined` (Mamba-2's chunkwise SSD), plus the separate `causal-conv1d` package for the fused depthwise conv. `Mamba2(d_model=...)` is a drop-in replacement for the `MambaBlock` we wrote, with the same `(B, L, D) -> (B, L, D)` signature. Requires a CUDA GPU.
+- **`fla-org/flash-linear-attention`** (imported as `fla`) — Triton kernels for the *whole* gated-linear-recurrence family (GLA, RetNet, Mamba-2, DeltaNet, gated DeltaNet, RWKV-6/7, Based), exposed both as functional ops (`fla.ops.gla.chunk_gla`) and as `nn.Module` layers (`fla.layers.GatedLinearAttention`, `fla.layers.GatedDeltaNet`). This is what you reach for to *swap the token mixer* in an existing PyTorch model, and it runs on NVIDIA, AMD, and Intel backends.
+- **HF `transformers`** — `MambaForCausalLM`, `Mamba2ForCausalLM`, `JambaForCausalLM` and their siblings give published checkpoints (e.g. `state-spaces/mamba-130m-hf`) the same `from_pretrained` / `generate` interface as any transformer, so your training, eval, and tokenizer code is unchanged. Note that generation carries a **`MambaCache`** (or a hybrid cache) rather than a KV cache — a fixed-size tensor of conv states and SSM states.
+- **vLLM / SGLang** — serving. vLLM allocates a fixed-size *state cache* for the recurrent layers alongside the paged KV cache for the (few) attention layers, which is exactly what makes hybrids such as Jamba, Nemotron-H, and Granite 4.0 cheap to serve at long context; see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+
+```bash
+# CUDA GPU required for the fused kernels; causal-conv1d is a separate build.
+pip install mamba-ssm causal-conv1d
+pip install flash-linear-attention   # imported as `fla`
+```
+
+```python
+import torch
+
+# --- Real Mamba-2 block (state-spaces/mamba) ---------------------------------
+try:
+    from mamba_ssm import Mamba2
+except ImportError:
+    Mamba2 = None
+
+# --- Real gated-linear-attention / gated-DeltaNet layers (fla) ---------------
+try:
+    from fla.layers import GatedLinearAttention
+except ImportError:
+    GatedLinearAttention = None
+
+if __name__ == "__main__":
+    B, L, D = 2, 64, 256
+    if Mamba2 is not None and torch.cuda.is_available():
+        x = torch.randn(B, L, D, device="cuda", dtype=torch.bfloat16)
+        # d_state=64 and headdim=64 are Mamba-2's defaults; d_inner = expand*D = 512.
+        block = Mamba2(d_model=D, d_state=64, d_conv=4, expand=2, headdim=64).cuda().to(torch.bfloat16)
+        y = block(x)                       # (B, L, D) -> (B, L, D), fused chunkwise SSD
+        assert y.shape == x.shape
+        print("mamba_ssm.Mamba2 OK:", tuple(y.shape))
+
+    if GatedLinearAttention is not None and torch.cuda.is_available():
+        x = torch.randn(B, L, D, device="cuda", dtype=torch.bfloat16)
+        gla = GatedLinearAttention(hidden_size=D, num_heads=4, mode="chunk").cuda().to(torch.bfloat16)
+        out = gla(x)                       # recent fla returns (output, attn_weights, cache)
+        y = out[0] if isinstance(out, tuple) else out
+        assert y.shape == x.shape
+        print("fla GatedLinearAttention OK:", tuple(y.shape))
+
+# Pretrained SSM checkpoints behave like any HF causal LM (downloads weights):
+#   from transformers import AutoTokenizer, AutoModelForCausalLM
+#   tok = AutoTokenizer.from_pretrained("state-spaces/mamba-130m-hf")
+#   model = AutoModelForCausalLM.from_pretrained("state-spaces/mamba-130m-hf")
+#   ids = tok("State space models are", return_tensors="pt").input_ids
+#   print(tok.decode(model.generate(ids, max_new_tokens=20)[0]))
+```
+
+### Building a ~100M Hybrid Yourself
+
+If you are swapping some of your own model's attention blocks for recurrent ones — the ablation offered in [The Stack-100M Architecture: SOTA Components, Cited and Assembled](../14-capstone/04-architecture.html), whose gated short-convolution mixer is the cheapest member of this family — four things change, and all four are easy to get wrong:
+
+1. **Parameter accounting.** A Mamba block at `expand=2` costs roughly $6d^2$ parameters (in-projection $4d^2$, out-projection $2d^2$, plus negligible conv/$\Delta$/$B$/$C$ terms), while a transformer layer costs $4d^2$ (attention) $+\ 8d^2$ (SwiGLU MLP) $\approx 12d^2$. So a Mamba stack needs about **twice the depth** of a transformer to match parameters — the substitution is *not* one block for one block, and forgetting this silently halves your model.
+2. **Positional encoding.** SSM, conv, and decayed-linear-attention mixers are *implicitly* positional: order enters through the recurrence itself. They take no RoPE. In a hybrid, apply RoPE only inside the attention layers — or, as Jamba does, drop explicit positional encodings entirely and let the recurrent layers carry position ([Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)).
+3. **Initialization of $\Delta$.** The `dt_proj` bias must be initialized so that $\operatorname{softplus}(\Delta)$ starts in roughly $[0.001, 0.1]$ (code below); leave PyTorch's default `nn.Linear` bias init in place and $\Delta$ starts near $0.7$, so $\bar A = \exp(\Delta A)$ decays hard at every step, the state is overwritten each token, and the model never learns long-range memory. The reference recipe samples $\Delta$ log-uniformly in that range and stores its inverse-softplus in the bias.
+4. **Optimizer groups.** Exclude `A_log`, `D`, and the conv/`dt` biases from weight decay — they are not "weights" in the usual sense, and decaying `A_log` drags every state toward instant forgetting. This is the same parameter-group discipline as norms and biases in a transformer ([Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html)), and it slots into the capstone's Muon/AdamW split in [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html).
+
+```python
+import math
+import torch
+import torch.nn as nn
+
+def init_dt_bias(dt_proj: nn.Linear, dt_min: float = 1e-3, dt_max: float = 1e-1) -> nn.Linear:
+    """
+    Mamba's Delta initialization: softplus(dt_proj.bias) is log-uniform in [dt_min, dt_max].
+    Store the *inverse* softplus in the bias so the forward pass's softplus recovers dt.
+    """
+    d = dt_proj.out_features
+    dt = torch.exp(torch.rand(d) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min))
+    inv_dt = dt + torch.log(-torch.expm1(-dt))      # inverse of softplus, numerically stable
+    with torch.no_grad():
+        dt_proj.bias.copy_(inv_dt)
+    return dt_proj
+
+def ssm_param_groups(model: nn.Module, weight_decay: float = 0.1):
+    """No weight decay on A_log, D, biases, or norm/conv-1d parameters."""
+    no_decay = [p for n, p in model.named_parameters()
+                if p.ndim <= 1 or n.endswith(("A_log", "D"))]
+    decay    = [p for n, p in model.named_parameters()
+                if not (p.ndim <= 1 or n.endswith(("A_log", "D")))]
+    return [{"params": decay, "weight_decay": weight_decay},
+            {"params": no_decay, "weight_decay": 0.0}]
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    proj = init_dt_bias(nn.Linear(16, 128))
+    dt = torch.nn.functional.softplus(proj.bias)
+    assert dt.min() > 5e-4 and dt.max() < 0.2
+    print(f"dt range after init: [{dt.min():.4f}, {dt.max():.4f}]")   # ~[0.001, 0.1]
+
+    groups = ssm_param_groups(SelectiveSSM(64, d_state=8))
+    print("decayed tensors:", len(groups[0]["params"]),
+          "| undecayed (A_log, D, biases):", len(groups[1]["params"]))
+```
+
+At 100M parameters and a 2048–8192-token context, note honestly that a hybrid buys you very little: the KV cache of a 100M transformer at 8K context is only tens of megabytes, so the memory argument that motivates Nemotron-H does not bite. Build one to *measure* the tradeoff — a real ablation you can run in an afternoon — not because it is the better model at this scale.
+
 ---
 
 ## Gated Linear Attention and the Convergence
@@ -1046,12 +1151,30 @@ where $G_t \in (0,1)^{d_k \times d_v}$ is a data-dependent gate (or decay) matri
 
 This convergence has practical implications: hardware-efficient kernels developed for one variant (e.g., GLA's chunked parallel scan) can be adapted for others, and model designers can tune the gate expressiveness/cost tradeoff without changing the high-level architecture.
 
+### The Delta Rule: Overwriting Instead of Accumulating
+
+One important family does *not* fit the elementwise-gate template, and it is worth stating explicitly because it is the token mixer behind the strongest 2025–2026 linear models. Every recurrence above *adds* $k_t \otimes v_t$ into the state; nothing ever removes a stale association, so a key written early keeps polluting later reads. **DeltaNet** (Schlag et al., 2021; made hardware-efficient by Yang et al., 2024) replaces the additive write with an *error-correcting* one:
+
+$$
+S_t = \big(I - \beta_t\, k_t k_t^\top\big)\, S_{t-1} + \beta_t\, k_t v_t^\top, \qquad o_t = q_t^\top S_t
+$$
+
+Read it as *erase then write*: the projector $I - \beta_t k_t k_t^\top$ removes whatever the state currently associates with $k_t$, and $\beta_t k_t v_t^\top$ writes the new value in its place. Equivalently, it is exactly one step of online gradient descent with step size $\beta_t$ on the regression loss $\tfrac{1}{2}\lVert S^\top k_t - v_t \rVert^2$ — the state is a fast-weight memory being *trained* at test time. Because the update is rank-one rather than diagonal, it can overwrite a key–value binding instead of merely accumulating, which is precisely what repairs linear attention's associative-recall failures.
+
+**Gated DeltaNet** (Yang et al., 2025) composes the two ideas, multiplying in Mamba-2's scalar decay $\alpha_t$ as well:
+
+$$
+S_t = \alpha_t \big(I - \beta_t\, k_t k_t^\top\big)\, S_{t-1} + \beta_t\, k_t v_t^\top
+$$
+
+— fast global forgetting ($\alpha_t$) *and* targeted edits ($\beta_t$). RWKV-7's "dynamic state evolution" is a generalization of the same rule with a vector-valued gate. All of these admit the same chunkwise algorithm as the rest of the chapter (the rank-one products accumulate into a WY-style representation within a chunk), and `fla` ships them as `chunk_delta_rule` / `chunk_gated_delta_rule`.
+
 ### HGRN and Hawk/Griffin
 
 Other notable entries in this space include:
 
 - **HGRN / HGRN-2** (Qin et al.): Hierarchical Gated Recurrent Network, using input-dependent forget gates similar to LSTM but designed for parallelism.
-- **Hawk / Griffin** (De et al., Google DeepMind, 2024): A hybrid recurrent + local-attention model with a "Real Gated Linear Recurrence" (RGLR) layer that has been trained at the scale of multi-billion parameter models, demonstrating competitive performance with transformers.
+- **Hawk / Griffin** (De et al., Google DeepMind, 2024): both are built from the **RG-LRU** (Real-Gated Linear Recurrent Unit) — a real-valued gated linear recurrence with an input gate and a recurrence gate, deliberately avoiding complex numbers and any discretization step. *Hawk* is the pure-recurrent stack; *Griffin* interleaves RG-LRU blocks with **local (sliding-window) attention**, making it the recurrent-side twin of the SSM/attention hybrids above. Both were trained to multi-billion-parameter scale with quality competitive with transformer baselines and lower decode latency.
 
 ---
 
@@ -1063,7 +1186,7 @@ As of mid-2026, the field has reached some pragmatic conclusions:
 
 **The long-context use case is where alternatives shine.** For standard (up to 8K token) language modeling, modern transformers with FlashAttention are hard to beat. The advantage of SSM and linear-attention models grows dramatically as context exceeds 32K tokens.
 
-**Training dynamics differ.** SSMs and RWKV models have different sensitivity to hyperparameters than transformers. The learning rate schedule, initialization, and gradient clipping values that work for transformers often need significant adjustment for recurrent models.
+**Training dynamics differ.** SSMs and RWKV models have different sensitivity to hyperparameters than transformers. The learning rate schedule, initialization, and gradient clipping values that work for transformers often need significant adjustment for recurrent models — the concrete list (depth doubling to match parameters, $\Delta$ initialization, no weight decay on `A_log`/`D`, no RoPE on recurrent layers) is in *Building a ~100M Hybrid Yourself* above.
 
 **Scaling laws are being remeasured.** Early (2022-2023) Chinchilla-style scaling laws were derived for transformers. Whether SSMs follow the same laws is an open research question. Preliminary results suggest competitive scaling, but the optimal model size / data tradeoff may differ.
 
@@ -1091,7 +1214,8 @@ As of mid-2026, the field has reached some pragmatic conclusions:
     - S4 introduced the HiPPO matrix for stable long-range memory via an SSM; Mamba extended this with input-dependent (selective) parameters, allowing the model to filter irrelevant inputs.
     - RWKV achieves RNN-like inference cost with transformer-like training by expressing attention as an exponentially-decayed weighted sum, trainable in parallel via log-space prefix scans.
     - RetNet uses a fixed decay $\gamma$ per head, enabling three equivalent computation forms: parallel (training), recurrent (inference), and chunkwise (balanced).
-    - Mamba-2/SSD and GLA reveal that SSMs, linear attention, and RWKV-style models are instances of the same gated linear recurrence framework, differing only in how the gate $G_t$ is parameterized.
+    - Mamba-2/SSD and GLA reveal that SSMs, linear attention, and RWKV-style models are instances of the same gated linear recurrence framework, differing only in how the gate $G_t$ is parameterized; the *delta rule* adds a rank-one erase-then-write update — one step of online gradient descent on the state's own regression loss — which repairs associative recall and is the mixer behind RWKV-7, Gated DeltaNet, and Qwen3-Next.
+    - In practice you use `mamba-ssm` (fused selective-scan / chunked-SSD CUDA kernels), `fla` (Triton kernels for GLA, RetNet, DeltaNet, RWKV), HF `transformers` for pretrained SSM checkpoints, and vLLM — which serves hybrids with a fixed-size recurrent state cache beside the paged KV cache.
     - Hybrid architectures that interleave a small number of attention layers with many SSM layers represent the practical state of the art, and by 2026 have moved into shipped production models (Jamba, NVIDIA Nemotron-H, IBM Granite 4.0): combining exact-retrieval capability with long-context memory efficiency.
     - The SSM inference advantage is most pronounced at context lengths exceeding 32K tokens, where the KV cache of a transformer can consume tens of gigabytes of memory while an SSM's state stays constant.
 
@@ -1133,6 +1257,9 @@ As of mid-2026, the field has reached some pragmatic conclusions:
 - Sun, Y., et al. (2023). **Retentive Network: A Successor to Transformer for Large Language Models (RetNet).** arXiv:2307.08621.
 - Katharopoulos, A., et al. (2020). **Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention.** ICML 2020.
 - Yang, S., et al. (2023). **Gated Linear Attention Transformers with Hardware-Efficient Training.** arXiv:2312.06635.
+- Schlag, I., Irie, K., & Schmidhuber, J. (2021). **Linear Transformers Are Secretly Fast Weight Programmers.** ICML 2021 — the delta rule for linear attention.
+- Yang, S., et al. (2024). **Parallelizing Linear Transformers with the Delta Rule over Sequence Length (DeltaNet).** NeurIPS 2024.
+- GitHub: **fla-org/flash-linear-attention** — Triton kernels and `nn.Module` layers for GLA, RetNet, DeltaNet, gated DeltaNet, and RWKV-6/7.
 - De, S., et al. (Google DeepMind, 2024). **Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models.** arXiv:2402.19427.
 - AI21 Labs (2024). **Jamba: A Hybrid Transformer-Mamba Language Model.** arXiv:2403.19887.
 - GitHub: **state-spaces/mamba** — official Mamba implementation and selective scan CUDA kernels.

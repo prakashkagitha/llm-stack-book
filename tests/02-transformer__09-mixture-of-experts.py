@@ -111,7 +111,7 @@ class SparseMoE(nn.Module):
 
         # 2) CAPACITY: max tokens any single expert will accept this batch.
         #    capacity = capacity_factor * (tokens * k / E), rounded up.
-        capacity = int(self.capacity_factor * (N * self.k) / self.n_experts)
+        capacity = math.ceil(self.capacity_factor * (N * self.k) / self.n_experts)
         capacity = max(capacity, 1)
 
         out = torch.zeros_like(x)                  # accumulate expert outputs here

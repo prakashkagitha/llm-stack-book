@@ -385,8 +385,8 @@ class UnifiedModel(nn.Module):
         out  = torch.zeros(B, T, self.text_embed.embedding_dim,
                            device=text_ids.device)
 
-        # Text positions
-        out[~is_image] = self.text_embed(text_ids[~is_image.squeeze()])
+        # Text positions (text_ids is full-length, so the same (B, T) mask indexes both)
+        out[~is_image] = self.text_embed(text_ids[~is_image])
 
         # Image positions: project noisy patch to d_model
         out[is_image]  = self.patch_proj(noisy_patches.reshape(-1, noisy_patches.shape[-1]))

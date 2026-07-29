@@ -170,7 +170,7 @@ class MLP(nn.Module):
         return self.dropout(x)
 ```
 
-The two linear layers hold $2 \times (4\,n_\text{embd}^2) = 8\,n_\text{embd}^2$ parameters per block — **twice** what attention uses. In a standard GPT, the MLPs are where most of the parameters (and, the [interpretability](../05-posttraining-alignment/01-sft-instruction-tuning.html) literature argues, most of the stored "knowledge") live.
+The two linear layers hold $2 \times (4\,n_\text{embd}^2) = 8\,n_\text{embd}^2$ parameters per block — **twice** what attention uses. In a standard GPT, the MLPs are where most of the parameters (and, the [mechanistic interpretability](../13-interp-safety-gov/01-mechanistic-interpretability.html) literature argues, most of the stored "knowledge") live.
 
 ### The Block: pre-norm, residual, repeat
 
@@ -346,6 +346,31 @@ $$
 
 {{fig:next-token-training-signal}}
 
+### From characters to a real corpus: a real tokenizer and a memmap loader
+
+Character-level keeps the demo self-contained, but nothing above depends on it. Moving to a real corpus changes exactly two things. **(1) The tokenizer:** swap `encode`/`decode` for a real subword tokenizer — `tiktoken.get_encoding("gpt2")` for GPT-2's 50257-token byte-level BPE, or a Hugging Face `tokenizers` / `AutoTokenizer` for anything else (see [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html)). **(2) The data loader:** stop holding the corpus in a RAM tensor. Tokenize once into a flat binary file and read it back with `np.memmap`, so the OS pages in only the windows you actually sample — the only reason this loop works on a corpus larger than memory.
+
+```python
+# --- One time: tokenize the corpus into a flat uint16 file ---
+# uint16 is enough for any vocab < 65536 (GPT-2's 50257 fits); halves file size vs int32.
+import tiktoken                                  # pip install tiktoken
+enc = tiktoken.get_encoding("gpt2")
+ids = np.array(enc.encode_ordinary(text), dtype=np.uint16)
+ids.tofile("train.bin")                          # do the same for the val split
+
+# --- At train time: identical contract to get_batch, backed by the file ---
+def get_batch_memmap(split, block_size, batch_size, device):
+    # Reopen the memmap every call. Keeping one np.memmap object alive across
+    # many reads leaks memory (the pages are never released); reopening is cheap.
+    d = np.memmap(f"{split}.bin", dtype=np.uint16, mode="r")
+    ix = torch.randint(len(d) - block_size, (batch_size,))
+    x = torch.stack([torch.from_numpy(d[i     : i + block_size    ].astype(np.int64)) for i in ix])
+    y = torch.stack([torch.from_numpy(d[i + 1 : i + 1 + block_size].astype(np.int64)) for i in ix])
+    return x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+```
+
+Everything downstream — the loss, the loop, `generate` — is unchanged; only `vocab_size` in the config must now match the tokenizer's. Note that random-offset sampling silently splices across document boundaries; the production fix (document-aware packing with shard files and a resumable sampler) is built in [The Stack-100M Data Pipeline](../14-capstone/02-data-pipeline.html).
+
 ### The optimizer with a weight-decay split
 
 A subtlety that separates toy code from real training: **not all parameters should be weight-decayed.** Matmul weights (2D tensors) benefit from L2 regularization; biases and LayerNorm gains (1D tensors) should *not* be decayed — shrinking them toward zero damages the model. We build two parameter groups accordingly. We use AdamW, the optimizer of choice for transformers (see [Optimizers](../03-pretraining/09-optimizers.html)).
@@ -439,6 +464,41 @@ for it in range(max_iters):
 
 Four lines in that inner loop are the *entire* mechanics of training a neural network, and they recur unchanged in every model in this book: `forward → zero_grad → backward → step`. Everything else — the schedule, clipping, evaluation, distributed wrappers, mixed precision — is engineering around those four lines.
 
+### Three additions that make it a real run: bf16, gradient accumulation, `torch.compile`
+
+The loop above is honest but naive: it trains in fp32, takes exactly one micro-batch per optimizer step, and runs eager PyTorch. Three small additions — all present in nanoGPT, none of which changes the model — are what separate it from a run you would actually spend GPU-hours on.
+
+**1. Mixed precision.** Wrap the forward/backward in `torch.autocast` with `bfloat16`; parameters and the AdamW moments stay fp32. On any Ampere-or-newer GPU this roughly halves activation memory and puts the matmuls on tensor cores. Because bf16 has fp32's exponent range, it needs **no** loss scaler — reach for `torch.amp.GradScaler` only if you are stuck with fp16. This matters more than it looks here: the `(B, T, V)` logits tensor is typically the single largest activation in a small model — at `B=64, T=256, V=50257` it is 3.3 GB in fp32 — which is also why `F.cross_entropy` is the right call, since it fuses a numerically stable `log_softmax` (max-subtraction built in) with the label gather instead of materializing a second `(B, T, V)` probability tensor. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
+
+**2. Gradient accumulation.** The batch size that matters for optimization is the *token* batch `batch_size * block_size * grad_accum_steps`, chosen by your [LR/batch-size schedule](../03-pretraining/10-lr-schedules-hparams.html) — not by how much fits in your GPU. Accumulating several micro-batches before stepping decouples the two, and is how a single GPU reproduces a large-batch recipe.
+
+**3. `torch.compile`.** One line traces the model and fuses the pointwise work (GELU, residual adds, norm) into far fewer kernels; see [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html). Expect a slow first iteration (compilation) and a recompile whenever an input *shape* changes — which is why fixed-shape `(B, T)` batches like ours are compile-friendly.
+
+```python
+# --- Setup, once, right after building the model ---
+device_type = "cuda" if device.startswith("cuda") else "cpu"
+use_bf16 = (device_type == "cuda" and torch.cuda.is_bf16_supported())
+ctx = torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_bf16)
+
+torch.set_float32_matmul_precision("high")  # allow TF32 for whatever fp32 matmuls remain
+model = torch.compile(model)                # PyTorch 2.x graph capture + kernel fusion
+
+grad_accum_steps = 8                        # tokens/step = batch_size * block_size * this
+
+# --- Inner step, replacing the single forward/backward above ---
+optimizer.zero_grad(set_to_none=True)
+for _micro in range(grad_accum_steps):
+    X, Y = get_batch("train", config.block_size, batch_size, device)
+    with ctx:                                  # bf16 forward; fp32 master weights
+        logits, loss = model(X, Y)
+        loss = loss / grad_accum_steps         # MEAN over micro-batches, not sum
+    loss.backward()                            # gradients accumulate into .grad
+torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)   # clip the FULL gradient
+optimizer.step()
+```
+
+Two orderings in that snippet are load-bearing. Dividing each micro-batch loss by `grad_accum_steps` is what makes the accumulated gradient the *mean* rather than the sum; forgetting it silently multiplies your effective learning rate by `grad_accum_steps`, which usually shows up as a loss spike a few hundred steps in. And `clip_grad_norm_` runs **once, after the last micro-batch**, so the norm is taken over the complete gradient — clipping inside the accumulation loop clips each partial gradient and changes the update. This is exactly the loop the capstone scales up to spend ~20 GPU-hours training a real ~100M model in [The Pretraining Run](../14-capstone/07-pretraining-run.html).
+
 ### Checkpointing: save and resume
 
 The A1 deliverable asks for "a training loop with checkpointing," and at single-GPU scale that is not a distributed-systems problem — it is about 15 lines of `torch.save`/`torch.load`. The sharded, topology-agnostic version for multi-GPU and multi-node jobs (FSDP + PyTorch Distributed Checkpoint / DCP) is covered in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html); everything below is the honest small-scale baseline that version generalizes.
@@ -458,7 +518,12 @@ def save_checkpoint(path, model, optimizer, it, config):
 
 def load_checkpoint(path, model, optimizer, device):
     """Restore model, optimizer, and RNG state; return the iter to resume AT."""
-    ckpt = torch.load(path, map_location=device)
+    # PyTorch >= 2.6 defaults to weights_only=True, which refuses to unpickle the
+    # GPTConfig dataclass we stored alongside the tensors. Pass weights_only=False
+    # for checkpoints YOU produced; never for a file downloaded from the internet
+    # (unpickling executes arbitrary code). The alternative is to save config as a
+    # plain dict, or to allow-list the class via torch.serialization.add_safe_globals.
+    ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"])
     optimizer.load_state_dict(ckpt["optimizer"])
     # RNG state must be a CPU ByteTensor regardless of map_location, hence .cpu().
@@ -492,7 +557,7 @@ for it in range(start_it, max_iters):
     optimizer.step()
 ```
 
-Two things worth internalizing. First, **weight tying survives the round-trip automatically**: `wte.weight` and `lm_head.weight` are the *same* tensor object, so it appears once in `state_dict()` and reloads shared — there is nothing special to do. Second, **saving RNG state and the optimizer's moment buffers is what makes a kill/resume bit-continuous**: after resuming, the first logged loss should continue from roughly where it left off (modulo ordinary batch-sampling noise), *not* jump back up toward $\ln V$. If you see a jump on resume, you forgot to restore the optimizer state (AdamW's first/second moment estimates) or the RNG/data-iterator state — the model is stepping from a warm optimizer trajectory it thinks is cold.
+Three things worth internalizing. First, if you wrapped the model in `torch.compile`, **`state_dict()` keys gain an `_orig_mod.` prefix** — save `model._orig_mod.state_dict()` (or strip the prefix on load) so the checkpoint stays loadable by an uncompiled model. Second, **weight tying survives the round-trip automatically**: `wte.weight` and `lm_head.weight` are the *same* tensor object, so it appears once in `state_dict()` and reloads shared — there is nothing special to do. Third, **saving RNG state and the optimizer's moment buffers is what makes a kill/resume bit-continuous**: after resuming, the first logged loss should continue from roughly where it left off (modulo ordinary batch-sampling noise), *not* jump back up toward $\ln V$. If you see a jump on resume, you forgot to restore the optimizer state (AdamW's first/second moment estimates) or the RNG/data-iterator state — the model is stepping from a warm optimizer trajectory it thinks is cold.
 
 For sizing intuition: our default ~10.7M-parameter model produces a checkpoint of roughly 130 MB in fp32 — the model weights plus AdamW's two moment buffers per parameter (~3× the raw parameter count) — trivial to write on a laptop or a single GPU. At multi-node scale, saving every rank's full state to one file stops being trivial; you either checkpoint only on rank 0 or use DCP's sharded format, both covered in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
@@ -594,6 +659,7 @@ What we just built is, structurally, GPT-2. The leap from this 10M-parameter cha
 - **MLP:** optionally replace the dense MLP with a [Mixture-of-Experts](../02-transformer/09-mixture-of-experts.html) layer to grow capacity without growing per-token FLOPs.
 - **Scale:** more layers, more width, vastly more data — governed by [scaling laws](../03-pretraining/04-scaling-laws.html) and executed with [distributed training](../03-pretraining/05-distributed-data-parallel.html) and [mixed precision](../03-pretraining/08-mixed-precision-fp8.html).
 - **Behavior:** the pretrained base model is then [supervised-fine-tuned](../05-posttraining-alignment/01-sft-instruction-tuning.html) and [RLHF-aligned](../05-posttraining-alignment/05-rlhf-reward-modeling.html) into an assistant.
+- **The worked build:** Part XIV performs every one of these swaps on a single model you train yourself — the ~100M-parameter Stack-100M, defined in [The Stack-100M Architecture](../14-capstone/04-architecture.html) and trained in [The Pretraining Run](../14-capstone/07-pretraining-run.html).
 
 Every one of those is a swap of a single module or a multiplication of a single number in our `GPTConfig`. The skeleton — embed, stack pre-norm blocks on a residual stream, project to logits, train with next-token cross-entropy, sample autoregressively — is the same skeleton at every scale. You have now built it end to end.
 
@@ -823,7 +889,7 @@ Four checks confirm the integration is wired correctly, not just "not crashing":
 
 **Scaling this exercise to your hardware.** On a laptop or CPU, shrink to `n_layer=4, n_embd=128` and run a few hundred iterations — you should still watch the loss fall from ~4.17. On a single GPU, the defaults above take roughly 2–4 minutes for 5000 iterations on an A100 or 3090, matching the baseline's timing exactly, since param count and FLOPs are essentially unchanged. On an 8-GPU node or a multi-node cluster, the module itself is byte-for-byte the same — you only wrap `ModernGPT` in DDP or FSDP per [Distributed Data Parallelism](../03-pretraining/05-distributed-data-parallel.html); there is no architectural change at scale.
 
-What you just built is, module for module, Llama's decoder block. The next section maps every piece onto the actual `transformers` source so you can read it directly.
+What you just built is, module for module, Llama's decoder block — and the direct ancestor of the capstone's Stack-100M, which takes this same `ModernBlock` and adds only GQA and a deeper/thinner aspect ratio ([The Stack-100M Architecture](../14-capstone/04-architecture.html)). The next section maps every piece onto the actual `transformers` source so you can read it directly.
 
 ## Reading the Real Thing: This Chapter in `transformers`
 
@@ -889,6 +955,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
     - **Weight tying** (share `wte` with `lm_head`) saves $V \times n_\text{embd}$ params and regularizes; the **scaled residual init** ($\div\sqrt{2\,n_\text{layer}}$ on output projections) keeps the residual stream's variance bounded as depth grows.
     - Training is four lines — `forward → zero_grad → backward → step` — wrapped in a learning-rate schedule (warmup + cosine decay), gradient clipping, and a no-weight-decay group for 1-D parameters. The loss is mean next-token cross-entropy over all $B\times T$ positions.
     - The first logged loss should be $\approx \ln V$ (uniform-guess baseline); a loss far from it signals a labelling, masking, or init bug *before* you blame the model.
+    - Turning the toy loop into a real run needs no model change: a real BPE tokenizer plus an `np.memmap` data file, a `torch.autocast` bf16 region, gradient accumulation (divide the micro-batch loss; clip *once*, after the last one), and `torch.compile`.
     - **Generation** is the autoregressive sample-append loop; **temperature**, **top-k**, and **top-p** shape the distribution. Repetitive degenerate text is almost always a decoding (too-greedy) problem, not a weights problem — reach for nucleus sampling.
     - Scaling this nanoGPT to a frontier model is mostly module swaps (BPE, RoPE, GQA, RMSNorm/SwiGLU, MoE) and more data/compute — the skeleton is invariant across scale.
 

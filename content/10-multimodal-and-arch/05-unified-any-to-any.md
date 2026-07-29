@@ -25,22 +25,66 @@ The key insight is that autoregressive language modeling already knows how to pr
 **VQ-VAE and VQ-GAN.** A vector-quantised variational autoencoder (VQ-VAE, van den Oord et al., 2017) learns an encoder $E$, a codebook $\mathbf{C} \in \mathbb{R}^{K \times d}$, and a decoder $D$. Given an image $x \in \mathbb{R}^{H \times W \times 3}$, the encoder outputs a spatial feature map $z_e \in \mathbb{R}^{h \times w \times d}$ (with $h = H/f$, $w = W/f$ for downsampling factor $f$). Each spatial location is replaced by the nearest codebook vector:
 
 $$
-z_q[i,j] = \arg\min_{k} \| z_e[i,j] - \mathbf{C}_k \|_2
+k^\star[i,j] = \arg\min_{k} \| z_e[i,j] - \mathbf{C}_k \|_2, \qquad z_q[i,j] = \mathbf{C}_{k^\star[i,j]}
 $$
 
-The decoder reconstructs $\hat{x} = D(z_q)$. Training minimises reconstruction loss plus a commitment loss:
+The integer $k^\star[i,j]$ *is* the token the language model will predict; $\mathbf{C}_{k^\star}$ is what the decoder sees. The decoder reconstructs $\hat{x} = D(z_q)$. Training minimises reconstruction loss plus a codebook and a commitment loss:
 
 $$
 \mathcal{L}_\text{VQVAE} = \| x - \hat{x} \|^2 + \| \text{sg}(z_e) - z_q \|^2 + \beta \| z_e - \text{sg}(z_q) \|^2
 $$
 
-where $\text{sg}(\cdot)$ is the stop-gradient operator. After training, each image becomes a 1-D token sequence of length $h \times w$, with each token in $\{0, \ldots, K-1\}$. A 256×256 image with $f=8$ yields a $32 \times 32 = 1024$-token sequence — the same length as a medium-length paragraph of text.
+where $\text{sg}(\cdot)$ is the stop-gradient operator (`.detach()` in PyTorch): the second term drags codebook vectors toward the encoder outputs assigned to them, the third keeps the encoder from drifting away from its chosen code. The $\arg\min$ itself has zero gradient everywhere, so the reconstruction gradient reaches the encoder only via the **straight-through estimator** — in code, `z_q = z_e + (z_q - z_e).detach()`, which forward-passes the quantised vector but back-propagates as if quantisation were the identity. Without that one line the encoder receives no learning signal at all.
+
+After training, each image becomes a 1-D token sequence of length $h \times w$, with each token in $\{0, \ldots, K-1\}$. A 256×256 image with $f=8$ yields a $32 \times 32 = 1024$-token sequence — the same length as a medium-length paragraph of text.
 
 {{fig:vqvae-image-to-tokens-pipeline}}
 
-VQ-GAN (Esser et al., 2021) improves reconstruction fidelity by adding an adversarial loss, producing crisper tokens better suited to autoregressive generation. It became the tokenizer of choice for early image-generation transformers.
+VQ-GAN (Esser et al., 2021) improves reconstruction fidelity by adding an adversarial loss and a perceptual (LPIPS) loss on top of the L2 term, producing crisper tokens better suited to autoregressive generation. It became the tokenizer of choice for early image-generation transformers.
 
-**FSQ and lookup-free quantisation.** More recent work like Finite Scalar Quantisation (FSQ, Mentzer et al., 2023) replaces the learned codebook with a simple per-channel rounding scheme, removing the training instability of codebook collapse and dead codes. Each dimension of the latent is independently rounded to a small set of values; the codebook is implicit. This matters for unified training because VQ-VAE codebooks can degrade when exposed to multi-domain data; FSQ is more robust.
+**Libraries, not re-implementations.** Almost nobody writes a quantiser from scratch twice. `vector-quantize-pytorch` (lucidrains) ships `VectorQuantize`, `ResidualVQ`, `FSQ` and `LFQ` as drop-in `nn.Module`s with the straight-through estimator, EMA codebook updates and dead-code restarts already handled; `diffusers` exposes pretrained `VQModel` autoencoders you can load and freeze; the original `CompVis/taming-transformers` VQ-GAN checkpoints remain the reference image tokenizers. For a unified model you normally **train the tokenizer once (or download it), freeze it, and pre-tokenise the whole image corpus to integer arrays offline** — the transformer then trains on `int16`/`int32` token files exactly like a text model, and the tokenizer never appears in the training loop at all. That offline step is also what makes the data pipeline of [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) reusable unchanged.
+
+**FSQ and lookup-free quantisation.** More recent work like Finite Scalar Quantisation (FSQ, Mentzer et al., 2023) replaces the learned codebook with a simple per-channel rounding scheme, removing the training instability of codebook collapse and dead codes. The latent is squashed to a handful of channels ($d \approx 3$–$6$), each channel is bounded and rounded to one of $L_i$ allowed values, and the code index is the mixed-radix number formed by those per-channel levels — so the codebook is *implicit* and its size is simply $\prod_i L_i$ (e.g. levels $[8,5,5,5]$ give 1000 codes). Every code is reachable by construction, so there is nothing to collapse: no codebook loss, no EMA, no dead-code restarts. Reported results put FSQ roughly on par with VQ once the codebook exceeds about a thousand entries, and it is the more robust choice for unified training because VQ codebooks can degrade when exposed to multi-domain data.
+
+```python
+import torch
+
+def fsq_quantize(z: torch.Tensor, levels: list[int], eps: float = 1e-3):
+    """Finite Scalar Quantisation (Mentzer et al., 2023) — a codebook-free tokenizer.
+
+    z:      (..., d) latent, one channel per entry of `levels`
+    levels: allowed values per channel, e.g. [8, 5, 5, 5] -> 8*5*5*5 = 1000 codes
+
+    Returns (z_q, indices): z_q is the quantised latent, normalised to ~[-1, 1] and
+    differentiable through the straight-through estimator; indices are the integer
+    tokens the language model actually predicts.
+    """
+    dev, dt = z.device, z.dtype
+    # Squash each channel into a window that rounds to exactly L_i distinct integers.
+    half_l = torch.tensor([(L - 1) * (1 - eps) / 2 for L in levels], device=dev, dtype=dt)
+    # Even L needs a half-step shift so the grid stays symmetric about 0.
+    offset = torch.tensor([0.5 if L % 2 == 0 else 0.0 for L in levels], device=dev, dtype=dt)
+    half_w = torch.tensor([L // 2 for L in levels], device=dev, dtype=dt)
+
+    zb = torch.tanh(z + torch.atanh(offset / half_l)) * half_l - offset
+    zq = zb + (torch.round(zb) - zb).detach()      # straight-through round
+
+    # Mixed-radix encoding: per-channel level index -> one integer token.
+    per_channel = (zq + half_w).long()                              # in [0, L_i - 1]
+    radix = torch.cumprod(torch.tensor([1] + levels[:-1], device=dev), dim=0)
+    indices = (per_channel * radix).sum(-1)
+    return zq / half_w, indices
+
+
+torch.manual_seed(0)
+levels = [8, 5, 5, 5]                       # implicit codebook of 1000 codes
+z = (torch.randn(4, 64, len(levels)) * 5).requires_grad_(True)
+zq, idx = fsq_quantize(z, levels)
+assert idx.min() >= 0 and idx.max() < 1000, "every code is a valid index"
+zq.sum().backward()                          # gradient survives the rounding
+assert z.grad.abs().sum() > 0, "straight-through estimator must pass gradient"
+print("FSQ tokens:", idx[0, :8].tolist())
+```
 
 ### Discrete Audio Tokens
 
@@ -56,14 +100,48 @@ Given discrete image tokens, image generation becomes next-token prediction — 
 
 {{fig:unified-ar-image-seq-layout}}
 
-The model is trained with cross-entropy loss on all positions, but at inference time only the image portion is generated autoregressively. The text prefix provides conditioning through cross-attention in the causally masked attention — no architectural change is needed beyond the standard transformer.
+The model is trained with cross-entropy loss on all positions, but at inference time only the image portion is generated autoregressively. Note what is *absent*: there is no cross-attention, no encoder, and no conditioning module. The caption conditions the image purely through ordinary causal **self**-attention, because every image token can look back at the text that precedes it in the same stream. A text-only transformer plus a bigger embedding table is the entire architecture.
+
+### Classifier-Free Guidance for Discrete Tokens
+
+Prompted image generation is unusable without one ingredient text generation never needs. Sampling straight from $p_\theta(\text{image} \mid \text{text})$ gives images that only loosely obey the prompt; the fix, inherited from diffusion, is **classifier-free guidance** (CFG, Ho & Salimans, 2022). During training, drop the text condition on a fraction of examples — 10% is the usual choice — replacing it with an empty/unconditional prompt, so the same weights learn both the conditional and the unconditional distribution. At sampling time, run the model twice per step and extrapolate away from the unconditional prediction in *logit* space:
+
+$$
+\ell_\text{cfg} = \ell_\text{uncond} + w \left( \ell_\text{cond} - \ell_\text{uncond} \right)
+$$
+
+Guidance weight $w = 1$ recovers ordinary conditional sampling; discrete image models typically use $w$ in the range 3–7. The cost is 2× compute per decoding step (the two branches batch together, so it is one forward pass at batch 2) and, at large $w$, reduced diversity and over-saturated colours. Parti- and Emu3-style autoregressive models all sample this way; Transfusion applies exactly the same formula to the predicted *velocity* instead of to logits. Forgetting the conditioning dropout during training is a common and fatal mistake — without it there is no unconditional branch to guide away from.
+
+```python
+import torch
+
+def cfg_logits(logits_cond: torch.Tensor, logits_uncond: torch.Tensor,
+               w: float = 5.0) -> torch.Tensor:
+    """Classifier-free guidance in logit space, applied per decoding step
+    to the image-token slice of the vocabulary.
+
+    w = 0 -> unconditional, w = 1 -> plain conditional, w > 1 -> sharpened
+    prompt adherence at the cost of diversity.
+    """
+    return logits_uncond + w * (logits_cond - logits_uncond)
+
+
+lc, lu = torch.randn(2, 8192), torch.randn(2, 8192)
+assert torch.allclose(cfg_logits(lc, lu, w=1.0), lc, atol=1e-5)   # w=1 -> conditional
+assert torch.allclose(cfg_logits(lc, lu, w=0.0), lu, atol=1e-5)   # w=0 -> unconditional
+# Guidance amplifies whatever the condition changed, by exactly w:
+gap_plain  = (lc - lu).abs().mean()
+gap_guided = (cfg_logits(lc, lu, w=5.0) - lu).abs().mean()
+assert torch.isclose(gap_guided, 5 * gap_plain, atol=1e-4)
+print("CFG OK — guidance scales the conditional signal by w")
+```
 
 ### Scaling Challenges for Autoregressive Image Generation
 
 A $256 \times 256$ image at $f=8$ produces 1024 tokens. A $512 \times 512$ image at the same downsampling yields 4096 tokens. Since attention is quadratic in sequence length, naive autoregressive generation at high resolution is expensive. Several mitigations exist:
 
 1. **Hierarchical generation.** Generate low-resolution tokens first, then condition a second pass on those to fill in high-resolution details.
-2. **Masked autoregressive (MAR) generation.** Generate in parallel over multiple masked positions per step (Chang et al., 2022, MaskGIT), trading sequential ordering for speed.
+2. **Masked / parallel decoding.** Predict *all* masked positions each step, keep only the most confident ones, and iterate — a dozen or so passes instead of one per token (MaskGIT, Chang et al., 2022). Li et al.'s MAR (*Autoregressive Image Generation without Vector Quantization*, 2024) extends the same masked schedule to continuous tokens by replacing the softmax with a small per-token diffusion head.
 3. **More aggressive tokenisers.** Increase the downsampling ratio $f$ to reduce token count at the cost of reconstruction fidelity.
 
 !!! example "Worked example: image token budget"
@@ -73,12 +151,27 @@ A $256 \times 256$ image at $f=8$ produces 1024 tokens. A $512 \times 512$ image
     At $f=8$ that becomes $64 \times 64 = 4096$ tokens.
 
     With a batch size of 32 and mixed text+image sequences of 4096 image tokens + 256 text
-    tokens = 4352 total tokens, one forward pass processes
-    $32 \times 4352 = 139{,}264$ tokens. At BF16 with a 7B model (roughly
-    $14 \times 10^{12}$ multiply-adds per token), that's about
-    $139{,}264 \times 14 \times 10^{12} \approx 1.95 \times 10^{18}$ FLOPs per step.
-    A single H100 at 989 TFLOPS of BF16 throughput handles this in about 2 seconds —
-    meaning training at high image resolution demands serious compute even for one update.
+    tokens = 4352 total tokens, one step processes $32 \times 4352 = 139{,}264$ tokens —
+    and 94% of them are image tokens.
+
+    A dense $N = 7$B model costs about $2N = 1.4 \times 10^{10}$ FLOPs per token in the
+    forward pass and $6N = 4.2 \times 10^{10}$ for forward + backward (the standard
+    accounting of [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html),
+    ignoring the attention term, which at 4352 context adds only a few percent). One
+    optimiser step is therefore
+
+    $$
+    139{,}264 \times 4.2 \times 10^{10} \approx 5.8 \times 10^{15}\ \text{FLOPs.}
+    $$
+
+    A single H100 SXM peaks at 989 TFLOP/s of dense BF16; at a realistic 40% MFU that is
+    $\approx 4 \times 10^{14}$ FLOP/s, so **one step takes roughly 15 seconds on one GPU**.
+    A 100,000-step run is then about 17 GPU-days — a couple of hours of wall-clock only
+    if you split the batch across a 256-GPU cluster. The lesson is not the absolute
+    number but the ratio: the text in this batch is
+    essentially free, and the entire compute bill of unification is set by the tokenizer's
+    downsampling factor $f$. Doubling $f$ cuts the image token count — and this whole
+    budget — by 4×.
 
 ## Chameleon: A Native Multi-Modal Transformer
 
@@ -205,13 +298,40 @@ class ChameleonBlock(torch.nn.Module):
         return x
 ```
 
+### Running a Unified Model in `transformers`
+
+The from-scratch block above is the mechanism; in practice Chameleon is a first-class `transformers` architecture, and the whole interleaved-sequence machinery hides behind a processor that splices image placeholders into the token stream for you.
+
+```python
+# pip install "transformers>=4.44" accelerate torch pillow
+import torch
+from transformers import ChameleonProcessor, ChameleonForConditionalGeneration
+from PIL import Image
+
+model_id = "facebook/chameleon-7b"
+processor = ChameleonProcessor.from_pretrained(model_id)
+model = ChameleonForConditionalGeneration.from_pretrained(
+    model_id, torch_dtype=torch.bfloat16, device_map="auto"
+)
+
+image = Image.open("cat.jpg")                       # any RGB image
+# "<image>" is the placeholder the processor expands into VQ-VAE token ids.
+inputs = processor(text="<image>Describe this image in one sentence.",
+                   images=image, return_tensors="pt").to(model.device)
+
+out = model.generate(**inputs, max_new_tokens=64, do_sample=False)
+print(processor.decode(out[0], skip_special_tokens=True))
+```
+
+Two honest caveats. First, the publicly released Chameleon checkpoints ship the *understanding* half only — Meta withheld the image-generation capability, so `generate` will not emit image tokens no matter how you prompt it. If you want an open model that actually generates images by next-token prediction, use BAAI's **Emu3**, which publishes both the generation checkpoint and its vision tokenizer separately, or DeepSeek's **Janus-Pro** (MIT-licensed weights and code). Second, `device_map="auto"` needs `accelerate`; a 7B model in BF16 is ~14 GB of weights before the KV cache, so plan for a 24 GB card.
+
 ### Data Mixture and Modality Balance
 
 Chameleon is trained on text, image-only, and interleaved text-image documents. The paper reports that maintaining roughly equal token counts across modalities (with a modest over-representation of text) is critical; if image tokens are under-represented, the model forgets how to generate them even though it can still understand them. This is analogous to the catastrophic forgetting discussed in [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html).
 
 ## Transfusion: Mixing Discrete and Diffusion Objectives
 
-Discrete tokenisation loses information. A VQ-GAN codebook of size 8192 can represent roughly $\log_2 8192 = 13$ bits per spatial location; a raw 8-bit pixel RGB patch carries $3 \times 8 = 24$ bits. The quantisation gap degrades image generation quality at small scales.
+Discrete tokenisation loses information, and it is worth being precise about how much. A codebook of size 8192 carries exactly $\log_2 8192 = 13$ bits per token. At $f = 8$ each of those tokens stands for an $8 \times 8$ patch of 8-bit RGB pixels — $8 \times 8 \times 3 \times 8 = 1{,}536$ raw bits. Natural images are enormously redundant, so the real gap is far smaller than that 118× ratio suggests, but the point stands: whatever the codebook cannot express is destroyed *before the transformer ever sees the image*, and no amount of model scale recovers it. That is a hard ceiling on generation quality, and it binds hardest at small scales.
 
 **Transfusion** (Zhou et al., 2024, Meta) sidesteps this by using a hybrid objective: autoregressive next-token prediction for text, and diffusion (specifically flow matching) for image patches — all within the same transformer.
 
@@ -316,6 +436,46 @@ print("Transfusion mask OK: bidirectional image block, causal elsewhere")
 print(mask.int())
 ```
 
+That double loop is the *definition*, not the implementation: it is $O(T^2)$ Python, and materialising a dense boolean mask at $T = 4352$ costs 18M booleans per sequence that FlashAttention would then have to read. Since PyTorch 2.5, the same rule is written once as a `mask_mod` predicate and compiled by **FlexAttention** into a *block* mask — a list of which 128×128 tiles are non-empty — so fully-masked tiles are never computed at all. This is the production form of every custom mask in this chapter (and of packing, sliding windows, and document masking; see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)).
+
+```python
+import torch
+
+def make_block_causal_mask_mod(block_id: torch.Tensor):
+    """block_id: (T,) int tensor — 0 for text, k >= 1 for the k-th image block.
+
+    Returns a FlexAttention `mask_mod`: True where query q_idx may attend to key
+    kv_idx. The whole Transfusion rule is one boolean expression — attend inside
+    your own image block (in both directions), or causally to anything earlier.
+    """
+    def mask_mod(b, h, q_idx, kv_idx):
+        same_image = (block_id[q_idx] > 0) & (block_id[q_idx] == block_id[kv_idx])
+        return same_image | (kv_idx <= q_idx)
+    return mask_mod
+
+
+# It must agree exactly with the reference implementation above.
+types    = ['text'] * 3 + ['image'] * 4 + ['text'] * 2
+block_id = torch.tensor([0, 0, 0, 1, 1, 1, 1, 0, 0])
+T = len(types)
+q_idx = torch.arange(T).view(T, 1).expand(T, T)
+kv_idx = torch.arange(T).view(1, T).expand(T, T)
+assert torch.equal(make_block_causal_mask_mod(block_id)(None, None, q_idx, kv_idx),
+                   transfusion_attention_mask(types, T))
+
+# On PyTorch >= 2.5 the same predicate compiles into a sparse block mask.
+try:
+    from torch.nn.attention.flex_attention import create_block_mask  # noqa: F401
+    big = torch.cat([torch.zeros(256), torch.ones(1024), torch.zeros(256)]).long()
+    bm = create_block_mask(make_block_causal_mask_mod(big), B=None, H=None,
+                           Q_LEN=1536, KV_LEN=1536, device="cpu", _compile=False)
+    # Fraction of 128x128 tiles the kernel can skip entirely.
+    print(f"block-mask sparsity: {bm.sparsity():.1f}%")
+    # then: flex_attention(q, k, v, block_mask=bm)  -- a fused, masked SDPA
+except Exception as exc:                       # older PyTorch, or no flex_attention
+    print("flex_attention unavailable:", exc)
+```
+
 ### Why Transfusion Outperforms Pure Discrete Tokenisation
 
 For image generation benchmarks (FID scores, recall), Transfusion trades slightly lower text quality for significantly better image quality compared to Chameleon-style discrete image tokens, at the same model and compute scale. The intuition is that continuous representations preserve the full information content of the image; the diffusion head is trained to reconstruct it directly rather than through a bottleneck codebook.
@@ -368,7 +528,7 @@ The "any-to-any" aspiration means the same model handles text, images, audio, an
 
 ### AnyGPT
 
-AnyGPT (Zhan et al., 2024) is an example of a fully discrete any-to-any model. It unifies text, image (VQ-GAN tokens), audio (SoundStorm-style semantic tokens), and music under a single autoregressive transformer. The vocabulary is the union of all per-modality codebooks. Special delimiter tokens mark modality boundaries:
+AnyGPT (Zhan et al., 2024) is an example of a fully discrete any-to-any model. It unifies text, image, speech, and music under a single autoregressive transformer by bolting together four *existing* off-the-shelf tokenizers rather than training new ones: a SEED-style image tokenizer, SpeechTokenizer for speech (whose first RVQ layer is deliberately semantic, with the remaining acoustic layers reconstructed at synthesis time by a SoundStorm-style model), and EnCodec for music. This is the practical lesson of the design — an any-to-any model is mostly an exercise in *plumbing frozen codecs into one vocabulary*, and every one of those codecs is a `pip install` away (`transformers` ships `EncodecModel`, and `torchaudio`/`audiocraft` expose the same weights). The vocabulary is the union of all per-modality codebooks. Special delimiter tokens mark modality boundaries:
 
 ```text
 [TEXT_START] "Describe this sound:" [TEXT_END]
@@ -544,8 +704,8 @@ from typing import Optional
 @dataclass
 class Batch:
     """A mixed-modal training batch."""
-    input_ids:        torch.Tensor   # (B, T_text)  — text token ids
-    text_labels:      torch.Tensor   # (B, T_text)  — same, with -100 for masked positions
+    input_ids:        torch.Tensor   # (B, T_total) — text ids; any filler id at image slots
+    text_labels:      torch.Tensor   # (B, T_total) — same, with -100 at image/masked slots
     image_patches:    torch.Tensor   # (B, T_img, D_patch)  — continuous patch embeddings
     image_labels:     torch.Tensor   # (B, T_img, D_patch)  — clean patch targets
     noise:            torch.Tensor   # (B, T_img, D_patch)  — sampled ε
@@ -575,8 +735,8 @@ class UnifiedModel(nn.Module):
         out  = torch.zeros(B, T, self.text_embed.embedding_dim,
                            device=text_ids.device)
 
-        # Text positions
-        out[~is_image] = self.text_embed(text_ids[~is_image.squeeze()])
+        # Text positions (text_ids is full-length, so the same (B, T) mask indexes both)
+        out[~is_image] = self.text_embed(text_ids[~is_image])
 
         # Image positions: project noisy patch to d_model
         out[is_image]  = self.patch_proj(noisy_patches.reshape(-1, noisy_patches.shape[-1]))
@@ -625,6 +785,16 @@ class UnifiedModel(nn.Module):
 
 Note: this sketch omits the attention mask construction, the transformer implementation, and the data loader. A production implementation would use FlashAttention (see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)) and handle variable-length sequences with sequence packing (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)).
 
+### Making Stack-100M Generate Images
+
+The Chameleon recipe is the *cheapest* multi-modal extension in this book, because it changes no code — only the vocabulary. Take the capstone model of [The Stack-100M Architecture](../14-capstone/04-architecture.html) ($V = 32{,}768$, $d_\text{model} = 512$, context 2048, tied embeddings) and:
+
+1. **Grow the vocabulary.** Pre-tokenise a CC3M-scale caption corpus at 256×256 with a frozen `diffusers` VQ-GAN at $f = 16$: 256 image tokens per image, from a 1024-entry codebook. Append those 1024 codes plus two delimiters (`<boi>`, `<eoi>`) to the byte-level BPE of [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html), giving $V = 33{,}794$. Because Stack-100M ties its embeddings, those $1024 \times 512 \approx 0.5$M new parameters — half a percent of the model — buy you both the input embedding *and* the output head for images.
+2. **Change nothing else in the model.** Image tokens are ordinary integers in an ordinary causal stream; one image costs 256 of the 2048-token context (12.5%). Note that `StackConfig` already sets `qk_norm=True` and `z_loss_coef=1e-4` — the two stabilisers Chameleon found *necessary* for a mixed-modality softmax are switched on in the capstone for exactly the same reason.
+3. **Balance the mix and keep the loop.** Interleave `<caption><boi>…<eoi>` documents into the pretraining shards of [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) at roughly 15–20% of the token budget, drop the caption on 10% of image documents so classifier-free guidance has an unconditional branch, and run [The Pretraining Run](../14-capstone/07-pretraining-run.html) unmodified.
+
+At 100M parameters this produces recognisably-prompted but blurry 256×256 thumbnails — a 1024-entry codebook is only 10 bits for each 16×16 patch, and the model's capacity bites just as hard. That is the honest outcome, and it is still the fastest way to feel every mechanism in this chapter working end to end on one GPU.
+
 !!! key "Key Takeaways"
 
     - Unified models collapse understanding and generation across modalities into a single
@@ -637,6 +807,10 @@ Note: this sketch omits the attention mask construction, the transformer impleme
       training and inference complexity.
     - Chameleon-style training requires QK-Norm and modality-aware z-loss to stabilise the
       joint vocabulary softmax over 65K tokens from two very different distributions.
+    - Prompted image generation needs classifier-free guidance: drop the caption on ~10% of
+      training examples, then sample with $\ell_\text{uncond} + w(\ell_\text{cond} -
+      \ell_\text{uncond})$, $w \approx 3$–$7$. Skip the training-time dropout and there is no
+      unconditional branch to guide away from.
     - Data mixing ratios and training curriculum (text-first warmup → multi-modal ramp-up)
       are critical hyperparameters; poor mixing causes modality-specific forgetting.
     - MoE architectures naturally extend to unified models by letting the router learn
@@ -649,7 +823,7 @@ Note: this sketch omits the attention mask construction, the transformer impleme
       captures cross-modal coherence and modality-specific quality simultaneously.
 
 !!! sota "State of the Art & Resources (2026)"
-    By 2026, native multimodal generation has moved from research demo to shipped product: frontier proprietary systems (OpenAI's GPT-4o, Google's Gemini) now generate and edit images natively inside the same model that reasons over them, and a wave of open unified models — Chameleon (discrete token fusion), Transfusion (hybrid AR + diffusion), Emu3 (pure next-token prediction), Show-o, Janus-Pro, and BAGEL — plus omni-modal systems like Qwen2.5-Omni that ingest audio and video and stream speech back out, has closed much of the gap with specialist models on both understanding and generation benchmarks.
+    By 2026, native multimodal generation has moved from research demo to shipped product: frontier proprietary systems (OpenAI's GPT-4o, Google's Gemini) now generate and edit images natively inside the same model that reasons over them, and a wave of open unified models — Chameleon (discrete token fusion), Transfusion (hybrid AR + diffusion), Emu3 (pure next-token prediction), Show-o, Janus-Pro, and BAGEL — plus omni-modal systems like Qwen2.5-Omni and its Qwen3-Omni successor that ingest audio and video and stream speech back out, has closed much of the gap with specialist models on both understanding and generation benchmarks. The practical consequence for a practitioner is that all three layers of the stack are now installable: the tokenizer (`vector-quantize-pytorch`, `diffusers`, EnCodec via `transformers`), the unified model itself (Chameleon, Emu3, Janus-Pro, Show-o in `transformers` or their own repos), and the custom attention masks unified training needs (PyTorch FlexAttention).
 
     **Foundational work**
 
@@ -671,6 +845,10 @@ Note: this sketch omits the attention mask construction, the transformer impleme
     - [facebookresearch/chameleon](https://github.com/facebookresearch/chameleon) — official inference code and evaluation prompts for Meta's Chameleon model.
     - [showlab/show-o](https://github.com/showlab/show-o) — training and inference code for Show-o and Show-o2, with pretrained checkpoints on Hugging Face.
     - [deepseek-ai/Janus](https://github.com/deepseek-ai/Janus) — Janus, JanusFlow, and Janus-Pro implementations with MIT-licensed code and model weights.
+    - [baaivision/Emu3](https://github.com/baaivision/Emu3) — pure next-token-prediction unified model; the generation checkpoint and its vision tokenizer are released separately, so you can reuse the tokenizer alone to pre-tokenise your own image corpus.
+    - [lucidrains/vector-quantize-pytorch](https://github.com/lucidrains/vector-quantize-pytorch) — VQ, residual VQ, FSQ and lookup-free quantisation as drop-in `nn.Module`s, with the straight-through estimator, EMA codebook updates and dead-code restarts already handled.
+    - Hugging Face `transformers` — first-class `Chameleon` classes (understanding only in the public weights) and, in recent versions, Emu3 and the Qwen-Omni family; `EncodecModel` gives you discrete audio tokens in three lines.
+    - [PyTorch FlexAttention](https://pytorch.org/blog/flexattention/) — writes the block-causal / interleaved-modality masks of this chapter as a `mask_mod` predicate and compiles them into fused, tile-sparse attention kernels.
 
 ## Further Reading
 
@@ -682,6 +860,8 @@ Note: this sketch omits the attention mask construction, the transformer impleme
 - Zhou et al., "Transfusion: Predict the Next Token and Diffuse Images with One Multi-Modal Model", Meta, 2024.
 - Lipman et al., "Flow Matching for Generative Modeling", ICLR 2023.
 - Chang et al., "MaskGIT: Masked Generative Image Transformer", CVPR 2022.
+- Li et al., "Autoregressive Image Generation without Vector Quantization" (MAR), NeurIPS 2024.
+- Ho & Salimans, "Classifier-Free Diffusion Guidance", 2022.
 - Zhan et al., "AnyGPT: Unified Multimodal LLM with Discrete Sequence Modeling", 2024.
 - Mentzer et al., "Finite Scalar Quantization: VQ-VAE Made Simple", ICLR 2024.
 - Défossez et al., "High Fidelity Neural Audio Compression" (EnCodec), 2022.

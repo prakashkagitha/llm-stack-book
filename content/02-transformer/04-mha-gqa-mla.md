@@ -211,9 +211,15 @@ def repeat_kv(x, n_rep):
     x: (B, n_kv, L, d_h). Repeat each KV head n_rep times along the head axis,
     producing (B, n_kv * n_rep, L, d_h) = (B, n_heads, L, d_h).
 
-    This is a memory-cheap expand (no data copy until the kernel reads it):
-    head order becomes [kv0, kv0, ..., kv1, kv1, ...], so query head j uses
+    Head order becomes [kv0, kv0, ..., kv1, kv1, ...], so query head j uses
     KV group j // n_rep. Mirrors Llama's reference implementation.
+
+    Cost note: `expand` itself is free (a stride-0 view), but the `reshape`
+    that follows CANNOT stay a view, so it materializes a transient tensor
+    n_rep times larger. The *cache* is unaffected — it still holds only n_kv
+    heads, which is where the memory win lives — but GQA-aware kernels
+    (FlashAttention, SDPA's enable_gqa, vLLM's paged attention) skip this
+    copy entirely by reading the narrow K/V directly. See below.
     """
     B, n_kv, L, d_h = x.shape
     if n_rep == 1:
@@ -293,7 +299,57 @@ for n_kv in (8, 2, 1):                            # MHA, GQA(g=2), MQA
 # n_kv=8: 256 B   n_kv=2: 64 B   n_kv=1: 32 B  -> 8× and 16× smaller than MHA
 ```
 
-The two load-bearing facts in that code: (1) `W_k` and `W_v` output `n_kv_heads * head_dim`, which is *smaller* than `d_model` — that is where parameters and, more importantly, cache are saved; (2) `repeat_kv` is a cheap `expand` that does not copy the cached data, so at inference you store only the small KV tensors and broadcast them into the kernel. The query side is untouched, so the model keeps all $h$ query heads' worth of expressivity in *how it asks questions*, sacrificing only the diversity of *what it can address*.
+The two load-bearing facts in that code: (1) `W_k` and `W_v` output `n_kv_heads * head_dim`, which is *smaller* than `d_model` — that is where parameters and, more importantly, cache are saved; (2) `repeat_kv` never touches the *cache* — you store only the narrow `n_kv_heads` tensors and expand a transient copy at compute time, and a GQA-aware kernel skips even that copy. The query side is untouched, so the model keeps all $h$ query heads' worth of expressivity in *how it asks questions*, sacrificing only the diversity of *what it can address*.
+
+One consequence that trips people up: **GQA saves bytes, not FLOPs.** After the broadcast the kernel still computes $h$ full sets of $QK^\top$ and $PV$ products, so training and prefill FLOPs are *identical* to MHA. What changes is the *arithmetic intensity* of the attention operator during decode: the same FLOPs are performed while reading $h/g$ fewer bytes of K/V from HBM, which is exactly what moves a bandwidth-bound decode step toward the compute-bound side of the roofline. If you benchmark GQA on a prefill-only workload and see no speedup, nothing is broken — you measured the wrong regime.
+
+### GQA in the real libraries
+
+A hand-written `repeat_kv` like the one above is the *fallback* path, not the fast path: every layer of the real stack has a GQA-native route that avoids the copy, and they all key off the same two numbers — query heads and KV heads.
+
+- **PyTorch.** `F.scaled_dot_product_attention` takes an `enable_gqa=True` flag (added in PyTorch 2.5), which performs the head broadcast *inside* the kernel, so you hand it the narrow `(B, n_kv, L, d_h)` K/V straight out of the cache with no materialized copy.
+- **FlashAttention.** `flash_attn_func(q, k, v, causal=True)` in [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) accepts `nheads_k` different from `nheads_q` natively (it requires only that `nheads_q % nheads_k == 0`) and does the group mapping in-register — see [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html).
+- **HuggingFace `transformers`.** GQA is a single config field. `num_key_value_heads` equal to `num_attention_heads` gives MHA, `1` gives MQA, anything in between gives GQA, and `LlamaAttention` derives the group size from the ratio. `transformers` ships its own `repeat_kv` for the eager path, but with `attn_implementation="flash_attention_2"` (or `"sdpa"`) it hands the narrow tensors to the kernel instead.
+- **Serving engines.** vLLM and SGLang size their paged KV blocks from `num_key_value_heads`, so that one number determines how much cache a token costs and therefore how many concurrent sequences fit — see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+
+Concretely, this is the entire GQA specification of Llama-3-8B, as it appears in its `config.json` — 32 query heads over 8 KV heads, i.e. $g=8$ with 4 query heads per group:
+
+```json
+{
+  "num_hidden_layers": 32,
+  "hidden_size": 4096,
+  "num_attention_heads": 32,
+  "num_key_value_heads": 8
+}
+```
+
+In your own code, prefer the PyTorch-native form; this version degrades gracefully on older builds:
+
+```python
+import torch
+import torch.nn.functional as F
+
+# The cache holds NARROW K/V: n_kv_heads, not n_heads. Feed it to the kernel as-is.
+torch.manual_seed(0)
+B, Hq, Hkv, L, Dh = 2, 8, 2, 7, 16
+q = torch.randn(B, Hq,  L, Dh)     # 8 query heads
+k = torch.randn(B, Hkv, L, Dh)     # 2 KV heads  <- this is what you cache
+v = torch.randn(B, Hkv, L, Dh)
+
+try:
+    # PyTorch >= 2.5: the kernel broadcasts KV heads internally. No copy.
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
+    native = True
+except (TypeError, RuntimeError):
+    # Older PyTorch: fall back to the explicit (copying) broadcast.
+    n_rep = Hq // Hkv
+    out = F.scaled_dot_product_attention(
+        q, repeat_kv(k, n_rep), repeat_kv(v, n_rep), is_causal=True)
+    native = False
+
+print(f"native GQA kernel: {native}, out {tuple(out.shape)}")   # (2, 8, 7, 16)
+assert out.shape == (B, Hq, L, Dh)
+```
 
 !!! note "Aside: uptraining — converting an existing MHA checkpoint to GQA"
     A delightful result from the GQA paper is that you don't have to train from scratch. You can take a pretrained MHA model and *construct* a GQA model by **mean-pooling** the key/value projection weights within each group — average the $W_K$ of the heads in a group to get the group's shared $W_K$ — then "uptrain" with a small fraction (e.g. ~5%) of the original pretraining compute to recover quality. This made GQA a cheap retrofit, which is a big reason it spread so fast: model providers could ship GQA variants of existing models without a full pretrain.
@@ -394,7 +450,7 @@ Put the four schemes side by side. Let $h$ be the number of query heads, $g$ the
 
 How to reason about the choice:
 
-- **GQA is the safe default.** It gives a large, tunable cache reduction (pick $g$) with negligible quality loss at $g \approx 8$, it is trivially supported by every serving stack, and it can be retrofitted onto an MHA checkpoint by uptraining. If you are building a conventional dense or MoE model in 2024–2026, GQA is the path of least resistance and the strong baseline. ([Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) addresses the *FFN* cost; GQA addresses the *attention cache* cost — they compose.)
+- **GQA is the safe default.** It gives a large, tunable cache reduction (pick $g$) with negligible quality loss at $g \approx 8$, it is trivially supported by every serving stack, and it can be retrofitted onto an MHA checkpoint by uptraining. If you are building a conventional dense or MoE model in 2024–2026, GQA is the path of least resistance and the strong baseline. This is exactly the choice made for **Stack-100M**, the ~100M-parameter model built end to end in Part XIV: 8 query heads over 2 KV heads (a 4:1 group), which costs 15 KiB of KV cache per token across its 30 layers instead of MHA's 60 KiB — see [The Stack-100M Architecture](../14-capstone/04-architecture.html). At that scale $g$ is chosen for the *parameter* saving as much as the cache: shrinking $W_K, W_V$ by $4\times$ frees ~11.8M parameters, more than four extra transformer blocks' worth. ([Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) addresses the *FFN* cost; GQA addresses the *attention cache* cost — they compose.)
 - **MQA only when memory is desperate and you accept the risk.** The full $1/h$ reduction is tempting, but the quality regression and training instability mean most teams stop at GQA. MQA makes sense in tightly constrained settings (small on-device models, extreme batch) where every byte counts.
 - **MLA when you control the whole stack and want the Pareto frontier.** MLA pushes the memory–quality frontier beyond GQA, but it demands custom kernels, a different cache layout, and the decoupled-RoPE machinery. It pays off most for very long contexts and at large scale, where the absolute cache savings are enormous — but it is an architectural commitment, not a drop-in.
 - **Quantizing the cache is orthogonal and stacks.** All four schemes can additionally store the cache in fp8 or int8/int4, multiplying the savings (see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)). GQA + fp8 cache is a very common, very effective combination.
@@ -423,7 +479,8 @@ From here, the cache reappears everywhere downstream: the serving systems that *
     - **The KV cache is the real inference bottleneck.** Its size is $2\, B\, L_\text{layers}\, S \times (\text{KV-head count}) \times d_h \times P$ bytes — for a 70B model at 4K context, standard MHA wants ~10 GB *per sequence*, and it must be streamed from HBM every decode step (memory-bandwidth bound).
     - **The query-head count and the KV-head count can be decoupled.** Many query heads can share few key/value heads — this single observation generates MQA, GQA, and MLA.
     - **MQA** uses one shared KV head ($1/h$ cache) but loses quality and can destabilize training. **GQA** uses $g$ KV groups ($g/h$ cache); at $g\approx 8$ it recovers ≈ MHA quality and is the modern default.
-    - **GQA implementation** = smaller $W_K, W_V$ projections (output $g\,d_h$, not $d_\text{model}$) plus a cheap `repeat_kv` broadcast to align KV heads with query heads; setting $n_\text{kv}=h$ recovers MHA and $n_\text{kv}=1$ recovers MQA.
+    - **GQA implementation** = smaller $W_K, W_V$ projections (output $g\,d_h$, not $d_\text{model}$) plus a `repeat_kv` broadcast to align KV heads with query heads; setting $n_\text{kv}=h$ recovers MHA and $n_\text{kv}=1$ recovers MQA. In real stacks you skip the broadcast copy entirely — `enable_gqa=True` in PyTorch SDPA, or `nheads_k < nheads_q` in `flash_attn_func`; in `transformers` the whole scheme is the single config field `num_key_value_heads`.
+    - **GQA saves bytes, not FLOPs.** Prefill/training cost is identical to MHA; the win is a $h/g$ reduction in KV bytes read per decode step, which raises attention's arithmetic intensity and unbinds a bandwidth-bound decode.
     - **MLA (DeepSeek)** caches a low-rank latent $c^{KV}$ and up-projects per-head K/V from it, with weight absorption to keep decode cheap and a decoupled RoPE key to remain position-aware — pushing the memory–quality frontier beyond GQA at the cost of complexity.
     - **An MHA checkpoint can be uptrained into GQA** by mean-pooling KV weights within groups and fine-tuning with a small fraction of pretraining compute — a cheap retrofit that accelerated GQA's adoption.
     - **Cache savings are a budget, not a free lunch**, and they stack with KV quantization and TP-aligned head counts ($g=8$ for 8-way tensor parallelism). Always state what you hold fixed when quoting a reduction factor.

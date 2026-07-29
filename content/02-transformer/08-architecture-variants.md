@@ -218,13 +218,13 @@ BART (Lewis et al., *BART: Denoising Sequence-to-Sequence Pre-training for Natur
 
 ### Memory Footprint of Encoder-Decoder
 
-A significant practical consideration: encoder-decoder models carry *two* full transformer stacks. T5-large has around 770M parameters split roughly evenly. During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the encoder output is cached, the memory cost scales as $B \times T_\text{enc} \times d_\text{model} \times N_\text{dec}$ bytes. For a T5-3B model with a 1 024-token source:
+A significant practical consideration: encoder-decoder models carry *two* full transformer stacks. T5-large has around 770M parameters split roughly evenly. During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the cross-attention K/V are cached, the memory cost scales as $B \times T_\text{enc} \times d_\text{attn} \times 2 \times N_\text{dec}$ bytes, where $d_\text{attn} = n_\text{heads} \times d_k$ is the attention *inner* dimension and the factor 2 counts K and V. For a model with $d_\text{attn} = 1024$, 24 decoder layers, and a 1 024-token source:
 
 $$
-\text{encoder KV cache} \approx 1024 \times 1024 \times 2 \times 24 \times 2\text{ bytes (fp16)} \approx 96\text{ MB per batch element}
+\text{cross-attention KV cache} \approx 1024 \times 1024 \times 2 \times 24 \times 2\text{ bytes (fp16)} \approx 96\text{ MB per batch element}
 $$
 
-At batch size 32 that is roughly 3 GB just for cross-attention keys and values — comparable to the KV cache budget in a mid-sized decoder-only model.
+At batch size 32 that is roughly 3 GB just for cross-attention keys and values — comparable to the KV cache budget in a mid-sized decoder-only model. One trap when you plug in a real config: T5 *decouples* $d_\text{attn}$ from $d_\text{model}$ (its larger variants use $n_\text{heads} \times d_k$ considerably wider than $d_\text{model}$), so read `d_kv` and `num_heads` off the checkpoint config rather than assuming $d_\text{attn} = d_\text{model}$. The consolation is that this cache is computed **once** at prefill and never grows during decoding — unlike the decoder's self-attention cache, which grows one entry per generated token.
 
 ---
 
@@ -417,7 +417,7 @@ if __name__ == "__main__":
 
 A **prefix language model** (prefix-LM) is a decoder-only model with a modified attention mask: the tokens belonging to the *input prompt* (the "prefix") attend to each other **bidirectionally**, while the tokens being *generated* attend causally. The mask is the block-diagonal hybrid we showed earlier.
 
-This was the design used in models like **ULMFiT**-adjacent work and, more prominently, **PaLM** (Chowdhery et al., *PaLM: Scaling Language Modeling with Pathways*, 2022) in its fine-tuning phase, and was described explicitly in Raffel et al.'s T5 paper as a baseline worth studying. Google's **Gemini** architecture is also described as prefix-LM.
+The canonical reference is **UniLM** (Dong et al., *Unified Language Model Pre-training for Natural Language Understanding and Generation*, 2019), which pre-trains a *single* shared transformer under three different masks — bidirectional, causal, and sequence-to-sequence (prefix) — by simply switching the mask per batch. Raffel et al.'s T5 paper studies "prefix LM" explicitly as an architectural baseline against the encoder-decoder and the causal decoder, and **UL2** (Tay et al., *UL2: Unifying Language Learning Paradigms*, 2022) folds it into its mixture-of-denoisers as the "S-denoiser" (sequential denoising). The pattern keeps resurfacing because it is the cheapest way to get *encoder-decoder-like bidirectional prompt encoding without paying for a second tower*: the same weights, one KV cache, one stack.
 
 ### Constructing the Prefix-LM Mask
 
@@ -522,7 +522,11 @@ By 2022–2023, essentially all frontier models (GPT-3, PaLM, LLaMA, Mistral, Ge
 
 **5. KV cache simplicity.** The KV cache for inference (see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)) is a single cache for a single stack. Encoder-decoder models require a separate cross-attention KV cache per decoder layer.
 
-**What encoder-only is still good for.** Representation tasks with tight latency budgets: search re-ranking, embedding retrieval, token classification. A 110M-parameter BERT encoder produces high-quality contextual embeddings orders of magnitude cheaper than running a 70B decoder-only model.
+**6. The serving ecosystem voted.** This is now self-reinforcing: vLLM, SGLang and TensorRT-LLM are built around a causal decoder's prefill/decode split, and features like prefix caching, speculative decoding and continuous batching all assume one growing KV cache. Choosing encoder-decoder in 2026 means giving up most of that tooling. For the same reasons, Stack-100M — the ~100M model built from scratch in Part XIV — is a causal decoder; see [The Stack-100M Architecture](../14-capstone/04-architecture.html).
+
+**What encoder-only is still good for.** Representation tasks with tight latency budgets: search re-ranking, embedding retrieval, token classification. A 110M-parameter encoder produces high-quality contextual embeddings orders of magnitude cheaper than running a 70B decoder-only model. In 2026 the default choice here is no longer original BERT but **ModernBERT** (Warner et al., 2024) — the same bidirectional mask, rebuilt with RoPE, FlashAttention and an 8 192-token window — served through `sentence-transformers` for bi-encoders and cross-encoder rerankers.
+
+**But the mask is not destiny.** The strongest embedding models on MTEB-style leaderboards are now *decoder* checkpoints repurposed as encoders (the E5-Mistral / NV-Embed / Qwen3-Embedding lineage). **LLM2Vec** (BehnamGhader et al., 2024) makes the recipe explicit and is worth reading precisely because it is this chapter's thesis run backwards: take a pretrained causal LM, **switch the attention mask to bidirectional**, adapt it with a short masked-next-token-prediction phase, then contrastively fine-tune. Bidirectionality is a property you can *install* into a decoder for a few GPU-hours; what you cannot cheaply install is the pretraining compute the decoder already absorbed. See [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html) for the contrastive-training side of this.
 
 **What encoder-decoder is still good for.** Constrained generation tasks where the output vocabulary is small relative to the input (document summarization with a known schema, structured extraction, code generation conditioned on long specs). The encoder-decoder can build a much richer representation of the source, which can matter when the source is long and the generation is short.
 
@@ -541,6 +545,46 @@ The pre-training objective is not just a loss function — it determines what th
 A key efficiency point: CLM trains on **every position** in every sequence, while MLM trains only on the ~15% masked positions. This means that for a given sequence of $T$ tokens, CLM extracts $T$ gradient signals while MLM extracts only $\approx 0.15T$. Over a fixed compute budget, CLM sees more learning signal per FLOP on raw generation ability. MLM produces better per-token representations for discrimination tasks, but that advantage diminishes with scale.
 
 {{fig:archvar-objective-signal-comparison}}
+
+### The Same Three Objectives in HuggingFace Transformers
+
+In practice you rarely hand-roll the masking bookkeeping — `transformers` exposes one `AutoModelFor*` head per family, and each hides exactly the shifting/masking logic this chapter made explicit. Knowing which class implies which mask is the whole point:
+
+```python
+from transformers import (
+    AutoTokenizer, AutoModelForMaskedLM, AutoModelForSeq2SeqLM,
+    AutoModelForCausalLM, DataCollatorForLanguageModeling,
+)
+
+text = "the cat sat on the mat"
+
+# (1) Encoder-only + MLM. DataCollatorForLanguageModeling implements the
+#     80/10/10 scheme we coded above and emits `labels` with -100 padding.
+bert_tok = AutoTokenizer.from_pretrained("bert-base-uncased")
+bert     = AutoModelForMaskedLM.from_pretrained("bert-base-uncased")
+collator = DataCollatorForLanguageModeling(bert_tok, mlm=True, mlm_probability=0.15)
+# Use a longer passage: at 15% on a 6-token sentence you may select nothing,
+# and a batch with zero labels gives a NaN loss (every label is -100).
+batch    = collator([bert_tok((text + ". ") * 8)])
+print("MLM loss:", bert(**batch).loss.item())
+
+# (2) Encoder-decoder + span corruption. `labels` are shifted right internally
+#     to build `decoder_input_ids`; you never construct them by hand.
+t5_tok = AutoTokenizer.from_pretrained("google-t5/t5-small")
+t5     = AutoModelForSeq2SeqLM.from_pretrained("google-t5/t5-small")
+src    = t5_tok("The <extra_id_0> sat on the <extra_id_1> mat.", return_tensors="pt")
+tgt    = t5_tok("<extra_id_0> cat <extra_id_1> brown", return_tensors="pt")
+print("span-corruption loss:", t5(**src, labels=tgt.input_ids).loss.item())
+
+# (3) Decoder-only + CLM. Pass labels == input_ids; the model shifts by one
+#     internally so position t is scored against the token at t+1.
+gpt_tok = AutoTokenizer.from_pretrained("gpt2")
+gpt     = AutoModelForCausalLM.from_pretrained("gpt2")
+ids     = gpt_tok(text, return_tensors="pt").input_ids
+print("CLM loss:", gpt(input_ids=ids, labels=ids).loss.item())
+```
+
+Two library gotchas worth internalizing. First, `AutoModelForCausalLM` shifts `labels` for you — if you shift them *and* pass them, you train the model to predict two tokens ahead and the loss plateaus mysteriously high. Second, `AutoModel` (no head) returns hidden states with the architecture's *native* mask, so calling it on a decoder checkpoint and mean-pooling gives you causal, not bidirectional, embeddings.
 
 !!! note "The ELECTRA Alternative"
     Clark et al. (*ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators*, 2020) observed that MLM wastes compute on easy-to-predict unmasked tokens. ELECTRA uses a small generator to fill in masks, then trains a large discriminator to detect which tokens are "replaced." The discriminator trains on *all* tokens, achieving BERT-level performance at substantially lower compute. This is still encoder-only but with a more efficient objective.
@@ -586,11 +630,14 @@ def encoder_decoder_mask(T_dec: int, T_enc: int,
     return {"self": self_mask, "cross": cross_mask}
 
 
-# --- Common gotcha: using the wrong dtype ---
+# --- Common gotcha: mask dtype AND mask polarity ---
 # torch.where and masked_fill expect a *bool* mask, not float.
-# torch.nn.functional.scaled_dot_product_attention (PyTorch 2.0+) expects
-# an *additive* attn_mask (float, 0 or -inf), NOT a bool mask.
-# Always double-check which convention your attention function uses.
+# torch.nn.functional.scaled_dot_product_attention (PyTorch 2.0+) accepts
+# EITHER a float additive mask (0 / -inf, added to the logits) OR a bool
+# mask — and in the bool case True means "this key DOES take part in
+# attention", which is the exact opposite of nn.MultiheadAttention's
+# `attn_mask`, where True means "block this position".
+# Always check both dtype and polarity for the function you are calling.
 
 def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
                            ) -> torch.Tensor:
@@ -607,8 +654,41 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     )
 ```
 
+### Running a Non-Causal Mask Fast: FlexAttention
+
+There is a systems catch hiding behind everything above. The moment you pass an explicit `(T, T)` mask tensor, you have (a) allocated $O(T^2)$ memory and (b) usually dropped off the fused FlashAttention backend, because FlashAttention's kernel supports only a fixed menu of masks — dense, causal, and sliding-window variants — not an arbitrary user matrix. So the prefix-LM mask we just built is *correct but slow*: at $T = 8192$ a single `(B, 1, T, T)` bool mask for a batch of 8 is already half a gigabyte.
+
+PyTorch 2.5+ closes this gap with **FlexAttention** (`torch.nn.attention.flex_attention`). You express the mask as a *predicate over indices*, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and `torch.compile` lowers it into a fused, block-sparse Triton kernel; `create_block_mask` evaluates the predicate once per $128\times128$ block and stores only which blocks are non-empty, so fully-masked blocks are never computed at all.
+
+```python
+import torch
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+
+# Requires PyTorch >= 2.5 (CUDA); CPU support landed later, so prefer a GPU here.
+flex_attention = torch.compile(flex_attention, dynamic=False)  # fused kernel
+
+B, H, T, d_k = 2, 4, 1024, 64
+PREFIX_LEN = 256
+dev = "cuda" if torch.cuda.is_available() else "cpu"
+q, k, v = (torch.randn(B, H, T, d_k, device=dev, dtype=torch.float32) for _ in range(3))
+
+def prefix_lm_mod(b, h, q_idx, kv_idx):
+    """True = allowed. Causal everywhere, plus full visibility inside the prefix."""
+    causal        = q_idx >= kv_idx
+    inside_prefix = (q_idx < PREFIX_LEN) & (kv_idx < PREFIX_LEN)
+    return causal | inside_prefix
+
+# B=None, H=None → the same mask is broadcast over batch and heads.
+block_mask = create_block_mask(prefix_lm_mod, B=None, H=None,
+                               Q_LEN=T, KV_LEN=T, device=dev)
+out = flex_attention(q, k, v, block_mask=block_mask)   # (B, H, T, d_k)
+print(out.shape)
+```
+
+The same `mask_mod` trick answers the mask you will *actually* ship when pretraining: **document-boundary masking**. Pretraining data is packed — many short documents concatenated into one fixed-length window — and under a plain causal mask, token 3 of document 2 happily attends to document 1, teaching the model spurious cross-document dependencies. The fix is a causal-*and*-same-document predicate, `(q_idx >= kv_idx) & (doc_id[b, q_idx] == doc_id[b, kv_idx])`, which is derived and benchmarked in [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) and implemented end to end for Stack-100M in [Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html). The kernel-level alternative is FlashAttention's *varlen* API (`flash_attn_varlen_func`, driven by a `cu_seqlens` tensor of cumulative document lengths), which is what Megatron-LM and HuggingFace's packed-training path use; it is marginally faster but requires your data loader to emit flattened sequences plus offsets rather than a rectangular `(B, T)` batch.
+
 !!! warning "Mask Convention Mismatch"
-    PyTorch's `nn.MultiheadAttention` uses a `key_padding_mask` where `True` means *ignore* (the opposite of "allowed"), while its `attn_mask` is an *additive* mask where $-\infty$ means blocked. `F.scaled_dot_product_attention` (PyTorch 2.0+) also uses an additive `attn_mask` and has `is_causal` as a shortcut. HuggingFace Transformers internally converts bool "attention masks" (1=attend, 0=ignore) into additive masks. Mixing these conventions is the most common source of silent accuracy bugs when implementing custom attention modules.
+    PyTorch's `nn.MultiheadAttention` uses a `key_padding_mask` where `True` means *ignore*, and its bool `attn_mask` also uses `True` = *blocked*. `F.scaled_dot_product_attention` (PyTorch 2.0+) accepts either a float additive `attn_mask` ($-\infty$ = blocked) **or** a bool `attn_mask` in which `True` = *allowed to attend* — the opposite polarity from `nn.MultiheadAttention`. `is_causal=True` is the shortcut for the triangular case. HuggingFace Transformers takes a user-facing `attention_mask` with 1=attend, 0=ignore, and converts it internally into an additive mask. Mixing these conventions is the most common source of silent accuracy bugs when implementing custom attention modules; the cheap check is to feed a two-token input and assert that token 0's output does not change when you edit token 1.
 
 ---
 
@@ -621,7 +701,7 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
 
     Choose BERT-style when you need high-quality representations of fixed-length inputs: text classification, named entity recognition, extractive QA, semantic search embeddings. These tasks benefit from the richer per-token context from both directions. Choose GPT-style when you need to **generate** text — summarization, dialogue, code completion, instruction following — or when you want a single unified model that can handle both understanding and generation via prompting. For production deployment, decoder-only models also have a simpler KV-cache story: one cache, one stack, no cross-attention overhead.
 
-    A nuance: both architectures can do retrieval if you pool the hidden states. But a fine-tuned BERT encoder at 110M parameters will produce better embeddings at lower latency than a 7B decoder-only model for the same compute budget, which is why bi-encoder retrieval systems still frequently use BERT-family models.
+    A nuance: both architectures can do retrieval if you pool the hidden states. Under a fixed serving budget a fine-tuned 110M encoder (ModernBERT-class) still wins on latency and cost per document, which is why bi-encoder retrieval systems remain encoder-heavy. But if you remove the budget constraint, the top of the embedding leaderboards is currently held by *decoder* checkpoints converted into encoders — the LLM2Vec recipe flips the causal mask to bidirectional, does a short adaptation phase, then contrastively fine-tunes. The honest answer in an interview is therefore "encoder for throughput, adapted decoder for peak quality," and the reason both work is that the mask is a *choice*, not a property of the weights.
 
     **Follow-up:** Why can't you use BERT for generation? Because to predict token $t$, BERT's bidirectional attention would need to attend to token $t$ itself (it is in the input), which leaks the answer. You could run BERT autoregressively by masking future tokens, but then you are re-running the full encoder at every step, which is expensive, and you lose the bidirectional context benefit that justified using an encoder in the first place.
 
@@ -637,7 +717,8 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     - **Prefix-LM** is a middle ground: bidirectional attention over the prompt, causal attention over the generation. It improves prompt representation at the cost of a distribution mismatch if the model was pre-trained purely causally.
     - The field converged on **decoder-only** for frontier models because: (1) CLM trains on all positions (more signal per FLOP), (2) in-context learning arises naturally from the sequence-continuation framing, (3) post-training pipelines (SFT, RLHF) are simpler, and (4) a single KV cache is operationally cleaner at inference.
     - Encoder-only models remain competitive for **embedding and classification** workloads where latency and cost matter more than generation capability.
-    - A silent bug when implementing custom attention: mask conventions differ between PyTorch's `MultiheadAttention`, `F.scaled_dot_product_attention`, and HuggingFace — always verify whether `True` means "attend" or "ignore."
+    - A silent bug when implementing custom attention: mask conventions differ between PyTorch's `MultiheadAttention` (bool `True` = blocked), `F.scaled_dot_product_attention` (bool `True` = attend, or a float additive mask), and HuggingFace (`attention_mask` 1 = attend) — always verify polarity *and* dtype.
+    - Any mask that is not plain causal falls off the fused FlashAttention path if you materialize it as a `(T, T)` tensor. Express it instead as a `mask_mod` predicate for PyTorch's **FlexAttention**, or as `cu_seqlens` for varlen FlashAttention — this is how prefix-LM and packed-document masking are made cheap in practice.
     - At large scale the distinction between architectures blurs: a decoder-only model with a very long context window and prompt caching behaves similarly to an encoder-decoder in many retrieval-augmented workloads.
 
 ---
@@ -661,7 +742,9 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     **Open-source & tools**
 
     - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — minimal (~300-line) decoder-only GPT implementation; the canonical readable reference for the causal transformer.
-    - [huggingface/transformers](https://github.com/huggingface/transformers) — hosts production implementations of BERT, T5, BART, GPT-2, Llama, Mistral, and more; the standard starting point for all three architecture families.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — hosts production implementations of BERT, T5, BART, GPT-2, Llama, Mistral, and more; `AutoModelForMaskedLM` / `AutoModelForSeq2SeqLM` / `AutoModelForCausalLM` are the three architecture families behind one API.
+    - [PyTorch, *FlexAttention: The Flexibility of PyTorch with the Performance of FlashAttention* (2024)](https://pytorch.org/blog/flexattention/) — `torch.nn.attention.flex_attention` and `create_block_mask`: how to run prefix-LM, document-block-diagonal, and other non-causal masks as fused block-sparse kernels instead of `(T, T)` tensors.
+    - [McGill-NLP/llm2vec](https://github.com/McGill-NLP/llm2vec) — reference implementation of converting a causal decoder into a bidirectional text encoder; the cleanest code demonstration that the mask, not the weights, defines the family.
 
     **Go deeper**
 
@@ -676,6 +759,9 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
 - Brown, Mann, Ryder, et al. *Language Models are Few-Shot Learners (GPT-3)*. NeurIPS 2020.
 - Clark, Luong, Le, Manning. *ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators*. ICLR 2020.
 - Chowdhery, Narang, Devlin, et al. *PaLM: Scaling Language Modeling with Pathways*. JMLR 2023.
+- Dong, Yang, Wang, et al. *Unified Language Model Pre-training for Natural Language Understanding and Generation (UniLM)*. NeurIPS 2019. (One transformer, three masks — the canonical prefix-LM reference.)
+- Tay, Dehghani, Tran, et al. *UL2: Unifying Language Learning Paradigms*. ICLR 2023. (Mixture-of-denoisers; the S-denoiser is prefix-LM.)
+- BehnamGhader, Adlakha, Mosbach, et al. *LLM2Vec: Large Language Models Are Secretly Powerful Text Encoders*. COLM 2024. (Flipping a decoder's causal mask to bidirectional to build state-of-the-art embedders.)
 - Vaswani, Shazeer, Parmar, et al. *Attention Is All You Need*. NeurIPS 2017.
 - Touvron, Lavril, Izacard, et al. *LLaMA: Open and Efficient Foundation Language Models*. arXiv 2023. (Exemplary decoder-only design at scale.)
 - Andrej Karpathy. *nanoGPT* (GitHub). Reference implementation of a minimal decoder-only transformer.

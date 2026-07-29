@@ -2,7 +2,7 @@
 
 Every modern large language model is, at its heart, a stack of identical *transformer blocks*. Whether you are reading the weights of Llama 3, Gemma 3, DeepSeek-V3, or Qwen3, the same four-element recipe repeats dozens or hundreds of times: a normalization step, a self-attention sublayer, another normalization step, and a feed-forward network (FFN) sublayer — all wired together through residual connections. Getting this wiring right is not a detail. It is the reason transformers train stably at scale when many predecessor architectures did not.
 
-This chapter dissects every component of the transformer block from first principles. We start with the residual stream — the conceptual backbone — then cover the two normalization variants (LayerNorm and RMSNorm), the critical pre-norm versus post-norm distinction, the FFN/MLP sublayer, and modern activation functions (ReLU, GELU, SwiGLU, GeGLU). We close with dropout, the complete block wiring diagram, a heavily commented implementation, and worked numerical examples. If you have already read [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html) and [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html), this chapter completes the picture of how a single layer is assembled. [Building a GPT From Scratch (nanoGPT-style)](../02-transformer/07-build-gpt-from-scratch.html) then stacks these blocks into a full model.
+This chapter dissects every component of the transformer block from first principles. We start with the residual stream — the conceptual backbone — then cover the two normalization variants (LayerNorm and RMSNorm), the critical pre-norm versus post-norm distinction, the FFN/MLP sublayer, and modern activation functions (ReLU, GELU, SwiGLU, GeGLU). We close with dropout, the complete block wiring diagram, a heavily commented implementation, and worked numerical examples. If you have already read [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html) and [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html), this chapter completes the picture of how a single layer is assembled. [Building a GPT From Scratch (nanoGPT-style)](../02-transformer/07-build-gpt-from-scratch.html) then stacks these blocks into a full model, and [The Stack-100M Architecture](../14-capstone/04-architecture.html) pins every constant of this block for the ~100M-parameter model the capstone trains end to end ($d = 512$, 30 layers, $d_\text{ff} = 1408$, RMSNorm + SwiGLU, no bias terms).
 
 ---
 
@@ -76,6 +76,16 @@ There is no $\boldsymbol{\beta}$ shift term. Llama, Llama 2, Llama 3, Mistral, G
 2. *Hypothesis: the shift is redundant.* If the residual stream already has a near-zero mean (which empirically it often does), the centering step wastes compute without helping. The scale parameter $\boldsymbol{\gamma}$ retains the expressive power to rescale each feature.
 
 The two norms behave identically when $\mu \approx 0$, which is the common case during training.
+
+### Norms in practice: the libraries, and the fp32 rule
+
+You rarely hand-write a norm in production. PyTorch ≥ 2.4 ships `torch.nn.RMSNorm(dim, eps=...)` and the functional `torch.nn.functional.rms_norm`, alongside the long-standing `torch.nn.LayerNorm`; both dispatch to fused kernels. HuggingFace `transformers` carries its own `LlamaRMSNorm`, instantiated inside `LlamaDecoderLayer` as `input_layernorm` (pre-attention) and `post_attention_layernorm` (pre-FFN, despite the misleading name), with $\epsilon$ read from `config.rms_norm_eps`. For training throughput, **Liger-Kernel** (`liger_kernel.transformers.LigerRMSNorm`, from LinkedIn) supplies a Triton fused forward+backward that avoids materializing the intermediate, and NVIDIA Apex offers `apex.normalization.FusedRMSNorm`; `torch.compile` will also fuse a hand-written RMSNorm into a single kernel with no code change. The mechanics of writing such a kernel yourself are in [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html).
+
+!!! warning "Common pitfall: computing norm statistics in bf16"
+
+    Compute $\mu$, $\sigma^2$, and $\text{RMS}$ in **fp32 even when the model runs in bf16**. bf16 carries roughly 8 mantissa bits, so accumulating $d = 4096$ squared activations in bf16 loses real precision in the very quantity you are dividing by — the norm itself becomes a source of gradient noise, and the error grows with $d$. Every production implementation upcasts: HuggingFace's `LlamaRMSNorm` calls `.to(torch.float32)`, computes the reciprocal RMS, then casts back before applying $\boldsymbol{\gamma}$. The reference code later in this chapter does the same.
+
+    A second trap, this one for checkpoint conversion: **Gemma stores its RMSNorm scale as $\gamma - 1$** and applies `(1.0 + weight)`, so its norm weights are initialized to zero. Loading Gemma norm tensors into a Llama-style `(x / rms) * weight` module without adding the 1 multiplies the residual stream by ≈ 0 and produces a model that emits pure noise.
 
 !!! example "Worked example: LayerNorm vs RMSNorm on a small vector"
 
@@ -196,13 +206,25 @@ $$
 
 To keep parameter count and FLOPs comparable to the standard $4d$ expansion, the inner dimension is reduced to $\frac{2}{3} \times 4d \approx \frac{8d}{3}$, then rounded up to a hardware-friendly multiple. Llama 2 7B rounds $\frac{8 \times 4096}{3} = 10{,}922.7$ up to a multiple of 256 (its `multiple_of` hyperparameter), giving $d_\text{ff} = 11{,}008$. Rounding the same $8d/3$ target up to a multiple of 64 instead — as the reference implementation later in this chapter does — yields $d_\text{ff} = 10{,}944$; it is the identical recipe with a different alignment constant.
 
-**GeGLU** is the same idea with GELU instead of Swish: $\text{GeGLU}(x, W, V) = \text{GELU}(xW) \odot (xV)$. Gemma 2 uses GeGLU.
+**GeGLU** is the same idea with GELU instead of Swish: $\text{GeGLU}(x, W, V) = \text{GELU}(xW) \odot (xV)$. Gemma 2 and Gemma 3 use GeGLU.
+
+**In practice.** In HuggingFace `transformers` this sublayer is `LlamaMLP`, whose three matrices are named `gate_proj`, `up_proj`, and `down_proj`; the width comes from `config.intermediate_size` (11008 for Llama 2 7B) and the gate nonlinearity from `config.hidden_act` (`"silu"` for SwiGLU, `"gelu_pytorch_tanh"` for Gemma's GeGLU). Those two config fields plus the three weight names are all you need to identify any open-weight model's FFN from its `config.json`. The naive PyTorch version below materializes `gate`, `up`, and their product as three separate `[B, T, d_ff]` activation tensors; `torch.compile` fuses the elementwise part automatically, and Liger-Kernel's `LigerSwiGLUMLP` is a hand-written Triton fusion of the same thing that keeps only what the backward pass needs. Megatron-LM goes one step further and stores gate and up as a *single* `ColumnParallelLinear` of width $2 d_\text{ff}$ that is chunked in the forward pass — one larger GEMM instead of two, and the natural layout for tensor parallelism (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)).
 
 ### Why gated activations work
 
 The intuition: the gate $\text{Swish}(W_\text{gate}\mathbf{x})$ can *suppress* entire features (output near zero) when the input pattern is not relevant, while the value path $W_\text{up}\mathbf{x}$ determines *what* to write when the gate is open. This is conceptually similar to the forget/input gates of an LSTM, but computed in a single feedforward pass without recurrence. Empirically, SwiGLU and GeGLU consistently outperform GELU and ReLU at the same parameter count on language modeling benchmarks.
 
 {{fig:tblock-activation-curves}}
+
+### Why modern blocks have no bias terms
+
+Notice that every `nn.Linear` in this chapter's reference implementation defaults to `bias=False`, and that RMSNorm has no $\boldsymbol{\beta}$. This is not an oversight: **PaLM (Chowdhery et al., 2022) removed the bias from every dense layer and every normalization and reported improved training stability at scale**, and Llama, Mistral, Gemma, and DeepSeek-V3 all followed. Three reasons make this nearly free:
+
+1. *Redundancy.* Every dense layer in a pre-norm block reads a freshly normalized input. A learned additive offset on that input is largely absorbed by the norm's own scale (and, in LayerNorm, its shift), so the bias buys little expressive power it did not already have.
+2. *Cost without benefit.* Biases are a negligible fraction of parameters ($d_\text{ff} + d$ per FFN versus $3 d\, d_\text{ff}$ weights) but they are a separate tensor to broadcast, an extra epilogue in every GEMM, and one more thing for a tensor-parallel or quantization pass to shard correctly.
+3. *Stability.* A bias is the one parameter in a linear layer whose gradient does not shrink when the input shrinks, so it drifts freely; unbounded bias drift is a known contributor to the slow logit growth that precedes loss spikes (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)).
+
+The exceptions are worth knowing so you are not surprised by a `config.json`: GPT-2 and the encoder-style models keep biases everywhere, and some recent families (notably Qwen2) retained a bias on the QKV projection specifically while dropping it elsewhere. If you are writing a checkpoint loader, treat "does this family use QKV bias?" as a per-family flag rather than a constant.
 
 ---
 
@@ -213,7 +235,7 @@ Dropout (Srivastava et al., *Dropout: A Simple Way to Prevent Neural Networks fr
 1. After the attention weights (before the weighted sum over values) — *attention dropout*.
 2. After each sublayer's output, before the residual addition — *residual dropout*.
 
-During pretraining of large models on large datasets, dropout is often set to 0.0 — the models are underfit, not overfit, and dropout hurts loss. GPT-3 used $p = 0.1$; Llama and subsequent models use $p = 0.0$ during pretraining and may introduce small dropout during fine-tuning.
+During pretraining of large models on large datasets, dropout is often set to 0.0 — the models are underfit, not overfit, and dropout hurts loss. GPT-2 (and nanoGPT's default config) used $p = 0.1$; Llama and subsequent open-weight models use $p = 0.0$ throughout pretraining and may introduce small dropout during fine-tuning.
 
 If you train on small datasets or fine-tune with very few samples, residual dropout of 0.05–0.1 remains a useful regularizer. See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) for fine-tuning configurations.
 
@@ -266,9 +288,17 @@ class RMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [batch, seq_len, dim]  (or any shape ending in dim)
-        # Compute RMS along last dimension
-        rms = x.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
-        return (x / rms) * self.weight
+        # Statistics are computed in fp32 even when x is bf16/fp16: summing
+        # `dim` squared activations with bf16's ~8 mantissa bits loses real
+        # precision in the exact quantity we divide by. Every production
+        # implementation (HF LlamaRMSNorm, Liger-Kernel) does this upcast.
+        in_dtype = x.dtype
+        xf = x.float()
+        rms = xf.pow(2).mean(dim=-1, keepdim=True).add(self.eps).sqrt()
+        return (xf / rms).to(in_dtype) * self.weight
+        # Equivalent one-liner on torch >= 2.4:
+        #   return torch.nn.functional.rms_norm(x, (x.shape[-1],),
+        #                                       self.weight, self.eps)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -388,9 +418,11 @@ class TransformerBlock(nn.Module):
         self.norm_attn = RMSNorm(dim, eps=norm_eps)
         self.norm_ffn  = RMSNorm(dim, eps=norm_eps)
 
-        # Sublayers
+        # Sublayers. The FFN's *internal* dropout is disabled here so that the
+        # FFN path gets exactly one dropout (self.res_drop below); applying
+        # both would give an effective rate of 1 - (1 - p)^2, not p.
         self.attn = MinimalMHA(dim, n_heads, bias=bias)
-        self.ffn  = SwiGLUFFN(dim, ffn_hidden, bias=bias, dropout=dropout)
+        self.ffn  = SwiGLUFFN(dim, ffn_hidden, bias=bias, dropout=0.0)
 
         # Residual dropout (applied after each sublayer, before addition)
         self.res_drop = nn.Dropout(dropout)
@@ -404,7 +436,6 @@ class TransformerBlock(nn.Module):
         # ── FFN sublayer (pre-norm residual) ───────────────────────────────
         # Normalize first, pass through FFN, add back to residual stream
         x = x + self.res_drop(self.ffn(self.norm_ffn(x)))
-        # Note: self.ffn already applies internal dropout before returning
 
         return x   # shape unchanged: [batch, T, dim]
 
@@ -476,7 +507,34 @@ At layer $l$, the residual stream has (empirically) roughly unit variance after 
 
 ### Initialization scaling for deep stacks
 
-Radford et al. (*Language Models are Unsupervised Multitask Learners* / GPT-2, 2019) and Shoeybi et al. (*Megatron-LM*, 2019) note that naive Xavier/Kaiming initialization for a deep stack can produce variance blowup in the residual stream. GPT-2 addresses this by scaling the residual output projections by $1/\sqrt{N}$ (with $N$ the number of residual layers), and Megatron-LM uses the equivalent $1/\sqrt{2L}$ factor (two residual additions per block over $L$ blocks). The fix: scale the output projections of each sublayer by $1/\sqrt{2L}$ (where $L$ is the total number of layers), so that the $L$ residual contributions have unit total variance. This is the `init_scale` trick in many industrial implementations.
+Radford et al. (*Language Models are Unsupervised Multitask Learners* / GPT-2, 2019) and Shoeybi et al. (*Megatron-LM*, 2019) note that naive Xavier/Kaiming initialization for a deep stack can produce variance blowup in the residual stream. GPT-2 addresses this by scaling the residual output projections by $1/\sqrt{N}$ (with $N$ the number of residual layers), and Megatron-LM uses the equivalent $1/\sqrt{2L}$ factor (two residual additions per block over $L$ blocks). The reasoning: each block writes twice into the stream, so after $L$ blocks the stream has accumulated $2L$ independent contributions and its variance is $\mathcal{O}(L)$; shrinking each *writing* projection's initialization std by $1/\sqrt{2L}$ pulls that back to $\mathcal{O}(1)$.
+
+Concretely, only two matrices per block write to the residual stream — the attention output projection and the FFN down-projection — so the whole trick is six lines on top of an otherwise standard normal init:
+
+```python
+def scaled_residual_init(model: TransformerStack, n_layers: int,
+                         std: float = 0.02) -> None:
+    """GPT-2 / Megatron init: N(0, std) everywhere, then shrink the two
+    projections per block that WRITE into the residual stream by 1/sqrt(2L)."""
+    for m in model.modules():
+        if isinstance(m, (nn.Linear, nn.Embedding)):
+            nn.init.normal_(m.weight, mean=0.0, std=std)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.zeros_(m.bias)
+        # RMSNorm weights stay at their ones() init — do not touch them.
+
+    scale = (2 * n_layers) ** -0.5      # 2 residual writes per block
+    for block in model.blocks:
+        block.attn.proj.weight.data.mul_(scale)    # attention output proj
+        block.ffn.w_down.weight.data.mul_(scale)   # FFN down proj
+
+
+# usage:
+#   model = TransformerStack(dim=512, n_heads=8, n_layers=4)
+#   scaled_residual_init(model, n_layers=4)
+```
+
+Skipping this is a common cause of early-training instability in deep-and-thin models, where $L$ is large relative to $d$; the capstone applies exactly this scaling to its 30-layer stack in [The Stack-100M Architecture](../14-capstone/04-architecture.html).
 
 ### bfloat16 and overflow in the FFN
 
@@ -487,6 +545,8 @@ The inner FFN activations after the gating product can have large magnitudes (on
     Suppose each sublayer output has norm approximately $\|\delta_l\| \approx c$ for some small constant $c$. After $L$ blocks the residual stream norm is:
 
     $$\|\mathbf{x}_L\| \approx \|\mathbf{x}_0\| + L \cdot c$$
+
+    (This is the *worst case*, assuming successive updates point in the same direction. If the updates were mutually orthogonal — the independent-random-vector assumption behind the $\mathcal{O}(\sqrt{l})$ estimate above — the norm would instead grow like $\sqrt{\|\mathbf{x}_0\|^2 + L c^2}$. Real networks sit between the two, closer to linear in later layers where sublayers learn correlated writes.)
 
     For $L = 32$, $\|\mathbf{x}_0\| \approx \sqrt{d} = \sqrt{4096} = 64$ (a unit-normal $d$-dim vector), and $c \approx 2$ (a rough estimate from empirical norms early in training), we get $\|\mathbf{x}_{32}\| \approx 64 + 64 = 128$. Pre-norm normalizes this back to $\approx 1$ before each sublayer input, so each sublayer sees a clean signal despite the stream growing. Post-norm would normalize *after* the addition, applying different normalization constants at each block, which has been observed to interact poorly with gradient flow.
 
@@ -530,7 +590,7 @@ with $\alpha > 1$, combined with a scaled initialization. The authors prove that
 
 ### Sandwich norm and dual residuals
 
-Some architectures apply a second normalization after the sublayer function and before the addition (both pre- and post-norm). This "sandwich norm" trades compute for additional stability and was found beneficial in certain ultra-deep configurations.
+Some architectures apply a second normalization to the sublayer *output*, after $F$ and before the residual addition: $\mathbf{x}' = \mathbf{x} + \text{Norm}_\text{post}(F(\text{Norm}_\text{pre}(\mathbf{x})))$. This "sandwich norm" trades a little compute for extra stability by bounding what each sublayer can write into the stream. It is not exotic: **Gemma 2 and Gemma 3 ship it**, and you can see all four norms per layer in their HuggingFace configs (`input_layernorm`, `post_attention_layernorm`, `pre_feedforward_layernorm`, `post_feedforward_layernorm`). A related 2024–2025 move is OLMo 2's reordered norm, which normalizes each sublayer's output rather than its input while keeping the residual path clean — reported (together with QK-norm) as a stability win over plain pre-norm at their scale.
 
 For more on these and other architectural choices, see [Modern Architecture Improvements & Design Choices](../02-transformer/10-modern-arch-improvements.html).
 
@@ -548,6 +608,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
     - Dropout is typically 0.0 during large-scale pretraining (data is more abundant than model capacity), but 0.05–0.1 is useful for fine-tuning on small datasets.
     - Deep stacks benefit from careful output-projection scaling ($1/\sqrt{2L}$) to prevent residual stream variance blowup. Using bfloat16 (rather than float16) avoids FFN activation overflow.
     - The final RMSNorm after the last block is essential in pre-norm architectures: without it, the last block's output is un-normalized before the language-model head projection.
+    - Modern blocks carry **no bias terms** anywhere (PaLM's finding, now universal), and norm statistics must be accumulated in fp32 even under bf16 training. In real code this block is `LlamaDecoderLayer` in HuggingFace `transformers`, `torch.nn.RMSNorm` in PyTorch, and `LigerRMSNorm`/`LigerSwiGLUMLP` when you want the fused Triton versions.
 
 ---
 
@@ -578,6 +639,9 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 
     - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — ~300-line readable PyTorch GPT implementation; the clearest reference for transformer block wiring in code.
     - [EleutherAI/gpt-neox](https://github.com/EleutherAI/gpt-neox) — production-grade multi-GPU training library (Megatron + DeepSpeed); supports RMSNorm, RoPE, flash attention, and MoE out of the box.
+    - **PyTorch** — `torch.nn.RMSNorm` / `torch.nn.functional.rms_norm` (since 2.4) and `torch.nn.LayerNorm` are the fused primitives; `torch.compile` fuses a hand-written norm or SwiGLU into a single kernel with no code change.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — `modeling_llama.py` is the de-facto reference spelling of this block (`LlamaRMSNorm`, `LlamaMLP` with `gate_proj`/`up_proj`/`down_proj`, `LlamaDecoderLayer`); reading it alongside this chapter maps every equation onto a real checkpoint.
+    - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — drop-in Triton fusions for exactly this chapter's components (`LigerRMSNorm`, `LigerSwiGLUMLP`, fused linear cross-entropy), patchable into HF models in one call.
 
 ## Further Reading
 

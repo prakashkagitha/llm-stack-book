@@ -112,13 +112,15 @@ The unembedding step is a **genuine matrix multiply** — $O(TVd)$ — and it is
 
 A key observation: $\mathbf{W}_E$ (the input embedding) and $\mathbf{W}_U$ (the unembedding) both have shape $[V, d]$ and both need to learn "what each token means." It is natural to **share them** — setting $\mathbf{W}_U = \mathbf{W}_E$.
 
-This idea, called **weight tying** (or **tied embeddings**), was popularized by Press & Wolf (2017) in the paper *Using the Output Embedding to Improve Language Models*. It was adopted by GPT-2, BERT, and most subsequent models.
+This idea, called **weight tying** (or **tied embeddings**), was popularized by Press & Wolf (2017) in the paper *Using the Output Embedding to Improve Language Models*. It was adopted by GPT-2 and BERT and is standard in small models today.
 
 **Why it works:**
 
 - It halves the parameter count in the vocabulary-dependent tensors (saving $V \times d$ parameters — in GPT-2 small, that is about 38M parameters saved, ~30% of the total).
 - It couples the representation space of tokens-as-inputs with tokens-as-outputs, creating a consistency pressure: a token's input embedding must be compatible with its appearance as a prediction target.
 - Empirically it improves perplexity at equal parameter counts, especially for smaller models.
+
+**Who actually ties, as of 2026.** Tying is *not* universal — it is a scale-dependent decision, and the deciding quantity is the fraction $Vd/N$ of total parameters $N$ that the table consumes. Small models tie: Gemma 2 and Gemma 3 tie at every size, and the sub-4B members of the Qwen 2.5 / Qwen 3, Llama 3.2 (1B, 3B), and SmolLM families ship with `tie_word_embeddings: true`. Larger models generally untie: Llama 2, Llama 3 8B/70B, and the 7B-and-up Qwen checkpoints all set `tie_word_embeddings: false`. The logic is straightforward — at 1B parameters with $V = 128{,}000$ the table is a third of the model and tying is nearly free capacity, while at 70B it is under 2% and the extra freedom for the output head to specialize is worth the parameters. Because Stack-100M spends ~17% of its budget on the table, our capstone ties; see [The Stack-100M Architecture](../14-capstone/04-architecture.html) for the full parameter accounting and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) for why we pick $V = 32{,}768$ in the first place.
 
 **Implementation:**
 
@@ -163,17 +165,101 @@ model = TiedTransformerHead(vocab_size=32_000, d_model=4096)
 total = sum(p.numel() for p in model.parameters())
 print(f"Parameters: {total:,}")   # 32000 * 4096 = 131,072,000
 
-# Verify the weights are truly shared (same object, not a copy)
-assert model.embed.weight.data_ptr() == model.embed.weight.data_ptr()
+# Verify there is exactly ONE [V, d] tensor: the parameter list has a single
+# entry, and a second (untied) head would have doubled `total` above.
+assert total == 32_000 * 4096
+assert len(list(model.parameters())) == 1
 
 # Gradient flows through both paths during training:
 # dL/d(W_E) accumulates gradients from both token_embed() and logits().
 ```
 
+In HuggingFace `transformers` you never write this by hand: every `*ForCausalLM` reads the `tie_word_embeddings` boolean from its config and calls `model.tie_weights()` at the end of `from_pretrained`, which rebinds `lm_head.weight` to `model.embed_tokens.weight`. Two consequences bite people in practice. First, a tied checkpoint saved with **safetensors** contains only `model.embed_tokens.weight` — the format refuses to serialize two names pointing at the same storage, so `lm_head.weight` is simply absent from the file and is re-created by `tie_weights()` on load. Loading such a state dict with `strict=True` into a hand-rolled model will fail on a "missing key" that is not actually missing. Second, if you mutate the config to `tie_word_embeddings=False` after loading, you must explicitly clone the tensor (`model.lm_head.weight = nn.Parameter(model.get_input_embeddings().weight.clone())`); otherwise the two remain aliased and "untying" silently does nothing.
+
 !!! warning "Common pitfall: copying instead of sharing"
     A frequent mistake is doing `self.unembed = nn.Linear(d_model, vocab_size); self.unembed.weight = self.embed.weight`. This looks right but `nn.Linear` initializes its own weight before you reassign it — you waste memory for a moment and, more dangerously, the `bias` is still separate. Use `F.linear(hidden, self.embed.weight)` (no `nn.Linear` at all) to avoid any ambiguity. Also be careful: if you serialize the model and reload it, ensure the saved checkpoint does not store two copies of the weight.
 
 {{fig:weight-tying-shared-matrix}}
+
+### The Logit Tensor Is the Training Memory Bottleneck
+
+Here is a fact that surprises almost everyone the first time they train a small model: the largest single tensor in a training step is usually not a weight, an activation, or the KV cache — it is the logits. The unembedding turns a `[N, d]` hidden state into `[N, V]`, and with $V \gg d$ that is an expansion by a factor of $V/d$.
+
+Make it concrete for our capstone model, `Stack-100M` ($d = 512$, $V = 32{,}768$), training with a micro-batch of 16 sequences of 2048 tokens, i.e. $N = 32{,}768$ tokens:
+
+| Tensor | Shape | dtype | Bytes |
+|---|---|---|---|
+| Final hidden state | $[32768, 512]$ | bf16 | 34 MB |
+| Logits (bf16 matmul output) | $[32768, 32768]$ | bf16 | 2.15 GB |
+| Logits upcast to fp32 for the softmax | $[32768, 32768]$ | fp32 | 4.29 GB |
+| Gradient w.r.t. logits | $[32768, 32768]$ | fp32 | 4.29 GB |
+
+That is roughly **10.7 GB** for the loss computation alone — about eight times the model's entire trainable state (101M params in bf16 plus AdamW moments). The fp32 upcast is not optional: computing `log_softmax` over 32k classes in bf16 loses several bits of the loss signal, so every serious implementation upcasts.
+
+The fix is to never materialize the full `[N, V]` tensor. Split the tokens into chunks, compute the projection *and* the cross-entropy per chunk, and discard each chunk's logits before moving on — recomputing them in the backward pass. This is a plain application of activation checkpointing to the loss head:
+
+```python
+import torch
+import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
+
+def chunked_linear_ce(hidden, weight, targets, chunk=4096, ignore_index=-100):
+    """
+    Memory-efficient (unembedding + cross-entropy) fused into one op.
+
+    hidden:  [N, d]  flattened final hidden states (N = B*T)
+    weight:  [V, d]  the (possibly tied) unembedding matrix
+    targets: [N]     int64 next-token IDs, `ignore_index` where masked
+
+    Peak logit memory is [chunk, V] instead of [N, V]: the chunk's logits are
+    freed right after its scalar loss is computed, then recomputed in backward.
+    Mathematically identical to F.cross_entropy on the full logit tensor.
+    """
+    n_valid = (targets != ignore_index).sum().clamp(min=1)
+
+    def chunk_loss(h, t):
+        # The [chunk, V] tensor exists only inside this function.
+        logits = F.linear(h, weight).float()      # fp32 softmax for stability
+        return F.cross_entropy(logits, t, ignore_index=ignore_index,
+                               reduction="sum")
+
+    total = hidden.new_zeros((), dtype=torch.float32)
+    for i in range(0, hidden.shape[0], chunk):
+        total = total + checkpoint(
+            chunk_loss, hidden[i:i + chunk], targets[i:i + chunk],
+            use_reentrant=False,
+        )
+    return total / n_valid
+
+
+# --- equivalence check against the naive full-logit path ---
+torch.manual_seed(0)
+N, d, V = 4096, 128, 2048
+W = (torch.randn(V, d) * 0.02).requires_grad_(True)
+h = torch.randn(N, d, requires_grad=True)
+tgt = torch.randint(0, V, (N,))
+
+loss_chunked = chunked_linear_ce(h, W, tgt, chunk=512)
+loss_naive = F.cross_entropy(F.linear(h, W).float(), tgt)
+assert torch.allclose(loss_chunked, loss_naive, atol=1e-5)
+
+loss_chunked.backward()
+g_chunked = h.grad.clone(); h.grad = None
+loss_naive.backward()
+assert torch.allclose(g_chunked, h.grad, atol=1e-5)
+print("chunked linear-CE matches the naive path in value and gradient")
+```
+
+In production you do not hand-roll this. Two open-source implementations push the same idea into a single fused kernel that never writes the logits to HBM at all:
+
+- **[linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel)** — a library of Triton kernels for LLM training whose flagship op is `LigerFusedLinearCrossEntropyLoss`, which fuses the `lm_head` matmul, the log-softmax, and the loss into one kernel with chunked recomputation. It is wired into the HuggingFace `Trainer` behind a single flag: `TrainingArguments(..., use_liger_kernel=True)`, and TRL, Axolotl, and Unsloth all expose it.
+- **[apple/ml-cross-entropy](https://github.com/apple/ml-cross-entropy)** — "Cut Cross-Entropy" (Wijmans et al., 2024), which goes further: it computes only the logit of the *correct* token densely and evaluates the log-sum-exp denominator in on-chip SRAM, reducing logit memory for the loss to a small constant.
+
+Both give bit-comparable losses and are among the highest-leverage single-line changes available when a training run OOMs. See [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html) for the general technique and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) for how this choice sets the micro-batch size of the capstone run.
+
+### Sharding the Vocabulary Across GPUs
+
+When $V \times d$ no longer fits comfortably on one device — or, more often, when the `[N, V]` logits do not — the vocabulary axis is sharded. Megatron-LM's `VocabParallelEmbedding` splits the table row-wise across the tensor-parallel group: rank $r$ owns token IDs $[r \cdot V/P, (r+1) \cdot V/P)$, masks out IDs it does not own, looks up the rest, and an `all-reduce` over the group sums the partial results into the full embedding. The output side mirrors this: `ColumnParallelLinear` for the LM head gives each rank a $[V/P, d]$ slice of the logits, and `vocab_parallel_cross_entropy` computes the loss without ever gathering the full vocabulary — each rank contributes its local max and local sum-of-exponentials to two small all-reduces. This is why Megatron requires `vocab_size` to be padded to a multiple of the tensor-parallel size times 128, and it is the reason real vocab sizes are numbers like 32,768, 128,256, or 50,304 rather than round decimals. See [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html) and [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
 
 ---
 
@@ -187,16 +273,17 @@ The embedding dimension $d$ (also called `d_model`, `hidden_size`, or `n_embd` i
 
 Typical values across model families:
 
-| Model family | $d$ | $V$ | Embed params ($V \times d$) |
-|---|---|---|---|
-| GPT-2 small | 768 | 50,257 | 38.6 M |
-| GPT-2 XL | 1,600 | 50,257 | 80.4 M |
-| Llama 2 7B | 4,096 | 32,000 | 131 M |
-| Llama 3 8B | 4,096 | 128,000 | 524 M |
-| GPT-3 175B | 12,288 | 50,257 | 617 M |
-| Llama 3 70B | 8,192 | 128,000 | 1,048 M |
+| Model family | $d$ | $V$ | Table params ($V \times d$) | Tied? |
+|---|---|---|---|---|
+| GPT-2 small | 768 | 50,257 | 38.6 M | yes |
+| GPT-2 XL | 1,600 | 50,257 | 80.4 M | yes |
+| Llama 2 7B | 4,096 | 32,000 | 131 M | no |
+| Llama 3.2 1B | 2,048 | 128,256 | 263 M | yes |
+| Llama 3 8B | 4,096 | 128,256 | 525 M | no |
+| GPT-3 175B | 12,288 | 50,257 | 618 M | — |
+| Llama 3 70B | 8,192 | 128,256 | 1,051 M | no |
 
-With weight tying, the embed/unembed table is counted once. Without weight tying (some encoder-decoder models like T5 do not tie weights), double those numbers.
+Read the last column carefully: a *tied* model pays for this table once, an *untied* model pays twice. Llama 3 8B therefore spends about 1.05 B of its ~8 B parameters — roughly 13% — on the input embedding plus a separate LM head, while Llama 3.2 1B spends 263 M of ~1.24 B (21%) on a single shared table. Encoder-decoder models such as T5 also keep the decoder LM head separate from the shared token embedding.
 
 **Scaling law intuition.** The Kaplan et al. (2020) and Chinchilla (Hoffmann et al., 2022) scaling laws treat $d$ as one axis of model capacity. In practice, the ratio of $d$ to the number of layers and the ratio of $d$ to the number of attention heads are constrained (typically $d_{\text{head}} = d / n_{\text{heads}} = 64$ or $128$), so $d$ scales roughly as the square root of the parameter count. See [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) for the full picture.
 
@@ -212,7 +299,36 @@ Let us trace a concrete example from raw string to the first Transformer block i
 
 The entire pipeline is differentiable end-to-end. The only non-differentiable step is the tokenizer itself — it is a deterministic rule-based lookup, not a learned function (though soft approaches like SentencePiece with straight-through gradients have been explored).
 
-Here is the corresponding runnable code:
+The first hop — string to integers — is handled by the `tokenizers` / `transformers` stack, and it is worth seeing the seam explicitly rather than starting from a `randint`:
+
+```python
+import torch
+from transformers import AutoTokenizer, AutoModel
+
+tok = AutoTokenizer.from_pretrained("gpt2")     # Rust-backed fast BPE tokenizer
+model = AutoModel.from_pretrained("gpt2")
+
+# GPT-2 ships no pad token -- a classic first-run crash. Reuse EOS as pad and
+# rely on attention_mask (and label masking) to exclude those positions.
+tok.pad_token = tok.eos_token
+
+batch = tok(["The cat sat on the mat.", "Hello world"],
+            return_tensors="pt", padding=True)
+print(batch["input_ids"])        # int64 [2, T]; the tokenizer's only output
+print(batch["attention_mask"])   # 1 for real tokens, 0 for padding
+
+# `wte` ("word token embedding") IS the nn.Embedding of shape [50257, 768].
+wte = model.get_input_embeddings()
+assert isinstance(wte, torch.nn.Embedding)
+assert wte.weight.shape == (50257, 768)
+
+x = wte(batch["input_ids"])      # [2, T, 768] -- the first hidden state
+print(x.shape, x.dtype)
+```
+
+Note what the tokenizer does *not* produce: no floats, no positions, no mask over the vocabulary. It emits `input_ids` (and, when padding, an `attention_mask`), and every remaining transformation is the model's. `get_input_embeddings()` is the portable accessor across all HF architectures — `wte` in GPT-2, `embed_tokens` in Llama/Qwen/Gemma — and it is the handle you use for resizing, freezing, or inspecting the table. For how `input_ids` are produced in the first place, see [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html).
+
+Here is the corresponding runnable code for the from-scratch path:
 
 ```python
 import torch
@@ -292,7 +408,7 @@ print(f"Output norm (mean token): {x.norm(dim=-1).mean().item():.3f}")
 ## Numerical Worked Example: Memory and FLOPs
 
 !!! example "Worked example: Embedding layer sizing for Llama 3 8B"
-    Llama 3 uses $V = 128{,}000$, $d = 4{,}096$, and weight tying.
+    Llama 3 8B uses $V = 128{,}256$ (we round to $128{,}000$ below to keep the arithmetic clean) and $d = 4{,}096$. Note that Llama 3 8B does **not** tie: it carries a separate LM head, so the model pays the figures below *twice* — once for `embed_tokens`, once for `lm_head`.
 
     **Parameter count (embedding table):**
     $$
@@ -362,14 +478,16 @@ The unembed gradient is dense (it involves all $T$ hidden states hitting all $V$
 
 Real models reserve slots in the vocabulary for special-purpose tokens. For example:
 
-| Token | GPT-2 ID | Llama 3 ID | Purpose |
+| Token | Model | ID | Purpose |
 |---|---|---|---|
-| `<\|endoftext\|>` | 50256 | — | end-of-sequence / pad |
-| `<s>` (BOS) | — | 128000 | begin-of-sequence |
-| `</s>` (EOS) | — | 128001 | end-of-sequence |
-| `<\|pad\|>` | — | 128004 | padding (variable-length batches) |
+| `<\|endoftext\|>` | GPT-2 | 50256 | document separator / EOS / pad |
+| `<s>`, `</s>` | Llama 2 (SentencePiece) | 1, 2 | BOS, EOS |
+| `<\|begin_of_text\|>` | Llama 3 | 128000 | begin-of-sequence |
+| `<\|end_of_text\|>` | Llama 3 | 128001 | end of a pretraining document |
+| `<\|finetune_right_pad_id\|>` | Llama 3.1+ | 128004 | right padding for fine-tuning |
+| `<\|eot_id\|>` | Llama 3 Instruct | 128009 | end of a chat turn |
 
-These tokens have embedding vectors like any other token. The critical implementation detail is the `padding_idx` argument to `nn.Embedding`:
+Note the pattern: Llama 3's vocabulary is 128,000 learned BPE merges plus 256 reserved special-token slots, giving `vocab_size = 128256`. Reserving spare slots up front is deliberate — it lets a fine-tuner introduce new control tokens later without resizing the table at all. These tokens have embedding vectors like any other token. The critical implementation detail is the `padding_idx` argument to `nn.Embedding`:
 
 ```python
 # padding_idx ensures the pad token's embedding stays zero and receives
@@ -386,7 +504,47 @@ print(embed.weight[128004].norm())   # tensor(0.)
 # During backward, gradient for padding_idx is zeroed out automatically.
 ```
 
+One subtlety with tying: `padding_idx` pins that row to zero, and because the row is shared with the LM head, the pad token's logit becomes exactly $0$ at every position — a constant, not a learned score. That is harmless (the softmax simply treats it as a fixed-scoring class) but it means you cannot rely on the model learning to *avoid* emitting pad. The real mechanism for excluding padding from the objective is label masking: set the label to `-100` at pad positions so `F.cross_entropy(..., ignore_index=-100)` drops them. Masking labels is mandatory; `padding_idx` is a convenience.
+
 In practice, most modern LLM training uses **sequence packing** to avoid padding entirely — multiple documents are concatenated into a single sequence, separated by EOS tokens, and an attention mask prevents cross-document attention. See [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) for how this is implemented in training pipelines.
+
+### Adding Tokens After Pretraining: Resizing the Table
+
+You will hit this the first time you take a base model to SFT. Your chat template needs control tokens (`<|im_start|>`, `<|im_end|>`, a tool-call delimiter) that the pretrained tokenizer does not have. Adding them to the tokenizer grows $V$, so both the embedding table and the LM head must grow to match — and the new rows need sensible values.
+
+The naive move is to let HuggingFace default-initialize the new rows from $\mathcal{N}(0, \sigma^2)$ with the config's `initializer_range`. That is a real footgun: a randomly initialized row sits at an arbitrary direction in a residual stream whose learned embeddings have long since settled into a particular norm and mean. Because the head is usually tied, that random row is also a random *logit direction*, which can produce large spurious logits for the new token and a loss spike in the first few hundred steps. The standard fix is to initialize each new row to the **mean of the existing rows** (equivalently, a small perturbation around it), which places the new token at the center of the learned distribution where it is maximally neutral:
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "HuggingFaceTB/SmolLM2-135M"          # any small base model
+tok = AutoTokenizer.from_pretrained(model_id)
+model = AutoModelForCausalLM.from_pretrained(model_id)
+
+new_tokens = ["<|im_start|>", "<|im_end|>"]
+n_added = tok.add_special_tokens({"additional_special_tokens": new_tokens})
+
+old_V = model.get_input_embeddings().weight.shape[0]
+
+# pad_to_multiple_of keeps the vocab dimension tensor-core / TP friendly.
+model.resize_token_embeddings(len(tok), pad_to_multiple_of=64)
+
+with torch.no_grad():
+    inp = model.get_input_embeddings().weight
+    mean_row = inp[:old_V].mean(dim=0, keepdim=True)
+    inp[old_V:] = mean_row                        # neutral init for new rows
+
+    # HF returns the lm_head module even when tied, so compare storage:
+    # if it aliases the input table, the assignment above already covered it.
+    out = model.get_output_embeddings()
+    if out is not None and out.weight.data_ptr() != inp.data_ptr():
+        out.weight[old_V:] = out.weight[:old_V].mean(dim=0, keepdim=True)
+
+print(f"added {n_added} tokens; vocab {old_V} -> {inp.shape[0]}")
+```
+
+Three things to check every time. (1) `resize_token_embeddings` handles the tied head automatically *only* if `config.tie_word_embeddings` is true — otherwise you must initialize the head's new rows yourself, as above. (2) Pass `pad_to_multiple_of` (64 or 128) so the new $V$ stays a friendly multiple; an odd vocabulary size costs measurable throughput in the `lm_head` GEMM and breaks Megatron's tensor-parallel divisibility requirement. (3) The tokenizer and the model must be saved and reloaded *together* — a resized model with the original tokenizer will silently emit garbage. The capstone applies exactly this procedure when it introduces chat and tool-call tokens before SFT; see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO)](../14-capstone/09-post-training.html).
 
 ---
 
@@ -421,8 +579,11 @@ class LlamaInputPipeline(nn.Module):
         super().__init__()
         # Simple lookup; no padding_idx by default in Llama
         self.embed_tokens = nn.Embedding(vocab_size, d_model)
-        # Initialization: std scales with d_model
-        nn.init.normal_(self.embed_tokens.weight, std=d_model ** -0.5)
+        # Llama's HF configs use a flat `initializer_range = 0.02`, inherited
+        # from GPT-2 -- NOT a width-dependent rule. (Some research codebases
+        # prefer std = d_model ** -0.5; the two happen to agree near d ~ 2500,
+        # and the muP-style width scaling is discussed in Chapter 3.10.)
+        nn.init.normal_(self.embed_tokens.weight, std=0.02)
 
     def forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
         """input_ids: [B, T]  ->  hidden_states: [B, T, d_model]"""
@@ -461,9 +622,11 @@ This perspective has practical implications:
 
     **A:** Weight tying (proposed by Press & Wolf, 2017) shares the token embedding matrix $\mathbf{W}_E$ between the lookup at the input and the logit projection at the output. The motivations are: (1) it cuts the vocabulary-dependent parameter count roughly in half — for a model with $V = 128{,}000$ and $d = 4{,}096$ that saves about 524 M parameters; (2) it regularizes training by enforcing that a token's input representation is geometrically aligned with the direction the output head uses to predict that same token; (3) it generally improves perplexity at equal model size, especially for smaller models.
 
-    The main tradeoff is that it couples two computations that might benefit from different representations — the input embedding is the start of computation, while the output head reads the fully processed hidden state. For very large models, this coupling becomes less harmful because the model has enough capacity to compensate. Some encoder-decoder models (e.g., early T5 variants) do not tie weights, giving the encoder embedding and decoder LM head full independence.
+    The main tradeoff is that it couples two computations that might benefit from different representations — the input embedding is the start of computation, while the output head reads the fully processed hidden state. That is why tying is scale-dependent in practice: below ~4B parameters the table is 15–30% of the model and tying is nearly free capacity (Gemma, Llama 3.2 1B/3B, small Qwen, SmolLM all tie), while at 8B and above the saving is a small fraction of the model and the field generally unties (Llama 3 8B/70B, large Qwen). Encoder-decoder models such as T5 likewise keep the decoder LM head independent of the shared token embedding.
 
     An interviewer follow-up: "Where does the gradient go?" — During backprop, $\mathbf{W}_E$ receives a sparse gradient from the input lookup (only the rows corresponding to tokens in the current batch) plus a dense gradient from the logit projection (all rows, weighted by the hidden states). The dense unembed gradient dominates for frequent tokens.
+
+    A second follow-up that separates candidates: "Tying halves the *parameters* — does it halve the *memory* of a training step?" — No, and not even close. The dominant term is not the weights but the `[N, V]` logit tensor and its fp32 gradient, which tying does not touch at all. For a 100M-parameter model with $V = 32{,}768$ and a 32k-token micro-batch that is ~10 GB, several times the model plus optimizer state. The lever there is a fused/chunked linear-cross-entropy (Liger-Kernel, Cut Cross-Entropy), not tying.
 
 ---
 
@@ -472,7 +635,8 @@ This perspective has practical implications:
 !!! key "Key Takeaways"
     - The embedding layer is a learned lookup table $\mathbf{W}_E \in \mathbb{R}^{V \times d}$. Mathematically it is $\mathbf{W}_E \mathbf{o}_i$, but implemented as an index select for $O(Td)$ cost rather than an $O(TVd)$ matmul.
     - The unembedding (logit projection) is a genuine dense matmul $\mathbf{H} \mathbf{W}_U^\top$ of shape $[T, d] \times [d, V]$ and is often one of the most expensive operations at inference time.
-    - Weight tying ($\mathbf{W}_U = \mathbf{W}_E$) halves the vocabulary parameter count, regularizes the model, and typically improves perplexity — it is the default in most modern decoder-only LLMs.
+    - Weight tying ($\mathbf{W}_U = \mathbf{W}_E$) halves the vocabulary parameter count and typically improves perplexity at small scale. As of 2026 it is standard *below* roughly 4B parameters (Gemma, Llama 3.2 1B/3B, small Qwen, SmolLM) and usually dropped above it (Llama 3 8B/70B, large Qwen).
+    - The `[N, V]` logit tensor — not any weight — is usually the largest single tensor in a training step. Fusing the LM head with the cross-entropy and recomputing logits chunk-by-chunk (hand-rolled with `torch.utils.checkpoint`, or via Liger-Kernel / Cut Cross-Entropy) removes it almost entirely.
     - Embedding gradients are sparse (only touched tokens get nonzero gradient); the unembed gradient is dense. This asymmetry matters for optimizer state memory and effective learning rate.
     - The embedding dimension $d$ is the width of the entire residual stream and must be chosen jointly with the number of layers, heads, and MLP expansion factor.
     - Modern models (Llama, Mistral) do not add positional encodings at the embedding stage — RoPE is applied inside each attention layer, making the input pipeline a single table lookup.
@@ -495,11 +659,15 @@ This perspective has practical implications:
 
     - [Yu et al., *Scaling Embedding Layers in Language Models* (2025)](https://arxiv.org/abs/2502.01637) — SCONE adds frequent n-gram embeddings off-accelerator so a 1B model outperforms a 1.9B baseline at roughly half the inference FLOPs and accelerator memory (NeurIPS 2025).
     - [Tao et al., *LLMs are Also Effective Embedding Models: An In-depth Overview* (2024)](https://arxiv.org/abs/2412.12591) — surveys how decoder-only LLMs (GPT, LLaMA) now outperform BERT-style encoders for retrieval and semantic similarity.
+    - [Wijmans et al., *Cut Your Losses in Large-Vocabulary Language Models* (2024)](https://arxiv.org/abs/2411.09009) — Cut Cross-Entropy (Apple); computes the loss without materializing the `[N, V]` logit tensor in global memory, collapsing the dominant memory term of training a large-vocabulary model.
 
     **Open-source & tools**
 
     - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — ~300-line reference for weight tying, embedding initialization, and the full token-ID-to-logit pipeline.
     - [huggingface/tokenizers](https://github.com/huggingface/tokenizers) — the Rust-backed tokenizer library (BPE, WordPiece, Unigram) that feeds token IDs into embedding layers in production systems.
+    - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — Triton kernels for LLM training; `LigerFusedLinearCrossEntropyLoss` fuses the tied LM head with the loss and is exposed as `TrainingArguments(use_liger_kernel=True)` in HuggingFace `transformers`.
+    - [apple/ml-cross-entropy](https://github.com/apple/ml-cross-entropy) — reference implementation of Cut Cross-Entropy, a drop-in replacement for the `lm_head` + `cross_entropy` pair.
+    - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — `VocabParallelEmbedding` and `vocab_parallel_cross_entropy`: the canonical implementation of sharding the vocabulary axis across a tensor-parallel group.
 
     **Go deeper**
 

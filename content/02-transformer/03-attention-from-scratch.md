@@ -326,6 +326,9 @@ def scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0,
     return torch.matmul(weights, v)              # (B,H,Lq,d_v)
 ```
 
+!!! warning "Common pitfall: `is_causal` with a rectangular score matrix"
+    The `tril` above — and PyTorch's own `is_causal=True` — aligns the triangle to the **top-left** of the $L_q \times L_k$ score matrix. That is only correct when $L_q = L_k$. During KV-cached decoding you push a *single* new query against $N$ cached keys ($L_q = 1$, $L_k = N$), and top-left alignment lets that query see only key 0: the model reads the first prompt token and ignores everything after it, emitting fluent nonsense that no training loss ever catches (training only exercises the square case, where the two alignments coincide). Build the mask from *positions* instead — `q_pos[:, None] >= kv_pos[None, :]`, which is unambiguous for prefill, chunked prefill, and single-token decode alike — or pass `torch.nn.attention.bias.causal_lower_right(Lq, Lk)` as `attn_mask=`, which requests bottom-right alignment and still reaches a fused kernel. See [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html), and [The Stack-100M Architecture](../14-capstone/04-architecture.html) for the same guard inside the capstone model.
+
 ### A complete, trainable self-attention module
 
 Now we wrap the kernel in a module that *creates* the queries, keys, and values from a single input via learned projections — i.e. genuine self-attention. This is single-head; [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html) generalizes it to many heads (and to the memory-saving GQA/MLA variants that modern models use).
@@ -400,6 +403,32 @@ assert torch.allclose(ours, ref, atol=1e-5)
 
 The built-in does the *exact same math* — it just never materializes the full $L \times L$ score matrix in slow high-bandwidth memory, computing softmax incrementally instead. That IO-aware reformulation is the heart of FlashAttention; we devote a whole chapter to it in [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html). For everyday work, prefer the fused builtin; reach for the from-scratch version to understand, debug, or modify the mechanism.
 
+### Which kernel actually runs: the open-source attention layer
+
+`F.scaled_dot_product_attention` is a *dispatcher*, not one kernel. At call time PyTorch chooses among several backends — a FlashAttention backend, a memory-efficient (xFormers-derived) backend, a cuDNN fused backend, and a pure-PyTorch `MATH` fallback that does materialize the $n^2$ matrix — based on dtype, head dimension, mask type, and hardware. The surprise in practice is silent *fallback*: pass an arbitrary float `attn_mask`, an unsupported head dim, or fp32 inputs, and you quietly drop to `MATH` and pay the quadratic memory you thought you had avoided. Pin and inspect the choice rather than hoping:
+
+```python
+import torch
+from torch.nn.attention import sdpa_kernel, SDPBackend
+
+# Restrict the dispatcher to an explicit preference list. If none of the listed
+# backends can service the call, SDPA raises instead of silently falling back.
+prefer = ([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]
+          if torch.cuda.is_available() else [SDPBackend.MATH])
+
+with sdpa_kernel(prefer):
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+print(out.shape)
+```
+
+Three more pieces of the real ecosystem sit around this call, and you will meet all of them again later in the book:
+
+- **`torch.nn.attention.flex_attention`** (PyTorch ≥ 2.5) compiles a user-written `score_mod` — an arbitrary function of `(score, b, h, q_idx, kv_idx)` — and a `block_mask` predicate into a FlashAttention-class kernel. It is how you get ALiBi biases, Gemma-style logit soft-capping, sliding-window attention, or document-packed block-causal masks *without* leaving the fused fast path (compile it; uncompiled, it materializes scores).
+- **[Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention)** is the reference CUDA implementation. Beyond `flash_attn_func`, its `flash_attn_varlen_func` takes a `cu_seqlens` array of cumulative document lengths and treats a packed buffer as a ragged batch — no mask, no padding waste. That is what Megatron-LM and TRL's packing path call; see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html).
+- **HuggingFace Transformers** exposes the same choice as a one-line flag: `AutoModelForCausalLM.from_pretrained(..., attn_implementation="sdpa")`, with `"eager"` (the readable, mask-materializing path — the one to use when you want to *see* attention weights), `"flash_attention_2"`, and `"flex_attention"` as the alternatives.
+
+For serving, the equivalent layer is a paged kernel that reads KV from non-contiguous blocks — vLLM's PagedAttention and SGLang's RadixAttention, covered in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+
 ## Cost, Complexity & What the Gradients Look Like
 
 Two practical facts about attention dominate every systems decision downstream: its quadratic cost and the shape of its gradient.
@@ -423,6 +452,47 @@ $$
 
 This is where the $\sqrt{d_k}$ scaling pays off a second time. When $a$ is near-uniform (early training, thanks to scaling) the Jacobian has healthy non-zero entries and gradients propagate to queries and keys. When $a$ is saturated (one-hot), $J \to 0$ and the query/key gradients vanish — the failure mode the scale factor exists to prevent. The scale is not just numerically tidy at the forward pass; it keeps the *backward* pass alive.
 
+### The backward pass, written out
+
+Autograd will assemble this for you, but you should be able to write it by hand: it is four matrix products, it is what a fused kernel actually implements, and you cannot read the FlashAttention backward pass without it. Let $S = QK^\top/\sqrt{d_k}$, $A = \operatorname{softmax}(S)$ row-wise, $O = AV$, and let $dO = \partial \mathcal{L}/\partial O$ be the gradient arriving from above. Then
+
+$$
+dV = A^\top dO, \qquad dA = dO\, V^\top, \qquad dS = A \odot \big(dA - D\big),
+$$
+
+$$
+dQ = \frac{1}{\sqrt{d_k}}\, dS\, K, \qquad dK = \frac{1}{\sqrt{d_k}}\, dS^\top Q,
+$$
+
+where $\odot$ is elementwise product and $D \in \mathbb{R}^{n \times 1}$ is the row-wise sum $D_i = \sum_j A_{ij} (dA)_{ij}$, broadcast across the row. The $dS$ line is just the softmax Jacobian $\operatorname{diag}(a) - aa^\top$ applied row by row, written without ever forming the $n \times n \times n$ object. The useful identity is that $D_i = \sum_j A_{ij}(dO_i \cdot v_j) = dO_i \cdot o_i$: **the correction term is a row-wise dot product of the output with its own incoming gradient**, so it can be computed from $dO$ and $O$ alone, in one pass, without $dA$. That is precisely the quantity FlashAttention's backward kernel precomputes and calls $D$ — the trick that lets it recompute $A$ on the fly instead of storing it; see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html).
+
+```python
+torch.manual_seed(0)
+L, d = 6, 8
+Q = torch.randn(L, d, requires_grad=True)
+K = torch.randn(L, d, requires_grad=True)
+V = torch.randn(L, d, requires_grad=True)
+
+S = (Q @ K.T) / d**0.5
+A = torch.softmax(S, dim=-1)
+O = A @ V
+dO = torch.randn(L, d)          # pretend gradient arriving from the layer above
+O.backward(dO)                  # autograd fills Q.grad, K.grad, V.grad
+
+with torch.no_grad():           # the same three gradients, by hand
+    dV = A.T @ dO
+    dA = dO @ V.T
+    D  = (dO * O).sum(dim=-1, keepdim=True)   # == rowsum(dA * A); FlashAttention's D
+    dS = A * (dA - D)
+    dQ = (dS @ K) / d**0.5
+    dK = (dS.T @ Q) / d**0.5
+
+for name, manual, auto in [("dQ", dQ, Q.grad), ("dK", dK, K.grad), ("dV", dV, V.grad)]:
+    print(name, "max abs err vs autograd:", (manual - auto).abs().max().item())  # ~1e-7
+```
+
+Two things fall straight out of these formulas. First, $dV = A^\top dO$ confirms the earlier claim quantitatively: value $j$ collects $\sum_i A_{ij}\, dO_i$, i.e. gradient in proportion to how much each query attended to it. Second, notice that the $1/\sqrt{d_k}$ appears in $dQ$ and $dK$ but *not* in $dV$: the scale factor damps the query/key gradient path only, so it also sets the relative learning rate of $W_Q, W_K$ against $W_V$ — another reason the "obvious" alternative of dividing by $d_k$ is not benign.
+
 !!! tip "Practitioner tip: read the attention maps, but don't over-read them"
     Visualizing the rows of $A$ (which keys each query attends to) is a genuinely useful debugging and interpretability tool — you can literally watch induction heads form, see attention sinks land on the first token, or catch a padding-mask bug as stray weight on `<pad>`. But resist the temptation to treat attention weights as a faithful "explanation" of the model's decision: a value vector that is heavily attended to may carry little task-relevant information, and information also flows through the MLPs and residual stream. Attention weights show *where* information was mixed, not *why* the model produced a given output.
 
@@ -435,7 +505,7 @@ This is where the $\sqrt{d_k}$ scaling pays off a second time. When $a$ is near-
 
 We started with a `dict` lookup and ended with a trainable, batched, masked, autograd-ready attention layer — and at no point did we wave our hands. Every component earned its place: queries/keys/values are the three roles a token plays in a soft retrieval; the dot product is the similarity; $\sqrt{d_k}$ keeps that similarity's variance dimension-independent so softmax stays soft and gradients stay alive; softmax is the differentiable relaxation of "pick the best match" into "blend by match quality"; the attention matrix is the explicit, inspectable record of who-attends-to-whom; and masking is a single additive bias that reshapes information flow into causal, padding-aware, or arbitrary patterns.
 
-From here the path forks in three directions, all of which build directly on this chapter. **Up the stack**: replicate this kernel across many [heads](../02-transformer/04-mha-gqa-mla.html), inject [position information](../02-transformer/05-positional-encoding.html) (since bare attention is permutation-equivariant — it has no inherent notion of order), wrap it in [a Transformer block](../02-transformer/06-transformer-block.html) with norms and residuals and an MLP, and stack the blocks into a [full GPT](../02-transformer/07-build-gpt-from-scratch.html). **Down to the metal**: make this kernel fast and memory-frugal with [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) and serve it with a [KV cache](../07-inference-serving/01-anatomy-inference.html). **Sideways**: question whether the $n^2$ cost is fundamental at all, in [SSMs, Mamba & linear attention](../02-transformer/11-ssm-and-alternatives.html). Whichever way you go, the equation at the top of this page is the thing you are scaling, accelerating, or replacing.
+From here the path forks in three directions, all of which build directly on this chapter. **Up the stack**: replicate this kernel across many [heads](../02-transformer/04-mha-gqa-mla.html), inject [position information](../02-transformer/05-positional-encoding.html) (since bare attention is permutation-equivariant — it has no inherent notion of order), wrap it in [a Transformer block](../02-transformer/06-transformer-block.html) with norms and residuals and an MLP, and stack the blocks into a [full GPT](../02-transformer/07-build-gpt-from-scratch.html). **Down to the metal**: make this kernel fast and memory-frugal with [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) and serve it with a [KV cache](../07-inference-serving/01-anatomy-inference.html). **Sideways**: question whether the $n^2$ cost is fundamental at all, in [SSMs, Mamba & linear attention](../02-transformer/11-ssm-and-alternatives.html). And if you want to see this exact kernel inside a model you will actually train end to end — with GQA, QK-norm, RoPE, a document-packed mask and a KV cache wrapped around it — that is [The Stack-100M Architecture](../14-capstone/04-architecture.html) in the capstone. Whichever way you go, the equation at the top of this page is the thing you are scaling, accelerating, or replacing.
 
 !!! key "Key Takeaways"
     - **Attention is differentiable soft retrieval.** A query scores against every key (dot-product similarity), softmax turns scores into a probability distribution, and the output is the weighted average of the values — a smooth, differentiable relaxation of a hard `dict` lookup.
@@ -445,7 +515,8 @@ From here the path forks in three directions, all of which build directly on thi
     - **Masking is a single additive bias.** A lower-triangular causal mask forbids attending to the future (enabling one-pass training and the KV cache); a padding mask ignores `<pad>` tokens. In low precision use a large finite negative number, not true $-\infty$.
     - **Cost is $\mathcal{O}(n^2 d)$ in compute and $\mathcal{O}(n^2)$ in memory** for the score matrix — the quadratic bottleneck that motivates FlashAttention, long-context tricks, and sub-quadratic alternatives.
     - The output is a convex combination of value vectors: it can interpolate among them but never extrapolate beyond their hull. Gradient to value $v_j$ is exactly its attention weight $a_{ij}$.
-    - For real workloads use a fused kernel (`F.scaled_dot_product_attention`); use the from-scratch version to understand, debug, and modify the mechanism.
+    - **The backward pass is four matmuls**: $dV = A^\top dO$, $dA = dO V^\top$, $dS = A \odot (dA - D)$ with $D_i = dO_i \cdot o_i$, then $dQ = dS\,K/\sqrt{d_k}$ and $dK = dS^\top Q/\sqrt{d_k}$. That $D$ row-sum is exactly what FlashAttention's backward kernel precomputes.
+    - For real workloads use a fused kernel (`F.scaled_dot_product_attention`) — but it is a *dispatcher*, so pin and check the backend with `torch.nn.attention.sdpa_kernel` rather than silently falling back to the $n^2$ `MATH` path, and reach for `flex_attention` or FlashAttention's `flash_attn_varlen_func` when you need custom masks, biases, or packing. Use the from-scratch version to understand, debug, and modify the mechanism.
 
 !!! sota "State of the Art & Resources (2026)"
     Scaled dot-product attention remains the dominant mechanism in frontier LLMs, but the field has moved aggressively on efficiency: IO-aware kernels (FlashAttention, now on its fourth generation targeting NVIDIA Blackwell) have made the $n^2$ matrix tractable, KV-cache-reducing attention — GQA and, in DeepSeek-style models, Multi-head Latent Attention (MLA) — is standard in essentially every production decoder, and differential attention variants have started to show quality gains at scale.

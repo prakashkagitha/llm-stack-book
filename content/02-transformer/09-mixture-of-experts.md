@@ -90,6 +90,8 @@ $$
 
 The noise does two jobs: it **breaks ties** so different tokens explore different experts early in training, and it acts as a regularizer that spreads load. Most modern models drop the learned noise (they rely on the auxiliary balancing loss instead) but the lesson — that routing needs *exploration* to avoid premature collapse onto a few experts — recurs throughout the field. DeepSeek-V3 reintroduced a different exploration mechanism: a per-expert **bias** added to the *routing scores used for selection only* (not for the gate weights), nudged up or down each step to equalize load without polluting the gradient — an "auxiliary-loss-free" balancing trick we return to below.
 
+**A baseline that should worry you.** *Hash layers* (Roller et al., 2021) throw the learned router away entirely and dispatch each token by a fixed random hash of its token id — no gating, no aux loss, perfectly balanced by construction — and still capture a large share of MoE's gain over a dense baseline. The lesson is not that routing is pointless but that much of the benefit comes from the extra *capacity* plus *balanced* dispatch, so a learned router has to earn its keep. Whenever you build one, run the hash baseline next to it; if your router does not beat a hash, it is not learning anything.
+
 {{fig:moe-router-dispatch-pipeline}}
 
 ## A Toy MoE Layer From Scratch
@@ -102,6 +104,7 @@ Let us build a correct, runnable sparse MoE FFN layer. The pedagogical subtlety 
 We implement the loop version, which is what scales:
 
 ```python
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -143,7 +146,7 @@ class SparseMoE(nn.Module):
 
         # 2) CAPACITY: max tokens any single expert will accept this batch.
         #    capacity = capacity_factor * (tokens * k / E), rounded up.
-        capacity = int(self.capacity_factor * (N * self.k) / self.n_experts)
+        capacity = math.ceil(self.capacity_factor * (N * self.k) / self.n_experts)
         capacity = max(capacity, 1)
 
         out = torch.zeros_like(x)                  # accumulate expert outputs here
@@ -213,7 +216,7 @@ $$
 
 with a small coefficient $\alpha$ (on the order of $10^{-2}$). Two questions: why the *product* $f_e P_e$, and why mix a hard count with a soft probability?
 
-The product is minimized, subject to $\sum_e P_e = 1$, exactly when the load is **uniform** ($P_e = 1/E$ for all $e$). You can see this with Lagrange multipliers, or intuitively: $\sum_e f_e P_e$ is like an expectation that is smallest when probability mass avoids the heavily-loaded experts. The factor $E$ rescales it so the loss is $\approx 1$ at perfect balance, making $\alpha$ interpretable across different $E$.
+The product is minimized at **uniform** load, and it is worth being precise about in what sense. At a routing fixed point the hard counts track the soft mass, $f_e \approx P_e$, so $\sum_e f_e P_e \approx \sum_e P_e^2 = \lVert P \rVert_2^2$ — and minimizing a squared norm subject to $\sum_e P_e = 1$ gives $P_e = 1/E$ for every $e$, with value $1/E$. The factor $E$ out front rescales that to exactly $1$ at perfect balance, so $\alpha$ means the same thing across different $E$; a perfectly collapsed router gives $E \cdot 1 = E$ instead. Read literally at a single step, with $f$ detached, the gradient on each expert's probability mass is just $\alpha E f_e$: constant pressure proportional to how overloaded that expert currently is. It is the *dynamics* of that pressure, not a static optimum, that walks the router toward uniform.
 
 The hard/soft mix is the clever part. We *want* to penalize the hard dispatch counts $f_e$ — those are what actually cause imbalance — but $f_e$ comes from a `top-k`/`argmax` and is **non-differentiable**. So we keep $f_e$ as a constant (it provides the *direction*: which experts are overloaded) and multiply by the differentiable $P_e$ (which provides the *gradient*: nudging the router's probabilities down on overloaded experts and up on starved ones). The loss "reads" imbalance from the hard counts and "writes" the correction through the soft probabilities. It is a beautiful little gradient-routing trick and it is why MoE trains at all.
 
@@ -258,7 +261,7 @@ Why does capacity exist at all? Because GPUs want **static, rectangular tensors*
 
     **Parameter count.** Each expert FFN (SwiGLU has 3 matrices; use 2 here for simplicity) holds $2 \times d_\text{model} \times d_\text{ff} = 2 \times 4096 \times 14336 \approx 1.17 \times 10^{8}$ params. Eight experts: $\approx 9.4 \times 10^{8}$ params in this one MoE layer. A dense FFN would be just $1.17 \times 10^{8}$. So the MoE layer holds **8× the parameters** of a dense FFN.
 
-    **FLOP count (the payoff).** Per token, only $k = 2$ experts run. The MoE FFN does $\approx 2 \times (2 \times d_\text{model} \times d_\text{ff}) \times k$ FLOPs $= 2 \times 1.17\times10^8 \times 2 \approx 9.4 \times 10^{8}$ FLOPs per token — i.e. **2 experts' worth**, not 8. The model *contains* 8 experts but each token *pays* for 2. Total-to-active ratio $= 8/2 = 4\times$. That 4× is the lever: roughly 4× the parameters (capacity) at 1× the per-token FLOPs of a 2-expert dense model.
+    **FLOP count (the payoff).** Per token, only $k = 2$ experts run. Using the standard "2 FLOPs per parameter per token" forward-pass rule, the MoE FFN does $\approx 2 \times (2\,d_\text{model} d_\text{ff}) \times k = 2 \times 1.17\times10^8 \times 2 \approx 4.7 \times 10^{8}$ FLOPs per token forward (roughly $3\times$ that including the backward pass) — i.e. **2 experts' worth**, not 8. Running all 8 experts densely would cost $\approx 1.9 \times 10^{9}$. The model *contains* 8 experts but each token *pays* for 2. Total-to-active ratio $= 8/2 = 4\times$. That 4× is the lever: roughly 4× the parameters (capacity) at 1× the per-token FLOPs of a 2-expert dense model.
 
 The takeaway in one line: **capacity factor governs the dropping-vs-padding trade-off; the total-to-active ratio governs the capacity-vs-cost trade-off.** Both are knobs you tune, and both show up directly in training loss and serving latency.
 
@@ -300,6 +303,96 @@ A small comparison table to anchor the lineage:
 | Mixtral 2023 | 8 | 2 | topk-then-softmax | aux loss | open decoder LLM, shared attn |
 | DeepSeek-V3 2024 | 256 routed (+shared) | 8 | sigmoid/softmax + bias | aux-loss-free bias | fine-grained + shared experts |
 
+## MoE in Practice: The Libraries That Implement This
+
+You will almost never ship the dispatch loop we wrote. Each layer of the MoE stack has a mature open-source owner, and knowing which library owns which concern is most of the practical knowledge.
+
+**Modelling and fine-tuning — HuggingFace `transformers`.** Mixtral, Qwen3-MoE, DeepSeek-V3, OLMoE and Llama 4 all ship as `transformers` model classes whose MoE block (`MixtralSparseMoeBlock` and its siblings) is structurally the loop above: a `nn.Linear` gate, an expert `ModuleList`, top-$k$, and an `index_add_` scatter. The non-obvious API detail is that **the auxiliary loss is opt-in** — you must ask the model to return router logits before the balancing term is folded into the loss:
+
+```python
+from transformers import AutoConfig, AutoModelForCausalLM
+
+cfg = AutoConfig.from_pretrained("mistralai/Mixtral-8x7B-v0.1")
+print(cfg.num_local_experts, cfg.num_experts_per_tok)  # -> 8, 2  (E and k)
+print(cfg.router_aux_loss_coef)                        # the alpha in alpha * E * sum(f*P)
+
+cfg.output_router_logits = True        # <-- REQUIRED: without it, no aux loss is added
+model = AutoModelForCausalLM.from_pretrained("mistralai/Mixtral-8x7B-v0.1", config=cfg)
+
+out = model(input_ids=input_ids, labels=labels)
+# out.loss        = LM cross-entropy + router_aux_loss_coef * load-balancing loss
+# out.router_logits = tuple of (N, E) tensors, one per MoE layer -- feed these
+#                     straight into the ExpertLoadMonitor at the end of this chapter.
+```
+
+The reference implementation of the balancing term lives in `transformers.models.mixtral.modeling_mixtral.load_balancing_loss_func`; read it next to the `switch_aux_loss` we derived — it is the same $\alpha E \sum_e f_e P_e$, generalized to top-$k$ and to attention masks. Forget `output_router_logits=True` when fine-tuning an MoE and you silently train with no balancing at all, which is one of the most common ways to wreck a routed model on a small dataset.
+
+**Pretraining at scale — Megatron-Core, DeepSpeed-MoE, MegaBlocks, Tutel.** These own dispatch kernels and expert parallelism. Megatron-Core exposes the entire design space of this chapter as flags, which makes its CLI a good checklist of the knobs that matter:
+
+```bash
+#!/bin/bash
+# Megatron-Core: a DeepSeek-style fine-grained MoE with a shared expert.
+# Every flag below is a knob this chapter derived from first principles.
+
+MOE_ARGS=(
+  --num-experts 64                        # E: routed experts per MoE layer
+  --moe-router-topk 6                     # k: experts per token
+  --moe-router-load-balancing-type aux_loss   # 'none' => the bias-based scheme
+  --moe-aux-loss-coeff 1e-2               # alpha in alpha * E * sum(f * P)
+  --moe-z-loss-coeff 1e-3                 # router z-loss (ST-MoE), logit hygiene
+  --moe-expert-capacity-factor 1.25       # omit this flag entirely => dropless
+  --moe-shared-expert-intermediate-size 2048  # always-on shared expert (DeepSeekMoE)
+  --moe-grouped-gemm                      # one batched GEMM over the ragged groups
+  --moe-token-dispatcher-type alltoall    # the expert-parallel shuffle
+)
+
+torchrun --nproc-per-node 8 pretrain_gpt.py \
+  "${MOE_ARGS[@]}" \
+  --expert-model-parallel-size 8 \
+  --tensor-model-parallel-size 1
+  # ... plus the usual data / optimizer / schedule flags
+```
+
+**DeepSpeed-MoE** offers the same capability as a drop-in module (`deepspeed.moe.layer.MoE`) plus expert-slicing for inference; **Microsoft Tutel** contributes adaptive, dynamically-switched all-to-all kernels; and **MegaBlocks** (`megablocks.layers.dmoe.dMoE`) is the dropless block-sparse implementation — it reformulates the ragged dispatch as one block-sparse matmul so there is no capacity factor, no padding, and no dropped tokens. If you want to *write* the kernel rather than call it, the grouped-GEMM pattern is the canonical intermediate exercise in [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html).
+
+**Serving — vLLM and SGLang.** Both implement fused MoE kernels (a single grouped GEMM over the sorted, expert-major token list) and both let you choose whether the MoE layer is sharded by *tensor* parallelism — every rank holds a slice of every expert — or by *expert* parallelism, where each rank owns whole experts and the all-to-all does the shuffling. vLLM turns the latter on with `--enable-expert-parallel`; SGLang exposes an equivalent expert-parallel size flag. Which is faster depends on batch size and interconnect, and is the subject of [Serving Mixture-of-Experts](../07-inference-serving/13-serving-moe.html).
+
+### Sparse upcycling: an MoE without pretraining one
+
+You do not have to train an MoE from random initialization. **Sparse upcycling** (Komatsuzaki et al., 2023) takes a *trained dense* checkpoint, replaces each FFN with $E$ copies of that same FFN, adds a freshly-initialized router, and continues pretraining. At step zero the MoE layer computes almost exactly what the dense layer did — no capability is thrown away — and the experts then diverge under continued training. Several open MoE releases (the Qwen-MoE line among them) were produced this way, because it converts an existing dense run into extra capacity for a fraction of a from-scratch MoE budget. Two initialization details decide whether it works:
+
+```python
+def upcycle_ffn_to_moe(dense_ffn, d_model, d_ff, n_experts, k=2, jitter=1e-2):
+    """Sparse upcycling: one trained dense FFN -> an E-expert MoE layer.
+    Every expert starts as a COPY of the dense FFN, so the upcycled layer starts
+    from the dense model's function rather than from noise."""
+    moe = SparseMoE(d_model, d_ff, n_experts, k=k)
+    sd = dense_ffn.state_dict()
+    with torch.no_grad():
+        for e in range(n_experts):
+            moe.experts[e].load_state_dict(sd)          # exact clone of the dense FFN
+            # (1) Break the symmetry: identical experts get identical gradients and
+            #     would never differentiate. A little noise lets them specialize.
+            for p in moe.experts[e].parameters():
+                p.add_(jitter * p.std() * torch.randn_like(p))
+        # (2) Small -- NOT zero -- router weights. Near-uniform routing preserves the
+        #     dense function; nonzero weights break per-token ties so every expert is
+        #     selected sometimes and therefore receives gradient. A zero router would
+        #     always pick experts 0..k-1 and starve the rest permanently.
+        moe.router.weight.normal_(mean=0.0, std=1e-3)
+    return moe
+
+torch.manual_seed(0)
+dense = Expert(d_model=32, d_ff=64)
+upcycled = upcycle_ffn_to_moe(dense, d_model=32, d_ff=64, n_experts=8, k=2)
+x = torch.randn(2, 16, 32)
+y_moe, _ = upcycled(x)
+y_dense = dense(x.reshape(-1, 32)).reshape(2, 16, 32)
+print(float((y_moe - y_dense).abs().mean()))   # ~3e-3: starts where dense left off
+```
+
+The gate weights sum to 1 and every expert is (nearly) the same function, so the top-$k$ convex combination reproduces the dense FFN — which is exactly why upcycling does not lose the parent model's quality on day one.
+
 ## Expert Parallelism: A Systems Preview
 
 So far we have treated all experts as living on one device. At frontier scale they cannot — 256 experts of 100M+ parameters each will not fit on one GPU, and even if they did, you would want their compute spread out. **Expert parallelism (EP)** shards the experts across devices: GPU 0 holds experts 0–31, GPU 1 holds 32–63, and so on. This creates the defining systems challenge of MoE, and it is worth previewing here even though [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html) covers it in depth.
@@ -310,7 +403,7 @@ The problem: a token on GPU 0 may route to an expert on GPU 5. Before the MoE la
 
 This is exactly why **load balancing maps directly to throughput**. If expert 3 (on GPU 5) is overloaded, GPU 5 does more work than the others; because the all-to-all is a barrier, *every* GPU waits for the slowest. Imbalance does not just hurt quality — it idles your cluster. The all-to-all is also bandwidth-hungry, so production MoE training overlaps it with computation, places experts to minimize cross-node traffic, and tunes the capacity factor to bound the message sizes. DeepSeek-V3's auxiliary-loss-free balancing and its node-limited routing (restricting each token to experts on a bounded number of nodes) are, at bottom, *communication* optimizations dressed as routing rules. The architecture and the systems are inseparable in MoE; you cannot reason about one without the other.
 
-For inference, EP interacts with the [serving stack](../07-inference-serving/01-anatomy-inference.html): MoE models have *low* active-parameter FLOPs (great for decode) but *high* total-parameter memory (you must keep all experts resident in HBM, since any token might need any of them) and *high* all-to-all traffic. This makes MoE serving a memory-bandwidth and communication problem more than a compute one — the opposite balance from dense models — and motivates specialized kernels and expert-placement strategies in vLLM and SGLang.
+For inference, EP interacts with the [serving stack](../07-inference-serving/01-anatomy-inference.html): MoE models have *low* active-parameter FLOPs (great for decode) but *high* total-parameter memory (you must keep all experts resident in HBM, since any token might need any of them) and *high* all-to-all traffic. This makes MoE serving a memory-bandwidth and communication problem more than a compute one — the opposite balance from dense models — and motivates the specialized kernels and expert-placement strategies of [Serving Mixture-of-Experts: Expert Parallelism & All-to-All Inference](../07-inference-serving/13-serving-moe.html).
 
 !!! interview "Interview Corner"
     **Q:** A Mixtral-style model is "8×7B" but reported as ~47B total parameters activating ~13B per token. Reconcile those three numbers, and explain why the total-to-active ratio, not the raw parameter count, is what you should reason about for both quality and serving cost.
@@ -327,7 +420,7 @@ A few practitioner realities round out the picture. MoE models are **less FLOP-e
 - **Training instability.** Routers are prone to spiky losses; the router z-loss, fp32 router computation, and careful initialization (small router weights so early routing is near-uniform) are standard mitigations. See [Training Stability & Loss Spikes](../03-pretraining/11-training-stability.html).
 - **Fine-tuning is finicky.** Sparse models can overfit downstream tasks faster and route inconsistently on small datasets; freezing the router or using a higher capacity factor during fine-tuning helps. Distilling a sparse model into a dense one ([Distillation & Compression](../05-posttraining-alignment/12-distillation-compression.html)) is a common deployment path when you want MoE's training efficiency but dense serving simplicity.
 - **Memory dominates serving.** As above, all experts must be resident, so MoE shifts the bottleneck from compute to HBM capacity and bandwidth. Expert offloading (CPU↔GPU paging of cold experts) and quantizing experts more aggressively than attention are active areas.
-- **When to use it.** Reach for MoE when you are *compute-bound* in training or *latency-bound* in serving but have *memory to spare* — exactly the frontier-pretraining and high-throughput-serving regimes. If memory is your scarce resource (edge, single-GPU), a dense model of the same *total* size is simpler and serves with less machinery.
+- **When to use it.** Reach for MoE when you are *compute-bound* in training or *latency-bound* in serving but have *memory to spare* — exactly the frontier-pretraining and high-throughput-serving regimes. If memory is your scarce resource (edge, single-GPU), a dense model of the same *total* size is simpler and serves with less machinery. This is precisely why the book's capstone model, Stack-100M, is deliberately **dense**: at 100M parameters on one GPU, memory — not FLOPs — is the binding constraint, so MoE's machinery buys nothing. [The Retrospective & Scale-Up Path](../14-capstone/12-retrospective-and-scaleup.html) works out where MoE becomes the right fork on the way past 1B and gives a fine-grained + shared-expert FFN you can drop into that codebase.
 
 !!! tip "Practitioner tip: watch the routing entropy, not just the loss"
     The single most useful MoE training diagnostic is the **per-expert token distribution** (and its entropy) over time. Healthy training shows it rising toward uniform early and then *gently* specializing — not collapsing to a spike. A sudden drop in routing entropy, or one expert's load climbing past ~2–3× the mean, is an early warning of collapse that precedes any loss spike. Log it every few steps; it will save you a wasted multi-day run.
@@ -435,6 +528,7 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
     - **The lineage:** Shazeer 2017 (sparse gating) → GShard (top-2, expert parallelism) → Switch (top-1 simplicity, z-loss) → Mixtral (open decoder LLM, renormalized gating) → DeepSeek-MoE (**fine-grained + shared experts**, auxiliary-loss-free bias balancing).
     - **Expert parallelism makes MoE a communication problem:** tokens are shuffled to their experts' devices via **all-to-all** and back. Load imbalance directly idles GPUs because the all-to-all is a barrier — architecture and systems are inseparable.
     - **MoE serving is memory- and bandwidth-bound,** not compute-bound: low active FLOPs (fast decode) but all experts must stay resident in HBM (high VRAM) with heavy all-to-all traffic.
+    - **Know the libraries:** `transformers` for modelling and fine-tuning (set `output_router_logits=True` or you train with *no* balancing loss), Megatron-Core / DeepSpeed-MoE / Tutel / MegaBlocks for grouped-GEMM dispatch and expert parallelism at scale, vLLM and SGLang (`--enable-expert-parallel`) for serving. **Sparse upcycling** — copy a trained dense FFN into every expert, jitter to break symmetry, small-but-nonzero router init — gets you an MoE without a from-scratch MoE budget.
     - **Compare MoE to dense by *active* params or by *FLOPs*, never by total params** — total-parameter comparisons are marketing apples-to-oranges.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -450,14 +544,19 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
 
     - [Zoph et al., *ST-MoE: Designing Stable and Transferable Sparse Expert Models* (2022)](https://arxiv.org/abs/2202.08906) — introduced the router z-loss that stabilizes training; thorough fine-tuning study at 269B parameters.
     - [Zhou et al., *Mixture-of-Experts with Expert Choice Routing* (2022)](https://arxiv.org/abs/2202.09368) — inverts routing so each expert picks its top-C tokens, guaranteeing perfect load balance by construction.
+    - [Komatsuzaki et al., *Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints* (2023)](https://arxiv.org/abs/2212.05055) — turn a trained dense model into an MoE by copying its FFN into every expert; the cheapest route to a working MoE.
     - [Jiang et al. (Mistral AI), *Mixtral of Experts* (2024)](https://arxiv.org/abs/2401.04088) — open decoder-only MoE with top-k-then-softmax renormalized gating; existence proof for MoE in the open-source stack.
     - [Dai et al. (DeepSeek), *DeepSeekMoE: Towards Ultimate Expert Specialization* (2024)](https://arxiv.org/abs/2401.06066) — fine-grained experts plus always-on shared experts; richer routing combinations at identical active-parameter cost.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — 671B total / 37B active parameters; auxiliary-loss-free bias-adjustment balancing and node-limited routing as communication optimizations.
+    - [Muennighoff et al. (AI2), *OLMoE: Open Mixture-of-Experts Language Models* (2024)](https://arxiv.org/abs/2409.02060) — a 7B-total / 1B-active MoE released with data, code, logs and intermediate checkpoints; the best reference if you want to reproduce an MoE pretraining run end to end.
     - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — a 1T-total / 32B-active open-weight MoE, representative of the 2025 wave (alongside Qwen3 and Llama 4) that made fine-grained, hundreds-of-experts sparsity the open-frontier norm.
 
     **Open-source & tools**
 
     - [databricks/megablocks](https://github.com/databricks/megablocks) — dropless MoE training via block-sparse grouped-GEMM kernels; eliminates token dropping and padding, up to 40% faster than prior frameworks.
+    - [NVIDIA/Megatron-LM (Megatron-Core MoE)](https://github.com/NVIDIA/Megatron-LM) — production MoE training: grouped GEMM, all-to-all token dispatch, expert/tensor/pipeline parallel composition, capacity-factor and dropless modes, all exposed as `--moe-*` flags.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — `MixtralSparseMoeBlock`, `load_balancing_loss_func`, and the `output_router_logits` / `router_aux_loss_coef` config knobs used above; the readable reference implementation of everything in this chapter.
+    - [microsoft/Tutel](https://github.com/microsoft/tutel) and [DeepSpeed-MoE](https://github.com/deepspeedai/DeepSpeed) — adaptive all-to-all kernels and drop-in `MoE` layers for training and inference.
     - [deepseek-ai/DeepSeek-V3](https://github.com/deepseek-ai/DeepSeek-V3) — open inference and training code for the DeepSeek-V3 MoE architecture including the auxiliary-loss-free balancing implementation.
 
     **Go deeper**
@@ -474,6 +573,9 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
 - Jiang, Sablayrolles, Roux, et al. (Mistral AI) — *Mixtral of Experts* (2024). The open decoder-only MoE with top-2 renormalized gating.
 - Dai, Deng, Zhao, et al. (DeepSeek) — *DeepSeekMoE: Towards Ultimate Expert Specialization* (2024), and the *DeepSeek-V3 Technical Report* (2024). Fine-grained and shared experts; auxiliary-loss-free balancing.
 - Gale, Narayanan, Zaharia, et al. — *MegaBlocks: Efficient Sparse Training with Mixture-of-Experts* (2022). Block-sparse / grouped-GEMM kernels that make MoE dropless.
+- Roller, Sukhbaatar, Szlam, Weston — *Hash Layers For Large Sparse Models* (2021). Fixed hash routing as the baseline every learned router should have to beat.
+- Komatsuzaki, Puigcerver, Lee-Thorp, et al. — *Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints* (2023). Reuse a dense run to bootstrap an MoE.
+- Muennighoff, Soldaini, Groeneveld, et al. (AI2) — *OLMoE: Open Mixture-of-Experts Language Models* (2024). A fully open MoE — data, code, logs and checkpoints — and the best end-to-end reproduction target.
 - Jacobs, Jordan, Nowlan, Hinton — *Adaptive Mixtures of Local Experts* (1991). The original mixture-of-experts formulation that started it all.
 
 ## Exercises

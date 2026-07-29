@@ -145,6 +145,35 @@ class ResidualVQ(nn.Module):
 
 {{fig:rvq-residual-cascade}}
 
+You will essentially never train your own codec. The pretrained ones ship in **HuggingFace `transformers`** (`EncodecModel`, `MimiModel`, `DacModel`), in Descript's **`descript-audio-codec`** package (DAC), and in **`kyutai-labs/moshi`** (Mimi). A full encode/decode round trip is a dozen lines, and it is the first thing to run when you are debugging an audio LM: if the codec round trip already sounds wrong, nothing downstream can be right.
+
+```python
+# Real EnCodec round trip: waveform -> integer codes -> waveform
+import torch
+from transformers import EncodecModel, AutoProcessor
+
+model = EncodecModel.from_pretrained("facebook/encodec_24khz")
+processor = AutoProcessor.from_pretrained("facebook/encodec_24khz")
+
+wav = torch.randn(24000 * 2)                     # 2 s of (fake) 24 kHz mono audio
+inputs = processor(raw_audio=wav.numpy(),
+                   sampling_rate=processor.sampling_rate,
+                   return_tensors="pt")
+
+with torch.no_grad():
+    enc = model.encode(inputs["input_values"], inputs["padding_mask"],
+                       bandwidth=6.0)            # 6 kbps -> 8 RVQ levels
+    # audio_codes: (n_chunks, batch, num_quantizers, num_frames) integers
+    print(enc.audio_codes.shape, enc.audio_codes.dtype)   # ... torch.int64
+    recon = model.decode(enc.audio_codes, enc.audio_scales,
+                         inputs["padding_mask"])[0]       # (batch, 1, samples)
+
+# 2 s at 75 frames/s = 150 frames; 8 quantizers -> 1200 integers total.
+print(recon.shape)
+```
+
+Those integers are the whole trick: from here on, `audio_codes` is just a `(K, T)` block of vocabulary indices, and every technique from [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) applies unchanged.
+
 ### Token Rate and Sequence Length
 
 !!! example "Worked example: token budget for 30 s of speech"
@@ -159,8 +188,10 @@ class ResidualVQ(nn.Module):
 
     The codec produces **200× more tokens than the transcript**. This is the core engineering tension: faithful audio reconstruction demands high token density, but LLM context windows are finite. Real systems use one of three mitigations:
     1. Use only the coarsest 1–2 RVQ levels for modeling semantics (the rest are predicted in parallel or recovered by a separate decoder).
-    2. Use a higher compression codec (e.g., DAC at lower bitrates).
+    2. Use a **low-frame-rate codec**. This is where the field moved after 2024: Kyutai's Mimi (the codec inside Moshi) runs at **12.5 frames/s** rather than 75, so 8 quantizers cost 100 tokens/s instead of 600 — a 6$\times$ reduction with speech quality preserved by distilling semantic features into the first codebook. Descript's DAC, SNAC's multi-scale hierarchy, and single-codebook designs like WavTokenizer push in the same direction, typically landing on the order of 40–100 tokens/s for speech.
     3. Encode audio as a continuous vector sequence (Whisper-style) instead of discrete tokens, and quantize only for generation.
+
+    Redo the arithmetic with Mimi: 30 s $\times$ 100 tokens/s $= 3{,}000$ tokens, roughly 33$\times$ the transcript instead of 200$\times$. That single change is what made real-time full-duplex dialogue affordable on one GPU.
 
 ### Codec Token Interleaving Patterns
 
@@ -168,7 +199,7 @@ When flattening $K$ RVQ levels into a 1-D token stream, there are two main strat
 
 {{fig:audio-rvq-interleave-patterns}}
 
-The delay pattern (used in AudioLM, VALL-E, and related systems) allows the autoregressive model to condition each level on all previous time steps, limiting temporal lookahead. Level 1 alone captures coarse semantics; levels 2–8 refine acoustic detail.
+The delay pattern (introduced by MusicGen and adopted by most later codec LMs, e.g. Parler-TTS) allows the autoregressive model to condition each level on all previous time steps, limiting temporal lookahead. Level 1 alone captures coarse semantics; levels 2–8 refine acoustic detail. Systems that instead separate the levels into distinct *stages* — AudioLM's coarse-then-fine acoustic models, VALL-E's AR level-1 plus NAR levels 2–8 — are solving the same problem with a different factorization: both refuse to pay the $K\times$ sequence-length cost of a flat interleave.
 
 ## Whisper: The Encoder-Only Path to ASR
 
@@ -197,8 +228,12 @@ def transcribe_with_whisper(audio_path: str, model_size: str = "large-v3"):
     audio = whisper.load_audio(audio_path)
     audio = whisper.pad_or_trim(audio)  # pad/trim to exactly 30 s
 
-    # Compute log-Mel spectrogram on the same device as the model
-    mel = whisper.log_mel_spectrogram(audio).to(model.device)  # (80, 3000)
+    # Compute log-Mel spectrogram on the same device as the model.
+    # IMPORTANT: the number of Mel bins is a per-checkpoint property —
+    # 80 for tiny..medium, 128 for large-v3 and large-v3-turbo. Hard-coding
+    # 80 will feed a large-v3 encoder the wrong input shape.
+    n_mels = model.dims.n_mels
+    mel = whisper.log_mel_spectrogram(audio, n_mels).to(model.device)  # (n_mels, 3000)
 
     # Detect language (optional)
     _, probs = model.detect_language(mel.unsqueeze(0))
@@ -214,6 +249,59 @@ def transcribe_with_whisper(audio_path: str, model_size: str = "large-v3"):
 # text = transcribe_with_whisper("interview.wav", model_size="base")
 ```
 
+In production almost nobody uses the reference `openai/whisper` package. The two libraries that matter are **HuggingFace `transformers`** (`WhisperForConditionalGeneration` + `AutoProcessor`, which handles long-form audio by chunking with overlap and gives you batching, `torch.compile`, and Flash-Attention kernels for free) and **`faster-whisper`** (a CTranslate2 reimplementation with INT8/FP16 weights that is several times faster at the same word error rate, and the usual choice for CPU or single-GPU real-time transcription). `WhisperX` adds forced alignment for word-level timestamps and `pyannote.audio` diarization on top.
+
+```python
+# The mainstream path: transformers ASR pipeline (handles >30 s audio by chunking)
+import torch
+from transformers import pipeline
+
+asr = pipeline(
+    task="automatic-speech-recognition",
+    model="openai/whisper-large-v3-turbo",
+    torch_dtype=torch.float16,
+    device="cuda:0",
+    chunk_length_s=30,      # sliding 30 s windows for long-form audio
+    stride_length_s=5,      # overlap so words at chunk seams are not lost
+)
+out = asr("interview.wav", return_timestamps=True, batch_size=8)
+# out["text"] -> full transcript; out["chunks"] -> [{"timestamp": (t0, t1), "text": ...}, ...]
+```
+
+### CTC: The Encoder-Only Alternative
+
+Whisper is a sequence-to-sequence model, but the other major ASR family — wav2vec 2.0, HuBERT fine-tuned for recognition, and most streaming production recognizers — uses **Connectionist Temporal Classification (CTC)**. CTC keeps only the encoder: it emits one distribution over characters (plus a special blank symbol $\varnothing$) per acoustic frame, and defines the probability of a transcript $y$ as the sum over every frame-level alignment $a$ that collapses to it:
+
+$$
+p(y \mid x) = \sum_{a \in \mathcal{B}^{-1}(y)} \prod_{t=1}^{T} p(a_t \mid x)
+$$
+
+where $\mathcal{B}$ deletes blanks and merges repeated symbols ("h h $\varnothing$ i" $\to$ "hi"). The sum has exponentially many terms but is computed in $O(T \cdot |y|)$ by a forward–backward dynamic program — the same algorithm as an HMM forward pass. PyTorch ships it as `torch.nn.functional.ctc_loss`, so fine-tuning `Wav2Vec2ForCTC` on your own labelled audio is a handful of lines.
+
+CTC's conditional independence across frames (no autoregressive decoder) is exactly why it is fast, streamable, and immune to the hallucinated-text failure mode that seq2seq decoders like Whisper exhibit on silence or music; it is also why plain CTC has no language model and needs an external one (beam search with a KenLM n-gram, or a shallow-fused neural LM) to reach competitive accuracy.
+
+```python
+# Measuring what actually matters: word error rate
+import jiwer
+
+reference  = "the quick brown fox jumps over the lazy dog"
+hypothesis = "the quick brown fox jumped over a lazy dog"
+
+# Normalize before scoring — casing and punctuation otherwise dominate WER
+transform = jiwer.Compose([
+    jiwer.ToLowerCase(),
+    jiwer.RemovePunctuation(),
+    jiwer.RemoveMultipleSpaces(),
+    jiwer.Strip(),
+    jiwer.ReduceToListOfListOfWords(),
+])
+wer = jiwer.wer(reference, hypothesis,
+                reference_transform=transform, hypothesis_transform=transform)
+print(f"WER = {wer:.3f}")   # 2 substitutions / 9 reference words = 0.222
+```
+
+WER is edit distance (substitutions + insertions + deletions) divided by reference length, so it is unbounded above; the normalization step matters more than people expect, which is why HuggingFace's Open ASR Leaderboard pins a single text normalizer across all submitted models. Audio has no `lm-evaluation-harness` equivalent with the same gravitational pull — the community standards are that leaderboard for ASR, and toolkits like **ESPnet**, **SpeechBrain**, and **NVIDIA NeMo** for training and scoring recipes end to end.
+
 ### Whisper as a Feature Extractor
 
 For downstream tasks — speech LLMs, speaker diarization, voice cloning — we often want encoder hidden states rather than the text output. The encoder's final hidden states are rich acoustic representations that have been used in place of (or alongside) codec tokens.
@@ -224,12 +312,13 @@ import whisper
 from whisper.model import AudioEncoder
 
 def extract_whisper_features(
-    mel: torch.Tensor,   # (batch, 80, 3000) on GPU
+    mel: torch.Tensor,   # (batch, model.dims.n_mels, 3000) on GPU
     model: whisper.Whisper,
 ) -> torch.Tensor:
     """
     Return encoder hidden states: (batch, 1500, encoder_dim).
-    For whisper-large-v3, encoder_dim = 1280.
+    For whisper-large-v3, n_mels = 128 and encoder_dim = 1280;
+    for whisper-base, n_mels = 80 and encoder_dim = 512.
     """
     with torch.no_grad():
         # model.encoder is a standard TransformerEncoder
@@ -249,6 +338,8 @@ Classic neural TTS decomposes the problem:
 
 HiFi-GAN (Kong et al., 2020) is a GAN-based vocoder trained to invert Mel spectrograms to waveforms with high perceptual quality. The generator is a series of transposed convolutions with multi-receptive-field fusion (MRF) blocks. Training uses a combination of multi-period and multi-scale discriminators.
 
+This paradigm is far from obsolete, and it is the one to reach for on a small budget: end-to-end non-autoregressive systems in the VITS/StyleTTS family run in the tens of millions of parameters and synthesize far faster than real time on a CPU. `transformers` serves VITS and Meta's MMS-TTS checkpoints (`VitsModel`) directly, `coqui-ai/TTS` and `speechbrain` package the full train/finetune recipes, and the 2025 open-weight Kokoro model is roughly 82 M parameters — the same order as the capstone's Stack-100M. Codec LMs win on zero-shot voice cloning and expressive prosody; vocoder pipelines win on latency, footprint, and determinism.
+
 ### Codec LM Pipelines: VALL-E and Relatives
 
 VALL-E (Wang et al., Microsoft, 2023) reframes TTS as a language modeling problem over codec tokens. Given a 3-second acoustic prompt and a text transcript, VALL-E:
@@ -266,7 +357,7 @@ The key insight: level-1 tokens determine *what* is said and *how* (prosody, spe
 
 The logical endpoint of audio tokenization is a model that accepts and emits audio tokens natively — no ASR transcription step, no TTS synthesis step, just raw audio tokens flowing through a standard transformer. We call these "speech LMs" or "audio LLMs."
 
-### SpeechTokenizer, dSPIN, and Semantic-Acoustic Disentanglement
+### SpeechTokenizer and Semantic-Acoustic Disentanglement
 
 A pure codec tokenizer conflates semantic content with acoustic style in its first RVQ level. SpeechTokenizer (Zhang et al., 2023) addresses this by training the first codebook to align with HuBERT semantic features (see below), forcing it to capture *what was said* while higher levels capture *how it was said*.
 
@@ -289,11 +380,15 @@ HuBERT (Hsu et al., Facebook AI Research, 2021) is a BERT-style masked predictio
 
 **AudioPaLM** (Rubenstein et al., Google, 2023) interleaves audio tokens and text tokens in the same token stream fed to a pre-trained PaLM language model. Audio tokens use a separate embedding table; text and audio share the same positional encoding and transformer blocks. This enables a single model to perform ASR, TTS, and speech-to-speech translation in a unified framework.
 
-**Moshi** (Défossez et al., Kyutai, 2024) goes further: it is designed for real-time full-duplex spoken dialogue, meaning the model continuously emits audio while simultaneously listening. It uses two parallel audio token streams — one for the system's voice and one for the user's voice — processed by separate depth-transformers at each time step, plus a shared inner "language model" operating at a slower rate. This hierarchical temporal structure enables sub-200 ms response latency in practice.
+**Moshi** (Défossez et al., Kyutai, 2024) goes further: it is designed for real-time full-duplex spoken dialogue, meaning the model continuously emits audio while simultaneously listening. Three ideas make it work:
+
+- **Mimi, a 12.5 Hz streaming codec.** One frame every 80 ms, 8 quantizers, with the first codebook distilled from a self-supervised speech model so it carries semantics. The low frame rate is what puts a full conversation inside a normal context window.
+- **A two-transformer hierarchy.** A large *temporal* transformer (Moshi's 7 B-parameter Helium text LM backbone) advances one step per 80 ms frame; a small *depth* transformer then autoregresses over the $K$ codebooks *within* that frame. Cost therefore scales with frames, not with $K \times$ frames.
+- **Two parallel audio streams plus "Inner Monologue."** Moshi models its own voice and the user's voice as separate token streams at every step — that is what "full duplex" means mechanically: there is no turn variable, both streams always exist, so barge-in and backchannels are just ordinary predictions. Alongside its own audio stream it also predicts time-aligned *text* tokens as a prefix to the audio of each frame, which measurably improves linguistic quality — the model quite literally thinks in text a beat before it speaks.
 
 {{fig:moshi-temporal-hierarchy}}
 
-The crucial engineering decision in Moshi: **the inner LM runs causally** — it only attends to past codec frames, enabling real-time streaming. The depth transformer runs separately per frame, keeping per-step latency bounded.
+The crucial engineering decision in Moshi: **the temporal transformer runs causally over frames** — it only attends to past codec frames, enabling true streaming with no lookahead. The depth transformer runs $K$ tiny steps inside each frame, keeping per-step latency bounded; the reported theoretical latency is around 160 ms (one 80 ms frame of codec delay plus one frame of compute).
 
 By 2025–2026 this native-audio approach scaled into full any-to-any "omni" backbones. Qwen3-Omni (Alibaba, 2025), for instance, ingests text, audio, image, and video and emits text plus streaming speech from a single model — using a Thinker–Talker split and time-aligned position embeddings — reaching open-source SOTA on most audio benchmarks. Speech dialogue is increasingly a capability folded into one multimodal model rather than a standalone speech LM (see [Unified & Any-to-Any Models](../10-multimodal-and-arch/05-unified-any-to-any.html)).
 
@@ -455,6 +550,10 @@ class AudioQFormer(nn.Module):
         return q  # (B, 32, 4096) — drop into LLM as prefix tokens
 ```
 
+!!! tip "Practitioner tip: giving a small text LM ears"
+
+    This is the cheapest real multimodal project in the book, and it is entirely within reach of the capstone model. Take the frozen Stack-100M decoder from [The Stack-100M Architecture](../14-capstone/04-architecture.html), freeze a `whisper-small` encoder next to it, and train *only* a two-layer MLP projector from the encoder's 768-dim states into the decoder's `d_model` — on the order of a million trainable parameters. Average-pool the encoder output by 4 to keep the audio prefix near 375 tokens, format each example as `<audio prefix> + "Transcribe:" + transcript`, and mask the loss to the transcript tokens exactly as in the SFT recipe of [Post-Training Stack-100M](../14-capstone/09-post-training.html). A few thousand hours of LibriSpeech/Common Voice gets a usable, if unimpressive, speech-in model; only then is it worth unfreezing the encoder's top blocks at a 10$\times$ lower learning rate.
+
 ### Handling Variable-Length Audio in a Batch
 
 One practical challenge is batching audio inputs of different lengths. There are two strategies:
@@ -481,6 +580,8 @@ Multimodal audio models are evaluated on:
 | Speech translation | CoVoST-2 | BLEU |
 | Zero-shot TTS similarity | LibriSpeech test-clean | SECS (speaker cosine sim) |
 | Speech emotion recognition | IEMOCAP | Weighted accuracy |
+
+All of these are loadable through HuggingFace `datasets`, whose `Audio` feature decodes and resamples lazily — `load_dataset("librispeech_asr", "clean", split="test", streaming=True).cast_column("audio", Audio(sampling_rate=16_000))` gives you 16 kHz `numpy` arrays without ever materializing the corpus on disk. That streaming path matters: audio corpora are one to two orders of magnitude larger per hour of content than the text corpora of [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html).
 
 !!! warning "Common pitfall"
 
@@ -528,7 +629,7 @@ Beyond speech, audio LLMs can model music and environmental sound by replacing t
 
 ### MusicGen
 
-MusicGen (Copet et al., Meta AI, 2023) is an autoregressive transformer trained on EnCodec tokens from licensed music. It uses a **codebook interleaving** technique: instead of the delay pattern, it uses a "codebook per time step" approach where all $K$ levels for time step $t$ are modeled jointly in a single forward pass using a small depth transformer, before advancing to step $t+1$. This avoids the exponential search space of fully autoregressive RVQ and keeps generation tractable.
+MusicGen (Copet et al., Meta AI, 2023) is a single autoregressive transformer trained on EnCodec tokens from licensed music. Its contribution is a systematic study of **codebook interleaving patterns** — flat, parallel, delayed, and coarse-first — and the finding that the *delay* pattern is the best quality/compute trade-off. One transformer step emits all $K$ codebooks for the current column through $K$ separate output heads; because level $k$ is shifted right by $k$ frames, each head still gets to condition on the coarser levels of the same acoustic instant, without the $K\times$ longer sequence a flat interleave would require. (The alternative — a small depth transformer autoregressing within the frame, as in Moshi and UniAudio — buys exact within-frame conditioning at the cost of an extra network.)
 
 ```python
 from audiocraft.models import MusicGen
@@ -538,13 +639,13 @@ import numpy as np
 def generate_music(
     description: str,
     duration_seconds: float = 10.0,
-    model_size: str = "small"   # small | medium | large | melody
+    model_name: str = "facebook/musicgen-small"   # small | medium | large | melody
 ) -> np.ndarray:
     """
     Generate music conditioned on a text description.
     Returns float32 audio at 32 kHz.
     """
-    model = MusicGen.get_pretrained(model_size)
+    model = MusicGen.get_pretrained(model_name)
     model.set_generation_params(duration=duration_seconds)
 
     # Condition on text description
@@ -600,7 +701,7 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 !!! key "Key Takeaways"
 
     - Audio is made machine-learnable as either continuous Mel spectrograms (for encoder models like Whisper) or discrete codec tokens via Residual Vector Quantization (for generative models like VALL-E, AudioLM, MusicGen).
-    - Neural audio codecs (EnCodec, SoundStream) compress audio to ~75 frames/second with 8 RVQ levels, producing approximately 600 tokens/second — far more than text, creating a fundamental token-budget tension.
+    - Neural audio codecs (EnCodec, SoundStream) compress audio to ~75 frames/second with 8 RVQ levels, producing approximately 600 tokens/second — far more than text, creating a fundamental token-budget tension. Low-frame-rate codecs (Mimi at 12.5 frames/s, ~100 tokens/s) are the 2024–2026 answer, and are what make full-duplex dialogue fit in a context window.
     - Whisper's encoder-decoder architecture treats ASR as a standard seq2seq problem over log-Mel features, making it easy to reuse as an audio feature extractor for downstream LLMs via linear projection or Q-Former adapters.
     - Speech LMs (AudioPaLM, Moshi) bypass the ASR/TTS pipeline by treating audio tokens and text tokens as interchangeable elements of a unified sequence, enabling lower latency and richer parallelism.
     - Real-time full-duplex dialogue (Moshi-style) requires a hierarchical temporal architecture: a slow inner LM operating on coarse semantic tokens, and fast depth transformers producing fine acoustic tokens per step.
@@ -632,6 +733,10 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
     - [facebookresearch/audiocraft](https://github.com/facebookresearch/audiocraft) — Meta's library for MusicGen, AudioGen, and EnCodec; includes training code and pretrained checkpoints.
     - [openai/whisper](https://github.com/openai/whisper) — official Whisper inference library with all model sizes (tiny → large-v3, plus the faster 2024 `large-v3-turbo`) under MIT license.
     - [kyutai-labs/moshi](https://github.com/kyutai-labs/moshi) — full-duplex spoken dialogue framework with the Mimi streaming codec and pretrained Moshi weights.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — the practical home of most of this chapter: `WhisperForConditionalGeneration`, `Wav2Vec2ForCTC`, `EncodecModel`, `MimiModel`, `DacModel`, `VitsModel`, and the `automatic-speech-recognition` pipeline with long-form chunking.
+    - [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper) — CTranslate2 Whisper runtime with INT8/FP16 inference; the usual choice for real-time or CPU transcription.
+    - [jitsi/jiwer](https://github.com/jitsi/jiwer) and the HuggingFace Open ASR Leaderboard — WER computation with a pinned text normalizer, the only fair way to compare ASR systems.
+    - [espnet/espnet](https://github.com/espnet/espnet), [speechbrain/speechbrain](https://github.com/speechbrain/speechbrain), and NVIDIA NeMo — end-to-end training recipes for ASR, TTS, and speaker tasks.
 
 ## Further Reading
 
@@ -639,6 +744,8 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 - **EnCodec:** Défossez et al., "High Fidelity Neural Audio Compression," arXiv 2210.13438, 2022.
 - **Whisper:** Radford et al., "Robust Speech Recognition via Large-Scale Weak Supervision," OpenAI technical report, 2022.
 - **HuBERT:** Hsu et al., "HuBERT: Self-Supervised Speech Representation Learning by Masked Prediction of Hidden Units," *TASLP*, 2021.
+- **CTC:** Graves et al., "Connectionist Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural Networks," *ICML*, 2006.
+- **wav2vec 2.0:** Baevski et al., "wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations," *NeurIPS*, 2020.
 - **VALL-E:** Wang et al., "Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers," arXiv 2301.02111, 2023.
 - **AudioLM:** Borsos et al., "AudioLM: a Language Modeling Approach to Audio Generation," *TASLP*, 2023.
 - **MusicGen:** Copet et al., "Simple and Controllable Music Generation," *NeurIPS*, 2023.
@@ -695,9 +802,9 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 **3.** Whisper's encoder always processes exactly 1500 positions, "regardless of actual utterance duration." (a) Trace how a raw 30-second clip becomes 1500 encoder positions given the chapter's numbers (16 kHz input, 10 ms hop, and a convolutional front-end that halves the temporal resolution). (b) What does the pipeline do with a 5-second clip, and what is the compute cost consequence? (c) What happens to a 40-second clip, and why can this silently hurt transcription quality?
 
 ??? note "Solution"
-    (a) At 16 kHz with a 10 ms hop, each frame covers $160$ samples, so a 30-second clip yields $30 \text{ s} \times 100 \text{ frames/s} = 3000$ log-Mel frames (the `(80, 3000)` tensor in the transcription code). The convolutional front-end halves the temporal resolution, $3000 \to 1500$, which is the fixed number of positions each self-attention block attends over.
+    (a) At 16 kHz with a 10 ms hop, each frame covers $160$ samples, so a 30-second clip yields $30 \text{ s} \times 100 \text{ frames/s} = 3000$ log-Mel frames (the `(n_mels, 3000)` tensor in the transcription code — $n_{\text{mels}} = 80$ for `base`, $128$ for `large-v3`). The convolutional front-end halves the temporal resolution, $3000 \to 1500$, which is the fixed number of positions each self-attention block attends over.
 
-    (b) `whisper.pad_or_trim` pads the 5-second clip with silence up to the full 30-second window before feature extraction, so it still becomes a `(80, 3000)` input and 1500 encoder positions. The padded/silent region is masked, but the encoder self-attention still runs over all 1500 positions — so a 5-second utterance costs the same encoder compute as a 30-second one. Short utterances waste compute, exactly the downside the chapter lists for the fixed-length-window strategy.
+    (b) `whisper.pad_or_trim` pads the 5-second clip with silence up to the full 30-second window before feature extraction, so it still becomes a `(n_mels, 3000)` input and 1500 encoder positions. The padded/silent region is masked, but the encoder self-attention still runs over all 1500 positions — so a 5-second utterance costs the same encoder compute as a 30-second one. Short utterances waste compute, exactly the downside the chapter lists for the fixed-length-window strategy.
 
     (c) A 40-second clip is *trimmed* to the first 30 seconds. The final 10 seconds are simply discarded, so any speech there is never transcribed. Because the API returns a fluent transcript for the portion it did see, the truncation is silent — there is no error, just missing words. The chapter's remedy is dynamic chunking: split long audio into overlapping 30-second windows, encode each, and concatenate.
 
@@ -762,7 +869,7 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 
     Because each level quantizes the residual left by the previous ones, `decode(all_indices[:j])` reconstructs $\sum_{k=1}^{j}\mathbf{e}^{(k)}$, and the MSE decreases as $j$ grows — the numeric embodiment of the chapter's statement that "level 1 alone captures coarse semantics; levels 2-8 refine acoustic detail." (The codebooks here are randomly initialized, not trained, so the absolute MSE is large; the point is the monotone decrease.)
 
-**6.** The chapter contrasts flat interleaving with the *delay pattern* used by AudioLM, VALL-E, and MusicGen. Implement `apply_delay_pattern(codes, pad_id)` that takes a codec tensor of shape `(B, K, T)` (K RVQ levels over T frames) and returns the delayed layout where level $k$ (0-indexed) is shifted right by $k$ steps, with `pad_id` filling the exposed positions. State the output shape and explain, in one sentence, why this pattern helps a causal autoregressive model.
+**6.** The chapter contrasts flat interleaving with the *delay pattern* introduced by MusicGen. Implement `apply_delay_pattern(codes, pad_id)` that takes a codec tensor of shape `(B, K, T)` (K RVQ levels over T frames) and returns the delayed layout where level $k$ (0-indexed) is shifted right by $k$ steps, with `pad_id` filling the exposed positions. State the output shape and explain, in one sentence, why this pattern helps a causal autoregressive model.
 
 ??? note "Solution"
     Each level $k$ is written into the output starting at column $k$, so higher levels lag behind level 0. The output has $K - 1$ extra columns to hold the staggered tail:

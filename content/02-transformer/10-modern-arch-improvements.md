@@ -2,7 +2,9 @@
 
 The Transformer described by Vaswani et al. in 2017 was a landmark, but the architecture used in today's production LLMs — Llama 4, Qwen3, DeepSeek-V3, Gemma 3 — bears only a family resemblance to that original design. A practitioner opening a modern model config file for the first time will encounter terms like `rms_norm`, `silu`, `rope_theta`, `num_key_value_heads`, `qk_norm`, and `no_bias`. Each of these represents a deliberate, empirically validated architectural decision made in pursuit of better training stability, improved compute efficiency, or stronger final model quality.
 
-This chapter is your annotated map of those decisions. We will examine each improvement from first principles — why it was introduced, what it fixes, how it works mathematically, and how it appears in code. We conclude with a "modern transformer recipe" summarizing which choices are nearly universal versus still debated. For the transformer block basics, see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html); for positional encodings in depth, see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html); and for GQA/MQA mechanics, see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).
+This chapter is your annotated map of those decisions. We will examine each improvement from first principles — why it was introduced, what it fixes, how it works mathematically, how it appears in code, and finally what its name is in a real `config.json` and which library ships the fused kernel for it. We conclude with a "modern transformer recipe" summarizing which choices are nearly universal versus still debated. For the transformer block basics, see [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html); for positional encodings in depth, see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html); and for GQA/MQA mechanics, see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).
+
+Every choice surveyed here is *committed to* in [The Stack-100M Architecture](../14-capstone/04-architecture.html), where the capstone freezes one config — RMSNorm pre-norm, SwiGLU, GQA with 8 query / 2 KV heads, RoPE with interleaved position-free layers, QK-norm, tied embeddings, no biases — and reproduces its parameter count to the last norm vector. Read this chapter for the menu; read that one for the order.
 
 ---
 
@@ -77,16 +79,22 @@ raw_normed = x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + 1
 print(f"RMS of raw_normed row 0: {raw_normed[0,0].pow(2).mean().sqrt():.4f}")  # ~1.000
 ```
 
+!!! warning "Common pitfall: the `(1 + w)` convention"
+
+    Two conventions for the learned scale coexist in the wild. Llama/Qwen/Mistral store $\gamma$ directly and multiply by `self.weight` (initialized to ones), exactly as above. Gemma stores an *offset* and multiplies by `(1.0 + self.weight)` with the parameter initialized to **zeros**, so that weight decay pulls the scale toward 1 rather than toward 0. Loading a Gemma checkpoint into a Llama-style `RMSNorm` therefore multiplies every hidden state by roughly zero and produces fluent-looking garbage with no error message. When you write a checkpoint converter, diff the norm formula before you diff anything else.
+
 ### Pre-norm vs post-norm
 
-GPT-2 used post-norm (LayerNorm after the residual). Nearly all modern models use **pre-norm** (LayerNorm before the sublayer):
+The original Transformer (and BERT) used **post-norm**: normalization applied *after* the residual addition. GPT-2 already moved the norm to the input of each sub-block — **pre-norm** — and added a single final norm before the LM head; nearly all modern models kept that placement:
 
 ```text
-Post-norm (GPT-2):  x → Sublayer(x) + x → Norm → output
-Pre-norm  (modern): x → Norm(x) → Sublayer → + x → output
+Post-norm (Vaswani 2017, BERT):  x → Sublayer(x) + x → Norm → output
+Pre-norm  (GPT-2 onward):        x → Norm(x) → Sublayer → + x → output
 ```
 
 Pre-norm yields more stable gradients at large scale — the residual path is always clean, so gradients flow through the skip connection without being divided by a normalization operation. The trade-off is that pre-norm models can exhibit "representation collapse" at depth if not carefully initialized, which motivates other tricks like scaled initialization.
+
+Two further placements are now common at the frontier, both of which keep the clean residual highway but re-bound *what each block adds to it*. **Sandwich norm** (Gemma 2/3) keeps the pre-norm and adds a second RMSNorm on the sublayer output before the residual add: `x + Norm_post(Sublayer(Norm_pre(x)))`. **Reordered / output norm** (OLMo 2) drops the pre-norm and normalizes only the branch output: `x + Norm(Sublayer(x))`. Both cost one extra cheap reduction per sublayer and both were adopted specifically because they suppress loss spikes in long runs (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)). A different axis entirely — running the attention and MLP sublayers *in parallel* off a single norm, as PaLM and GPT-NeoX do — is derived in [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html).
 
 ---
 
@@ -257,7 +265,7 @@ GQA:  H_q = G * H_kv  for G > 1   (G query heads share one KV head)
 MQA:  H_kv = 1                     (all query heads share one KV)
 ```
 
-A common configuration is 8 KV heads for 32 query heads (G=4), as in Llama 2 70B and Qwen 2.5. This reduces the KV cache memory by a factor of G while introducing only a small quality degradation versus MHA.
+The near-universal choice is **8 KV heads**, almost regardless of query-head count: Llama 3 8B uses 32 query / 8 KV heads ($G=4$), Llama 2 70B and Llama 3 70B use 64 query / 8 KV heads ($G=8$), and the Qwen 2.5 / Qwen3 families follow the same pattern. This reduces KV cache memory by a factor of $G$ while introducing only a small quality degradation versus MHA. Eight is not a coincidence: under tensor parallelism the KV heads are split across ranks, so $H_{kv} \ge \text{TP degree}$ lets each GPU of a standard 8-GPU node own exactly one KV head with no replication and no extra all-gather (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)). Picking $H_{kv} < \text{TP}$ forces the KV cache to be duplicated on every rank and silently gives back the memory you were trying to save.
 
 !!! example "Worked example: KV cache memory budget"
 
@@ -366,18 +374,22 @@ In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ c
 
 ### QK-norm: normalize Q and K before attention
 
-The fix, used in models like Gemma 2/3 and OLMo 2, is to apply RMSNorm to the query and key vectors *before* computing the attention scores:
+The fix — introduced for ViT-22B (Dehghani et al., "Scaling Vision Transformers to 22 Billion Parameters", 2023), studied systematically as an instability remedy by Wortsman et al. ("Small-scale proxies for large-scale Transformer training instabilities", 2023), and now standard in Gemma 3, OLMo 2, Chameleon and Qwen3 — is to apply RMSNorm to the query and key vectors *before* computing the attention scores:
 
 $$
 \text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{\text{RMSNorm}(Q)\,\text{RMSNorm}(K)^\top}{\sqrt{d_k}}\right)V
 $$
 
-This bounds the dot products to $O(d_k)$ regardless of training duration or model size. An independent learned scale $\gamma$ per head can be added to recover expressivity.
+After normalization each head's query and key have RMS $\approx \gamma$, so $\|q\| \approx \|k\| \approx \sqrt{d_k}\,\gamma$ and by Cauchy–Schwarz $|q \cdot k| \le d_k \gamma_q \gamma_k$; after the $1/\sqrt{d_k}$ scale the logits are $O(\sqrt{d_k}\,\gamma_q\gamma_k)$ — bounded by the *learned* scales rather than by whatever magnitude the projections happened to drift to over a trillion tokens. Because $\gamma$ is learned per channel, expressivity is largely retained; only the unbounded growth is removed.
+
+Two implementation details matter. First, **order versus RoPE**: the convention (and what HuggingFace's `Qwen3Attention` and `Gemma3Attention` do) is *project → normalize → rotate*. Either order gives the same bound, since rotation preserves vector norms, but the two are not the same function once $\gamma$ is per-channel — rotation mixes channel pairs — so a converter that swaps them will silently produce a different model. Second, the norm is over `head_dim`, not `d_model`: one tiny $\gamma \in \mathbb{R}^{d_k}$ shared across heads (Qwen3, Gemma 3) or one per head (some variants). The shared version is what the code below implements, and it adds only $2 d_k$ parameters per layer.
 
 ```python
 class QKNormAttention(nn.Module):
     """
-    Attention with per-head QK normalization, as in Gemma 2.
+    Attention with per-head QK normalization, as in Gemma 3, OLMo 2 and Qwen3.
+    (Gemma 2 used logit soft-capping instead; Gemma 3 replaced it with this.)
+    In HuggingFace these modules are literally named `q_norm` / `k_norm`.
     Prevents logit explosion during long training runs.
     """
 
@@ -421,16 +433,22 @@ class QKNormAttention(nn.Module):
 
 GPT-2 had bias terms in every linear projection and LayerNorm. Modern models like Llama, Qwen, and Mistral remove biases from all linear layers. The motivation is empirical: at large scale biases do not meaningfully improve loss (they represent a negligible fraction of parameters), but they complicate optimizer state memory (Adam maintains a first and second moment for every parameter, so biases add to optimizer memory with little benefit). For a 7B model, removing biases saves a few hundred MB of optimizer state — not huge, but free.
 
-There is also a theoretical argument: when using pre-RMSNorm (which has no bias itself), the preceding biases in linear projections are redundant, as RMSNorm can represent any affine output of a linear layer with a bias by adjusting its scale.
+There is also a theoretical argument: when using pre-RMSNorm (which has no bias itself), the preceding biases in linear projections are redundant, as RMSNorm can represent any affine output of a linear layer with a bias by adjusting its scale. A stability argument closed the case: biases are the one part of the model that receives gradient regardless of the input, so they drift monotonically over long runs and are a recurring source of activation outliers that later break INT8/FP8 quantization (see [Quantization I: Post-Training Quantization](../04-kernels-efficiency/07-quantization-ptq.html)). Qwen2 kept a bias on the Q/K/V projections specifically to help length extrapolation; Qwen3 removed it and added QK-norm instead — the clearest single data point that the field now prefers normalizing over biasing.
 
 ### Tied vs untied embeddings
 
 The embedding table maps token IDs to vectors of dimension $d$ and has shape $(V, d)$ where $V$ is the vocabulary size. The output "unembedding" (also called the LM head or logit projection) maps from $d$ back to $V$, also shape $(V, d)$.
 
-**Tied embeddings** share the same weight matrix for both. This was common in smaller models (original GPT-2, T5) because it saves $V \times d$ parameters — for a vocabulary of 32,000 and $d=4096$, that is ~131M parameters. **Untied embeddings** use separate matrices. The choice:
+**Tied embeddings** (Press & Wolf, 2017) share the same weight matrix for both. This saves $V \times d$ parameters — for a vocabulary of 32,000 and $d=4096$, that is ~131M. **Untied embeddings** use separate matrices. The choice:
 
 - Tied: fewer parameters, simpler to implement, forces the embedding space to be simultaneously useful for input representation and output scoring.
-- Untied: more expressive; the input and output embedding spaces can specialize. Llama 1 used tied embeddings; Llama 2 and 3 use **untied** embeddings, the direction most modern large models have moved for quality reasons.
+- Untied: more expressive; the input and output embedding spaces can specialize, and the LM head can develop the large-norm "unembedding" directions that tying would push back into the input representation.
+
+The decision is essentially a *budget fraction* question, and the field splits cleanly by scale rather than by year. Tie when $V d$ is a large slice of the model — GPT-2, all Gemma models, Llama 3.2 1B/3B, and Qwen3 0.6B–4B tie; untie when it is a rounding error — the Llama 1/2/3 models at 7B and above, and Qwen3 8B+, untie. A workable rule of thumb: if $V d$ exceeds roughly 10% of your parameter budget, tie. At $V=128{,}256$ and $d=3072$ the table is 394M parameters, over 12% of a 3B model — tie. At $d=8192$ in a 70B model it is 1.05B, under 2% — untie and buy the expressivity.
+
+!!! tip "Practitioner tip: tying changes the gradient scale on the embedding table"
+
+    With tied weights the embedding matrix receives gradient from *two* places every step: a sparse gradient from the input lookup (only the rows for tokens actually in the batch) and a dense gradient from the LM head (every row, every step). The dense term dominates, so the table trains far faster than an untied input embedding would. Gemma compensates by scaling the looked-up embeddings by $\sqrt{d_{\text{model}}}$ before the first block — a fixed multiplier that decouples the scale the input path wants from the scale the output logits want. If you tie embeddings in a from-scratch model and see the embedding rows blowing up, this multiplier (or a lower LR group for the table) is the standard fix.
 
 !!! note "Initialization matters more than you think"
 
@@ -460,7 +478,9 @@ $$
 \hat{a}_{ij} = 50 \cdot \tanh\!\left(\frac{q_i \cdot k_j / \sqrt{d_k}}{50}\right)
 $$
 
-This combines with QK-norm to doubly guard against attention saturation.
+**Currency note: soft-capping lost.** Gemma 3 explicitly *replaced* Gemma 2's soft-capping with QK-norm, citing Dehghani et al. (2023), Wortsman et al. (2023) and the Chameleon team. The reason is a systems reason rather than a quality one: a $\tanh$ applied to the full $T \times T$ logit matrix cannot be expressed inside a FlashAttention kernel, which by construction never materializes that matrix (see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)). Enabling attention soft-capping in HuggingFace therefore forces the eager attention path, which is exactly the throughput you were trying to buy with long context. QK-norm, by contrast, is two cheap elementwise ops on $Q$ and $K$ *before* the kernel, so it composes with FlashAttention for free.
+
+The other standard guard on the **final** logits is the **z-loss**, an auxiliary penalty $\beta_z \cdot \operatorname{mean}\big(\log\sum_v e^{z_v}\big)^2$ with $\beta_z \approx 10^{-4}$ (PaLM, ST-MoE, OLMo 2). It applies pressure on the log-partition function during training instead of clamping at inference, so it changes no forward-pass math and costs nothing at serving time — which is why most 2025–2026 models use z-loss rather than logit capping. It is derived, fused with cross-entropy, and chunked for memory in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html). Learn soft-capping because you will meet it in Gemma 2 checkpoints and in interviews; reach for QK-norm plus z-loss when you build.
 
 ```python
 import torch
@@ -513,6 +533,8 @@ The attention sink phenomenon has two practical consequences:
 
 2. **Deliberate sink token design**: some models prepend a learnable or fixed "register" token that is never attended to in the output but acts as a sink for attention. This frees the model from overloading the BOS token.
 
+3. **Learned sink logits, no token at all**: the cleanest 2025 formulation drops the sink *token* and instead gives each head a learned scalar $s_h$ that participates in the softmax denominator but has no corresponding value vector — i.e. $\text{softmax}$ over $[\,q\!\cdot\!k_1, \ldots, q\!\cdot\!k_t, s_h\,]$, with the last slot's weight simply discarded. The head can now attend to *nothing* (all real weights near zero) without distorting any value, which is the "off-by-one softmax" idea made trainable. OpenAI's gpt-oss models (2025) ship this as a per-head `sinks` parameter, and it is what `GptOssAttention` implements in HuggingFace `transformers`. Concretely, the softmax denominator becomes $e^{s_h} + \sum_j e^{q\cdot k_j}$, costing one extra scalar per head and nothing at inference.
+
 !!! interview "Interview Corner"
     **Q:** You are designing a 70B parameter language model for production deployment. Walk through the key architectural choices you would make compared to the original Transformer, and explain *why* for each one.
 
@@ -524,8 +546,8 @@ The attention sink phenomenon has two practical consequences:
     4. **GQA with ~8 KV heads**: dramatically reduces KV cache memory (often 4–8x smaller) with minimal quality loss; critical for deployment economics.
     5. **No biases in linear layers**: negligible quality impact, reduces optimizer memory, simplifies distributed checkpointing.
     6. **Untied input/output embeddings**: improved model quality at scale; the cost is $V \times d$ extra parameters (~130M for a 32K vocab at d=4096), which is acceptable.
-    7. **QK-norm** (for very large scale or long training): prevents attention logit explosion during extended training runs.
-    8. **Logit soft-capping** (optional, Gemma 2 style): additional guard against output logit saturation, especially with large vocabularies.
+    7. **QK-norm** (RMSNorm on Q and K per head): prevents attention logit explosion during extended training runs, and unlike soft-capping it composes with FlashAttention because it acts before the kernel.
+    8. **Z-loss** ($\beta_z \approx 10^{-4}$ on $(\log\sum_v e^{z_v})^2$) rather than Gemma 2-style logit soft-capping: same guard against output logit blow-up, but training-time only, so inference math and kernel choice are unaffected.
     9. **Scaled residual initialization**: scale down output projections by $1/\sqrt{2L}$ to keep residual variance stable at initialization in deep models.
 
 ---
@@ -550,7 +572,9 @@ The ratio $L / d_{\text{model}}$ tends to be consistent across generations:
 | Qwen 2.5 72B | 80 | 8192 | 0.0098 |
 | DeepSeek-V3 (dense equiv.) | 61 | 7168 | 0.0085 |
 
-Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attention head dimension of 128 (with 32 heads). Larger models scale $d$ and $L$ roughly in proportion. Going much beyond $d=8192$ per attention head becomes hardware-unfriendly: matmuls want square-ish tensors, and very large hidden dimensions with few heads under-utilize hardware parallelism.
+Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attention head dimension of 128 (with 32 heads). Larger models scale $d$ and $L$ roughly in proportion, holding $d_k = 128$ fixed and adding heads: $d_k$ below 64 wastes tensor-core tiles (which want $\ge 64$ along the contraction dimension) and starves each head of capacity, while $d_k$ above 256 is unsupported by most FlashAttention builds. So the practical knobs are $L$, $H_q$ and $H_{kv}$, with $d = H_q \cdot d_k$ falling out.
+
+Below ~1B parameters the trade-off tilts noticeably toward depth: MobileLLM (Liu et al., 2024) ablated shape at fixed parameter count for sub-billion models and found deeper-and-thinner consistently wins, which is why the capstone's Stack-100M chooses $d=512$ with 30 layers ($L/d \approx 0.059$, six times "deeper" by this metric than a 7B model). See [The Stack-100M Architecture](../14-capstone/04-architecture.html) for that derivation in full.
 
 !!! example "Worked example: parameter count breakdown for Llama 2 7B"
 
@@ -627,17 +651,19 @@ We now have enough pieces to assemble a complete reference. The table below summ
 
 {{fig:modarch-recipe-gpt2-vs-modern}}
 
-| Component | GPT-2 (2019) | Modern Consensus | Notes |
-|---|---|---|---|
-| Normalization | LayerNorm (post) | RMSNorm (pre) | Zhang & Sennrich 2019 |
-| MLP activation | GeLU | SwiGLU / GeGLU | Shazeer 2020 |
-| Position encoding | Learned absolute | RoPE | Su et al. 2021 |
-| Multi-head variant | MHA | GQA | Ainslie et al. 2023 |
-| Bias in Linear | Yes | No | Empirical preference |
-| Tied embeddings | Yes | Untied (usually) | Llama 2+ trend |
-| QK-norm | No | Yes (increasingly standard) | Gemma 2/3, OLMo 2 |
-| Logit soft-cap | No | Optional | Gemma 2 |
-| Attention sink | Ignored | Keep BOS in KV cache | StreamingLLM, 2023 |
+| Component | GPT-2 (2019) | Modern Consensus | HF config field | Notes |
+|---|---|---|---|---|
+| Normalization | LayerNorm (pre) | RMSNorm (pre; +post in Gemma/OLMo 2) | `rms_norm_eps` | Zhang & Sennrich 2019 |
+| MLP activation | GeLU | SwiGLU / GeGLU | `hidden_act: "silu"` | Shazeer 2020 |
+| MLP width | $4d$ | $\approx \tfrac{8}{3}d$, multiple of 256 | `intermediate_size` | iso-parameter with 3 matrices |
+| Position encoding | Learned absolute | RoPE (+ NoPE layers at long ctx) | `rope_theta`, `rope_scaling` | Su et al. 2021 |
+| Multi-head variant | MHA | GQA, $H_{kv}=8$ | `num_key_value_heads` | Ainslie et al. 2023 |
+| Bias in Linear | Yes | No | `attention_bias: false` | Qwen3 dropped the last holdout |
+| Tied embeddings | Yes | Tied under ~4B, untied above | `tie_word_embeddings` | budget-fraction decision |
+| QK-norm | No | Yes (increasingly standard) | `q_norm`/`k_norm` modules | Gemma 3, OLMo 2, Qwen3 |
+| Logit soft-cap | No | Rare — superseded | `attn_logit_softcapping` | Gemma 2 only; Gemma 3 dropped it |
+| Logit z-loss | No | Common (training-time only) | (loss-side, not in config) | PaLM, ST-MoE, OLMo 2 |
+| Attention sink | Ignored | Keep BOS in KV cache; learned sink logits | `sinks` (gpt-oss) | StreamingLLM 2023; gpt-oss 2025 |
 
 ```python
 """
@@ -782,8 +808,105 @@ y = block(x)
 print(f"Block output shape: {y.shape}")          # (2, 16, 512)
 print(f"Output norm (should be finite): {y.norm().item():.3f}")
 param_count = sum(p.numel() for p in block.parameters())
-print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
+print(f"Block parameter count: {param_count:,}")  # 2,753,152 -> ~2.75M
+# Check by hand: attention = 512*512 (Q) + 2*512*128 (K,V, GQA) + 512*512 (O)
+#              = 655,360;  SwiGLU = 3*512*1365 = 2,096,640;
+#              norms = 2*512 + 2*64 (qk_norm) = 1,152.  Total 2,753,152.
 ```
+
+---
+
+## The Recipe in Practice: Config Files, Fused Kernels & Reference Repos
+
+We opened by promising that a modern `config.json` would stop being alphabet soup. Here is the actual configuration of Llama 3.2 3B — the model we sized by hand earlier — with every field now decodable:
+
+```json
+{
+  "architectures": ["LlamaForCausalLM"],
+  "hidden_size": 3072,
+  "intermediate_size": 8192,
+  "num_hidden_layers": 28,
+  "num_attention_heads": 24,
+  "num_key_value_heads": 8,
+  "hidden_act": "silu",
+  "rms_norm_eps": 1e-05,
+  "rope_theta": 500000.0,
+  "rope_scaling": {
+    "rope_type": "llama3",
+    "factor": 32.0,
+    "low_freq_factor": 1.0,
+    "high_freq_factor": 4.0,
+    "original_max_position_embeddings": 8192
+  },
+  "max_position_embeddings": 131072,
+  "attention_bias": false,
+  "tie_word_embeddings": true,
+  "vocab_size": 128256,
+  "torch_dtype": "bfloat16"
+}
+```
+
+Read it against this chapter: `rms_norm_eps` is the $\epsilon$ of our `RMSNorm` (pre-norm placement is implied by the architecture class, not by a flag); `hidden_act: "silu"` with `intermediate_size` $\ne 4d$ tells you it is SwiGLU, since a plain FFN would have no third matrix and would sit at $4 \times 3072 = 12288$; `num_key_value_heads: 8` against 24 query heads is GQA with $G=3$; `attention_bias: false` is the no-bias decision; `tie_word_embeddings: true` is the small-model budget call ($128256 \times 3072 = 394$M would otherwise be paid twice); `rope_theta: 500000` plus `rope_scaling` is long-context RoPE, trained at 8192 and extended 32× by frequency-dependent interpolation (see [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html)). There is no `q_norm` field because QK-norm in `transformers` is expressed as submodules in the attention class (Qwen3, Gemma 3, OLMo 2) rather than a boolean.
+
+Instantiating that recipe — no download required — is three lines:
+
+```python
+from transformers import LlamaConfig, LlamaForCausalLM, AutoModelForCausalLM
+
+# Route 1: build the architecture from the recipe, randomly initialized.
+cfg = LlamaConfig(
+    hidden_size=3072, intermediate_size=8192, num_hidden_layers=28,
+    num_attention_heads=24, num_key_value_heads=8,      # GQA, G=3
+    hidden_act="silu", rms_norm_eps=1e-5,               # SwiGLU + RMSNorm
+    rope_theta=500000.0, attention_bias=False,          # RoPE, no biases
+    tie_word_embeddings=True, vocab_size=128256,
+)
+model = LlamaForCausalLM(cfg)
+print(f"{sum(p.numel() for p in model.parameters()):,}")  # ~3.21B, matching our hand count
+
+# Route 2: load real weights and read the same knobs back off the config.
+# model = AutoModelForCausalLM.from_pretrained(
+#     "meta-llama/Llama-3.2-3B",
+#     attn_implementation="flash_attention_2",  # or "sdpa" (default) / "eager"
+#     dtype="bfloat16",
+# )
+```
+
+That `attn_implementation` argument is where this chapter meets Part IV. `"eager"` is the hand-rolled softmax we wrote above; `"sdpa"` dispatches to `torch.nn.functional.scaled_dot_product_attention`; `"flash_attention_2"` calls the `flash-attn` package's kernel directly. Only the first can express logit soft-capping — which is precisely why Gemma 3 dropped it.
+
+### Where the fused kernels live
+
+The from-scratch modules in this chapter are for understanding. In a real training loop every one of them has a fused counterpart, and using them is not optional at scale:
+
+| Layer | From scratch (this chapter) | What you actually call | Package |
+|---|---|---|---|
+| GQA attention | manual `_repeat_kv` + softmax | `F.scaled_dot_product_attention(..., enable_gqa=True)` | PyTorch (2.5+) |
+| Attention (train) | — | `flash_attn_func`, `flash_attn_varlen_func` | `flash-attn` |
+| RMSNorm | `x * rsqrt(mean(x²))` | `LigerRMSNorm`, `apex.normalization.FusedRMSNorm` | Liger-Kernel, apex |
+| SwiGLU MLP | three `nn.Linear` + `F.silu` | `LigerSwiGLUMLP` | Liger-Kernel |
+| RoPE | complex-valued rotation | `LigerRopeFunction`, `apply_rotary_emb` | Liger-Kernel, `flash-attn` |
+| LM head + CE (+ z-loss) | `lm_head` then `cross_entropy` | `LigerFusedLinearCrossEntropy`, `cut-cross-entropy` | Liger-Kernel |
+
+The last row matters more than it looks: it never materializes the $(B, T, V)$ logit tensor, which at $BT=16384$ and $V=128256$ would be 8.4 GB in fp32 — often the single largest tensor in a small-model training step. `enable_gqa=True` similarly avoids materializing the repeated K and V, which our teaching code does materialize. Liger-Kernel is written in Triton (see [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)); `torch.compile` will fuse the simpler ones (RMSNorm, SwiGLU) for you without any extra dependency.
+
+```python
+import torch
+import torch.nn.functional as F
+
+# The production form of the GQA forward pass: no _repeat_kv materialization,
+# causal masking inside the kernel, and an IO-aware fused backend under the hood.
+B, T, Hq, Hkv, dk = 2, 128, 24, 8, 128
+q = torch.randn(B, Hq,  T, dk)      # (B, H_q,  T, d_k)
+k = torch.randn(B, Hkv, T, dk)      # (B, H_kv, T, d_k)  <-- 3x smaller
+v = torch.randn(B, Hkv, T, dk)
+
+out = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)
+print(out.shape)                    # (2, 24, 128, 128) -- broadcast over the group
+```
+
+### Reference implementations worth reading
+
+When you need a correct, complete, *trainable* version of this recipe rather than a teaching one, these are the canonical open-source starting points, in rough order of increasing machinery: **nanoGPT** (Karpathy — the minimal GPT-2 training loop, the ancestor of [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html)); **litgpt** (Lightning AI — clean single-file implementations of ~20 modern architectures); **torchtitan** (PyTorch's own reference for pretraining Llama-family models with FSDP2 + tensor/pipeline parallelism); **torchtune** (PyTorch's fine-tuning library, with the architectures expressed as composable builder functions); **nanotron** (HuggingFace's minimal 3D-parallel pretrainer); and **Megatron-LM** / **DeepSpeed** for the industrial path, covered in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html). All six implement exactly the components of this chapter; the differences between them are parallelism and ergonomics, not architecture.
 
 ---
 
@@ -792,16 +915,17 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
     - **SwiGLU** provides multiplicative gating that consistently outperforms ReLU/GELU FFNs at equal parameter cost; the three-weight design requires scaling the intermediate dimension to $\frac{8}{3}d$ to stay iso-parameter.
     - **RoPE** enables relative positional encoding without a separate embedding table, generalizes beyond training context length, and is the universal choice for decoder-only models. The `rope_theta` base should be set high (100k–500k) for long-context models.
     - **GQA** (Grouped Query Attention) reduces KV cache memory by a factor equal to the grouping ratio (commonly 4–8x) with minimal quality degradation; this is the key architectural enabler for long-context inference.
-    - **QK-norm** (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; used in Gemma 2/3 and OLMo 2, and increasingly a default rather than a large-scale-only trick.
-    - **No biases** in linear layers is almost universal at the frontier; biases add optimizer memory overhead and negligible quality benefit, especially with pre-RMSNorm.
-    - **Logit soft-capping** ($z \to c \cdot \tanh(z/c)$) is a differentiable alternative to hard clipping that prevents output distribution collapse and improves numerical stability.
-    - **Attention sinks** (typically the BOS token) must be preserved in the KV cache for streaming/long-context inference; evicting them causes catastrophic attention pattern collapse.
+    - **QK-norm** (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; originating in ViT-22B and now used in Gemma 3, OLMo 2 and Qwen3, it is increasingly a default rather than a large-scale-only trick.
+    - **No biases** in linear layers is almost universal at the frontier; biases add optimizer memory overhead and negligible quality benefit, especially with pre-RMSNorm, and they drive activation outliers that later hurt quantization. Qwen3 dropped the last common holdout (QKV bias) in favor of QK-norm.
+    - **Logit soft-capping** ($z \to c \cdot \tanh(z/c)$) is a differentiable alternative to hard clipping, but it cannot live inside a FlashAttention kernel; Gemma 3 replaced it with QK-norm, and the training-time **z-loss** is the standard guard on final logits.
+    - **Attention sinks** (typically the BOS token) must be preserved in the KV cache for streaming/long-context inference; evicting them causes catastrophic attention pattern collapse. The 2025 refinement is a learned per-head sink *logit* with no token and no value vector (gpt-oss).
+    - **Know the config field for every knob.** `num_key_value_heads`, `rope_theta`, `hidden_act`, `attention_bias`, `tie_word_embeddings`, `rms_norm_eps` are the interface; `flash-attn`, PyTorch SDPA (`enable_gqa=True`), and Liger-Kernel are the implementations you actually run.
     - **Scaled residual initialization** ($\times 1/\sqrt{2L}$ on output projections) is essential for stable training of very deep models; without it, the residual stream variance grows with depth.
 
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 4, Qwen3, DeepSeek-V3, Gemma 3) since 2023, with logit soft-capping and attention-sink awareness rounding out the toolkit for stable long-context training. The 2025 generation pushed on two fronts: sparse Mixture-of-Experts backbones (DeepSeek-V3, Llama 4, Qwen3) and long-context attention variants (Gemma 3's 5:1 local-to-global sliding-window interleave; Llama 4's position-free "NoPE" layers).
+    The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 4, Qwen3, DeepSeek-V3, Gemma 3) since 2023, with z-loss and attention-sink awareness rounding out the toolkit for stable long-context training (logit soft-capping was a Gemma 2-only detour that Gemma 3 itself abandoned, because a $\tanh$ on the score matrix is incompatible with FlashAttention). The 2025 generation pushed on two fronts: sparse Mixture-of-Experts backbones (DeepSeek-V3, Llama 4, Qwen3) and long-context attention variants (Gemma 3's 5:1 local-to-global sliding-window interleave; Llama 4's position-free "NoPE" layers).
 
     **Foundational work**
 
@@ -812,15 +936,20 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
 
     **Recent advances (2023–2026)**
 
-    - [The Gemma Team, *Gemma 2: Improving Open Language Models at a Practical Size* (2024)](https://arxiv.org/abs/2408.00118) — introduces QK-norm and logit soft-capping ($c \cdot \tanh(z/c)$) as complementary stability mechanisms, alongside interleaved sliding-window attention.
+    - [The Gemma Team, *Gemma 2: Improving Open Language Models at a Practical Size* (2024)](https://arxiv.org/abs/2408.00118) — introduces logit soft-capping ($c \cdot \tanh(z/c)$) on both attention and final logits, sandwich (pre + post) normalization, and interleaved sliding-window attention.
+    - [Dehghani et al., *Scaling Vision Transformers to 22 Billion Parameters* (2023)](https://arxiv.org/abs/2302.05442) and [Wortsman et al., *Small-scale proxies for large-scale Transformer training instabilities* (2023)](https://arxiv.org/abs/2309.14322) — the origin and the systematic study of QK-norm; the second is the best single reference on diagnosing attention-logit growth from small-scale proxies.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — comprehensive recipe for a 671B MoE model using MLA, SwiGLU, RMSNorm, and auxiliary-loss-free load balancing; shows the modern stack scales to frontier quality.
     - [Meta AI, *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — documents the full open-source recipe at 8B–405B scale: GQA, RoPE with `theta=500000`, untied embeddings, and a 128K context window. Its 2025 successor, [Llama 4](https://ai.meta.com/blog/llama-4-multimodal-intelligence/), moves to a Mixture-of-Experts backbone with *iRoPE* — interleaving position-free "NoPE" layers among the RoPE layers to reach a 10M-token context.
-    - [The Gemma Team, *Gemma 3 Technical Report* (2025)](https://arxiv.org/abs/2503.19786) — the follow-up to Gemma 2 keeps QK-norm and adopts a 5:1 local-to-global sliding-window attention ratio (1024-token local windows) to cut long-context KV-cache cost.
+    - [The Gemma Team, *Gemma 3 Technical Report* (2025)](https://arxiv.org/abs/2503.19786) — explicitly *replaces* Gemma 2's soft-capping with QK-norm and adopts a 5:1 local-to-global sliding-window attention ratio (1024-token local windows) to cut long-context KV-cache cost; the cleanest published statement of the current norm/stability consensus.
     - [Qwen Team, *Qwen3 Technical Report* (2025)](https://arxiv.org/abs/2505.09388) — a 0.6B–235B family spanning dense and MoE variants that folds fast/"thinking" reasoning modes into a single checkpoint atop the standard RMSNorm/SwiGLU/RoPE/GQA stack.
 
     **Open-source & tools**
 
-    - [huggingface/transformers](https://github.com/huggingface/transformers) — canonical implementations of every major modern architecture (Llama, Qwen, Gemma, DeepSeek) with config files exposing every design knob discussed in this chapter.
+    - [huggingface/transformers](https://github.com/huggingface/transformers) — canonical implementations of every major modern architecture (Llama, Qwen, Gemma, DeepSeek, gpt-oss) with config files exposing every design knob discussed in this chapter; `attn_implementation` selects between eager / SDPA / FlashAttention-2 backends.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) and [pytorch/torchtune](https://github.com/pytorch/torchtune) — PyTorch's own reference pretraining and fine-tuning stacks; the cleanest reading of this recipe wired to FSDP2 and tensor/pipeline parallelism.
+    - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — Triton kernels fusing exactly the modules in this chapter (RMSNorm, SwiGLU, RoPE, and a fused linear + cross-entropy that never materializes the $(B,T,V)$ logit tensor).
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the attention kernel every serious training run uses, plus fused RoPE and layer-norm utilities.
+    - [Lightning-AI/litgpt](https://github.com/Lightning-AI/litgpt) and [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — readable single-file implementations for checking your own from-scratch model against a known-good reference.
 
     **Go deeper**
 
@@ -833,7 +962,10 @@ print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
 - Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding," arXiv 2021 — original RoPE paper.
 - Ainslie et al., "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints," EMNLP 2023 — GQA, including a method for uptraining existing MHA checkpoints.
 - Touvron et al., "Llama 2: Open Foundation and Fine-Tuned Chat Models," arXiv 2023 — a comprehensive blueprint of the modern recipe in an openly released model.
-- Team Gemma, "Gemma 2: Improving Open Language Models at a Practical Size," Google DeepMind 2024 — QK-norm, logit soft-capping, and interleaved sliding-window attention.
+- Team Gemma, "Gemma 2: Improving Open Language Models at a Practical Size," Google DeepMind 2024 — logit soft-capping, sandwich normalization, and interleaved sliding-window attention; and "Gemma 3 Technical Report," 2025, which swaps soft-capping for QK-norm.
+- Wortsman et al., "Small-scale proxies for large-scale Transformer training instabilities," 2023 — QK-norm, z-loss and logit-growth diagnostics studied at a scale you can actually reproduce.
+- Press and Wolf, "Using the Output Embedding to Improve Language Models," EACL 2017 — the original weight-tying argument.
+- Liu et al., "MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases," ICML 2024 — the deep-and-thin aspect-ratio result for small models.
 - Xiao et al., "Efficient Streaming LLMs with Attention Sinks," ICLR 2024 — attention sink phenomenon and StreamingLLM.
 - Kaplan et al., "Scaling Laws for Neural Language Models," arXiv 2020 — depth vs width trade-offs in the context of scaling.
 - Meta AI, Llama 3 model card and technical report, 2024 — updated RoPE theta and architectural decisions at 70B/405B scale.

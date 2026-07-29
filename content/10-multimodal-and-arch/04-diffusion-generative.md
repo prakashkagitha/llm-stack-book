@@ -79,13 +79,39 @@ $$
 
 This is just mean-squared-error between the true noise $\boldsymbol{\epsilon}$ and the neural network's *prediction of that noise* $\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)$. The simplicity is striking: we sample a random timestep, corrupt a training example, and ask the network to guess the noise. Training is stable because it is regression throughout.
 
+??? note "Optional: the full derivation from the ELBO to $\mathcal{L}_\text{simple}$"
+    Start from the standard variational bound on the negative log-likelihood, obtained by importance-weighting with the forward chain $q$:
+
+    $$
+    -\log p_\theta(\mathbf{x}_0) \le \mathbb{E}_q\!\left[-\log\frac{p_\theta(\mathbf{x}_{0:T})}{q(\mathbf{x}_{1:T}\mid\mathbf{x}_0)}\right] = \underbrace{D_\text{KL}\!\left(q(\mathbf{x}_T\mid\mathbf{x}_0)\,\|\,p(\mathbf{x}_T)\right)}_{\mathcal{L}_T} + \sum_{t>1}\underbrace{D_\text{KL}\!\left(q(\mathbf{x}_{t-1}\mid\mathbf{x}_t,\mathbf{x}_0)\,\|\,p_\theta(\mathbf{x}_{t-1}\mid\mathbf{x}_t)\right)}_{\mathcal{L}_{t-1}} \underbrace{-\log p_\theta(\mathbf{x}_0\mid\mathbf{x}_1)}_{\mathcal{L}_0}
+    $$
+
+    $\mathcal{L}_T$ has no parameters (it is a constant that the schedule design drives to $\approx 0$). The middle terms are KLs between *Gaussians*, because the forward posterior conditioned on $\mathbf{x}_0$ is available in closed form by Bayes' rule on the two Gaussians $q(\mathbf{x}_t\mid\mathbf{x}_{t-1})$ and $q(\mathbf{x}_{t-1}\mid\mathbf{x}_0)$:
+
+    $$
+    q(\mathbf{x}_{t-1}\mid\mathbf{x}_t,\mathbf{x}_0) = \mathcal{N}\!\left(\tilde{\boldsymbol\mu}_t(\mathbf{x}_t,\mathbf{x}_0),\ \tilde\beta_t\mathbf{I}\right),\quad
+    \tilde{\boldsymbol\mu}_t = \frac{\sqrt{\bar\alpha_{t-1}}\,\beta_t}{1-\bar\alpha_t}\mathbf{x}_0 + \frac{\sqrt{\alpha_t}\,(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}\mathbf{x}_t,\quad
+    \tilde\beta_t = \frac{1-\bar\alpha_{t-1}}{1-\bar\alpha_t}\beta_t
+    $$
+
+    For two Gaussians with the *same* fixed covariance $\sigma_t^2\mathbf{I}$, the KL collapses to a scaled squared distance between means, $\mathcal{L}_{t-1}=\frac{1}{2\sigma_t^2}\|\tilde{\boldsymbol\mu}_t-\boldsymbol\mu_\theta\|^2$. Substituting $\mathbf{x}_0=(\mathbf{x}_t-\sqrt{1-\bar\alpha_t}\,\boldsymbol\epsilon)/\sqrt{\bar\alpha_t}$ into $\tilde{\boldsymbol\mu}_t$ and matching it with the $\boldsymbol\mu_\theta$ parameterization stated just below, the $\mathbf{x}_t$ terms cancel and only the noise residual survives:
+
+    $$
+    \mathcal{L}_{t-1} = \mathbb{E}_{\mathbf{x}_0,\boldsymbol\epsilon}\!\left[\frac{\beta_t^2}{2\sigma_t^2\,\alpha_t\,(1-\bar\alpha_t)}\left\|\boldsymbol\epsilon-\boldsymbol\epsilon_\theta(\mathbf{x}_t,t)\right\|^2\right]
+    $$
+
+    So the true ELBO is a *weighted* noise-prediction regression. Ho et al.'s $\mathcal{L}_\text{simple}$ simply sets every weight to 1. That is not the ELBO — it up-weights large-$t$ (high-noise) terms relative to the bound — but it empirically improves sample quality, because the ELBO over-invests capacity in imperceptible high-frequency detail at small $t$. Kingma et al.'s *Variational Diffusion Models* made this precise: for any variance-preserving schedule the diffusion loss depends on the schedule only through the SNR endpoints, and different loss weightings are exactly different reweightings of $\mathrm{SNR}(t)$ — which is why "choose a weighting" (min-SNR-$\gamma$, $P_2$, EDM's $\lambda(\sigma)$, SD3's logit-normal timestep sampling) is one of the few knobs that reliably moves quality.
+
 Given the predicted noise, the mean of the reverse step is:
 
 $$
 \boldsymbol{\mu}_\theta(\mathbf{x}_t, t) = \frac{1}{\sqrt{\alpha_t}}\!\left(\mathbf{x}_t - \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)\right)
 $$
 
-Alternatively, the network can be parameterized to predict $\mathbf{x}_0$ directly ($\mathbf{x}$-prediction) or the score function $\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t)$ — all three are mathematically equivalent via reparameterization.
+Alternatively, the network can be parameterized to predict $\mathbf{x}_0$ directly ($\mathbf{x}$-prediction), the score function $\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t)$, or the *velocity* $\mathbf{v} = \sqrt{\bar\alpha_t}\,\boldsymbol\epsilon - \sqrt{1-\bar\alpha_t}\,\mathbf{x}_0$ (Salimans & Ho, *Progressive Distillation*). All four are related by invertible linear maps at fixed $t$, so they parameterize the *same* model — but they are *not* the same objective, because a plain MSE in each output space implies a different implicit per-timestep weighting (Exercise 5 works this out for $\mathbf{x}_0$-prediction). $\mathbf{v}$-prediction is the practical default for high-resolution and distilled models: it stays well-conditioned at both $t\to0$ (where $\boldsymbol\epsilon$-prediction is nearly information-free) and $t\to T$ (where $\mathbf{x}_0$-prediction is), which is why SD 2.x, progressive distillation, and most video models use it.
+
+!!! warning "Common pitfall: non-zero terminal SNR"
+    The standard linear/cosine schedules do not actually reach $\bar\alpha_T = 0$ — DDPM's linear schedule leaves $\bar\alpha_T \approx 4\times10^{-5}$, i.e. a small but non-zero terminal SNR. Training therefore never shows the network a *truly* pure-noise input, yet sampling always starts from one. Under $\boldsymbol\epsilon$-prediction the leak is mild; it becomes visible as a *mean-brightness bias* — such models struggle to generate very dark or very bright images and drift toward medium grey, regardless of the prompt. Lin et al. (*Common Diffusion Noise Schedules and Sample Steps Are Flawed*, WACV 2024) diagnosed this and prescribe the fix: rescale the schedule to enforce $\bar\alpha_T = 0$ exactly, switch to $\mathbf{v}$-prediction (which stays defined at zero SNR), and start sampling at the true last timestep. In `diffusers` this is the `rescale_betas_zero_snr=True` scheduler flag paired with `prediction_type="v_prediction"`. Flow-matching models get this for free: the path *starts* at pure noise by construction.
 
 ```python
 import torch
@@ -116,8 +142,9 @@ def q_sample(x0: torch.Tensor, t: torch.Tensor, alphas_bar: torch.Tensor):
         x_t, eps   both (B, C, H, W)
     """
     eps = torch.randn_like(x0)
-    # gather ā_t for each sample in the batch
-    ab = alphas_bar[t].view(-1, 1, 1, 1)   # broadcast over C,H,W
+    # gather ā_t for each sample in the batch (.to() keeps the CPU-built
+    # schedule usable when x0/t live on GPU — a classic silent crash)
+    ab = alphas_bar.to(x0.device)[t].view(-1, 1, 1, 1)   # broadcast over C,H,W
     x_t = ab.sqrt() * x0 + (1 - ab).sqrt() * eps
     return x_t, eps
 
@@ -219,6 +246,8 @@ $$
 
 Setting $\sigma_t = 0$ makes the process fully deterministic: you can think of it as Euler integration of the *probability flow ODE*. DDIM allows *subsampling* — you can skip timesteps and use, say, 50 steps instead of 1000 with minimal quality loss, giving a 20× speedup.
 
+Once you accept the ODE view, DDIM is just the crudest solver, and the whole numerical-integration literature becomes available. **DPM-Solver / DPM-Solver++** (Lu et al.) exploit the *semi-linear* structure of the probability-flow ODE — the linear drift term is integrated analytically and only the neural part is approximated — giving second- and third-order multistep schemes that reach DDIM's 50-step quality in roughly 10–20 steps. **UniPC** adds a predictor–corrector wrapper on top. **EDM** (Karras et al., *Elucidating the Design Space of Diffusion-Based Generative Models*) rewrites the whole framework in terms of a single noise level $\sigma$ and uses Heun's second-order method with a tuned $\sigma$ spacing. These are drop-in replacements for `ddim_sample`: same trained network, different integrator. Below ~4 steps, no solver saves you — the ODE trajectory is genuinely curved — and you must instead *distill* (progressive distillation, consistency models / latent consistency models, adversarial distillation as in SDXL-Turbo and FLUX.1 [schnell]) or train with straight paths from the start, which is what flow matching does.
+
 ```python
 @torch.no_grad()
 def ddim_sample(model: nn.Module, shape: tuple, alphas_bar: torch.Tensor,
@@ -311,6 +340,7 @@ The denoiser in most LDMs is a U-Net with:
 The DiT (Diffusion Transformer, Peebles & Xie) replaced the U-Net entirely with a Vision Transformer (ViT) operating on latent patches, conditioning on timestep and text through adaptive layer norm. DiT scales predictably with model size and is used in Stable Diffusion 3, Flux, and Sora-like systems.
 
 ```python
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -386,6 +416,47 @@ class TinyUNet(nn.Module):
         h  = self.dec2(self.up(h) + h1, t_emb)    # skip connection
         return self.out_proj(h)
 ```
+
+### Doing It For Real: Hugging Face `diffusers`
+
+Nobody re-derives $\bar\alpha_t$ in production. `diffusers` is the PyTorch library that owns this layer of the stack: it factors every model into a *scheduler* (the noise schedule + the sampler update, i.e. everything in our `make_linear_schedule`/`ddim_sample`), a *denoiser* (`UNet2DConditionModel` or `SD3Transformer2DModel`/`FluxTransformer2DModel`), a *VAE* (`AutoencoderKL`), and *text encoders* pulled from `transformers`. A `Pipeline` is just the glue. Crucially the scheduler API mirrors the two functions we wrote by hand — `add_noise` is `q_sample`, `step` is one reverse update — so you can swap DDIM for DPM-Solver++ or a flow-matching Euler solver without retraining.
+
+```python
+# pip install diffusers transformers accelerate peft safetensors
+import torch
+from diffusers import (AutoencoderKL, UNet2DConditionModel, DDPMScheduler,
+                       DPMSolverMultistepScheduler, StableDiffusionXLPipeline)
+
+# ---- (1) Training: one latent-diffusion step, library primitives ------- #
+sched = DDPMScheduler(num_train_timesteps=1000, beta_schedule="scaled_linear",
+                      prediction_type="epsilon")   # or "v_prediction"
+
+def training_step(vae: AutoencoderKL, unet: UNet2DConditionModel,
+                  pixels: torch.Tensor, text_emb: torch.Tensor):
+    """pixels: (B,3,H,W) in [-1,1]; text_emb: (B, L, D) from a CLIP/T5 encoder."""
+    with torch.no_grad():                                   # VAE is frozen
+        latents = vae.encode(pixels).latent_dist.sample()
+        latents = latents * vae.config.scaling_factor       # ~0.18215 for SD1.x
+    noise = torch.randn_like(latents)
+    t = torch.randint(0, sched.config.num_train_timesteps,
+                      (latents.shape[0],), device=latents.device)
+    noisy = sched.add_noise(latents, noise, t)              # == our q_sample
+    pred  = unet(noisy, t, encoder_hidden_states=text_emb).sample
+    # target depends on the parameterization the scheduler was configured with
+    target = noise if sched.config.prediction_type == "epsilon" \
+             else sched.get_velocity(latents, noise, t)
+    return torch.nn.functional.mse_loss(pred.float(), target.float())
+
+# ---- (2) Inference: swap the sampler, no retraining ------------------- #
+pipe = StableDiffusionXLPipeline.from_pretrained(
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16)
+pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+pipe.enable_model_cpu_offload()          # fits a 24 GB card comfortably
+img = pipe("a photo of a cat wearing a hat", num_inference_steps=25,
+           guidance_scale=7.0).images[0]
+```
+
+Three practical notes. **(a)** Conditioning drop-out for CFG is your job at training time — replace `text_emb` with the encoder's embedding of `""` for ~10% of examples, exactly the $\emptyset$ token of the CFG section. **(b)** Fine-tuning is almost always LoRA, not full fine-tuning: `diffusers` integrates `peft`, and its `examples/text_to_image/train_text_to_image_lora_sdxl.py` script is the canonical starting point — the same low-rank adapters covered in [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html), applied to the U-Net's attention projections. **(c)** Rectified-flow models use `FlowMatchEulerDiscreteScheduler` and pipelines `StableDiffusion3Pipeline` / `FluxPipeline`; FLUX.1 [schnell] is distilled to run at `num_inference_steps=4` with `guidance_scale=0.0` (guidance is *baked into* the weights via guidance distillation, so a second forward pass would be wasted). Beyond `diffusers`, the practitioner ecosystem is **ComfyUI** (node-graph inference), **k-diffusion** (Karras/EDM samplers), and **kohya-ss/sd-scripts** (LoRA/DreamBooth training).
 
 ## Flow Matching: A Cleaner Generalization
 
@@ -469,8 +540,8 @@ The success of diffusion in continuous domains (images, audio) raises a natural 
 
 1. **Discrete space**: Adding Gaussian noise to a token index produces a float, not a token. Standard Gaussian diffusion does not apply directly.
 2. **Non-continuous interpolation**: There is no obvious straight-line path between the token "cat" and "dog."
-3. **Mask-based diffusion**: One approach (Austin et al., D3PM; Chang et al., MaskGIT; Ye et al., MDLM) replaces noise corruption with *masking*: the forward process randomly masks tokens, and the reverse process predicts the masked tokens (much like masked language modeling). This is called *absorbing diffusion*.
-4. **Embedding-space diffusion**: Another approach (Lovelace et al., Genie; Lin & Han, CDCD) runs diffusion in the continuous embedding space, then decodes. The challenge is round-trip fidelity: denoised embeddings may not correspond to any real token.
+3. **Mask-based diffusion**: One approach (Austin et al., D3PM; Chang et al., MaskGIT; Sahoo et al., MDLM) replaces noise corruption with *masking*: the forward process randomly masks tokens, and the reverse process predicts the masked tokens (much like masked language modeling). This is called *absorbing diffusion*, because `[MASK]` is an absorbing state of the corruption chain — once a token is masked it stays masked.
+4. **Embedding-space diffusion**: Another approach (Li et al., Diffusion-LM; Dieleman et al., *Continuous Diffusion for Categorical Data*; Lovelace et al., *Latent Diffusion for Language Generation*) runs diffusion in a continuous embedding or latent space, then decodes back to tokens. The challenge is round-trip fidelity: denoised embeddings may not correspond to any real token, so these methods need a rounding/clamping step or a learned decoder. In practice absorbing diffusion has won — every scaled diffusion LM (LLaDA, Mercury, Gemini Diffusion) is mask-based.
 
 ### Masked Diffusion Language Models
 
@@ -488,6 +559,10 @@ The neural network (typically a Transformer) predicts all unmasked tokens simult
 4. Repeat until all tokens are unmasked.
 
 This gives parallel generation, a key advantage over autoregressive models which generate strictly left-to-right. Models like MDLM and Plaid operate this way and can generate text of length $L$ in $O(K)$ passes for a fixed $K$ (e.g., 10) rather than $O(L)$ autoregressive steps.
+
+Structurally the recipe is tiny: take the Transformer of [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html), drop the causal mask so attention is bidirectional, add one vocabulary row for a reserved `[MASK]` id, and train with masked cross-entropy reweighted by $1/t$ where $t$ is the mask rate — that weight is exactly what turns "BERT with a random mask rate" into a genuine likelihood bound (the NELBO of absorbing-state diffusion), which is why MDLM perplexities are comparable to autoregressive ones rather than incomparable pseudo-likelihoods. Two caveats the throughput headline hides: bidirectional attention means there is **no KV cache**, so $K$ diffusion passes cost $K$ full prefills rather than $K$ cheap decode steps (semi-autoregressive *block* diffusion, which diffuses one block at a time and caches the settled prefix, recovers much of this); and the generation *length* must be fixed up front, so EOS and padding need explicit conventions.
+
+Because this is the one part of the diffusion story that operates directly on the book's core object — text — it gets a full treatment of its own, with from-scratch training loss, a confidence-based parallel sampler, block-causal masking, and the inference economics: see [Diffusion & Non-Autoregressive Language Models](../02-transformer/12-diffusion-nonAR-lms.html). If you want to run the ablation on the capstone corpus, the ingredients are already assembled — the tokenizer of [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) plus one `[MASK]` id, the model of [The Stack-100M Architecture](../14-capstone/04-architecture.html) with the causal mask disabled, and the loop of [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) with the masked-diffusion loss swapped in for next-token prediction. Stack-100M itself stays autoregressive: at that budget AR is the better-understood and far better-tooled choice.
 
 ### Comparison to Autoregressive Generation
 
@@ -513,7 +588,7 @@ Why should an engineer focused on language models care about diffusion?
 
 **2. Reward models and RLHF for diffusion.** Just as LLMs are fine-tuned with RLHF (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)), diffusion models are fine-tuned with reinforcement learning from human feedback using reward gradients backpropagated through the sampling chain (DDPO, ReFL). The policy gradient machinery is the same; the action space is the denoised image.
 
-**3. Diffusion as a generative backend.** Systems like Stable Diffusion serve as compute-heavy generation backends; LLM engineers writing serving stacks need to reason about the inference throughput of iterative samplers, batch sizing across steps, and caching of the text encoder (which runs once per prompt rather than once per step).
+**3. Diffusion as a generative backend.** Systems like Stable Diffusion serve as compute-heavy generation backends; LLM engineers writing serving stacks need to reason about the inference throughput of iterative samplers, batch sizing across steps, and caching of the text encoder (which runs once per prompt rather than once per step). Note that none of the LLM serving engines apply here — vLLM/SGLang exist to manage a KV cache and variable-length autoregressive decoding, neither of which a denoiser has. Image serving instead means `diffusers` plus `torch.compile`, fused attention kernels, batching the CFG pair into one forward pass, and optionally TensorRT/ONNX export; the workload is compute-bound and fixed-shape, which is the *opposite* of the memory-bound, ragged-shape LLM decode regime analysed in [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).
 
 **4. Score functions and energy-based intuitions.** The score function $\nabla_\mathbf{x} \log p(\mathbf{x})$ and the energy-based model perspective appear in contrastive learning losses, noise-contrastive estimation (the NCE loss used in word2vec), and the connection between reward models and energy-based models in RLHF. Diffusion gives you a concrete, visual intuition for these abstract objects.
 
@@ -584,13 +659,19 @@ Why should an engineer focused on language models care about diffusion?
 - Liu, Gong & Liu, *Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow* (ICLR 2023) — rectified flow.
 - Peebles & Xie, *Scalable Diffusion Models with Transformers* (DiT, ICCV 2023) — Transformer denoiser, used in Sora-like systems.
 - Austin, Johnson, Ho, Tarlow & van den Berg, *Structured Denoising Diffusion Models in Discrete State-Spaces* (D3PM, NeurIPS 2021) — diffusion over discrete tokens.
+- Kingma, Salimans, Poole & Ho, *Variational Diffusion Models* (NeurIPS 2021) — the ELBO in SNR form; shows loss weighting and noise schedule are the same knob.
+- Salimans & Ho, *Progressive Distillation for Fast Sampling of Diffusion Models* (ICLR 2022) — introduces $\mathbf{v}$-prediction and halving-the-steps distillation.
+- Karras, Aittala, Aila & Laine, *Elucidating the Design Space of Diffusion-Based Generative Models* (EDM, NeurIPS 2022) — disentangles schedule, preconditioning, weighting and solver; the reference for practical sampler design.
+- Lu et al., *DPM-Solver++* (2022) — high-order exponential-integrator solvers that cut step counts to ~10–20.
+- Lin, Liu, Li & Yang, *Common Diffusion Noise Schedules and Sample Steps Are Flawed* (WACV 2024) — the zero-terminal-SNR fix.
+- Song, Dhariwal, Chen & Sutskever, *Consistency Models* (ICML 2023) — one- and few-step generation by distilling the probability-flow ODE.
 - Saharia et al., *Photorealistic Text-to-Image Diffusion Models with Deep Language Understanding* (Imagen, NeurIPS 2022) — dynamic thresholding and cascaded diffusion.
 
 !!! key "Key Takeaways"
     - Diffusion models define a forward noising process with a closed-form marginal $q(\mathbf{x}_t|\mathbf{x}_0) = \mathcal{N}(\sqrt{\bar\alpha_t}\mathbf{x}_0,(1-\bar\alpha_t)\mathbf{I})$, enabling any timestep to be sampled in one shot.
     - The DDPM training objective reduces to simple noise-prediction regression: $\mathbb{E}\|\boldsymbol\epsilon - \boldsymbol\epsilon_\theta(\mathbf{x}_t,t)\|^2$. Stability comes from regression; no adversarial training required.
-    - Score matching and diffusion are equivalent: the noise predictor $\boldsymbol\epsilon_\theta$ is a re-scaled score function of the noisy distribution.
-    - DDIM reformulates sampling as ODE integration, enabling deterministic, subsampable trajectories (20–50 steps instead of 1000).
+    - Score matching and diffusion are equivalent — the noise predictor $\boldsymbol\epsilon_\theta$ is a re-scaled score of the noisy distribution — and $\boldsymbol\epsilon$-, $\mathbf{x}_0$-, score- and $\mathbf{v}$-prediction are all one model under linear reparameterization, yet different *objectives*, since each implies a different per-timestep weighting; $\mathbf{v}$-prediction plus a zero-terminal-SNR schedule is the fix for the medium-grey brightness bias of the classic schedules.
+    - DDIM reformulates sampling as ODE integration, enabling deterministic, subsampable trajectories (20–50 steps instead of 1000); higher-order solvers (DPM-Solver++, UniPC, EDM/Heun) reach the same quality in 10–20, and going below ~4 steps requires distillation rather than a better integrator.
     - Classifier-free guidance (CFG) steers generation by extrapolating beyond the conditional model: $\tilde{\boldsymbol\epsilon} = \boldsymbol\epsilon_\emptyset + w(\boldsymbol\epsilon_\mathbf{c} - \boldsymbol\epsilon_\emptyset)$ with $w>1$. Higher $w$ improves prompt adherence but risks over-saturation.
     - Latent diffusion (Stable Diffusion) runs the diffusion process in the compressed latent space of a VAE, reducing spatial resolution 8× and compute $\sim$64× versus pixel space.
     - Flow matching (Rectified Flow, CFM) is a cleaner framework: train the network to predict the straight-line velocity $\mathbf{x}_1 - \mathbf{x}_0$; requires fewer ODE steps and is now the backbone of SD3 and Flux.

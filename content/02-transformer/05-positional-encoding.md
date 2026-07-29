@@ -10,7 +10,7 @@ Now permute the rows of the input — swap token 2 with token 17, reverse the wh
 
 That is a disaster for language, code, and basically every sequence we care about. The cure is **positional encoding**: we inject information about each token's position so the model can tell *where* every token is and, more importantly, *how far apart* any two tokens are. This chapter is the complete tour of how that is done — from the original sinusoidal scheme, through learned tables, to **Rotary Position Embedding (RoPE)** and **ALiBi**, the two designs that dominate modern LLMs — and then the practical art of stretching a model trained on 4K tokens to run at 128K via **position interpolation, NTK-aware scaling, and YaRN**. We build RoPE entirely from scratch, twice, and verify its defining mathematical property numerically.
 
-This chapter assumes the [attention mechanism](../02-transformer/03-attention-from-scratch.html) and the [embedding pipeline](../02-transformer/02-embeddings-input.html). It pairs tightly with [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html) (RoPE is applied per head) and feeds directly into [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html).
+This chapter assumes the [attention mechanism](../02-transformer/03-attention-from-scratch.html) and the [embedding pipeline](../02-transformer/02-embeddings-input.html). It pairs tightly with [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html) (RoPE is applied per head) and feeds directly into [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html). Everything here is cashed out concretely in the capstone: Stack-100M ships exactly this RoPE (with NoPE on every 4th layer) in [The Stack-100M Architecture](../14-capstone/04-architecture.html), and its context is stretched from 2048 to 8192 tokens by RoPE base rescaling in [Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html).
 
 ## Why Attention Needs Position, and the Two Ways to Add It
 
@@ -166,7 +166,7 @@ $$
 \theta_k = \text{base}^{-2k/d}, \qquad k = 0, 1, \dots, d/2 - 1,
 $$
 
-with $\text{base} = 10000$ by default — the *same* geometric frequency ladder as the sinusoidal encoding, which is no coincidence. Low-index pairs rotate fast (encode fine, local position); high-index pairs rotate slowly (encode coarse, long-range position). The full RoPE transform is a block-diagonal rotation matrix:
+with $\text{base} = 10000$ by default — the *same* geometric frequency ladder as the sinusoidal encoding, which is no coincidence. Low-index pairs rotate fast (encode fine, local position); high-index pairs rotate slowly (encode coarse, long-range position). The base is a real design knob, not a constant: models pretrained for long context now ship a much larger `rope_theta` from the start (Llama 3 uses 500,000 and the Qwen 2.5/3 families use 1,000,000, versus GPT-NeoX-era 10,000), because a bigger base slows every dimension down and keeps the slow pairs inside a well-trained angular range at long positions. There is a genuine floor here — the base needed to support a target context grows with that context, a point argued directly in the "base of RoPE bounds context length" line of work (Men et al., 2024) — so a model pretrained at base 10,000 has less headroom to be stretched later than one pretrained at 500,000. The full RoPE transform is a block-diagonal rotation matrix:
 
 $$
 R_{\Theta}(m) = \begin{bmatrix}
@@ -275,6 +275,68 @@ print("RoPE relative-position property verified.")
 ```
 
 This runs and prints two essentially identical numbers: the score from rotating $q$ at position 25 and $k$ at position 10 equals the score from rotating $q$ at offset 15 and $k$ at offset 0. **The absolute positions cancel; only the offset $15 = 25 - 10$ survives.**
+
+### Positions are an input, not `arange`
+
+The code above quietly assumed every token's position is its index in the batch, `arange(T)`. That assumption is wrong in two of the three situations you will actually hit, and both failures are silent — the model still runs, it just gets worse. Build your RoPE application to take an explicit **`position_ids`** tensor and index the tables with it; that single indirection is what makes packing, incremental decoding, and context extension all work with no further changes.
+
+```python
+import torch
+# Reuses build_rope_cache() and rotate_half() defined earlier in this chapter.
+
+def apply_rope_at(x, position_ids, cos_tab, sin_tab):
+    """RoPE with EXPLICIT positions.
+
+    x:            (B, H, T, D) queries or keys
+    position_ids: (B, T) int64 — each token's TRUE absolute position
+    cos_tab/sin_tab: (max_seq, D) tables from build_rope_cache
+    """
+    cos = cos_tab[position_ids].unsqueeze(1)   # (B, 1, T, D): broadcast over heads
+    sin = sin_tab[position_ids].unsqueeze(1)
+    return x * cos + rotate_half(x) * sin
+
+B, H, D, MAX_SEQ = 1, 4, 64, 512
+cos_tab, sin_tab = build_rope_cache(MAX_SEQ, D)
+
+# (a) Training on PACKED documents: positions restart at each document boundary,
+#     matching the block-diagonal mask so document 2 does not think it starts at 4000.
+pos_packed = torch.tensor([[0, 1, 2, 3, 0, 1, 0, 1]])          # three documents in one window
+q_packed = apply_rope_at(torch.randn(B, H, 8, D), pos_packed, cos_tab, sin_tab)
+
+# (b) Incremental decoding with a KV cache: the ONE new token sits at position
+#     past_len, NOT 0. Rotating it at 0 is the single most common RoPE bug —
+#     the model degenerates into treating every generated token as the sequence start.
+past_len = 137
+q_step = apply_rope_at(torch.randn(B, H, 1, D),
+                       torch.tensor([[past_len]]), cos_tab, sin_tab)
+print(q_packed.shape, q_step.shape)   # torch.Size([1, 4, 8, 64]) torch.Size([1, 4, 1, 64])
+```
+
+Three practical rules fall out of this. **(1)** Rotate the key *once*, at write time, and store the rotated key in the cache — never re-rotate cached keys, and never rotate them by an offset relative to the current query. **(2)** Under [GQA](../02-transformer/04-mha-gqa-mla.html), apply RoPE to the *narrow* key tensor (`n_kv_heads`) before expanding it to `n_heads`; the rotation is per-position and head-count-agnostic, so doing it after expansion is pure wasted work. **(3)** RoPE happens *before* the attention kernel — FlashAttention and `torch.nn.functional.scaled_dot_product_attention` take already-rotated $q,k$ and know nothing about position. The capstone's model does exactly this and derives `position_ids` from the packed token stream itself ([The Stack-100M Architecture](../14-capstone/04-architecture.html)).
+
+!!! warning "Common pitfall: build the cos/sin tables in fp32, cast only at the end"
+    `torch.arange(seq_len)` cast to bf16 is exact only up to 256 — position 4097 rounds to 4096, and beyond ~100K the spacing between representable bf16 values exceeds 512 tokens. If the position vector, the inverse frequencies, or the `pos × inv_freq` outer product are computed in bf16/fp16 (easy to do accidentally under `torch.autocast`), whole ranges of positions collapse onto the same angle and long-context quality quietly dies. Compute `inv_freq`, `freqs`, `cos`, and `sin` in **float32** (float64 if you are serving past a million tokens) and cast the resulting tables to the compute dtype only at the very end — which is why `transformers` keeps `inv_freq` as a float32 buffer and wraps the table construction in an autocast-disabled block. See [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html).
+
+### The libraries you will actually call
+
+You will implement RoPE from scratch exactly once — to understand it. In production it comes from a library, and the two you will meet are HuggingFace `transformers` (training/reference) and a fused CUDA kernel (serving).
+
+```python
+# --- HuggingFace Transformers: the same math, config-driven ---
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+print(sorted(ROPE_INIT_FUNCTIONS))
+# e.g. ['dynamic', 'linear', 'llama3', 'longrope', 'proportional', 'yarn']
+#      (plus a default/no-scaling path; the exact set grows with the version)
+
+from transformers.models.llama.modeling_llama import apply_rotary_pos_emb, rotate_half
+# Inside LlamaAttention the flow is exactly ours:
+#   cos, sin = self.rotary_emb(value_states, position_ids)   # tables built from config
+#   q, k     = apply_rotary_pos_emb(q, k, cos, sin)          # x*cos + rotate_half(x)*sin
+# `rotary_emb` picks its table-builder from ROPE_INIT_FUNCTIONS[<the config's rope_type>],
+# which is how one config dict switches between linear / yarn / llama3 / longrope.
+```
+
+Every scaling method in the next section is therefore a *config edit*, not a code change. For throughput, `flash_attn.layers.rotary.apply_rotary_emb` (from the `flash-attn` package) fuses the rotation into one kernel pass and supports `interleaved=True` for the original RoFormer pairing — note it expects half-width `cos`/`sin` of shape `(seqlen, rotary_dim/2)` rather than the duplicated full-width tables above, a mismatch worth checking against your own implementation with `torch.allclose`. vLLM and SGLang ship their own fused rotary kernels (vLLM's `get_rope(...)` factory mirrors the HF config keys), and llama.cpp implements RoPE as a GGML op configured by `rope_freq_base` / `rope_scaling_type` stored in the GGUF header. All of them compute the same rotation; they differ only in the pairing convention and where the multiply happens.
 
 !!! example "Worked example: how fast does each RoPE dimension spin?"
     Take head dimension $d = 128$, base $= 10000$, so there are $64$ frequency pairs with $\theta_k = 10000^{-2k/128} = 10000^{-k/64}$.
@@ -411,6 +473,28 @@ for k, v in rope_scaling_summary().items():
     print(f"{k:14s}: {v}")
 ```
 
+In practice you rarely write any of this: you edit a config or pass a serving flag. The three places that matter are the HF config (training and reference inference), the inference server, and the GGUF/llama.cpp path.
+
+```bash
+# 1) HuggingFace config.json — the source of truth a checkpoint carries with it.
+#    {"rope_theta": 10000.0,
+#     "rope_scaling": {"rope_type": "yarn", "factor": 4.0,
+#                      "original_max_position_embeddings": 8192}}
+#    Recent transformers releases normalize this into a single `rope_parameters`
+#    dict (absorbing rope_theta) and keep `rope_scaling` as a read-compatible alias.
+
+# 2) vLLM — override the checkpoint's rotary config at serve time, no retraining.
+vllm serve my-org/my-8k-model \
+  --max-model-len 32768 \
+  --hf-overrides '{"rope_scaling": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 8192}}'
+# (older vLLM releases expose dedicated --rope-scaling / --rope-theta flags instead)
+
+# 3) llama.cpp — the same knobs on a quantized GGUF model.
+llama-cli -m model.gguf -c 32768 --rope-scaling yarn --yarn-orig-ctx 8192
+```
+
+Whichever route you take, `factor` and `original_max_position_embeddings` must describe the *original pretraining* length, and the server's `--max-model-len` must not exceed `factor × original` — the two are a matched pair (recent `transformers` versions will warn you when the explicit `factor` disagrees with `max_position_embeddings / original_max_position_embeddings`), and mismatching them is exactly the double-counting failure described in the warning below. The capstone works this end to end for Stack-100M, rescaling the base from 10,000 to about 42,000 for a 2048 → 8192 extension and then continuing training at the new length ([Mid-Training](../14-capstone/08-mid-training.html)).
+
 !!! tip "Practitioner tip: always evaluate the extended model on long-range *retrieval*, not just perplexity"
     A context-extended model can have a deceptively low perplexity at 128K — perplexity is dominated by the easy local tokens — while completely failing to *use* information from the far end of the context. Always validate with a targeted long-range probe such as needle-in-a-haystack (plant a fact at a random depth, ask for it) or RULER-style synthetic tasks. It is common to see PI/NTK pass perplexity but flunk retrieval at the new length, which then guides whether you need YaRN, more fine-tuning data at length, or a larger scale factor. See [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html) for the full evaluation playbook.
 
@@ -439,6 +523,7 @@ From here, RoPE'd attention slots into [a full Transformer block](../02-transfor
     - **Two injection sites:** add to the representation (sinusoidal, learned absolute — Approach A) or add a bias to the attention score (T5 relative, ALiBi — Approach B). RoPE is the hybrid: it rotates $q,k$ (Approach A's locus) so the dot product depends on relative offset (Approach B's goal).
     - **Learned absolute encodings have a hard length ceiling** ($L_{\max}$ baked into parameter shapes) and cannot extrapolate by even one token — the central reason the field abandoned them.
     - **RoPE rotates each $q,k$ pair by an angle proportional to position**, so $q_m^\top R_\Theta(n-m)k_n$ depends only on the relative offset $n-m$. It has zero parameters, is a cheap rotate-half elementwise op, and is fully KV-cache compatible (key $n$'s rotation depends only on $n$). It is the modern default.
+    - **Positions are an input, not `arange`.** Index the cos/sin tables with an explicit `position_ids` tensor: packed documents restart at 0 per document, and a decode step's single token sits at `past_len`, not 0. Build the tables in fp32 (bf16 cannot even represent integer positions past 256) and rotate keys once, at cache-write time.
     - **ALiBi** adds a per-head linear distance penalty $-m_h|i-j|$ to the score, with no embedding-side position at all. It extrapolates beautifully out of the box but encodes a recency bias that can hurt long-range retrieval.
     - **NoPE** shows the causal mask alone leaks enough information for a decoder-only model to recover position — a clarifying result, not a production default.
     - **Context extension manipulates RoPE's frequency ladder:** Position Interpolation (uniform squeeze, needs fine-tune) → NTK-aware (stretch the base non-uniformly, often training-free for 2–4×) → YaRN (per-dimension ramp + attention-logit temperature, the production-grade method behind most long-context releases).

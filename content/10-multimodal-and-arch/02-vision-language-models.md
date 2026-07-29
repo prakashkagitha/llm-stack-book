@@ -205,6 +205,8 @@ The key architectural difference from the projector approach:
 
 Flamingo's cross-attention design enables *interleaved* image–text few-shot inference natively: you can pass "image1, caption1, image2, caption2, image3, ?" as a single context. The cross-attention layers route each text token to the most recently preceding image (via a masking strategy in the attention). This is harder to achieve with projectors because all image tokens compete for context space.
 
+Cross-attention did not die with Flamingo. Llama 3.2 Vision (11B/90B, Meta 2024) bolts a vision encoder onto a *frozen* text model through interleaved cross-attention adapter layers, precisely so that adding sight costs nothing on text-only benchmarks — the regression that unfreezing the LLM in a projector recipe invites. NVIDIA's NVLM-1.0 (2024) is the cleanest head-to-head: it trains a decoder-only variant (projector), a cross-attention variant, and a hybrid on identical data, and reports the projector wiring stronger on OCR/text-heavy tasks while the cross-attention wiring is cheaper at high resolution because visual tokens never enter the LLM's self-attention. The rule of thumb that falls out: **projector when images are few and text-in-image matters; cross-attention when images are many, large, or you must not perturb the text model.** Note also that Meta's own follow-up, Llama 4 (2025), moved to early-fusion native multimodal pretraining instead of either connector — the field's center of gravity is drifting from bolted-on connectors toward joint training.
+
 ```python
 import torch
 import torch.nn as nn
@@ -387,6 +389,7 @@ def encode_tiles_to_visual_tokens(
     tiles: list,
     vision_encoder,       # returns [1, 1+N_patches, D_v]
     projector,            # maps [1, N_patches, D_v] -> [1, N_patches, D_llm]
+    image_processor,      # e.g. CLIPImageProcessor.from_pretrained(...)
     device: str = "cuda",
 ) -> torch.Tensor:
     """
@@ -396,8 +399,10 @@ def encode_tiles_to_visual_tokens(
     """
     all_tokens = []
     for tile_img in tiles:
-        # Preprocess (CLIP normalization, to_tensor, add batch dim)
-        pixel_values = preprocess(tile_img).unsqueeze(0).to(device)  # [1, 3, 336, 336]
+        # CLIP preprocessing: resize/center-crop, rescale, channel normalize
+        pixel_values = image_processor(
+            images=tile_img, return_tensors="pt"
+        )["pixel_values"].to(device)                                 # [1, 3, 336, 336]
         with torch.no_grad():
             enc = vision_encoder(pixel_values=pixel_values)
         # Drop CLS token, project
@@ -412,7 +417,63 @@ def encode_tiles_to_visual_tokens(
 # Example: 672x336 image -> 2 tiles + 1 thumbnail = 3 * 576 = 1728 visual tokens
 ```
 
-InternVL 1.5 and 2.x push this further with **dynamic high resolution**: tiles are selected based on the image's aspect ratio and content type, and the model is trained with a curriculum that starts at low resolution and increases to $4 \times 4$ tiles (up to 2304 tokens excluding thumbnail). Qwen-VL uses a similar approach but introduces a **position-aware visual attention** mechanism so that patches from different tiles maintain correct 2-D relative positions when processed in the LLM.
+InternVL 1.5 and 2.x push this further with **dynamic high resolution**: tiles are selected based on the image's aspect ratio and content type, and the model is trained with a curriculum that starts at low resolution and increases to $4 \times 4$ tiles (up to 2304 tokens excluding thumbnail). Qwen-VL (v1) used a similar tiling-plus-resampler design.
+
+### Truly Native Resolution: Variable-Length ViTs, Patch Mergers, and M-RoPE
+
+Tiling is a *workaround* for a vision encoder that can only accept one fixed input size. The cleaner answer — pioneered by NaViT (Dehghani et al., 2023, "patch n' pack") and made mainstream by Qwen2-VL — is to make the ViT accept a variable number of patches in the first place. Three mechanisms make that work, and all three are worth understanding because they are now the default in Qwen2.5-VL/Qwen3-VL and in InternVL3's native pipeline:
+
+**1. Sequence packing in the vision tower.** An image of $H \times W$ pixels simply becomes $\lceil H/p \rceil \cdot \lceil W/p \rceil$ patches. Different images in a batch have different patch counts, so instead of padding them to a common length you *concatenate* them into one long sequence and pass a `cu_seqlens` boundary array to a variable-length attention kernel, so no image ever attends to another. This is exactly the packing/varlen machinery from [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html), reused verbatim — `flash_attn_varlen_func` is what the Qwen2-VL vision tower actually calls. The learned 2-D position embedding is interpolated to the image's real grid rather than assuming a fixed $24 \times 24$.
+
+**2. A patch merger before the LLM.** Native resolution would otherwise make the token explosion worse, so Qwen2-VL applies an MLP over each $2 \times 2$ neighborhood of ViT outputs, concatenating the four vectors and projecting them down to one LLM token. With $p = 14$, one visual token therefore covers a $28 \times 28$ pixel region. This is the same idea as the `pool_2x2` connector in Exercise 5, but *learned* (concat + MLP) rather than averaged — it preserves within-neighborhood detail that averaging destroys, which matters for small text. Processors expose `min_pixels` / `max_pixels` knobs that clamp the resized area, giving you a direct dial on visual tokens per image.
+
+**3. M-RoPE (multimodal rotary position embedding).** Once visual tokens carry real 2-D geometry, a 1-D position index throws that geometry away. M-RoPE partitions the rotary dimensions of each head into three sections — temporal, height, width — and feeds each section its own position index. A text token gets the *same* index in all three sections, which makes M-RoPE collapse exactly to ordinary 1-D RoPE on text, so a pretrained text LLM's positional behavior is preserved bit-for-bit; an image's tokens share one temporal index and vary in $(h, w)$; a video's frames increment the temporal index. (See [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html) for the 1-D case.)
+
+```python
+import math
+
+def qwen2vl_visual_tokens(h: int, w: int, patch: int = 14, merge: int = 2) -> int:
+    """Visual tokens for one image under native-resolution + 2x2 patch merging.
+
+    The processor first snaps H, W to multiples of patch*merge (28 px), so each
+    surviving LLM token covers a (patch*merge)^2 = 28x28 pixel region.
+    """
+    unit = patch * merge                       # 28 px per output token side
+    gh, gw = math.ceil(h / unit), math.ceil(w / unit)
+    return gh * gw
+
+
+def mrope_position_ids(seq: list[tuple[str, int, int]]) -> list[tuple[int, int, int]]:
+    """Build (t, h, w) position ids for a text/image interleaved sequence.
+
+    seq entries are ("text", n_tokens, 0) or ("image", grid_h, grid_w).
+    Text advances all three axes together (== 1-D RoPE); an image occupies one
+    temporal step and spreads over its (h, w) grid. Each new segment starts one
+    past the max index used so far, so nothing collides.
+    """
+    ids: list[tuple[int, int, int]] = []
+    start = 0
+    for kind, a, b in seq:
+        if kind == "text":
+            ids += [(start + i,) * 3 for i in range(a)]
+            start += a
+        else:  # image: grid a x b, single temporal index
+            ids += [(start, start + r, start + c) for r in range(a) for c in range(b)]
+            start += max(a, b)                 # advance past the widest axis used
+    return ids
+
+
+if __name__ == "__main__":
+    # A 1288x952 screenshot: no tiling, no thumbnail, one variable-length pass.
+    print(qwen2vl_visual_tokens(1288, 952))          # 46*34 = 1564 tokens
+    # The same image under 336px AnyRes tiling: round(1288/336)=4 cols,
+    # round(952/336)=3 rows -> 12 tiles + 1 thumbnail, at 576 tokens each.
+    print((4 * 3 + 1) * 576)                         # 7488 tokens -> ~4.8x more
+    pos = mrope_position_ids([("text", 3, 0), ("image", 2, 2), ("text", 2, 0)])
+    print(pos)   # text ids are (i,i,i); image ids vary in h and w at fixed t
+```
+
+The payoff is that a $1288 \times 952$ screenshot is encoded *as itself*: no aspect-ratio distortion, no tile seams cutting a word in half, no redundant thumbnail pass. The cost is that per-image compute is now data-dependent, which complicates batching and makes throughput planning harder — which is why Qwen2.5-VL runs **window attention** in most ViT layers (with a few full-attention layers left in) so vision-tower cost grows roughly linearly, not quadratically, in patch count.
 
 ## Qwen-VL and InternVL: The Modern Recipe
 
@@ -469,6 +530,60 @@ def build_optimizer_stage2(model, lr_llm=2e-5, lr_vision=2e-6, lr_proj=1e-4):
     return optimizer
 ```
 
+## Doing This With Real Libraries
+
+Everything above is the mechanism. In practice you assemble a VLM out of four open-source layers, and it is worth knowing exactly which library owns which one.
+
+**Inference / prototyping — HF `transformers`.** A VLM checkpoint ships a `Processor` (an image processor plus the tokenizer plus the chat template) alongside the model. The processor is what expands a single `<image>` placeholder into the right number of image-token ids for that image's resolution — the bookkeeping the `splice_visual_tokens` helper above does by hand.
+
+```python
+from transformers import AutoProcessor, AutoModelForImageTextToText
+from PIL import Image
+
+model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
+# min_pixels/max_pixels clamp the resized area -> a direct cap on visual tokens.
+processor = AutoProcessor.from_pretrained(
+    model_id, min_pixels=256 * 28 * 28, max_pixels=1280 * 28 * 28,
+)
+model = AutoModelForImageTextToText.from_pretrained(
+    model_id, torch_dtype="auto", device_map="auto",
+)
+
+image = Image.open("receipt.jpg").convert("RGB")
+messages = [{"role": "user", "content": [
+    {"type": "image"},
+    {"type": "text", "text": "What is the total, and which line item is largest?"},
+]}]
+# 1) template -> a string containing the model's image placeholder tokens
+text = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+# 2) processor -> input_ids (placeholder expanded), pixel_values, and the patch grid
+inputs = processor(text=[text], images=[image], return_tensors="pt").to(model.device)
+print(inputs["input_ids"].shape)      # text tokens + one id per merged visual token
+out = model.generate(**inputs, max_new_tokens=128)
+print(processor.batch_decode(out[:, inputs["input_ids"].shape[1]:],
+                             skip_special_tokens=True)[0])
+```
+
+**Serving — vLLM / SGLang.** Both speak multimodal natively; you pass images as `multi_modal_data` next to the prompt, and both cap per-request image counts so one prompt cannot blow up the batch. vLLM's prefix caching also applies to the visual prefix, which is a large win when many questions are asked about the same document. Note that PagedAttention pages the *KV* of visual tokens exactly like text KV ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)) — the encoder pass itself is separate work, cached per image.
+
+```python
+from vllm import LLM, SamplingParams
+from PIL import Image
+
+llm = LLM(model="Qwen/Qwen2.5-VL-7B-Instruct",
+          limit_mm_per_prompt={"image": 4},   # reject prompts with >4 images
+          max_model_len=16384)                # must cover visual + text tokens
+out = llm.generate({
+    "prompt": text,                            # same templated string as above
+    "multi_modal_data": {"image": Image.open("receipt.jpg").convert("RGB")},
+}, SamplingParams(max_tokens=128))
+print(out[0].outputs[0].text)
+```
+
+**Fine-tuning — TRL, LLaMA-Factory, ms-swift.** TRL's `SFTTrainer` accepts vision-language datasets directly (conversations whose content lists contain `{"type": "image"}` entries) and handles the visual-label masking for you; combine it with `peft` LoRA on the LLM's attention projections while leaving the vision tower frozen, which is the standard cheap recipe. LLaMA-Factory and ms-swift wrap the same idea in YAML configs with support for the full Qwen-VL/InternVL/LLaVA families; InternVL's own repo ships its native training stack. If you write the loop yourself, the only VLM-specific requirement is the `-100` masking shown earlier.
+
+**Data and evaluation.** Image–text corpora are built with `img2dataset` (URL lists → resized, sharded `webdataset` tars) and consumed with `webdataset` or HF `datasets`; captions get re-written at scale by a stronger VLM (the ShareGPT4V pattern). Evaluation runs through [VLMEvalKit](https://github.com/open-compass/VLMEvalKit) or `lmms-eval` — the multimodal analogues of `lm-evaluation-harness` ([Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)), covering DocVQA, ChartQA, MMMU, MMBench, and OCRBench with one command.
+
 ## OCR and Document Understanding
 
 One of the most commercially important capabilities of modern VLMs is reading text in images: receipts, invoices, PDFs, whiteboards, code screenshots. This task goes by many names — OCR-VQA, document understanding, visual text recognition — and it stresses VLMs in a specific way: the model must both *see* fine-grained character shapes and *understand* the semantic meaning of the text in context.
@@ -500,6 +615,7 @@ def encode_document_pages(
     vision_encoder,
     projector,
     tokenizer,
+    image_processor,
     max_tiles_per_page: int = 4,
     page_sep_token: str = "<page_sep>",
 ) -> dict:
@@ -518,7 +634,8 @@ def encode_document_pages(
     all_embeds = []
     for page_img in pages:
         tiles  = tile_image(page_img, max_tiles=max_tiles_per_page)
-        tokens = encode_tiles_to_visual_tokens(tiles, vision_encoder, projector)
+        tokens = encode_tiles_to_visual_tokens(
+            tiles, vision_encoder, projector, image_processor)
         # tokens: [1, K*576, D_llm]
         all_embeds.append(tokens)
         all_embeds.append(sep_embed)  # separator between pages
@@ -547,6 +664,8 @@ The capability of a VLM is governed at least as much by its training data mix as
 | Interleaved web data | MMC4, OBELISC | Multi-image context |
 
 Data quality matters more than quantity. LLaVA-1.5 uses only 665K instruction-tuning examples but outperforms models trained on millions of lower-quality samples. Techniques like ShareGPT4V (Zhang et al., 2023) use GPT-4V to generate higher-quality captions for existing images, bootstrapping quality at scale.
+
+**Building the smallest version of this yourself.** `Stack-100M`, the model built in Part XIV, is text-only — but the projector recipe is the cheapest possible extension and a genuinely runnable single-GPU project. Freeze `openai/clip-vit-base-patch16` (86M params, $(224/16)^2 = 196$ patch tokens), apply the Exercise-5 `pool_2x2` to get 49 visual tokens so the prefix costs only 2.4% of the capstone's 2048-token context, and train *only* a two-layer MLP from $D_v = 768$ into the capstone's $d_\text{model} = 512$ ([Capstone: Model Architecture](../14-capstone/04-architecture.html)). That connector is $768 \cdot 512 + 512 \cdot 512 \approx 0.66$M parameters — under 1% of the model — and Stage 1 is a few hours of caption LM loss on a CC3M-style shard built with `img2dataset`. Stage 2 then reuses the capstone's SFT loop unchanged ([Capstone: Post-Training — SFT, DPO and Narrow RLVR](../14-capstone/09-post-training.html)); the only genuinely new code is the placeholder splicing and the `-100` visual masking above. The capstone's habit of passing explicit `position_ids` into RoPE rather than assuming `arange(T)` is also exactly the hook you would need to upgrade it to M-RoPE later.
 
 The loss function is standard cross-entropy over text tokens only. Visual tokens are in the input but produce no loss signal:
 
@@ -596,7 +715,8 @@ The remaining open questions the field is actively working on:
     - VLMs bridge a vision encoder and an LLM via two main strategies: **projector (LLaVA-style)** prepends projected visual tokens into the LLM's sequence; **cross-attention (Flamingo-style)** inserts new cross-attention layers that let LLM hidden states query visual features without consuming context positions.
     - The **projector approach** remains dominant through 2026 due to its simplicity: a two-layer MLP maps ViT patch embeddings into the LLM embedding space. Only ~21M new parameters are needed. (The frontier open families — Qwen3-VL, InternVL3.5 — increasingly blend this with *native multimodal pretraining*, training vision and text jointly from the start rather than bolting a projector onto a frozen text LLM.)
     - The **visual token explosion** is the central engineering constraint: a 336px image generates 576 tokens, and any-resolution tiling multiplies this by the number of tiles. KV-cache memory and prefill FLOPS scale accordingly.
-    - **Any-resolution (AnyRes) tiling** — dividing an image into multiple 336×336 tiles and encoding each independently — is the standard solution for high-resolution and OCR tasks. LLaVA-1.6, InternVL 2, and Qwen-VL all use this approach.
+    - **Any-resolution (AnyRes) tiling** — dividing an image into multiple 336×336 tiles and encoding each independently — was the first fix for high-resolution and OCR tasks (LLaVA-1.6, InternVL 2, Qwen-VL v1). Since Qwen2-VL the frontier has moved to **truly native resolution**: a variable-length ViT with packed `cu_seqlens` attention, a learned 2×2 patch merger (one token per 28×28 pixels), and **M-RoPE**, which splits rotary dimensions into temporal/height/width sections and degenerates to 1-D RoPE on text.
+    - **The library stack is short and stable:** `transformers` (`AutoProcessor` + `AutoModelForImageTextToText`) for prototyping, vLLM or SGLang with `multi_modal_data` for serving, TRL/LLaMA-Factory/ms-swift (+ PEFT LoRA) for fine-tuning, `img2dataset`/`webdataset` for corpora, and VLMEvalKit or `lmms-eval` for evaluation.
     - **Training is staged:** first align the projector with frozen encoder + LLM; then co-train the projector and LLM (and optionally the encoder at a lower LR) on diverse instruction-following data.
     - **OCR and document understanding** require high resolution (tiling), large encoders, and specialized training data (DocVQA, TextVQA, ChartQA). The model must localize then read text.
     - **Data quality beats data quantity:** 665K high-quality instruction examples (LLaVA-1.5) outperforms millions of noisy samples. GPT-4V-recaptioned data improves downstream quality significantly.
@@ -639,7 +759,10 @@ The remaining open questions the field is actively working on:
 - **Flamingo** — Alayrac et al., "Flamingo: a Visual Language Model for Few-Shot Learning," NeurIPS 2022. Gated cross-attention design.
 - **BLIP-2** — Li et al., "BLIP-2: Bootstrapping Language-Image Pre-Training with Frozen Image Encoders and Large Language Models," ICML 2023. Q-Former token compression.
 - **InternVL** — Chen et al., "InternVL: Scaling up Vision Foundation Models and Aligning for Generic Visual-Linguistic Tasks," CVPR 2024.
-- **Qwen-VL** — Bai et al., "Qwen-VL: A Versatile Vision-Language Model's Large Language Model," arXiv 2023.
+- **Qwen-VL** — Bai et al., "Qwen-VL: A Versatile Vision-Language Model for Understanding, Localization, Text Reading, and Beyond," arXiv 2023.
+- **Qwen2-VL** — Wang et al., "Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution," arXiv 2024. Native dynamic resolution and M-RoPE.
+- **NaViT** — Dehghani et al., "Patch n' Pack: NaViT, a Vision Transformer for any Aspect Ratio and Resolution," NeurIPS 2023. Sequence packing for variable-resolution ViTs.
+- **NVLM** — Dai et al., "NVLM: Open Frontier-Class Multimodal LLMs," arXiv 2024. Controlled comparison of projector vs cross-attention vs hybrid connectors.
 - **ShareGPT4V** — Zhang et al., "ShareGPT4V: Improving Large Multi-Modal Models with Better Captions," arXiv 2023.
 - **DocOwl** — Ye et al., "mPLUG-DocOwl: Modularized Multimodal Large Language Model for Document Understanding," arXiv 2023.
 

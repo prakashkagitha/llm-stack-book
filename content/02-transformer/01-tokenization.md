@@ -214,7 +214,7 @@ The key subtlety in `encode_word` is the **rank-based priority**: we do not just
     2. **Incremental pair counts.** Maintain a `pair -> count` map plus, for each pair, the set of word positions where it occurs. When you merge a pair, only the pairs *adjacent to each merge site* change — the pair to the left and right of the merge are destroyed, and (at most) two new pairs are created — so you update a handful of counts instead of rescanning the whole corpus. Pull the top pair with a max-heap or bucket structure keyed by count, in roughly $O(\log P)$, instead of a full linear `max` scan.
     3. **Parallelize pre-tokenization** across corpus shards (embarrassingly parallel), then merge the per-shard word counters before the sequential merge loop.
 
-    Rough wall-clock: the naive pure-Python trainer above (and educational trainers like `minbpe`) would take many hours to days for 32k merges on ~1 GB of text. The incremental Rust implementation in HuggingFace `tokenizers` trains 32k merges on ~1 GB in well under a minute — roughly ~20 s/GB. Takeaway: the *algorithm* above is exactly right for understanding BPE, but do not run it on real corpora — reach for HF `tokenizers` or `tiktoken` and read their incremental-update loop if you need to train a production tokenizer.
+    Rough wall-clock: the naive pure-Python trainer above (and educational trainers like `minbpe`) would take many hours to days for 32k merges on ~1 GB of text. The incremental Rust implementation in HuggingFace `tokenizers` trains 32k merges on ~1 GB in well under a minute — roughly ~20 s/GB. Takeaway: the *algorithm* above is exactly right for understanding BPE, but do not run it on real corpora — reach for HF `tokenizers` or `tiktoken` and read their incremental-update loop if you need to train a production tokenizer. If you want the incremental version written out in Python, with the one subtle bookkeeping bug that makes the obvious implementation silently wrong, [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) builds it for the capstone model.
 
 ## Byte-Level BPE: Guaranteeing No `<unk>`
 
@@ -290,7 +290,7 @@ One line per alternation, left to right:
 - `\s+(?!\S)` — trailing whitespace *not* followed by a non-space character, so a space that precedes a word attaches to that word rather than to the previous chunk.
 - `\s+` — any remaining whitespace run (e.g. a whitespace-only string, or trailing whitespace at end of text).
 
-`cl100k_base` (GPT-3.5/GPT-4) changes exactly two things in this pattern: it replaces ` ?\p{N}+` with `\p{N}{1,3}` — digits in groups of at most three — and it makes the contraction alternatives case-insensitive. The pre-tokenizer alone, before any BPE merge runs, is what forces GPT-4's 1–3-digit number grouping.
+`cl100k_base` (GPT-3.5/GPT-4) keeps the same skeleton but tightens several alternations: the contraction group becomes case-insensitive (`(?i:'s|'t|...)`), the letter run may be preceded by a single non-letter/non-digit character rather than only a space, newline runs get their own alternatives, and — the change with the largest downstream effect — ` ?\p{N}+` becomes `\p{N}{1,3}`, digits in groups of at most three. The pre-tokenizer alone, before any BPE merge runs, is what forces GPT-4's 1–3-digit number grouping. (Always read the live pattern from `tiktoken.get_encoding(name)._pat_str` rather than trusting a transcription, including this one.)
 
 **The tokenizer class.** This reuses `bytes_to_unicode`, `Counter`, `get_pair_counts`, and `merge_pair` defined earlier in this chapter — training is exactly the same greedy loop, just over byte-glyph symbols instead of characters, with no `</w>`:
 
@@ -526,7 +526,7 @@ print(wordpiece_encode("tokenization", vocab))  # ['token', '##ization']
 print(wordpiece_encode("playing", vocab))        # ['play', '##ing']
 ```
 
-### Unigram / SentencePiece (T5, Llama, Gemma)
+### Unigram & SentencePiece (T5, ALBERT, XLNet)
 
 Unigram (Kudo, *Subword Regularization*, 2018), the default model in the **SentencePiece** library, takes the opposite philosophical approach from BPE. Where BPE *builds up* a vocabulary by merging, Unigram *prunes down*. It starts with a large seed vocabulary (e.g. all frequent substrings) and iteratively removes pieces, keeping the set that best explains the corpus under a probabilistic model.
 
@@ -592,7 +592,7 @@ for w, p in {"hello": 0.2, "he": 0.05, "llo": 0.05, "world": 0.2}.items():
 print(viterbi_segment("hello", logp))   # -> ['hello'] (single high-prob piece)
 ```
 
-Two properties make Unigram special. First, because it has an explicit probability model, it supports **subword regularization**: during *training* of the downstream model you can sample *different* segmentations of the same text (not always the Viterbi-best), which acts as data augmentation and improves robustness. BPE has an analogous trick called **BPE-dropout** (randomly skip merges). Second, SentencePiece treats the input as a **raw character stream including spaces**, encoding the space as a visible meta-symbol `▁` (U+2581). This makes tokenization fully reversible and **language-agnostic** — no assumption that words are whitespace-separated, which is essential for Chinese, Japanese, and Thai. Llama, Mistral (early), T5, Gemma, and many multilingual models use SentencePiece (some with Unigram, some with BPE backends).
+Two properties make Unigram special. First, because it has an explicit probability model, it supports **subword regularization**: during *training* of the downstream model you can sample *different* segmentations of the same text (not always the Viterbi-best), which acts as data augmentation and improves robustness. BPE has an analogous trick called **BPE-dropout** (randomly skip merges). Second, SentencePiece treats the input as a **raw character stream including spaces**, encoding the space as a visible meta-symbol `▁` (U+2581). This makes tokenization fully reversible and **language-agnostic** — no assumption that words are whitespace-separated, which is essential for Chinese, Japanese, and Thai. Keep the *library* and the *algorithm* distinct: T5, ALBERT, and XLNet use SentencePiece with the **Unigram** backend, while Llama-1/2, early Mistral, and Gemma use SentencePiece with a **BPE** backend (plus `byte_fallback`). "Uses SentencePiece" therefore tells you the space convention and the byte-fallback behaviour, not which of the two training objectives was run — check `model_type` in the trained `.model` file if it matters.
 
 !!! note "Aside: BPE vs WordPiece vs Unigram at a glance"
     | | BPE | WordPiece | Unigram |
@@ -601,7 +601,7 @@ Two properties make Unigram special. First, because it has an explicit probabili
     | Objective | most frequent pair | max likelihood gain | unigram LM likelihood (EM) |
     | Encode | apply merges in order | greedy longest-match | Viterbi best path |
     | Marker | `Ġ` (byte-level) | `##` continuation | `▁` (space) |
-    | Used by | GPT-* (byte-level); Llama-3 (byte-level); Llama-1/2 & Mistral-v0.x (SentencePiece BPE) | BERT, DistilBERT | T5, Gemma, ALBERT, XLNet |
+    | Used by | GPT-* (byte-level); Llama-3 (byte-level); Llama-1/2, Mistral-v0.x & Gemma (SentencePiece BPE) | BERT, DistilBERT | T5, ALBERT, XLNet |
     | Sampling | BPE-dropout | — | subword regularization (native) |
 
 ## `tiktoken`, Vocabulary Size & The Cost Math
@@ -631,6 +631,93 @@ print(enc.encode("hello") == enc.encode(" hello"))   # False
 
 The leading-space behavior bites everyone: in byte-level BPE, `" hello"` (with the space) is typically a *single* token distinct from `"hello"`. Concatenating model outputs naively, or stripping spaces before counting, gives wrong token counts and occasionally wrong continuations.
 
+### Training a real tokenizer: HF `tokenizers` and `sentencepiece`
+
+`tiktoken` *uses* an existing encoding; when you pretrain your own model you must *train* one. Two libraries do essentially all of this work in production. **HuggingFace `tokenizers`** (Rust core, Python bindings) is the byte-level-BPE path, and it produces the single `tokenizer.json` artifact that `transformers`, TRL, vLLM, and SGLang all load:
+
+```python
+# pip install tokenizers transformers
+from tokenizers import Tokenizer, models, pre_tokenizers, decoders, processors, trainers
+
+tok = Tokenizer(models.BPE())                                  # the merge table
+tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)  # regex + byte map
+tok.decoder       = decoders.ByteLevel()                       # inverse byte map
+tok.post_processor = processors.ByteLevel(trim_offsets=False)  # keeps offsets byte-exact
+
+trainer = trainers.BpeTrainer(
+    vocab_size=32000,
+    special_tokens=["<|endoftext|>"],                 # reserved ids, never merged into
+    # Seed the alphabet with ALL 256 byte values, not just bytes seen in the
+    # corpus. This is what makes the result provably <unk>-free.
+    initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+    min_frequency=2,
+)
+
+# Either from files on disk...
+# tok.train(["corpus.txt"], trainer)
+# ...or streamed from any Python iterable (e.g. a HF `datasets` split), which is
+# how you train on a corpus far larger than RAM:
+tok.train_from_iterator(["low low lower newest widest"] * 50, trainer)
+tok.save("tokenizer.json")
+
+ids = tok.encode(" hello world").ids
+assert tok.decode(ids) == " hello world"     # byte-level => exact round-trip
+```
+
+That `tokenizer.json` is not yet a *model* tokenizer: the rest of the stack expects a `transformers` wrapper that also knows the special-token roles, the padding side, and the chat template. Wrap it once and save:
+
+```python
+from transformers import PreTrainedTokenizerFast
+
+hf_tok = PreTrainedTokenizerFast(
+    tokenizer_file="tokenizer.json",
+    eos_token="<|endoftext|>",
+    bos_token="<|endoftext|>",     # GPT-2-style: one marker serves both roles
+    pad_token="<|endoftext|>",     # padding is masked out of the loss anyway
+)
+hf_tok.save_pretrained("my-tokenizer")     # -> AutoTokenizer.from_pretrained("my-tokenizer")
+
+batch = hf_tok(["hello", "a longer sequence"], padding=True, return_tensors="pt")
+print(batch["input_ids"].shape, batch["attention_mask"])   # ready for the model
+```
+
+The `Fast` in `PreTrainedTokenizerFast` means "backed by the Rust `tokenizers` library," and it buys two things a pure-Python tokenizer cannot: batched multi-threaded encoding, and **offset mappings** (`return_offsets_mapping=True`) that tell you which character span of the original string each token covers — indispensable for span-level tasks, citation highlighting, and streaming detokenization.
+
+The other library is **`sentencepiece`**, the reference implementation of Unigram (and of SentencePiece-BPE). It trains straight from raw text with no external pre-tokenizer, which is why it is the default for multilingual and CJK-heavy corpora:
+
+```python
+# pip install sentencepiece
+import pathlib
+import sentencepiece as spm
+
+pathlib.Path("corpus.txt").write_text(
+    "Tokenization turns text into integers.\ncafé résumé 日本語 🤖 1234\n" * 500
+)
+
+spm.SentencePieceTrainer.train(
+    input="corpus.txt",
+    model_prefix="sp32k",
+    vocab_size=300,                  # 32000 in production
+    hard_vocab_limit=False,          # demo only: a toy corpus cannot fill the
+                                     # target, so treat vocab_size as a soft goal
+    model_type="unigram",            # or "bpe" -- this is the Llama-1/2 setting
+    character_coverage=0.9995,       # <1.0 for CJK; 1.0 for pure Latin script
+    byte_fallback=True,              # unknown chars -> <0xNN> byte pieces, so no <unk>
+    split_digits=True,               # every digit its own piece (the Llama recipe)
+    remove_extra_whitespaces=False,  # keep indentation intact for code
+    allow_whitespace_only_pieces=True,
+)
+
+sp = spm.SentencePieceProcessor(model_file="sp32k.model")
+# On a real corpus this prints pieces like '▁Token', 'ization'; on the toy corpus
+# above it mostly falls back to characters, and any character the tiny vocabulary
+# never learned shows up as a byte piece such as '<0x79>' -- byte_fallback at work.
+print(sp.encode("Tokenization is sneaky.", out_type=str))
+assert sp.decode(sp.encode("café 🤖")) == "café 🤖"          # byte_fallback keeps it lossless
+```
+
+Those five flags are the whole practical difference between a tokenizer that mangles code and low-resource languages and one that does not: `byte_fallback` removes `<unk>`, `split_digits` fixes place value, `remove_extra_whitespaces=False` preserves Python indentation, and `character_coverage` decides how much of a long Unicode tail gets its own piece instead of falling back to bytes. Stack-100M trains its own 32k byte-level BPE and exports it to all three ecosystems (`tiktoken`, `tokenizers`, `transformers`) in [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html).
+
 ### The vocabulary-size tradeoff
 
 Vocabulary size $V$ is the single biggest tokenizer knob. Increasing $V$ has competing effects:
@@ -650,6 +737,8 @@ Vocabulary size $V$ is the single biggest tokenizer knob. Increasing $V$ has com
     So going from 32k to 128k adds ~393M embedding parameters (the output projection adds the same again if untied). On a 7B model that is a few percent of total parameters — *not* free, but affordable.
 
     Now the upside. Llama-3's 128k tokenizer compresses text noticeably better. Suppose a corpus needs 1.30 tokens/word at 32k but 1.15 tokens/word at 128k — about **12% fewer tokens**. For a fixed context window of 8{,}192 tokens, that is ~12% more *content* per request, ~12% lower inference cost per document, and ~12% fewer steps to pretrain over the same text. At the scale of trillions of training tokens and billions of inference calls, a 12% sequence-length reduction dwarfs the cost of 393M extra parameters. This is why the industry trend is **toward larger vocabularies** (32k → 100k → 256k).
+
+**The arithmetic inverts at small scale**, which matters the moment you train your own model. For a ~100M-parameter model with $d_\text{model} = 768$, a 32k vocabulary is $32{,}000 \times 768 \approx 24.6$M parameters — about a quarter of the entire model — and a 128k vocabulary would be $98.3$M, i.e. the embedding table alone would consume the whole budget and leave nothing for depth or width. At that scale the right moves are a *smaller* vocabulary (roughly 16k–32k), **weight tying** between the embedding and the output projection (which halves the cost; see [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html)), and accepting slightly worse compression. Vocabulary size is a scale-dependent budget line, not a global best practice — the capstone works this tradeoff with measured compression numbers in [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html).
 
 A useful way to think about it: tokenization is **lossless compression**, and a good metric is **bytes-per-token** or **tokens-per-word** on your target distribution. Higher bytes-per-token = better compression = cheaper everything, up to the point where rare tokens become undertrained or the matrices dominate memory. The relationship to model loss is real: a tokenizer that compresses better lets a fixed compute budget see more *effective* text, intertwining with [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html).
 
@@ -676,7 +765,7 @@ Because tokenizers are trained on a corpus that is overwhelmingly English (and E
 2. **Effective context.** A document that fits in the window in English overflows it in a high-token-rate language.
 3. **Quality.** Longer token sequences and undertrained pieces correlate with weaker performance.
 
-Byte-level fallback guarantees *coverage* (nothing is unrepresentable) but not *efficiency*. The fixes are corpus rebalancing (oversample non-English text when training the tokenizer) and larger, more multilingual vocabularies — visible in the jump from Llama-2's 32k to Llama-3's 128k and Gemma's 256k.
+Byte-level fallback guarantees *coverage* (nothing is unrepresentable) but not *efficiency*. The fixes are corpus rebalancing (oversample non-English text when training the tokenizer) and larger, more multilingual vocabularies — visible in the jump from Llama-2's 32k to Llama-3's 128k, Qwen's ~151k, and Gemma's 256k. Measure this directly before you commit to a tokenizer: encode the *same* parallel text (a few thousand sentences of, say, FLORES-200) in each target language and compare bytes-per-token; a language sitting at half the bytes-per-token of English will cost roughly twice as much to serve.
 
 ### Code tokenization
 
@@ -729,7 +818,8 @@ print(per_digit("6789"))        # ['6', '7', '8', '9']  -- same scheme every tim
     - **BPE merges the most frequent adjacent pair, greedily and repeatedly**, producing an ordered merge list. Encoding applies those merges *in learned order* (rank-priority), not by left-to-right scanning.
     - **Byte-level BPE** starts from the 256 byte values, so any string in any language is representable with no `<unk>` — the reason GPT-2/3/4 and Llama-3 use it (Llama-1/2 and early Mistral instead use SentencePiece BPE with byte-fallback, a related but distinct scheme). The `Ġ` you see is the byte-to-unicode map for a space.
     - **WordPiece** (BERT) merges by likelihood gain and marks continuations with `##`; **Unigram/SentencePiece** (T5, Llama, Gemma) prunes a large vocabulary via EM, decodes with Viterbi, marks spaces with `▁`, and natively supports subword-regularization sampling.
-    - **Vocabulary size is a tradeoff:** larger $V$ compresses text (fewer tokens → cheaper inference, more context, more effective pretraining data) but grows the embedding/softmax matrices linearly and risks undertrained "glitch" tokens. The industry trend is toward larger vocabularies (32k → 256k).
+    - **Vocabulary size is a tradeoff:** larger $V$ compresses text (fewer tokens → cheaper inference, more context, more effective pretraining data) but grows the embedding/softmax matrices linearly and risks undertrained "glitch" tokens. The trend at frontier scale is toward larger vocabularies (32k → 256k), but the arithmetic *inverts* for small models: at $d_\text{model}=768$ a 32k table is already ~25% of a 100M-parameter budget.
+    - **In practice you train with a library, not the loop above:** HF `tokenizers` (`BpeTrainer` + `ByteLevel`, seeded with `ByteLevel.alphabet()`) emits the `tokenizer.json` that `transformers`, TRL, and vLLM consume; `sentencepiece` covers Unigram and SentencePiece-BPE, where `byte_fallback`, `split_digits`, and `remove_extra_whitespaces=False` are the flags that decide whether your tokenizer handles code and low-resource languages.
     - **Special tokens** (EOS, BOS, pad, chat/role markers) are a trusted-code-only injection surface — never parse them from user input.
     - **Digit and multilingual pitfalls are real:** inconsistent number chunking breaks arithmetic and letter-counting (fix with per-digit splitting), and English-centric tokenizers make other languages 3–5× more expensive. Always count tokens with the model's own tokenizer.
 

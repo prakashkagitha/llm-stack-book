@@ -82,7 +82,7 @@ $$
 Read this carefully, because three ideas are packed into it:
 
 1. **Only masked positions contribute.** The sum runs over $i$ where $x_t^i$ is `[MASK]`. Unmasked positions provide *context* but no loss — the model is rewarded only for recovering what was hidden.
-2. **The weight $1/(1-\alpha_t)$ corrects for the masking rate.** When $t$ is near 1, almost everything is masked, $1-\alpha_t \approx 1$, and the model must reconstruct from almost nothing — a hard denoising problem. When $t$ is near 0, only a few tokens are masked and the weight is large, so each rare masked position counts heavily. This weighting is exactly what makes the masked-LM loss a valid (upper bound on the) negative log-likelihood, i.e. a true generative objective, not just a representation-learning trick. The MDLM and RADD analyses (Sahoo et al.; Ou et al., 2024) show this weighted form is a tight Evidence Lower Bound.
+2. **The weight $1/(1-\alpha_t)$ corrects for the masking rate.** When $t$ is near 1, almost everything is masked, $1-\alpha_t \approx 1$, and the model must reconstruct from almost nothing — a hard denoising problem. When $t$ is near 0, only a few tokens are masked and the weight is large, so each rare masked position counts heavily. This weighting is exactly what makes the masked-LM loss a valid (upper bound on the) negative log-likelihood, i.e. a true generative objective, not just a representation-learning trick. The MDLM and RADD analyses (Sahoo et al.; Ou et al., 2024) show this weighted form is a tight Evidence Lower Bound. (Strictly, the continuous-time ELBO carries the weight $-\alpha_t'/(1-\alpha_t)$, where $\alpha_t' = \mathrm{d}\alpha_t/\mathrm{d}t$. With the standard **linear** schedule $\alpha_t = 1 - t$ we get $\alpha_t' = -1$ and the weight collapses to $1/(1-\alpha_t) = 1/t$, the form we use throughout this chapter. A pleasant result of the MDLM/Shi et al. analyses is that the ELBO's *value* is invariant to the choice of monotone schedule — unlike continuous diffusion, where the noise schedule is a hyperparameter you tune — so the schedule only affects gradient variance, not the objective being optimized.)
 3. **There is no left-to-right ordering.** Unlike next-token prediction, where the chain rule dictates the factorization order, here the model learns to fill *any* subset of positions given *any* other subset. This is the source of the bidirectional advantage.
 
 Contrast with next-token prediction, where the loss is $-\sum_t \log p_\theta(x_t \mid x_{<t})$ over *every* position with a strict causal mask. AR predicts the next token from a left context; masked diffusion predicts a random subset from a bidirectional context. AR gives you an exact autoregressive likelihood and trivially correct sampling order; diffusion gives you parallelism and bidirectionality at the cost of an approximate, order-agnostic factorization.
@@ -96,6 +96,57 @@ Contrast with next-token prediction, where the loss is $-\sum_t \log p_\theta(x_
 ### Time conditioning, or the lack of it
 
 Continuous diffusion models almost always feed the timestep $t$ into the network (via sinusoidal embeddings added to the input). A pleasant surprise in the discrete-masked setting is that **$t$ is largely redundant**: the *number of `[MASK]` tokens in the input already tells the model roughly where it is in the denoising process*. Several strong masked-diffusion LLMs (including LLaDA) drop explicit time conditioning entirely and rely on the mask count as an implicit clock. This is one fewer thing to get right and lets the architecture stay a vanilla bidirectional transformer.
+
+### The training step, end to end
+
+The objective above is short enough to implement in a dozen lines, and — this is the practically important point — **it bolts onto the GPT you already built**. Everything from [Building a GPT From Scratch (nanoGPT-style)](../02-transformer/07-build-gpt-from-scratch.html) and the Stack-100M block in [The Stack-100M Architecture](../14-capstone/04-architecture.html) carries over unchanged: RoPE, RMSNorm, SwiGLU, GQA, the tokenizer, the packed `uint16` shards, the optimizer, the WSD schedule. Exactly three things change.
+
+1. **Delete the causal mask.** `F.scaled_dot_product_attention(q, k, v, is_causal=False)` with no additive mask. That single flag converts the decoder into a bidirectional denoiser.
+2. **Add one vocabulary entry** for `[MASK]` — one extra row in the token embedding and in `lm_head` (a tied-embedding model gets both for free). Real checkpoints do this: LLaDA reserves a dedicated mask id rather than reusing an existing special token.
+3. **Change the loss, and drop the shift.** This is the most common bug in a first implementation. An AR model's logits at position $i$ predict token $i+1$, so training shifts targets by one. A diffusion denoiser predicts the token *at* position $i$ from the corrupted sequence — **no shift**. If you copy an AR training loop verbatim you get a model that trains to a plausible-looking loss and generates garbage.
+
+```python
+import torch
+import torch.nn.functional as F
+
+def masked_diffusion_loss_batch(model, x0, mask_id, eps=1e-3):
+    """
+    Batched absorbing-diffusion training loss (the LLaDA/MDLM form).
+
+    model: bidirectional transformer, (B, L) ids -> (B, L, V) logits. NO causal mask.
+    x0:    (B, L) clean token ids from your ordinary packed pretraining shards.
+    Linear schedule alpha_t = 1 - t, so P(mask) = t and the ELBO weight is 1/t.
+    Returns a scalar ready for .backward().
+    """
+    B, L = x0.shape
+    # One t PER SEQUENCE, not per token: the forward process draws a single noise
+    # level for the sequence and then masks its tokens i.i.d. at that level.
+    # Clamp t away from 0 so the 1/t weight cannot explode a single microbatch.
+    t = torch.rand(B, 1, device=x0.device) * (1.0 - eps) + eps      # (B, 1)
+    masked = torch.rand(B, L, device=x0.device) < t                 # broadcast -> (B, L)
+
+    # A row with zero masked positions contributes no gradient; force one.
+    # (Bias is negligible: P(no mask) = (1-t)^L is tiny for L in the thousands.)
+    masked[:, 0] |= ~masked.any(dim=1)
+
+    xt = torch.where(masked, torch.full_like(x0, mask_id), x0)
+    logits = model(xt)                                              # (B, L, V)
+
+    # Cross-entropy on MASKED positions only. NOTE: no shift -- logits[b, i]
+    # predicts x0[b, i], unlike the next-token objective.
+    ce = F.cross_entropy(logits[masked], x0[masked], reduction="none")   # (n_masked,)
+
+    # Weight each masked position by 1/t of ITS OWN sequence, then normalize by
+    # B*L (per-token normalization) so the loss is comparable across batches.
+    w = t.expand(B, L)[masked]                                      # (n_masked,)
+    return (ce / w).sum() / (B * L)
+```
+
+Two consequences worth internalizing. First, **the number reported by this loss is not a perplexity you can compare to an AR run** — it is a Monte-Carlo estimate of an ELBO, and its variance is high early in training because a single $t$ per sequence is a coarse estimator (antithetic or low-discrepancy sampling of $t$ across the batch is the standard variance reduction). Second, **the diffusion model sees strictly less supervision per forward pass**: an AR pass gets a gradient at all $L$ positions, a diffusion pass only at the $\approx tL$ masked ones (in expectation, half of them). Empirically this is a real part of why from-scratch masked-diffusion LLMs need more tokens or more epochs to match AR quality at equal parameters, and it is the single strongest argument for the AR-to-diffusion *adaptation* route that Dream took.
+
+For SFT the recipe is a small variant: **never mask the prompt.** Concatenate prompt and response, corrupt only the response positions, and compute the loss only there — the prompt is permanently-clean context, exactly as `is_prompt` is clamped in the sampler below. That is the diffusion analogue of the prompt-masked SFT loss in [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html).
+
+Concretely, this is a weekend project on top of the capstone: keep the corpus and packing of [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) and the training loop of [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) exactly as they are, set `is_causal=False`, grow the vocab by one, and swap the shifted cross-entropy for `masked_diffusion_loss_batch`. You get a ~100M-parameter masked-diffusion LM you can sample with the code in the next section — an ablation against the AR Stack-100M that costs one extra run and teaches more about the two paradigms than any benchmark table. Budget more tokens than the AR baseline for the reason just given, and compare on generation quality rather than on loss, since the two numbers measure different things.
 
 ---
 
@@ -266,6 +317,8 @@ def block_causal_mask(L: int, block_size: int) -> torch.Tensor:
     return mask
 ```
 
+**Training block diffusion** has one wrinkle the sampler hides. Each block must be denoised while attending to the *clean* (finalized) versions of all earlier blocks, but the earlier blocks in your training batch are themselves noised. BD3-LM's solution is a vectorized **two-forward-pass** scheme: one pass over the clean sequence under the block-causal mask to materialize keys and values for every block, then a second pass over the noised sequence in which each block's queries attend to those cached clean keys/values for blocks $<b$ and to its own noised block bidirectionally. That keeps training $O(1)$ passes per batch instead of one pass per block. The paper also reports that the naive $t \sim \mathcal{U}(0,1)$ draw has high gradient variance at block granularity and uses **clipped noise schedules** — sampling $t$ from a narrower interval $[\beta, \omega] \subset (0,1)$ tuned per block size — to reduce it, which is the main reason BD3-LM reaches better perplexities than earlier discrete-diffusion models.
+
 Block diffusion is the architecture that most directly maps onto the existing high-performance AR serving stack: you keep continuous batching, paged KV cache, and prefix caching, and you simply swap the inner decode kernel from "one token per step" to "a block of tokens per few diffusion steps." This is a large part of why the first commercially viable diffusion LLM, Mercury, is built on this semi-autoregressive structure rather than pure parallel diffusion.
 
 !!! tip "Practitioner tip: block size is your latency–quality dial"
@@ -283,9 +336,42 @@ We now have the pieces — masked-diffusion objective, iterative denoising, bloc
 ### The landscape
 
 - **LLaDA** (Nie et al., 2025) is the proof of concept at scale: an 8B-parameter masked-diffusion LLM trained from scratch with the absorbing objective, with an instruction-tuned chat variant. Its headline result is that a pure (non-block) masked-diffusion model can be *competitive with similarly-sized autoregressive LLaMA-class models* on standard benchmarks — the first time a from-scratch diffusion LLM closed most of that gap. It also concretely demonstrated the bidirectional/reversal advantage (below).
-- **Dream** (2025) is a 7B masked-diffusion LLM that, rather than training from scratch, *initializes from an existing autoregressive checkpoint* and adapts it to the diffusion objective — a clever way to reuse the enormous compute already spent on AR pretraining. It uses context-adaptive token-level noise and confidence-based decoding orders to push quality.
+- **Dream** (2025) is a 7B masked-diffusion LLM that, rather than training from scratch, *initializes from an existing autoregressive checkpoint* (a Qwen2.5-7B base model) and adapts it to the diffusion objective — a clever way to reuse the enormous compute already spent on AR pretraining, at a small fraction of from-scratch cost. It uses context-adaptive token-level noise and confidence-based decoding orders to push quality. This adaptation route is the one to copy if you want a diffusion LM without a pretraining budget: take any open base model, drop the causal mask, add a mask token, and continue training under the loss above.
 - **Mercury** (Inception Labs, 2025) is the commercial diffusion-LLM system, marketed around coding (Mercury Coder) and built on a block-diffusion-style architecture for flexible length and KV reuse. Its technical report puts Mercury Coder Mini and Small at roughly 1109 and 737 tokens/sec on an NVIDIA H100 — up to about 10× the throughput of comparable speed-optimized autoregressive code models at similar quality — by exploiting parallel decode. (The *mechanism* — parallel denoising of blocks with cache reuse — is the durable takeaway; treat exact numbers as hardware- and configuration-dependent.)
 - **Gemini Diffusion** (Google DeepMind, 2025) and **Seed Diffusion** (ByteDance, 2025) are the clearest signal that the approach has reached the frontier and the speed frontier respectively: the former is an experimental text-diffusion model reported at on the order of 1,400 tokens/sec while matching Google's fast autoregressive models on coding and math benchmarks; the latter is a code-focused discrete-diffusion model reporting above 2,000 tokens/sec on datacenter GPUs. Their existence — more than any single vendor figure — is the evidence that parallel-decode diffusion is now a mainstream research direction rather than an academic curiosity.
+
+### The open-source stack: what you actually run
+
+The from-scratch code above is the mechanism; here is the tooling that implements it. Open-weight diffusion LLMs ship on the HuggingFace Hub with **custom modeling code**, so they load through `transformers` with `trust_remote_code=True` — but note that `model.generate()` in its usual AR form does *not* apply, because the generation loop is a denoiser, not a next-token loop. The repos therefore ship their own `generate` function implementing the remasking schedule.
+
+```python
+# Loading a released masked-diffusion LLM through HuggingFace transformers.
+# Repo ids move; confirm the exact one on the Hub before depending on it.
+import torch
+from transformers import AutoModel, AutoTokenizer
+
+repo = "GSAI-ML/LLaDA-8B-Instruct"          # LLaDA's instruction-tuned release
+tok = AutoTokenizer.from_pretrained(repo, trust_remote_code=True)
+model = AutoModel.from_pretrained(
+    repo, trust_remote_code=True, torch_dtype=torch.bfloat16
+).to("cuda").eval()
+
+# The absorbing token is a REAL vocabulary entry in released checkpoints -- read
+# it from the config/tokenizer instead of hardcoding index 0 as our toy sampler did.
+mask_id = getattr(model.config, "mask_token_id", None) or tok.mask_token_id
+
+# From here the loop is the one we wrote by hand: start from a fully-[MASK]ed
+# answer block after the prompt, forward the whole sequence, commit the most
+# confident positions, repeat. The reference `generate.py` in the model's repo
+# implements exactly this, plus semi-autoregressive block decoding.
+```
+
+The pieces of the ecosystem worth knowing by name:
+
+- **Reference training code.** The Kuleshov group's `mdlm` and `bd3lms` repositories are the canonical implementations of the simplified masked-diffusion objective and of block diffusion respectively — Hydra-configured PyTorch Lightning training on OpenWebText/LM1B, and the cleanest place to read a correct ELBO implementation. The LLaDA authors' repo (`ML-GSAI/LLaDA`) is the reference for the 8B-scale sampler, including low-confidence remasking and semi-autoregressive block decoding.
+- **Inference acceleration.** **Fast-dLLM** (NVIDIA, 2025) is the notable training-free accelerator: it approximates a KV cache for block-wise bidirectional attention (caching prefix *and* suffix blocks) and adds *confidence-thresholded parallel decoding* — commit every position whose probability exceeds a threshold in one shot, rather than a fixed count — reporting large end-to-end speedups on LLaDA and Dream with minimal quality loss. The mechanism is the durable part: **adaptive** commit counts beat the fixed linear schedule our toy sampler uses.
+- **Serving stacks.** The mature engines ([vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html), [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html), [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html)) are built around the AR decode loop — a per-request single-token step, paged KV cache, continuous batching. First-class diffusion-LM support is emerging rather than settled; check the current release notes rather than assuming parity. In practice today you serve a diffusion LLM from the model repo's own loop wrapped in `torch.compile` and CUDA graphs ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)), and you get continuous batching only if you write it. Quantization (GPTQ/AWQ/bitsandbytes) applies unchanged, since it operates on the weights and is indifferent to the decode loop.
+- **Evaluation.** `lm-evaluation-harness` ([Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)) mostly works, with one caveat that matters: its `loglikelihood` request type assumes an exact AR log-probability. A diffusion model can only supply a Monte-Carlo ELBO estimate, so multiple-choice tasks scored by log-likelihood are noisy and not strictly comparable to AR numbers. Generative tasks (`generate_until`) are the honest comparison; wire the model's denoising `generate` into a custom `LM` subclass.
 
 ### Where the speed actually comes from — and where it doesn't
 
@@ -361,7 +447,7 @@ This is the capability that AR models have to *bolt on* and diffusion models get
 A few engineering realities to keep the picture honest:
 
 - **Likelihood is a bound, not exact.** AR models give you an exact log-likelihood (useful for perplexity, ranking, watermarking). Masked diffusion gives a variational *bound*; reported perplexities use the ELBO and are not directly comparable to AR perplexity. Be careful when comparing benchmark tables across the two paradigms.
-- **Post-training is younger.** The instruction-tuning, RLHF, and preference-optimization stack (Part V) was built around AR generation. Adapting SFT and RL — especially methods that need per-token log-probs and a well-defined generation order ([Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html), [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)) — to diffusion LLMs is active research, not a solved recipe.
+- **Post-training is younger.** The instruction-tuning, RLHF, and preference-optimization stack (Part V) was built around AR generation. SFT ports cleanly (mask only the response, as above). The hard part is RL and preference optimization, because PPO/GRPO/DPO all need a per-sequence log-probability $\log \pi_\theta(y \mid x)$ and a well-defined generation order ([Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html), [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html)) — and a diffusion LM has neither. The workaround in the literature is to substitute the **ELBO estimate** for the exact log-prob: `d1` (2025) introduces *diffu-GRPO*, a GRPO variant that uses a one-forward-pass, per-token ELBO surrogate for the policy log-prob so that RLVR ([RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)) can run on a masked-diffusion LLM; LLaDA 1.5 attacks the same problem on the preference side with variance-reduced preference optimization (VRPO), whose whole content is reducing the variance of that Monte-Carlo ELBO so DPO-style gradients are not swamped by noise. Both are the same lesson: **the missing exact likelihood is the central obstacle to diffusion post-training**, and every method here is a variance-reduction story around estimating it.
 - **Length handling.** Pure diffusion needs a length up front; block diffusion fixes this but adds the block-size hyperparameter and a block-causal mask. Either way, length control is more involved than AR's natural "generate until `[EOS]`."
 - **Tooling maturity.** vLLM, SGLang, speculative decoding ([Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)), and the entire kernel ecosystem are tuned for AR decode. Diffusion-specific serving is catching up but is not yet at parity.
 
@@ -378,6 +464,7 @@ Diffusion and non-AR language models are best understood as a third major branch
     - Autoregressive generation has a hard serial-depth floor of one forward pass per token; non-autoregressive **masked (absorbing-state) diffusion** instead denoises all positions in parallel over $N \ll L$ iterative steps, cutting serial depth and boosting single-stream tokens/sec.
     - The absorbing-diffusion objective reduces to a **time-conditioned, mask-rate-weighted cross-entropy on masked positions only** — a continuous-time generalization of BERT-style masked LM that is a valid likelihood bound; the weight $1/(1-\alpha_t)$ is what makes it generative rather than just representation-learning.
     - A single denoising step models masked tokens as **conditionally independent**, which is wrong for language; **iterative remasking** (commit high-confidence tokens, re-condition, repeat) recovers inter-token correlations. More steps trade compute for coherence; the remasking schedule is a first-class decoding hyperparameter.
+    - Turning your existing GPT into a diffusion LM takes exactly three changes: **drop the causal mask**, **add one `[MASK]` vocabulary entry**, and **replace the shifted next-token loss with the unshifted, mask-rate-weighted cross-entropy** (the missing shift is the classic first-implementation bug). Everything else — tokenizer, packed shards, optimizer, schedule — is unchanged, which is also why AR-to-diffusion *adaptation* (Dream, from a Qwen2.5-7B base) is far cheaper than training from scratch.
     - **Block diffusion** interpolates between AR and diffusion: generate blocks left-to-right (autoregressive, with a block-causal mask) but tokens within a block in parallel (diffusion). This unlocks **KV-cache reuse** and **flexible/arbitrary output length**, mapping cleanly onto existing AR serving stacks.
     - The speedup is a **serial-depth (latency) win, not a FLOPs win**: diffusion often does more total compute per token but in fewer, more parallel steps. The advantage is largest at low-to-moderate batch and long single outputs; at very high concurrency, batched AR throughput catches up.
     - **Bidirectionality** is a separate, structural benefit: native infilling/editing, global-constraint satisfaction, and robustness to the **reversal curse** — capabilities AR models must bolt on but diffusion gets for free.
@@ -410,6 +497,17 @@ Diffusion and non-AR language models are best understood as a third major branch
     - Google DeepMind, *Gemini Diffusion* (2025) — experimental text-diffusion model from a frontier lab, reported at on the order of 1,400 tokens/sec with competitive coding/math benchmarks.
     - Song et al., *Seed Diffusion* (ByteDance, 2025) — large-scale discrete-diffusion code model reporting >2,000 tokens/sec, among the fastest reported diffusion LLMs.
 
+    **Post-training & inference acceleration (2025–2026)**
+
+    - Zhao et al., *d1: Scaling Reasoning in Diffusion Large Language Models via Reinforcement Learning* (2025) — introduces **diffu-GRPO**, substituting a one-forward-pass ELBO surrogate for the policy log-probability so RLVR runs on a masked-diffusion LLM.
+    - Zhu et al., *LLaDA 1.5: Variance-Reduced Preference Optimization for Large Language Diffusion Models* (2025) — DPO-style alignment for diffusion LMs, built entirely around reducing the variance of the ELBO log-prob estimate.
+    - Wu et al., *Fast-dLLM* (NVIDIA, 2025) — training-free acceleration via block-wise approximate KV caching plus confidence-thresholded parallel decoding (adaptive commit counts instead of a fixed schedule).
+
+    **Code to read**
+
+    - `kuleshov-group/mdlm` and `kuleshov-group/bd3lms` — reference training implementations of the simplified masked-diffusion ELBO and of block diffusion.
+    - `ML-GSAI/LLaDA` — the 8B reference sampler (low-confidence remasking, semi-autoregressive block decoding) and HuggingFace-loadable weights.
+
     **Go deeper**
 
     - The image/continuous-diffusion foundations live in [Diffusion Models & Generative Modeling (Breadth)](../10-multimodal-and-arch/04-diffusion-generative.html); the serving-side economics are in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
@@ -426,7 +524,11 @@ Diffusion and non-AR language models are best understood as a third major branch
 - Inception Labs (2025). **Mercury: Ultra-Fast Language Models Based on Diffusion.** arXiv:2506.17298 — commercial diffusion LLM (incl. Mercury Coder).
 - Google DeepMind (2025). **Gemini Diffusion** — experimental frontier-lab text-diffusion model.
 - Song, Y., et al. (2025). **Seed Diffusion: A Large-Scale Diffusion Language Model with High-Speed Inference.** arXiv:2508.02193.
-- Gong, S., et al. (2025). **Dream 7B** — autoregressive-to-diffusion adaptation.
+- Gong, S., et al. (2025). **Dream 7B** — autoregressive-to-diffusion adaptation from a Qwen2.5-7B base checkpoint.
+- Zhao, S., et al. (2025). **d1: Scaling Reasoning in Diffusion Large Language Models via Reinforcement Learning** — diffu-GRPO.
+- Zhu, F., et al. (2025). **LLaDA 1.5: Variance-Reduced Preference Optimization for Large Language Diffusion Models.**
+- Wu, C., et al. (2025). **Fast-dLLM: Training-free Acceleration of Diffusion LLM by Enabling KV Cache and Parallel Decoding.** NVIDIA.
+- Reference code: `kuleshov-group/mdlm`, `kuleshov-group/bd3lms`, `ML-GSAI/LLaDA`.
 
 ---
 

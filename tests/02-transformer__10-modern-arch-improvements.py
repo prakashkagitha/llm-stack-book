@@ -454,7 +454,7 @@ y = block(x)
 print(f"Block output shape: {y.shape}")          # (2, 16, 512)
 print(f"Output norm (should be finite): {y.norm().item():.3f}")
 param_count = sum(p.numel() for p in block.parameters())
-print(f"Block parameter count: {param_count:,}")  # ~4.2M for this config
+print(f"Block parameter count: {param_count:,}")  # 2,753,152 -> ~2.75M
 
 assert y.shape == (2, 16, 512)
 assert torch.isfinite(y).all()
