@@ -16,7 +16,7 @@ We can draw a clean axis: memory that lives *inside* the context window versus m
 {{fig:agentmem-two-horizons}}
 
 
-**Short-term (in-context) memory** is the running conversation: system prompt, prior turns, tool call/result pairs, and any snippets the agent has fetched. Its capacity is bounded by the context length and its cost by the token budget. A 128 k-token model at on the order of \$3 per million output tokens will spend roughly \$0.04 per completely filled context — cheap per call, but it accumulates fast in long-running sessions. See [Context Engineering & Management](../08-agents-harness/04-context-engineering.html) for how to manage what goes into this budget.
+**Short-term (in-context) memory** is the running conversation: system prompt, prior turns, tool call/result pairs, and any snippets the agent has fetched. Its capacity is bounded by the context length and its cost by the token budget — and note that the whole window is re-encoded as *input* on every turn. At on the order of \$1 per million input tokens, one completely filled 128 k window costs roughly \$0.13 per call, so a 200-turn session that keeps the window near-full pays that price 200 times. Prefix caching removes most of the repeat cost for the unchanged prefix (an order of magnitude cheaper per cached token on several 2026 APIs — see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)), but it does not stop the window from filling up, which is the failure external memory exists to prevent. See [Context Engineering & Management](../08-agents-harness/04-context-engineering.html) for how to manage what goes into this budget.
 
 **Long-term (external) memory** is any storage system the agent can query and update. It is not bounded by the context window, persists across sessions, and can be shared across many agent instances. Its cost is dominated by embedding latency (for vector retrieval) and I/O rather than per-token model pricing.
 
@@ -111,7 +111,7 @@ A memory *read* queries external storage and injects the result into the current
 - **When the agent signals uncertainty** — "I don't remember whether..." triggers a retrieval.
 - **Proactively, by the harness** — the orchestrating code detects topic shifts and retrieves matching memories.
 
-The retrieved snippets must be ranked and filtered: if you inject the top-20 vector matches unfiltered, you fill the context with noise. A conservative top-$k$ of 3–5 with a relevance threshold works well for most agents.
+The retrieved snippets must be ranked and filtered: if you inject the top-20 vector matches unfiltered, you fill the context with noise. A conservative top-$k$ of 3–5 with a relevance threshold works well for most agents. Ranking by cosine similarity alone is also a weak default — it is blind to *when* a memory was formed and *how consequential* it was; section 8.5.10 adds recency and importance terms and implements the combined ranker.
 
 ### 8.5.4.3 Reflect
 
@@ -190,6 +190,8 @@ A naive agent starts each session with a blank context. A persistent agent carri
 
 
 The inter-session state that must be persisted is at minimum: the session summary, any newly learned facts, and any open task state (what was in progress when the session ended).
+
+**Memory at 100M parameters.** Everything above assumes the model can be trusted to decide *when* to write and *what* to distil. A ~100M model cannot: it has neither the instruction-following reliability to emit a `remember()` call at the right moment nor the in-context-learning strength to write a good reflection — the same limitation that forces trajectory distillation in [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html). So for Stack-100M the entire write/read/reflect triad moves *harness-side*: the harness writes structured slots deterministically after each verified tool result, injects a fixed `## Known facts` block at a known position in every prompt (position stability also keeps the prefix cache warm), and runs the reflect step offline with a larger teacher model whose distilled facts the small model only ever *reads*. The budgets shrink accordingly: with the 8 192-token context that mid-training gives us ([Mid-Training](../14-capstone/08-mid-training.html)), the injection budget is a few hundred tokens rather than 2 000 — top-$k$ of 2–3 short facts, and compaction triggered much earlier than 75%.
 
 ---
 
@@ -721,6 +723,143 @@ This is the core of the Generative Agents reflection loop made concrete. A typic
 
 ---
 
+## 8.5.10 Ranked Recall: Recency, Importance, Relevance
+
+Cosine similarity answers "which memory is most *like* this query?" but an agent usually wants "which memory is most *useful right now*?" Those differ. A three-month-old note about a database that has since been migrated is highly similar and actively harmful; a decision made an hour ago is what you actually need. Generative Agents (Park et al., 2023) scores each candidate memory $m$ against query $q$ with a weighted sum of three separately normalised components:
+
+$$
+\text{score}(m, q) = \alpha_{\text{rec}}\,\underbrace{\gamma^{\,\Delta t(m)}}_{\text{recency}}
+\;+\; \alpha_{\text{imp}}\,\underbrace{I(m)}_{\text{importance}}
+\;+\; \alpha_{\text{rel}}\,\underbrace{\cos\!\left(\mathbf{e}(q), \mathbf{e}(m)\right)}_{\text{relevance}}
+$$
+
+Here $\Delta t(m)$ is the number of hours since the memory was last *accessed* (not created — retrieving a memory refreshes it, exactly as in an LRU cache), $\gamma$ is a decay factor just below 1, and $I(m)$ is an importance score the LLM assigns once at write time ("on a scale of 1 to 10, how consequential is this?"). Park et al. use $\gamma = 0.99$, so recency weight halves after $\ln 0.5 / \ln 0.99 \approx 69$ hours — roughly three days — and they set all three $\alpha = 1$ after min-max normalising each component to $[0,1]$. The normalisation matters: raw cosine scores for a sentence embedder cluster in a narrow band (often 0.3–0.8), so without rescaling the relevance term would be nearly constant and the ranker would collapse into pure recency.
+
+```python
+def recall_ranked(mem: AgentMemory, query: str, top_k: int = 5,
+                  gamma: float = 0.99, now: float | None = None,
+                  weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
+                  n_candidates: int = 50) -> list[tuple[str, float]]:
+    """
+    Generative-Agents-style retrieval: recency + importance + relevance.
+    Expects entries written with metadata['last_access'] (epoch seconds) and
+    metadata['importance'] in [0, 1]; both default sensibly if absent.
+
+    Two-stage: cheap ANN/dot-product recall of a wide candidate set, then an
+    exact re-rank of those candidates. This is the standard retrieve-then-rerank
+    shape -- you never score the whole store with the expensive function.
+    """
+    now = now if now is not None else time.time()
+    cands = mem.vectors.search(query, top_k=n_candidates, min_score=-1.0)
+    if not cands:
+        return []
+
+    rel = np.array([s for _, s in cands], dtype=np.float32)
+    hours = np.array(
+        [(now - float(e.metadata.get("last_access", now))) / 3600.0
+         for e, _ in cands], dtype=np.float32)
+    rec = np.power(gamma, hours, dtype=np.float32)
+    imp = np.array([float(e.metadata.get("importance", 0.5))
+                    for e, _ in cands], dtype=np.float32)
+
+    def minmax(x: np.ndarray) -> np.ndarray:
+        span = float(x.max() - x.min())
+        # A flat component carries no ranking signal; make it neutral.
+        return np.full_like(x, 0.5) if span < 1e-9 else (x - x.min()) / span
+
+    w_rec, w_imp, w_rel = weights
+    score = w_rec * minmax(rec) + w_imp * minmax(imp) + w_rel * minmax(rel)
+
+    order = np.argsort(-score)[:top_k]
+    for i in order:                       # refresh recency on access
+        entry = cands[int(i)][0]
+        entry.metadata["last_access"] = now
+    mem.vectors._save()
+    return [(cands[int(i)][0].text, float(score[i])) for i in order]
+```
+
+The three weights are the knobs worth tuning per application. A coding agent working inside one repository wants $\alpha_{\text{rec}}$ high (the codebase changes under it); a personal assistant recalling stable preferences wants $\alpha_{\text{rec}}$ near zero, because "the user prefers British English" does not become less true after three days.
+
+---
+
+## 8.5.11 The Library Layer: LangGraph, mem0, and Letta
+
+You now know exactly what a memory system does, because you built one. In production you rarely hand-roll it — and the libraries below are worth reading precisely because each one is a recognisable instance of the architecture in this chapter.
+
+### 8.5.11.1 LangGraph: checkpointers (short-term) and stores (long-term)
+
+LangGraph splits memory along exactly the axis of section 8.5.1. A **checkpointer** persists the graph state after every step, scoped to a `thread_id` — that is short-term, in-context memory made durable, so a crashed or resumed session replays from the last checkpoint. A **store** (`BaseStore`) is a namespaced key-value store with optional vector indexing that lives *across* threads — that is long-term memory. Both are injected into your node functions by the runtime.
+
+```python
+# pip install langgraph langgraph-checkpoint-sqlite sentence-transformers
+from langgraph.checkpoint.memory import InMemorySaver   # swap: SqliteSaver, PostgresSaver
+from langgraph.store.memory import InMemoryStore        # swap: PostgresStore
+from langgraph.store.base import BaseStore
+from langgraph.graph import StateGraph, MessagesState, START
+from langchain_core.runnables import RunnableConfig
+
+def embed(texts: list[str]) -> list[list[float]]:
+    """Any callable list[str] -> list[list[float]] works; reuse our embedder."""
+    return _get_embedder().encode(texts, normalize_embeddings=True).tolist()
+
+# Long-term: cross-thread, semantically searchable (our VectorMemory).
+store = InMemoryStore(index={"embed": embed, "dims": 384})
+# Short-term: per-thread state, snapshotted after every node (our EpisodicLog).
+checkpointer = InMemorySaver()
+
+def agent_node(state: MessagesState, config: RunnableConfig, *, store: BaseStore):
+    user_id = config["configurable"]["user_id"]
+    ns = ("memories", user_id)          # namespace tuple == the scope of a memory
+    last = state["messages"][-1].content
+
+    hits = store.search(ns, query=last, limit=3)             # READ  (vector recall)
+    recalled = "\n".join(f"- {i.value['text']}" for i in hits)
+    # ... here you would call the model with `recalled` prepended to the system
+    #     prompt; we echo it so the example runs without an API key ...
+    store.put(ns, f"mem-{len(state['messages'])}", {"text": last})   # WRITE
+
+    return {"messages": [{"role": "assistant",
+                          "content": f"recalled:\n{recalled or '(nothing yet)'}"}]}
+
+g = StateGraph(MessagesState)
+g.add_node("agent", agent_node)
+g.add_edge(START, "agent")
+app = g.compile(checkpointer=checkpointer, store=store)
+
+cfg = {"configurable": {"thread_id": "thread-1", "user_id": "alice"}}
+app.invoke({"messages": [{"role": "user", "content": "I prefer British English"}]}, cfg)
+# A *new* thread_id starts a fresh conversation but still sees alice's store.
+app.invoke({"messages": [{"role": "user", "content": "Which spelling do I use?"}]},
+           {"configurable": {"thread_id": "thread-2", "user_id": "alice"}})
+```
+
+The namespace tuple is the piece most people underuse: `("memories", user_id)` versus `("memories", user_id, "preferences")` gives you the episodic/semantic separation of section 8.5.2 for free, because `search` takes a namespace prefix. Swapping `InMemorySaver` for `SqliteSaver.from_conn_string("checkpoints.sqlite")` and `InMemoryStore` for `PostgresStore` is the only change needed to go from a demo to a durable multi-user service.
+
+### 8.5.11.2 mem0 and Letta: managed memory layers
+
+**mem0** takes the opposite stance: instead of you deciding what to write, you hand it raw messages and an LLM decides. Its extraction pass proposes candidate facts, and a second pass reconciles them against what is already stored by emitting one of `ADD` / `UPDATE` / `DELETE` / `NOOP` — an automated version of the "upsert on new evidence" rule in our table, including the contradiction handling that a naive append-only vector store lacks.
+
+```python
+# pip install mem0ai   (needs an LLM + embedder configured; see the repo README)
+from mem0 import Memory
+
+m = Memory()
+m.add([{"role": "user", "content": "I prefer British English and TypeScript"}],
+      user_id="alice")                      # LLM extracts facts, then ADD/UPDATE/DELETE
+print(m.search("which language does the user write in?", user_id="alice"))
+print(m.get_all(user_id="alice"))
+```
+
+**Letta** (formerly MemGPT) implements the OS-paging metaphor literally: the agent has a small in-context *core memory* of editable blocks plus paged-out archival and recall storage, and it edits its own core memory through tools (`core_memory_append`, `core_memory_replace`) rather than through harness code. That self-editing design is powerful with a frontier model and unusable at 100M parameters — which is exactly the trade-off flagged in section 8.5.6.
+
+**Choosing:** hand-roll (as in 8.5.7) when you want auditable files and no dependencies; LangGraph when memory must be consistent with agent control flow and durable execution; mem0 or Letta when you want fact reconciliation and self-editing without writing the reflect loop yourself.
+
+### 8.5.11.3 Does it actually work? Evaluating memory
+
+Memory systems fail silently: the agent simply does not mention the thing it should have remembered, and no exception is raised. Two public benchmarks are the standard checks. **LoCoMo** (Maharana et al., 2024) tests question answering over very long multi-session conversations, probing single-hop, multi-hop, and temporal reasoning across sessions. **LongMemEval** (Wu et al., ICLR 2025) is the sharper diagnostic: roughly 500 questions across five abilities — information extraction, multi-session reasoning, temporal reasoning, knowledge updates (does the system honour a correction?), and abstention (does it say "I don't know" instead of confabulating?) — and it reports a substantial accuracy drop for commercial assistants as history grows. Run these before trusting a memory design, and build the same five categories into your own regression suite; the *knowledge-update* and *abstention* categories are the ones hand-rolled append-only stores fail most often. For the general evaluation machinery, see [Agent Evaluation & Benchmarks](../08-agents-harness/08-agent-evaluation.html).
+
+---
+
 !!! interview "Interview Corner"
 
     **Q:** An LLM agent is running a multi-day research task. The user comes back after two days and the context window is empty. How do you design the memory system to give the agent continuity across sessions?
@@ -774,6 +913,8 @@ Memory is the difference between a stateless chatbot and a persistent agent. We 
 - **Write / read / reflect** — three operations that every memory-capable agent must implement.
 - **Compaction** — you must proactively manage context size or the window fills and information is lost.
 - **Session persistence** — bootstrap read, in-session writes, graceful shutdown, and periodic reflection.
+- **Ranked recall** — recency, importance, and relevance combined, not cosine similarity alone.
+- **The library layer** — LangGraph checkpointers/stores, mem0's LLM-managed fact reconciliation, Letta's self-editing core memory — and LoCoMo/LongMemEval to check that any of it works.
 
 The code in this chapter gives you a concrete starting point. In the next chapter we look at how the [Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html) standardises the interface through which agents access both memory and tools. For retrieval-heavy applications, the detailed treatment of ANN indexes and hybrid search in [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html) and [Advanced RAG: GraphRAG, Agentic RAG & Long-Context vs RAG](../09-rag-retrieval/05-advanced-rag.html) will be essential.
 
@@ -790,6 +931,8 @@ The code in this chapter gives you a concrete starting point. In the next chapte
     - File-as-memory (structured directories of markdown/JSON) is a production-proven pattern that requires no external database and is human-auditable.
     - Injection budget matters: at top-$k = 5$ and 100 tokens per entry, 500 extra input tokens per call costs under \$0.001 at typical API prices — memory retrieval is cheap relative to its value.
     - The reflect step should be triggered periodically (every $N$ episodes) and at session boundaries; it is the mechanism by which short-term experience becomes long-term knowledge.
+    - Rank retrieved memories by recency $\times$ importance $\times$ relevance (each min-max normalised), not by cosine similarity alone — a stale but similar memory is worse than useless.
+    - In production the layer is usually LangGraph (checkpointer = short-term, store = long-term), mem0 (LLM-managed ADD/UPDATE/DELETE reconciliation), or Letta (self-editing core memory); a ~100M model cannot drive any of them itself, so its memory triad must run harness-side and offline.
 
 ---
 
@@ -813,6 +956,12 @@ The code in this chapter gives you a concrete starting point. In the next chapte
     - [mem0ai/mem0](https://github.com/mem0ai/mem0) — 60k+-star "universal memory layer" combining vector, graph, and key-value stores; production-ready Python/TypeScript SDK.
     - [letta-ai/letta](https://github.com/letta-ai/letta) — formerly MemGPT; stateful-agent platform with built-in virtual context management and a REST API for persistent agent services.
     - [topoteretes/cognee](https://github.com/topoteretes/cognee) — open-source memory control plane with remember/recall/forget/improve operations backed by embeddings and knowledge graphs.
+    - [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) — agent runtime whose *checkpointers* (thread-scoped, durable short-term state) and *stores* (cross-thread, vector-indexed long-term memory) are the cleanest open-source instantiation of the two-horizon split in 8.5.1.
+
+    **Benchmarks** — evaluate before you trust a design (see 8.5.11.3)
+
+    - Maharana et al., *Evaluating Very Long-Term Conversational Memory of LLM Agents* (LoCoMo, ACL 2024) — QA over very long multi-session dialogues; single-hop, multi-hop, and temporal questions.
+    - Wu et al., *LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory* (ICLR 2025) — five ability categories including knowledge updates and abstention; the standard stress test for a memory layer.
 
     **Go deeper**
 

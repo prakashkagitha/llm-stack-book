@@ -426,9 +426,69 @@ print("max grad-check error:", err)     # ~1e-7: analytic backward matches finit
 
 The gradient check passes to $\sim 10^{-7}$, the expected precision of central differences in fp64. The backward pass is genuinely exact. Two practical notes mirror the real kernel:
 
-- **$\mathrm{d}V$ and $\mathrm{d}K$ accumulate across query blocks** (every query attends to a given key), so in a parallel implementation they require atomic adds or a separate reduction pass. FlashAttention-1 handles this by looping keys in the outer loop for the backward pass (the opposite of the forward), so each key block's $\mathrm{d}K_j, \mathrm{d}V_j$ is finalized in one go while $\mathrm{d}Q$ is accumulated with atomics. The math above is loop-order-agnostic; the implementation chooses an order that minimizes atomics.
+- **$\mathrm{d}V$ and $\mathrm{d}K$ accumulate across query blocks** (every query attends to a given key), so in a parallel implementation they require atomic adds or a separate reduction pass. FlashAttention-1 handles this by looping keys in the outer loop for the backward pass (the opposite of the forward), so each key block's $\mathrm{d}K_j, \mathrm{d}V_j$ is finalized in one go while $\mathrm{d}Q$ is accumulated with atomics. The math above is loop-order-agnostic; the implementation chooses an order that minimizes atomics. A practical consequence: because floating-point addition is not associative and atomics land in nondeterministic order, the FlashAttention **backward pass is run-to-run nondeterministic** by default. If you are bisecting a training divergence and need bitwise reproducibility, set `deterministic=True` in the `flash-attn` API (it uses a slower deterministic reduction) or `torch.use_deterministic_algorithms(True)`, and expect to pay for it.
 
 - **Recomputation cost is small and overlaps.** The backward pass redoes the $QK^\top$ matmul (the score tile) it could have stored. That is one extra $O(N^2 d)$ matmul — but matmuls run on tensor cores that the memory-bound kernel was leaving idle anyway, and we *save* the $O(N^2)$ HBM read/write of the stored $P$. On the memory-bound side of the roofline, trading FLOPs for bytes is exactly the right direction.
+
+### Wiring it into PyTorch autograd
+
+A forward and a backward function are not yet a usable layer. PyTorch's autograd does not know that our tiled kernel implements attention, and if we let it trace the tile loop it would build a graph over every intermediate — reintroducing exactly the $O(N^2)$ storage we removed. The bridge is `torch.autograd.Function`: we register the pair as one opaque op, declare what it saves, and hand back gradients ourselves. This is the same interface the real `flash-attn` package and every Triton attention kernel use, and it is worth writing once so nothing about the training loop stays a black box.
+
+```python
+import torch
+
+class FlashAttentionFn(torch.autograd.Function):
+    """Turn the tiled kernel into a first-class PyTorch op.
+
+    The body calls the NumPy routines above; a production version swaps them
+    for a Triton or CUDA kernel. What matters is the *contract*: forward saves
+    only (Q, K, V, O, L) -- O(N*d) state, never an NxN tensor -- and backward
+    rebuilds every probability tile from L. That contract is what lets
+    FlashAttention drop into any training loop.
+    """
+
+    @staticmethod
+    def forward(ctx, Q, K, V, causal=False, Br=32, Bc=32):
+        npy = lambda t: t.detach().cpu().double().numpy()
+        O_np, L_np = flash_attention_forward(npy(Q), npy(K), npy(V), Br, Bc, causal)
+        O = torch.as_tensor(O_np).to(Q)          # .to(Q) matches dtype AND device
+        L = torch.as_tensor(L_np).to(Q)
+        ctx.save_for_backward(Q, K, V, O, L)     # note: no NxN tensor is saved
+        ctx.hparams = (causal, Br, Bc)           # non-tensors go on ctx directly
+        return O
+
+    @staticmethod
+    def backward(ctx, dO):
+        Q, K, V, O, L = ctx.saved_tensors
+        causal, Br, Bc = ctx.hparams
+        npy = lambda t: t.detach().cpu().double().numpy()
+        dQ, dK, dV = flash_attention_backward(
+            npy(Q), npy(K), npy(V), npy(O), npy(L), npy(dO), Br, Bc, causal)
+        back = lambda a: torch.as_tensor(a).to(Q)
+        # one return value per forward input; None for the non-tensor arguments
+        return back(dQ), back(dK), back(dV), None, None, None
+
+flash_attention = FlashAttentionFn.apply
+
+# ---- check the op against PyTorch's own attention AND its autograd ----
+torch.manual_seed(0)
+N, d = 96, 16
+Q, K, V = (torch.randn(N, d, dtype=torch.float64, requires_grad=True) for _ in range(3))
+
+flash_attention(Q, K, V, True).square().sum().backward()   # our op
+g_flash = [t.grad.clone() for t in (Q, K, V)]
+for t in (Q, K, V):
+    t.grad = None
+
+torch.nn.functional.scaled_dot_product_attention(       # PyTorch's reference op
+    Q, K, V, is_causal=True).square().sum().backward()
+g_ref = [t.grad.clone() for t in (Q, K, V)]
+
+print("max grad error vs PyTorch autograd:",
+      max((a - b).abs().max().item() for a, b in zip(g_flash, g_ref)))   # ~1e-15
+```
+
+Three details generalize to any custom kernel you write. `save_for_backward` is for tensors only — it participates in autograd's reference bookkeeping and version-counter checks — while non-tensor configuration is stashed on `ctx` as ordinary attributes. `backward` must return exactly as many values as `forward` took arguments, `None` for those that need no gradient. And the whole point of the exercise is visible in one line: the saved set is $(Q, K, V, O, L)$, all $O(Nd)$ or smaller, which is why swapping this op into a transformer block turns attention's activation memory from quadratic to linear. Replacing the NumPy body with a real GPU kernel is the subject of [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html); the `autograd.Function` wrapper around it stays exactly as written here.
 
 ## IO-aware analysis: counting the bytes
 
@@ -474,7 +534,7 @@ Two consequences fall out of this accounting:
 
 ## Practical use: you almost never write this yourself
 
-You now understand the algorithm well enough to implement it. In practice you call it. PyTorch ships a fused, hardware-dispatched attention that uses a FlashAttention backend when shapes and dtypes allow:
+You now understand the algorithm well enough to implement it. In practice you call it — this is the single line every training loop in this book depends on, including Stack-100M's, whose attention block calls it directly ([The Stack-100M Architecture](../14-capstone/04-architecture.html)) and whose 8K-context extension is only affordable because of the $O(N^2) \to O(N)$ memory drop ([The Pretraining Run](../14-capstone/07-pretraining-run.html)). PyTorch ships a fused, hardware-dispatched attention that uses a FlashAttention backend when shapes and dtypes allow:
 
 ```python
 import torch
@@ -503,7 +563,40 @@ Things that silently *disable* the FlashAttention backend and fall back to a slo
 - **An additive float mask with awkward shape**, or a mask that the kernel cannot fuse, can force the materialized path. Prefer `is_causal=True` over hand-built masks when possible.
 - **Non-contiguous tensors** or unsupported strides.
 
-The official `flash-attn` package (Dao et al.) exposes the kernels directly (`flash_attn_func`, `flash_attn_varlen_func` for ragged/packed batches — relevant to [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)) with more knobs: sliding-window attention, ALiBi slopes, dropout fused into the kernel, and the variable-length API that avoids padding waste. For writing your *own* fused attention variants (custom masks, custom biases) the modern path is [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html), where a FlashAttention-style kernel is the canonical tutorial example.
+The official `flash-attn` package (Dao et al.) exposes the kernels directly, with more knobs than SDPA surfaces: sliding-window attention, ALiBi slopes, dropout fused into the kernel, deterministic backward, and a variable-length API that avoids padding waste.
+
+```python
+# pip install flash-attn --no-build-isolation      # compiles CUDA kernels; needs nvcc
+from flash_attn import flash_attn_func, flash_attn_varlen_func
+
+# GOTCHA: flash-attn takes (batch, seqlen, heads, head_dim) -- the seq and head
+# axes are TRANSPOSED relative to SDPA's (batch, heads, seqlen, head_dim).
+qf, kf, vf = (t.transpose(1, 2).contiguous() for t in (q, k, v))    # from the SDPA layout
+out = flash_attn_func(qf, kf, vf, causal=True)                     # (B, S, H, D)
+out = flash_attn_func(qf, kf, vf, causal=True, window_size=(1023, 0))  # sliding window
+
+# Packed/ragged batches: concatenate documents with NO padding and pass the
+# cumulative sequence-length offsets, so no cross-document score is ever computed.
+out = flash_attn_varlen_func(q_packed, k_packed, v_packed,
+                             cu_seqlens_q=cu, cu_seqlens_k=cu,     # int32, len B+1
+                             max_seqlen_q=max_len, max_seqlen_k=max_len,
+                             causal=True)
+```
+
+`flash_attn_varlen_func` and its `cu_seqlens` convention are what Megatron-LM, TRL, and most production pretraining loops use for packed sequences — see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) and, for the document-masking version of the same problem, [Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html). One level up, HF Transformers picks the backend for you with a single argument, and it is worth setting explicitly rather than trusting the default:
+
+```python
+import torch
+from transformers import AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen3-0.6B",
+    dtype=torch.bfloat16,
+    attn_implementation="flash_attention_2",   # "sdpa" (default) | "eager" | "flex_attention"
+)
+```
+
+`"eager"` is the materialized-$N^2$ path — correct, useful for debugging or when you need the attention probabilities returned, and never what you want for a real run. For writing your *own* fused attention variants (custom masks, custom biases) the modern path is [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html), where a FlashAttention-style kernel is the canonical tutorial example, or PyTorch's `flex_attention`, which compiles a user-supplied `score_mod`/`mask_mod` into an FA-style kernel.
 
 !!! tip "Block size is a tuning knob, not a constant"
     $B_r$ and $B_c$ are chosen to fill SRAM without spilling, and the sweet spot depends on $d$ and the GPU's SRAM-per-SM. The IO analysis says bigger blocks → fewer passes over $K,V$ → less HBM traffic, but blocks too big spill registers/SRAM and tank occupancy. Real kernels autotune these (often 64 or 128). When you write a Triton version, sweep `BLOCK_M` and `BLOCK_N` — it is routinely a 1.5–2× swing.
@@ -525,7 +618,8 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
     - The **backward pass uses recomputation**: it does not store $P$; it reconstructs each probability tile as $\exp(S_{ij} - L_i)$ from $Q$, $K$, and the saved logsumexp, trading idle-tensor-core FLOPs for avoiding an $O(N^2)$ HBM read. The per-row scalar $D_i = \mathrm{d}O_i \cdot O_i$ collapses the softmax Jacobian.
     - **IO complexity** drops from $\Theta(N^2)$ to $\Theta(N^2 d^2 / M)$ where $M$ is SRAM size — about an order of magnitude — and is provably near-optimal for exact tiled attention.
     - **Causal masking is nearly free**: tiled kernels skip key-blocks entirely above the diagonal, roughly halving the work for long sequences.
-    - In practice you call `F.scaled_dot_product_attention` or the `flash-attn` library; know the fallback triggers (fp32, unsupported head dim, awkward masks). Custom variants are written in [Triton](../04-kernels-efficiency/04-triton-kernels.html).
+    - In practice you call `F.scaled_dot_product_attention`, the `flash-attn` library (`flash_attn_func`, `flash_attn_varlen_func` + `cu_seqlens` for packed batches), or HF Transformers' `attn_implementation="flash_attention_2"`; know the fallback triggers (fp32, unsupported head dim, awkward masks). Custom variants are written in [Triton](../04-kernels-efficiency/04-triton-kernels.html).
+    - A kernel becomes a **usable layer** only when wrapped in a `torch.autograd.Function` that saves $(Q, K, V, O, L)$ and returns $\mathrm{d}Q, \mathrm{d}K, \mathrm{d}V$ itself — that wrapper is what turns attention's activation memory from quadratic to linear in a real training loop.
 
 !!! sota "State of the Art & Resources (2026)"
     FlashAttention is now the universal baseline for exact attention on modern GPUs: FA-2 ships inside PyTorch's `scaled_dot_product_attention`, FA-3 (still beta) targets Hopper's async tensor cores and FP8, and FA-4 has since shipped as a production `pip install flash-attn-4` package extending the approach to Blackwell (e.g. B200) alongside Hopper. The core IO-aware tiling idea has spawned a broad ecosystem of inference-optimized and flexibly-programmable attention kernels.

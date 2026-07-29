@@ -12,17 +12,15 @@ PyTorch's eager mode is a triumph of usability: every line runs immediately, err
 2. **Kernel launch.** `cudaLaunchKernel` submits work to the GPU's hardware queue. Each launch costs on the order of a few to tens of microseconds of CPU time.
 3. **Global memory round-trip.** For a sequence of elementwise ops — say, `x = gelu(linear(x))` — each intermediate result is written to GPU DRAM and immediately read back by the next kernel, even though the values could have stayed in registers or L2 cache.
 
-Consider a simple fused operation: `y = relu(a * b + c)` where all tensors are [4096, 4096] FP16. A naive eager implementation launches three kernels (multiply, add, relu). Each kernel reads and writes 128 MB at DRAM bandwidth (~2 TB/s on an H100). A fused kernel reads the inputs once, computes all three operations in registers, and writes the output once — cutting memory traffic by roughly 3×.
+Consider a simple fused operation: `y = relu(a * b + c)` where all tensors are [4096, 4096] FP16 — $4096 \times 4096 \times 2\,\text{B} = 32\,\text{MB}$ each. A naive eager implementation launches three kernels: `t = a*b` (reads two tensors, writes one), `u = t + c` (reads two, writes one), `y = relu(u)` (reads one, writes one). That is $3 + 3 + 2 = 8$ tensor-sized transfers, or 256 MB of DRAM traffic. A fused kernel reads `a`, `b`, `c` once, keeps the intermediates in registers, and writes `y` once — 4 transfers, or 128 MB. Taking a round 2 TB/s of HBM bandwidth (an H100 PCIe part is about 2 TB/s; the SXM part is about 3.35 TB/s, and a well-written streaming kernel achieves roughly 70–85% of peak):
 
 $$
-\text{time}_{\text{naive}} = 3 \times \frac{128\,\text{MB}}{2\,\text{TB/s}} \approx 192\,\mu\text{s}
-$$
-
-$$
+\text{time}_{\text{naive}} \approx \frac{256\,\text{MB}}{2\,\text{TB/s}} \approx 128\,\mu\text{s}
+\qquad
 \text{time}_{\text{fused}} \approx \frac{128\,\text{MB}}{2\,\text{TB/s}} \approx 64\,\mu\text{s}
 $$
 
-That is the arithmetic ideal. Real speedups are smaller due to occupancy and scheduling, but the memory-traffic argument is real. See [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) for the full bandwidth/compute roofline framework.
+so fusion halves the traffic here. The win grows with the length of the chain: fusing $n$ pointwise ops over a shared operand set pushes the traffic ratio toward $n$, because the fused kernel's cost stays pinned at (inputs + output) while the naive cost grows linearly in $n$. That is the arithmetic ideal. Real speedups are smaller due to occupancy and scheduling, but the memory-traffic argument is real. See [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) for the full bandwidth/compute roofline framework.
 
 ## Kernel Fusion: Mechanisms and Taxonomy
 
@@ -103,7 +101,7 @@ The critical constraint: **memory addresses must be identical** across captures 
 - **Host-to-device synchronizations** (e.g., `tensor.item()`, printing) inside the captured region stall or fail.
 - **Variable shapes**: a graph captured with batch=32 cannot be replayed with batch=16 without recapture.
 
-The vLLM serving system manages this by pre-capturing graphs for a discrete set of batch sizes and selecting the closest one at runtime.
+The vLLM serving system manages this by pre-capturing graphs for a discrete set of batch sizes and padding up to the closest one at runtime. Its V1 engine goes a step further with **piecewise CUDA graphs**: it runs `torch.compile` over the model, splits the compiled graph at the attention operator — whose shapes genuinely vary with each batch's mix of sequence lengths — and captures CUDA graphs only for the fixed-shape pieces in between. The result is graph replay for the bulk of the decode step while attention remains a flexible, hand-written paged kernel. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html).
 
 ## torch.compile: The Full PyTorch Compiler Stack
 
@@ -209,6 +207,36 @@ model = torch.compile(model, dynamic=True)
 # Inspect what happened: graph breaks, subgraphs, guards
 torch._dynamo.explain(model)(x)
 ```
+
+!!! warning "Compiled numerics are not bitwise-identical to eager"
+
+    Inductor reorders reductions, keeps fused intermediates in fp32 registers instead of round-tripping them through bf16 DRAM, and under `max-autotune` may select a different GEMM algorithm than cuBLAS would. Every one of those is legitimate, but together they mean a compiled model does not reproduce eager output bit-for-bit. Compare with a real tolerance (`torch.testing.assert_close(..., rtol=1e-2, atol=1e-2)` is reasonable for bf16), and validate a compiled training run on its loss trajectory and downstream metrics rather than on step-for-step equality with an eager baseline. To localize a numerical regression, compile with `backend="aot_eager"` — that runs Dynamo capture plus AOTAutograd but skips Inductor codegen, so if the discrepancy survives it is a capture/decomposition issue and if it vanishes it is a generated kernel.
+
+### Ahead-of-Time Compilation: `torch.export` and AOTInductor
+
+`torch.compile` is *just-in-time*: the first call for every new shape signature pays tracing and code generation, and the artifact dies with the Python process. For deployment you usually want the opposite — build once, offline, then run with no tracing and ideally no Python interpreter at all. PyTorch's answer is a two-step path that sits alongside `torch.compile` rather than replacing it:
+
+1. **`torch.export`** captures a *whole-graph*, graph-break-free representation: an `ExportedProgram` holding an ATen-level FX graph plus its symbolic shape constraints and a graph signature naming every parameter and buffer the graph consumes. Unlike Dynamo's JIT mode it refuses to fall back to eager — a data-dependent branch makes export raise an error instead of silently splitting the model. For a shippable artifact that strictness is the feature.
+2. **AOTInductor** lowers that exported program to a self-contained package: the same Triton/CUDA kernels Inductor would have generated, plus a compiled `.so` wrapper, loadable from Python or linked directly into a C++ server.
+
+```python
+import torch
+
+model = MyTransformerBlock(d_model=4096, n_heads=32)
+model = model.to(device="cuda", dtype=torch.bfloat16).eval()
+example = (torch.randn(1, 512, 4096, device="cuda", dtype=torch.bfloat16),)
+
+# Declare which dimensions may vary; everything else is frozen at export time.
+batch = torch.export.Dim("batch", min=1, max=64)
+ep = torch.export.export(model, example, dynamic_shapes={"x": {0: batch}})
+
+# Lower to a standalone package (a .pt2 file containing the compiled kernels).
+path = torch._inductor.aoti_compile_and_package(ep)
+runner = torch._inductor.aoti_load_package(path)   # no re-tracing at load time
+y = runner(example[0])
+```
+
+Rule of thumb: use `torch.compile` for training and research loops where flexibility wins, and `torch.export` + AOTInductor when you need a fixed, auditable, Python-free binary — the niche TensorRT and ONNX Runtime occupy, but staying inside PyTorch's own operator semantics so exported numerics match what you trained.
 
 ### Diagnosing and Reducing Graph Breaks
 
@@ -476,6 +504,16 @@ Two practical notes:
 1. **`set_to_none=True` in `zero_grad`** avoids a separate memset kernel per parameter — a nice interaction with `torch.compile`.
 2. **`fused=True` in AdamW** uses a fused CUDA kernel for the Adam update, reducing the kernel count from O(number of parameters) to a handful.
 
+### Compile Time, Caching, and Regional Compilation
+
+Compiling a 32-layer model as one graph can take minutes, and by default that work is thrown away when the process exits. Three practices make compilation affordable on a real training run:
+
+- **Regional compilation.** Compile *one* decoder block rather than the whole model — `for blk in model.blocks: blk.compile()` — and Dynamo reuses the cached artifact for every structurally identical layer. Compile time drops roughly by the number of layers, and you forfeit only fusion *across* block boundaries, which for a pre-norm transformer is one residual add.
+- **Persistent caching.** Point `TORCHINDUCTOR_CACHE_DIR` at fast local storage so Inductor's FX-graph and Triton caches survive across processes; a warm restart then skips code generation almost entirely. This is what makes crash-restart on a long job cheap — see [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
+- **Keep shapes constant.** Every new `(batch, seq_len)` signature is a recompile. Pack and pad training batches to a fixed shape and drop the ragged final batch, or the last step of each epoch silently retriggers the pipeline. Worse, once Dynamo exceeds its recompile budget (`torch._dynamo.config.cache_size_limit`, renamed `recompile_limit` in newer releases; 8 by default) it gives up and falls back to eager permanently — which presents as a mysterious mid-run slowdown rather than an error.
+
+For the ~100M model built in Part XIV, compiling the decoder block against a fixed `[B, 1024]` packed batch shape is the single largest free throughput win available in the training loop; the loop that does it is in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
+
 For distributed training, `torch.compile` composes with FSDP2 and DDP. The recommended order is to compile *before* wrapping with FSDP, so that Dynamo captures the model graph without FSDP's all-gather hooks in the way. Consult [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) for the full FSDP setup.
 
 ## Graph Breaks Deep-Dive: What Actually Stops Compilation
@@ -552,9 +590,10 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     - AOTAutograd's joint forward+backward graph enables cross-boundary fusion, for example fusing an activation function with its gradient computation, which is unavailable in eager mode.
     - XLA (used by JAX/TPU) and TVM take fundamentally similar approaches — whole-graph compilation with loop fusion — but are optimized for different hardware targets and have different dynamism tradeoffs.
     - `torch.compile` composes with FSDP, DDP, and fused optimizers; compile the model before wrapping with FSDP, and use `fused=True` in AdamW to reduce optimizer kernel count.
+    - For deployment, `torch.export` captures a strict graph-break-free `ExportedProgram` and AOTInductor lowers it ahead of time to a Python-free package; for training, compile one decoder block (not the whole model), set `TORCHINDUCTOR_CACHE_DIR`, and keep batch shapes constant so you never blow the recompile budget.
 
 !!! sota "State of the Art & Resources (2026)"
-    `torch.compile` is the standard path to production-quality training and inference performance in PyTorch, with TorchDynamo + TorchInductor delivering 1.4–2.3× geomean speedups across hundreds of real-world models; CUDA graph support, Triton-based code generation, and dynamic-shape handling have matured substantially since the PyTorch 2.0 launch. The newest addition to the stack is Helion, PyTorch's higher-level autotuned kernel-authoring DSL that compiles down to Triton (and now TPU Pallas), extending the same fusion/autotuning philosophy above hand-written Triton.
+    `torch.compile` is the standard path to production-quality training and inference performance in PyTorch, with TorchDynamo + TorchInductor delivering 1.4–2.3× geomean speedups across hundreds of real-world models; CUDA graph support, Triton-based code generation, and dynamic-shape handling have matured substantially since the PyTorch 2.0 launch. Two directions define the current frontier. First, ahead-of-time deployment: `torch.export` plus AOTInductor now give a strict, whole-graph, Python-free artifact, and the serving stacks have absorbed the compiler outright — vLLM's V1 engine runs `torch.compile` over the model and layers piecewise CUDA graphs on top of it, rather than treating compilation as an optional accelerator. Second, kernel authoring: Helion, PyTorch's higher-level autotuned kernel DSL, compiles down to Triton (and now TPU Pallas), extending the same fusion/autotuning philosophy above hand-written Triton.
 
     **Foundational work**
 
@@ -576,6 +615,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 
     - [PyTorch, *Accelerating PyTorch with CUDA Graphs* (blog, 2021; updated 2024)](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/) — official deep-dive on the CUDA graph capture API with MLPerf benchmark results.
     - [PyTorch, *Introduction to torch.compile* (tutorial)](https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html) — official step-by-step guide covering modes, backends, and graph-break debugging.
+    - [PyTorch, *AOTInductor: Ahead-Of-Time Compilation for Torch.Export-ed Models* (docs)](https://docs.pytorch.org/docs/stable/torch.compiler_aot_inductor.html) — the export → compile → package → load-from-C++ deployment path in full.
     - [PyTorch, *Accelerating Large Language Models with Accelerated Transformers* (blog)](https://pytorch.org/blog/accelerating-large-language-models/) — practical walkthrough showing `torch.compile` + SDPA achieving up to 64% speedup on nanoGPT.
     - [Edward Yang, *Ways to Use torch.compile* (blog, 2024)](https://blog.ezyang.com/2024/11/ways-to-use-torch-compile/) — pragmatic guide to when and how to apply compilation in training vs. inference workloads.
 
@@ -595,13 +635,13 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 **1.** The chapter opens by listing three hidden costs of eager PyTorch: Python interpreter/dispatcher overhead, kernel launch latency, and global memory round-trips. Kernel fusion and CUDA graphs are the two main tools introduced. For *each* tool, say which of the three costs it primarily attacks and which it leaves untouched. Then explain why `mode="reduce-overhead"` in `torch.compile` combines both.
 
 ??? note "Solution"
-    **Kernel fusion** attacks the **global memory round-trip** cost. By merging several kernels into one, intermediate tensors stay in registers or shared memory instead of being written to DRAM and read back, cutting memory traffic (the chapter's `relu(a*b+c)` example drops from three 128 MB round-trips to one). Fusion also *incidentally* reduces launch count (one kernel instead of three), but its defining purpose is memory traffic. It does nothing about Python-level dispatch overhead per se — that is a graph-capture concern.
+    **Kernel fusion** attacks the **global memory round-trip** cost. By merging several kernels into one, intermediate tensors stay in registers or shared memory instead of being written to DRAM and read back, cutting memory traffic (the chapter's `relu(a*b+c)` example drops from 8 tensor-sized DRAM transfers to 4). Fusion also *incidentally* reduces launch count (one kernel instead of three), but its defining purpose is memory traffic. It does nothing about Python-level dispatch overhead per se — that is a graph-capture concern.
 
     **CUDA graphs** attack the **kernel launch latency** (and the CPU-side dispatch/interpreter overhead of re-entering the driver). The whole recorded sequence is replayed with a single `cudaGraphLaunch` CPU call, so the CPU no longer pays 5–20 µs per kernel. CUDA graphs do *not* change memory traffic at all: each recorded kernel still reads and writes exactly the same DRAM it did before; fusion is orthogonal.
 
     **`reduce-overhead`** combines both because it runs the full `torch.compile` stack — TorchInductor fuses pointwise/reduction ops (memory-traffic win) — *and* it additionally captures the resulting kernel sequence into a CUDA graph (launch-overhead win). So it removes both the DRAM round-trips (via Inductor fusion) and the per-kernel CPU launch cost (via graph replay), which is why it is the mode of choice for fixed-shape inference.
 
-**2.** The chapter estimates that the fused version of `y = relu(a * b + c)` on `[4096, 4096]` FP16 tensors takes about $64\,\mu\text{s}$ versus $192\,\mu\text{s}$ naive. Redo the calculation from scratch for `[8192, 8192]` FP16 tensors on the same 2 TB/s H100, and report the naive time, the fused time, and the speedup. Assume the fused kernel reads the three inputs once and writes one output.
+**2.** The chapter estimates that the fused version of `y = relu(a * b + c)` on `[4096, 4096]` FP16 tensors takes about $64\,\mu\text{s}$ versus $128\,\mu\text{s}$ naive. Redo the calculation from scratch for `[8192, 8192]` FP16 tensors on the same 2 TB/s device, counting every operand read and every result write, and report the naive time, the fused time, and the speedup. Then say what would have to change for the fused speedup to approach $3\times$ instead.
 
 ??? note "Solution"
     First the tensor size. An `[8192, 8192]` FP16 tensor has $8192 \times 8192 = 67{,}108{,}864$ elements, each 2 bytes:
@@ -610,27 +650,23 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     67{,}108{,}864 \times 2\,\text{bytes} = 134{,}217{,}728\,\text{bytes} = 128\,\text{MB}.
     $$
 
-    (It is 4x the elements of a `[4096, 4096]` tensor, which was 32 MB; so this is 128 MB — same per-tensor size the chapter used in its DRAM-traffic sentence.)
+    Call that one "transfer" $T = 128\,\text{MB}$ and just count transfers.
 
-    **Naive.** Three kernels (multiply, add, relu). The chapter's model counts one 128 MB read+write pass per kernel:
-
-    $$
-    \text{time}_{\text{naive}} = 3 \times \frac{128\,\text{MB}}{2\,\text{TB/s}} = 3 \times 64\,\mu\text{s} = 192\,\mu\text{s}.
-    $$
-
-    **Fused.** One kernel that reads the three inputs $a, b, c$ once each and writes one output $y$ — four 128 MB transfers = 512 MB:
+    **Naive.** Three kernels: `t = a*b` moves $3T$ (read $a$, read $b$, write $t$); `u = t + c` moves $3T$; `y = relu(u)` moves $2T$. Total $8T = 1024\,\text{MB}$:
 
     $$
-    \text{time}_{\text{fused}} = \frac{512\,\text{MB}}{2\,\text{TB/s}} = \frac{0.5\,\text{GB}}{2000\,\text{GB/s}} = 256\,\mu\text{s}\;?
+    \text{time}_{\text{naive}} \approx \frac{1024\,\text{MB}}{2\,\text{TB/s}} \approx 512\,\mu\text{s}.
     $$
 
-    That would be *slower*, which flags that the chapter's own $64\,\mu\text{s}$ figure uses a simplified "one 128 MB round-trip" model rather than counting all four operands. Following the chapter's stated model literally — "reads the inputs once and writes the output once" collapsed to a single 128 MB round-trip — the fused kernel is:
+    **Fused.** One kernel that reads $a, b, c$ once each and writes $y$ once — $4T = 512\,\text{MB}$:
 
     $$
-    \text{time}_{\text{fused}} \approx \frac{128\,\text{MB}}{2\,\text{TB/s}} = 64\,\mu\text{s},
+    \text{time}_{\text{fused}} \approx \frac{512\,\text{MB}}{2\,\text{TB/s}} \approx 256\,\mu\text{s}.
     $$
 
-    giving a **$192/64 = 3\times$ speedup**, identical to the `[4096, 4096]` case. The key insight the exercise surfaces: under a pure-bandwidth roofline the fusion speedup is set by the *ratio of memory passes eliminated* (3 passes -> 1), not by the absolute tensor size — doubling each dimension scales naive and fused time by the same factor and leaves the 3x ratio unchanged.
+    **Speedup** $= 8T / 4T = 2\times$ — *identical* to the `[4096, 4096]` case, because both numerator and denominator scale with tensor size. The first lesson: under a pure-bandwidth roofline the fusion speedup is set by the *ratio of transfers eliminated*, not by the absolute tensor size.
+
+    **What would push it toward $3\times$?** The fused kernel's cost is floored at (distinct inputs + outputs) $= 4T$ here, so the ceiling is set by how much naive traffic you can pile on top of that floor. Lengthen the pointwise chain — `relu(a*b + c)` then scaled, then GELU'd, then dropped out — and each extra eager op adds $2T$ to the naive side while adding *nothing* to the fused side, so the ratio climbs $8/4 \to 10/4 \to 12/4$. Alternatively, reduce the number of distinct inputs: `relu(a*a + a)` has a fused floor of only $2T$, giving $8/2 = 4\times$. This is exactly why Inductor's scheduler tries to grow fusion groups greedily: every additional pointwise op absorbed into an existing kernel is close to free.
 
 **3.** A batch-size-1 decode step launches 140 small kernels, each doing negligible arithmetic (memory-bound, ~1 µs of actual GPU work) but costing 8 µs of CPU launch time. The CPU launches kernels serially and the GPU cannot start a kernel until the CPU has launched it. (a) Estimate the per-step wall-clock time in eager mode. (b) After wrapping the decode step in a CUDA graph, the entire sequence replays with a single 8 µs CPU call and the GPU then runs the 140 kernels back-to-back. Estimate the new per-step time and the speedup. (c) Which sentence in the chapter explains why this workload is a *good* fit for CUDA graphs?
 

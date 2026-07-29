@@ -25,7 +25,7 @@ $$
 q = \operatorname{round}\!\left(\frac{w}{s}\right) + z, \quad \hat{w} = s \cdot (q - z)
 $$
 
-The quantization error per element is bounded by $\frac{s}{2}$, so the goal of calibration (GPTQ, AWQ, SmoothQuant) is to minimize $s$ for the most sensitive weight groups.
+The quantization error per element is bounded by $\frac{s}{2}$, and if we model the rounding residual as uniform on $[-s/2, s/2]$ its variance is $s^2/12$ — the standard round-off noise model, and a useful sanity check when you measure reconstruction MSE in code. It also makes the scale/clipping tradeoff precise. Setting $s$ from the group's absolute maximum ("absmax", what every snippet in this chapter does) guarantees *no* clipping, but a single outlier weight then inflates $s$ — and hence the error on all $g-1$ well-behaved weights — for the whole group. The MSE-optimal scale is generally *smaller* than absmax: you accept clipping error on one or two extreme weights to shrink rounding error everywhere else. This is why real PTQ implementations do not use absmax directly but grid-search a clipping ratio $\alpha \in (0, 1]$ with $s = \alpha \max(|\mathbf{w}|)/q_\text{max}$, minimizing either reconstruction MSE or, better, the *output* error $\lVert \mathbf{X}\mathbf{W}^\top - \mathbf{X}\hat{\mathbf{W}}^\top \rVert^2$ on calibration activations. Minimizing output error rather than weight error is exactly what separates GPTQ, AWQ, and SmoothQuant from naive round-to-nearest — see [Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)](../04-kernels-efficiency/07-quantization-ptq.html).
 
 ---
 
@@ -101,15 +101,14 @@ where $s$ and $z$ are the group scale and zero-point. The kernel unpacks two 4-b
 
 ### NF4: Normal Float 4
 
-NF4 (Dettmers et al., QLoRA, 2023) is an *information-theoretically optimal* 4-bit data type for normally distributed weights. Instead of uniform spacing between the 16 quantization levels, NF4 spaces them at the quantiles of a standard normal distribution $\mathcal{N}(0,1)$. This minimizes expected squared quantization error for weights that are normally distributed (which pretrained LLM weights approximately are).
+NF4 (Dettmers et al., QLoRA, 2023) is a 4-bit data type whose code points are placed at the *quantiles* of a standard normal $\mathcal{N}(0,1)$ rather than at uniform spacing. The idea: each of the 16 codes should be used about equally often, so no code is wasted on a region of the distribution where weights never land. The QLoRA paper calls this "information-theoretically optimal" for normally distributed data — read that as *equal-probability bins*, not as MSE-optimal. A Lloyd–Max quantizer (which minimizes expected squared error for a given density) would place its levels slightly differently; equal-probability quantiles are the entropy-maximizing choice, and the two coincide only in the high-resolution limit. In practice the difference at 4 bits is small, and NF4's real advantage over plain INT4 comes from spending resolution near zero where most weights actually are.
 
-The 16 NF4 code points are the values $q_i$ such that:
+The construction has two details worth knowing, because they explain the odd-looking constants in the code table below:
 
-$$
-q_i = Q_\mathcal{N}\!\left(\frac{2i + 1}{2 \times 16}\right), \quad i = 0, 1, \ldots, 15
-$$
+1. **The grid is asymmetric, with an exact zero.** A symmetric 16-level quantile grid has no code at $0$, but a code for exactly zero is valuable (most weights are near zero, and it makes an exactly-zero weight exactly representable). NF4 therefore builds the two halves separately — 8 levels on the positive side, 7 on the negative — and inserts $0$ as the 16th code. That is why the table below has 7 negative entries, a zero, and 8 positive entries.
+2. **The tails are clipped at a finite quantile.** $Q_\mathcal{N}(1) = \infty$, so the extreme levels are taken at an offset $p_{\max} = 0.9677083$ rather than at $1$ — the average of the two "half-bin-in-from-the-end" quantiles for a 15-level and a 16-level grid, $\tfrac{1}{2}\big[(1 - \tfrac{1}{30}) + (1 - \tfrac{1}{32})\big]$. The whole set is then divided by its largest magnitude so the codes span exactly $[-1, +1]$.
 
-where $Q_\mathcal{N}$ is the quantile function of the standard normal. At runtime, each weight group is rescaled by $s = \max(|\mathbf{w}|) / 0.9677$ (the scale that maps the group's maximum to the most extreme NF4 code point), then the nearest code point index is stored.
+At runtime the group scale is simply the group's absolute maximum, $s = \max(|\mathbf{w}|)$, so the largest-magnitude weight in each block maps onto the extreme code $\pm 1$; the nearest code point index is then stored as 4 bits.
 
 NF4 is the weight format used by QLoRA for the frozen base model. It achieves slightly lower perplexity than INT4 per-group on the same model at the same 4-bit budget, because its code points are better matched to the actual weight distribution.
 
@@ -137,7 +136,13 @@ model = AutoModelForCausalLM.from_pretrained(
 
 ### Double Quantization
 
-Double quantization (also from QLoRA) applies a second quantization step to the scale factors themselves. Each group-128 scale is an FP32 value. With $g_2 = 256$ scales sharing a second-level scale (stored in FP8), the per-weight overhead of the primary scale is reduced from $32/128 = 0.25$ bits/weight to roughly $8/256 + 32/(256 \cdot 256) \approx 0.031 + 0.001 \approx 0.032$ bits/weight — an additional saving of about 0.22 bits/weight across the whole model.
+Double quantization (also from QLoRA) applies a second quantization step to the scale factors themselves. bitsandbytes' NF4 uses a default block size of $g = 64$, and each block's absmax scale is an FP32 value — that is $32/64 = 0.5$ bits per weight of pure metadata, which is a *lot* when the payload is only 4 bits. Double quantization quantizes those FP32 absmaxes to 8 bits (bitsandbytes first subtracts their mean so the values are centered, then applies an 8-bit dynamic-exponent map), grouping $g_2 = 256$ scales under one FP32 meta-scale. The overhead becomes
+
+$$
+\frac{8}{64} + \frac{32}{64 \times 256} = 0.125 + 0.002 = 0.127 \text{ bits/weight},
+$$
+
+a saving of about $0.373$ bits/weight — which the QLoRA paper reports as roughly 3 GB on a 65 B model. Note the metadata is quantized to 8-bit *integers*, not FP8; FP8 hardware types are not involved here at all.
 
 !!! example "Worked example: memory budget for a 70 B model"
     Consider a 70B-parameter dense model (e.g., Llama 3.3 70B or a similarly sized open-weight model). Let's compute memory under different quantization schemes.
@@ -148,7 +153,9 @@ Double quantization (also from QLoRA) applies a second quantization step to the 
 
     **INT4 per-group-128 (with FP16 scales):** Weights = $70 \times 10^9 \times 0.5 \text{ bytes} = 35 \text{ GB}$. Scales add $70 \times 10^9 / 128 \times 2 \text{ bytes} \approx 1.1 \text{ GB}$. Total: $\approx 36 \text{ GB}$.
 
-    **NF4 + double quantization:** Weights $\approx 35$ GB. First-level FP8 scales: $70 \times 10^9 / 128 \times 1 \text{ byte} \approx 0.55$ GB. Second-level FP32 meta-scale: $70 \times 10^9 / (128 \times 256) \times 4 \text{ bytes} \approx 0.009$ GB. Total: $\approx 35.6$ GB — essentially the same as INT4, with a small extra saving from compressing the scales.
+    **NF4 (block 64) without double quantization:** Weights $\approx 35$ GB. FP32 absmax scales: $70 \times 10^9 / 64 \times 4 \text{ bytes} \approx 4.4$ GB. Total $\approx 39.4$ GB — the scales alone cost more than a full extra bit per weight.
+
+    **NF4 + double quantization:** Weights $\approx 35$ GB. First-level 8-bit scales: $70 \times 10^9 / 64 \times 1 \text{ byte} \approx 1.1$ GB. Second-level FP32 meta-scale: $70 \times 10^9 / (64 \times 256) \times 4 \text{ bytes} \approx 0.017$ GB. Total: $\approx 36.1$ GB — double quantization bought back $3.3$ GB, enough to matter for whether the model plus its KV cache fits in 80 GB.
 
     In practice, a 70 B NF4+DQ model fits comfortably in 36–40 GB with overhead for the KV cache and activations, enabling single-GPU deployment on an A100-80GB or H100-80GB.
 
@@ -158,12 +165,12 @@ Double quantization (also from QLoRA) applies a second quantization step to the 
 
 FP8 introduces a floating-point format at 8 bits. Two variants exist:
 
-- **E4M3:** 4 exponent bits, 3 mantissa bits. Dynamic range: roughly $[5.96 \times 10^{-8}, 448]$. Better for weights (need a wider range).
-- **E5M2:** 5 exponent bits, 2 mantissa bits. Wider dynamic range, less precision per number. Better for gradients during training.
+- **E4M3:** 4 exponent bits, 3 mantissa bits, exponent bias 7. Representable magnitudes run from the smallest subnormal $2^{-9} \approx 1.95 \times 10^{-3}$ up to a maximum of $448$ (the OCP FP8 spec reclaims the all-ones exponent pattern for NaN instead of infinities, which is how you get 448 rather than 240). Better for weights and activations, which need mantissa bits more than range.
+- **E5M2:** 5 exponent bits, 2 mantissa bits, exponent bias 15. Range up to $57344$ with a smallest subnormal of $2^{-16} \approx 1.5 \times 10^{-5}$ — much wider dynamic range, one fewer mantissa bit. Better for gradients during training, whose magnitudes span many more orders of magnitude.
 
 NVIDIA Hopper GPUs (H100, H200) introduced native FP8 Tensor Core support, and the Blackwell generation (B200, GB200) carries FP8 forward while adding native 4-bit floating-point Tensor Cores as well. The hardware performs FP8 × FP8 multiplications and accumulates in FP32, then scales and stores results in FP8 or FP16.
 
-FP8 differs from INT8 in one crucial way: the scale granularity is coarser (per-tensor or per-row) and is baked into the hardware instruction as a scaling factor, rather than per-group. This makes FP8 better suited to weights and activations that are roughly uniform in magnitude, which is why FP8 shines for inference on GEMM-heavy forward passes (attention and FFN projections) but can degrade more than INT8 on outlier-heavy activations unless paired with SmoothQuant-style smoothing.
+FP8 differs from INT8 in one crucial way: because the exponent field already gives each *element* its own scale, the explicit scale factor can be much coarser — per-tensor or per-row rather than per-group-128. On Hopper the scaling happens *around* the GEMM, not inside it: the Tensor Core multiplies FP8 operands and accumulates in FP32, and the scale is folded into the epilogue (this is exactly what `torch._scaled_mm` exposes). Blackwell changes that by adding **block-scaled MMA** instructions that consume a per-block scale factor directly from the instruction operands, which is what makes MXFP8/MXFP4/NVFP4 cheap in hardware. The practical consequence of coarse scaling is that FP8 shines on GEMM-heavy forward passes (attention and FFN projections) but can degrade more than per-group INT4/INT8 on outlier-heavy activations unless paired with SmoothQuant-style smoothing or with *fine-grained* FP8 — the recipe DeepSeek-V3 popularized, quantizing activations in $1\times128$ tiles and weights in $128\times128$ blocks so that no single outlier channel sets the scale for a whole tensor.
 
 On Blackwell, NVFP4 pushes this idea one step further into 4-bit floating point (E2M1: 1 sign, 2 exponent, 1 mantissa bit). It uses small 16-value micro-blocks, each with its own FP8 (E4M3) scale factor plus a single FP32 scale for the whole tensor — finer-grained than the 32-value blocks used by the open MXFP4 standard. NVIDIA reports roughly 1.8× lower memory footprint than FP8 with well under 1% accuracy degradation on language-modeling benchmarks; vLLM and TensorRT-LLM both support NVFP4 checkpoints (e.g., vLLM's `quantization="modelopt_fp4"`), and it is now being used for pretraining as well as inference (see *Pretraining Large Language Models with NVFP4* below), not just as a serving-time format.
 
@@ -194,16 +201,55 @@ with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
     print(f"Output dtype: {y.dtype}")  # still BF16 after cast-back
 ```
 
-For practical FP8 inference with vLLM:
+For practical FP8 inference with vLLM, the quickest path is on-the-fly quantization at load time — no calibration, per-tensor dynamic scales:
 
 ```bash
-# Enable FP8 quantization in vLLM (requires H100/H200 or Ada generation)
-python -m vllm.entrypoints.openai.api_server \
-    --model meta-llama/Meta-Llama-3-70B-Instruct \
+# Quantize weights to FP8 as the model loads (needs Ada/Hopper/Blackwell).
+# Zero setup, but you pay the conversion cost on every server start and you
+# get no activation calibration.
+vllm serve meta-llama/Meta-Llama-3-70B-Instruct \
     --quantization fp8 \
     --dtype bfloat16 \
     --gpu-memory-utilization 0.92
 ```
+
+### The Checkpoint Format Layer: `compressed-tensors` and `llm-compressor`
+
+On-the-fly quantization is convenient but wasteful. In production you quantize **once, offline**, and ship a checkpoint the server can `mmap` straight into the right kernel. The format that has consolidated this in the vLLM/SGLang ecosystem is **`compressed-tensors`** — a safetensors-compatible checkpoint format that stores packed low-bit weights alongside a `quantization_config` describing scheme, group size, symmetry, and which layers were left in BF16. It is what replaced the proliferation of one-format-per-algorithm checkpoints (`gptq`, `awq`, `marlin`, …) with a single serialization that a runtime can inspect and route to the best available kernel.
+
+The tool that *writes* those checkpoints is **`llm-compressor`** (the vLLM Project's toolkit, successor to Neural Magic's SparseML). The algorithms it runs — GPTQ, AWQ, SmoothQuant — are covered in [Quantization I](../04-kernels-efficiency/07-quantization-ptq.html); what matters here is that one `oneshot()` call selects the *format* you deploy:
+
+```python
+# pip install llmcompressor
+# Produce an offline FP8 W8A8 checkpoint that vLLM loads with no conversion cost.
+from llmcompressor import oneshot
+from llmcompressor.modifiers.quantization import QuantizationModifier
+
+MODEL_ID = "meta-llama/Meta-Llama-3-8B-Instruct"
+
+recipe = QuantizationModifier(
+    targets="Linear",              # quantize every nn.Linear ...
+    scheme="FP8_DYNAMIC",          # ... to FP8 weights + dynamic per-token FP8 acts
+    ignore=["lm_head"],            # ... except the output head, which is sensitive
+)
+
+# FP8_DYNAMIC needs no calibration data: weight scales come from the weights,
+# activation scales are computed per token at runtime.
+oneshot(model=MODEL_ID, recipe=recipe, output_dir="Llama-3-8B-Instruct-FP8")
+
+# Swap `scheme` for other formats this chapter covers:
+#   "FP8"        -> static per-tensor FP8 activations (needs calibration data)
+#   "W8A8"       -> INT8 weights + INT8 activations (add a SmoothQuant modifier)
+#   "W4A16"      -> INT4 group-128 weight-only (pair with GPTQModifier + calib set)
+#   "NVFP4"      -> 4-bit float, Blackwell block-scaled kernels
+# Then simply: vllm serve Llama-3-8B-Instruct-FP8
+```
+
+NVIDIA's parallel tool for its own stack is **TensorRT Model Optimizer** (`nvidia-modelopt`), which produces the NVFP4/FP8 checkpoints TensorRT-LLM consumes and that vLLM loads via `--quantization modelopt` / `modelopt_fp4`.
+
+### Which Kernel Actually Runs
+
+A W4A16 checkpoint is useless without a fast kernel, and this is where most of the throughput spread in the table below comes from. vLLM's INT4/FP8 weight-only path runs on **Marlin** (Frantar et al.), a mixed-precision GEMM that hides dequantization behind the memory pipeline and holds near-4× speedup out to batch sizes of 32–64, where naive dequantize-then-FP16-GEMM has long since collapsed to BF16 speed. **Machete** is its Hopper successor, built on CUTLASS 3.x and `wgmma` with weights pre-shuffled at load time. The lesson generalizes: at batch size 1 any correct INT4 kernel wins because you are bandwidth-bound; at moderate batch the *kernel*, not the format, decides whether weight-only quantization is still a win.
 
 ---
 
@@ -213,22 +259,26 @@ GGUF (GPT-Generated Unified Format) is the binary container format used by llama
 
 ### The K-Quant Family
 
-llama.cpp's k-quants are a family of mixed-precision block quantization schemes. The name comes from the original author's handle and the "k" for the block size. The key innovation is **block-level mixed precision**: within each block of 256 weights, the scheme uses different bit widths for the "super-block scale" (stored at higher precision) versus the individual weight quantization steps.
+llama.cpp's k-quants are a family of mixed-precision block quantization schemes contributed by Iwan Kawrakow (hence the "k"). The key innovation is **two-level block scaling**: each super-block of 256 weights carries fp16 super-block scales, and those in turn scale a set of cheap low-bit *sub-block* scales, one per 16 or 32 weights. You get near-per-32 scale granularity for a fraction of the metadata cost of storing an fp16 scale every 32 weights.
 
-The available k-quant types and their approximate sizes per weight:
+The block layouts and their exact bits/weight (derived from the `block_*` structs in `ggml-quants.h`):
 
-| Format   | Bits/weight (approx) | Notes |
-|----------|---------------------|-------|
-| Q2_K     | 2.6 bits            | Very aggressive; noticeable quality loss |
-| Q3_K_S/M/L | 3.0–3.5 bits     | S=small scales, M=medium, L=large scales |
-| Q4_K_S/M | 4.1–4.6 bits        | Most popular tradeoff; M has larger super-block |
-| Q5_K_S/M | 5.0–5.5 bits        | Near-BF16 quality on most models |
-| Q6_K     | 6.6 bits            | Essentially lossless for 7–13 B models |
-| Q8_0     | 8.0 bits            | INT8, simple scale-per-32-weights |
+| Format   | Block bits/weight | Notes |
+|----------|------------------|-------|
+| Q2_K     | 2.625            | Very aggressive; noticeable quality loss without an importance matrix |
+| Q3_K     | 3.4375           | Usable floor for large models |
+| Q4_K     | 4.5              | Most popular tradeoff |
+| Q5_K     | 5.5              | Near-BF16 quality on most models |
+| Q6_K     | 6.5625           | Essentially lossless for 7–13 B models |
+| Q8_0     | 8.5              | INT8 payload + one fp16 scale per 32 weights |
+
+The `_S` / `_M` / `_L` suffixes you see on filenames (`Q4_K_M`, `Q3_K_L`) are **not** different block layouts — they are *tensor-level mixes*. `llama-quantize` applies the named type to most tensors but promotes the ones empirically most sensitive to quantization error (typically `attn_v` and `ffn_down`, plus the output/embedding matrices) to a higher k-quant. `Q4_K_S` is Q4_K nearly everywhere; `Q4_K_M` stores some of those sensitive tensors at Q6_K. That is why a real Q4_K_M file measures a few tenths of a bit per weight above the 4.5-bit block figure, and why `_M` is the recommended default: the extra bits go exactly where they buy the most quality.
+
+**Importance-matrix (imatrix) quantization and the IQ family.** Plain k-quants minimize weight reconstruction error, treating all weights as equally important. llama.cpp's `llama-imatrix` tool fixes that by running calibration text through the fp16 model and recording, per weight column, the mean squared activation that multiplies it — an *importance matrix*, the same activation-awareness idea behind AWQ ([Quantization I](../04-kernels-efficiency/07-quantization-ptq.html)). Passing `--imatrix` to `llama-quantize` weights the rounding search by that importance and is close to mandatory below 4 bits. Built on top of it is the **IQ family** (`IQ1_S` … `IQ4_XS`), which replaces scalar rounding with lookup into a fixed codebook of lattice points — vector quantization in small groups — reaching genuinely usable quality at 2–3 bits/weight where Q2_K struggles.
 
 GGUF has also picked up native 4-bit floating-point support alongside the integer k-quants: OpenAI's open-weight gpt-oss models ship natively in MXFP4, and llama.cpp added first-class MXFP4 loading (in collaboration with NVIDIA) so those weights run directly without a lossy conversion to a k-quant format.
 
-**Q4_K_M internal structure:** Each super-block covers 256 weights. It stores two fp16 super-block scales — `d` (applied to the sub-block scales) and `dmin` (applied to the sub-block mins) — plus 8 sub-block scales and 8 sub-block mins covering 8 sub-blocks of 32 weights each. Those 16 values (8 scales + 8 mins) are each quantized to 6 bits and packed into a 12-byte array. Individual weights are stored as 4-bit unsigned integers. This matches ggml's `block_q4_K` struct, which is the source of truth: `ggml_half d, dmin;` (the two fp16 super-block scales), `uint8_t scales[12];` (the sixteen 6-bit sub-block scales and mins), and `uint8_t qs[128];` (the 256 4-bit weights). The dequantization formula per weight is:
+**`Q4_K` internal structure:** Each super-block covers 256 weights. It stores two fp16 super-block scales — `d` (applied to the sub-block scales) and `dmin` (applied to the sub-block mins) — plus 8 sub-block scales and 8 sub-block mins covering 8 sub-blocks of 32 weights each. Those 16 values (8 scales + 8 mins) are each quantized to 6 bits and packed into a 12-byte array. Individual weights are stored as 4-bit unsigned integers. This matches ggml's `block_q4_K` struct, which is the source of truth: `ggml_half d, dmin;` (the two fp16 super-block scales), `uint8_t scales[12];` (the sixteen 6-bit sub-block scales and mins), and `uint8_t qs[128];` (the 256 4-bit weights). The dequantization formula per weight is:
 
 $$
 \hat{w} = d \cdot s_j \cdot q \; - \; d_\text{min} \cdot m_j
@@ -239,10 +289,12 @@ where $d$ and $d_\text{min}$ are the two fp16 super-block scales (for the sub-bl
 {{fig:quant-q4km-superblock-anatomy}}
 
 ```python
-# Convert a Hugging Face model to GGUF Q4_K_M using llama.cpp's converter
-# First clone llama.cpp and install dependencies:
-# git clone https://github.com/ggerganov/llama.cpp && cd llama.cpp
-# pip install -r requirements.txt && make -j
+# Convert a Hugging Face model to GGUF Q4_K_M using llama.cpp's converter.
+# First clone llama.cpp and build it (the project is CMake-only; the old
+# top-level Makefile was removed, and binaries land in ./build/bin/):
+#   git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
+#   pip install -r requirements.txt
+#   cmake -B build -DGGML_CUDA=ON && cmake --build build --config Release -j
 
 # Step 1: Convert HF model to GGUF F16 (lossless intermediate)
 # (Run from the llama.cpp directory)
@@ -255,11 +307,21 @@ python convert_hf_to_gguf.py \
     --outfile llama3-8b-f16.gguf \
     --outtype f16
 
-# Step 2: Quantize to Q4_K_M (the recommended default for CPU/edge)
-./llama-quantize llama3-8b-f16.gguf llama3-8b-Q4_K_M.gguf Q4_K_M
+# Step 2 (optional but recommended below 5 bits): build an importance matrix
+# from a few MB of calibration text, so the quantizer knows which weight
+# columns actually matter.
+./build/bin/llama-imatrix \
+    -m llama3-8b-f16.gguf \
+    -f calibration.txt \
+    -o llama3-8b.imatrix
 
-# Step 3: Run inference
-./llama-cli \
+# Step 3: Quantize to Q4_K_M (the recommended default for CPU/edge)
+./build/bin/llama-quantize \
+    --imatrix llama3-8b.imatrix \
+    llama3-8b-f16.gguf llama3-8b-Q4_K_M.gguf Q4_K_M
+
+# Step 4: Run inference
+./build/bin/llama-cli \
     -m llama3-8b-Q4_K_M.gguf \
     -n 256 \
     -p "Explain quantization to a 5 year old:" \
@@ -271,6 +333,15 @@ The `--n-gpu-layers` flag enables **GPU+CPU split inference**: the first $n$ lay
 ### Why GGUF for Edge Deployment?
 
 GGUF's portability is unmatched: the same binary runs on macOS (Metal), Linux (CUDA or CPU), Windows (DirectML or CUDA), and even Android/iOS via llama.cpp bindings. For edge deployment, the k-quant Q4_K_M format on a 7 B model typically results in a ~4.1 GB file that runs at 20–40 tokens/second on a modern CPU — no GPU required.
+
+### Exporting *Your Own* Model to GGUF
+
+`convert_hf_to_gguf.py` does not read arbitrary PyTorch checkpoints — it dispatches on the `architectures` field of `config.json` to a registered `Model` subclass that knows how to rename and reshape that architecture's tensors. So for a model you trained yourself there are two honest paths:
+
+1. **Borrow a supported architecture.** If your model *is* structurally a Llama (RMSNorm, RoPE, SwiGLU, GQA — the Stack-100M recipe), the cheapest route is to write your state dict out under HF's `LlamaForCausalLM` naming with a matching `config.json`, and let the existing converter handle it. The one trap is RoPE layout: HF's Llama implementation stores Q/K in the "split-half" permutation and the converter *un*-permutes it, so a model trained with interleaved RoPE must have its Q and K projection rows permuted at export time or generation will be silently garbage.
+2. **Register a new architecture.** Subclass `Model` in `convert_hf_to_gguf.py`, declare your tensor-name mapping, and add the matching graph-building code on the C++ side in `llama.cpp`. This is the real cost of a custom architecture — worth knowing *before* you invent a novel block.
+
+A related warning for small models: quantization damage does **not** scale down with parameter count, it scales *up*. A 100 M-parameter model has far less redundancy to absorb rounding error than a 7 B one, so the 0.1–0.5 perplexity penalty quoted below for Q4_K_M at 7 B can become several points at 100 M. At that scale prefer `Q8_0` or `Q6_K` — the file is still tiny (a ~100 M model is ~110 MB at Q8_0) and you keep essentially all of your quality. The capstone walks the whole export-and-measure loop for a model you built yourself in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
 
 ---
 
@@ -438,6 +509,41 @@ def qat_finetune_step(model, batch, optimizer):
     return loss.item()
 ```
 
+### Doing QAT For Real: `torchao`
+
+You would not hand-roll the module swap above for a real model. The PyTorch-native library for this is **`torchao`** (`pytorch/ao`) — the same package that provides the `float8` training path used by torchtitan ([Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html)). Its quantization API is a single in-place `quantize_(model, config)` that walks the module tree and swaps weights for tensor subclasses carrying the packed data plus scales, so the model stays a normal `nn.Module` and composes with `torch.compile`, FSDP2, and `torch.export`.
+
+QAT in torchao is a **two-phase** flow, and the phase boundary is the important idea to carry away regardless of library:
+
+1. **Prepare.** Insert fake-quantization (quantize → dequantize in the same dtype, with an STE backward) into the forward pass. Weights are still BF16 and still trainable; the model is merely *simulating* the target numerics. Fine-tune for a small number of steps — QAT after pretraining is a fine-tuning-scale cost, typically well under 1 % of the pretraining budget.
+2. **Convert.** Replace the simulation with the real low-bit representation, producing the deployable checkpoint.
+
+```python
+# pip install torchao
+import torch
+from torchao.quantization import quantize_, Int4WeightOnlyConfig
+from torchao.quantization.qat import QATConfig
+
+base_config = Int4WeightOnlyConfig(group_size=32)   # the target deployment numerics
+
+# --- Phase 1: prepare (insert fake-quant + STE), then fine-tune normally ---
+quantize_(model, QATConfig(base_config, step="prepare"))
+for batch in qat_dataloader:                 # a short fine-tune, not a full retrain
+    loss = model(**batch).loss
+    loss.backward()
+    optimizer.step(); optimizer.zero_grad()
+
+# --- Phase 2: convert to the real 4-bit representation ---
+quantize_(model, QATConfig(base_config, step="convert"))
+
+# Straight PTQ (no fine-tuning) is the same call without the QAT wrapper:
+#   quantize_(model, Int4WeightOnlyConfig(group_size=32))
+# torchao's API is versioned; older releases spell the configs as factory
+# functions (`int4_weight_only(group_size=32)`) — check the installed version.
+```
+
+The payoff is real but bounded: QAT mainly earns its keep at 4 bits and below, or for small models where PTQ damage is largest. At INT8, or at W4A16 on a 7 B+ model with a good PTQ algorithm, the remaining gap is usually too small to justify the training run. The decision rule: reach for QAT only after GPTQ/AWQ with a proper calibration set has failed to hit your quality bar.
+
 ### QLoRA: Quantization + Low-Rank Adaptation
 
 QLoRA (Dettmers et al., 2023) is arguably the most impactful combination of quantization and fine-tuning. The recipe:
@@ -503,14 +609,20 @@ $$
 32 \times 32 \times 128 \times 32000 \times 2 \text{ bytes (BF16)} \approx 8.4 \text{ GB}
 $$
 
-Quantizing the KV cache to INT8 halves this to 4.2 GB; INT4 reduces it to 2.1 GB. KV quantization is more delicate than weight quantization because keys and values are computed dynamically (they change every sequence) and have heavier-tailed distributions than model weights.
+(That figure assumes multi-head attention; every modern model uses grouped-query attention, which divides it by the query-to-KV head ratio — 4× for Llama 3 8B's 32 query heads over 8 KV heads. GQA is the *first* KV-memory lever; quantization stacks on top of it. See [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).)
+
+Quantizing the KV cache to INT8 halves this to 4.2 GB; INT4 reduces it to 2.1 GB. KV quantization is more delicate than weight quantization because keys and values are computed dynamically (they change every sequence), have heavier-tailed distributions than model weights, and — unlike weights — cannot be calibrated offline against the tensor you will actually quantize.
 
 ### Per-Token Dynamic Quantization of KV
 
-The standard approach (used in TensorRT-LLM, vLLM, and FlexGen) is:
+Two axes exist, and which one you quantize along matters more than the bit width:
 
-1. **Per-channel (head-level) symmetric INT8:** For each head at each layer, compute the scale from the running max absolute value of that head's K or V vector at the current position.
-2. **Per-token INT8 with small group size (e.g., group=32 along the token dimension):** More accurate but slightly more complex indexing.
+1. **Per-token (per-position) symmetric quantization:** one scale per (layer, head, position), computed from the max absolute value across that position's `head_dim` elements. This is what the code below does and what most runtimes ship.
+2. **Per-channel quantization:** one scale per (layer, head, channel), shared across positions.
+
+The KIVI result (Liu et al., ICML 2024) is that **keys and values want different axes**. Key tensors have persistent *outlier channels* — a few dimensions of $K$ that are large at every position — so per-token scaling lets one bad channel set the scale for the whole vector; keys should be quantized **per-channel**. Value tensors show no such channel structure, and because $V$ is contracted along the *position* axis by the attention weights, per-token quantization keeps each value's error independent; values should be quantized **per-token**. Getting this asymmetry right is what lets KIVI reach 2-bit KV cache without fine-tuning. The practical wrinkle is that per-channel K quantization needs a full channel's worth of positions before the scale is known, so implementations keep the most recent group of tokens in full precision as a sliding "residual" window and quantize only the settled prefix.
+
+In production, the widely deployed setting is **FP8 KV cache** rather than INT8: vLLM exposes `--kv-cache-dtype fp8` (E4M3 by default, with E5M2 available), which halves KV memory and, on Hopper/Blackwell, feeds the FP8 attention kernel directly with no dequantization step. E4M3's exponent field absorbs the heavy tails that hurt INT8 here, which is why FP8 is the better default for KV even where INT8 wins for weights.
 
 ```python
 # Simplified KV cache quantization kernel (conceptual)
@@ -572,7 +684,7 @@ For a single-user, memory-bandwidth-bound decode scenario on an A100:
 | FP8 (W+A)   | 0.5×          | ~2× (Hopper/Blackwell) |
 | INT8 W+A     | 0.5×          | ~1.8–2.2× |
 
-The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s hand-tuned INT4 GEMM kernels significantly outperform naive dequantize-then-FP16-GEMM approaches.
+The large spread in INT4 throughput reflects kernel quality, not format: hand-tuned mixed-precision GEMMs (Marlin/Machete in vLLM, ExLlama's kernels for single-user local inference) significantly outperform naive dequantize-then-FP16-GEMM. Note also that these numbers are for batch size 1. As batch size grows, the GEMM becomes compute-bound rather than bandwidth-bound and weight-only quantization's advantage decays toward 1× — which is precisely when W8A8 (FP8 or INT8), whose win comes from *arithmetic* throughput, takes over.
 
 ### Practical Decision Tree
 
@@ -590,21 +702,23 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 | Format | Bits/w | Granularity | Runtime | Best use case |
 |--------|--------|-------------|---------|---------------|
 | BF16   | 16     | —           | Any GPU | Training, highest quality |
-| FP8 E4M3 | 8   | Per-tensor  | H100+   | High-throughput inference |
+| FP8 E4M3 | 8   | Per-tensor / per-block | H100+ (Ada for weights) | High-throughput inference; also KV cache |
 | FP4 (NVFP4) | 4 | Per-16-block (FP8 scale) | Blackwell only | Highest-throughput inference/training on B200/GB200 |
 | INT8 W-only | 8 | Per-col   | Any GPU | Drop-in quality-preserving compression |
-| INT8 W+A | 8  | Per-token   | Ampere+ | Highest server throughput |
-| NF4    | 4      | Per-group-64 | Any GPU | QLoRA base model |
-| INT4 GPTQ | 4  | Per-group-128 | Any GPU | Server INT4 inference |
-| Q4_K_M | ~4.5  | Block-256   | CPU/GPU | Edge / llama.cpp |
-| Q8_0   | 8      | Per-32      | CPU     | Fast CPU inference |
+| INT8 W+A | 8  | Per-token (act) / per-channel (wt) | Ampere+ | Highest server throughput |
+| NF4    | 4 (+0.13 metadata) | Per-block-64 | Any GPU | QLoRA base model |
+| INT4 GPTQ/AWQ | 4 | Per-group-128 | Any GPU (Marlin/Machete kernels) | Server W4A16 inference |
+| Q4_K (Q4_K_M) | 4.5 block | Super-block-256 + sub-block-32 | CPU/GPU | Edge / llama.cpp |
+| Q8_0   | 8.5    | Per-32      | CPU     | Fast CPU inference; safe default for <1 B models |
 
 !!! key "Key Takeaways"
     - Weight-only quantization (W-only) reduces memory bandwidth and footprint without changing arithmetic type; weight+activation quantization (W+A) additionally uses lower-precision integer arithmetic units for higher compute throughput.
-    - NF4 is information-theoretically optimal for normally distributed weights: its 16 code points are placed at the quantiles of $\mathcal{N}(0,1)$, minimizing expected squared error at 4 bits.
-    - Double quantization compresses the per-group scale factors themselves (from FP32 to FP8), saving an additional ~0.22 bits/weight across the whole model — meaningful at 70 B scale.
+    - Absmax scaling is never MSE-optimal: one outlier inflates the scale for a whole group. Real PTQ grid-searches a clipping ratio and minimizes *output* error on calibration activations, not weight error.
+    - NF4 places its 16 code points at equal-probability quantiles of $\mathcal{N}(0,1)$ (asymmetric, with an exact zero, tails clipped at $p=0.9677$) — an entropy-maximizing rather than strictly MSE-optimal design, but a clear win over uniform INT4 because it spends resolution where weights actually live.
+    - Double quantization compresses the per-block scale factors themselves (FP32 → 8-bit integers, in second-level blocks of 256), cutting scale overhead from 0.5 to 0.127 bits/weight at NF4's block size of 64 — about 3 GB on a 65 B model.
     - QLoRA combines NF4 base model storage with BF16 LoRA adapters and paged optimizers, enabling full fine-tuning of a 65 B model on a single 48 GB GPU; gradients never need to pass through the NF4 rounding because the base model weights are frozen.
-    - llama.cpp's GGUF k-quants (Q4_K_M, Q5_K_M, Q6_K) use block-level mixed precision with super-block and sub-block scales, offering a smooth tradeoff between file size and quality for CPU/edge deployment.
+    - llama.cpp's GGUF k-quants use two-level block scaling (fp16 super-block scales over cheap 6-bit sub-block scales); the `_S`/`_M`/`_L` suffixes are *tensor-level mixes* that promote sensitive tensors like `attn_v` and `ffn_down` to a higher k-quant, not different block layouts. Below 4 bits, build an importance matrix with `llama-imatrix` first.
+    - Quantization damage scales *inversely* with model size: a 100 M model has far less redundancy than a 7 B one, so prefer Q8_0/Q6_K there and always re-run your eval battery after quantizing — it is a model edit, and therefore a hypothesis.
     - FP8 (E4M3) inference on Hopper and Blackwell GPUs achieves near-BF16 quality at roughly half the memory bandwidth, but requires per-tensor or per-row scaling and benefits from SmoothQuant-style activation smoothing; Blackwell further adds native FP4 (NVFP4) Tensor Cores for roughly another 1.8× memory reduction over FP8.
     - KV-cache quantization (INT8 or INT4 per-token) can halve or quarter KV memory overhead at long contexts; per-token scales are required because KV distributions vary dramatically across positions.
     - Quantization-aware training with the straight-through estimator (STE) allows gradient flow through the rounding operation by passing upstream gradients unchanged in the backward pass, at the cost of a biased gradient estimate.
@@ -625,6 +739,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 
     - [Lin et al., *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration* (2023)](https://arxiv.org/abs/2306.00978) — protects 1 % of salient weights by per-channel activation scaling; MLSys 2024 Best Paper; now a first-class backend in vLLM and TGI.
     - [Ashkboos et al., *QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs* (2024)](https://arxiv.org/abs/2404.00456) — Hadamard rotation removes activation outliers end-to-end, enabling full W4A4 (weights, activations, and KV cache) with <0.5 PPL loss on Llama-2-70B.
+    - [Liu et al., *KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache* (2024)](https://arxiv.org/abs/2402.02750) — establishes the key/value asymmetry (per-channel for K, per-token for V) plus a full-precision sliding residual window; ICML 2024.
     - [Kurtic et al., *"Give Me BF16 or Give Me Death"? Accuracy-Performance Trade-Offs in LLM Quantization* (ACL 2025)](https://arxiv.org/abs/2411.02355) — 500 K+ evaluations across the Llama-3.1 family; finds FP8 W8A8 lossless, INT8 W8A8 only 1–3 % degradation, and W4A16 the most cost-efficient for synchronous serving.
     - [NVIDIA et al., *Pretraining Large Language Models with NVFP4* (2025)](https://arxiv.org/abs/2509.25149) — trains a 12 B-parameter model on 10 T tokens natively in 4-bit floating point (NVFP4) on Blackwell, using random Hadamard rotations and 2D block scaling to match FP8-quality pretraining.
 
@@ -633,6 +748,9 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
     - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — the canonical PyTorch INT8/NF4 quantization library; powers `load_in_8bit` and `load_in_4bit` in Hugging Face Transformers.
     - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — reference C/C++ implementation of GGUF k-quants (Q2_K through Q8_0); runs on CPU, Metal, CUDA, and DirectML with no Python dependency.
     - [NVIDIA/TransformerEngine](https://github.com/NVIDIA/TransformerEngine) — NVIDIA's FP8 (and FP4) training and inference library for Hopper/Ada/Blackwell GPUs; includes delayed scaling, amax history, and PyTorch/JAX APIs.
+    - [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor) — the production path from a BF16 checkpoint to a deployable FP8 / INT8 W8A8 / W4A16 / NVFP4 `compressed-tensors` checkpoint, in one `oneshot()` call; what vLLM and SGLang load natively.
+    - [pytorch/ao (`torchao`)](https://github.com/pytorch/ao) — PyTorch-native quantization via tensor subclasses: `quantize_(model, config)` for PTQ, a two-phase prepare/convert `QATConfig` for QAT, plus FP8 training; composes with `torch.compile`, FSDP2, and `torch.export`.
+    - [NVIDIA/TensorRT-Model-Optimizer](https://github.com/NVIDIA/TensorRT-Model-Optimizer) — `nvidia-modelopt`, the toolkit that produces the NVFP4/FP8 checkpoints consumed by TensorRT-LLM and loadable by vLLM.
 
     **Go deeper**
 
@@ -645,8 +763,9 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 - **Dettmers et al., "QLoRA: Efficient Finetuning of Quantized LLMs"**, NeurIPS 2023 — introduces NF4, double quantization, paged optimizers, and the QLoRA recipe.
 - **Xiao et al., "SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models"**, ICML 2023 — the per-channel migration trick that enables W8A8.
 - **Frantar et al., "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers"**, ICLR 2023 — the second-order OBC-based algorithm that produces the INT4 weights used by many GGUF conversions.
-- **bitsandbytes library** (Tim Dettmers / Hugging Face) — `github.com/TimDettmers/bitsandbytes` — the production Python/CUDA implementation of LLM.int8() and NF4.
-- **llama.cpp** (Georgi Gerganov) — `github.com/ggerganov/llama.cpp` — the canonical k-quant and GGUF implementation; the source code in `ggml-quants.c` is the reference for Q4_K_M/Q5_K_M internals.
+- **Frantar et al., "MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large Language Models"** — the mixed-precision GEMM kernel that keeps W4A16 fast past batch size 1; the default INT4 path in vLLM, with `Machete` as its Hopper/CUTLASS-3 successor.
+- **bitsandbytes library** (Tim Dettmers / Hugging Face) — `github.com/bitsandbytes-foundation/bitsandbytes` — the production Python/CUDA implementation of LLM.int8() and NF4.
+- **llama.cpp** (Georgi Gerganov and contributors) — `github.com/ggml-org/llama.cpp` — the canonical k-quant and GGUF implementation; `ggml-quants.c` and the `block_*` structs in `ggml-quants.h` are the reference for Q4_K/Q5_K internals.
 - **Sheng et al., "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU"**, ICML 2023 — demonstrates INT4 KV cache quantization and CPU offloading.
 - **NVIDIA Transformer Engine** (`github.com/NVIDIA/TransformerEngine`) — reference implementation of FP8 training and inference on Hopper GPUs, including delayed scaling and amax history.
 
@@ -674,7 +793,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
 
     **(c)** Symmetric quantization has zero-point $z = 0$, so $q = \operatorname{round}(w/s) = \operatorname{round}(0.30 / 0.12) = \operatorname{round}(2.5) = 2$ (round-half-to-even; either $2$ or $3$ is acceptable if a different rounding rule is used — take $2$). This is within $[-8, 7]$, so no clipping. Dequantized value: $\hat{w} = s \cdot q = 0.12 \times 2 = 0.24$. Error: $|0.30 - 0.24| = 0.06$, which sits exactly at the $s/2$ bound derived in (b).
 
-**3.** The chapter states that `Q4_K_M` costs about $4.5$ bits/weight, and gives the exact `block_q4_K` layout: two fp16 super-block scales `d, dmin`; a 12-byte array `scales[12]` holding the sixteen 6-bit sub-block scales and mins; and `qs[128]`, the 256 packed 4-bit weights. Each super-block covers **256 weights**. Derive the $4.5$ bits/weight figure from this struct, and identify how many bits of that total are "pure payload" (the 4-bit weights) versus metadata overhead.
+**3.** The chapter states that the `Q4_K` block layout costs exactly $4.5$ bits/weight (a real `Q4_K_M` *file* averages a few tenths more, because the `_M` mix promotes `attn_v` and `ffn_down` to Q6_K), and gives the exact `block_q4_K` layout: two fp16 super-block scales `d, dmin`; a 12-byte array `scales[12]` holding the sixteen 6-bit sub-block scales and mins; and `qs[128]`, the 256 packed 4-bit weights. Each super-block covers **256 weights**. Derive the $4.5$ bits/weight figure from this struct, and identify how many bits of that total are "pure payload" (the 4-bit weights) versus metadata overhead.
 
 ??? note "Solution"
     Add up the bytes in one super-block, then divide by the 256 weights it encodes.
@@ -689,7 +808,7 @@ The large spread in INT4 throughput reflects kernel quality — `exllamav2`'s ha
     \frac{1152 \text{ bits}}{256 \text{ weights}} = 4.5 \text{ bits/weight}
     $$
 
-    **Payload vs. overhead:** the pure 4-bit weight payload is $1024/256 = 4.0$ bits/weight. The remaining $128/256 = 0.5$ bits/weight is metadata — the two fp16 super-block scales ($32/256 = 0.125$ bits/weight) plus the sixteen 6-bit sub-block scales/mins ($96/256 = 0.375$ bits/weight). So Q4_K_M pays a half-bit-per-weight tax over a hypothetical flat 4-bit format, and spends it on two levels of scale granularity (per-256 super-block and per-32 sub-block), which is exactly the block-level mixed precision that buys back accuracy.
+    **Payload vs. overhead:** the pure 4-bit weight payload is $1024/256 = 4.0$ bits/weight. The remaining $128/256 = 0.5$ bits/weight is metadata — the two fp16 super-block scales ($32/256 = 0.125$ bits/weight) plus the sixteen 6-bit sub-block scales/mins ($96/256 = 0.375$ bits/weight). So Q4_K pays a half-bit-per-weight tax over a hypothetical flat 4-bit format, and spends it on two levels of scale granularity (per-256 super-block and per-32 sub-block), which is exactly the block-level mixed precision that buys back accuracy.
 
 **4.** Consider the chapter's KV-cache setting: a model with $L = 32$ layers, $H = 32$ heads, head dimension $D = 128$, decoding a single sequence ($B=1$) out to $T = 8192$ tokens. The cache stores both $K$ and $V$.
 

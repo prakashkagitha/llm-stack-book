@@ -186,6 +186,161 @@ print(out.shape)  # (2, 16, 8192, 128)
 
 {{fig:fa2-flops-not-fungible}}
 
+### The backward pass: recompute, and the one identity that makes it tile-able
+
+The forward is only half the kernel — training spends roughly twice as long in the backward, and a from-scratch implementation has to get both right (this is precisely the CS336 systems assignment, written in Triton; see [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)). The backward keeps the same IO discipline: it never materializes $S$ or $P$ in HBM. That is possible because the forward saves just two things per query row: the output $O_i$ and the **logsumexp** $L_i = m_i + \log \ell_i$, one fp32 number per row (this is the `softmax_lse` tensor `flash_attn` optionally returns). From $L$ alone the probabilities are recoverable *exactly*, with no running max and no second online pass, since $L_i$ is already the finished global normalizer for that row:
+
+$$
+P_{ij} = \exp(S_{ij} - L_i).
+$$
+
+Given the incoming gradient $dO$, and writing $\circ$ for the elementwise product and $\tau = 1/\sqrt{d}$, the whole backward is:
+
+$$
+dV = P^\top dO, \qquad dP = dO\,V^\top, \qquad dS = P \circ (dP - D), \qquad D_i = \sum_j P_{ij}\,dP_{ij},
+$$
+
+$$
+dQ = \tau\, dS\,K, \qquad dK = \tau\, dS^\top Q.
+$$
+
+Two points carry the design. First, $dS = P \circ (dP - D)$ is the row-softmax Jacobian in closed form — you never build the per-row $N \times N$ Jacobian. Second, and this is the identity that makes the backward tile-able at all: $D_i$ *looks* like a reduction over the entire key axis (so a tile working on key block $j$ could not compute it), but it collapses to the row dot product of two tensors you already have,
+
+$$
+D_i = \sum_j P_{ij}\,(dO_i \cdot V_j) = dO_i \cdot \Big(\sum_j P_{ij} V_j\Big) = dO_i \cdot O_i .
+$$
+
+So $D$ is computed once in a tiny elementwise preprocessing kernel over $(dO, O)$ and every tile reads it locally. Without it, a tiled backward would need an extra full pass over the keys.
+
+That is five matmuls (recompute $S$, then $dV$, $dP$, $dQ$, $dK$) against two in the forward, which is why the backward runs at roughly $2.5\times$ the forward FLOPs. The parallelization asymmetry mentioned above also falls out here: give each thread block a $K_j, V_j$ tile and $dK_j, dV_j$ accumulate locally in registers, while $dQ$ — a reduction *over key blocks* — becomes the one gradient that must be combined across blocks, via fp32 atomic adds or a separate pass. Those atomics are also why attention backward is non-deterministic by default; `flash_attn`'s `deterministic=True` flag (and PyTorch's `use_deterministic_algorithms`) selects a slower, reproducible path.
+
+```python
+import torch
+
+def flash_attention_2_backward_reference(Q, K, V, O, L, dO, causal=False):
+    """
+    FA2-style backward for one head. The only things carried over from the
+    forward are O and the per-row logsumexp L -- S and P are RECOMPUTED
+    (here all at once for clarity; the real kernel does it tile by tile).
+    Q, K, V, O, dO: (N, d).  L: (N,), L_i = logsumexp_j S_ij.
+    """
+    N, d = Q.shape
+    scale = d ** -0.5
+    S = (Q @ K.T) * scale                        # matmul 1: recompute scores
+    if causal:
+        pos = torch.arange(N)
+        S = S.masked_fill(pos.unsqueeze(0) > pos.unsqueeze(1), -float('inf'))
+    P = torch.exp(S - L.unsqueeze(1))            # exact probabilities from L alone
+
+    dV = P.T @ dO                                # matmul 2
+    dP = dO @ V.T                                # matmul 3
+    D = (dO * O).sum(dim=1)                      # rowsum(P .* dP) == rowdot(dO, O)
+    dS = P * (dP - D.unsqueeze(1))               # softmax Jacobian, closed form
+    dQ = (dS @ K) * scale                        # matmul 4  (reduces over key blocks)
+    dK = (dS.T @ Q) * scale                      # matmul 5
+    return dQ, dK, dV
+
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    N, d = 128, 32
+    Q, K, V = (torch.randn(N, d, requires_grad=True) for _ in range(3))
+
+    # reference forward with autograd, saving ONLY O and L (as FA2 does)
+    S = (Q @ K.T) * d ** -0.5
+    pos = torch.arange(N)
+    S = S.masked_fill(pos.unsqueeze(0) > pos.unsqueeze(1), -float('inf'))
+    L = torch.logsumexp(S, dim=1)
+    O = torch.softmax(S, dim=1) @ V
+    dO = torch.randn_like(O)
+    O.backward(dO)
+
+    dQ, dK, dV = flash_attention_2_backward_reference(
+        Q.detach(), K.detach(), V.detach(), O.detach(), L.detach(), dO, causal=True)
+    for name, mine, ref in [("dQ", dQ, Q.grad), ("dK", dK, K.grad), ("dV", dV, V.grad)]:
+        print(name, "max abs err:", (mine - ref).abs().max().item())
+    # all ~1e-6 -- the recomputed backward is exact, not an approximation
+```
+
+Note how this differs from ordinary gradient checkpointing ([Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html)): checkpointing re-runs a *region* of the graph to save activations; FlashAttention's backward recomputes $S$ and $P$ *inside the kernel, in SRAM*, so the recomputed tensor never reaches HBM at all. The activation memory of attention drops from $O(N^2)$ to $O(N d)$ for $O$ plus $O(N)$ for $L$, which is what makes 8k–128k contexts trainable.
+
+### Calling the real kernel: `flash-attn`, SDPA, and packed sequences
+
+Everything above is for understanding the kernel; in production you call one of three entry points, and they are not drop-in interchangeable.
+
+- **`torch.nn.functional.scaled_dot_product_attention` (SDPA)** — in-tree, no extra dependency, dispatches among a FlashAttention backend, the xFormers-derived memory-efficient backend, a cuDNN backend, and a math fallback. Layout `(B, H, N, d)`. This is the right default.
+- **The `flash-attn` package** (`Dao-AILab/flash-attention`) — the reference implementation and usually the first place new features land (variable-length batching, GQA-aware kernels, sliding windows, logit softcapping, and the FA3 Hopper kernels, which ship as a separate `flash_attn_interface` module built from the repo's `hopper/` directory). Its layout is `(B, N, H, d)` — heads *third*, not second — and passing an SDPA-shaped tensor to it is a classic silently-wrong-results bug.
+- **Serving engines** (vLLM, SGLang, TensorRT-LLM) wrap their own paged variants of these kernels; see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+
+```python
+# pip install flash-attn --no-build-isolation    # compiles CUDA kernels; needs nvcc
+import torch
+from flash_attn import flash_attn_func, flash_attn_varlen_func
+
+B, N, H, Hkv, d = 2, 8192, 16, 4, 128    # GQA: 16 query heads share 4 KV heads
+q = torch.randn(B, N, H,   d, device="cuda", dtype=torch.bfloat16)   # (B, N, H, d)!
+k = torch.randn(B, N, Hkv, d, device="cuda", dtype=torch.bfloat16)
+v = torch.randn_like(k)
+
+# GQA is native: nheads_k need only divide nheads_q -- no KV replication in HBM.
+out = flash_attn_func(q, k, v, causal=True)                     # (B, N, H, d)
+
+# Sliding-window attention: window_size=(left, right) counts keys strictly to
+# each side, so (4095, 0) with causal=True is a 4096-token window including self
+# -- the same mask you implement by hand in Exercise 5, but block-skipped in HW.
+out_swa = flash_attn_func(q, k, v, causal=True, window_size=(4095, 0))
+```
+
+**Packed variable-length batches.** Pretraining concatenates many short documents into one fixed-length row to avoid padding waste. Run plain causal attention on such a row and tokens attend *across document boundaries* — a quiet data-contamination bug. `flash_attn_varlen_func` is the fix: flatten the batch to `(total_tokens, H, d)` and hand the kernel a cumulative-length index, and its block scheduler simply refuses to schedule key blocks outside the current document (the same block-skipping logic as the causal aside above, applied per segment, so you also *save* the masked FLOPs rather than multiplying by zero).
+
+```python
+total, H, Hkv, d = 2048, 16, 4, 128
+# Three documents of length 300, 1000, 748 packed into one 2048-token row.
+lengths = torch.tensor([300, 1000, 748], device="cuda")
+cu_seqlens = torch.cat([torch.zeros(1, dtype=torch.int32, device="cuda"),
+                        lengths.cumsum(0).to(torch.int32)])   # [0, 300, 1300, 2048]
+
+qf = torch.randn(total, H,   d, device="cuda", dtype=torch.bfloat16)
+kf = torch.randn(total, Hkv, d, device="cuda", dtype=torch.bfloat16)
+vf = torch.randn_like(kf)
+
+out_packed = flash_attn_varlen_func(
+    qf, kf, vf,
+    cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+    max_seqlen_q=int(lengths.max()), max_seqlen_k=int(lengths.max()),
+    causal=True)                     # (total, H, d); no cross-document attention
+```
+
+In Hugging Face `transformers` you normally select the backend at load time rather than calling either API yourself, and `DataCollatorWithFlattening` produces the flattened batches that route a model to the varlen path:
+
+```python
+from transformers import AutoModelForCausalLM
+
+model = AutoModelForCausalLM.from_pretrained(
+    "HuggingFaceTB/SmolLM2-135M", dtype=torch.bfloat16, device_map="cuda",
+    attn_implementation="flash_attention_2",   # or "sdpa" (default) / "eager"
+)
+print(model.config._attn_implementation)       # confirm what you actually got
+```
+
+(Recent `transformers` releases also expose an FA3/Hopper option under a separate implementation name; check your version's docs rather than assuming, and always verify with the line above.) Stack-100M trains on exactly this pattern — 2048-token packed windows, document-boundary-aware attention — in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html), fed by the packing described in [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html).
+
+Finally, the cheapest way to check that you are on the fast path is to *demand* it: restricting SDPA to a single backend makes it raise instead of silently falling back.
+
+```python
+import torch.nn.functional as F
+from torch.nn.attention import sdpa_kernel, SDPBackend
+
+q_bhnd = q.transpose(1, 2)   # SDPA wants (B, H, N, d); flash-attn wants (B, N, H, d)
+k_bhnd, v_bhnd = k.transpose(1, 2), v.transpose(1, 2)
+
+with sdpa_kernel(SDPBackend.FLASH_ATTENTION):    # raises if FA cannot run these inputs
+    out = F.scaled_dot_product_attention(q_bhnd, k_bhnd, v_bhnd,
+                                         enable_gqa=True, is_causal=True)
+```
+
+If it raises, one of the fast-path conditions failed — unsupported dtype (fp32 never qualifies), head dimension out of range, a materialized additive float mask instead of `is_causal=True`, or awkward strides. That single line turns "I think FlashAttention is on" into a fact.
+
 ## FlashAttention-3: exploiting Hopper
 
 FA2 is close to optimal *for Ampere's programming model*, where the tensor-core instruction (`mma`) is synchronous: a warp issues it and waits for the result. NVIDIA's Hopper architecture (H100) added new hardware that breaks that synchronous assumption, and FA3 is essentially "FA2 rewritten to use everything Hopper offers." Three Hopper features matter.
@@ -398,11 +553,14 @@ It is worth stepping back to place these kernels against each other and against 
 | FlashAttention-1 | Ampere (A100) | IO-aware tiling, online softmax | fp16/bf16 | ~25–40% |
 | FlashAttention-2 | Ampere (A100) | deferred rescale, seqlen parallel, split-Q warps | fp16/bf16 | ~50–73% |
 | FlashAttention-3 | Hopper (H100) | warp-specialized producer/consumer (TMA), wgmma overlap | bf16 / FP8 | ~75% (bf16); higher FP8 |
+| FlashAttention-4 | Blackwell (B200) | fully async MMA pipelines, softmax co-designed with the kernel | bf16 / FP8 | ~71% reported (see the SoTA box) |
 | xFormers mem-efficient | Ampere+ | tiled attention (similar idea) | fp16/bf16 | comparable to FA1/FA2 |
 | cuDNN fused attention | Ampere/Hopper | vendor kernels, Hopper-aware | bf16/FP8 | competitive on Hopper |
 | FlashDecoding | inference decode | split-KV parallelism for tiny query | fp16/bf16 | optimizes decode latency |
 
 A few important clarifications:
+
+**Each generation is a rewrite, not a patch.** The through-line of the table is that FlashAttention gets re-derived whenever the hardware changes what "asynchronous" means. Blackwell (B200) continues the pattern: its fifth-generation tensor cores are driven by the `tcgen05` MMA instructions, whose accumulators live in a dedicated on-chip **Tensor Memory (TMEM)** rather than in each warp's registers, and two SMs in a cluster can cooperate on a single MMA. Because the accumulator no longer sits in the same register file as the softmax, FA3's warpgroup ping-pong is no longer the right shape; and since tensor-core throughput grew faster than the special-function unit's `exp2` rate, FA4 reportedly goes as far as *emulating* the exponential in the regular math pipes instead of paying for the SFU (see the SoTA box). The lesson to carry forward: the *algorithm* — tiling plus online softmax — has been stable since 2022; the *kernel* is rewritten every hardware generation, which is precisely why you should call a maintained library rather than freeze your own.
 
 **xFormers and the lineage of `memory_efficient_attention`.** xFormers is Meta's library of composable attention/kernel building blocks, and its `memory_efficient_attention` was one of the first widely-used fused, tiled attention kernels: it never materializes the full $N \times N$ score matrix, using the same online-softmax-plus-tiling idea as FlashAttention. Its lineage traces to Rabe & Staats's "Self-Attention Does Not Need $O(N^2)$ Memory" (2021) combined with FlashAttention-style IO-aware tiling, and its fast path is a set of CUTLASS-based CUDA C++ kernels (with a fallback Triton/flash path). The API differs from SDPA's layout — `q`/`k`/`v` are shaped `(batch, seqlen, num_heads, head_dim)` rather than `(B, H, N, d)`, and causal masking is passed as a bias object rather than a boolean flag:
 
@@ -436,12 +594,13 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
 !!! key "Key Takeaways"
     - FlashAttention-1 was memory-optimal but only ~25–40% of compute peak; FA2 and FA3 are about **compute utilization**, not memory traffic.
     - FA2's three edits: **defer normalization** (less non-matmul work on the critical path), **parallelize the forward over query blocks / sequence length** (fill all SMs at small batch×heads), and **split-Q warp partitioning** (each warp owns query rows → no per-iteration inter-warp reduction). Backward parallelizes over keys instead, to keep $dK,dV$ reductions local.
+    - The **backward** stores only $O$ and the per-row logsumexp $L = m + \log\ell$ and *recomputes* $S, P$ in SRAM. It hinges on two closed forms: $dS = P \circ (dP - D)$ and $D_i = dO_i \cdot O_i$ — the second turns what looks like a full reduction over keys into a cheap row dot product, which is what makes the backward tile-able. Five matmuls, ~2.5× the forward FLOPs, and $dQ$ is the one gradient needing cross-block atomics.
     - On a GPU, FLOPs are not fungible: the ~1% of FLOPs that are softmax/$\exp$ can be ~15% of *runtime* because they run on slow special-function units — which is why minimizing and overlapping them matters.
     - FA3 targets Hopper with **warp specialization**: TMA-driven *producer* warps prefetch KV tiles into a shared-memory ring buffer while *consumer* warpgroups run `wgmma`, so data movement overlaps compute.
     - FA3 overlaps the two matmuls with softmax via **ping-pong scheduling** (one warpgroup does softmax on SFUs while another does GEMM on tensor cores) and intra-warpgroup pipelining — possible only because Hopper's `wgmma` is asynchronous.
     - **FP8 attention** roughly doubles matmul throughput; **incoherent processing** (a random-sign Hadamard rotation $M$ with $M^\top M = I$, so $QK^\top$ is unchanged) spreads outliers across coordinates so the FP8 scale stays tight. Inputs are FP8 but accumulation and softmax stats stay in FP32.
     - These kernels keep attention at $O(N^2)$ work but with a tiny constant; **decode** (single-token query) is memory-bound and wants **FlashDecoding** (split-KV) instead, and subquadratic alternatives are a separate design axis.
-    - In practice you call the kernel (`scaled_dot_product_attention`, `flash-attn`, vLLM/cuDNN) — the engineering lesson is to verify *which backend dispatched* on your hardware before assuming you got the fast path.
+    - In practice you call the kernel (`scaled_dot_product_attention`, `flash-attn`, vLLM/cuDNN) — the engineering lesson is to verify *which backend dispatched* before assuming you got the fast path (force a single SDPA backend so it raises instead of silently falling back), and to remember that `flash-attn` uses `(B, N, H, d)` while SDPA uses `(B, H, N, d)`. For packed multi-document training rows, `flash_attn_varlen_func` with `cu_seqlens` is what prevents attention from leaking across document boundaries.
 
 !!! sota "State of the Art & Resources (2026)"
     FlashAttention has evolved through four generations — from IO-aware tiling (FA1) through work-partitioning on Ampere (FA2), Hopper warp specialization and FP8 (FA3), to algorithm/kernel co-design for Blackwell's asymmetric hardware (FA4) — and remains the dominant exact-attention implementation in production training and inference stacks.

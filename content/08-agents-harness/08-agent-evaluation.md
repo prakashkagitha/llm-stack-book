@@ -2,7 +2,7 @@
 
 Evaluating a language model on a multiple-choice question is easy: you check whether the top-1 token matches the gold label. Evaluating an *agent* is structurally harder: the agent must execute a sequence of actions, possibly across dozens of tool calls, browser interactions, or shell commands, and the outcome depends on both what it does and *how* the harness around it behaves. A 3% improvement on SWE-bench might reflect a better model, a different scaffold, a looser time limit, or a lucky leak of test data into pretraining. Understanding which of these is true is the central challenge of agent evaluation.
 
-This chapter covers the major benchmarks — SWE-bench, SWE-bench Verified, WebArena, GAIA, tau-bench, terminal-bench, and others — and then digs into the measurement science: trajectory versus outcome scoring, pass@k estimators, harness effects, reproducibility, and contamination. We close with a worked example and practitioner guidance for building trustworthy evals in your own projects.
+This chapter covers the major benchmarks — SWE-bench, SWE-bench Verified, WebArena, GAIA, tau-bench, terminal-bench, and others — together with the open-source runners that actually execute them (the official `swebench` Docker harness, BrowserGym, the `tb` CLI, and Inspect AI), and then digs into the measurement science: trajectory versus outcome scoring, pass@k estimators, harness effects, reproducibility, and contamination. We close with a worked example, a recipe for evaluating a small narrow agent like the capstone's, and practitioner guidance for building trustworthy evals in your own projects.
 
 ## Why Agent Evaluation Is Different
 
@@ -24,7 +24,7 @@ Before cataloguing benchmarks, it's worth internalizing what makes agent eval fu
 
 SWE-bench (Jimenez et al., 2023) is the canonical benchmark for software-engineering agents. Each task is a real GitHub issue from a popular Python repository (Django, Flask, NumPy, Sympy, and others). The agent receives the issue text and the full repository, and must produce a *patch* — a `git diff` — that makes the failing test suite pass.
 
-The original SWE-bench has approximately 2,300 tasks (split into dev and test). **SWE-bench Verified** is a human-curated subset of about 500 tasks where annotators confirmed the task is well-specified, the reference solution is correct, and no annotation errors exist. Because the full set has a long tail of noisy tasks, Verified is now the preferred reporting target: scores are higher and more meaningful.
+The original SWE-bench test split contains 2,294 task instances (with a small dev split alongside it, and a much larger train split mined the same way). **SWE-bench Verified** is a human-curated subset of 500 tasks where annotators confirmed the task is well-specified, the reference solution is correct, and no annotation errors exist. Because the full set has a long tail of noisy tasks, Verified is now the preferred reporting target: scores are higher and more meaningful.
 
 **Evaluation protocol.**
 
@@ -91,6 +91,40 @@ def run_swebench_task(repo_path: str, patch: str, test_cmd: str) -> bool:
         subprocess.run(["git", "checkout", "--", "."], cwd=repo_path)
 ```
 
+**Use the official harness, not the sketch above.** The toy runner illustrates the mechanism, but it is wrong in one way that matters: it only asks "did the test command exit 0?". The real benchmark checks *two* named test sets per instance — `FAIL_TO_PASS` (tests that must flip from failing to passing) and `PASS_TO_PASS` (tests that must *stay* passing, catching patches that fix the issue by breaking something else). Those test lists, the exact dependency pins, and the per-repo Docker image *are* the benchmark, which is why every credible number comes from `pip install swebench`:
+
+```python
+# The dataset tells you exactly what the grader will check.
+from datasets import load_dataset
+
+ds = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
+ex = ds[0]
+print(ex["instance_id"])         # e.g. "astropy__astropy-12907"
+print(ex["repo"], ex["base_commit"])   # checkout target: the commit BEFORE the fix
+print(ex["problem_statement"][:200])   # the GitHub issue text given to the agent
+print(ex["FAIL_TO_PASS"])              # JSON list: must flip failing -> passing
+print(ex["PASS_TO_PASS"])              # JSON list: must remain passing (regression guard)
+
+# Your scaffold's only job is to emit one JSON object per instance:
+#   {"instance_id": "astropy__astropy-12907",
+#    "model_name_or_path": "my-agent-v1",
+#    "model_patch": "diff --git a/... "}
+```
+
+```bash
+pip install swebench          # requires Docker; images are built and cached per repo
+python -m swebench.harness.run_evaluation \
+  --dataset_name princeton-nlp/SWE-bench_Verified \
+  --predictions_path preds.jsonl \
+  --max_workers 8 \
+  --run_id my-agent-v1
+# -> my-agent-v1.json with resolved_ids / unresolved_ids, plus per-instance run logs.
+# The repo also ships `sb-cli` to run the same evaluation on hosted infrastructure
+# if you do not want tens of GB of container images on a laptop.
+```
+
+Note the division of labour: **the harness grades patches, it does not produce them.** Producing `model_patch` is the scaffold's job, and open-source reference scaffolds exist precisely so a *model* comparison is not silently a *scaffold* comparison — SWE-agent (the original agent-computer interface), OpenHands, mini-SWE-agent (a deliberately ~100-line bash-only baseline), and Aider are the usual points of reference. Always report which one you ran. See [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html) for how to build such a scaffold and [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) for the harness internals.
+
 ### WebArena
 
 WebArena (Zhou et al., 2023) measures whether an agent can complete realistic web tasks — booking travel, searching an e-commerce site, navigating a codebase on GitLab, managing a Reddit-like forum, and similar. Tasks are expressed as natural-language instructions, and the agent interacts with live web environments via a browser API.
@@ -102,6 +136,8 @@ WebArena (Zhou et al., 2023) measures whether an agent can complete realistic we
 - *Task diversity.* About 800 tasks spanning single-site and multi-site scenarios. Many require multi-step navigation with backtracking.
 
 **Scoring.** Each task is binary (success/failure). The success criterion is verified by an automated checker that queries application state. Success rate across all tasks is the primary metric.
+
+**Running it.** You self-host the app containers (GitLab, a shopping site, a Reddit clone, a wiki) and point the benchmark at them through `WA_*` base-URL environment variables; the agent drives a real browser through Playwright. In practice most 2026 work does not use the original repo's runner directly but **BrowserGym** (ServiceNow), which wraps WebArena, VisualWebArena, WorkArena, MiniWoB and others behind one Gymnasium interface — `gym.make("browsergym/webarena.0")` returns an observation containing the accessibility tree, DOM, and screenshot, and accepts Python action strings like `click("a42")`. Its companion **AgentLab** handles parallel rollouts, reproducible experiment records, and trace viewing. Standardizing on one observation/action space is what makes cross-benchmark web-agent comparisons meaningful at all.
 
 WebArena scores for frontier models have grown substantially as agents learned to reason about HTML structure and leverage screenshots. It tests a different capability than SWE-bench: navigation and form-filling under real UI constraints rather than code editing.
 
@@ -119,6 +155,8 @@ GAIA is deliberately designed so that the answers are short and verifiable (a nu
 
 **What GAIA measures.** Unlike SWE-bench, GAIA is a general-purpose assistant benchmark. Succeeding requires knowing *when* to use which tool, correct tool invocation, and accurate synthesis of returned results. It does not test specialized coding ability.
 
+**Running it.** The dataset lives on the Hugging Face Hub (`gaia-benchmark/GAIA`, gated by an access agreement) and ships attached files (spreadsheets, PDFs, audio) alongside each question. The validation split has public answers, so that is what you iterate on; test answers are withheld and scored through the leaderboard, which is a deliberate anti-contamination design. Grading is normalized exact match, not an LLM judge — numbers compared numerically, strings after case/punctuation normalization — so your agent must emit a bare answer, not a paragraph. Hugging Face's `smolagents` ships a reference GAIA agent (search + page-reading + a Python interpreter) that is a reasonable open baseline to reproduce before claiming an improvement.
+
 ### tau-bench
 
 tau-bench (Yao et al., 2024) evaluates tool-augmented agents in *realistic customer service* settings. An agent must interact with a user (simulated by a model) and a database of tools to fulfill requests like modifying orders, refunding purchases, or looking up account status.
@@ -131,6 +169,8 @@ tau-bench (Yao et al., 2024) evaluates tool-augmented agents in *realistic custo
 
 tau-bench is particularly relevant for production deployments of service agents. Its simulated-user design avoids the need for human annotators during evaluation while keeping the dynamics realistic. Its 2025 successor, τ²-bench (Sierra Research), extends this to a *dual-control* setting where the simulated user also holds tools and must act in a shared state, exposing coordination failures that the original single-control design could not.
 
+The reference implementation (`sierra-research/tau-bench`) is a small Python package with two domains — `retail` and `airline` — each a JSON database plus a policy document, run as `python run.py --env retail --agent-strategy tool-calling --model <id> --user-model <id>`. Note that it needs *two* model endpoints, one for the agent and one for the user simulator; the user model is part of the measurement instrument, so swapping it changes scores and must be disclosed like any other harness choice. tau-bench is also the benchmark that popularized **pass^k** — the probability that *all* $k$ independent trials succeed — which measures reliability rather than coverage and is the metric you actually care about for a deployed service agent (Exercise 4 implements it).
+
 ### terminal-bench
 
 terminal-bench evaluates agents in a raw terminal environment without web or GUI scaffolding. Tasks are given as natural-language instructions inside a bash session; the agent must run commands, interpret output, install packages, write scripts, and navigate the filesystem. Inspired by earlier work on computer-using agents, it focuses on the low-level "can it actually operate a Unix system?" question.
@@ -141,7 +181,7 @@ terminal-bench evaluates agents in a raw terminal environment without web or GUI
 - Time and command-count limits prevent pathological behavior.
 - Scoring is automated: a checker script verifies the final system state (e.g., "does file X exist with content Y?").
 
-terminal-bench is newer and smaller than SWE-bench or WebArena, but it isolates a distinct capability: raw terminal proficiency that is a prerequisite for coding agents.
+terminal-bench is newer and smaller than SWE-bench or WebArena, but it isolates a distinct capability: raw terminal proficiency that is a prerequisite for coding agents. It ships as a pip-installable package with a `tb` CLI — roughly `tb run --dataset terminal-bench-core --agent <agent-name> --model <model-id>` — where each task is a directory containing a Dockerfile, an instruction, and a `tests/` script that decides pass/fail; adding your own task is mostly writing that trio. A 2.0 release (2025) rebuilt the task set with tighter verification and a container runner designed for parallel execution, and it is one of the successors the field moved to as SWE-bench Verified saturated.
 
 ### Other Notable Benchmarks
 
@@ -153,6 +193,49 @@ terminal-bench is newer and smaller than SWE-bench or WebArena, but it isolates 
 | AppAgent / ScreenAgent | Mobile/Desktop | Vision-based GUI interaction |
 | HumanEval-X | Code (pass@k) | Multilingual code generation |
 | SciCode | Scientific coding | Domain knowledge + coding |
+
+## The Open-Source Eval Stack
+
+Reimplementing a benchmark is the most reliable way to produce numbers nobody can compare against. Here is what to reach for:
+
+| Benchmark | Runner to use | Entry point |
+|-----------|---------------|-------------|
+| SWE-bench / Verified | `swebench` (official, Docker per instance) | `python -m swebench.harness.run_evaluation` |
+| WebArena / VisualWebArena | BrowserGym + AgentLab | `gym.make("browsergym/webarena.0")` |
+| GAIA | HF dataset + leaderboard; `smolagents` reference agent | validation split locally, test via leaderboard |
+| tau-bench / τ²-bench | `sierra-research/tau-bench` | `python run.py --env retail ...` |
+| terminal-bench | `terminal-bench` package | `tb run --dataset terminal-bench-core ...` |
+| Your own agent tasks | **Inspect AI** (`pip install inspect-ai`) | `inspect eval task.py --model <id> --epochs 5` |
+
+**Inspect AI** (UK AI Security Institute) is the framework worth learning, because it factors an agent eval into exactly the three pieces this chapter argues about — a **dataset** of tasks, a **solver** (the scaffold: a tool-using agent loop), and a **scorer** (the metric) — and gives you per-sample Docker sandboxing, full step-level trace logs with a viewer, retries, and resumable runs for free:
+
+```python
+# task.py — an agentic eval in Inspect AI. Run: inspect eval task.py --model <id> --epochs 5
+from inspect_ai import Task, task
+from inspect_ai.dataset import json_dataset
+from inspect_ai.scorer import includes
+from inspect_ai.solver import basic_agent, system_message
+from inspect_ai.tool import bash, python
+
+@task
+def repo_triage():
+    return Task(
+        # Each JSONL record: {"input": <instruction>, "target": <expected substring>}
+        dataset=json_dataset("tasks.jsonl"),
+        solver=basic_agent(                       # the SCAFFOLD, swap to ablate it
+            init=system_message("You are a coding agent. Call submit() when done."),
+            tools=[bash(timeout=60), python(timeout=60)],
+            max_attempts=3,                       # the iteration budget, made explicit
+            message_limit=40,                     # hard stop on runaway trajectories
+        ),
+        scorer=includes(),                        # the METRIC (swap for a state checker)
+        sandbox="docker",                         # every tool call runs in a container
+    )
+```
+
+Two details matter for this chapter. `--epochs k` runs each sample $k$ times, which is precisely the $n$ you need for the pass@k estimator below rather than a single noisy draw. And because the solver is a first-class object, a *harness ablation* — the thing the next sections insist you must run — becomes a one-line edit rather than a fork of your eval code. The companion `inspect_evals` package ships community implementations of many benchmarks above (GAIA, SWE-bench, and others), so "reuse, then modify" is usually the right move. For static, non-agentic benchmarks the analogous tool is `lm-evaluation-harness`; see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) for the comparison.
+
+For *inspecting* trajectories rather than scoring them, the open observability layer is Langfuse, Arize Phoenix, or W&B Weave, all of which now speak the OpenTelemetry GenAI semantic conventions — so a harness that emits spans per tool call gets trace search, cost accounting, and failure clustering without bespoke plumbing.
 
 ## Trajectory vs. Outcome Scoring
 
@@ -401,6 +484,8 @@ Agent benchmarks have notoriously high variance. The main sources are:
 
 **Test suite fragility.** Some SWE-bench test suites are flaky — tests that pass and fail non-deterministically regardless of the patch. The Verified subset was curated to reduce this, but it persists in the full set.
 
+**Two variances, not one.** It is worth separating them explicitly, because they call for different fixes. *Seed variance* is the spread you get by rerunning the same agent on the same task; you shrink it by averaging more seeds per task. *Task-sampling variance* is the spread you would get if the benchmark had drawn a different 500 issues from the same population; more seeds do **not** shrink it — only more tasks do. The binomial standard error below captures only the second, and only under the assumption of exactly one draw per task. If you run $S$ seeds per task and then plug the pooled success count into that formula, you will report an interval that is too narrow by roughly $\sqrt{S}$, because your $N \times S$ observations are not $N \times S$ independent draws — they are clustered within $N$ tasks. The fix is a cluster bootstrap over tasks (`bootstrap_ci` below).
+
 ### Confidence Intervals for Agent Scores
 
 For a binary outcome metric on $N$ tasks, the standard error of the proportion is:
@@ -446,6 +531,34 @@ def agent_benchmark_ci(n_tasks: int, n_correct: int, confidence: float = 0.95) -
         "n": n_tasks,
         "n_correct": n_correct,
     }
+
+def bootstrap_ci(per_task_rates: list[float],
+                 n_boot: int = 10000,
+                 seed: int = 0,
+                 confidence: float = 0.95) -> dict:
+    """
+    Cluster bootstrap over TASKS — the right interval when you ran several seeds
+    per task. per_task_rates[i] is the fraction of seeds that succeeded on task i
+    (with 3 seeds: 0, 1/3, 2/3, or 1).
+
+    Resampling whole tasks (not individual rollouts) keeps the within-task
+    correlation intact, so the interval reflects task-sampling variance plus the
+    residual seed noise. Feeding pooled N*S rollouts to the binomial SE instead
+    would understate the width by roughly sqrt(S).
+    """
+    rng = np.random.default_rng(seed)
+    arr = np.asarray(per_task_rates, dtype=float)
+    n = len(arr)
+    idx = rng.integers(0, n, size=(n_boot, n))      # resample tasks with replacement
+    means = arr[idx].mean(axis=1)
+    lo_q = 100 * (1 - confidence) / 2               # 2.5 for 95%
+    return {
+        "estimate": float(arr.mean()),
+        "ci_lower": float(np.percentile(means, lo_q)),
+        "ci_upper": float(np.percentile(means, 100 - lo_q)),
+        "n_tasks": n,
+    }
+
 
 def mcnemar_test(outcomes_a: list[bool], outcomes_b: list[bool]) -> dict:
     """
@@ -545,6 +658,23 @@ If you are building an agent system and need reliable internal evaluation, the p
 
 **Automate the evaluator.** Human evaluation is gold-standard but does not scale. The gold standard for agentic eval is automated state-checking (does the final system state match the goal?), not model-based judging. Reserve LLM-as-a-judge (see [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html)) for tasks where no automated checker exists.
 
+### Evaluating a Small, Narrow Agent (the Stack-100M Case)
+
+Everything above assumes a model strong enough to register on a public benchmark. A ~100M-parameter model is not: it scores essentially 0% on SWE-bench, GAIA, and tau-bench, and a benchmark pinned at the floor gives you *zero* gradient for engineering decisions — every ablation "ties." This is the situation you are in when you build the capstone's narrow auto-research agent in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html), and the fix is to build a benchmark with resolution at your scale.
+
+The recipe:
+
+1. **Write 60–120 held-out tasks in your agent's narrow domain**, each with a *programmatic* checker (an expected numeric answer, an expected substring, a final-state assertion). Freeze them before you start tuning, and keep a separate dev set for iteration — the tasks you look at are contaminated.
+2. **Instrument metrics that have signal below the outcome floor.** End-to-end success may be 20%, but these decompose it:
+   - *Tool-call format validity* — the fraction of emitted calls that parse and validate against the JSON schema. At 100M this is usually the dominant failure mode, and it is fixed by grammar-constrained decoding and more distillation traces, not by a bigger model.
+   - *Tool-choice accuracy* — did it pick the right first tool, versus a gold label? High validity with low choice accuracy means the syntax was learned but the policy was not: a data-coverage problem.
+   - *Retrieval hit rate* — did the needed document ever enter context? This cleanly separates "retrieval failed" from "retrieval worked and the model ignored it."
+   - *Step-cap rate* — what fraction of episodes exhausted the turn limit? A high value means the harness guards matter more than the model right now.
+3. **Report pass@1 over 5 seeds with the cluster bootstrap CI above**, and always against two reference points: a no-tool baseline of the same model (does the agent scaffold help at all?) and the teacher model that generated your distillation traces (how much of it did you recover?).
+4. **Reuse Inspect AI** rather than hand-rolling: serve the checkpoint through vLLM's OpenAI-compatible endpoint and point the same task file at both your model and the teacher, so scaffold and scorer are provably identical across the comparison.
+
+The full worked implementation — task file, per-metric scorers, failure taxonomy over logged traces, and the honest-reporting discussion — is in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
 ```python
 # Minimal reproducible eval harness with seeding and logging
 
@@ -565,7 +695,8 @@ class EvalConfig:
 
     def __post_init__(self):
         if not self.timestamp:
-            self.timestamp = datetime.datetime.utcnow().isoformat()
+            # timezone-aware UTC; datetime.utcnow() is deprecated in Python 3.12+
+            self.timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     def fingerprint(self) -> str:
         """Stable hash of this config for deduplication."""
@@ -611,7 +742,8 @@ def run_eval(
     # Aggregate
     pass1 = aggregate_pass_at_k(all_per_task, k=1)
     passN = aggregate_pass_at_k(all_per_task, k=config.n_seeds)
-    ci = agent_benchmark_ci(len(tasks), int(pass1 * len(tasks)))
+    # Cluster bootstrap over tasks: the honest interval when n_seeds > 1.
+    ci = bootstrap_ci([c / n for n, c in all_per_task])
 
     summary = {
         "config": asdict(config),
@@ -653,10 +785,12 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
 !!! key "Key Takeaways"
     - SWE-bench (especially the Verified subset) is the standard for coding agent evaluation: agents produce git patches graded by whether the task test suite passes.
     - WebArena tests web navigation, GAIA tests general multi-tool reasoning, tau-bench tests conversational service agents, and terminal-bench tests raw shell proficiency — each isolating a different capability.
+    - Do not reimplement a benchmark: run the official `swebench` Docker harness (which checks `FAIL_TO_PASS` *and* `PASS_TO_PASS`), BrowserGym for WebArena-family web tasks, `tb` for terminal-bench, and Inspect AI (`Task` = dataset + solver + scorer, with Docker sandboxing and `--epochs k`) for your own agent evals.
     - Outcome scoring (binary pass/fail) is the norm; trajectory scoring provides richer diagnostics but requires annotated demonstrations or process reward models.
     - pass@k is the correct estimator when you run multiple samples: $\text{pass@}k = 1 - \binom{n-c}{k}/\binom{n}{k}$, unbiased and numerically stable.
     - Harness choices — file localization, iteration budget, tools available, context truncation — routinely shift SWE-bench scores by 10–20 percentage points, making harness disclosure mandatory for fair comparison.
-    - With 500 tasks and ~30% solve rate, a 95% CI spans about ±4 points; a 3-point improvement may be noise. Use McNemar's paired test and report CIs, not just point estimates.
+    - With 500 tasks and ~30% solve rate, a 95% CI spans about ±4 points; a 3-point improvement may be noise. Use McNemar's paired test and report CIs, not just point estimates — and when you run several seeds per task, use a cluster bootstrap over tasks, since pooling rollouts into a binomial SE understates the width by roughly $\sqrt{S}$.
+    - A ~100M model floors every public agent benchmark, so evaluate it on 60–120 held-out narrow tasks with programmatic checkers plus sub-outcome metrics (tool-call schema validity, tool-choice accuracy, retrieval hit rate) that still have resolution.
     - Contamination is a structural risk: SWE-bench tasks live on GitHub and may appear in training crawls; prefer recency-filtered splits and stratify results by task creation date.
     - In production, augment pass@k with cost-normalized metrics (tasks solved per dollar) and ablation studies that separate model contribution from scaffold contribution.
 
@@ -683,6 +817,10 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
     - [SWE-bench/SWE-bench](https://github.com/SWE-bench/SWE-bench) — official Docker-based evaluation harness for SWE-bench and SWE-bench Verified; includes dataset, inference scripts, and the sb-cli cloud runner.
     - [web-arena-x/webarena](https://github.com/web-arena-x/webarena) — self-hostable web environment with 812 tasks across sandboxed web apps; Playwright-based browser automation.
     - [THUDM/AgentBench](https://github.com/THUDM/AgentBench) — multi-environment evaluation suite covering OS, database, knowledge-graph, web shopping, and household tasks (ICLR 2024).
+    - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the UK AI Security Institute's eval framework: `Task` = dataset + solver + scorer, with per-sample Docker sandboxing, step-level trace logging and a viewer, and `--epochs` for multi-sample metrics; `inspect_evals` adds community implementations of GAIA, SWE-bench and more.
+    - [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) and [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) — the reference open-source coding scaffolds that *produce* SWE-bench patches (the harness only grades them); mini-SWE-agent is a deliberately minimal bash-only baseline in the same family.
+    - [ServiceNow/BrowserGym](https://github.com/ServiceNow/BrowserGym) and [ServiceNow/AgentLab](https://github.com/ServiceNow/AgentLab) — one Gymnasium-style observation/action space over WebArena, VisualWebArena, WorkArena and MiniWoB, plus parallel experiment management and trace viewing.
+    - [sierra-research/tau-bench](https://github.com/sierra-research/tau-bench) — reference implementation of τ-bench's retail and airline domains, including the user simulator and the pass^k reliability metric.
 
     **Go deeper**
 
@@ -698,7 +836,9 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
 - Chen et al., "Evaluating Large Language Models Trained on Code" (Codex, 2021) — introduced the pass@k estimator.
 - Liu et al., "AgentBench: Evaluating LLMs as Agents" (2023) — multi-environment benchmark.
 - Xie et al., "OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments" (2024).
-- SWE-bench leaderboard and harness code: github.com/princeton-nlp/SWE-bench
+- Yehudai et al., "Survey on Evaluation of LLM-based Agents" (2025) — the broadest map of the agent-eval literature.
+- SWE-bench leaderboard and harness code: swebench.com and github.com/SWE-bench/SWE-bench (formerly princeton-nlp/SWE-bench).
+- Inspect AI (UK AI Security Institute), github.com/UKGovernmentBEIS/inspect_ai — the framework to standardize on for custom agent evals.
 
 ## Exercises
 

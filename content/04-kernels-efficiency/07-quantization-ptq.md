@@ -242,6 +242,27 @@ def accumulate_hessian(layer, calibration_inputs):
     return (2.0 / n) * H
 ```
 
+Where do those `calibration_inputs` come from? You do not have them lying around — you have to *record* the tensor each `nn.Linear` actually sees, with a forward pre-hook:
+
+```python
+def capture_layer_inputs(model, linear, batches):
+    """Record the inputs one nn.Linear sees over a calibration set."""
+    store = []
+
+    def hook(module, args):
+        x = args[0].detach()                       # [batch, seq, in_f]
+        store.append(x.reshape(-1, x.shape[-1]).float())   # -> [tokens, in_f]
+
+    h = linear.register_forward_pre_hook(hook)
+    with torch.no_grad():
+        for input_ids in batches:                  # e.g. 128 seqs x 2048 tokens
+            model(input_ids)
+    h.remove()
+    return store
+```
+
+Two practical details that real implementations get right and a naive one does not. First, **work block by block, not model-wide**: hold the hidden states entering transformer block $\ell$, quantize every linear in that block, then re-run those hidden states through the *already quantized* block to produce the inputs for block $\ell+1$. Later layers then compensate for the error earlier layers introduced — this is the `true_sequential` option in GPTQModel, and it is worth roughly a tenth of a perplexity point at INT4. Second, **budget the Hessians**: $H$ is $d_{\text{in}}\times d_{\text{in}}$ in FP32, so for $d_{\text{in}}=4096$ that is 67 MB per linear — and the MLP down-projection, whose input is the much wider intermediate dimension, costs several times that again. Accumulate them one block at a time and free them before moving on.
+
 GPTQ runs in **minutes to a couple of hours** for a 7B–70B model on a single GPU and reliably hits INT4 (and often INT3) with small perplexity loss. Its weakness: it is sequential per layer and Hessian-heavy, and it can struggle on the very narrowest bit-widths without a group size.
 
 {{fig:gptq-error-compensation}}
@@ -293,7 +314,9 @@ def awq_search_scales(W, X, n_bits=4, group_size=128, grid=20):
         beta = i / grid                           # interpolate importance exponent
         s = (x_mag ** beta) / (w_mag ** (1 - beta))
         s = s.clamp(min=1e-4)
-        s = s / s.max()                           # normalize to avoid blowup
+        # Normalize by the geometric mean of the extremes (as the official AWQ
+        # code does) so the scales straddle 1.0 instead of all shrinking.
+        s = s / (s.max() * s.min()).sqrt()
         Wq = quant_dequant(W * s)                 # quantize the *scaled* weights
         out = (X.float() / s) @ Wq.t()            # input rescaled by 1/s
         err = (out - ref).pow(2).mean().item()
@@ -398,6 +421,32 @@ def llm_int8_matmul(X, W, threshold=6.0):
 
 LLM.int8() is *zero-tuning* — no calibration, no Hessian, no scale search — and is the default behind `load_in_8bit=True` in `bitsandbytes`. Its downside is **latency**: the dynamic outlier detection and the split matmul add overhead, so it is better for fitting a model in memory than for maximum throughput. SmoothQuant, by contrast, is a static transform that yields a clean INT8-everywhere model with fast kernels.
 
+### Rotation: making the outliers disappear
+
+SmoothQuant *moves* the outliers and LLM.int8() *routes around* them. The third answer — the basis of essentially every W4A4 and FP4 pipeline in 2026 — is to **rotate them away**. Insert an orthogonal matrix and its inverse into the matmul, which changes nothing mathematically:
+
+$$
+X W = (X Q)\,(Q^\top W), \qquad Q^\top Q = I .
+$$
+
+Choose $Q$ to be a random-sign **Hadamard** matrix ($Q = \tfrac{1}{\sqrt d} H D$, applicable in $O(d\log d)$ by the fast Hadamard transform) and every output coordinate becomes an equally-weighted $\pm$ mix of *all* $d$ input coordinates. A single channel that was 100x the others no longer has anywhere to hide: after rotation the per-channel magnitudes are near-Gaussian and no coordinate is much larger than the vector's RMS. This is **incoherence processing**, introduced for weight quantization in QuIP and used by FlashAttention-3 to make FP8 attention viable (see [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html)).
+
+```python
+# Why rotation kills an outlier: a Hadamard mix spreads it over all d coords.
+import torch
+d = 1024
+H = torch.tensor([[1.0]])
+while H.shape[0] < d:                                  # Sylvester construction
+    H = torch.cat([torch.cat([H,  H], 1),
+                   torch.cat([H, -H], 1)], 0)
+Q = (H / d ** 0.5) * torch.randint(0, 2, (d,)).mul(2).sub(1).float()  # random signs
+x = torch.randn(64, d); x[:, 17] *= 60.0               # one outlier channel
+print(f"max|x| before rotation: {x.abs().max():.2f}")
+print(f"max|x| after  rotation: {(x @ Q).abs().max():.2f}")   # far smaller
+```
+
+**QuaRot** (Ashkboos et al., 2024) and **SpinQuant** (which *learns* the rotation instead of sampling it) fold these rotations into the checkpoint wherever the residual stream is linear, so most of them cost nothing at runtime. Two structural conditions make that folding legal, and they are worth internalizing: the normalization must be **RMSNorm without mean subtraction** (a rotation commutes with scaling by $\|x\|$ but not with subtracting a mean), and the norm's learned $\gamma$ must first be folded into the *following* linear so what remains is a pure scalar normalization. What cannot be folded — typically one rotation on the attention output and one on the MLP down-projection input — runs as an online fast Hadamard kernel costing a few percent of layer time. The payoff is large: rotated models quantize to **W4A4 including the KV cache** with roughly a point or less of perplexity loss, where SmoothQuant-style W8A8 was previously the floor. The same trick is what makes 4-bit *float* formats (NVFP4/MXFP4) usable; those formats and their kernels live in [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html).
+
 !!! example "Worked example: quantizing a 13B model to INT4"
 
     Take a 13B-parameter decoder, FP16 weights.
@@ -419,7 +468,59 @@ The shorthand **W4A16** means 4-bit weights, 16-bit activations (GPTQ/AWQ territ
 3. Run GPTQ or AWQ (weight-only) or SmoothQuant+per-tensor INT8 (W8A8).
 4. **Evaluate**: perplexity on held-out text *and* at least one task eval. A 0.1–0.3 perplexity rise is normal and usually invisible downstream; a >1.0 rise or a benchmark cliff means revisit group size, calibration data, or keep more layers in higher precision (the first and last layers, and `lm_head`, are often kept in FP16).
 
-For the actual file formats, packing, and how these integrate with `bitsandbytes`, GGUF, and quantization-aware training, continue to [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html). For how quantized models slot into serving systems, see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html); the floating-point background lives in [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html), and quantization for *training* in [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
+### Doing it with real libraries
+
+You should understand the algorithms above; you should almost never re-implement them for production. The 2026 default path is `llm-compressor`, which applies PTQ as a **one-shot recipe** and writes a `compressed-tensors` checkpoint that vLLM and SGLang load directly:
+
+```python
+from datasets import load_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from llmcompressor import oneshot          # older releases: llmcompressor.transformers
+from llmcompressor.modifiers.quantization import GPTQModifier
+from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
+
+MODEL_ID = "meta-llama/Llama-3.1-8B-Instruct"
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype="auto", device_map="auto")
+tok = AutoTokenizer.from_pretrained(MODEL_ID)
+
+# Calibration: a few hundred in-domain sequences, tokenized like deployment.
+ds = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft").shuffle(seed=0).select(range(512))
+ds = ds.map(lambda ex: tok(tok.apply_chat_template(ex["messages"], tokenize=False),
+                          truncation=True, max_length=2048))
+
+# W4A16 (GPTQ, group 128) — the memory-bound-decode target.
+recipe = GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"])
+
+# W8A8 instead? Compose SmoothQuant *before* the quantizer, exactly as in the paper:
+# recipe = [SmoothQuantModifier(smoothing_strength=0.8),
+#           GPTQModifier(targets="Linear", scheme="W8A8", ignore=["lm_head"])]
+
+oneshot(model=model, dataset=ds, recipe=recipe,
+        max_seq_length=2048, num_calibration_samples=512)
+model.save_pretrained("Llama-3.1-8B-Instruct-W4A16", save_compressed=True)
+tok.save_pretrained("Llama-3.1-8B-Instruct-W4A16")
+```
+
+Notice how the API mirrors the theory: `ignore=["lm_head"]` is the "keep the output layer high-precision" rule; `SmoothQuantModifier(smoothing_strength=0.8)` *is* the migration strength $\alpha$; swapping `GPTQModifier` for `AWQModifier` (from `llmcompressor.modifiers.awq`) swaps the algorithm without touching the pipeline. Serving needs no flags — vLLM reads the quantization config out of the checkpoint:
+
+```bash
+vllm serve ./Llama-3.1-8B-Instruct-W4A16   # compressed-tensors is auto-detected
+```
+
+The alternative front-end is **GPTQModel**, the maintained successor to AutoGPTQ (and, per its migration guide, to AutoAWQ), which emits classic `gptq`/`awq` checkpoints and ships Marlin/BitBLAS kernels:
+
+```python
+from gptqmodel import GPTQModel, QuantizeConfig
+
+cfg = QuantizeConfig(bits=4, group_size=128)          # the INT4-g128 default
+model = GPTQModel.load("meta-llama/Llama-3.1-8B-Instruct", cfg)
+model.quantize(calibration_dataset)                    # list of tokenized dicts
+model.save("Llama-3.1-8B-Instruct-gptq-4bit")
+```
+
+And for the zero-calibration path, `bitsandbytes` needs no separate step at all — `AutoModelForCausalLM.from_pretrained(..., quantization_config=BitsAndBytesConfig(load_in_8bit=True))` gives you LLM.int8() at load time (details, plus the 4-bit NF4 variant, in [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html)).
+
+To watch this run end to end on a model you built yourself — RTN INT8 and INT4-per-group applied to every `nn.Linear` of a 100M-parameter model, a `QuantizedLinear` that unpacks and dequantizes on the fly, and the honest before/after eval deltas on a laptop CPU — see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html); the GPTQ and AWQ ideas from this chapter are the upgrade path it measures itself against. For the actual file formats, packing, and how these integrate with `bitsandbytes`, GGUF, and quantization-aware training, continue to [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html). For how quantized models slot into serving systems, see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html); the floating-point background lives in [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html), and quantization for *training* in [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
 !!! interview "Interview Corner"
 
@@ -442,10 +543,11 @@ For the actual file formats, packing, and how these integrate with `bitsandbytes
     - **AWQ** protects salient weight channels (revealed by activation magnitude) with a per-channel scale, no Hessian — faster, more robust to calibration domain.
     - **SmoothQuant** migrates per-channel difficulty from activations into weights via $\operatorname{diag}(\mathbf{s})$ folded into the upstream norm, enabling clean **W8A8** INT8-tensor-core matmuls.
     - **LLM.int8()** splits the matmul: outlier dims in FP16, the rest in INT8 — zero tuning, default for `load_in_8bit`, but with kernel overhead.
+    - **Rotation (QuaRot/SpinQuant)** removes outliers outright: insert $Q Q^\top = I$ with a random-sign Hadamard $Q$, fold it into the weights, and the rotated activations become incoherent — the enabler for W4A4, quantized KV caches, and FP4.
     - **W4A16 for memory-bound decoding, W8A8 for compute-bound prefill/throughput.** Always evaluate perplexity *and* a downstream task; keep `lm_head` and edge layers high-precision if accuracy slips.
 
 !!! sota "State of the Art & Resources (2026)"
-    Post-training quantization for LLMs is now a mature, production-grade discipline: INT4 weight-only (GPTQ/AWQ) and INT8 weight+activation (SmoothQuant) are standard in every major serving stack. The *tooling* has consolidated, not the algorithms — the original standalone AutoGPTQ and AutoAWQ libraries have both been retired, superseded by multi-backend successors (GPTQModel) and by the vLLM Project's `llm-compressor`, which implements GPTQ, AWQ, and SmoothQuant natively for vLLM/SGLang deployment. Meanwhile research keeps pushing sub-4-bit quality with incoherence-processing, vector-quantization, and gradient-guided rounding methods.
+    Post-training quantization for LLMs is now a mature, production-grade discipline: INT4 weight-only (GPTQ/AWQ) and INT8 weight+activation (SmoothQuant) are standard in every major serving stack. The *tooling* has consolidated, not the algorithms — the original standalone AutoGPTQ and AutoAWQ libraries have both been retired, superseded by multi-backend successors (GPTQModel) and by the vLLM Project's `llm-compressor`, which implements GPTQ, AWQ, and SmoothQuant natively for vLLM/SGLang deployment. The one genuinely new algorithmic ingredient since the GPTQ/AWQ/SmoothQuant generation is **rotation**: Hadamard incoherence processing (QuIP#, QuaRot, SpinQuant) has moved from research into production as the standard way to erase activation outliers, and it is what makes W4A4 and Blackwell's 4-bit float formats viable. Vector-quantization and gradient-guided rounding (AutoRound) continue to push the sub-4-bit frontier.
 
     **Foundational work**
 
@@ -457,6 +559,7 @@ For the actual file formats, packing, and how these integrate with `bitsandbytes
     - [Lin et al., *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration* (2023)](https://arxiv.org/abs/2306.00978) — Salience-guided per-channel scaling with no Hessian; MLSys 2024 Best Paper.
     - [Xiao et al., *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models* (2022)](https://arxiv.org/abs/2211.10438) — Migrates activation difficulty into weights via a diagonal scale, enabling W8A8 on tensor cores; ICML 2023.
     - [Tseng et al., *QuIP#: Even Better LLM Quantization with Hadamard Incoherence and Lattice Codebooks* (2024)](https://arxiv.org/abs/2402.04396) — Pushes sub-4-bit quality with randomized Hadamard incoherence and E₈ lattice codebooks; ICML 2024.
+    - [Ashkboos et al., *QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs* (2024)](https://arxiv.org/abs/2404.00456) — Folds Hadamard rotations into the checkpoint to eliminate activation outliers, enabling W4A4 with a quantized KV cache; SpinQuant later showed the rotation can be *learned* rather than sampled.
     - [Cheng et al., *Optimize Weight Rounding via Signed Gradient Descent for the Quantization of LLMs* (2023)](https://arxiv.org/abs/2309.05516) — Intel's SignRound/AutoRound method; replaces RTN with a lightweight signed-gradient search over rounding decisions, now a widely-used PTQ backend feeding GPTQ-, AWQ-, and `llm-compressor`-compatible checkpoints.
 
     **Open-source & tools**
@@ -477,6 +580,7 @@ For the actual file formats, packing, and how these integrate with `bitsandbytes
 - Lin, Tang, Tang, et al. — *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration* (2023). The salience/scaling idea; the `llm-awq` repository.
 - Xiao, Lin, Seznec, Wu, Demouth, Han — *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models* (2022). Migrating difficulty for W8A8.
 - Dettmers, Lewis, Belkada, Zettlemoyer — *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale* (2022). Outlier features and mixed-precision decomposition; implemented in `bitsandbytes`.
+- Ashkboos et al. — *QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs* (2024). Hadamard rotation as the third answer to outliers; the `spcl/QuaRot` repository.
 - Frantar & Alistarh — *Optimal Brain Compression* / *Optimal Brain Quantization* (the OBS/OBQ lineage GPTQ builds on).
 - Nagel et al. — *A White Paper on Neural Network Quantization* (Qualcomm AI Research). An excellent, rigorous primer on scales, zero-points, granularity, and PTQ vs QAT.
 

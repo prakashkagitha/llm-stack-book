@@ -16,7 +16,7 @@ $$
 
 This number — call it the machine's **ridge point** $\pi/\beta$, where $\pi$ is peak FLOP/s and $\beta$ is peak bytes/s — says: *the hardware can perform about 156 floating-point operations in the time it takes to read one byte from HBM.* If your kernel does fewer than ~156 FLOP per byte it touches, it will finish its arithmetic and then sit idle waiting for the next bytes to arrive. It is **memory-bound**. If it does more, the memory system keeps up and the arithmetic units are the bottleneck; it is **compute-bound**.
 
-On an H100 (SXM) the imbalance is even more extreme: roughly 3.35 TB/s of HBM3 bandwidth against close to 990 TFLOP/s of dense bf16 tensor-core throughput, for a ridge of roughly 295 FLOP/B. Each GPU generation has pushed FLOP/s up faster than bandwidth — a trend that continues through the Blackwell generation (B200/GB200), 2026's production data-center flagship — so the ridge point keeps climbing and **more and more kernels fall into the memory-bound regime**. This is why so much of modern LLM systems work is about data movement, not arithmetic.
+On an H100 (SXM) the imbalance is even more extreme: roughly 3.35 TB/s of HBM3 bandwidth against close to 990 TFLOP/s of dense bf16 tensor-core throughput, for a ridge of roughly 295 FLOP/B. Each GPU generation has pushed peak FLOP/s up faster than bandwidth, and by 2026 the sharpest growth is in the *low-precision* tensor-core modes: a Blackwell B200 (2026's production data-center flagship) pairs HBM3e bandwidth on the order of 8 TB/s with dense FP4 throughput on the order of several PFLOP/s — a ridge point roughly an order of magnitude above the A100's 156 FLOP/B. Note the nuance: at a *fixed* precision (bf16) the ridge has moved much less, so the honest statement is that **the ridge you must clear depends on which tensor-core mode you use**, and the fastest modes are the hardest to keep fed. Either way the direction of travel is the same — more and more kernels fall into the memory-bound regime, which is why so much of modern LLM systems work is about data movement, not arithmetic.
 
 !!! note "Aside: why the asymmetry exists"
 
@@ -110,13 +110,15 @@ $$
 
 Second, the **score-and-value** computation: $QK^\top$ and the $\text{softmax}\cdot V$. For a single query attending over $s$ keys with head dimension summing to $d$, this costs about $2 \cdot 2\, s\, d = 4\, s\, d$ FLOPs per query token. Summed over a sequence of length $s$ (each of $s$ queries attends to up to $s$ keys), the score computation for the whole sequence is $\propto s^2 d$ — the famous quadratic. Per *token*, it is $\approx 4 s d$.
 
+One correction matters in practice: with **causal masking**, query $i$ attends only to keys $\le i$, so averaged over the sequence each token attends to $s/2$ keys and the per-token cost is $\approx 2 s d$, not $4 s d$. A kernel that actually skips the masked blocks (FlashAttention, or any block-sparse attention) realizes that 2× saving; a naive implementation that computes the full $s\times s$ matrix and then adds $-\infty$ pays the full $4sd$ and throws half of it away. Always state which convention your FLOP counter uses — a factor of two here is enough to make two teams' MFU numbers incomparable.
+
 Putting the per-token, per-layer forward cost together:
 
 $$
 \text{FLOPs/token/layer} \approx \underbrace{8 d^2}_{\text{QKVO}} + \underbrace{4 s d}_{\text{scores}} + \underbrace{16 d^2}_{\text{FFN}} = 24 d^2 + 4 s d.
 $$
 
-The headline observation: **for typical $d$ and moderate $s$, the $d^2$ terms dominate.** With $d = 4096$ and $s = 2048$, $24 d^2 \approx 4.0\times 10^8$ while $4 s d \approx 3.4\times 10^7$ — the dense projections and FFN are ~12× the attention-score FLOPs. The quadratic attention score only *dominates the FLOP budget* once $s$ becomes comparable to $6d$. But — and this is the subtlety that motivates FlashAttention — even when attention is a minority of FLOPs, it can dominate *runtime*, because its score matrix is enormous and memory-bound. FLOPs and time are not the same thing; that gap is exactly what the roofline exists to expose.
+The headline observation: **for typical $d$ and moderate $s$, the $d^2$ terms dominate.** With $d = 4096$ and $s = 2048$, $24 d^2 \approx 4.0\times 10^8$ while $4 s d \approx 3.4\times 10^7$ — the dense projections and FFN are ~12× the attention-score FLOPs. The quadratic attention score only *dominates the FLOP budget* once $s$ becomes comparable to $6d$ (or $12d$ with a causal kernel that skips the masked half). But — and this is the subtlety that motivates FlashAttention — even when attention is a minority of FLOPs, it can dominate *runtime*, because its score matrix is enormous and memory-bound. FLOPs and time are not the same thing; that gap is exactly what the roofline exists to expose.
 
 {{fig:transformer-flop-anatomy}}
 
@@ -134,12 +136,15 @@ for a full training run over $D$ tokens with $N$ parameters. This is the same $6
 
 ```python
 def transformer_flops_per_token(d_model, d_ff, n_layers, seq_len,
-                                vocab, gated=False):
+                                vocab, gated=False, causal=True):
     """Approximate forward-pass FLOPs for ONE token, training-style accounting.
     Returns a dict so we can see where the FLOPs live. 1 MAC = 2 FLOPs."""
     # --- per layer ---
     qkvo = 4 * 2 * d_model**2                 # Q,K,V,O projections (4 GEMMs d->d)
     scores = 2 * (2 * seq_len * d_model)      # QK^T  and  softmax@V  ~ 4*s*d
+    if causal:
+        scores //= 2                          # avg query sees s/2 keys, and a
+                                              # real causal kernel skips the rest
     ffn_mul = 6 if gated else 4               # SwiGLU has 3 mats; vanilla has 2
     ffn = ffn_mul * d_model * d_ff            # up (+gate) and down projections
     per_layer = qkvo + scores + ffn
@@ -181,6 +186,18 @@ Running this prints a forward cost on the order of a few GFLOP/token, with the F
 
     The $6N$ rule bundles forward ($2N$) and backward ($4N$). Our per-token function counts forward only, so we multiply by $3$ to approximate forward+backward. The attention-score term technically scales differently in the backward pass (and recomputation in activation checkpointing adds an extra forward), so treat $3\times$ as a planning estimate, not a guarantee. For exact accounting, libraries like `torch.utils.flop_counter` or DeepSpeed's FLOPs profiler instrument the real graph.
 
+### When $6N$ under-counts
+
+The $6N$ rule quietly assumes the $d^2$ terms are *everything*: it counts weight matmuls and ignores the attention scores (which scale with $s$, not with any parameter) and, if you define $N$ as *non-embedding* parameters, the vocabulary projection. Both assumptions hold comfortably for a 70B model at $s = 4$k. Both break for a small, deep, long-context model. A more honest per-token training cost is the three-term model
+
+$$
+\text{FLOPs/token} \approx \underbrace{6 N}_{\text{weight matmuls}} \;+\; \underbrace{6\,L\,d\,s}_{\text{causal attention scores}} \;+\; \underbrace{6\,V\,d}_{\text{logit projection, if not already in } N},
+$$
+
+where the middle term is the causal $2sd$ per-layer forward cost carried through forward+backward ($3 \times 2 L d s$).
+
+Take the book's capstone model, Stack-100M ($N = 101.4$M including its tied embedding, $L = 30$, $d = 512$, $V = 32768$, $s = 2048$; see [The Stack-100M Architecture](../14-capstone/04-architecture.html)). Plain $6N$ gives $608$ MFLOP/token. The attention term adds $6 \times 30 \times 2048 \times 512 \approx 189$ MFLOP — a **31% addition** that $6N$ silently drops, because the model is deliberately deep and thin. The governing shape metric is the score-to-body ratio $s/(\kappa d)$, where $\kappa \approx 11$ is the non-embedding parameters per layer per $d^2$ for a SwiGLU block: that is $\approx 0.37$ for Stack-100M's $d = 512$, but only $\approx 0.045$ for a 4096-wide model at the same 2048-token context. Use the wrong convention and the same run reports 44.5% MFU instead of 58.2% — see [The Pretraining Run](../14-capstone/07-pretraining-run.html), which builds this exact meter. The rule to carry away: **$6ND$ is a planning number; when you report MFU, state your FLOP convention**, because at small $d$ or long $s$ the difference is tens of percent.
+
 ## Bytes, Intensity, and the Two Regimes of Inference
 
 FLOPs alone don't tell you where a kernel lands on the roofline — you need bytes. The cleanest place to see this is LLM inference, which splits into two phases with opposite roofline character (covered operationally in [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)).
@@ -192,6 +209,16 @@ FLOPs alone don't tell you where a kernel lands on the roofline — you need byt
 This is why decode throughput is governed by *how fast you can read the weights*, and why the only way to make decode efficient is to **batch** many requests so the same loaded weights serve many tokens at once — raising the effective intensity. It is also why the KV cache, not the weights, often becomes the bandwidth bottleneck at long context; see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
 
 {{fig:decode-batching-amortization}}
+
+### The one-line rule: a weight matmul's intensity is its token count
+
+Prefill and decode are not two phenomena; they are one formula at two values of a single knob. Take any weight GEMM in the model — $M$ tokens times a weight matrix $W_{k\times n}$, costing $2Mkn$ FLOPs. When $M$ is small the HBM traffic is dominated by streaming the weights themselves, $b\,kn$ bytes at $b$ bytes per element, so
+
+$$
+I \;\approx\; \frac{2Mkn}{b\,kn} \;=\; \frac{2M}{b}.
+$$
+
+In bf16 ($b = 2$) that collapses to $I \approx M$ FLOP/B: **the arithmetic intensity of a weight matmul is simply the number of tokens sharing that weight read.** Compare it to the ridge and you have an operational rule with no further arithmetic — you need roughly $156$ tokens in flight per weight read to be compute-bound on an A100, $295$ on an H100. Batch-1 decode gives $M = 1$ (hopeless). A 2048-token prefill gives $M = 2048$ (comfortably compute-bound). Decode at batch 256 gives $M = 256$ — right at the ridge, which is exactly why production serving engines target concurrency in that range rather than 8 or 8000. Quantizing the weights to fp8 halves $b$ and doubles $I$, a real ~2× win for bandwidth-bound decode; but if the *math* also runs at fp8 the compute roof $\pi$ roughly doubles too, so the ridge doubles and the token threshold for compute-boundness barely moves. Low precision makes you faster at a given batch size; it does not let you skip batching.
 
 !!! example "Worked example: how many tokens/sec can a single decode stream produce?"
 
@@ -268,6 +295,8 @@ print(f"At 50% MFU we'd expect "
 
     Track MFU on every training run, not just loss. A code change that drops MFU from 48% to 31% with no architectural reason is a performance regression — maybe a kernel stopped fusing, a collective started blocking, or a tensor fell off the tensor-core path (wrong dtype, a non-multiple-of-8 dimension). MFU catches these where wall-clock-per-step might be noisy. Compute it from first principles ($6N \cdot \text{tok/s}$) so it's independent of any framework's possibly-wrong internal counter.
 
+MFU is also the number that turns a training plan into a bill. For the capstone's Stack-100M at $\approx 797$ MFLOP/token (the three-term convention above), one A100 at 50% MFU delivers $0.5 \times 312\times10^{12} / 797\times10^{6} \approx 1.96\times10^{5}$ tokens/s, so a 20B-token run is $20\times10^{9}/1.96\times10^{5} \approx 1.0\times10^{5}\ \text{s} \approx 28$ GPU-hours — tens of dollars, on one card. Expect to *work* for that 50%, though: at $d = 512$ the per-layer GEMMs are small enough that tensor cores are underfed, 30 layers means 30 rounds of launch overhead, and the element-wise norm/SwiGLU/softmax traffic is a larger share of the step than at 7B. The levers are the ones the roofline predicts — a large token micro-batch (so the GEMM's $M$ sits far above the ridge), `torch.compile` to fuse the memory-bound tail, a fused or chunked cross-entropy for the fat logit tensor, and a FlashAttention-backed SDPA. [The Pretraining Run](../14-capstone/07-pretraining-run.html) measures each of these on real hardware.
+
 ### Why low precision raises the roof
 
 Tensor cores run dramatically faster at lower precision: an H100's FP8 tensor-core throughput is roughly double its bf16 throughput, which is itself far above FP32. Dropping precision does two things on the roofline simultaneously — it raises the **compute roof** $\pi$ (faster math) *and* lowers bytes moved (smaller dtype), which raises **intensity** for memory-bound kernels. That double win is why FP8 training and INT4/INT8 inference are central to Part IV; the numerics and failure modes are in [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) and [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html). The roofline is precisely the tool that quantifies the payoff: a kernel sitting on the memory roof at $I=1$ FLOP/B doubles its ceiling if you halve its byte width.
@@ -322,6 +351,41 @@ What to look for in the output table:
 - **The top few CUDA kernels by total time** — that's where optimization pays. Usually some flavor of GEMM (`ampere_..._gemm`, `cutlass`) and the attention kernel.
 - **A long tail of tiny element-wise/normalization kernels.** If their *summed* time is large, you have a fusion opportunity (`torch.compile`, see [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)). Many small memory-bound kernels back-to-back = bandwidth-bound program.
 - **Gaps where the GPU is idle** in the Chrome trace — that's CPU launch overhead or a synchronizing `.item()`/`.cpu()` call stalling the pipeline. CUDA graphs or removing host syncs fix these.
+
+### Counting the real graph: `FlopCounterMode` + `do_bench`
+
+Analytic FLOP formulas are for planning; for a *measured* MFU you want the FLOPs your graph actually dispatched. PyTorch ships this: `torch.utils.flop_counter.FlopCounterMode` is a `TorchDispatchMode` that intercepts every op with a registered FLOP formula (matmuls, `scaled_dot_product_attention`, convolutions) and tallies them — including the backward pass, and including the exact attention convention your SDPA backend used. Pair it with `triton.testing.do_bench`, the microbenchmark helper that ships with PyTorch's Triton dependency and handles warmup, L2-cache flushing between reps, and synchronization for you.
+
+```python
+import torch
+from torch.utils.flop_counter import FlopCounterMode
+from triton.testing import do_bench
+
+model = build_model().cuda()                  # your nn.Module -> logits Tensor
+x = torch.randint(0, 32000, (8, 2048), device="cuda")
+
+def step():
+    model(x).float().sum().backward()         # stand-in loss; real fwd+bwd graph
+    model.zero_grad(set_to_none=True)
+
+# 1) EXACT dispatched FLOPs (fwd + bwd), no formula to get wrong.
+counter = FlopCounterMode(display=False)
+with counter:
+    step()
+flops = counter.get_total_flops()
+# counter.get_flop_counts() -> {module_qualname: {aten_op: flops}} for a breakdown
+
+# 2) HONEST wall time: do_bench warms up, flushes L2, and synchronizes.
+ms = do_bench(step)                           # milliseconds
+
+achieved_tflops = flops / (ms * 1e-3) / 1e12
+A100_BF16_PEAK_TFLOPS = 312
+print(f"{flops/1e9:8.1f} GFLOP/step  {ms:7.2f} ms  {achieved_tflops:6.1f} TFLOP/s")
+print(f"MFU  = {100 * achieved_tflops / A100_BF16_PEAK_TFLOPS:.1f}%")
+print(f"tok/s = {x.numel() / (ms * 1e-3):,.0f}")
+```
+
+Three caveats that decide whether the number means anything. First, `FlopCounterMode` counts only ops with registered formulas, which is precisely the "model FLOPs" numerator MFU wants — element-wise, normalization and softmax work is *excluded* by design, so a low ratio of counted FLOPs to measured time is the signature of a bandwidth-bound program, not a counting bug. Second, if activation checkpointing is active inside the context the recomputed forward *is* counted, so what you get is HFU, not MFU; run the audit with checkpointing off (or subtract the recompute forward) for a true MFU. Third, `do_bench` re-runs `step()` many times, so make it idempotent — no optimizer step, no growing KV cache. For a whole-model breakdown without writing the harness, DeepSpeed's `FlopsProfiler` (`deepspeed.profiling.flops_profiler`) attaches to a module and prints per-layer FLOPs, params and latency in one call. This closes the loop opened earlier: $6ND$ is the estimate, `FlopCounterMode` is the audit, and they should agree to within the conventions discussed above.
 
 ### Turning a profile into a roofline verdict
 
@@ -472,10 +536,11 @@ Despite these caveats, the roofline remains the most valuable single tool in per
     - The roofline is $P(I) = \min(\pi, \beta I)$: a flat **compute roof** $\pi$ (peak FLOP/s) and a sloped **memory roof** $\beta I$ (bandwidth $\times$ arithmetic intensity), meeting at the **ridge** $I^\* = \pi/\beta$ (~156 FLOP/B on A100, ~295 on H100).
     - **Arithmetic intensity** $I = \text{FLOPs}/\text{HBM bytes}$ decides everything: $I < I^\*$ is memory-bound (raise intensity, move fewer bytes), $I > I^\*$ is compute-bound (faster math, fewer FLOPs).
     - Transformer FLOPs are dominated by the $d^2$ terms (FFN + QKVO projections); attention scores are $\propto s^2$ and only dominate the FLOP budget at very long context — yet can dominate *runtime* because the score matrix is memory-bound.
-    - Memorize the constants: training $\approx 6N\!\cdot\!D$ FLOPs, inference $\approx 2N$ FLOPs/token. They power every capacity and cost estimate.
+    - Memorize the constants: training $\approx 6N\!\cdot\!D$ FLOPs, inference $\approx 2N$ FLOPs/token — but **state your convention**: adding the causal attention-score term $6Lds$ and the logit term $6Vd$ changes the count by tens of percent for a small, deep, long-context model (+31% for Stack-100M).
     - **Decode is memory-bound** (GEMV, $I\approx1$): single-stream speed is set by weight-read bandwidth, not FLOP/s. Batching and quantization, not FLOP pruning, are the fixes.
+    - The one-line rule that unifies prefill and decode: a bf16 weight matmul's intensity is its **token count** ($I \approx 2M/b$, $= M$ at $b=2$). You need $\gtrsim I^\*$ tokens per weight read — ~156 on A100, ~295 on H100 — to be compute-bound.
     - **MFU** $= 6N\!\cdot\!\text{tok/s} / (\text{GPUs}\times\pi)$ is your north-star efficiency metric; healthy large runs sit ~40–55%, and a drop with no architectural cause is a regression.
-    - Profile with the **PyTorch profiler** for operator-level hot lists and **Nsight Systems/Compute** for timelines and hardware rooflines — and always **warm up + synchronize** or your measurements are fiction.
+    - Profile with the **PyTorch profiler** for operator-level hot lists, **`FlopCounterMode` + `triton.testing.do_bench`** for a measured (not estimated) MFU, and **Nsight Systems/Compute** for timelines and hardware rooflines — and always **warm up + synchronize** or your measurements are fiction.
     - Lower precision raises the compute roof *and* the effective intensity simultaneously — the double win behind FP8/INT4.
 
 !!! sota "State of the Art & Resources (2026)"

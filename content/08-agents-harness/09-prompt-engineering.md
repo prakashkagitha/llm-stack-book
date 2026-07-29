@@ -4,7 +4,7 @@ Prompt engineering has an image problem. To many practitioners it sounds like co
 
 The stakes are high. For a deployed product every token in the system prompt is paid for on every request. A 500-token system prompt served 10 million times a day at a typical cost of USD 0.50 per million tokens costs USD 2,500 per day before you write a single line of user logic. At scale, prompt structure directly affects latency, cost, and quality — all simultaneously. Getting it right is engineering, not art.
 
-This chapter covers the full technical stack: the mechanics of each prompting technique, the math behind why some work, automated prompt optimization (DSPy, APE), evals-driven iteration, and prompt caching. By the end you will have a repeatable methodology for building and improving prompts the same way you improve any other software component.
+This chapter covers the full technical stack: how a `messages` list actually becomes tokens, the mechanics of each prompting technique, the math behind why some work, automated prompt optimization (DSPy, OPRO, APE), evals-driven iteration with real harnesses, and prompt caching both on hosted APIs and on a model you serve yourself. By the end you will have a repeatable methodology for building and improving prompts the same way you improve any other software component.
 
 ---
 
@@ -101,7 +101,28 @@ messages = template.render(
 )
 ```
 
-Notice the explicit separation of concerns: the template owns structure; the caller owns data. This makes version control, testing, and automated optimization tractable.
+Notice the explicit separation of concerns: the template owns structure; the caller owns data. This makes version control, testing, and automated optimization tractable. (The unused `few_shot_template` / `user_template` strings are the *completion-style* rendering path you need when targeting a base model with no chat format — see below.)
+
+### From Messages to Tokens: There Is No Such Thing as a "Role"
+
+A `messages` list is a convenient fiction. The model consumes one flat token sequence, and something must render roles into delimiter tokens — that something is the **chat template**, a Jinja2 string stored in the tokenizer's `chat_template` field:
+
+```python
+from transformers import AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+
+rendered = tok.apply_chat_template(
+    messages,                      # the list produced by ClassificationPrompt.render
+    tokenize=False,
+    add_generation_prompt=True,    # append the assistant header so the model *continues*
+)
+print(rendered)
+# ChatML-family models render roughly as:
+#   <|im_start|>system\n...<|im_end|>\n<|im_start|>user\n...<|im_end|>\n<|im_start|>assistant\n
+```
+
+Three consequences follow, and each is a real production bug class. First, every role delimiter costs tokens — a 6-turn few-shot block pays the delimiter tax six times. Second, prompt-level A/B results do not transfer across model families, because Llama 3 (`<|start_header_id|>` / `<|eot_id|>`) and ChatML (`<|im_start|>` / `<|im_end|>`) put your text in different surroundings. Third, if you train a model yourself you *own* this template: the exact string you fine-tune on must be the exact string you serve, or the model is out of distribution at inference. [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) covers the mechanism and the loss-masking rules; [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) defines the template Stack-100M is trained and served with. For a pure base model there is no template at all — you must fall back to raw concatenation (`Document: ... / Label: ...`), which is exactly what `few_shot_template` above is for.
 
 ---
 
@@ -187,7 +208,11 @@ This mirrors how humans tackle complex problems and aligns with the model's toke
 
 {{fig:cot-reasoning-scratchpad}}
 
-Wei et al.'s 2022 finding that appending "Let's think step by step" dramatically improves multi-step reasoning is one of the most-cited prompting results. The mechanism is not mysterious: by generating intermediate steps, the model creates a scratchpad that subsequent tokens can attend to. Each step reduces the cognitive distance to the answer.
+Two 2022 results anchor this technique, and they are routinely conflated. Wei et al. showed that *few-shot exemplars containing worked reasoning steps* dramatically improve multi-step reasoning; Kojima et al. then showed that the single trigger phrase "Let's think step by step" recovers much of that gain with **zero** exemplars ("zero-shot CoT"). The mechanism is not mysterious: by generating intermediate steps, the model creates a scratchpad that subsequent tokens can attend to, and it buys extra forward passes — depth in time rather than depth in layers. Each step reduces the cognitive distance to the answer.
+
+!!! warning "Common pitfall"
+
+    "Let's think step by step" is a 2022-era workaround, not a 2026 default. Modern reasoning models (see [Reasoning, Chain-of-Thought & Test-Time Compute](../05-posttraining-alignment/10-reasoning-test-time-compute.html)) are *post-trained* to emit a reasoning trace and will do so unprompted; bolting a CoT instruction on top can shorten or distort that trace, and providers generally advise against forcing a reasoning format on them. The technique remains essential for small, non-reasoning models — including a ~100M model you train yourself — and for eliciting reasoning in a *specific* format you need to parse.
 
 The formal view: the model computes
 
@@ -286,7 +311,9 @@ This is overkill for most tasks but powerful for planning problems where early m
 
 Few-shot examples are not just demonstrations — they communicate the *format*, *register*, *granularity*, and *implicit rubric* of good outputs all at once. This is often more information-dense than explicit instructions.
 
-When you provide $n$ examples $(x_1, y_1), \ldots, (x_n, y_n)$, the model's next-token distribution conditions on all of them. The examples effectively shift the model's prior over output space without any weight update. This is why few-shot works even when the labels are randomly permuted (the model learns format, not semantics from labels) — a finding that underscores how different in-context learning is from standard supervised learning.
+When you provide $n$ examples $(x_1, y_1), \ldots, (x_n, y_n)$, the model's next-token distribution conditions on all of them. The examples effectively shift the model's prior over output space without any weight update. This is why few-shot largely survives *randomly permuted* labels (Min et al., 2022): the demonstrations mostly teach format, label space, and input distribution rather than the input→label mapping, which pretraining already supplied.
+
+Two refinements matter, because the "labels don't matter" headline is over-read. First, the effect is **scale-dependent**: Wei et al. (2023) showed that with *systematically flipped* labels, small models happily ignore the flip and keep their pretrained priors, while large models increasingly override those priors and follow the in-context mapping — so at 100M parameters expect your demonstrations to work through format, and at frontier scale expect wrong labels to actually hurt. Second, the low-level mechanism has a name: **induction heads**, attention circuits that find an earlier occurrence of the current token and copy what followed it, which emerge in a sharp phase change during pretraining and account for much of in-context learning (Olsson et al., 2022). See [Mechanistic Interpretability & Model Internals](../13-interp-safety-gov/01-mechanistic-interpretability.html). The practical upshot for prompt design: anything that makes the *pattern* easier for a copy-and-continue circuit to lock onto — identical delimiters, identical field order, identical whitespace across every demonstration — is worth more than a cleverly worded instruction.
 
 ### Example Selection and Ordering
 
@@ -362,7 +389,9 @@ Zhou et al.'s APE (2022) treats instruction generation as a program synthesis pr
 
 {{fig:ape-optimization-loop}}
 
-This is simple to implement and surprisingly effective — APE-generated instructions sometimes outperform human-written ones on classification tasks. The key limitation is that it optimizes for the proxy metric used to score candidates; if that metric doesn't perfectly capture your goal, the instructions will overfit to it.
+This is simple to implement and surprisingly effective — APE-generated instructions sometimes outperform human-written ones on classification tasks, including a discovered zero-shot CoT trigger that beat Kojima et al.'s hand-written "Let's think step by step." The key limitation is that it optimizes for the proxy metric used to score candidates; if that metric doesn't perfectly capture your goal, the instructions will overfit to it — hold out a genuine test split, exactly as you would for hyperparameter search.
+
+Two descendants are worth knowing. **OPRO** (Yang et al., 2023) makes the LLM an explicit optimizer: the meta-prompt contains the trajectory of previously tried instructions *with their scores*, and the model is asked to propose a better one — a hill-climb with natural language as the search space. **TextGrad** (Yuksekgonul et al., 2024) pushes the analogy further, backpropagating *textual* critiques through a computation graph of LLM calls the way autograd backpropagates numbers, so an error signal at the output can be attributed to an intermediate prompt. Both are research-grade; DSPy is what you would actually reach for in production.
 
 ### DSPy: Prompting as a Differentiable Program
 
@@ -532,11 +561,43 @@ Respond with only a single integer 1-5."""
         return 0.0
 ```
 
+### Running the Loop Against Your Own Model
+
+Nothing above is tied to a hosted API. Both vLLM and SGLang expose an **OpenAI-compatible server**, so the identical harness points at a model you trained yourself by changing one argument:
+
+```bash
+# Serve your own checkpoint (vLLM). SGLang: python -m sglang.launch_server --model-path ...
+vllm serve ./stack-100m-sft --port 8000 --served-model-name stack-100m
+```
+
+```python
+from openai import AsyncOpenAI
+
+# Same client class, same eval code — only the endpoint moves.
+client = AsyncOpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+# then: run_eval(prompt_fn, cases, exact_match, model="stack-100m")
+```
+
+This is not a detail: prompt patterns tuned on a frontier model routinely fail on a 100M model, whose instruction-following is far weaker, so the prompts you ship with Stack-100M must be measured on Stack-100M. See [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+
+### Off-the-Shelf Harnesses
+
+Write the harness above once to understand it, then adopt a maintained one for anything long-lived:
+
+| Tool | What it is | Use it for |
+| --- | --- | --- |
+| `EleutherAI/lm-evaluation-harness` | The de-facto academic benchmark runner (MMLU, HellaSwag, GSM8K, …); supports HF, vLLM and OpenAI-compatible backends | Comparing *models*, with `--apply_chat_template` set correctly |
+| `promptfoo` | YAML-declared prompt/model matrix with assertions, run from CLI or CI | Regression-testing *prompts* on every pull request |
+| `UKGovernmentBEIS/inspect_ai` | UK AI Security Institute's eval framework: solvers, scorers, and a trace viewer | Agentic and multi-turn evals with inspectable transcripts |
+| `langfuse` / `Arize Phoenix` | Open-source tracing plus prompt versioning and dataset management | Layer 4: production traces promoted into eval cases |
+
+[Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html) and [LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html) cover scorer design, judge bias, and statistical significance in depth — do not ship a judge without reading the latter.
+
 ### The Iteration Loop
 
 {{fig:promptiter-eval-loop}}
 
-The cardinal sin is running the test set during iteration. That turns your test set into a dev set and your metrics become meaningless.
+The cardinal sin is running the test set during iteration. That turns your test set into a dev set and your metrics become meaningless. With 200 eval cases, a 3-point difference is inside the noise band — [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html) shows how to size the set and put an interval around the delta before you declare a prompt "better."
 
 ---
 
@@ -577,6 +638,8 @@ The cache is keyed on an exact byte-for-byte prefix match. This has a direct des
     Savings: USD 900/day, or roughly 51 %. For a modestly sized product serving 10 million requests/day, this is ~USD 9 000/day — the annual saving exceeds the cost of one engineer.
 
     The practical implication: order your prompt so the largest static block sits at the top. Even a 1 000-token reordering can unlock substantial savings.
+
+    One caveat this arithmetic hides: the *first* request that populates the cache is charged a write premium (Anthropic bills cache writes above the base input rate) and the entry has a finite TTL — on the order of minutes unless you opt into a longer one. Caching therefore pays only when the prefix is re-used many times before it expires. A low-QPS endpoint with a 10-minute idle gap between requests can pay the write premium on nearly every call and come out *behind*; check `cache_read_input_tokens` versus `cache_creation_input_tokens` in production before assuming the win.
 
 ### Implementing Cache Headers
 
@@ -621,7 +684,21 @@ print(f"Cache write tokens: {usage.cache_creation_input_tokens}")
 print(f"Cache read tokens: {usage.cache_read_input_tokens}")
 ```
 
-OpenAI's API uses similar semantics — the first N tokens of a prompt are automatically cached if they repeat across requests. The prompt ordering principle applies to both.
+OpenAI's API uses similar semantics but *implicitly*: there is no `cache_control` marker; the longest repeated prefix is cached automatically above a minimum prompt length (roughly a thousand tokens), and cached input tokens are billed at a discount rather than free. The prompt ordering principle applies to both.
+
+### Prefix Caching When You Host the Model
+
+Self-hosted engines give you the same lever with no per-token pricing at all. vLLM's **automatic prefix caching** hashes each KV block and reuses blocks whose full prefix hash matches (on by default in recent releases; toggled with `--enable-prefix-caching` / `--no-enable-prefix-caching`). SGLang implements the same idea with **RadixAttention**, keeping cached prefixes in a radix tree so branching conversations share their common trunk — which is exactly the shape of an agent loop, where every step re-sends the same system prompt plus a growing transcript.
+
+```bash
+# vLLM: reuse the KV cache for any request sharing a block-aligned prefix
+vllm serve ./stack-100m-sft --enable-prefix-caching --port 8000
+
+# SGLang: RadixAttention is on by default (--disable-radix-cache turns it off)
+python -m sglang.launch_server --model-path ./stack-100m-sft --port 8000
+```
+
+The design rule is identical, and now you can see why it is not arbitrary: matching is done on *block-aligned* prefixes of the token sequence, so a single changed token — a timestamp, a shuffled tool list, a user name injected at the top — invalidates the block it lands in and every block after it. Sort your tool definitions deterministically and keep the clock out of the system prompt.
 
 ---
 
@@ -683,6 +760,8 @@ Action: finish(answer="Tokyo's population is approximately 14 million people.")
 
 Without a few-shot example of the complete Thought→Action→Observation→Thought cycle, models often truncate after the first `Action` or skip the intermediate `Thought` entirely, degrading reasoning quality.
 
+At small scale, prompting alone stops being enough. A ~100M model cannot reliably hold a ReAct format across many turns no matter how the prompt is written: the format has to be *trained in*, by distilling traces from a larger teacher into SFT data whose target strings are exactly the `Thought:`/`Action:` template you will serve. That is the route [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) takes for Stack-100M. The general lesson — when a prompt fix stops working, the next lever is data, not more words — is the single most useful thing to know about prompting small models.
+
 ### Prompt Injection Defenses
 
 In agentic settings, content from the environment (web pages, documents, tool outputs) can contain adversarial instructions. This is prompt injection — one of the most pressing security issues in production agents. See [Security: Prompt Injection, Jailbreaks & Defenses](../12-production-mlops/06-security-prompt-injection.html) for a full treatment.
@@ -742,8 +821,9 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
     - Few-shot examples are in-context training signal; select them dynamically using embedding similarity and order them with the most relevant example last.
     - Automated prompt optimization (APE, DSPy) moves prompt tuning from intuition to a reproducible optimization loop with train/dev/test discipline.
     - An eval harness is a prerequisite, not an afterthought: you cannot improve what you do not measure. Never run the test set during iteration.
-    - Prompt caching can reduce input token costs by 50 % or more — the sole design requirement is that static content precedes dynamic content in the prompt.
-    - In agentic settings, the most important prompt instructions are stopping conditions and irreversibility constraints, not task descriptions.
+    - A `messages` list is a fiction the chat template renders into delimiter tokens; if you train the model, that Jinja template is yours to own and must match byte-for-byte between training and serving.
+    - Prompt caching can reduce input token costs by 50 % or more, provided static content precedes dynamic content *and* the prefix is reused enough times before TTL expiry to amortize the cache-write premium; self-hosted, the same lever is vLLM's automatic prefix caching or SGLang's RadixAttention.
+    - In agentic settings, the most important prompt instructions are stopping conditions and irreversibility constraints, not task descriptions — and below a certain model scale the format must be trained in by distillation rather than prompted.
     - Treating prompts as versioned, tested, compiled artifacts — not as ad-hoc strings — is what separates prompt engineering from folklore.
 
 ---
@@ -755,7 +835,9 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
 
     - [Wei et al., *Chain-of-Thought Prompting Elicits Reasoning in Large Language Models* (2022)](https://arxiv.org/abs/2201.11903) — demonstrated that intermediate reasoning steps dramatically improve multi-step reasoning; the spark for test-time compute research.
     - [Wang et al., *Self-Consistency Improves Chain of Thought Reasoning in Language Models* (2022)](https://arxiv.org/abs/2203.11171) — majority-voting over diverse CoT paths yields large accuracy gains with no model changes.
+    - [Kojima et al., *Large Language Models are Zero-Shot Reasoners* (NeurIPS 2022)](https://arxiv.org/abs/2205.11916) — the actual source of "Let's think step by step"; zero-shot CoT with no exemplars at all.
     - [Min et al., *Rethinking the Role of Demonstrations: What Makes In-Context Learning Work?* (2022)](https://arxiv.org/abs/2202.12837) — showed that example format, not gold labels, drives few-shot performance; foundational for understanding in-context learning.
+    - [Olsson et al., *In-context Learning and Induction Heads* (Anthropic, 2022)](https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html) — the mechanistic account: copy-and-continue attention circuits that emerge in a phase change and explain much of few-shot behaviour.
 
     **Recent advances (2023–2026)**
 
@@ -763,11 +845,17 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
     - [Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models* (ICLR 2023)](https://arxiv.org/abs/2210.03629) — interleaved Thought/Action/Observation prompting pattern; foundational template for agentic system prompts.
     - [Zhou et al., *Large Language Models Are Human-Level Prompt Engineers* (APE; ICLR 2023)](https://arxiv.org/abs/2211.01910) — treats instruction generation as program synthesis; LLM proposes and scores candidate prompts automatically.
     - [Khattab et al., *DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines* (2023)](https://arxiv.org/abs/2310.03714) — typed signatures replace hand-written prompts; optimizers bootstrap few-shot examples against a metric.
+    - [Yang et al., *Large Language Models as Optimizers* (OPRO; ICLR 2024)](https://arxiv.org/abs/2309.03409) — the meta-prompt carries past instructions *and their scores*, so the LLM hill-climbs in instruction space.
+    - [Wei et al., *Larger Language Models Do In-Context Learning Differently* (2023)](https://arxiv.org/abs/2303.03846) — the scale-dependent correction to "labels don't matter": large models override pretrained priors and follow flipped in-context labels; small models do not.
+    - [Yuksekgonul et al., *TextGrad: Automatic "Differentiation" via Text* (2024)](https://arxiv.org/abs/2406.07496) — backpropagates natural-language critiques through a graph of LLM calls, generalizing prompt optimization to whole compound systems.
     - [Agrawal et al., *GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning* (2025; ICLR 2026 oral)](https://arxiv.org/abs/2507.19457) — the 2026 state-of-the-art DSPy optimizer; evolves instructions via natural-language reflection on execution traces, beating MIPROv2 by 10%+ and GRPO with up to 35× fewer rollouts.
 
     **Open-source & tools**
 
     - [stanfordnlp/dspy](https://github.com/stanfordnlp/dspy) — the canonical framework for programming (not prompting) LMs; supports BootstrapFewShot, MIPROv2, and the reflective GEPA optimizer.
+    - [promptfoo/promptfoo](https://github.com/promptfoo/promptfoo) — declarative prompt/model matrix testing with assertions; the practical way to gate prompt changes in CI.
+    - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the UK AI Security Institute's eval framework (solvers, scorers, transcript viewer), strong for agentic and multi-turn evaluation.
+    - [langfuse/langfuse](https://github.com/langfuse/langfuse) — open-source tracing, prompt versioning, and dataset management; closes the loop from production traces back into eval cases.
 
     **Go deeper**
 
@@ -778,6 +866,9 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
 ## Further Reading
 
 - Wei, J. et al. — "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models" (NeurIPS 2022)
+- Kojima, T. et al. — "Large Language Models are Zero-Shot Reasoners" (NeurIPS 2022) — the origin of "Let's think step by step"
+- Olsson, C. et al. — "In-context Learning and Induction Heads" (Transformer Circuits, 2022) — the mechanistic account of few-shot learning
+- Yang, C. et al. — "Large Language Models as Optimizers" (OPRO; ICLR 2024); Yuksekgonul, M. et al. — "TextGrad: Automatic 'Differentiation' via Text" (2024)
 - Wang, X. et al. — "Self-Consistency Improves Chain of Thought Reasoning in Language Models" (ICLR 2023)
 - Zhou, Y. et al. — "Large Language Models Are Human-Level Prompt Engineers" (APE; ICLR 2023)
 - Khattab, O. et al. — "DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines" (2023); code at `github.com/stanfordnlp/dspy`

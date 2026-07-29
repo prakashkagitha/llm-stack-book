@@ -210,6 +210,8 @@ The system prompt and tool schemas are fixed and small; retrieval, history, and 
 
 {{fig:token-budget-allocator}}
 
+Budgets get *tighter*, not looser, as the model gets smaller — and the binding constraint changes. The narrow research agent we build in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) runs on a 100M model whose mid-training extended the context to 8,192 tokens, and each ReAct step costs on the order of 120 tokens; the window is therefore *not* what caps its horizon — the distribution of trajectory lengths it was distilled on is. Measure which constraint actually binds (window size, quality decay, or training distribution) before engineering against it.
+
 ### A concrete budget manager
 
 You need an accurate token count, not a character heuristic, because over-counting wastes budget and under-counting causes hard API failures. Use the model's real tokenizer (see [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html)).
@@ -297,6 +299,29 @@ print(f"assembled {ntok(prompt)} tokens (ceiling {32_000-4000})")
 
 The key design choices: per-segment caps prevent any one source (usually tool output or history) from cannibalizing the rest; *pinning* protects the load-bearing pieces (system prompt, current task, the active file); eviction leaves an explicit breadcrumb so the model knows context was removed rather than silently hallucinating continuity; and a global ceiling backstop guarantees you never exceed the API's hard limit.
 
+One caveat about the counting itself. `ntok` above counts raw strings, but the model never sees raw strings — it sees the *rendered chat template*, which wraps every message in role headers and turn delimiters (`<|im_start|>assistant\n`, `<|eot_id|>`, …) and serializes the tool schemas into the prompt. Count what the server will actually prefill, with the model's own tokenizer (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)):
+
+```python
+# Exact accounting for an open-weight model (or your own Stack-100M checkpoint):
+# render the chat template first, then tokenize the rendered string.
+from transformers import AutoTokenizer
+
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B")   # or "./stack-100m-sft"
+
+def ntok_messages(messages: list[dict], tools: list[dict] | None = None) -> int:
+    """Tokens the server will really prefill: role headers, turn delimiters,
+    and the serialized tool schemas included."""
+    rendered = tok.apply_chat_template(
+        messages, tools=tools, add_generation_prompt=True, tokenize=False)
+    # The template already emits BOS/special tokens, so do not add them twice.
+    return len(tok(rendered, add_special_tokens=False)["input_ids"])
+
+# The per-message overhead is small but not zero (a handful of delimiter tokens
+# each), so a long history hides hundreds of "invisible" tokens. For closed
+# models, use the provider's token-counting endpoint rather than a lookalike
+# tokenizer -- cl100k_base only approximates Claude/Gemini tokenization.
+```
+
 ## Compaction & Summarization
 
 When eviction is too lossy — you do not want to simply *drop* the last 30 turns of a debugging session — you **compact**: replace a long span of low-density context with a short, high-density summary that preserves the decisions and facts the agent still needs.
@@ -363,9 +388,13 @@ def maybe_compact(hist_seg: "Segment", call_model, keep_recent: int = 6):
 
 Two subtleties make or break compaction in practice. First, **never compact the most recent turns** — recency is exactly where the model's attention is strongest and where the immediate task state lives; summarizing it throws away your best signal. Keep the last few turns verbatim and compact only the older tail. Second, **compaction is lossy and compounding**: summaries of summaries drift. Mitigate by anchoring durable facts in *external* storage (next section) that is regenerated from ground truth rather than re-summarized, so the snapshot can be partly rebuilt from files on disk rather than from prior summaries.
 
+You rarely have to hand-roll this plumbing in production. LangChain's `trim_messages` (in `langchain_core.messages`) drops or keeps messages against a `max_tokens` budget using a `token_counter` you supply — pass the model's real tokenizer — with `strategy="last"`, `include_system=True` and `start_on="human"` so the trimmed history still begins on a legal turn boundary rather than orphaning a tool result. LangGraph lets you attach a pre-model hook that trims or summarizes state before every model call, which is precisely where `maybe_compact` belongs in a graph-structured agent ([Multi-Agent Systems & Orchestration](../08-agents-harness/07-multi-agent-systems.html)). LlamaIndex ships token-limited chat memory buffers plus a summarizing variant with the same trigger-on-high-water-mark logic. And on the API side, Anthropic now exposes context editing (server-side clearing of stale tool results) and a memory tool as first-party primitives, so the compaction loop can run inside the API instead of your harness. Adopt the mechanics from these libraries — but the *policy* (what is durable, what is ephemeral, what stays pinned) is yours, and it is what determines whether the agent survives its own compaction.
+
 !!! note "Aside: compaction vs. truncation vs. eviction"
 
     Three different operations, often conflated. **Truncation** cuts tokens by position (drop the oldest N) — cheap, zero model calls, maximally lossy. **Eviction** drops whole semantic items (a tool result, a turn) under a policy — cheap, semantically aware, still lossy. **Compaction** replaces a span with a model-generated summary — costs a model call, preserves the most information per token, but introduces drift. Mature harnesses use all three: evict obviously-dead items continuously, truncate over-long single results immediately, and compact the conversation periodically.
+
+All three operate on the *prompt*: you rebuild the token sequence and the server prefills it. A fourth mechanism operates one level down, on the **KV cache** itself. StreamingLLM (Xiao et al., *Efficient Streaming LLMs with Attention Sinks*, ICLR 2024) keeps the first few "attention sink" tokens plus a sliding window of the most recent ones, evicts everything between them from the cache, and assigns positions by cache slot rather than by original index. That keeps memory bounded and lets a model stream indefinitely without the perplexity blow-up you get from naively dropping the oldest tokens — and the blow-up is caused specifically by dropping the *sinks*, which is why they are retained (see [Modern Architecture Improvements & Design Choices](../02-transformer/10-modern-arch-improvements.html)). But be precise about what it buys: the evicted middle is gone and unrecoverable, and the model cannot even tell you it is missing. StreamingLLM is a **fluency** fix, not a **memory** fix. An agent that must recall a decision made at turn 3 needs compaction or an external store; a chat UI that must never crash on a 10-hour session needs StreamingLLM. Do not substitute one for the other.
 
 ## Structured External Context: Files, Scratchpads & State
 
@@ -480,6 +509,8 @@ def build_cached_request(system: str, tools: list[dict],
     }
 ```
 
+There are two dialects of the same idea. Provider APIs ask you to mark explicit **cache breakpoints** (Anthropic's `cache_control`), whereas self-hosted engines do it automatically: vLLM's Automatic Prefix Caching is on by default on the V1 engine (you opt *out* with `--no-enable-prefix-caching`), and SGLang's RadixAttention maintains a radix tree of shared prefixes across concurrent requests. So if you serve your own model — including the Stack-100M agent of Part XIV — you get the discount with no client-side annotation at all, and the only thing you must engineer is prefix stability. One implementation detail leaks through and matters for agents: these engines hash the KV cache in fixed-size **blocks** (vLLM's `--block-size`, 16 tokens by default), so a shared prefix counts as reused only up to the last *complete* matching block, and the tokens in a trailing partial block are recomputed regardless.
+
 ### The interaction with compaction
 
 There is a real tension: **compaction rewrites the prefix, which busts the cache.** Right after a compaction, the next request is a full cache miss because the conversation head changed. This is fine — you compact precisely because the old context was too expensive to keep re-sending — but it means you should not compact *too eagerly*. Each compaction trades a one-time cache-miss prefill (and a summarization call) for cheaper subsequent turns. Compact when the projected savings over the next several turns exceed that one-time cost, not on every turn.
@@ -526,6 +557,7 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
     - [gkamradt/LLMTest_NeedleInAHaystack](https://github.com/gkamradt/LLMTest_NeedleInAHaystack) — the standard harness for sweeping context length × needle depth to measure your model's effective window; widely adopted by Anthropic, Google, and OpenAI.
     - [nelson-liu/lost-in-the-middle](https://github.com/nelson-liu/lost-in-the-middle) — code and data from the Lost-in-the-Middle paper; multi-doc QA and key-value retrieval benchmarks for position-effect evaluation.
     - [mem0ai/mem0](https://github.com/mem0ai/mem0) — 60 k+-star universal memory layer for agents; provides managed persistent memory that offloads long-term context from the window to an external store.
+    - [langchain-ai/langchain](https://github.com/langchain-ai/langchain) — ships the trimming/summarizing primitives described above (`trim_messages` with a real `token_counter`, plus LangGraph pre-model hooks for per-call trimming or compaction); [run-llama/llama_index](https://github.com/run-llama/llama_index) offers the equivalent token-limited and summarizing chat memory buffers.
 
     **Go deeper**
 
@@ -541,6 +573,7 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
 - Anthropic engineering, *Prompt caching* and *Effective context engineering for AI agents* — vendor guidance on cache-friendly structuring and just-in-time context.
 - Packer et al., *MemGPT: Towards LLMs as Operating Systems* (2023) — the RAM-vs-disk framing of context as a managed memory hierarchy.
 - Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (RadixAttention) — automatic prefix sharing as a serving-side complement to context engineering.
+- Xiao et al., *Efficient Streaming LLMs with Attention Sinks* (ICLR 2024) — sink-plus-window KV-cache eviction: bounded-memory streaming, and the sharpest illustration of fluency-without-memory.
 - Lewis et al., *Retrieval-Augmented Generation* (2020) — the retrieval-vs-stuffing foundation; pairs with Part IX of this book.
 
 ## Exercises

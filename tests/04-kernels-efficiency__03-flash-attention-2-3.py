@@ -7,12 +7,15 @@ Blocks tested (CPU-runnable, executed in chapter order):
     "cuda" anywhere); heuristically flagged "needs-gpu" by the scanner but is
     trivially CPU-safe, so it is included here as a bonus in addition to the
     3 required blocks below.
-  - block #6 (line ~251): fa3_pipeline_model() — dataflow model of FA3's
+  - block #4 (line ~217): flash_attention_2_backward_reference() — the FA2
+    backward (recompute S/P from the saved logsumexp L; dS = P .* (dP - D)
+    with D = rowdot(dO, O)), checked against autograd. Pure CPU code.
+  - block #11 (line ~406): fa3_pipeline_model() — dataflow model of FA3's
     producer/consumer ring-buffer pipeline, computing exact attention for one
     query block.
-  - block #7 (line ~336): hadamard(), incoherent_rotation(), fake_fp8_quant()
+  - block #12 (line ~491): hadamard(), incoherent_rotation(), fake_fp8_quant()
     — the incoherent-processing (Hadamard rotation) demo for FP8 attention.
-  - block #8 (line ~409): xformers memory_efficient_attention snippet.
+  - block #13 (line ~567): xformers memory_efficient_attention snippet.
     SKIP(dependency): xformers is not in the guaranteed-available import
     list for CI (numpy/torch/einops/sklearn/stdlib only) and is not
     installed here. The import is guarded at module scope; the call is only
@@ -24,8 +27,14 @@ Blocks intentionally SKIPPED (not tested):
   - block #3 (line ~155): PyTorch SDPA example — hardcodes device="cuda" and
     torch.nn.attention.sdpa_kernel(...FLASH_ATTENTION...), which requires an
     actual CUDA flash-attention backend. SKIP(needs-gpu).
-  - block #4 (line ~210): ```text``` producer/consumer ring-buffer diagram — not Python.
-  - block #5 (line ~231): ```text``` ping-pong scheduling diagram — not Python.
+  - blocks #5, #6, #8 (lines ~275, ~296, ~330): flash_attn_func /
+    flash_attn_varlen_func / sdpa_kernel(FLASH_ATTENTION) usage — require a
+    CUDA device and the `flash-attn` package. SKIP(needs-gpu, dependency).
+  - block #7 (line ~316): transformers.AutoModelForCausalLM.from_pretrained
+    with attn_implementation="flash_attention_2" — downloads weights and needs
+    CUDA + flash-attn. SKIP(network, needs-gpu).
+  - block #9 (line ~365): ```text``` producer/consumer ring-buffer diagram — not Python.
+  - block #10 (line ~386): ```text``` ping-pong scheduling diagram — not Python.
 """
 
 import torch
@@ -116,7 +125,65 @@ assert err0c < 1e-4, f"flash_attention_2_reference causal path diverged: {err0c}
 
 
 # ---------------------------------------------------------------------------
-# Block #6 (line ~251): fa3_pipeline_model — producer/consumer ring-buffer
+# Block #4 (line ~217): flash_attention_2_backward_reference — the FA2 backward,
+# verified against autograd on a causal reference forward.
+# ---------------------------------------------------------------------------
+
+
+def flash_attention_2_backward_reference(Q, K, V, O, L, dO, causal=False):
+    """
+    FA2-style backward for one head. The only things carried over from the
+    forward are O and the per-row logsumexp L -- S and P are RECOMPUTED
+    (here all at once for clarity; the real kernel does it tile by tile).
+    Q, K, V, O, dO: (N, d).  L: (N,), L_i = logsumexp_j S_ij.
+    """
+    N, d = Q.shape
+    scale = d ** -0.5
+    S = (Q @ K.T) * scale                        # matmul 1: recompute scores
+    if causal:
+        pos = torch.arange(N)
+        S = S.masked_fill(pos.unsqueeze(0) > pos.unsqueeze(1), -float('inf'))
+    P = torch.exp(S - L.unsqueeze(1))            # exact probabilities from L alone
+
+    dV = P.T @ dO                                # matmul 2
+    dP = dO @ V.T                                # matmul 3
+    D = (dO * O).sum(dim=1)                      # rowsum(P .* dP) == rowdot(dO, O)
+    dS = P * (dP - D.unsqueeze(1))               # softmax Jacobian, closed form
+    dQ = (dS @ K) * scale                        # matmul 4  (reduces over key blocks)
+    dK = (dS.T @ Q) * scale                      # matmul 5
+    return dQ, dK, dV
+
+
+torch.manual_seed(0)
+N4, d4 = 128, 32
+Q4, K4, V4 = (torch.randn(N4, d4, requires_grad=True) for _ in range(3))
+
+# reference forward with autograd, saving ONLY O and L (as FA2 does)
+S4 = (Q4 @ K4.T) * d4 ** -0.5
+pos4 = torch.arange(N4)
+S4 = S4.masked_fill(pos4.unsqueeze(0) > pos4.unsqueeze(1), -float('inf'))
+L4 = torch.logsumexp(S4, dim=1)
+O4 = torch.softmax(S4, dim=1) @ V4
+dO4 = torch.randn_like(O4)
+O4.backward(dO4)
+
+dQ4, dK4, dV4 = flash_attention_2_backward_reference(
+    Q4.detach(), K4.detach(), V4.detach(), O4.detach(), L4.detach(), dO4, causal=True)
+for name4, mine4, ref4 in [("dQ", dQ4, Q4.grad), ("dK", dK4, K4.grad), ("dV", dV4, V4.grad)]:
+    e4 = (mine4 - ref4).abs().max().item()
+    print(f"block#4 {name4} max abs err:", e4)
+    assert e4 < 1e-4, f"FA2 backward {name4} diverged from autograd: {e4}"
+
+# the identity that makes the backward tile-able: D == rowsum(P .* dP)
+P4 = torch.exp(S4.detach() - L4.detach().unsqueeze(1))
+dP4 = dO4 @ V4.detach().T
+assert torch.allclose((dO4 * O4.detach()).sum(dim=1), (P4 * dP4).sum(dim=1), atol=1e-4), (
+    "D_i = rowdot(dO_i, O_i) should equal rowsum_j P_ij * dP_ij"
+)
+
+
+# ---------------------------------------------------------------------------
+# Block #11 (line ~406): fa3_pipeline_model — producer/consumer ring-buffer
 # dataflow model, verified against dense softmax attention.
 # ---------------------------------------------------------------------------
 
@@ -171,12 +238,12 @@ Q6 = torch.randn(128, d6); K6 = torch.randn(N6, d6); V6 = torch.randn(N6, d6)
 ref6 = torch.softmax(Q6 @ K6.T / d6**0.5, dim=-1) @ V6
 out6 = fa3_pipeline_model(Q6, K6, V6)
 err6 = (ref6 - out6).abs().max().item()
-print("block#6 max abs error:", err6)
+print("block#11 max abs error:", err6)
 assert err6 < 1e-4, f"fa3_pipeline_model diverged from dense softmax: {err6}"
 
 
 # ---------------------------------------------------------------------------
-# Block #7 (line ~336): hadamard / incoherent_rotation / fake_fp8_quant —
+# Block #12 (line ~491): hadamard / incoherent_rotation / fake_fp8_quant —
 # incoherent processing reduces FP8 quantization error under an outlier.
 # ---------------------------------------------------------------------------
 
@@ -221,8 +288,8 @@ M7 = incoherent_rotation(d7)
 Qr, Kr = Q7 @ M7, K7 @ M7                       # (QM)(KM)^T == QK^T exactly
 err_rot = (fake_fp8_quant(Qr) @ fake_fp8_quant(Kr).T - ref7).abs().mean()
 
-print(f"block#7 mean score error  plain FP8 : {err_plain:.4f}")
-print(f"block#7 mean score error  rotated   : {err_rot:.4f}")
+print(f"block#12 mean score error  plain FP8 : {err_plain:.4f}")
+print(f"block#12 mean score error  rotated   : {err_rot:.4f}")
 # the rotated version has substantially lower error because the
 # outlier in feature 7 is spread across all d coordinates
 assert err_rot < err_plain, (
@@ -239,7 +306,7 @@ assert torch.allclose(rot_only_scores, ref7, atol=1e-4), (
 
 
 # ---------------------------------------------------------------------------
-# Block #8 (line ~409): xformers memory_efficient_attention.
+# Block #13 (line ~567): xformers memory_efficient_attention.
 # SKIP(dependency): xformers is not in the guaranteed CI import set and is
 # not installed in this environment; the block's own logic is only executed
 # if the import actually succeeded above.
@@ -251,10 +318,10 @@ if memory_efficient_attention is not None:
     k8 = torch.randn(batch, seqlen, num_heads, head_dim)
     v8 = torch.randn(batch, seqlen, num_heads, head_dim)
     out8 = memory_efficient_attention(q8, k8, v8, attn_bias=LowerTriangularMask())
-    print("block#8 xformers output shape:", tuple(out8.shape))
+    print("block#13 xformers output shape:", tuple(out8.shape))
     assert out8.shape == (batch, seqlen, num_heads, head_dim)
 else:
-    print("block#8 SKIP(dependency): xformers not installed, skipping "
+    print("block#13 SKIP(dependency): xformers not installed, skipping "
           "memory_efficient_attention call.")
 
 

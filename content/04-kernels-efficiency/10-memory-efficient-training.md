@@ -83,6 +83,8 @@ so in fp16/bf16 (2 bytes per element) this is $M_{\text{act}} \approx 24\,B\,T\,
     $$8 \times 16.8\text{M} \approx 0.13\,\text{GB}$$
     Total: $3.5 + 0.03 + 0.13 \approx$ **3.7 GB** — easily fits in a 6 GB consumer GPU.
 
+The 7B numbers make optimizer state look like the whole story. Run the same accounting at the scale you can actually afford to pretrain — a ~100M-parameter model — and the ranking *inverts*: $16P = 1.6$ GB of static state disappears into a corner of any GPU, while a micro-batch of 32 sequences at $T=2048$ puts tens of GB into activations. Two consequences follow, and both are why the capstone run is engineered the way it is. First, at 100M the memory levers that matter are micro-batch size, activation checkpointing, and the *loss head* — the $B \times T \times V$ logits tensor, which lives outside the transformer blocks and is therefore untouched by block-level checkpointing, and which for $B\,T = 65{,}536$ and $V = 32{,}768$ is over a gigabyte in fp32 before you have counted a single block. Second, PEFT is the wrong tool here: you are training *from scratch*, so there is no pretrained base to freeze. [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) does this budget line by line for Stack-100M, including the chunked cross-entropy head that shrinks the logits term ~14–30×.
+
 ## Activation Checkpointing: Recompute vs. Store
 
 Activation checkpointing (also called **gradient checkpointing**) is the oldest and most universally applicable memory-reduction technique. The idea, introduced in the systems literature as "rematerialization" and popularized for deep learning by Chen et al. (2016) in *Training Deep Nets with Sublinear Memory Cost*, is simple:
@@ -235,6 +237,65 @@ class SelectiveCheckpointBlock(nn.Module):
         return x + self.ffn(self.ln2(x))
 ```
 
+### The Real Library APIs: SAC, `apply_activation_checkpointing`, and One-Line Trainer Flags
+
+Hand-rolling the split above is instructive but coarse — it forces you to carve the block into functions. Since PyTorch 2.4, `torch.utils.checkpoint` exposes **selective activation checkpointing (SAC)** at *operator* granularity through a policy function, which is what torchtitan uses as its default recompute mode. The policy sees each ATen op as it is traced and decides `MUST_SAVE` (keep the output — use for expensive matmuls and SDPA) or `PREFER_RECOMPUTE` (throw it away — use for cheap elementwise/normalization ops that produce big tensors):
+
+```python
+import torch
+from torch.utils.checkpoint import (
+    checkpoint, create_selective_checkpoint_contexts, CheckpointPolicy,
+)
+
+# Ops whose outputs are expensive to recompute -> save them.
+# Everything else (GELU/SiLU, mul, add, LayerNorm internals) is recomputed:
+# those are memory-bound elementwise ops, so recompute is nearly free.
+_SAVE = {
+    torch.ops.aten.mm.default,
+    torch.ops.aten._scaled_dot_product_flash_attention.default,
+}
+
+def _policy(ctx, op, *args, **kwargs):
+    return (CheckpointPolicy.MUST_SAVE if op in _SAVE
+            else CheckpointPolicy.PREFER_RECOMPUTE)
+
+def sac_forward(block, x):
+    """Run `block` with per-op selective recompute instead of all-or-nothing."""
+    return checkpoint(
+        block, x,
+        use_reentrant=False,
+        context_fn=lambda: create_selective_checkpoint_contexts(_policy),
+    )
+```
+
+This typically recovers most of full checkpointing's memory saving for a fraction of its compute overhead, because the SwiGLU/GELU intermediates — the single largest activation term in a modern block — are exactly the cheap-to-recompute ones, while the matmul outputs you would otherwise pay 33% to redo are kept.
+
+Two more library entry points you should reach for before writing your own wrapper:
+
+```python
+# 1) FSDP-composable block wrapping (torch.distributed). Preferred over a
+#    hand-rolled nn.Module wrapper because it composes with sharding.
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing, checkpoint_wrapper, CheckpointImpl,
+)
+apply_activation_checkpointing(
+    model,
+    checkpoint_wrapper_fn=lambda m: checkpoint_wrapper(
+        m, checkpoint_impl=CheckpointImpl.NO_REENTRANT),
+    check_fn=lambda m: isinstance(m, TransformerBlock),   # which modules to wrap
+)
+
+# 2) HuggingFace Transformers / TRL: one flag, on any supported architecture.
+model.gradient_checkpointing_enable(
+    gradient_checkpointing_kwargs={"use_reentrant": False})
+# ...or, from TrainingArguments / SFTConfig:
+#   gradient_checkpointing=True,
+#   gradient_checkpointing_kwargs={"use_reentrant": False},
+#   gradient_accumulation_steps=16,
+```
+
+Megatron-LM exposes the same idea as launcher flags — `--recompute-granularity selective` (the Korthikanti et al. attention-only policy) or `--recompute-granularity full --recompute-method uniform|block --recompute-num-layers N` for the coarse version; DeepSpeed as `"activation_checkpointing"` in its JSON config. See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
+
 ## CPU and NVMe Offloading
 
 When GPU memory is exhausted even after checkpointing, the next option is to spill tensors to cheaper, larger memory tiers.
@@ -281,6 +342,8 @@ DeepSpeed's ZeRO-Offload and ZeRO-Infinity implement optimizer-state and paramet
 }
 ```
 
+PyTorch-native FSDP offers the same lever without DeepSpeed: `CPUOffload(offload_params=True)` in FSDP1, and `fully_shard(module, offload_policy=CPUOffloadPolicy())` in FSDP2, which keeps the sharded parameters, gradients and optimizer state in host DRAM and streams each shard to the GPU as its all-gather comes due. ZeRO-Infinity extends the same idea one tier further, to NVMe, where the relevant budget is SSD read bandwidth (a few GB/s per drive) rather than PCIe.
+
 With ZeRO-3 + CPU offload, the GPU holds only a working subset of parameters and optimizer states at any time, allowing effective training of 30B+ models on a single GPU — at the cost of significantly reduced throughput (roughly 5–10× slowdown versus in-memory training due to PCIe bandwidth saturation). Newer offload engines attack this stall directly: DeepSpeed's ZenFlow (2025) updates only the highest-importance gradients synchronously on GPU and defers the rest to asynchronous, double-buffered CPU accumulation, overlapping PCIe transfer with GPU compute; DeepSpeed reports up to 5× end-to-end speedup over ZeRO-Offload with over 85% fewer GPU stalls on A100/H100 nodes.
 
 ### Gradient Accumulation as an Offloading Strategy
@@ -320,9 +383,36 @@ for step, (x, y) in enumerate(dataloader):
         scheduler.step()
 ```
 
+Two corrections this minimal loop deliberately leaves for you to add.
+
+**Under DDP, wrap all but the last micro-batch in `model.no_sync()`.** Otherwise DDP's autograd hooks all-reduce the full gradient after *every* micro-batch, so an 8-step accumulation does 8× the necessary communication — the classic "why is accumulation not free?" bug. The pattern is in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html); HuggingFace `accelerate` wraps it portably as `with accelerator.accumulate(model):`.
+
+**Dividing the loss by `ACCUMULATION_STEPS` is only correct when every micro-batch contributes the same number of loss terms.** With padded or variable-length sequences it is not: a mean-reduced cross-entropy already divides by that micro-batch's own token count, so short micro-batches get up-weighted and the accumulated gradient is a mean-of-means rather than the true token mean. (This is a real bug that shipped in several trainers and was fixed in HuggingFace Transformers/TRL in late 2024.) The fix is to normalize by the *total unmasked tokens in the window*:
+
+```python
+import itertools
+import torch.nn.functional as F
+
+IGNORE_INDEX = -100  # label id excluded from the loss (padding / prompt tokens)
+
+# Correct normalization under variable token counts: sum the per-token losses
+# in each micro-batch and divide once by the window's total token count.
+window = list(itertools.islice(loader, ACCUMULATION_STEPS))
+total_tokens = sum(int((y != IGNORE_INDEX).sum()) for _, y in window)
+
+for x, y in window:
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        logits = model(x.cuda())
+        loss = F.cross_entropy(                       # reduction="sum", not "mean"
+            logits.flatten(0, 1).float(), y.cuda().flatten(),
+            ignore_index=IGNORE_INDEX, reduction="sum",
+        ) / total_tokens
+    loss.backward()
+```
+
 ## The Math Behind LoRA and Why PEFT Slashes Memory
 
-Parameter-efficient fine-tuning (PEFT) methods attack the memory problem from a different angle: instead of reducing the cost of training all parameters, they *freeze* most parameters and only train a small adapter. [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) covers the practical usage in depth; here we focus on the memory mathematics.
+Parameter-efficient fine-tuning (PEFT) methods attack the memory problem from a different angle: instead of reducing the cost of training all parameters, they *freeze* most parameters and only train a small adapter. [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) covers the practical usage in depth; here we focus on the memory mathematics. Note that PEFT is a *fine-tuning* tool with a base-model prerequisite: it pays off when the frozen base is large relative to your GPU, or when you want to serve many task adapters over one shared base. Below a few hundred million parameters, full-parameter fine-tuning is usually both cheaper to reason about and better — which is exactly the call [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) makes for Stack-100M.
 
 ### The LoRA Factorization
 
@@ -355,11 +445,14 @@ With LoRA, the memory budget changes dramatically:
 | Term | Full fine-tuning | LoRA ($r=16$) |
 |---|---|---|
 | **Frozen weights** (bf16) | $2P$ bytes (trainable) | $2P$ bytes (frozen, no grad) |
-| **Adapter weights** (bf16) | — | $2 \cdot |\theta_{\text{LoRA}}|$ |
-| **Gradients** | $2P$ bytes | $2 \cdot |\theta_{\text{LoRA}}|$ bytes |
-| **Optimizer states** (Adam fp32) | $8P$ bytes | $8 \cdot |\theta_{\text{LoRA}}|$ bytes |
+| **Adapter weights** (bf16) | — | $2 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
+| **Gradients** | $2P$ bytes | $2 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
+| **Optimizer states** (Adam fp32) | $8P$ bytes | $8 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
+| **Activations** | $M_{\text{act}}$ | $\approx M_{\text{act}}$ (**unchanged**) |
 
 For a frozen weight tensor, PyTorch does not allocate a gradient buffer, so **frozen parameters contribute 0 bytes of gradient or optimizer state**. The savings are enormous: if LoRA covers all linear layers in a 7B model with rank 16, the optimizer state shrinks from $\sim$56 GB (fp32 Adam) to roughly $56 \times 0.004 = 0.22$ GB.
+
+Note the last row carefully, because it is the single most common misconception about LoRA. Because adapters sit at *every* depth, the backward pass still traverses the whole network and every layer still saves the input it needs to form $\partial\mathcal{L}/\partial A$. **LoRA cuts the gradient and optimizer lines by ~99% and the activation line by ~0%.** That is why the standard single-GPU recipe is QLoRA *plus* gradient checkpointing, not QLoRA alone: the two techniques attack disjoint line items. See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) for the gradient-flow derivation.
 
 The frozen base model's weights still occupy $2P$ bytes, but they require no gradient storage. With 4-bit quantization of the base model (QLoRA), these compress further to $\frac{P}{2}$ bytes:
 
@@ -512,9 +605,9 @@ QLoRA (Dettmers et al., *QLoRA: Efficient Finetuning of Quantized LLMs*, 2023) c
 
 2. **Double quantization**: The NF4 quantization constants themselves are quantized to 8 bits, saving roughly 0.37 bits per parameter on top of the base NF4 savings.
 
-3. **Paged optimizer**: Uses NVIDIA's unified memory to page optimizer states to CPU DRAM on demand, preventing OOM crashes from memory spikes.
+3. **Paged optimizer**: Uses NVIDIA's unified memory to page optimizer states to CPU DRAM on demand, preventing OOM crashes from memory spikes. In bitsandbytes this is a drop-in optimizer class — `bnb.optim.PagedAdamW8bit(...)` (or `PagedAdamW32bit`) — which is what TRL's `optim="paged_adamw_8bit"` selects.
 
-The base model is loaded in 4-bit and never updated; gradients flow only through the fp16/bf16 LoRA adapters using a straight-through-style mechanism.
+Be precise about what "frozen 4-bit base" means for autograd. Each base weight is dequantized to the bf16 compute dtype on the fly for its matmul, and the gradient of the loss with respect to the *layer input* does propagate back through that dequantized weight — otherwise no adapter below the top layer could learn. What is never formed is $\partial\mathcal{L}/\partial W_0$: the base weight carries `requires_grad=False`, so no weight gradient and no optimizer state is ever allocated for it. There is no straight-through estimator involved, because nothing is being quantized in the *forward* path of a trainable parameter — the adapters $A$ and $B$ stay in bf16 end to end.
 
 ```python
 # QLoRA with bitsandbytes and HuggingFace Transformers
@@ -606,6 +699,33 @@ for key, val in sorted(stats.items(), key=lambda kv: -kv[1]):
         print(f"  {key}: {val / 1e6:.1f} MB")
 ```
 
+Two numbers in that dict deserve special attention. `allocated_bytes.all.peak` is what your tensors actually need; `reserved_bytes.all.peak` is what the caching allocator holds from the driver. A large gap between them is **fragmentation**: the allocator has the bytes but not in a contiguous block of the right size, and you OOM with "GB free" in the error message. The single highest-value fix is one environment variable, which lets the allocator grow a segment in place instead of pooling fixed-size blocks:
+
+```bash
+# Cuts fragmentation-driven OOMs, especially with variable sequence lengths
+# or gradient checkpointing (whose alloc/free pattern is very bursty).
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+### Step 2b: Record a Memory Snapshot and Look at It
+
+Aggregate counters tell you *how much*; the snapshot recorder tells you *which tensor, allocated by which line of Python*. This is the tool to reach for when the budget on paper disagrees with reality:
+
+```python
+# Record every allocation with its Python stack, then dump a snapshot.
+torch.cuda.memory._record_memory_history(max_entries=100_000)
+
+for step, batch in enumerate(loader):   # a handful of steps is plenty
+    train_step(batch)
+    if step == 3:
+        break
+
+torch.cuda.memory._dump_snapshot("mem_snapshot.pickle")
+torch.cuda.memory._record_memory_history(enabled=None)   # stop recording
+```
+
+Drag `mem_snapshot.pickle` onto <https://pytorch.org/memory_viz> (a purely client-side page) to get a flame-graph timeline of every allocation. The signature shapes are easy to read once you know them: a *staircase* that never comes back down is a leak (usually a tensor with `grad_fn` retained in a Python list — accumulate `loss.detach()` or `loss.item()`, never `loss`); a tall *plateau* between forward and backward is activation memory (checkpoint it); and a spike that appears only at `optimizer.step()` is optimizer state (8-bit Adam, offload, or PEFT).
+
 ### Step 3: The Decision Tree
 
 
@@ -618,12 +738,14 @@ These techniques are not mutually exclusive. In practice, large-scale fine-tunin
 
 | Configuration | Approx. peak GPU memory |
 |---|---|
-| Vanilla full training (fp16 Adam) | $16 \times 70\,\text{B} \approx 1120\,\text{GB}$ |
-| + ZeRO-3 (8 GPUs, no offload) | $1120 / 8 \approx 140\,\text{GB/GPU}$ (still needs 2×A100) |
-| + ZeRO-3 + CPU offload | $\sim 40\,\text{GB/GPU}$ (1 H100, slow) |
-| LoRA ($r=16$, all attn layers) | $\sim 30\,\text{GB/GPU}$ (2P frozen + small optimizer) |
-| QLoRA ($r=16$, 4-bit base) | $\sim 15\,\text{GB/GPU}$ (4-bit base + bf16 adapters) |
-| QLoRA + checkpointing | $\sim 12\,\text{GB/GPU}$ |
+| Vanilla full training (bf16 Adam) | $16 \times 70\text{B} \approx 1120\,\text{GB}$ (needs $\ge$ 16 GPUs) |
+| + ZeRO-3 / FSDP `FULL_SHARD` (16 GPUs) | $1120 / 16 \approx 70\,\text{GB/GPU}$ + activations — borderline on 80 GB |
+| + ZeRO-3 + CPU offload (8 GPUs) | model state mostly on host DRAM; GPU holds the in-flight shards + activations, roughly tens of GB/GPU, at a large throughput cost |
+| LoRA ($r=16$), bf16 base, 1 GPU | $2P \approx 140\,\text{GB}$ — the *frozen base itself* no longer fits one GPU |
+| QLoRA ($r=16$), NF4 base, 1 GPU | $\approx P/2 \approx 35\text{–}40\,\text{GB}$ base + $\approx 0.2$ GB adapter/optimizer + activations |
+| QLoRA + gradient checkpointing | same base cost, activation term cut $\sim$3–8× — comfortably inside one 80 GB H100 |
+
+Read the LoRA row twice: at 70B, freezing everything is *not enough*, because the frozen bf16 base alone is 140 GB. Once optimizer state is gone, the resident base weights become the floor, and the only lever that moves that floor is **quantizing the base** — which is precisely the gap QLoRA was invented to close (Dettmers et al. report 65B fine-tuning on a single 48 GB GPU). Everything below the base-weight floor is then an activation problem, i.e. a checkpointing and micro-batch problem.
 
 !!! warning "Common pitfall: forgetting to freeze properly"
 
@@ -662,16 +784,20 @@ optimizer = bnb.optim.Adam8bit(
 # Drop-in replacement for torch.optim.Adam; uses ~4x less optimizer state memory.
 ```
 
+### GaLore: Low-Rank Optimizer State Without Low-Rank Weights
+
+LoRA constrains the *weights* to a low-rank update; GaLore (Zhao et al., 2024) instead constrains only the *optimizer state*. For a gradient $G \in \mathbb{R}^{m \times n}$ it computes a projector $P \in \mathbb{R}^{m \times r}$ from an SVD of $G$ (refreshed only every few hundred steps, so the SVD cost amortizes to near zero), runs Adam entirely on the projected gradient $P^\top G \in \mathbb{R}^{r \times n}$, then projects the resulting update back with $P$ before applying it. Optimizer state drops from $O(mn)$ to $O(rn)$ — the same asymptotic win as LoRA — but because $P$ is recomputed periodically, the accumulated weight update spans the full space over training rather than being pinned to one rank-$r$ subspace. That makes it usable for **pretraining from scratch**, where LoRA is not; the paper reports pretraining a 7B model on a single 24 GB consumer GPU. The cost is that the projection sits on the critical path of every step, and the weights themselves are still full-rank and full-size in memory.
+
 ### Muon: A Single-Buffer Alternative to Adam
 
 A different lever, orthogonal to compressing Adam's states, is to replace Adam itself. Muon (an orthogonalized-momentum optimizer scaled to production LLM training by Liu et al., *Muon is Scalable for LLM Training*, 2025) applies Newton–Schulz iteration to orthogonalize the momentum matrix of each 2D weight, and needs only a single momentum buffer rather than Adam's first *and* second moments — roughly halving optimizer-state memory for the hidden-weight matrices that dominate transformer parameter counts. It saw rapid adoption in 2025–2026 pretraining and full-fine-tuning runs as a memory- and compute-efficient AdamW alternative; it is complementary to, not a substitute for, the PEFT techniques in this chapter, since LoRA already eliminates almost all optimizer state on frozen layers regardless of which optimizer updates the adapters.
 
 ### Gradient Accumulation and FP16 Gradients
 
-When gradient accumulation is used, gradients are held for multiple micro-batches. Using fp16 (rather than fp32) gradient buffers halves the $2P$ bytes to $P$ bytes. PyTorch's `autocast` + `GradScaler` handles this automatically in mixed-precision mode:
+When gradient accumulation is used, the gradient buffer persists across every micro-batch of the window, so its dtype matters. Keeping gradients in bf16/fp16 costs $2P$ bytes versus $4P$ for fp32 — a 2× saving on that line item, but one you should take deliberately: accumulating many micro-batch gradients into a 10-bit-mantissa bf16 buffer loses small contributions to rounding, which is why DDP/FSDP expose an explicit `reduce_dtype` and why long accumulation windows usually keep fp32 gradient accumulation on (`MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)` in FSDP). With fp16 — not bf16 — you additionally need loss scaling to keep small gradients from flushing to zero; PyTorch's `autocast` + `GradScaler` handles that:
 
 ```python
-scaler = torch.cuda.amp.GradScaler()  # Maintains a fp16 loss scale
+scaler = torch.amp.GradScaler("cuda")  # torch.cuda.amp.GradScaler is deprecated in 2.4+
 
 for micro_batch_x, micro_batch_y in batches:
     with torch.autocast(device_type="cuda", dtype=torch.float16):
@@ -691,18 +817,19 @@ optimizer.zero_grad()
     **A:** The static memory breakdown for a 13B model is:
     - bf16 weights: $2 \times 13 \times 10^9 \approx 26\,\text{GB}$
     - fp32 master copy: $4 \times 13 \times 10^9 \approx 52\,\text{GB}$
+    - bf16 gradients: $2 \times 13 \times 10^9 \approx 26\,\text{GB}$
     - fp32 Adam $m_t + v_t$: another $\approx 104\,\text{GB}$
 
-    Total static alone is $\approx 182\,\text{GB}$ — more than twice the 80 GB budget, without any activations. Optimizer states ($8P$ bytes) dominate for a well-optimized Adam.
+    Total static is $16P \approx 208\,\text{GB}$ — more than 2.5× the 80 GB budget, without any activations. Optimizer states ($8P$ bytes) are exactly half of it and dominate every other line item.
 
     Techniques in decreasing memory impact:
-    1. **LoRA (rank 16)**: reduces optimizer states from $8P$ to $8 \times 0.004P \approx 0.03P$. This alone saves ~99.6% of optimizer memory, bringing static to roughly $\approx 28\,\text{GB}$.
-    2. **QLoRA (4-bit base)**: compresses frozen weights from 26 GB to $\approx 6.5\,\text{GB}$, total $\approx 8\,\text{GB}$.
-    3. **Gradient checkpointing**: further reduces activation peak, at ~33% compute cost.
-    4. **8-bit Adam** (without LoRA): halves optimizer state to $\approx 52\,\text{GB}$ total static — borderline without ZeRO.
-    5. **ZeRO-3**: shards all state across GPUs; requires multiple GPUs.
+    1. **LoRA (rank 16)**: eliminates gradients, master weights and optimizer states for the frozen base, so the $14P$ that is not weights collapses to a fraction of a GB. Static drops to roughly the bf16 base, $\approx 26\text{–}28\,\text{GB}$.
+    2. **QLoRA (4-bit base)**: compresses the frozen base from 26 GB to $\approx 6.5\,\text{GB}$, total $\approx 8\,\text{GB}$ static.
+    3. **Gradient checkpointing**: LoRA does *not* touch activations, so this is the next lever, at ~33% compute cost.
+    4. **8-bit Adam** (without LoRA): cuts $m_t, v_t$ from $8P$ to $\approx 2P$, i.e. $16P \to 10P \approx 130\,\text{GB}$ — a real win but still far over 80 GB on its own.
+    5. **ZeRO-3 / FSDP**: shards all state across GPUs; requires multiple GPUs, so it is not an option for the single-A100 constraint as stated.
 
-    For a single 80 GB A100, QLoRA is the canonical answer.
+    For a single 80 GB A100, QLoRA + gradient checkpointing is the canonical answer.
 
 ## Key Implementation Patterns and Pitfalls
 
@@ -774,6 +901,8 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
     - [huggingface/peft](https://github.com/huggingface/peft) — canonical Python library implementing LoRA, QLoRA, DoRA, IA³, and other PEFT methods with HuggingFace Transformers integration.
     - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — provides 8-bit/4-bit quantization kernels (NF4, LLM.int8()) and 8-bit Adam/AdamW optimizers used by QLoRA.
     - [deepspeedai/DeepSpeed](https://github.com/deepspeedai/DeepSpeed) — production ZeRO-1/2/3, ZeRO-Offload, and ZeRO-Infinity implementations; drop-in JSON config as shown in this chapter.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch-native reference pretraining stack; the cleanest real-world example of FSDP2 + per-op selective activation checkpointing (`create_selective_checkpoint_contexts`) + `torch.compile` composed together.
+    - [huggingface/trl](https://github.com/huggingface/trl) — SFT/DPO/GRPO trainers that wire gradient checkpointing, gradient accumulation, paged 8-bit optimizers and PEFT adapters together behind a handful of config flags.
 
     **Go deeper**
 
@@ -797,11 +926,11 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
     - Activation memory scales as $B \times T \times L$ and can exceed static costs for long sequences; the activation memory equation gives roughly $12 \cdot B \cdot T \cdot d \cdot L$ elements ($\approx 24\,B\,T\,d\,L$ bytes in fp16/bf16).
     - Gradient checkpointing trades ~33% extra compute for $O(\sqrt{L})$ activation memory; FlashAttention achieves a similar win for the $O(T^2)$ attention term.
     - CPU offloading (ZeRO-Offload, ZeRO-Infinity) works because optimizer states are accessed once per step, tolerating PCIe latency.
-    - LoRA with rank $r$ reduces trainable parameters to $\rho \approx r/d$ of the full matrix count, eliminating nearly all optimizer state for frozen layers.
-    - QLoRA = 4-bit base (NF4) + bf16 LoRA adapters + paged optimizer; enables 70B fine-tuning on a single consumer GPU.
+    - LoRA with rank $r$ reduces trainable parameters to $\rho \approx r/d$ of the full matrix count, eliminating nearly all gradient and optimizer state — but it leaves **activation memory essentially unchanged**, which is why it is always paired with checkpointing.
+    - QLoRA = 4-bit base (NF4) + double quantization + bf16 LoRA adapters + paged optimizer; the original paper fine-tunes a 65B model on a single 48 GB GPU. Once optimizer state is gone, the resident base weights are the floor, and quantizing them is the only lever that moves it.
     - 8-bit Adam provides a 4× optimizer state reduction with no change to architecture or training procedure.
     - Techniques compose: QLoRA + gradient checkpointing + gradient accumulation is the standard single-GPU fine-tuning stack.
-    - When debugging OOM: identify whether the failure is in forward (activation issue) or during parameter update (optimizer state issue), then apply the appropriate remedy.
+    - When debugging OOM: identify whether the failure is in forward (activation issue) or during parameter update (optimizer state issue), then apply the appropriate remedy. Record a snapshot with `torch.cuda.memory._record_memory_history()` / `_dump_snapshot()` and read it at pytorch.org/memory_viz rather than guessing; a large `reserved` − `allocated` gap means fragmentation, fixed by `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
 ## Exercises
 

@@ -43,7 +43,7 @@ MCP defines exactly three kinds of things a server can expose. Understanding the
 
 ### Tools
 
-A **tool** is a callable function. When a host invokes a tool, the server executes some action and returns a result. Tools follow the same calling convention as OpenAI function-calling (see [Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html)): the server declares an input schema in JSON Schema, the host passes a matching JSON object, and the server returns structured or unstructured content.
+A **tool** is a callable function. When a host invokes a tool, the server executes some action and returns a result. Tools follow the same calling convention as OpenAI function-calling (see [Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html)): the server declares an input schema in JSON Schema, the host passes a matching JSON object, and the server returns structured or unstructured content. A tool may also declare an `outputSchema`; when it does, the result carries a `structuredContent` object alongside the human-readable `content` blocks, and conforming clients validate it — the cleanest way to stop the model from parsing free-form strings. Tools additionally carry optional `annotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) that hosts use to decide which calls need a confirmation prompt; these are advisory metadata from the server, never a security guarantee.
 
 Tools are *model-controlled*: the LLM decides when to invoke a tool and what arguments to pass. This makes them powerful and also the highest-risk primitive — a malicious or buggy tool can execute arbitrary code on the user's machine.
 
@@ -164,7 +164,9 @@ import pathlib
 from typing import Any
 
 import pandas as pd
-from mcp.server import Server
+from pydantic import AnyUrl
+from mcp.server import NotificationOptions, Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
 from mcp import types
@@ -299,16 +301,24 @@ async def handle_list_resources() -> list[types.Resource]:
 
 
 @app.read_resource()
-async def handle_read_resource(uri: str) -> str:
+async def handle_read_resource(uri: AnyUrl) -> list[ReadResourceContents]:
     """
-    Return the resource content.  For text resources, return a plain string;
-    for binary resources, return bytes (the SDK base64-encodes them).
+    Return the resource content.  The SDK hands you a parsed pydantic AnyUrl,
+    not a str, so compare with str(uri).  Return one ReadResourceContents per
+    content block: `content` may be str (sent as text) or bytes (the SDK
+    base64-encodes it into a blob).  Returning a bare str still works but is
+    deprecated in current SDK versions.
     """
     expected_uri = f"file://{CSV_PATH.resolve()}"
-    if uri != expected_uri:
+    if str(uri) != expected_uri:
         raise ValueError(f"Unknown resource URI: {uri}")
 
-    return CSV_PATH.read_text(encoding="utf-8")
+    return [
+        ReadResourceContents(
+            content=CSV_PATH.read_text(encoding="utf-8"),
+            mime_type="text/csv",
+        )
+    ]
 
 
 # ── Main: run with stdio transport ────────────────────────────────────────────
@@ -326,9 +336,13 @@ async def main() -> None:
             InitializationOptions(
                 server_name="csv-analyst",
                 server_version="0.1.0",
-                # Advertise which capabilities this server has.
+                # Advertise which capabilities this server has.  The SDK
+                # derives them from which handlers you registered; pass a real
+                # NotificationOptions() (not None — it is dereferenced for the
+                # listChanged flags) to say whether you will emit
+                # notifications/*/list_changed.
                 capabilities=app.get_capabilities(
-                    notification_options=None,
+                    notification_options=NotificationOptions(),
                     experimental_capabilities={},
                 ),
             ),
@@ -362,6 +376,58 @@ For integration with Claude Desktop, add a server entry to `~/Library/Applicatio
 
 Claude Desktop will launch the process, perform the `initialize` handshake, and make the tools available in every conversation.
 
+### The Same Server with FastMCP
+
+The low-level `Server` class above shows the protocol honestly: you write the JSON Schema, you dispatch on tool name, you negotiate capabilities. In production almost nobody does this. The same `mcp` package ships **FastMCP**, a decorator-based high-level API (also distributed standalone as the `fastmcp` package) that derives the schemas from Python type hints — the FastAPI of MCP servers:
+
+```python
+# csv_server_fast.py — the same server, ~40 lines instead of ~180.
+# pip install "mcp[cli]" pandas    (the [cli] extra installs the `mcp` command)
+
+import pathlib
+
+import pandas as pd
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("csv-analyst")
+CSV_PATH = pathlib.Path("data.csv")
+
+
+@mcp.tool()
+def list_columns() -> dict[str, str]:
+    """Return the column names and dtypes of the CSV file."""
+    # The docstring becomes the tool `description` the model reads.
+    # The signature becomes `inputSchema`; the return annotation becomes
+    # `outputSchema`, so the result is also sent as `structuredContent`.
+    df = pd.read_csv(CSV_PATH)
+    return {col: str(dtype) for col, dtype in df.dtypes.items()}
+
+
+@mcp.tool()
+def query_csv(expression: str, max_rows: int = 20) -> str:
+    """Run a pandas DataFrame.query() expression against the CSV and return
+    up to max_rows matching rows as JSON, e.g. 'age > 30 and city == "London"'."""
+    df = pd.read_csv(CSV_PATH)
+    try:
+        return df.query(expression).head(max_rows).to_json(orient="records")
+    except Exception as exc:
+        # Still a *result*, not a protocol error — the model can self-correct.
+        return f"Query error: {exc}"
+
+
+@mcp.resource("file://data.csv", mime_type="text/csv")
+def raw_csv() -> str:
+    """The raw CSV data file being analysed."""
+    return CSV_PATH.read_text(encoding="utf-8")
+
+
+if __name__ == "__main__":
+    # transport="streamable-http" serves the same server over HTTP instead.
+    mcp.run(transport="stdio")
+```
+
+Note what the decorators bought you: `max_rows: int = 20` becomes an integer property with a default and *without* being in `required`; the return annotation `dict[str, str]` becomes an `outputSchema`, so hosts receive both a human-readable `content` block and a machine-checkable `structuredContent` object. Drop back to the low-level `Server` only when you need something FastMCP hides — dynamic tool lists that change per session, hand-tuned capability negotiation, or custom lifespan wiring.
+
 !!! example "Worked Example: latency and payload sizing"
     Suppose the CSV contains 100,000 rows of sales data, each row having 10 columns of mixed types, totalling about 8 MB on disk. When the user asks "how many orders came from London last month?", the agent invokes `query_csv` with the expression `'city == "London" and month == "2025-11"'`.
 
@@ -394,6 +460,10 @@ Sampling gives MCP a composable recursion structure: a host can spawn servers th
 
 !!! warning "Sampling requires explicit user consent"
     Servers that use sampling can trigger unbounded LLM calls, accumulating cost on the user's account. Hosts that expose sampling must require explicit user approval before allowing a server to request inference. Do not enable sampling silently.
+
+### Elicitation
+
+**Elicitation** (`elicitation/create`, added in the 2025-06-18 spec revision) is the other server-initiated request: mid-tool-call, the server asks the *user* — not the model — for structured input. A deployment server that has computed a plan can ask "which environment: staging or production?" by sending a JSON Schema of primitive fields and a message; the host renders a form and returns `accept` with the values, or `decline`, or `cancel`. This closes a real gap. Before elicitation, a server missing one parameter had only bad options: guess, fail, or return a text block hoping the model would relay the question. It also keeps sensitive values (an API key, a confirmation to delete) out of the model's context entirely — the user types them into the host's UI, and the server receives them directly. Servers must handle all three outcomes; treat `decline` and `cancel` as distinct from an error.
 
 ## Security Considerations
 
@@ -457,9 +527,9 @@ HTTP-transport servers typically authenticate with OAuth 2.1. Tokens passed to t
 As of 2026, MCP has been adopted across the AI tooling ecosystem:
 
 - **Claude Desktop** ships with MCP support and a growing registry of first-party servers (filesystem, GitHub, Slack, Postgres, Google Drive).
-- **VS Code / Copilot** added MCP server integration in early 2025, letting IDE agents use the same servers as desktop agents.
+- **VS Code / Copilot** added MCP server integration during 2025, letting IDE agents use the same servers as desktop agents.
 - **OpenAI** added support for remote MCP servers in its Responses API, meaning the same HTTP-transport server can be consumed by Claude, OpenAI's GPT-5 models, and any other conforming host.
-- **LangChain and LlamaIndex** both ship MCP adapters that wrap an MCP server as a native `Tool` within their frameworks.
+- **LangChain and LlamaIndex** both ship MCP adapters that wrap an MCP server as a native `Tool` within their frameworks — `pip install langchain-mcp-adapters` gives you `MultiServerMCPClient`, whose `get_tools()` returns LangChain/LangGraph tool objects from any set of stdio or HTTP servers; LlamaIndex's `llama-index-tools-mcp` exposes the equivalent `McpToolSpec`. In both cases you write the server once and it becomes a first-class tool inside a framework agent, with no second implementation.
 - **Zed editor, Cursor, Windsurf** all implemented MCP for their coding agent integrations.
 
 This rapid adoption is the payoff of standardisation: the filesystem server shipped by Anthropic in November 2024 required no modification to work with VS Code's Copilot when Microsoft implemented MCP support. The $N + M$ algebra worked in practice.
@@ -619,8 +689,10 @@ Building an MCP server is easy; building one that is safe, discoverable, and ple
 
 **Respect roots for scope.** If the client declares a root URI, honour it. Even if roots are not a security boundary, violating them surprises users who expect the agent to stay within the declared workspace.
 
+**Budget for the fact that tool definitions cost context.** Every tool a connected server advertises is serialised into the model's prompt on every turn, and every intermediate tool result flows back through the context window. Connect a dozen servers and the tool block alone can run to tens of thousands of tokens before the user has said anything — the naive path scales linearly in *tools connected*, not *tools used*, and long tool names from different servers start colliding (namespace them, e.g. `github__create_issue`). Two mitigations are now standard. First, **progressive disclosure**: the host loads only a small always-on tool set plus a search/loader tool, and pulls full definitions on demand. Second, **code execution with MCP**: rather than exposing tools directly to the model, the host presents each server as a code API in a sandboxed interpreter, and the model writes a short program that calls several tools and filters the intermediate data before anything returns to the context. Anthropic reports token reductions on the order of 98% for multi-tool workflows with this pattern (see the resources box). Both are host-side strategies, not protocol features — but they are why a well-factored server should keep its tool count small and its descriptions tight.
+
 !!! tip "Practitioner tip"
-    When debugging an MCP server, run it with the `MCP_LOG_LEVEL=debug` environment variable. The SDK will print every JSON-RPC message to stderr, letting you see exactly what the client sends and what the server returns. Pipe stderr to a file so it does not pollute stdout (which carries the protocol messages): `python csv_server.py 2>debug.log`.
+    Debug with the **MCP Inspector**, the official interactive client: `mcp dev csv_server_fast.py` (from the `mcp[cli]` extra) launches it via `npx @modelcontextprotocol/inspector`, giving you a browser UI to run the handshake, list and call tools, read resources, and watch every JSON-RPC frame in both directions. The cardinal rule when debugging stdio servers: **never `print()` to stdout** — stdout *is* the protocol channel, and one stray line corrupts the JSON-RPC stream. Log to stderr (Python's `logging` defaults there) and capture it separately: `python csv_server.py 2>debug.log`.
 
 ## MCP in the Broader Agent Stack
 
@@ -634,6 +706,8 @@ MCP is one layer in the multi-layer agent stack. It is worth being precise about
 
 **MCP does not cover evaluation.** Whether the agent used its tools correctly and produced the right outcome is an evaluation question — see [Agent Evaluation & Benchmarks](../08-agents-harness/08-agent-evaluation.html).
 
+**MCP does not shrink your tool schemas.** This matters most at the small end. When we build the narrow auto-research agent for Stack-100M in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html), MCP is the right way to *source* the capabilities — a search server and a calculator server we do not have to reimplement — but it is the wrong way to *present* them. A 100M-parameter model has a small context and a weak grip on long schemas; a dozen advertised tools with verbose JSON Schema would consume the budget and confuse the policy. The pattern that works is to run a real MCP client in the harness, call `tools/list` once at build time, and flatten two or three chosen tools into a fixed, terse prompt-level tool block that the model was distilled to emit against. The protocol earns its keep on the capability side; the prompt surface stays hand-tuned.
+
 What MCP *does* cover — the plumbing between a host and its external capabilities — it covers completely and with enough rigour for production use. That is the right scope for a protocol.
 
 !!! key "Key Takeaways"
@@ -644,6 +718,7 @@ What MCP *does* cover — the plumbing between a host and its external capabilit
     - The `initialize` handshake performs capability negotiation; both sides declare what they support and gracefully skip unsupported features.
     - The single largest security risk is prompt injection through tool results: tool output lands in the context window and can contain adversarial instructions. Mitigate with human-in-the-loop confirmation for destructive actions, sandboxed server processes, and typed output schemas.
     - Tool descriptions are read by the LLM, not the developer; write them to guide the model's invocation decisions, not to document the implementation.
+    - In practice you write servers with the SDK's `FastMCP` decorators (type hints become `inputSchema` and `outputSchema`) and debug them with the MCP Inspector via `mcp dev`; drop to the low-level `Server` class only for manual capability negotiation or dynamic tool lists. Remember that tool definitions cost context on *every* turn — cost scales with tools connected, not tools used — so scale with progressive disclosure or code-execution-with-MCP rather than by attaching more servers.
     - MCP covers only the plumbing layer; planning, memory, and multi-agent coordination are higher-level concerns handled by the rest of the agent stack.
 
 !!! sota "State of the Art & Resources (2026)"

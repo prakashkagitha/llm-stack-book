@@ -28,6 +28,14 @@ $$
 
 For $p = 0.7$ and $N = 3$, this is $1 - 0.3^3 = 0.973$. The gain is largest when $p$ is moderate — for tasks that are either trivial ($p \approx 1$) or impossibly hard ($p \approx 0$), multiple agents add cost without benefit.
 
+That formula is an *upper bound*, and in practice a loose one, because the independence assumption almost never holds: $N$ agents sampled from the same model with the same prompt share the same blind spots. A more honest model splits failures into systematic and idiosyncratic. Let a task be "systematically hard" for this model-and-prompt with probability $\rho$ — in which case *every* sample fails, no matter how many you draw — and otherwise let each agent succeed independently with probability $q$. The marginal per-agent success rate is then $p = (1-\rho)q$, and
+
+$$
+P(\text{at least one correct}) = (1-\rho)\left[1 - (1-q)^N\right] \le 1 - \rho
+$$
+
+With $p = 0.7$ and a modest $\rho = 0.2$ we get $q = 0.7/0.8 = 0.875$, and $N=3$ yields $0.8 \times (1 - 0.125^3) = 0.798$ — not the $0.973$ that independence promised, and no amount of extra agents pushes past the $0.8$ ceiling. This is the quantitative reason that ensembling pays only when you actively *decorrelate*: different base models, deliberately different personas or decompositions, different tool access, or higher sampling temperature all reduce $\rho$, whereas ten copies of the same agent at temperature 0 reduce nothing at all.
+
 {{fig:ensembling-gain-vs-p}}
 
 ## Topologies: How Agents Are Wired
@@ -257,6 +265,22 @@ The key engineering choices above:
 1. **ThreadPoolExecutor for parallelism** — LLM calls are network I/O so Python threads work fine; `asyncio` with `httpx` is equally valid and slightly lower overhead.
 2. **Structured JSON plan** — The orchestrator emits a machine-readable plan rather than prose, making the handoff deterministic. Always strip markdown fences defensively.
 3. **Isolated error handling per worker** — A single worker failure does not crash the pipeline; the synthesiser knows which workers succeeded.
+
+### Running all of this on a model you trained
+
+`call_model` is the only provider-coupled function in the file, and it speaks the OpenAI chat protocol — which **vLLM** and **SGLang** also expose on their OpenAI-compatible `/v1` route (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)). Swapping in your own checkpoint is a two-line change:
+
+```bash
+# One server hosts every "agent": the roles are system prompts, not separate models.
+vllm serve ./stack-100m-sft --port 8000
+```
+
+```python
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+# call_model(..., model="./stack-100m-sft")   # the rest of the file is unchanged
+```
+
+Two consequences are worth internalising. First, a multi-agent system over open weights costs $N$ *prompts*, not $N$ GPUs — because every role shares one weight set, the parallel workers land in the serving engine's continuous batch and the wall-clock time for four workers is close to that of one, not four (the token bill still scales with $N$). Second, and less comfortably: at ~100M parameters the model cannot own control flow. The `plan()` call above asks a model to emit a valid JSON array of sub-tasks, and a 100M model will not do that reliably, so you invert the design — the decomposition lives in code as a fixed workflow shell and the small model is used only at the leaves, where each call is a short, heavily-constrained span of text. That inversion is exactly what the capstone's narrow research agent does; see [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html).
 
 ## Shared Memory and the Blackboard Pattern
 
@@ -727,6 +751,8 @@ class WritingHandoff(BaseModel):
     flagged_sections: list[str]   # writer's own uncertainty flags
 ```
 
+**Cross-process handoff (A2A).** Pydantic schemas work when every agent is a function in one Python process. Once agents are separately deployed services — possibly owned by different teams or vendors — you need a wire protocol, and the emerging open standard is **Agent2Agent (A2A)**, introduced by Google in 2025 and donated to the Linux Foundation later that year. A2A is deliberately the mirror image of MCP: where [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html) standardises how *one* agent reaches *tools*, A2A standardises how one agent delegates to *another opaque agent* whose internals and prompts it cannot see. The mechanics are ordinary web plumbing — JSON-RPC over HTTP with server-sent events for streaming — plus two ideas worth borrowing even if you never adopt the protocol: a machine-readable **Agent Card** served at a well-known URL that advertises an agent's skills, endpoint, and auth requirements (the discovery step, analogous to a tool schema), and a **task** object with an explicit lifecycle (`submitted → working → input-required → completed/failed`) so a long-running delegation can be polled, resumed, or cancelled rather than held open on a single request. CrewAI and Microsoft's Agent Framework both ship A2A support; if your agents live in one process, the Pydantic boundary above is the right amount of ceremony.
+
 **Message bus** — agents subscribe to topics (e.g. "findings", "code_output") rather than passing messages directly. This decouples the topology and makes it easy to add new agents without rewiring the graph. Apache Kafka or even Redis pub/sub serve as the bus in production systems; for local development a simple Python `queue.Queue` suffices.
 
 **Context forwarding** is the mechanism used by most LLM-native systems: each agent's context window includes a summary or verbatim copy of the preceding step's output. The cost is linear in chain length — a 10-step pipeline may inject up to 10 prior summaries into each new model call. Managing this is the subject of [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
@@ -750,8 +776,10 @@ Adding agents is not free. Before designing a multi-agent system, run through th
 - **Blind trust** — an orchestrator that passes a worker's output to the next stage without validation. A worker that returns malformed JSON or a code snippet containing an injection should fail loudly, not silently corrupt downstream agents.
 - **Over-parallelism** — spawning 20 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled. Always model the rate-limit as a resource constraint on your thread pool.
 
+These are not folk wisdom. Cemri et al.'s *Why Do Multi-Agent LLM Systems Fail?* (2025) hand-annotated hundreds of execution traces across seven popular frameworks and distilled the **MAST** taxonomy: fourteen recurring failure modes in three families — **specification issues** (an agent disobeys its role, forgets the task constraints, or the termination condition is wrong), **inter-agent misalignment** (agents withhold information, reset context, or talk past each other), and **task verification** (no one checks the output, or the checker is too shallow to catch the error). The striking headline is that most of these are *organisational*, not capability failures: the individual model calls are fine, and the system still fails. The practical reading is that your engineering effort belongs in role specification, handoff validation, and a genuine verification stage — not in adding another agent.
+
 !!! warning "The multi-agent tax"
-    Every inter-agent boundary costs tokens and latency. A task that takes 500 tokens and 1 s as a single call may cost 3,000 tokens and 5 s when decomposed into a 3-agent pipeline with context forwarding. Benchmark the single-agent baseline before reaching for multi-agent decomposition.
+    Every inter-agent boundary costs tokens and latency. A task that takes 500 tokens and 1 s as a single call may cost 3,000 tokens and 5 s when decomposed into a 3-agent pipeline with context forwarding. Anthropic reported that their production multi-agent research system consumes roughly 15× the tokens of an ordinary chat interaction — which is why they reserve it for open-ended breadth-first research where that premium buys real coverage. Benchmark the single-agent baseline before reaching for multi-agent decomposition.
 
 !!! example "Cost worked example: 5-agent pipeline"
 
@@ -842,7 +870,7 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
     - LangGraph is best for stateful workflows where you want typed, inspectable state. AutoGen suits open-ended multi-turn conversations. CrewAI speeds up structured pipelines. OpenAI Swarm illustrates the handoff pattern but is educational-grade.
     - Shared-state (blackboard) architectures enable concurrent writers and emergent synthesis, but require thread-safe access and explicit conflict resolution.
     - Structured handoffs (Pydantic schemas at every inter-agent boundary) reduce silent error propagation. Validate payloads before forwarding.
-    - The multi-agent "tax" is real: a 5-agent pipeline with context forwarding can cost 3–5× more tokens than a single well-prompted call. The premium is justified only when measurable quality gain exceeds the cost.
+    - The multi-agent "tax" is real: a 5-agent pipeline with context forwarding can cost 3–5× more tokens than a single well-prompted call, and the quality side of that trade is oversold — $1-(1-p)^N$ is an upper bound, not a forecast, because $N$ samples from one model share its systematic failures and can never beat the $1-\rho$ ceiling. Pay the premium only when you have deliberately decorrelated the agents and measured the gain.
     - Self-critique loops (worker → scorer → retry with critique) are simple forms of policy gradient that can be applied without any model fine-tuning.
     - Anti-patterns: agent soup (unclear role boundaries), infinite loops (no iteration cap), blind trust (no output validation), and over-parallelism (ignoring rate limits).
 
@@ -860,11 +888,13 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
     - [Liang et al., *Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate* (2023)](https://arxiv.org/abs/2305.19118) — empirical study showing structured debate between agents reduces degeneration-of-thought and improves factual accuracy over single-model self-reflection.
     - [Chen et al., *A Survey on LLM-based Multi-Agent System: Recent Advances and New Frontiers* (2024)](https://arxiv.org/abs/2412.17481) — comprehensive survey covering topologies, communication patterns, and open challenges across 200+ recent papers.
     - [Anthropic, *Building Effective Agents* (2024)](https://www.anthropic.com/research/building-effective-agents) — practitioner guide distinguishing workflows from agents, advocating simple composable patterns before complex frameworks; widely referenced in production teams.
+    - [Cemri et al., *Why Do Multi-Agent LLM Systems Fail?* (2025)](https://arxiv.org/abs/2503.13657) — NeurIPS 2025 Datasets & Benchmarks paper introducing the MAST taxonomy: 14 failure modes across specification, inter-agent misalignment, and verification, annotated over traces from seven frameworks. Read this before designing your topology.
+    - [Anthropic, *How we built our multi-agent research system* (2025)](https://www.anthropic.com/engineering/built-multi-agent-research-system) — engineering account of a production orchestrator-worker research agent: subagent prompting, parallel tool calls, and the honest token accounting (roughly 15× a chat interaction).
 
     **Open-source & tools**
 
     - [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) — low-level state-machine orchestration framework for stateful, long-running agents; typed state dicts, conditional edges, and built-in checkpointing. Reached 1.0 GA in October 2025.
-    - [microsoft/autogen](https://github.com/microsoft/autogen) — conversational-agent framework where agents coordinate via natural-language message exchange; 60k+ GitHub stars but now in maintenance mode (see Agent Framework below).
+    - [microsoft/autogen](https://github.com/microsoft/autogen) — conversational-agent framework where agents coordinate via natural-language message exchange; one of the most-starred multi-agent repos, but now in maintenance mode (see Agent Framework below).
     - [crewAIInc/crewai](https://github.com/crewaiinc/crewai) — role-based multi-agent framework with Crews (autonomous collaboration) and Flows (production event-driven pipelines); ~45k+ stars, independent of LangChain, with native MCP and A2A support since its v1.0 release.
     - [openai/swarm](https://github.com/openai/swarm) — minimal educational reference implementation of the agent-handoff pattern; superseded in production by the OpenAI Agents SDK but ideal for studying core mechanics.
 
@@ -903,6 +933,7 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 - (a) Compute $P$ for $p = 0.6$ with $N = 1, 2, 3, 4$.
 - (b) Your API budget lets you run either **one agent on the hard task** ($p = 0.6$) or **spend the same tokens elsewhere**. Roughly how many agents $N$ do you need so that $P \ge 0.95$?
 - (c) The chapter says the gain is largest for moderate $p$ and negligible for trivial or impossible tasks. Verify this by comparing the *absolute* gain from going $N=1 \to N=3$ at $p = 0.6$ versus at $p = 0.95$.
+- (d) Now drop the independence assumption. Using the chapter's systematic-failure model, $P = (1-\rho)\left[1-(1-q)^N\right]$ with $q = p/(1-\rho)$, take $\rho = 0.15$ and the same marginal $p = 0.6$. Compute $q$ and $P$ at $N = 4$, and say what your answer to (b) becomes.
 
 ??? note "Solution"
     (a) Using $P = 1 - (1-p)^N$ with $1-p = 0.4$:
@@ -926,6 +957,14 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
     - At $p = 0.95$: $\big(1 - 0.05^3\big) - 0.95 = (1 - 0.000125) - 0.95 = 0.999875 - 0.95 = 0.0499$ (about 5 points).
 
     The moderate-$p$ task gains ~0.34 while the near-certain task gains only ~0.05 for the *same* 3x cost, confirming that ensembling multiple agents pays off most when a single agent is unreliable but not hopeless.
+
+    (d) With $\rho = 0.15$: $q = 0.6 / 0.85 \approx 0.7059$, so $1 - q \approx 0.2941$ and $(1-q)^4 \approx 0.00748$. Then
+
+    $$
+    P = 0.85 \times (1 - 0.00748) \approx 0.85 \times 0.99252 \approx 0.844
+    $$
+
+    against $0.974$ under independence — the four agents buy noticeably less than the naive formula promised. More importantly, the answer to (b) becomes **no such $N$ exists**: $P \le 1 - \rho = 0.85 < 0.95$ for every $N$. Once 15% of tasks fail systematically for this model-and-prompt, extra samples cannot reach a 95% target; you must change *something* — a stronger model, a different decomposition, a tool that supplies the missing information, or a verifier that catches the shared error — rather than buying more copies of the same agent.
 
 **3.** Reuse the chapter's cost model from the "5-agent pipeline" worked example (input USD 0.15 / 1M tokens, output USD 0.60 / 1M tokens). A team proposes cutting the pipeline from **5 stages to 3 stages** while keeping the same per-stage numbers: each stage still has a 1,000-token system prompt and generates 400 output tokens, and the forwarded context still grows by 500 tokens per stage starting at 0 (so stage 1 = 0, stage 2 = 500, stage 3 = 1,000).
 

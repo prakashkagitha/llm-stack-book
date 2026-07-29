@@ -1,6 +1,6 @@
 # 4.4 Writing GPU Kernels with Triton
 
-There is a moment in every LLM engineer's life when `torch.compile` is not enough, when fusing the operation you want by hand in CUDA C++ would take a week, and when the kernel you need does not yet exist in any library. That is the moment Triton was built for. Triton, originally created by Philippe Tillet and now an OpenAI project, is a Python-embedded language and compiler for writing GPU kernels. You write something that *looks* like NumPy operating on blocks of data; Triton's compiler turns it into PTX (NVIDIA's assembly) that, for many bandwidth-bound and moderately compute-bound kernels, lands within a few percent of expertly hand-tuned CUDA — at a tenth of the development cost.
+There is a moment in every LLM engineer's life when `torch.compile` is not enough, when fusing the operation you want by hand in CUDA C++ would take a week, and when the kernel you need does not yet exist in any library. That is the moment Triton was built for. Triton, originally created by Philippe Tillet and developed at OpenAI, is a Python-embedded language and compiler for writing GPU kernels; it now lives in the vendor-neutral `triton-lang` GitHub organization, with NVIDIA and AMD backends in-tree and an Intel GPU backend maintained alongside, so most of the kernels in this chapter compile and run unmodified on an MI300X as well as on an H100 (what changes across vendors is the *tuning*, not the source). You write something that *looks* like NumPy operating on blocks of data; Triton's compiler turns it into PTX (NVIDIA's assembly) that, for many bandwidth-bound and moderately compute-bound kernels, lands within a few percent of expertly hand-tuned CUDA — at a tenth of the development cost.
 
 This is the most hands-on chapter in Part IV. We will build, from nothing, four kernels of escalating difficulty: a **vector add** (to learn the programming model), a **fused softmax** (to learn reductions and row-wise work), a **matmul** (to learn tiling, accumulation, and the L2-cache `swizzle`), and a **simplified FlashAttention** (to tie it all together with the online softmax). Every kernel here is runnable. By the end you should be able to read the real FlashAttention and `fused_moe` Triton kernels in vLLM and understand every line.
 
@@ -795,7 +795,7 @@ if __name__ == "__main__":
 
 Run the same test with `q, k, v` in fp32 and you should see errors tighten to roughly `1e-3` — the fp16 case's larger tolerance is accumulation-order noise, not a bug. Two failure signatures worth memorizing so you recognize them instantly: **dropping the $D_i$ subtraction** (using `dS = P * dP * sm_scale` instead of `P * (dP - D_i) * sm_scale`) makes `dQ` wrong by a per-row *constant* offset, because the softmax Jacobian's rank-1 correction term vanishes; **dropping the `sm_scale` fold** (forgetting to multiply `dS` by `sm_scale`, or applying it twice) makes *every* gradient off by a factor of $\sqrt d$.
 
-**Full-spectrum hardware notes.** On a laptop or CPU-only box, set `TRITON_INTERPRET=1` and shrink the problem (`B=1, H=1, N=64, D=16`) to check correctness only — the interpreter is very slow, so this is a debugging mode, not a benchmark. On a single A100, H100, or B200, use realistic sizes (`N = 1024` to `8192`) for real timing; the backward does roughly 2x the forward's FLOPs (it recomputes `S`/`P` and additionally produces `dQ`, `dK`, `dV`), so expect the backward to cost about 2–2.5x the forward's latency at matched shapes. Multi-GPU is orthogonal here — this is a per-`(batch, head)` kernel; sharding across devices is handled by the training framework (data/tensor/context parallelism), not by anything inside the kernel.
+**Full-spectrum hardware notes.** On a laptop or CPU-only box, set `TRITON_INTERPRET=1` and shrink the problem (`B=1, H=1, N=64, D=16`) to check correctness only — the interpreter is very slow, so this is a debugging mode, not a benchmark. On a single A100, H100, or B200, use realistic sizes (`N = 1024` to `8192`) for real timing; the backward does roughly 2x the forward's FLOPs (it recomputes `S`/`P` and additionally produces `dQ`, `dK`, `dV`), so expect the backward to cost about 2–2.5x the forward's latency at matched shapes. On AMD (ROCm) the same source compiles through Triton's AMD backend, but the tuning constants do not transfer: a CDNA wavefront is 64 lanes wide rather than NVIDIA's 32, so `num_warps=4` is 256 threads there and 128 here — re-run `@triton.autotune` per vendor instead of shipping one config table. Multi-GPU is orthogonal here — this is a per-`(batch, head)` kernel; sharding across devices is handled by the training framework (data/tensor/context parallelism), not by anything inside the kernel.
 
 **Library mapping.** The official Triton tutorial `06-fused-attention.py` implements exactly this structure: the forward stores `M` (the running max) and `L`-equivalent statistics, `_attn_bwd_preprocess` computes `delta = sum(o * do)`, and `_attn_bwd_dkdv` / `_attn_bwd_dq` split the backward the atomics-free way described above. [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) is the reference implementation to read once this kernel makes sense.
 
@@ -830,6 +830,16 @@ os.environ["TRITON_INTERPRET"] = "1"   # set BEFORE importing triton
 
 The single most valuable habit: **write the eager-PyTorch reference first, then make the kernel match it** under `torch.allclose` with an appropriate tolerance (looser for fp16/bf16 because of accumulation order differences). Almost every Triton bug is a pointer/stride mistake or a missing mask, and a reference test localizes it immediately.
 
+**Reading what the compiler produced.** Triton lowers your kernel through a stack of MLIR dialects: **Triton IR** (your block program, hardware-agnostic) → **TritonGPU IR** (where tile *layouts*, the `num_warps` thread mapping, shared-memory allocation, and the `num_stages` pipeline are actually decided) → LLVM IR → PTX → cubin. Launching a kernel hands back the compiled object, and every stage is readable on it:
+
+```python
+compiled = add_kernel[(1,)](x, y, out, n_elements, BLOCK_SIZE=1024)
+print(compiled.asm.keys())                 # e.g. 'ttir', 'ttgir', 'llir', 'ptx', 'cubin'
+print(compiled.n_regs, compiled.n_spills)  # registers per thread, and register SPILLS
+```
+
+(The exact key names track the backend and Triton version.) `n_spills > 0` is the most actionable red flag in Triton: your tiles no longer fit the register file, so the compiler spills to "local" memory — which physically lives in HBM — and your supposedly on-chip kernel is quietly doing HBM round-trips inside the inner loop. The fix is a smaller `BLOCK_M`/`BLOCK_N`, fewer `num_stages`, or more `num_warps` (which splits the tile across more registers); this is a large part of why the autotuner's *biggest* config so often loses. Compiled binaries are cached on disk under `TRITON_CACHE_DIR` (`~/.triton/cache` by default) — clear it if you suspect a stale build, and set `TRITON_PRINT_AUTOTUNING=1` to see which config the autotuner actually picked.
+
 **Benchmarking.** Use `triton.testing.do_bench`, which handles GPU warmup, CUDA-stream synchronization, and the L2-cache flush between runs that naive `time.time()` benchmarks get wrong:
 
 ```python
@@ -841,6 +851,37 @@ print(f"{ms:.3f} ms,  {flops / (ms * 1e-3) / 1e12:.1f} TFLOP/s")
 ```
 
 **Where Triton fits in the stack.** TorchInductor — the backend of `torch.compile` — *generates Triton code* for fused pointwise and reduction kernels automatically. So even if you never write a `@triton.jit` function, you are running Triton when you `torch.compile` a model on an NVIDIA GPU. Writing kernels by hand is for the cases the compiler can't fuse well: novel attention variants, quantized matmuls, MoE dispatch, custom losses. See [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html).
+
+**Making your kernel `torch.compile`-safe.** A `@triton.jit` launch is opaque Python as far as TorchDynamo is concerned, so dropping one into a `torch.compile`d model risks a **graph break** — the compiled region splits in two around your kernel and you lose the surrounding fusions. The supported fix (PyTorch ≥ 2.6) is to register the launch as a real **custom operator** with `torch.library.triton_op`, marking the launch itself with `torch.library.wrap_triton`:
+
+```python
+import torch
+import triton
+from torch.library import triton_op, wrap_triton
+
+
+# Registers a genuine PyTorch operator, "stackbook::add", implemented by a
+# Triton kernel. Dynamo now sees a known op instead of untraceable Python.
+@triton_op("stackbook::add", mutates_args={})
+def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    out = torch.empty_like(x)
+    n_elements = out.numel()
+    # wrap_triton makes the launch *traceable*: under torch.compile it is
+    # captured into the graph rather than executed as a black box.
+    wrap_triton(add_kernel)[(triton.cdiv(n_elements, 1024),)](
+        x, y, out, n_elements, BLOCK_SIZE=1024
+    )
+    return out
+
+
+# Composes with the rest of the graph — no break, and Inductor can still fuse
+# the surrounding pointwise ops.
+compiled = torch.compile(lambda a, b: torch.sin(add(a, b)))
+```
+
+Because `triton_op` lets the tracer walk the wrapper body (that is exactly what `wrap_triton` enables), you generally do not need to hand-write the fake/meta implementation that the lower-level `torch.library.custom_op` requires for shape inference. Attach a gradient with `torch.library.register_autograd("stackbook::add", backward_fn, setup_context=...)` and the op is differentiable everywhere — the same job `FlashAttentionFn` did above, but additionally visible to `torch.compile` and `torch.export`. Rule of thumb: `autograd.Function` is fine for eager-only research code; register a custom op the moment the kernel has to live inside a compiled or exported model.
+
+**Don't write what already exists.** Before writing a kernel, check whether someone shipped it. [Liger-Kernel](https://github.com/linkedin/Liger-Kernel) provides Triton `LigerRMSNorm`, `LigerSwiGLUMLP`, `LigerRopeFunction`, and — the big one — `LigerFusedLinearCrossEntropy`, which fuses the LM head with the loss so the $(B{\cdot}T, V)$ logit tensor never lands in HBM; HuggingFace `Trainer` and TRL enable the whole set with one flag (`use_liger_kernel=True`). vLLM and SGLang ship Triton kernels for fused MoE routing and paged attention; `unslothai/unsloth` rewrites the fine-tuning backward in Triton. This is concrete for our own model: the fused cross-entropy is what keeps the loss head off the memory budget in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html), and the fused RMSNorm/SwiGLU swap-ins are called out in [The Stack-100M Architecture](../14-capstone/04-architecture.html). Hand-written Triton is for the op that *isn't* in a library yet.
 
 !!! interview "Interview Corner"
     **Q:** A candidate proposes rewriting softmax in Triton to make it faster. Walk me through *why* it's faster than calling several PyTorch ops, and what the speedup is fundamentally limited by.
@@ -855,7 +896,8 @@ print(f"{ms:.3f} ms,  {flops / (ms * 1e-3) / 1e12:.1f} TFLOP/s")
     - **Fusion is the win for memory-bound ops:** fused softmax loads a row once and writes once (~2 HBM passes vs ~5), giving ~2.5x — and that ceiling is set by bandwidth, not compute.
     - **Matmul is about reuse:** tile the `M`,`N`,`K` dims, accumulate `tl.dot` results in **fp32**, and use the **GROUP_M swizzle** for L2 locality; `num_stages` software-pipelines the K-loop to hide load latency.
     - **FlashAttention = online softmax over streamed K/V tiles:** keep running `m`, `ℓ`, and `O`; rescale **both** `ℓ` and `O` by `α = exp(m_old − m_new)` on every block; normalize once at the end. HBM traffic drops from $O(N^2)$ to $O(Nd)$.
-    - Always **write an eager-PyTorch reference first** and diff with `torch.allclose`; debug with `TRITON_INTERPRET=1`; benchmark with `triton.testing.do_bench`.
+    - Always **write an eager-PyTorch reference first** and diff with `torch.allclose`; debug with `TRITON_INTERPRET=1`; benchmark with `triton.testing.do_bench`; and check the compiled kernel's `n_spills` before believing any tile size — spilled registers live in HBM.
+    - To live inside a `torch.compile`d or exported model without a **graph break**, wrap the launch as a custom op with `torch.library.triton_op` + `wrap_triton` (plus `register_autograd` for gradients); plain `autograd.Function` is fine only for eager code.
     - Let `@triton.autotune` search `BLOCK_*`, `num_warps`, `num_stages`, `GROUP_M`; the best config depends on GPU, dtype, and problem shape — and bigger tiles can *lower* occupancy.
     - You usually don't beat cuBLAS/cuDNN with hand Triton; you write Triton to **fuse** what they can't (quantized GEMMs, custom attention, MoE), and TorchInductor already emits Triton under `torch.compile`.
 

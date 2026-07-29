@@ -4,7 +4,7 @@ A language model that can only read and write text is like a calculator without 
 
 This chapter covers the full engineering picture: how tool schemas are defined, how the function-calling fine-tune works, how you parse and validate model outputs, how to run the tool-call loop, how to handle errors gracefully, and how structured outputs relate to function calling. We also look at parallel tool calls, streaming, and best practices for production agents. By the end, you will be able to build a correct, robust tool-calling loop from scratch and understand what is happening inside the model when it decides to call a function.
 
-This chapter is the foundation for [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html), [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html), and [Memory Systems for Agents](../08-agents-harness/05-agent-memory.html).
+This chapter is the foundation for [The Agentic Loop: ReAct, Plan-Execute & Reflection](../08-agents-harness/02-agentic-loop.html), [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html), and [Memory Systems for Agents](../08-agents-harness/05-agent-memory.html). It is also the mechanism our capstone model is taught in [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) — everything below is written so it works against a 100M-parameter model you trained yourself, not only against a frontier API.
 
 ---
 
@@ -87,6 +87,38 @@ The result will be returned in <tool_response>...</tool_response>.
 ```
 
 The exact XML-like or JSON-like wrapper tokens vary per model family. Llama 3.1 uses a `<|python_tag|>` prefix for code interpreter calls and a custom tool-call format. Mistral uses `[TOOL_CALLS]` markers. Claude uses a dedicated `<parameter name="name">` XML structure. What they all share is that the *schema is in the context* and the *call is in the generated text*.
+
+In the open-source stack you rarely hand-write that JSON. HuggingFace `transformers` will derive the schema from a plain Python function — type hints plus a Google-style docstring — via `transformers.utils.get_json_schema`, and `apply_chat_template` accepts callables directly in its `tools=` argument:
+
+```python
+# pip install "transformers>=4.45"
+from transformers import AutoTokenizer
+from transformers.utils import get_json_schema
+
+def get_current_weather(location: str, units: str = "celsius") -> dict:
+    """
+    Retrieve the current weather for a city. Only use for current conditions.
+
+    Args:
+        location: City and optionally country, e.g. 'San Francisco, CA'.
+        units: Temperature unit, either 'celsius' or 'fahrenheit'.
+    """
+    return {"location": location, "temperature": 22, "units": units}
+
+# Docstring + annotations -> JSON Schema, no duplication of the interface.
+print(get_json_schema(get_current_weather))
+
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
+prompt = tok.apply_chat_template(
+    [{"role": "user", "content": "What's the weather in Tokyo?"}],
+    tools=[get_current_weather],   # callables or raw schema dicts both work
+    add_generation_prompt=True,
+    tokenize=False,
+)
+print(prompt)  # the serialized schema now sits inside the system message
+```
+
+The lesson for anyone building their own model: the *only* thing that makes tool calling work is that the chat template and the SFT data agree on a serialization. If you train your 100M model to emit `<tool_call>{...}</tool_call>`, then your `chat_template` (stored in `tokenizer_config.json`) must emit the matching schema block and `<tool_response>` wrapper, and the marker strings should be added to the tokenizer as *special tokens* so each becomes a single, unambiguous token that never gets split by BPE and can be used as a stop string — see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) and [A Byte-Level BPE Tokenizer From Scratch (and Why Vocab Size Is a Design Lever at 100M)](../14-capstone/03-tokenizer.html).
 
 {{fig:tool-call-anatomy}}
 
@@ -424,12 +456,13 @@ def run_tool_loop(
         )
         msg = response.choices[0].message
 
-        # Append the assistant's raw response to the conversation history
-        messages.append({
-            "role": "assistant",
-            "content": msg.content,
-            "tool_calls": [tc.model_dump() for tc in msg.tool_calls] if msg.tool_calls else None,
-        })
+        # Append the assistant's raw response to the conversation history.
+        # Omit the tool_calls key entirely when absent — some OpenAI-compatible
+        # servers reject an explicit null.
+        assistant_msg: dict[str, Any] = {"role": "assistant", "content": msg.content}
+        if msg.tool_calls:
+            assistant_msg["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+        messages.append(assistant_msg)
 
         # --- Check for tool calls ---
         if not msg.tool_calls:
@@ -503,6 +536,36 @@ if __name__ == "__main__":
 
     Total tokens for this 3-turn exchange on the order of 400–600 prompt tokens plus ~50 completion tokens — on the order of USD 0.001 with a small model. Context window growth is $O(n)$ in the number of tool calls because every call + result is appended to the message history.
 
+### Running the identical loop against an open-source model
+
+Nothing above is specific to a hosted API. Both [vLLM](../07-inference-serving/03-vllm-internals.html) and [SGLang](../07-inference-serving/04-sglang-radixattention.html) expose an OpenAI-compatible `/v1/chat/completions` endpoint that accepts the same `tools` array — you only change `base_url`. The one extra piece is a **tool-call parser**: a server-side plugin that converts the model family's raw markers (`<tool_call>…`, `[TOOL_CALLS]…`, `<|python_tag|>…`) into the structured `tool_calls` field the API contract promises.
+
+```bash
+# vLLM: enable model-initiated tool calls and pick the parser matching the
+# model family (hermes, mistral, llama3_json, pythonic, ... — check
+# `vllm serve --help` for the parsers your version ships).
+vllm serve Qwen/Qwen2.5-7B-Instruct \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --port 8000
+
+# SGLang exposes the same capability with its own parser registry:
+# python -m sglang.launch_server --model-path Qwen/Qwen2.5-7B-Instruct \
+#     --tool-call-parser qwen25 --port 8000
+```
+
+```python
+from openai import OpenAI
+
+# Same client, same TOOLS list, same run_tool_loop body — different endpoint.
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+```
+
+Two practical consequences. First, if no parser exists for *your* model — which is exactly the case for a model you fine-tuned yourself, like the capstone's Stack-100M — the server will hand back the raw marker text in `content`, and you fall back to the `extract_tool_calls` regex from the parse-validate-dispatch pipeline above. That path is not a downgrade; it is the ground truth the parsers themselves implement. Second, for small models it is worth pairing tool calling with constrained decoding (next section) so that argument JSON is *structurally* guaranteed valid and only the semantic choice of values is left to the model.
+
+!!! tip "Frameworks are this loop, wrapped"
+    LangChain/LangGraph (`llm.bind_tools([...])`), LlamaIndex (`FunctionAgent`), HuggingFace `smolagents`, and the OpenAI Agents SDK all reduce to the loop you just read: serialize schemas, call, parse, dispatch, append result, repeat. They add retries, tracing, and typed tool decorators. Write the raw loop once so that when a framework misbehaves you know exactly which of the five steps to inspect.
+
 ---
 
 ## Parallel Tool Calls
@@ -568,6 +631,22 @@ Both mechanisms use constrained decoding under the hood (see [Structured & Const
 
 The practical implication: when you set `response_format={"type": "json_schema", "json_schema": {...}}`, the model cannot produce invalid JSON. Field names are not masked (the model still generates them from its parameters), but structural elements — braces, commas, colons, value types — are enforced.
 
+The open-source implementations of that masking are worth knowing by name: **XGrammar**, **Outlines**, and **llguidance** all compile a JSON Schema (or an arbitrary EBNF grammar) into an incremental token-level mask. vLLM and SGLang both ship them as pluggable structured-output backends — XGrammar is the default in recent vLLM versions — and you reach them through the same OpenAI-compatible field:
+
+```python
+# Guaranteed-schema tool arguments from a local vLLM server.
+resp = client.chat.completions.create(
+    model="Qwen/Qwen2.5-7B-Instruct",
+    messages=[{"role": "user", "content": "Weather in Tokyo, in fahrenheit?"}],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {"name": "weather_args", "schema": WEATHER_SCHEMA},
+    },
+)
+```
+
+This is the single highest-leverage trick for making a *small* model a usable tool caller: a 100M-parameter model will drop a closing brace or invent a field name often enough to break a naive loop, but with grammar-constrained decoding its output is structurally valid by construction, and the only remaining errors are semantic (wrong tool, wrong value) — which the error-as-tool-result loop can recover from.
+
 ```python
 # Using structured outputs for a classification task (no tool needed)
 from pydantic import BaseModel
@@ -579,7 +658,9 @@ class SentimentResult(BaseModel):
     rationale: str
 
 client = OpenAI()
-completion = client.beta.chat.completions.parse(
+# Recent openai-python versions expose `.parse()` directly on
+# `client.chat.completions`; older ones only under `client.beta.…`.
+completion = client.chat.completions.parse(
     model="gpt-4o-mini",
     messages=[
         {"role": "system", "content": "Classify the sentiment of the user's text."},
@@ -660,6 +741,9 @@ def safe_dispatch(tool_call) -> dict:
         print(f"[ERROR] Tool '{fn_name}' raised: {traceback.format_exc()}")
         return {"error": "execution_error", "message": "An internal error occurred."}
 ```
+
+!!! warning "`signal.alarm` does not work in worker threads"
+    The timeout above is the simplest thing that works, but `signal.signal` and `signal.alarm` are POSIX-only and may only be called from the *main thread* of the main interpreter. If you combine this `safe_dispatch` with the `ThreadPoolExecutor` from the parallel-calls section, it will raise `ValueError: signal only works in main thread` — or, worse, silently never fire. For concurrent or cross-platform harnesses, enforce timeouts at the boundary instead: `concurrent.futures` `future.result(timeout=…)` (which stops *waiting* but does not kill the work), an `asyncio.wait_for` around an async tool, an HTTP client timeout for network tools, or — the only real answer for code execution — a subprocess or container you can hard-kill. Sandboxing tool execution is covered in [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html).
 
 ### Maximum call limits and infinite loop prevention
 
@@ -753,12 +837,35 @@ for msg in example:
     print(f"[{msg['role']}] {str(msg['content'])[:80]}")
 ```
 
+### Actually masking the loss
+
+"Compute loss only on assistant tokens" is easy to state and easy to get wrong, because after `apply_chat_template` you hold a flat token array with no obvious role boundaries. The mechanism `transformers` provides is a `{% generation %} … {% endgeneration %}` block inside the chat template, which makes the tokenizer return a per-token assistant mask:
+
+```python
+enc = tok.apply_chat_template(
+    example,                       # the 5-message conversation built above
+    tools=tools,
+    tokenize=True,
+    return_dict=True,
+    return_assistant_tokens_mask=True,   # requires {% generation %} in the template
+)
+input_ids = enc["input_ids"]
+mask = enc["assistant_masks"]      # 1 on assistant tokens, 0 elsewhere
+
+# Standard causal-LM convention: -100 tells cross_entropy to ignore the position.
+labels = [tid if m else -100 for tid, m in zip(input_ids, mask)]
+```
+
+In [TRL](https://github.com/huggingface/trl) the same behaviour is a single flag — recent `SFTConfig` versions accept `assistant_only_loss=True` — but do verify it on a real batch: decode the positions where `labels != -100` and confirm you see exactly the tool-call JSON and the final answer, and *never* a `<tool_response>` payload. This single check catches the most common tool-SFT bug, which trains the model to hallucinate tool outputs. See [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html) for the trainer around it, and [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html) for the capstone's concrete run.
+
 ### Data sources for tool-call training
 
 1. **Synthetic generation**: Use a capable frontier model (as of 2026, e.g. GPT-5, Gemini 3, or Claude Opus 4.5) to generate (query, tool call, result, answer) tuples given tool schemas. This scales cheaply and can cover arbitrary tool combinations.
 2. **Templated math/code tasks**: For calculator-style tools, many reasoning benchmarks (GSM8K, MATH) can be automatically converted: "call `calculate` with the expression, then state the answer."
 3. **Human demonstrations**: The highest quality but most expensive. Necessary for tools with complex multi-call chains.
 4. **Negative examples**: Include examples where the model correctly decides *not* to call a tool (the answer is in its parametric knowledge). Without these, over-calling becomes a problem.
+
+You do not have to start from zero: the HuggingFace Hub carries several permissively licensed function-calling SFT sets built exactly this way — Glaive's `glaive-function-calling-v2`, NousResearch's `hermes-function-calling-v1`, and Salesforce's xLAM data generated by the APIGen pipeline (which *verifies* each synthetic call by executing it) — alongside ToolBench for the 16k-API regime. Whichever you use, re-serialize it into *your* chat template before training, and measure the result on the Berkeley Function Calling Leaderboard harness (see the resources box) rather than on training-set loss; AST-level call accuracy is what you care about, and it can move in the opposite direction from loss.
 
 A rough rule of thumb: the order of thousands of tool-use examples is sufficient to teach a model the meta-skill on top of a strong instruction-following base. The exact count depends heavily on base model quality; a strong SFT base like Mistral-7B-Instruct can generalize to new schemas with on the order of 1,000–5,000 tool-call examples.
 
@@ -782,6 +889,8 @@ In a long agentic session, the message history grows without bound. Strategies t
 - **Summarize intermediate results**: after every $n$ tool calls, ask the model to produce a concise summary and replace the raw results with it.
 - **Structured memory**: extract key facts from tool results and store them in a dedicated memory section (see [Memory Systems for Agents](../08-agents-harness/05-agent-memory.html)).
 
+One serving-level consequence is easy to miss: the serialized tool schemas sit at the very front of every request in a session and never change, so they are a perfect stable prefix for KV-cache reuse. Keep the schema block byte-identical across turns (stable key ordering, no timestamps, no shuffling of the tool list) and vLLM/SGLang prefix caching will skip re-prefilling those tokens entirely — see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html). Conversely, appending a newly-enabled tool to the *middle* of the list invalidates the cache from that point onward, which is why dynamic tool sets belong at the end of the block.
+
 ### The Model Context Protocol (MCP)
 
 The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a standardized JSON-RPC-based protocol that lets any server expose tools, resources, and prompts to any compliant client. Instead of writing bespoke tool dispatch code per application, MCP provides a universal adapter: a tool server speaks MCP, the harness speaks MCP, and new tools can be plugged in without changing the client. It has since become the de facto industry standard — OpenAI adopted it in March 2025, Google and Microsoft followed, and in December 2025 Anthropic donated the specification to the Linux Foundation's Agentic AI Foundation, with a public ecosystem of over 10,000 active MCP servers. See [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html) for a deep dive.
@@ -792,10 +901,10 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
     - Tool schemas are JSON Schema objects injected into the model's context; the `description` field is the most important signal the model uses to decide whether and how to call a tool.
     - Function-calling capability is taught during SFT on multi-turn conversations that include tool calls and results; the model learns the meta-skill of reading any schema and producing conformant output.
     - The parse-validate-dispatch pipeline must handle JSON syntax errors, unknown tools, wrong argument types, and execution errors — all by feeding errors back to the model as tool results.
-    - The tool-call loop appends every (call, result) pair to the message history and repeats until the model produces a plain-text response or a maximum iteration limit is reached.
+    - The tool-call loop appends every (call, result) pair to the message history and repeats until the model produces a plain-text response; always bound it with a maximum iteration limit, per-tool quotas, and a context-window budget check.
     - Parallel tool calls allow the model to emit multiple independent calls in one response; results must be appended in the same order as the calls before the next LLM invocation.
-    - Structured outputs (JSON Schema constrained decoding) and function calling are complementary: function calling governs when to invoke a tool; structured outputs ensure the response payload is machine-readable.
-    - Always enforce a maximum call limit and a context window budget check to prevent infinite loops and context overflow.
+    - Structured outputs (JSON Schema constrained decoding, implemented open-source by XGrammar/Outlines/llguidance inside vLLM and SGLang) and function calling are complementary: function calling governs when to invoke a tool; constrained decoding makes the argument JSON structurally valid by construction — the difference between a usable and an unusable small-model tool caller.
+    - The same loop runs against an open-source model: vLLM/SGLang serve an OpenAI-compatible endpoint and a `--tool-call-parser` translates model-specific markers into `tool_calls`; with no parser for your own fine-tune, the regex parse-validate-dispatch pipeline in this chapter *is* the parser.
     - Training for tool use requires both positive examples (correct calls) and negative examples (correct non-calls) to avoid over-calling; a few thousand high-quality examples suffice on top of a strong instruction-following base.
     - Tool use is the foundational primitive for all agent architectures; everything in the agentic loop builds on top of the mechanisms described in this chapter.
 
@@ -819,6 +928,8 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
 
     - [OpenBMB/ToolBench](https://github.com/OpenBMB/ToolBench) — ICLR 2024 spotlight; training data, ToolLLaMA model, and evaluation harness for 16k-API tool use.
     - [ShishirPatil/gorilla](https://github.com/ShishirPatil/gorilla) — Gorilla OpenFunctions models, BFCL evaluation code, and GoEx safe execution engine.
+    - [mlc-ai/xgrammar](https://github.com/mlc-ai/xgrammar) and [dottxt-ai/outlines](https://github.com/dottxt-ai/outlines) — the grammar/JSON-Schema constrained-decoding engines that back structured outputs in vLLM and SGLang; the practical way to make a small model emit valid tool arguments.
+    - [vllm-project/vllm](https://github.com/vllm-project/vllm) and [sgl-project/sglang](https://github.com/sgl-project/sglang) — OpenAI-compatible servers whose `--tool-call-parser` plugins turn model-family tool markers into structured `tool_calls` for open-weight models.
     - [modelcontextprotocol/modelcontextprotocol](https://github.com/modelcontextprotocol/modelcontextprotocol) — the open MCP specification (donated to the Linux Foundation's Agentic AI Foundation in December 2025); the de facto standard for universal tool/resource interfaces, adopted by OpenAI, Google, and Microsoft.
 
     **Go deeper**

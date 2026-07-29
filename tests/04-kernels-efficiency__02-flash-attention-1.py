@@ -314,16 +314,78 @@ assert err < 1e-5, f"flash_attention_backward gradient check failed: {err}"
 
 
 # ---------------------------------------------------------------------------
-# SKIP(non-python): block #1 (line ~42) -- an ASCII HBM-traffic accounting
-# table in a ```text fence; not executable code.
+# Block "Wiring it into PyTorch autograd": the torch.autograd.Function wrapper
+# that turns the tiled forward/backward pair into a first-class PyTorch op,
+# checked against F.scaled_dot_product_attention and its autograd. Pure CPU
+# (float64, no device= anywhere).
+# ---------------------------------------------------------------------------
+
+import torch
+
+
+class FlashAttentionFn(torch.autograd.Function):
+    """Turn the tiled kernel into a first-class PyTorch op."""
+
+    @staticmethod
+    def forward(ctx, Q, K, V, causal=False, Br=32, Bc=32):
+        npy = lambda t: t.detach().cpu().double().numpy()
+        O_np, L_np = flash_attention_forward(npy(Q), npy(K), npy(V), Br, Bc, causal)
+        O = torch.as_tensor(O_np).to(Q)          # .to(Q) matches dtype AND device
+        L = torch.as_tensor(L_np).to(Q)
+        ctx.save_for_backward(Q, K, V, O, L)     # note: no NxN tensor is saved
+        ctx.hparams = (causal, Br, Bc)           # non-tensors go on ctx directly
+        return O
+
+    @staticmethod
+    def backward(ctx, dO):
+        Q, K, V, O, L = ctx.saved_tensors
+        causal, Br, Bc = ctx.hparams
+        npy = lambda t: t.detach().cpu().double().numpy()
+        dQ, dK, dV = flash_attention_backward(
+            npy(Q), npy(K), npy(V), npy(O), npy(L), npy(dO), Br, Bc, causal)
+        back = lambda a: torch.as_tensor(a).to(Q)
+        # one return value per forward input; None for the non-tensor arguments
+        return back(dQ), back(dK), back(dV), None, None, None
+
+
+flash_attention = FlashAttentionFn.apply
+
+torch.manual_seed(0)
+N, d = 96, 16
+Q, K, V = (torch.randn(N, d, dtype=torch.float64, requires_grad=True) for _ in range(3))
+
+flash_attention(Q, K, V, True).square().sum().backward()   # our op
+g_flash = [t.grad.clone() for t in (Q, K, V)]
+for t in (Q, K, V):
+    t.grad = None
+
+torch.nn.functional.scaled_dot_product_attention(       # PyTorch's reference op
+    Q, K, V, is_causal=True).square().sum().backward()
+g_ref = [t.grad.clone() for t in (Q, K, V)]
+
+autograd_err = max((a - b).abs().max().item() for a, b in zip(g_flash, g_ref))
+print("max grad error vs PyTorch autograd:", autograd_err)   # ~1e-15
+assert autograd_err < 1e-10, f"autograd.Function wrapper mismatch: {autograd_err}"
+
+
+# ---------------------------------------------------------------------------
+# SKIP(non-python): the ASCII HBM-traffic accounting table in a ```text fence;
+# not executable code.
 #
-# SKIP(non-python): block #5 (line ~453) -- an ASCII IO-complexity
-# accounting table in a ```text fence; not executable code.
+# SKIP(non-python): the ASCII IO-complexity accounting table in a ```text
+# fence; not executable code.
 #
-# SKIP(needs-gpu): block #6 (line ~479) -- constructs tensors with
-# device="cuda" and dispatches through torch's FlashAttention CUDA backend
-# (`F.scaled_dot_product_attention` under `sdpa_kernel(SDPBackend.FLASH_ATTENTION)`);
+# SKIP(needs-gpu): the `F.scaled_dot_product_attention` /
+# `sdpa_kernel(SDPBackend.FLASH_ATTENTION)` demo -- constructs tensors with
+# device="cuda" and dispatches through torch's FlashAttention CUDA backend;
 # there is no CPU FlashAttention kernel to fall back to, and CI has no GPU.
+#
+# SKIP(needs-gpu): the `flash_attn_func` / `flash_attn_varlen_func` demo --
+# requires the `flash-attn` package, which only builds against CUDA.
+#
+# SKIP(needs-network): the HF `AutoModelForCausalLM.from_pretrained(...,
+# attn_implementation="flash_attention_2")` snippet -- downloads weights from
+# the Hub and requires a CUDA FlashAttention kernel; CI must stay hermetic.
 # ---------------------------------------------------------------------------
 
 print("\nAll CPU-runnable blocks in 04-kernels-efficiency/02-flash-attention-1.md executed successfully.")

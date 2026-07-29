@@ -53,7 +53,7 @@ A **warp** is 32 threads that execute in lockstep on a single set of functional 
 - **Warp divergence**: when threads in the same warp take different branches (`if/else`), both paths are executed sequentially, with inactive threads masked. This halves throughput for a 50/50 split.
 - The SM schedules many warps concurrently. On an A100, each SM can hold up to 64 warps. When one warp stalls on a memory load, the SM issues instructions for a ready warp with zero overhead — this is *latency hiding*.
 
-**Occupancy** is the ratio of active warps per SM to the maximum. High occupancy is a proxy for effective latency hiding, though it is not the only factor — kernel-bound workloads may prefer fewer, more register-rich warps.
+**Occupancy** is the ratio of active warps per SM to the maximum. It is capped by three per-SM budgets: the register file (65,536 32-bit registers per SM on A100 and H100 — a kernel using 128 registers per thread therefore tops out at 512 resident threads, i.e. 16 of the 64 possible warps), the shared-memory capacity, and a hardware limit on resident blocks. High occupancy is a proxy for effective latency hiding, though it is not the only factor — compute-dense kernels often prefer fewer, more register-rich warps that keep a larger working set in registers. Measure rather than guess: `cudaOccupancyMaxActiveBlocksPerMultiprocessor(&n, kernel, threads_per_block, dynamic_smem_bytes)` reports resident blocks at runtime, `nvcc -Xptxas -v` prints per-thread register and per-block shared-memory usage at compile time, and `__launch_bounds__(max_threads, min_blocks_per_sm)` (or `-maxrregcount`) lets you tell the compiler to spill rather than exceed a register budget.
 
 ## The GPU Memory Hierarchy
 
@@ -61,7 +61,7 @@ Getting memory access right is the single most important performance lever in CU
 
 {{fig:cuda-memory-hierarchy-bandwidth-latency}}
 
-Bandwidth numbers are order-of-magnitude illustrations; see NVIDIA's official architecture whitepapers for precise figures. The key message: HBM is 10× slower than L2, and L2 is 10× slower than shared memory.
+Bandwidth numbers are order-of-magnitude illustrations; see NVIDIA's official architecture whitepapers for precise figures. The key message is the shape of the curve. On an A100, aggregate shared-memory bandwidth is on the order of 19 TB/s, L2 a few TB/s, and HBM ~2 TB/s — but the *latency* gap is far starker than the bandwidth gap: a shared-memory access resolves in tens of cycles, an L2 hit in a couple of hundred, an HBM miss in several hundred. Every optimization in this chapter is an attempt to move accesses up one level of that table.
 
 ### Global Memory Coalescing
 
@@ -221,9 +221,13 @@ __global__ void matmul_tiled(
     int row = blockIdx.y * BLOCK_SIZE + threadIdx.y;   // global row in C
     int col = blockIdx.x * BLOCK_SIZE + threadIdx.x;   // global col in C
 
-    // Shared memory tiles — +1 padding to avoid bank conflicts on B's transpose
+    // Shared memory tiles. With blockDim.x == 32 a warp is exactly one row of
+    // threads, so the stores Bs[ty][tx] and the reads Bs[k][tx] both stride by 1
+    // across lanes, and As[ty][k] is the same address for all lanes (a broadcast,
+    // not a conflict). This particular access pattern is conflict-free either way;
+    // the +1 pad is cheap insurance for variants that walk a tile column-wise.
     __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE + 1];  // +1 avoids bank conflicts
+    __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE + 1];
 
     float acc = 0.0f;  // Accumulator lives in a register
 
@@ -297,24 +301,35 @@ void launch_matmul_tiled(
     - Each tile is loaded once and reused by 32 threads along the row/column.
     - Each element of $A$ is loaded $N/T = 128$ times (once per block covering that row).
     - Each element of $B$ is loaded $M/T = 128$ times.
-    - Total reads: $(M \cdot K + K \cdot N) \times 1$ (each element loaded once per tile pass) = $2 \times K^2$ floats for the square case.
-    - That's $2 \times 4096^2 \approx 33 \times 10^6$ floats = ~134 MB — a ~4000× reduction in global memory traffic.
-    - In practice the L2 cache captures some reuse even in the naive case, but shared memory provides a guaranteed, programmer-managed cache at much higher bandwidth.
+    - Each block streams $K/T$ tile-pairs through shared memory, so it loads $2 \cdot K \cdot T$ floats; with $(M/T)(N/T)$ blocks the total is $2 \cdot M \cdot N \cdot K / T$ floats.
+    - That's $2 \times 4096^3 / 32 \approx 4.3 \times 10^9$ floats = ~17.2 GB — a **$T = 32\times$ reduction**. Tiling by $T$ divides HBM traffic by exactly $T$; that is the whole theorem.
+    - The absolute floor, if every element left HBM only once, would be $2K^2 \approx 33 \times 10^6$ floats = ~134 MB. Real cuBLAS/CUTLASS kernels approach it through multi-level blocking plus L2 reuse, and the L2 cache likewise rescues the naive kernel from the full 549 GB. Shared memory's advantage is that it is a *guaranteed*, programmer-managed cache at much higher bandwidth.
 
     **Arithmetic intensity:**
     - FLOPs: $2 \times 4096^3 \approx 137 \times 10^9$
-    - Bytes read (tiled): ~134 MB
-    - Arithmetic intensity: $137 \times 10^9 / (134 \times 10^6) \approx 1024$ FLOP/byte
-    - A100 peak: ~312 TFLOP/s FP32, HBM bandwidth ~2 TB/s → roofline crossover at ~156 FLOP/byte.
-    - At 1024 FLOP/byte we are firmly compute-bound, meaning the kernel is bottlenecked by FMA throughput, not memory. That is the correct regime for a matmul.
+    - Bytes read (tiled, $T = 32$, FP32): ~17.2 GB
+    - Arithmetic intensity: $137 \times 10^9 / (17.2 \times 10^9) \approx 8$ FLOP/byte. In general a $T \times T$ FP32 shared-memory tile gives exactly $\frac{2T^2K}{8KT} = T/4$ FLOP/byte, independent of matrix size.
+    - A100 roofline crossovers at ~2 TB/s HBM: FP32 CUDA cores (~19.5 TFLOP/s) → ~10 FLOP/byte; TF32 Tensor Cores (~156 TFLOP/s) → ~78; BF16/FP16 Tensor Cores (~312 TFLOP/s) → ~156.
+    - So this kernel sits *just under* the FP32 crossover — still marginally bandwidth-bound, and hopelessly so measured against Tensor Cores. This is exactly why a production GEMM does not stop at a 32×32 shared tile: register blocking raises the *effective* tile to 128×128 or larger, pushing arithmetic intensity into the hundreds and finally making the kernel compute-bound. The next subsection is how.
 
 ### Register Blocking and Double Buffering
 
 Production SGEMM kernels go further:
 
-1. **Register blocking**: each thread accumulates a $4 \times 4$ or $8 \times 8$ sub-tile in registers instead of one element, increasing the ratio of compute to shared-memory loads.
-2. **Double buffering**: while computing on tile $t$, asynchronously prefetch tile $t+1$ into a second shared-memory buffer using `__pipeline_memcpy_async()` (CUDA 11+), hiding the global-memory load latency completely.
-3. **Tensor Core instructions**: `wmma::mma_sync` or PTX `mma` instructions dispatch 4×8×16 mixed-precision fused operations directly to Tensor Cores, achieving peak TFLOP/s. cuBLAS and CUTLASS both use this path; you should too for any production matmul.
+1. **Register blocking**: each thread accumulates a $4 \times 4$ or $8 \times 8$ sub-tile in registers instead of one element. A block of 256 threads each holding an $8 \times 8$ accumulator covers a $128 \times 128$ output tile, so by the $T/4$ rule above the FP32 arithmetic intensity rises from 8 to ~32 FLOP/byte — past the crossover — while the register file, not shared memory, absorbs the reuse.
+2. **Double buffering**: while computing on tile $t$, asynchronously prefetch tile $t+1$ into a second shared-memory buffer using `cuda::memcpy_async` / `cp.async` (Ampere, CUDA 11+), hiding the global-memory load latency. On Hopper this is superseded by TMA (below).
+3. **Tensor Core instructions**: the `nvcuda::wmma` API issues warp-level `mma_sync` operations on fixed tile shapes (16×16×16, 32×8×16, 8×32×16 for FP16 inputs with FP32 accumulation); the underlying PTX `mma` instructions expose finer shapes such as `m16n8k16`. This is the only path to peak mixed-precision throughput — recall that FP32 CUDA cores deliver roughly 19.5 TFLOP/s on an A100 against ~312 TFLOP/s for its BF16 Tensor Cores. cuBLAS and CUTLASS both take this path; so should you for any production matmul.
+
+### Hopper and Blackwell: Async Copies, Clusters, and Warpgroup MMA
+
+From Hopper (`sm_90`) onward the fastest kernels are no longer written as "every thread loads its own element." Four hardware features restructure the inner loop, and together they are what FlashAttention-3 and CUTLASS 3.x/4.x are built on:
+
+- **TMA (Tensor Memory Accelerator)**: a *single* thread issues one bulk-tensor copy instruction (`cp.async.bulk.tensor`) that moves an entire multi-dimensional tile between global and shared memory, with address generation, bounds handling, and swizzling done in hardware. Completion is signalled through an `mbarrier` object in shared memory. This gives back the registers and instruction slots that hand-rolled `float4` loads consumed.
+- **Thread block clusters**: a group of blocks (up to 8 portably) is co-scheduled on the same GPC and can read and write each other's shared memory — *distributed shared memory* (DSMEM) — synchronizing with `cluster.sync()`. The hierarchy becomes grid → cluster → block → thread, so one loaded tile can serve several blocks.
+- **Warpgroup MMA (`wgmma`)**: an *asynchronous* matrix-multiply issued by a warpgroup (4 warps = 128 threads) that reads its operands straight from shared memory instead of registers, so it overlaps with the next TMA load. Blackwell (`sm_100`) extends this with fifth-generation Tensor Cores, a dedicated on-chip accumulator space (Tensor Memory), and block-scaled FP8/FP6/FP4 formats.
+- **Warp specialization**: once both the copy and the MMA are asynchronous, the natural kernel shape is a producer–consumer pipeline — some warps do nothing but issue TMA loads, others do nothing but issue `wgmma`. That is precisely FlashAttention-3's design.
+
+You almost never write these PTX instructions by hand. **CUTLASS**, with its **CuTe** layout algebra, is the canonical C++ interface to them; since CUTLASS 4 a Python-level **CuTe DSL** generates the same kernels from Python, and it is the toolchain FlashAttention-4 is written in. Two practical footnotes for any kernel at this level: shared memory beyond 48 KB per block must be requested explicitly with `cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, bytes)` (an H100 SM has 256 KB of unified L1/shared memory, most of which is addressable as shared memory by one block), and `wgmma`/TMA kernels must be compiled for the architecture-specific target `-arch=sm_90a` (`sm_100a` on Blackwell), not plain `sm_90`.
 
 Understanding these principles is what makes FlashAttention's tiled, IO-aware attention comprehensible — see [FlashAttention 2 & 3: Work Partitioning, Warp Specialization & FP8](../04-kernels-efficiency/03-flash-attention-2-3.html) for how they push these ideas further with warp specialization and pipeline stages.
 
@@ -453,7 +468,38 @@ matmul_ext = load(
 )
 ```
 
-For gradient support, wrap the function in `torch.autograd.Function` with a custom `backward` that calls the transpose matmuls.
+For gradient support — and, just as importantly, so that `torch.compile` can trace *through* your kernel instead of breaking the graph at it — register the kernel as a first-class PyTorch custom operator (`torch.library`, PyTorch 2.4+). This has superseded bare `torch.autograd.Function` as the recommended path for custom CUDA ops:
+
+```python
+import torch, matmul_ext
+
+@torch.library.custom_op("myext::matmul", mutates_args=())
+def my_matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    # The real kernel. `mutates_args=()` promises we do not write to the inputs.
+    return matmul_ext.matmul(a.contiguous(), b.contiguous())
+
+@my_matmul.register_fake          # shape/dtype rule: lets meta tensors and
+def _(a, b):                      # torch.compile reason about the op symbolically
+    return a.new_empty((a.shape[0], b.shape[1]))
+
+def _setup(ctx, inputs, output):  # save what backward needs
+    ctx.a, ctx.b = inputs
+
+def _backward(ctx, grad):         # dA = dC @ B^T,  dB = A^T @ dC
+    return my_matmul(grad, ctx.b.t()), my_matmul(ctx.a.t(), grad)
+
+torch.library.register_autograd("myext::matmul", _backward, setup_context=_setup)
+
+# opcheck runs PyTorch's full conformance suite: schema, fake-tensor consistency,
+# autograd correctness, and aliasing/mutation rules. Run it before you trust the op.
+torch.library.opcheck(
+    my_matmul,
+    (torch.randn(64, 32, device="cuda", requires_grad=True),
+     torch.randn(32, 16, device="cuda", requires_grad=True)),
+)
+```
+
+Without a registered fake (meta) implementation, `torch.compile` cannot infer the output shape and inserts a graph break around your kernel, silently giving back much of the fusion win described in [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html). Thirty lines of registration is what turns a fast kernel into a *composable* fast kernel.
 
 ## CUDA vs Triton: When to Use Each
 
@@ -489,6 +535,8 @@ For gradient support, wrap the function in `torch.autograd.Function` with a cust
 **When to use neither (torch.compile + PyTorch):**
 
 - `torch.compile` with `inductor` backend will auto-generate Triton kernels for most PyTorch operations. For standard ops — matmul, LayerNorm, ReLU — this is often within 5% of hand-written Triton and requires no custom kernel code. See [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html) for how this works.
+
+This last option is the right default for the capstone: [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) trains Stack-100M under `torch.compile`, which emits fused Triton kernels for RMSNorm, SwiGLU, and the cross-entropy loss while dispatching the heavy matmuls to cuBLAS and attention to FlashAttention. You will not hand-write a single CUDA kernel for Stack-100M — but when a step lands at 30% of the roofline you will open `ncu`, and coalescing, occupancy, bank conflicts, and arithmetic intensity are what make that report legible.
 
 !!! tip "Practitioner Tip: Start with Triton, Profile, then Descend to CUDA"
 
@@ -618,7 +666,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
     - **Shared memory** is programmer-managed L1 cache (~19 TB/s). Use it to reuse data loaded from HBM — the tiled matmul reduces global reads by a factor of $T$ (tile size), converting a bandwidth-bound kernel into a compute-bound one.
     - **Bank conflicts** occur when multiple threads in a warp access different addresses in the same shared-memory bank. Fix them by padding shared arrays by one element per row.
     - **Warp shuffle intrinsics** (`__shfl_sync`, `__shfl_down_sync`) enable intra-warp reductions and broadcasts faster than shared memory, without `__syncthreads()` overhead.
-    - A tiled 32×32 SGEMM at $M=N=K=4096$ achieves arithmetic intensity ~1024 FLOP/byte, firmly in the compute-bound regime — this is the goal for any large matmul kernel.
+    - A $T \times T$ shared-memory tile cuts HBM traffic by exactly $T$ and yields $T/4$ FLOP/byte in FP32 — so a 32×32 tile reaches only ~8 FLOP/byte, still short of the A100's ~10 FLOP/byte FP32 crossover. Register blocking (an $8\times8$ accumulator per thread → a $128\times128$ effective tile) and Tensor Cores are what finally make a GEMM compute-bound.
     - Choose Triton for new fused operators (80–95% of CUDA peak, Python syntax, portable), CUDA for maximum performance or irregular access patterns, and `torch.compile` for standard PyTorch graphs.
     - Always validate kernel outputs numerically against a PyTorch reference before profiling; use `ncu` for roofline analysis and bank-conflict detection.
     - Fused kernels (bias+activation, online softmax, dequant+matmul) reduce HBM traffic by eliminating intermediate writes — this is the design philosophy behind FlashAttention and quantized inference.
@@ -639,7 +687,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 
     **Open-source & tools**
 
-    - [NVIDIA/cutlass](https://github.com/NVIDIA/cutlass) — production-quality CUDA C++ templates for GEMM, including Tensor Core paths, pipeline stages, and Blackwell FP4/FP8 support; the reference for expert-level matmul kernels.
+    - [NVIDIA/cutlass](https://github.com/NVIDIA/cutlass) — production-quality CUDA C++ templates for GEMM, including Tensor Core paths, pipeline stages, and Blackwell FP4/FP8 support; the reference for expert-level matmul kernels. Its CuTe layout algebra is how TMA, clusters, and `wgmma` are expressed in practice, and CUTLASS 4 exposes the same machinery through a Python CuTe DSL.
     - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — official FlashAttention repository; now also ships FlashAttention-4, written in CuTeDSL and targeting Hopper and Blackwell Tensor Cores, alongside the FA2/FA3 kernels described above.
     - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — drop-in Triton kernel replacements for Hugging Face model components; shows the practical pattern for kernel-level LLM training optimization.
 
@@ -745,7 +793,9 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 
     **(c) Arithmetic intensity.** $\dfrac{1.10 \times 10^{12}\ \text{FLOP}}{4.03 \times 10^{8}\ \text{bytes}} \approx 2.73 \times 10^{3} \approx 2731$ FLOP/byte.
 
-    **Compute-bound?** $2731 \gg 156$, so yes — firmly compute-bound, even more so than the square $4096^3$ case (~1024 FLOP/byte). Intuitively, the larger $N$ and $M$ raise the FLOPs (which scale with $MNK$) faster than the read traffic (which scales with $MK + KN$), pushing arithmetic intensity higher.
+    **Compute-bound?** $2731 \gg 156$, so yes — under this idealized accounting, firmly compute-bound. Intuitively, the larger $N$ and $M$ raise the FLOPs (which scale with $MNK$) faster than the read traffic (which scales with $MK + KN$), pushing arithmetic intensity higher.
+
+    **Important caveat.** "Each element read once" is the *lower bound*, achievable only with unlimited on-chip capacity (plus L2 reuse). The concrete 32×32 shared-memory kernel in this chapter actually reads $2MNK/T = 2 \cdot 8192 \cdot 16384 \cdot 4096 / 32 \approx 3.44 \times 10^{10}$ floats $\approx 137$ GB, giving $T/4 = 8$ FLOP/byte — the same value as the square case, because the tiled kernel's arithmetic intensity depends only on $T$ and the element size, not on $M, N, K$. Closing the gap between 8 and 2731 FLOP/byte is precisely the job of register blocking, larger tiles, and L2-aware scheduling.
 
 **6.** Implement a fused kernel `fused_bias_gelu` that computes `C = gelu(A + bias)` element-wise, following the style of `fused_bias_relu_scale` in the chapter. Use the tanh approximation of GELU,
     $$ \text{gelu}(x) = 0.5\,x\left(1 + \tanh\!\left[\sqrt{2/\pi}\,(x + 0.044715\,x^3)\right]\right), $$

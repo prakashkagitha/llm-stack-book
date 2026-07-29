@@ -95,7 +95,7 @@ The loop terminates when $a_t$ calls `finish(·)` or when $t > T_{\max}$ (the ha
 
 {{fig:react-loop}}
 
-Here is a complete, runnable ReAct agent that uses the OpenAI-compatible chat API (works with any provider supporting function/tool calling or raw text generation). We implement both a tool-calling variant and a raw-text variant for clarity.
+Here is a complete, runnable ReAct agent that uses the OpenAI-compatible chat API (works with any provider — hosted or a local vLLM/SGLang server). We start with the raw-text variant, where the Thought/Action/Observation format is fully visible, and then rewrite it against the native tool-calling API that production harnesses actually use.
 
 ```python
 """
@@ -222,7 +222,8 @@ Important:
         )
         return params
 
-    def _parse_action(self, text: str) -> tuple[str, list[str]] | None:
+    @staticmethod
+    def _parse_action(text: str) -> tuple[str, list[str]] | None:
         """
         Extract the tool name and arguments from a line like:
             Action: search("Tokyo population")
@@ -238,9 +239,10 @@ Important:
         args = [a.strip().strip('"\'') for a in raw_args.split(",") if a.strip()]
         return tool_name, args
 
-    def _execute_action(self, tool_name: str, args: list[str]) -> str:
+    @staticmethod
+    def _execute_action(tool_name: str, args: list[str]) -> str:
         """Call the registered tool and return its string output."""
-        if tool_name == self.STOP_TOKEN:
+        if tool_name == ReActAgent.STOP_TOKEN:
             # finish() is a pseudo-tool handled by the loop.
             return "__FINISH__"
         if tool_name not in TOOLS:
@@ -344,6 +346,121 @@ The key implementation details to notice:
     4. `finish("Tokyo's metro area is approximately 1.85x larger than New York's.")`
 
     Total steps: 4. Total tokens: roughly 600 input + 200 output across all calls. At gpt-4o-mini pricing (~\$0.15/M input, ~\$0.60/M output), this trace costs on the order of USD 0.0002 — essentially free per query, but note that a 50-step agent task at similar density would approach USD 0.01.
+
+### The Native Tool-Calling Variant
+
+The raw-text loop above makes the mechanism visible, but every production harness in 2026 uses the provider's *native tool-calling* API instead: you pass JSON schemas for the tools, the chat template renders them, and the model emits structured tool calls that the SDK parses for you. The Thought/Action/Observation convention then lives in the chat template (see [Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html)) rather than in your regex.
+
+```python
+def tool_schemas() -> list[dict]:
+    """Convert the TOOLS registry into OpenAI-style JSON tool schemas."""
+    import inspect
+    schemas = []
+    for name, (fn, desc) in TOOLS.items():
+        params = {p: {"type": "string"}          # all our demo tools take strings
+                  for p in inspect.signature(fn).parameters}
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": desc,
+                "parameters": {
+                    "type": "object",
+                    "properties": params,
+                    "required": list(params),
+                },
+            },
+        })
+    return schemas
+
+
+def run_tool_calling(client, model: str, task: str, max_steps: int = 10) -> str:
+    """The same ReAct loop, but with structured tool calls instead of text parsing."""
+    messages: list[dict] = [{"role": "user", "content": task}]
+
+    for _ in range(max_steps):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tool_schemas(),
+            tool_choice="auto",
+            temperature=0.0,
+        )
+        msg = resp.choices[0].message
+        # Echo the assistant turn back verbatim — it carries the tool_call ids
+        # (and, for reasoning models, the reasoning block the next turn needs).
+        messages.append(msg.model_dump(exclude_none=True))
+
+        if not msg.tool_calls:
+            return msg.content or ""      # no tool call => this is the final answer
+
+        for call in msg.tool_calls:
+            args = json.loads(call.function.arguments)   # structured: no regex, no
+            fn, _ = TOOLS[call.function.name]            # quoting or paren bugs
+            try:
+                result = str(fn(**args))
+            except Exception as e:        # tool errors are observations, not crashes
+                result = f"Error: {e}"
+            messages.append({"role": "tool",
+                             "tool_call_id": call.id,
+                             "content": result})
+
+    return "Error: exceeded max steps."
+```
+
+Three structural differences are worth internalising. First, `finish()` disappears: **termination is signalled by an assistant turn that contains no tool call**, so the model no longer has to be taught a pseudo-tool. Second, the `stop=["Observation:"]` guard is unnecessary, because the API cannot emit a `tool` role message on the model's behalf — grounding is enforced by the protocol rather than by a stop string. Third, arguments arrive as parsed JSON, which eliminates the whole class of parsing bugs explored in Exercise 4. The raw-text form still matters when you serve a small model whose chat template has no tool section — which is exactly the situation in the capstone.
+
+### The Same Loop in a Framework: LangGraph
+
+Hand-rolling the loop is the right way to *understand* it; for production you generally want durable state, streaming, retries, and human-in-the-loop pauses. [LangGraph](https://github.com/langchain-ai/langgraph) is the de-facto Python runtime for this, and its prebuilt helper is a drop-in for everything above:
+
+```python
+# pip install langgraph langchain-openai
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a simple arithmetic expression."""   # docstring == tool description
+    allowed = set("0123456789+-*/()., ")
+    if not all(c in allowed for c in expression):
+        return "Error: only arithmetic expressions allowed."
+    return str(eval(expression, {"__builtins__": {}}, {}))
+
+agent = create_react_agent(
+    ChatOpenAI(model="gpt-4o-mini", temperature=0),
+    tools=[calculator],
+    checkpointer=InMemorySaver(),   # durable state: a run can be paused and resumed
+)
+
+result = agent.invoke(
+    {"messages": [{"role": "user", "content": "What is 37 / 20?"}]},
+    config={"configurable": {"thread_id": "demo-1"},
+            "recursion_limit": 25},   # LangGraph's equivalent of MAX_STEPS
+)
+print(result["messages"][-1].content)
+```
+
+Underneath, `create_react_agent` compiles to a two-node `StateGraph`: an `agent` node that calls the model, a `ToolNode` that executes any requested tools, and a *conditional edge* that routes back to `agent` while the last message still carries `tool_calls` and to `END` otherwise. That is literally the `while not done:` loop from the start of this chapter, expressed as a graph — which is what buys you checkpointing (resume after a crash), interrupts (ask a human before a destructive tool), and per-node streaming. The `recursion_limit` is the step ceiling; exceeding it raises rather than silently looping.
+
+The wider 2026 landscape is worth knowing by name: the **OpenAI Agents SDK** and **Pydantic AI** offer similar typed loops; Hugging Face **`smolagents`** implements the CodeAct variant where the action *is* a Python snippet rather than a JSON call (one code block can express branching and several tool calls at once); **LlamaIndex Workflows** targets event-driven retrieval pipelines; and **SWE-agent** / **OpenHands** are the reference open-source coding harnesses (see [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html)). All of them increasingly obtain their tools over the Model Context Protocol rather than hard-coding them — see [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html).
+
+### Running the Loop Against Your Own Model
+
+Nothing in this chapter requires a hosted API. Both vLLM and SGLang expose an OpenAI-compatible server, so the same client drives a model you trained yourself:
+
+```bash
+# Serve your own checkpoint; the loop above then needs only a different base_url.
+vllm serve ./stack-100m-sft --port 8000
+```
+
+```python
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+```
+
+At ~100M parameters the binding constraint is not reasoning quality but **format adherence**: a small base model will not reliably emit well-formed `Action:` lines, and its chat template usually has no tool section at all, so the raw-text variant is the one you use. Two fixes do most of the work, and both are covered in the capstone: supervised fine-tuning on ReAct transcripts distilled from a larger teacher, and grammar-constrained decoding so that the action line is syntactically valid by construction (vLLM and SGLang both expose structured-output fields backed by XGrammar/Outlines — check your server version for the exact field name; see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)). The end-to-end build — trace distillation, tool schema design, and the narrow research agent it produces — is [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html), with the SFT/RLVR machinery in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
 
 ## Planning: Decomposition and Plan-Execute
 
@@ -587,11 +704,12 @@ def beam_react_agent(
                     candidates.append((leaf_score, answer, None))
                     continue
 
-                # Execute action and get observation
-                parsed = ReActAgent._parse_action(None, text)  # static-style call
+                # Execute action and get observation.  Both helpers are
+                # @staticmethod, so we can reuse them without an agent instance.
+                parsed = ReActAgent._parse_action(text)
                 if parsed:
                     tool_name, args = parsed
-                    obs = ReActAgent._execute_action(None, tool_name, args)
+                    obs = ReActAgent._execute_action(tool_name, args)
                 else:
                     obs = "Error: no valid action found."
 
@@ -647,6 +765,8 @@ def context_full(messages: list, model_context_limit: int = 128_000) -> bool:
     estimated_tokens = total_chars / 4
     return estimated_tokens > MAX_CONTEXT_FRACTION * model_context_limit
 ```
+
+The 4-chars-per-token heuristic is fine for a guard rail but underestimates for code, JSON, and non-English text. In production, count real tokens with the model's own tokenizer — `tiktoken.encoding_for_model(...)` for OpenAI models, or `transformers.AutoTokenizer.from_pretrained(...).apply_chat_template(messages)` for an open-weights model, which also accounts for the template's role and tool-schema overhead.
 
 {{fig:agentloop-context-growth}}
 
@@ -728,6 +848,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 !!! key "Key Takeaways"
     - The agentic loop — observe, think, act — is the minimal pattern that grounds an LLM in real-world state. Without it, the model can only hallucinate outcomes.
     - ReAct interleaves Thought (chain-of-thought reasoning) and Action (tool calls) within a single context window, with Observations injected by the harness after each action. Always terminate generation at `"Observation:"` to prevent hallucinated observations.
+    - With the native tool-calling API the same loop needs no regex and no stop sequence: arguments arrive as JSON, observations go back as `role: "tool"` messages, and termination is simply an assistant turn with no tool call. LangGraph packages this as a two-node graph (`agent` → `ToolNode` → conditional edge) and adds checkpointing, interrupts, and a `recursion_limit` step ceiling.
     - Use `temperature=0.0` for agentic tasks, a hard `MAX_STEPS` safety limit, and action deduplication to detect and break loops before they waste tokens or cause real-world side effects.
     - Plan-Execute architectures front-load planning into a separate LLM call that produces a structured dependency graph of subtasks, enabling parallel execution and better long-horizon coherence.
     - Reflexion wraps the ReAct loop in an outer retry loop, using verbal reflection on failed trajectories to guide subsequent attempts — a form of few-shot self-supervised improvement.
@@ -757,6 +878,8 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 
     - [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) — graph-based orchestration framework for stateful, long-running agents with cycles, conditionals, and durable execution; the de-facto production choice for Python agentic pipelines.
     - [SWE-agent/SWE-agent](https://github.com/SWE-agent/SWE-agent) — open-source ReAct-style agent that resolves real GitHub issues; reference implementation for tool-interface design.
+    - [huggingface/smolagents](https://github.com/huggingface/smolagents) — deliberately small agent library whose `CodeAgent` expresses each action as executable Python (the CodeAct pattern) instead of a JSON tool call; the best short read for how little code a working loop needs.
+    - [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) — full open-source software-development agent (sandboxed shell, editor, browser); a working example of loop, harness, and sandbox integrated end to end.
     - [ysymyth/ReAct](https://github.com/ysymyth/ReAct) — official code release for the ICLR 2023 ReAct paper, with prompt notebooks for HotpotQA, FEVER, AlfWorld, and WebShop.
 
     **Go deeper**
@@ -840,7 +963,8 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
     **More robust strategy.** Rather than a single greedy regex, match the tool name and then parse the argument payload with a balanced-parenthesis / quote-aware pass. A pragmatic approach that stays in the chapter's style:
 
     ```python
-    def _parse_action(self, text: str):
+    @staticmethod
+    def _parse_action(text: str):
         # Find "Action:" then the tool name and an opening paren.
         m = re.search(r"Action:\s*(\w+)\(", text)
         if not m:
