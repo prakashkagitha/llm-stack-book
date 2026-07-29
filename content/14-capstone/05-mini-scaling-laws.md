@@ -456,6 +456,32 @@ Run it: as expected serving load rises from $10^{10}$ to $10^{14}$ tokens, the l
     - **Compute-optimal ≠ deployment-optimal.** For the same FLOP budget, compute-optimal wants ~190M params; we deliberately build ~85M and over-train, trading ~0.01 nats of loss for a ~55% permanent cut in inference cost — the deployment economics behind the plan's 200-tok/param budget.
     - **The law predicts loss, not capabilities.** Extrapolate loss with confidence; treat capability thresholds as uncertain and stay within a few epochs of unique data.
 
+!!! sota "State of the Art & Resources (2026)"
+    The Chinchilla parametric/IsoFLOP machinery this chapter miniaturizes is still the working standard, but 2024–2026 work has both formalized the deployment-aware extension this chapter builds toward (train-small-and-serve-long) and exposed real fragility in the original fitting methodology — worth knowing before you trust any single fit, including your own.
+
+    **Foundational work**
+
+    - [Kaplan, McCandlish, Henighan, et al., *Scaling Laws for Neural Language Models* (2020)](https://arxiv.org/abs/2001.08361) — the original power-law form for loss vs. $N$, $D$, $C$, and the LR-schedule confound this chapter's checklist is built to avoid.
+    - [Hoffmann, Borgeaud, Mensch, et al., *Training Compute-Optimal Large Language Models* (Chinchilla, 2022)](https://arxiv.org/abs/2203.15556) — introduces the three fitting approaches (loss envelope, IsoFLOP, parametric $L(N,D)$) this chapter's ladder reproduces at 1/1000th the scale.
+
+    **Recent advances (2023–2026)**
+
+    - [Sardana, Portes, Doubov & Frankle, *Beyond Chinchilla-Optimal: Accounting for Inference in Language Model Scaling Laws* (2024)](https://arxiv.org/abs/2401.00448) — formalizes the lifetime-compute (train + serve) objective behind this chapter's over-training decision; trained 47 models to validate that quality keeps improving well past 200 tokens/param.
+    - [Muennighoff, Rush, Barak, et al., *Scaling Data-Constrained Language Models* (2023)](https://arxiv.org/abs/2305.16264) — the repetition/data-wall correction that bounds how far over-training can go before epoching returns collapse.
+    - [Besiroglu, Erdil, Barnett & You, *Chinchilla Scaling: A Replication Attempt* (2024)](https://arxiv.org/abs/2404.10102) — reconstructs Hoffmann et al.'s data and shows the original parametric constants fit poorly and carry implausibly narrow confidence intervals, the empirical basis for this chapter's "trust the extrapolated loss, not the raw constants" rule.
+    - [Czech, Xu, Elmatad, Wang & Held, *Problems with Chinchilla Approach 2: Systematic Biases in IsoFLOP Parabola Fits* (2026)](https://arxiv.org/abs/2603.22339) — shows the IsoFLOP parabola-vertex method carries systematic bias unless slices are densely populated, precisely the caveat this chapter flags for its own coarse 4-rung ladder.
+    - [Xu, Wu, Cho, Hu & Wang, *Data-Constrained Language Model Pretraining: Improved Regularization and Scaling Laws* (2026)](https://arxiv.org/abs/2606.06888) — a newer data-constrained scaling law (SoftQ) plus a regularizer for training deep into repeated-data regimes.
+
+    **Open-source & tools**
+
+    - [apple/ml-scalefit](https://github.com/apple/ml-scalefit) — a JAX package for fitting parametric scaling laws ($L=E+A/N^\alpha+B/D^\beta$ and variants) with basin-hopping optimization and bootstrapped uncertainty, a production-grade version of this chapter's `scipy.optimize` fit.
+    - [shehper/scaling_laws](https://github.com/shehper/scaling_laws) — an open, from-scratch reproduction of Kaplan-style scaling laws on nanoGPT at sub-10M-parameter scale, the same "prove it on tiny models first" spirit as this chapter's ladder.
+
+    **Go deeper**
+
+    - [Lilian Weng, *Scaling Laws, Carefully* (2026)](https://lilianweng.github.io/posts/2026-06-24-scaling-laws/) — a thorough, up-to-date synthesis of the Kaplan/Chinchilla disagreement and why scaling-law fits are sensitive to seemingly trivial procedural choices (parameter counting, precision, loss aggregation).
+    - [Epoch AI, *Chinchilla Scaling: A Replication Attempt*](https://epoch.ai/publications/chinchilla-scaling-a-replication-attempt) — the visual, blog-form companion to the Besiroglu et al. paper above, with the reconstructed data and refit curves plotted out.
+
 ## Further Reading
 
 - Hoffmann, Borgeaud, Mensch, et al. *Training Compute-Optimal Large Language Models* (Chinchilla). arXiv 2022. — The three fitting methods (loss-envelope, IsoFLOP, parametric) this chapter miniaturizes.

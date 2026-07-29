@@ -661,6 +661,31 @@ You now have every artifact the capstone promised: a trained, mid-trained, align
     - GQA's 4× smaller KV cache, a right-sized 32768-token vocabulary, and int4 weights compound: the full model plus a 2048-token conversation fits in roughly 100MB of RAM — small enough for any laptop, and small enough for a Raspberry Pi.
     - The payoff of the entire capstone is concrete and checkable in one command: run `stacklm.generate --bits 4` and read text your own model produced, on your own machine.
 
+!!! sota "State of the Art & Resources (2026)"
+    Weight-only PTQ has matured into a commodity operation — GPTQ and AWQ are now standard export paths in every major serving stack, GGUF's block-quantized formats dominate CPU/edge deployment, and the frontier has pushed toward sub-4-bit and even ternary weights while small-model evaluation has consolidated around a handful of reproducible open harnesses.
+
+    **Foundational work**
+
+    - [Frantar, Ashkboos, Hoefler & Alistarh, *GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers* (2022)](https://arxiv.org/abs/2210.17323) — the Hessian-based, column-by-column reconstruction method this chapter's §5.2 implements a pedagogical version of.
+    - [Dettmers, Lewis, Belkada & Zettlemoyer, *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale* (2022)](https://arxiv.org/abs/2208.07339) — the mixed-precision decomposition that made int8 inference practical for transformers with outlier activation features.
+
+    **Recent advances (2023–2026)**
+
+    - [Lin, Tang, Tang, Yang, Dang & Han, *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration* (2023)](https://arxiv.org/abs/2306.00978) — the salient-channel-protection method §5.3 implements; MLSys 2024 Best Paper.
+    - [Xiao, Lin, Seznec, Wu, Demouth & Han, *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models* (2023)](https://arxiv.org/abs/2211.10438) — migrates quantization difficulty from activations to weights via a per-channel smoothing factor, enabling accurate W8A8 (not just weight-only) quantization.
+    - [Ma, Wang, Ma, Wang, Wang, Huang, Dong, Wang, Xue & Wei, *The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits* (2024)](https://arxiv.org/abs/2402.17764) — ternary {-1, 0, 1} weights matching full-precision perplexity at equal size/tokens, the current frontier past int4.
+
+    **Open-source & tools**
+
+    - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — the production reference for fused, quantized CPU/edge inference and the GGUF format this chapter's §7 practitioner tip points to as the "make it fast" follow-up.
+    - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — the library behind `torch.ao`-adjacent 8-bit/4-bit `Linear` layers and QLoRA, referenced in §7 as the CPU/GPU integer-kernel path.
+    - [ModelCloud/GPTQModel](https://github.com/ModelCloud/GPTQModel) — actively maintained production GPTQ/AWQ/GGUF quantization toolkit with Hugging Face Transformers, vLLM, and SGLang integration.
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the framework whose cloze-scoring approach §3.2 borrows for MC probes; backs the Hugging Face Open LLM Leaderboard.
+
+    **Go deeper**
+
+    - [GGUF (Hugging Face Hub docs)](https://huggingface.co/docs/hub/en/gguf) — the on-disk block-quantization format (Q4_K, Q6_K, IQ-series, and more) referenced throughout §5–§7 as the production upgrade from this chapter's reference int8/int4 packing.
+
 ## Further reading
 
 - Frantar, Ashkboos, Hoefler & Alistarh, *GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers*, 2022.

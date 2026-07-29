@@ -572,6 +572,33 @@ The design point (LFM2's own recipe): use *mostly* conv blocks with a *few* atte
     - **Efficiency variants are options, not the default**: MLA (DeepSeek-V2) compresses the KV cache to a latent; MTP (DeepSeek-V3 / Gloeckle et al.) adds a next-2-token head for denser signal + free draft head; an LFM2-style gated short-conv block trades long-range capacity for KV-free decode speed.
     - **One model, config-selected mixers**: keep every variant behind the same module contract so the Ch. 14.7 training loop and Ch. 14.5 scaling ladder run unchanged — coherence across the capstone is the whole point.
 
+!!! sota "State of the Art & Resources (2026)"
+    Every mechanism wired into `Stack-100M` — GQA, RMSNorm, QK-norm, RoPE/NoPE, SwiGLU, MLA, MTP — is a named, shipped choice in today's frontier open models; the list below links the primary sources plus the repos and write-ups worth reading alongside the code in this chapter.
+
+    **Foundational work**
+
+    - [Su et al., *RoFormer: Enhanced Transformer with Rotary Position Embedding* (2021)](https://arxiv.org/abs/2104.09864) — the RoPE mechanism `build_rope_cache`/`apply_rope` implement.
+    - [Zhang & Sennrich, *Root Mean Square Layer Normalization* (2019)](https://arxiv.org/abs/1910.07467) — RMSNorm, used for every norm in the model including QK-norm.
+    - [Shazeer, *GLU Variants Improve Transformer* (2020)](https://arxiv.org/abs/2002.05202) — SwiGLU, the MLP sublayer.
+
+    **Recent advances (2023–2026)**
+
+    - [Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints* (2023)](https://arxiv.org/abs/2305.13245) — the 8-query/2-KV-head attention design.
+    - [Liu et al., *MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases* (2024)](https://arxiv.org/abs/2402.14905) — the deep-and-thin evidence behind `d_model=512, n_layers=30`.
+    - [DeepSeek-AI, *DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model* (2024)](https://arxiv.org/abs/2405.04434) — introduces MLA, implemented here as the optional `MLAttention` module.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — ships Multi-Token Prediction at scale, the basis for `MTPHead`.
+    - [Gemma Team, *Gemma 2: Improving Open Language Models at a Practical Size* (2024)](https://arxiv.org/abs/2408.00118) — the logit/attention soft-capping this chapter exposes as `logit_soft_cap`/`attn_soft_cap`.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — MuonClip's QK-clip, the trillion-parameter cousin of this chapter's QK-norm stability argument.
+
+    **Open-source & tools**
+
+    - [huggingface/smollm](https://github.com/huggingface/smollm) — training code and recipe for SmolLM3, the model that popularized the every-4th-layer NoPE interleave this chapter adopts.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the fused, GQA-aware attention kernel that PyTorch's `scaled_dot_product_attention` dispatches to when available.
+
+    **Go deeper**
+
+    - [SmolLM3: smol, multilingual, long-context reasoner](https://huggingface.co/blog/smollm3) — HuggingFace's own writeup of the GQA + NoPE ablations behind the design choices this chapter cites.
+
 ## Further reading
 
 - Liu et al., *MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases*, 2024 — the deep-and-thin evidence.

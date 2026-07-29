@@ -500,6 +500,33 @@ Go run it. Then over-train it. Then, when you are ready, scale it up.
 
 ---
 
+!!! sota "State of the Art & Resources (2026)"
+    Cost-aware pretraining — over-training small models for cheap inference, then scaling the same recipe with data-constrained-aware mixes, μP-style hyperparameter transfer, and fine-grained MoE — is now the default playbook at every lab that ships a small production model.
+
+    **Foundational work**
+
+    - [Kaplan et al., *Scaling Laws for Neural Language Models* (2020)](https://arxiv.org/abs/2001.08361) — the original power-law relationships between loss, params, data, and compute that the capstone's cost arithmetic builds on.
+    - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (2022)](https://arxiv.org/abs/2203.15556) — the Chinchilla result showing most trained models are compute-inefficient, the baseline the capstone deliberately trains past.
+    - [Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2019)](https://arxiv.org/abs/1910.02054) — the sharded-optimizer-state idea behind FSDP, the first rung of the 1B→beyond parallelism ladder.
+
+    **Recent advances (2023–2026)**
+
+    - [Muennighoff et al., *Scaling Data-Constrained Language Models* (2023)](https://arxiv.org/abs/2305.16264) — quantifies how far repeating data can substitute for volume, the data-wall math cited for the 1B scale-up.
+    - [Sardana et al., *Beyond Chinchilla-Optimal* (2024)](https://arxiv.org/abs/2401.00448) — the inference-aware scaling law that formally justifies deliberately over-training a model you intend to serve.
+    - [Dai et al., *DeepSeekMoE: Towards Ultimate Expert Specialization* (2024)](https://arxiv.org/abs/2401.06066) — the fine-grained-plus-shared-expert MoE design the chapter's `DeepSeekMoEFFN` sketch is modeled on.
+    - [Qwen Team, *Qwen3 Technical Report* (2025)](https://arxiv.org/abs/2505.09388) — a current production MoE family (dense and MoE variants) applying the same capacity/compute-decoupling trade at scale.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — reports the MuonClip / QK-clip stabilization that keeps Muon usable at trillion-parameter scale, the fix the chapter tells you not to drop.
+
+    **Open-source & tools**
+
+    - [KellerJordan/Muon](https://github.com/KellerJordan/Muon) — the reference Muon-optimizer implementation, paired with AdamW for embeddings/norms exactly as in Stack-100M's hybrid optimizer.
+    - [microsoft/DeepSpeed](https://github.com/microsoft/DeepSpeed) — production ZeRO/FSDP/3D-parallelism and MoE training library, the systems layer that carries the DP→FSDP→pipeline progression past 1B.
+    - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — a minimal, widely-reproduced training loop; useful as a second reference implementation for the reproducibility and cost-accounting discipline this chapter builds.
+
+    **Go deeper**
+
+    - [EleutherAI, *Transformer Math 101*](https://blog.eleuther.ai/transformer-math/) — the canonical write-up of the 6ND FLOP rule, MFU, and per-parameter memory accounting used throughout this chapter's cost tables.
+
 ## 14.12.6 Further Reading: The Works Behind Part XIV
 
 Every technique in Stack-100M traces to a real, load-bearing paper. This is the curated list of the works actually cited across the capstone — read these and you have read the sources of the modern small-model recipe. (Illustrative magnitudes throughout the capstone are "on the order of"; these citations are the verifiable ground truth.)

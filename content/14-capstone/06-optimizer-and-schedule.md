@@ -410,6 +410,32 @@ It is worth stating plainly why each alternative was rejected, because an interv
     - Shared knobs: **weight decay 0.1** (decoupled; none on 1D norms), **global grad-clip 1.0**, AdamW **betas (0.9, 0.95)**, **bf16** autocast with no loss scaler, **~0.5M-token effective batch** via gradient accumulation (~16 micro-steps of 16 seqs @ 2048).
     - For `Stack-100M`'s 20B-token budget: **40,000 steps**, ~2,000 warmup, ~30,000 stable, ~8,000 decay.
 
+!!! sota "State of the Art & Resources (2026)"
+    Muon (with the Moonshot RMS-matching fix) and QK-clip have moved from nanoGPT speedrun tricks to production ingredients at frontier scale, and WSD is now a common default for schedule-agnostic pretraining — the capstone's stack mirrors what Kimi K2, Moonlight, and DeepSeek actually shipped.
+
+    **Foundational work**
+
+    - [Gupta, Koren & Singer, *Shampoo: Preconditioned Stochastic Tensor Optimization* (2018)](https://arxiv.org/abs/1802.09568) — the full-matrix preconditioner Muon cheaply approximates via Newton–Schulz.
+    - [McCandlish, Kaplan & Amodei, *An Empirical Model of Large-Batch Training* (2018)](https://arxiv.org/abs/1812.06162) — introduces the gradient-noise-scale / critical-batch-size argument used to justify the ~0.5M-token effective batch.
+    - [Loshchilov & Hutter, *Decoupled Weight Decay Regularization* (2019)](https://arxiv.org/abs/1711.05101) — the AdamW paper; Muon's decoupled weight decay follows the same recipe.
+
+    **Recent advances (2023–2026)**
+
+    - [Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024)](https://arxiv.org/abs/2404.06395) — introduces the Warmup–Stable–Decay schedule and its continuable-pretraining property.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — a frontier-scale run using a WSD-style multi-stage schedule.
+    - [Liu et al. (Moonshot AI), *Muon is Scalable for LLM Training* (2025)](https://arxiv.org/abs/2502.16982) — the Moonlight report: decoupled weight decay for Muon and the update-RMS matching that lets Muon and AdamW share one learning rate.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — introduces MuonClip and QK-clip to tame attention-logit blow-up under Muon at trillion-parameter scale.
+
+    **Open-source & tools**
+
+    - [KellerJordan/Muon](https://github.com/KellerJordan/Muon) — the reference PyTorch `Optimizer` implementation this chapter's `muon.py` follows.
+    - [KellerJordan/modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — the speedrun repo where Muon, QK-norm, and related tricks were stress-tested step by step.
+    - [MoonshotAI/Moonlight](https://github.com/MoonshotAI/Moonlight) — open-source distributed Muon (ZeRO-1) plus checkpoints from the "Muon is Scalable" report.
+
+    **Go deeper**
+
+    - [Keller Jordan, *Muon: An optimizer for hidden layers in neural networks* (blog, 2024)](https://kellerjordan.github.io/posts/muon/) — the original writeup deriving Newton–Schulz orthogonalization and the nanoGPT speedrun results.
+
 ## Further Reading
 
 - **Keller Jordan et al.**, *Muon: An optimizer for the hidden layers of neural networks* (2024) — the original Muon and Newton–Schulz orthogonalization; the nanoGPT speedrun context.

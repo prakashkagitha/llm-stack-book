@@ -417,6 +417,34 @@ assert TOY_CONFIG.n_heads * TOY_CONFIG.head_dim == TOY_CONFIG.d_model
     - "Narrow but real" is the capstone's honest target: not a general chatbot, but a model whose narrow-domain, tool-scaffolded outputs (arithmetic, retrieval-grounded QA) are genuinely verifiable, not merely plausible.
     - The entire project lives in one coherent, growing repository — package `stacklm` under `capstone/` — with a hermetic, network-free toy-scale config that exercises every code path in seconds, so every real bug is caught before a GPU-hour is spent.
 
+!!! sota "State of the Art & Resources (2026)"
+    The "train a real GPT-class model on a budget" tradition Karpathy started now has a 2025–2026 generation of open small-model recipes to learn directly from — the same data mixes, architectures, and optimizers Stack-100M borrows are all publicly documented and reproducible.
+
+    **Foundational work**
+
+    - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (2022)](https://arxiv.org/abs/2203.15556) — the Chinchilla scaling law this chapter's "over-train past compute-optimal" argument is built against.
+    - [Liu et al., *MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases* (2024)](https://arxiv.org/abs/2402.14905) — the paper that made the "deep-and-thin" case quantitative; the direct justification for Stack-100M's 30×512 shape.
+    - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — the original small-budget GPT-2 reproduction this capstone updates; simplest reference for the base training loop shape.
+
+    **Recent advances (2023–2026)**
+
+    - [Ben Allal et al., *SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model* (2025)](https://arxiv.org/abs/2502.02737) — HuggingFace's own writeup of exactly the aggressive-curation, heavily-over-trained recipe this chapter cites.
+    - [*SmolLM3: smol, multilingual, long-context reasoner*](https://huggingface.co/blog/smollm3) — the official HuggingFace blog post that introduced interleaved NoPE (every 4th layer) for length generalization, which Stack-100M adopts directly.
+    - [Qwen Team, *Qwen3 Technical Report* (2025)](https://arxiv.org/abs/2505.09388) — the frontier-lab report behind Qwen3-0.6B, the sub-billion dense model this chapter cites as proof a small model can be a real base, not a toy.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — the technical report documenting MuonClip (QK-clip), the fix that lets Muon train stably at scale, which Stack-100M's optimizer chapter reuses.
+    - [Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024)](https://arxiv.org/abs/2404.06395) — introduces the Warmup-Stable-Decay (WSD) schedule Stack-100M's pretraining and mid-training phases use.
+    - [*Introducing LFM2: The Fastest On-Device Foundation Models on the Market*](https://www.liquid.ai/blog/liquid-foundation-models-v2-our-second-series-of-generative-ai-models) — Liquid AI's official announcement of the gated short-convolution-plus-attention hybrid block Stack-100M implements as an optional mixer variant.
+
+    **Open-source & tools**
+
+    - [karpathy/llm.c](https://github.com/karpathy/llm.c) — pure C/CUDA GPT-2/GPT-3 reproduction; the low-level companion to nanoGPT for understanding what a training step costs on real hardware.
+    - [KellerJordan/Muon](https://github.com/KellerJordan/Muon) — the reference implementation of the Muon optimizer (Newton–Schulz orthogonalized updates for 2D hidden-layer weights) that Stack-100M's hybrid optimizer is built on.
+    - [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) — the classifier-filtered, high-educational-value web corpus that anchors Stack-100M's pretraining mix.
+
+    **Go deeper**
+
+    - [*Cosmopedia: how to create large-scale synthetic data for pre-training Large Language Models*](https://huggingface.co/blog/cosmopedia) — HuggingFace's own walkthrough of generating the dense, textbook-style synthetic data Stack-100M mixes in alongside FineWeb-Edu.
+
 ## Further Reading
 
 - Hoffmann et al., *Training Compute-Optimal Large Language Models* ("Chinchilla"), 2022.

@@ -589,6 +589,31 @@ Get this chapter wrong and every one of those three commitments has to be redone
     - Bigger vocabularies compress better (fewer tokens per document) but cost more embedding parameters; smaller vocabularies protect depth but pay it back in longer sequences and more forward passes per document — 32,768 is Stack-100M's chosen point on that curve, not a universal default.
     - Measured, real numbers beat estimated ones: this chapter's compression ratios (≈3.9 bytes/token corpus-wide, ≈4.7 for clean prose, ≈2.7 for code) came from actually running the trainer above, and you should always measure your own tokenizer against your own data rather than trusting someone else's numbers.
 
+!!! sota "State of the Art & Resources (2026)"
+    Byte-level BPE (this chapter's algorithm) remains the dominant tokenization scheme for production LLMs, but 2024–2026 research has pushed hard on two fronts: making tokenizers themselves better at compression (superword tokenization), and asking whether an explicit tokenizer is needed at all (byte-level / patch-based models).
+
+    **Foundational work**
+
+    - [Sennrich, Haddow & Birch, *Neural Machine Translation of Rare Words with Subword Units* (2016)](https://arxiv.org/abs/1508.07909) — the paper that brought BPE from data compression into NLP as a subword tokenizer.
+    - [Radford et al., *Language Models are Unsupervised Multitask Learners* (GPT-2, 2019)](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf) — introduced byte-level BPE and the pre-tokenizer regex this chapter's trainer reuses directly.
+    - [Kudo & Richardson, *SentencePiece: A Simple and Language Independent Subword Tokenizer and Detokenizer* (2018)](https://arxiv.org/abs/1808.06226) — the language-agnostic, whitespace-as-symbol framing behind many production tokenizer pipelines.
+    - [Press & Wolf, *Using the Output Embedding to Improve Language Models* (2017)](https://arxiv.org/abs/1608.05859) — the tied-embeddings result this chapter's parameter accounting (the "worth ~6 layers" argument) depends on.
+
+    **Recent advances (2023–2026)**
+
+    - [Pagnoni et al., *Byte Latent Transformer: Patches Scale Better Than Tokens* (2024)](https://arxiv.org/abs/2412.09871) — Meta's dynamic-entropy byte-patching architecture, the most credible recent attempt to match BPE-tokenized LLM quality without a fixed subword vocabulary at all.
+    - [Liu, Hayase, Hofmann, Oh, Smith & Choi, *SuperBPE: Space Travel for Language Models* (2025)](https://arxiv.org/abs/2503.13423) — extends BPE to merge across whitespace into "superword" tokens, reporting meaningfully fewer tokens per document and lower inference compute at fixed vocabulary size — directly relevant to this chapter's compression-vs-embedding-budget tradeoff.
+
+    **Open-source & tools**
+
+    - [openai/tiktoken](https://github.com/openai/tiktoken) — OpenAI's fast BPE tokenizer; the `allowed_special` design this chapter's `encode()` follows originates here.
+    - [huggingface/tokenizers](https://github.com/huggingface/tokenizers) — the Rust-backed production trainer referenced in this chapter's "training at scale" timing comparison.
+    - [karpathy/minbpe](https://github.com/karpathy/minbpe) — a minimal, from-scratch reference implementation of byte-level BPE train/encode/decode, good for cross-checking this chapter's trainer against an independently written one.
+
+    **Go deeper**
+
+    - [Hugging Face LLM Course — Byte-Pair Encoding tokenization](https://huggingface.co/learn/llm-course/chapter6/5) — a worked, step-by-step walkthrough of the BPE training and tokenization algorithm this chapter implements.
+
 ## Further reading
 
 - Sennrich, Haddow & Birch, *Neural Machine Translation of Rare Words with Subword Units*, 2016 — the paper that introduced BPE to NLP.

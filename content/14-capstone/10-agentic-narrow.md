@@ -713,6 +713,31 @@ This is the frontier of what 100M can honestly do, and it is a genuinely satisfy
     - Tool use **offloads exactly what small models fail at** (exact arithmetic, format discipline); the residual bottleneck is query formulation — the one cognitive step you cannot offload — which bounds the whole system.
     - Be honest: the result is a **narrow, grounded, scaffolding-shaped research assistant**, useful inside its distilled groove and brittle one step outside it. That is the genuine frontier of 100M.
 
+!!! sota "State of the Art & Resources (2026)"
+    Trajectory distillation into small tool-using agents has gone from a research curiosity (2023) to a standard recipe with dedicated frameworks and papers explicitly targeting sub-3B students — the narrow-agent approach this chapter builds is now mainstream practice, not a toy simplification.
+
+    **Foundational work**
+
+    - [Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models* (2022)](https://arxiv.org/abs/2210.03629) — the interleaved thought/action/observation loop this chapter implements.
+    - [Schick et al., *Toolformer: Language Models Can Teach Themselves to Use Tools* (2023)](https://arxiv.org/abs/2302.04761) — self-supervised tool-call insertion, a complementary route to tool use.
+    - [Zelikman et al., *STaR: Bootstrapping Reasoning With Reasoning* (2022)](https://arxiv.org/abs/2203.14465) — rejection-sampling fine-tuning on self-generated successful traces, the pattern behind the filter step.
+
+    **Recent advances (2023–2026)**
+
+    - [Chen et al., *FireAct: Toward Language Agent Fine-tuning* (2023)](https://arxiv.org/abs/2310.05915) — fine-tuning on diverse GPT-4-generated ReAct trajectories substantially outperforms few-shot prompting and improves robustness to noisy tool observations, the same finding this chapter's worked examples reproduce at 100M scale.
+    - [Kang et al., *Distilling LLM Agent into Small Models with Retrieval and Code Tools* (2025)](https://arxiv.org/abs/2505.17612) — transfers full task-solving trajectories (not just chain-of-thought) into 0.5B–3B students with retrieval and code tools, matching much larger CoT-distilled baselines.
+    - [Belcak et al., *Small Language Models are the Future of Agentic AI* (NVIDIA, 2025)](https://arxiv.org/abs/2506.02153) — a position paper arguing narrow, repetitive agent nodes (tool-calling, structured reasoning) are exactly where small specialized models belong, with a strong LLM reserved for planning.
+
+    **Open-source & tools**
+
+    - [huggingface/smolagents](https://github.com/huggingface/smolagents) — a barebones (~1,000 line) agent library where the model writes actions as code rather than JSON; useful reference for the wire-format tradeoffs this chapter discusses.
+    - [huggingface/trl](https://github.com/huggingface/trl) — includes a production `GRPOTrainer`, the same critic-free algorithm used in the optional RLVR polish pass.
+    - [Nardien/agent-distillation](https://github.com/Nardien/agent-distillation) — official code for the Kang et al. small-agent-distillation paper above: trajectory logging, SFT training, and benchmarking for distilled agents.
+
+    **Go deeper**
+
+    - [Anthropic, *Building Effective Agents* (2024)](https://www.anthropic.com/engineering/building-effective-agents) — practitioner guidance that simple, composable agent patterns beat complex frameworks, echoing this chapter's "keep the interface brutally regular" design choice.
+
 ## Further reading
 
 - Yao, Zhao, Yu, Du, Shafran, Narasimhan & Cao, *ReAct: Synergizing Reasoning and Acting in Language Models*, 2022 — the loop this chapter implements.

@@ -442,6 +442,33 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
     - **The bill is tiny for the return.** ~2–4 GPU-hours (~USD 4–8) for the sharpest quality jump, a 4× context window, and a task-relevant base — the best marginal compute return in the whole capstone.
     - **Resume optimizer state, keep z-loss, checkpoint every boundary.** Mid-training adds orchestration, not model code; reuse `StackLM`, the Muon+AdamW hybrid, and the checkpoint helpers unchanged.
 
+!!! sota "State of the Art & Resources (2026)"
+    WSD-style annealing and RoPE-rescale-plus-continue-train are now the default recipe for squeezing a quality jump and a long-context window out of a small model's last few percent of tokens — the open reports below (MiniCPM, OLMo 2, SmolLM3) all converge on the same broad-then-narrow, short-then-long shape this chapter walks through.
+
+    **Foundational work**
+
+    - [Su et al., *RoFormer: Enhanced Transformer with Rotary Position Embedding* (2021)](https://arxiv.org/abs/2104.09864) — the original RoPE derivation this chapter's frequency-ladder math builds on.
+    - [Kazemnejad et al., *The Impact of Positional Encoding on Length Generalization in Transformers* (2023)](https://arxiv.org/abs/2305.19466) — the NoPE result motivating Stack-100M's every-4th-layer no-position-encoding design.
+
+    **Recent advances (2023–2026)**
+
+    - [Peng et al., *YaRN: Efficient Context Window Extension of Large Language Models* (2023)](https://arxiv.org/abs/2309.00071) — per-wavelength NTK-by-parts scaling plus attention-temperature correction; the fuller cousin of the base-rescale used here.
+    - [Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024)](https://arxiv.org/abs/2404.06395) — introduces the WSD schedule and the 1−sqrt decay shape this chapter's `wsd_decay_multiplier` implements.
+    - [Ibrahim et al., *Simple and Scalable Strategies to Continually Pre-train Large Language Models* (2024)](https://arxiv.org/abs/2403.08763) — quantifies the LR re-warm/re-decay tax that motivates resuming from a *pre-decay* checkpoint rather than a finished one.
+    - [OLMo 2 Team, *2 OLMo 2 Furious* (Allen Institute for AI, 2024–2025)](https://arxiv.org/abs/2501.00656) — the fully open report that named and detailed the mid-training stage as a distinct phase between pretraining and post-training.
+    - [Hugging Face, *SmolLM3: smol, multilingual, long-context reasoner* (2025)](https://huggingface.co/blog/smollm3) — a public 3B model whose recipe mirrors this chapter almost move-for-move: a decay-phase mix upsampling math/code, every-4th-layer NoPE, and YaRN extrapolation from a 64K training length out to 128K.
+
+    **Open-source & tools**
+
+    - [allenai/OLMo-core](https://github.com/allenai/OLMo-core) — AI2's current training codebase for the OLMo family, including the staged pretrain/mid-train/anneal pipeline referenced above.
+    - [OpenBMB/MiniCPM](https://github.com/OpenBMB/MiniCPM) — reference implementation and checkpoints from the team that popularized WSD annealing at small scale.
+    - [huggingface/smollm](https://github.com/huggingface/smollm) — training configs and data recipes for the SmolLM/SmolLM3 family, a concrete public example of NoPE + YaRN + decay-phase capability injection.
+
+    **Go deeper**
+
+    - [HuggingFaceTB/cosmopedia](https://huggingface.co/datasets/HuggingFaceTB/cosmopedia) — the synthetic-textbook dataset this chapter's anneal mix leans on for dense, knowledge-rich tokens.
+    - [Aman Arora, *How LLMs Scaled from 512 to 2M Context: A Technical Deep Dive* (2025)](https://amaarora.github.io/posts/2025-09-21-rope-context-extension.html) — a worked, visual walkthrough of position interpolation, NTK-aware scaling, and YaRN that pairs well with this chapter's RoPE-rescale derivation.
+
 ## Further Reading
 
 - OLMo 2 Team, *2 OLMo 2 Furious* (Allen Institute for AI, 2024–2025): the open report that named and detailed the mid-training / annealing stage.

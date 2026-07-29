@@ -817,3 +817,30 @@ class PackedMemmapDataset(Dataset):
     ```
 
     **Why exact before near.** Exact dedup is far cheaper — a single `blake2b` hash and set membership per document, streaming, with O(1) memory per *unique* document (it stores 16-byte digests, not text). Near-dedup is heavier: it computes a 128-element MinHash signature per document, inserts it into the LSH index, and re-checks estimated Jaccard against every candidate. Running exact dedup first strips out all the verbatim repeats — mirrored pages, copy-pasted boilerplate, and the exact-repeat documents `synthetic_corpus` injects every 97th doc — so the expensive near-dedup pass processes a smaller, already-thinned stream. It is strictly wasteful to pay for a MinHash signature on a document an exact hash would have removed for a tiny fraction of the cost. The near pass then catches only what exact dedup cannot: the ~5%-edited near-duplicates (injected every 53rd doc) and cross-source paraphrases, whose normalized text differs and so hash to distinct keys.
+
+!!! sota "State of the Art & Resources (2026)"
+    The "filtered web + synthetic textbooks + code/math" recipe this chapter follows, and the practice of over-training small models past Chinchilla-optimal, are now the mainstream way small open LLMs are built — the links below trace both threads from their founding papers to the current tools.
+
+    **Foundational work**
+
+    - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (2022)](https://arxiv.org/abs/2203.15556) — the Chinchilla scaling law this chapter deliberately trains past, and the reason "tokens per parameter" is the right unit to reason in.
+    - [Lee et al., *Deduplicating Training Data Makes Language Models Better* (2022)](https://arxiv.org/abs/2107.06499) — the empirical case for the two-stage exact + near dedup this chapter implements from scratch.
+
+    **Recent advances (2023–2026)**
+
+    - [Penedo et al., *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale* (2024)](https://arxiv.org/abs/2406.17557) — the paper behind FineWeb and FineWeb-Edu, 70% of the Stack-100M mix.
+    - [Li et al., *DataComp-LM: In Search of the Next Generation of Training Sets for Language Models* (2024)](https://arxiv.org/abs/2406.11794) — a rigorous benchmark for comparing data-curation pipelines (filtering, dedup, mixing) at fixed compute, the same design space this chapter navigates by hand.
+    - [Ben Allal et al., *SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model* (2025)](https://arxiv.org/abs/2502.02737) — the technical report behind the small-model, high-quality-mix recipe (and Cosmopedia) this capstone's data mix follows.
+    - [Dubey et al., *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — documents Llama 3 8B's ~15T-token over-training run, the large-scale precedent for the deployment-economics argument in Section 1.
+
+    **Open-source & tools**
+
+    - [huggingface/datatrove](https://github.com/huggingface/datatrove) — HuggingFace's production pipeline library for large-scale filtering, deduplication, and dataset construction; the real-world version of `filters.py`/`dedup.py` in this chapter.
+    - [ChenghaoMou/text-dedup](https://github.com/ChenghaoMou/text-dedup) — ready-to-use MinHash/LSH and other near-dedup implementations, a drop-in production alternative to the from-scratch `MinHasher`/`LSHIndex` here.
+    - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — the flat-binary, memory-mapped `.bin` shard convention `ShardWriter`/`PackedMemmapDataset` follow.
+    - [karpathy/llm.c](https://github.com/karpathy/llm.c) — a minimal C/CUDA reimplementation of the same GPT-2-style data-loading and training loop, useful for seeing the packed-shard format used end to end without any Python framework.
+
+    **Go deeper**
+
+    - [FineWeb: Decanting the Web for the Finest Text Data at Scale (blog)](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1) — HuggingFace's narrative walkthrough of the exact filtering/dedup pipeline FineWeb-Edu was built with.
+    - [HuggingFaceTB/cosmopedia (dataset)](https://huggingface.co/datasets/HuggingFaceTB/cosmopedia) — the synthetic-textbook dataset card, including its generation methodology and its own MinHash dedup pass, for the 15% slice of the mix that has no standalone paper.

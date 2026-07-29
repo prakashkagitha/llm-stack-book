@@ -874,6 +874,33 @@ passes per optimizer step, hence the PLAN's stated ~2–4× wall-clock versus th
     - Expect final train loss on the order of **2.8–3.2 nats/token** on the Stack-100M mix — never
       treat this, or any illustrative number in this chapter, as a benchmark to hit exactly.
 
+!!! sota "State of the Art & Resources (2026)"
+    Single-GPU training loops like this one now borrow directly from the open speedrunning
+    community — Muon-based optimizers, `torch.compile`, and PyTorch-native sharding have all
+    moved from research curiosities to defaults since 2024.
+
+    **Foundational work**
+
+    - [Narayanan et al., *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM* (2021)](https://arxiv.org/abs/2104.04473) — established reporting achieved-vs-peak FLOPs/s as the standard way to measure training efficiency, the methodology MFU generalizes to a single GPU.
+
+    **Recent advances (2023–2026)**
+
+    - [Jordan, *Muon: An optimizer for hidden layers in neural networks* (2024)](https://kellerjordan.github.io/posts/muon/) — the Newton-Schulz-orthogonalized momentum optimizer this chapter's training loop applies to 2-D hidden weights.
+    - [Unsloth, *Bugs in LLM Training – Gradient Accumulation Fix* (2024)](https://unsloth.ai/blog/gradient) — a real, widely-reproduced instance of exactly the accumulation-scaling pitfall this chapter warns about, with measured loss-curve impact.
+    - [PyTorch team, *PyTorch 2: Faster ML Through Dynamic Bytecode Transformation and Graph Compilation* (ASPLOS 2024)](https://pytorch.org/blog/pytorch-pytorch-2-paper-tutorial/) — the TorchDynamo/TorchInductor compiler stack behind `torch.compile`, used here to help close the GPU-Util/MFU gap.
+
+    **Open-source & tools**
+
+    - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — the minimal single-GPU GPT training reference this capstone's loop is a direct descendant of.
+    - [karpathy/llm.c](https://github.com/karpathy/llm.c) — GPT-2/GPT-3 training in pure C/CUDA, a from-scratch counterpoint to the PyTorch loop in this chapter.
+    - [KellerJordan/modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — a community speedrunning record chain (Muon, FlashAttention, custom kernels) tracking how fast a small GPT can be trained end to end.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch-native pretraining platform (FSDP2, torch.compile, distributed checkpointing) that this chapter's "Scaling Out" section points toward for readers going past one GPU.
+
+    **Go deeper**
+
+    - [Getting Started with Fully Sharded Data Parallel (FSDP2)](https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html) — official PyTorch tutorial for the sharding path this chapter's FSDP discussion references.
+    - [Methods and tools for efficient training on a single GPU](https://huggingface.co/docs/transformers/perf_train_gpu_one) — HuggingFace's practitioner-oriented guide to the same batching/precision/memory levers this chapter walks through by hand.
+
 ## Further reading
 
 - Kaplan et al., *Scaling Laws for Neural Language Models* (2020) — the 6ND FLOPs-per-token rule used throughout this chapter's MFU calculation.

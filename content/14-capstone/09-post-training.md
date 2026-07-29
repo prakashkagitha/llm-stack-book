@@ -576,6 +576,33 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
     - The ladder is load-bearing and ordered: SFT gives format so DPO's pairs are comparable and GRPO's verifier can parse; skip a rung and the next one has nothing to work with — the same SFT → preference → verifiable-RL order as Tülu 3, scaled to one GPU.
     - Honest ceiling: post-training changes what the model *does* (turn-taking, format, taste, one narrow verifiable skill), not fundamentally what it *knows*; expect narrow generalization, confident errors off-distribution, and forgetting under aggressive RL — which is exactly why the capstone's endpoint is a scaffolded, tool-using *narrow* agent.
 
+!!! sota "State of the Art & Resources (2026)"
+    The SFT → DPO → RLVR ladder this chapter builds is now the industry-standard open post-training recipe; the open-source tooling that implements it at scale (TRL, open-instruct, verl) is exactly what you would reach for beyond a single GPU.
+
+    **Foundational work**
+
+    - [Christiano et al., *Deep Reinforcement Learning from Human Preferences* (2017)](https://arxiv.org/abs/1706.03741) — the pairwise-preference-to-reward idea that RLHF and, downstream, DPO both trace back to.
+    - [Wei et al., *Finetuned Language Models Are Zero-Shot Learners* (FLAN, 2021)](https://arxiv.org/abs/2109.01652) — established that instruction-formatted fine-tuning, not just scale, drives zero-shot instruction-following.
+
+    **Recent advances (2023–2026)**
+
+    - [Ding et al., *UltraChat: Enhancing Chat Language Models by Scaling High-quality Instructional Conversations* (2023)](https://arxiv.org/abs/2305.14233) — the multi-turn synthetic-dialogue dataset behind UltraChat-200k and much of the modern SFT-mix lineage.
+    - [Meng, Xia, Chen, *SimPO: Simple Preference Optimization with a Reference-Free Reward* (2024)](https://arxiv.org/abs/2405.14734) — drops DPO's reference model entirely by using length-normalized sequence log-probability as the implicit reward; the natural next step past the DPO code in this chapter.
+    - [Ben Allal et al., *SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model* (2025)](https://arxiv.org/abs/2502.02737) — documents the SmolTalk SFT mix referenced above and the full small-model pretrain-to-instruct pipeline it was built for.
+    - [Liu et al., *Understanding R1-Zero-Like Training: A Critical Perspective* (Dr. GRPO, 2025)](https://arxiv.org/abs/2503.20783) — identifies and removes GRPO's length-bias, the correction this chapter's loop already applies (per-token rather than per-sequence normalization).
+
+    **Open-source & tools**
+
+    - [huggingface/trl](https://github.com/huggingface/trl) — production `SFTTrainer`/`DPOTrainer`/`GRPOTrainer` implementations; the natural upgrade path from this chapter's from-scratch loops.
+    - [allenai/open-instruct](https://github.com/allenai/open-instruct) — the actual Tülu 3 codebase: SFT, DPO, and RLVR stages chained exactly as this chapter narrows them to 100M.
+    - [volcengine/verl](https://github.com/volcengine/verl) — a flexible, high-throughput RL-for-LLMs library (PPO, GRPO, RLOO, and more) for when rollouts need to scale past one GPU.
+    - [HuggingFaceTB/smoltalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk) — the ~1.1M-conversation SFT dataset this chapter's data-source note points to.
+
+    **Go deeper**
+
+    - [The RLHF Book](https://rlhfbook.com/) — Nathan Lambert's freely-readable, continuously updated book covering RLHF and post-training end to end, from reward modeling through direct alignment algorithms to RLVR.
+    - [Tülu 3: The Next Era in Open Post-Training](https://allenai.org/blog/tulu-3-technical) — AI2's write-up of the five-stage SFT → DPO → RLVR pipeline this chapter's single-GPU recipe is a miniature of.
+
 ## Further reading
 
 - Rafailov, Sharma, Mitchell, Manning, Ermon, Finn — *Direct Preference Optimization: Your Language Model is Secretly a Reward Model* (2023). The DPO derivation and loss used here.
