@@ -2,11 +2,11 @@
 
 The most expensive thing in this book is a from-scratch pretraining run. A frontier base model represents tens of millions of dollars of compute and months of wall-clock time. So the question that dominates real-world LLM engineering is rarely "how do I train a model from scratch?" — it is "I have a good base model and a new requirement (a new domain, a new language, fresher data, a bigger model); how do I get there *without paying the full pretraining bill again*?"
 
-That is **continual pretraining (CPT)** — also called *continued pretraining*, *continued pretraining*, or, when the new data is concentrated in one domain, **domain-adaptive pretraining (DAPT)**. You take a converged checkpoint and keep optimizing the language-modeling objective on a new data distribution. It sounds trivial — "just keep training" — and that is exactly why so many teams get it wrong. Naively resuming training on new data triggers two opposing failure modes at once: if you use a small learning rate, the model barely *learns* the new domain (the *plasticity* problem); if you use a large one, it *forgets* everything it knew (the *catastrophic forgetting* problem, also called the *stability* problem). The entire craft of CPT is navigating this stability–plasticity dilemma at a cost that is a single-digit percentage of the original run.
+That is **continual pretraining (CPT)** — also called *continued pretraining* or *continued training (CT)*, or, when the new data is concentrated in one domain, **domain-adaptive pretraining (DAPT)**. You take a converged checkpoint and keep optimizing the language-modeling objective on a new data distribution. It sounds trivial — "just keep training" — and that is exactly why so many teams get it wrong. Naively resuming training on new data triggers two opposing failure modes at once: if you use a small learning rate, the model barely *learns* the new domain (the *plasticity* problem); if you use a large one, it *forgets* everything it knew (the *catastrophic forgetting* problem, also called the *stability* problem). The entire craft of CPT is navigating this stability–plasticity dilemma at a cost that is a single-digit percentage of the original run.
 
 This chapter covers the full toolkit. We start with the learning-rate dynamics that make or break a CPT run (re-warming and re-decay), then the data-side defense against forgetting (replay), then the specific recipes for domain, language, and streaming adaptation. The second half is about a more aggressive idea: not just continuing to train the *same* weights, but **growing the model** — adding depth and width, upcycling a dense model into a Mixture-of-Experts (MoE), and transplanting an old model's knowledge into a new, larger vocabulary. We close with how to *plan* a CPT run: predicting the loss trajectory and budgeting compute before you spend it.
 
-Read this chapter alongside [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html), which sets the compute-vs-data tradeoffs CPT exploits; [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html), whose schedule machinery we reuse; [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html) for the data-mix knobs; and [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) for the upcycling target.
+Read this chapter alongside [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html), which sets the compute-vs-data tradeoffs CPT exploits; [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html), whose schedule machinery we reuse; [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html) for the data-mix knobs; and [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) for the upcycling target. The capstone applies this chapter's machinery at 100M scale: [Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html) is literally a CPT pass — resume the pre-decay WSD checkpoint, swap the data mix, re-decay — and is the cheapest place to practice every knob below.
 
 ## The Stability–Plasticity Dilemma
 
@@ -19,6 +19,8 @@ $$
 but with two complications: we usually do not have $\mathcal{D}_{\text{base}}$ exactly (the original mix is proprietary or lost), and we want the *new* term to dominate the compute. **Catastrophic forgetting** is the empirical fact that gradient descent on the first term alone drives the second term up sharply — the parameters that encoded general knowledge are overwritten by the new-domain gradient signal.
 
 Why does forgetting happen so violently in transformers? The loss landscape near a converged minimum is *not* flat in the directions that matter for old tasks. SGD on new data moves $\theta$ along whatever directions reduce the new loss fastest; those directions are generally **not orthogonal** to the directions that the old task cares about. The Fisher information matrix $F$ of the base task quantifies this — high-curvature directions (large $F_{ii}$) are precisely the parameters whose perturbation most damages old performance. Elastic Weight Consolidation (EWC, Kirkpatrick et al., 2017) added an explicit penalty $\sum_i F_{ii}(\theta_i - \theta_{0,i})^2$, but for LLM-scale CPT the dominant practical tools turn out to be *learning-rate control* and *replay*, not curvature penalties — they are cheaper and more robust. We will see why.
+
+A related question every team asks: why not just use LoRA? A low-rank adapter ([PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html)) *does* bound forgetting almost for free — you can always drop the adapter to recover the base model — but it also bounds *learning*. CPT's job is to inject genuinely new knowledge (a new language's morphology, a new domain's facts), which is diffuse and high-rank; the empirical pattern is that LoRA is competitive for style/format adaptation and clearly weaker than full-parameter training for knowledge acquisition at fixed token budget. Use full-parameter CPT to add knowledge, and reserve PEFT for behavior. Everything below assumes full-parameter training.
 
 {{fig:cpt-stability-plasticity-tradeoff}}
 
@@ -105,6 +107,8 @@ def make_cpt_schedule(
 #             num_decay_steps=4_000, final_lr_frac=0.05)
 ```
 
+In real training stacks you rarely write this from scratch — you configure it. With Hugging Face `transformers`, the cleanest route is to build the `LambdaLR` above and hand it to `Trainer(optimizers=(opt, sched))`, since the built-in `get_scheduler("cosine", ...)` has no re-warm/re-decay concept. With **Megatron-LM / Megatron-Core** the whole recipe is command-line flags: `--finetune` loads the model weights but resets the optimizer state, RNG state, and iteration counter (exactly the "reset and re-warm" move); `--override-opt_param-scheduler` makes your new `--lr`, `--lr-warmup-iters`, and `--lr-decay-style` win over the schedule saved in the checkpoint — forget that flag and Megatron will silently resume the *base* run's schedule at its floor LR, which is the single most common CPT configuration bug. `--no-load-optim` / `--no-load-rng` give finer-grained control if you want weights-only loading without `--finetune`'s counter reset. MosaicML **llm-foundry** exposes the same idea as `load_path` plus `load_weights_only: true` in YAML, and **torchtitan** and **nanotron** both support weights-only warm starts. See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html) for the surrounding launch configuration.
+
 !!! warning "Common pitfall: skipping re-warmup causes a worse spike than doing it"
     It is tempting to think "the model is already trained, so I can jump straight to my target CPT learning rate with no warmup." Don't. Resuming a converged checkpoint and immediately applying a 10x-higher LR than it finished at produces a large gradient step into a region the optimizer's stale Adam second-moment estimates ($v_t$) are not calibrated for — you get a sharp loss spike and sometimes divergence. Always re-warm over at least a few hundred steps, and re-initialize or carefully load the optimizer state (see below).
 
@@ -172,10 +176,39 @@ def token_balanced_stream(new_iter, replay_iter, replay_ratio, len_fn=len):
         yield doc
 ```
 
+In practice you get this for free from the data libraries. Hugging Face `datasets` interleaves streaming corpora with explicit sampling probabilities, which is exactly a replay ratio:
+
+```python
+from datasets import load_dataset, interleave_datasets
+
+# new domain: your own cleaned corpus, streamed from local JSONL shards
+new    = load_dataset("json", data_files="medical/*.jsonl",
+                      split="train", streaming=True)
+# proxy replay: a general-web corpus standing in for the lost base mix
+replay = load_dataset("HuggingFaceFW/fineweb-edu", "sample-10BT",
+                      split="train", streaming=True)
+
+# 5% replay; "all_exhausted" oversamples the smaller stream instead of stopping
+cpt_stream = interleave_datasets([new, replay], probabilities=[0.95, 0.05],
+                                 seed=42, stopping_strategy="all_exhausted")
+```
+
+Note that `probabilities` are *document*-level, so — as in the code above — token-level shares only match if the two sources have similar mean document length; pre-tokenize and pack into fixed-length shards ([Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html)) if you need exact token accounting. If you are running on **Megatron-LM**, the equivalent is a weighted blend passed to `--data-path` as alternating weight/prefix pairs (`--data-path 0.95 /shards/medical_text_document 0.05 /shards/general_text_document`), which Megatron samples at the *sample* level from pre-packed binary shards — that is the exact-token-accounting version. Build those replay shards with the same **datatrove** / `datasets` pipeline you used for pretraining data ([Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html)) so filtering and dedup are identical on both sides.
+
 !!! tip "Practitioner tip: measure forgetting on a frozen held-out base set"
-    Before you start CPT, carve out a held-out evaluation set from the *base* distribution (general-knowledge MMLU-style tasks, a perplexity set on web text) and a held-out *new*-domain set. Log both every N steps. A healthy CPT run shows new-domain loss dropping steadily while base loss rises only slightly and then plateaus. If base loss climbs monotonically, raise the replay ratio or lower the re-warm peak. This two-curve plot is your single best diagnostic.
+    Before you start CPT, carve out a held-out evaluation set from the *base* distribution (general-knowledge MMLU-style tasks, a perplexity set on web text) and a held-out *new*-domain set. Log both every N steps. Wire the downstream half to **EleutherAI's `lm-evaluation-harness`** (`lm_eval --model hf --model_args pretrained=<ckpt> --tasks hellaswag,arc_easy,mmlu`) run against periodic checkpoints, so "forgetting" is measured on the same harness and few-shot settings the base model was reported on — see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). A healthy CPT run shows new-domain loss dropping steadily while base loss rises only slightly and then plateaus. If base loss climbs monotonically, raise the replay ratio or lower the re-warm peak. This two-curve plot is your single best diagnostic.
 
 {{fig:cpt-replay-two-curve-diagnostic}}
+
+### Merging back toward the base model
+
+Replay fights forgetting *during* training; weight interpolation fights it *after*. Because a CPT run stays in the same loss basin as its initialization, the base and adapted checkpoints are usually **linearly mode-connected**, so you can simply average them:
+
+$$
+\theta_{\text{merged}} = (1-\alpha)\,\theta_0 + \alpha\,\theta_{\text{cpt}}, \qquad \alpha \in (0,1].
+$$
+
+Sweeping $\alpha$ traces out an explicit stability–plasticity curve — a cheap post-hoc dial you can tune against the two-curve diagnostic above, with no extra training. This is the same machinery as model soups (Wortsman et al., 2022) and task arithmetic (Ilharco et al., 2022), and `mergekit` implements it (`linear`, `ties`, `dare_ties`) for real checkpoints; see [PEFT II: Prompt/Prefix Tuning, IA3, Model Merging & Soups](../05-posttraining-alignment/04-peft-prompt-merging.html). Two caveats: merging only works when both checkpoints share an architecture *and* a tokenizer (so it is unavailable after vocabulary extension), and it can only trade off capabilities the two endpoints already have — it cannot recover knowledge neither model retains.
 
 ## Domain, Language & Streaming Adaptation
 
@@ -277,6 +310,8 @@ The alternative, **progressive stacking** (train shallow, copy-stack to deeper, 
 Widening a hidden dimension $d \to d'$ reuses Net2Net's *net2wider*: copy existing neurons and **split their outgoing weights** so the function is preserved. If neuron $j$ is duplicated $k$ times, divide each copy's outgoing weights by $k$ so the summed contribution is unchanged. To break the symmetry (otherwise the copies receive identical gradients forever and never diverge), add tiny noise. bert2BERT applies exactly this "function-preserving" widening to initialize a wide BERT from a narrow one and recovers most of the from-scratch performance with far less compute.
 
 ```python
+import torch
+
 @torch.no_grad()
 def net2wider_linear(W_in: torch.Tensor, W_out: torch.Tensor, new_width: int,
                      noise: float = 1e-3):
@@ -306,7 +341,7 @@ def net2wider_linear(W_in: torch.Tensor, W_out: torch.Tensor, new_width: int,
 **Sparse upcycling** turns a trained *dense* model into a *sparse* Mixture-of-Experts model, reusing the dense weights. The recipe (Komatsuzaki et al., 2022; used at scale for several production MoEs): replace each (or every other) dense MLP block with an MoE layer whose $E$ experts are each **initialized as a copy of the original dense MLP**. The router is added fresh (small random init). At step 0, every expert is identical, so — if the router is roughly uniform — the MoE layer computes approximately the original dense MLP's output, preserving the function. Continued pretraining then *differentiates* the experts. This buys you a high-capacity MoE (more parameters, same or modestly higher FLOPs per token) for the cost of a CPT pass, rather than training an MoE from scratch.
 
 ```python
-import torch.nn as nn, copy
+import torch, torch.nn as nn, copy
 
 class UpcycledMoE(nn.Module):
     """
@@ -339,7 +374,7 @@ class UpcycledMoE(nn.Module):
         return out
 ```
 
-See [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) for routing, auxiliary load-balancing losses, and capacity factors — all of which you must tune during the upcycling CPT, because freshly-added routers are prone to collapse (routing all tokens to one expert).
+See [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) for routing, auxiliary load-balancing losses, and capacity factors — all of which you must tune during the upcycling CPT, because freshly-added routers are prone to collapse (routing all tokens to one expert). The loop above is deliberately written for clarity, not speed: a real implementation sorts tokens by expert and does one grouped GEMM per expert (see the MoE chapter, or the fused kernels in `megablocks` / `grouped_gemm`). You do not have to write the checkpoint surgery yourself either — **Megatron-Core** ships a dense-to-MoE upcycling path (enabled with `--moe-use-upcycling`, which converts a loaded dense checkpoint into the MoE architecture described by your `--num-experts` / `--moe-router-topk` flags on the first save), and `mergekit`'s `passthrough` merge method is the off-the-shelf way to do the depth-stacking growth of the previous subsection on Hugging Face checkpoints.
 
 ### Vocabulary & tokenizer transfer
 
@@ -380,7 +415,9 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
     return new_emb
 ```
 
-After re-initializing embeddings you almost always **CPT the whole model** (not just the embeddings) so the body learns to use the new vocabulary; a common warm-up is to first train *only* the new embedding rows for a few hundred steps with the rest frozen, then unfreeze everything. See [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) for how the merges that define new tokens are produced, and [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html) for embedding/unembedding tying.
+Three details that bite in practice. **(1) The output head.** If the model *unties* input and output embeddings, you must initialize the new `lm_head` rows too — run the same sub-token-mean procedure on the unembedding matrix (and on the output bias, if any). If weights are tied, resizing the input embedding is enough, but then a mean-initialized row is simultaneously an input vector and a logit direction, which is one reason tied models sometimes need a few hundred extra steps to stop over-predicting new tokens. **(2) Padding.** Round the new vocabulary size up to a multiple of 64 (128 with tensor parallelism) with dummy tokens; unaligned vocab sizes cost real throughput in the final GEMM, and Megatron's `--make-vocab-size-divisible-by` does this for you. **(3) Order of operations.** After re-initializing embeddings you almost always **CPT the whole model** (not just the embeddings) so the body learns to use the new vocabulary; a common warm-up is to first train *only* the new rows for a few hundred steps with the rest frozen, then unfreeze everything.
+
+The library path mirrors the code above. Train the new merges with Hugging Face `tokenizers` (or `SentencePiece`) on target-domain text, splice them in with `tokenizer.add_tokens([...])` — or, for a language pass, train a fresh tokenizer and take the union of vocabularies — then call `model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=64)`. Recent `transformers` versions default to `mean_resizing=True`, which draws new rows from a distribution fitted to the existing embeddings rather than from a plain $\mathcal{N}(0,\sigma^2)$; that is strictly better than random but is *not* sub-token-aware, so for a serious vocabulary transfer overwrite those rows with the FOCUS-style means computed above. See [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) for how the merges that define new tokens are produced, [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html) for embedding/unembedding tying, and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) for the capstone's own vocabulary, whose 100M-scale embedding table makes these tradeoffs cheap to measure.
 
 ## Planning CPT Compute With Loss-Trajectory Models
 
@@ -458,6 +495,7 @@ def fit_cpt_trajectory(tokens, losses):
     - **Domain DAPT** is ~10–100 B tokens before alignment; **language adaptation** needs tokenizer extension + heavy strong-language replay; **streaming** updates use a WSD/infinite schedule and replay across all past rounds.
     - **Grow, don't retrain**: function-preserving depth (zero the new block's residual output), width (Net2Net split-and-normalize), and **dense→MoE sparse upcycling** (clone the dense MLP into experts) let a trained model initialize a larger one, finished with a short CPT pass.
     - **Tokenizer/vocabulary transfer** initializes new token embeddings as the **mean of their old sub-tokens** and preserves shared tokens — this drastically shortens the CPT needed for the new vocab to become useful.
+    - Use **full-parameter** CPT to inject knowledge (LoRA is for behavior, not facts); **weight interpolation** back toward the base checkpoint, $\theta=(1-\alpha)\theta_0+\alpha\theta_{\text{cpt}}$, is a free post-hoc stability–plasticity dial when the tokenizer is unchanged. In production you *configure* all of this: Megatron-LM's `--finetune` + `--override-opt_param-scheduler` + weighted `--data-path` blend, `datasets.interleave_datasets(probabilities=...)` for replay, `lm-evaluation-harness` for forgetting, `mergekit` for merging and layer stacking.
     - **Plan with loss-trajectory models**: fit a shifted power law $\mathcal{L}\approx\mathcal{L}_\infty + A/(D_0+D)^\alpha$ to a short pilot to choose token budget, replay ratio, and the forgetting/learning tradeoff before committing compute.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -480,6 +518,9 @@ def fit_cpt_trajectory(tokens, losses):
 
     - [apple/ml-tic-lm](https://github.com/apple/ml-tic-lm) — official code for TiC-LM: dataset pipelines, training scripts, and evaluation for time-continual pretraining experiments.
     - [Wang-ML-Lab/llm-continual-learning-survey](https://github.com/Wang-ML-Lab/llm-continual-learning-survey) — living paper list for the ACM CSUR 2025 comprehensive survey on continual learning of LLMs; organized by CPT, DAPT, and continual fine-tuning.
+    - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — the production CPT harness: weights-only warm start (`--finetune`, `--no-load-optim`), schedule override (`--override-opt_param-scheduler`), weighted data blends on `--data-path`, and dense→MoE upcycling (`--moe-use-upcycling`).
+    - [arcee-ai/mergekit](https://github.com/arcee-ai/mergekit) — checkpoint surgery toolkit: `linear`/`ties`/`dare_ties` merges for post-CPT anti-forgetting interpolation, and `passthrough` for depth-growth layer stacking.
+    - [axolotl-ai-cloud/axolotl](https://github.com/axolotl-ai-cloud/axolotl) — config-driven fine-tuning framework with a streaming continued-pretraining mode (`pretraining_dataset:`), a practical on-ramp for small-scale DAPT runs.
 
     **Go deeper**
 

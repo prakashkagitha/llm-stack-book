@@ -59,7 +59,7 @@ $$
 H(p_\text{data}, p_\theta) = H(p_\text{data}) + D_{\text{KL}}(p_\text{data} \| p_\theta)
 $$
 
-The entropy $H(p_\text{data})$ of the true data distribution is a constant. So minimizing cross-entropy is the same as minimizing the KL divergence from the model to the data. The irreducible entropy of natural language — roughly 1–1.5 bits per character or on the order of 2–4 nats per token for English — sets a hard lower bound the model can never beat.
+The entropy $H(p_\text{data})$ of the true data distribution is a constant. So minimizing cross-entropy is the same as minimizing the KL divergence from the model to the data. The irreducible entropy of natural language — Shannon's classic estimates put English at roughly 0.6–1.3 bits per character, which for a BPE token covering ~4 characters is on the order of 2–5 bits per token — sets a floor the model can never beat.
 
 **Perplexity** (PPL) is the exponentiated average loss:
 
@@ -202,6 +202,80 @@ assert torch.allclose(ref, mine, atol=1e-5)
 
 Both lines print `~11.05` — a randomly-initialized model scoring a 32000-token vocabulary lands near $\log V$ plus a logit-variance term, here about 11.05 nats — and the assert passes to machine precision. That confirms the flattened `(B*T, V)` call used throughout this chapter is nothing more than stable log-softmax, a gather at the true-class index, and a masked mean.
 
+### The Logit Tensor Is the Memory Bottleneck
+
+That innocuous `logits.reshape(B * T, V)` is, at real batch sizes, the single largest allocation in a training step — and it is the first thing that will OOM when you try to train your own model. Count the bytes for a micro-batch of $B \cdot T = 32 \times 2048 = 65{,}536$ tokens against a $V = 32{,}768$ vocabulary:
+
+| Tensor | dtype | bytes |
+|---|---|---|
+| `logits` from `lm_head` | bf16 | $65{,}536 \times 32{,}768 \times 2 = 4.3$ GB |
+| fp32 upcast for a numerically safe softmax | fp32 | 8.6 GB |
+| `log_softmax` output saved for backward | fp32 | 8.6 GB |
+| **loss head, peak** | | **≈ 21 GB** |
+
+For a 100M-parameter model the entire transformer trunk — weights, optimizer state, and all block activations — is *smaller than this*. Two properties make it especially nasty: the cost grows as $B \cdot T \cdot V$, so it fights every attempt to raise throughput by increasing the micro-batch; and activation checkpointing does nothing about it, because the head sits outside the checkpointed blocks.
+
+The 2026 standard fix is **chunked (fused) linear cross-entropy**: fold the `lm_head` matmul into the loss and process the token dimension in chunks, so at most `chunk × V` logits ever exist, and recompute those logits in the backward pass instead of storing them.
+
+```python
+import torch
+import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
+
+
+def _chunk_ce(h, w, t):
+    """One chunk -> (sum of CE over valid rows, valid count). The (C, V) logits are
+    local to this function, so `checkpoint` frees them right after the forward and
+    rebuilds one chunk at a time during backward."""
+    logits = F.linear(h, w).float()                    # (C, V) fp32 — transient
+    lse = torch.logsumexp(logits, dim=-1)              # (C,)
+    valid = t != -100
+    tgt = t.clamp_min(0).unsqueeze(-1)                 # keep gather in range
+    ce = lse - logits.gather(-1, tgt).squeeze(-1)      # CE = logsumexp - logit[target]
+    return (ce * valid).sum(), valid.sum()
+
+
+def chunked_linear_cross_entropy(hidden, weight, targets, chunk: int = 8192):
+    """Mathematically identical to F.cross_entropy(hidden @ weight.T, targets),
+    but peak logit memory is chunk*V instead of (B*T)*V — independent of batch size.
+    Gradients w.r.t. both `hidden` and `weight` accumulate correctly because autograd
+    sums across the checkpointed calls."""
+    h = hidden.reshape(-1, hidden.shape[-1])           # (B*T, d)
+    t = targets.reshape(-1)                            # (B*T,)
+    tot = h.new_zeros((), dtype=torch.float32)
+    n = torch.zeros((), dtype=torch.long, device=h.device)
+    for i in range(0, h.shape[0], chunk):
+        s, c = checkpoint(_chunk_ce, h[i:i + chunk], weight, t[i:i + chunk],
+                          use_reentrant=False)
+        tot, n = tot + s, n + c
+    return tot / n.clamp_min(1)
+
+
+# Verify against the naive path on a small problem
+torch.manual_seed(0)
+BT, d, V = 512, 64, 1000
+hidden = torch.randn(BT, d, requires_grad=True)
+weight = (torch.randn(V, d) * 0.02).requires_grad_()
+targets = torch.randint(0, V, (BT,))
+targets[::9] = -100
+
+ref = F.cross_entropy(F.linear(hidden, weight).float(), targets, ignore_index=-100)
+mine = chunked_linear_cross_entropy(hidden, weight, targets, chunk=128)
+assert torch.allclose(ref, mine, atol=1e-5), (ref.item(), mine.item())
+print(f"naive: {ref.item():.6f}   chunked: {mine.item():.6f}")
+```
+
+The price is recomputing the `lm_head` matmul in backward: $2 B T d V$ extra FLOPs, which for a 100M-class model is only a few percent on top of the $6ND$ step cost — a very cheap trade for a 10× cut in peak memory.
+
+In production you do not write this yourself. The libraries that implement it:
+
+- **Liger Kernel** (`liger-kernel`) — Triton kernels for LLM training; `from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss` drops in for the head + loss and is wired into TRL and Axolotl by a single config flag.
+- **Cut Cross-Entropy** (`cut-cross-entropy`, Wijmans et al.) — `from cut_cross_entropy import linear_cross_entropy`; computes the loss without ever materializing the logit matrix by fusing the matmul, the logsumexp, and the true-class gather in one kernel.
+- **`torch.compile`** over a hand-written chunked loop like the one above, which is what TorchTitan-style stacks use when they want no extra dependency.
+- **Megatron-LM** shards the vocabulary across tensor-parallel ranks and uses `vocab_parallel_cross_entropy`, which computes the log-partition with a single all-reduce of per-rank maxima and sums — so no rank ever holds the full $(B \cdot T, V)$ tensor (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)).
+
+Stack-100M uses the chunked path with `loss_chunk = 8192`, fused with its z-loss so the `logsumexp` is computed once and reused; the full kernel and its memory accounting are in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
+
 ---
 
 ## Loss Masking
@@ -291,11 +365,18 @@ Packed:
 
 Naive packing causes a subtle loss contamination issue: the model's prediction of the first token of document B is conditioned on the final tokens of document A, which is semantically meaningless. This inflates the loss on document-boundary tokens and, more insidiously, teaches the model to expect arbitrary tokens as context — potentially hurting coherence of long-form generation.
 
-There are two ways to handle this:
+There are three responses, in increasing order of rigor:
 
-**Option 1: Loss masking at boundaries.** Zero out the loss for the first token of each document in a packed sequence (its prediction is "poisoned" by the previous unrelated document). This is the most common approach.
+**Option 0: Do nothing.** Classic GPT-2/GPT-3-style pretraining simply concatenates documents with `<|endoftext|>` and trains on every position, letting the model learn that the separator means "the previous document ended, condition on nothing before it." At a 1–2k context the contaminated positions are a small fraction of all tokens, and this is what nanoGPT and most small reproductions do.
 
-**Option 2: Intra-document causal masking.** Use a block-diagonal attention mask so that each document only attends to itself. This is more expensive (cannot use standard FlashAttention without modification) but eliminates the contamination entirely. This is what some modern models use during fine-tuning (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)).
+**Option 1: Loss masking at boundaries.** Zero out the loss for the first token of each document in a packed sequence (its prediction is "poisoned" by the previous unrelated document). One line of code, no change to the attention kernel.
+
+**Option 2: Intra-document (block-diagonal) attention masking.** Forbid attention from crossing a document boundary at all, so each document is trained exactly as if it had been the only thing in the context window. The Llama 3 report describes using such a mask and notes it mattered most during long-context training, where a single sequence packs many documents. Two production paths give you this *without* giving up a fast kernel:
+
+- **varlen FlashAttention.** `flash_attn_varlen_func(q, k, v, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, causal=True)` from the `flash-attn` package takes the packed batch flattened to `(total_tokens, n_heads, head_dim)` plus an `int32` `cu_seqlens` array of cumulative document offsets, and runs each document as an independent attention problem at full FlashAttention speed.
+- **FlexAttention.** In PyTorch ≥ 2.5, `torch.nn.attention.flex_attention` with `create_block_mask(lambda b, h, q, kv: (q >= kv) & (doc_id[b, q] == doc_id[b, kv]), B, None, T, T)` compiles a fused causal-**and**-same-document mask and skips blocks that are entirely masked, so the cost stays close to dense causal attention.
+
+Megatron-LM exposes the same behaviour with `--reset-attention-mask`, and its companion `--reset-position-ids` restarts position indices at each `<|endoftext|>` so that RoPE does not give the second document in a pack an artificial positional offset — forgetting the position reset is a classic packing bug. The same machinery is reused for post-training packs (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)), and Stack-100M's packed `uint16` shards carry per-token `seq_ids` for exactly this purpose (see [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html)).
 
 ```python
 import torch
@@ -588,6 +669,19 @@ bpb = nats_per_token_to_bpb(2.85, 4.0)
 print(f"BPB: {bpb:.3f}")   # → 1.028
 ```
 
+You rarely compute this by hand for a released model: **`lm-evaluation-harness`** (EleutherAI) implements exactly this normalization for its rolling-loglikelihood tasks, which score a whole document by sliding the model over it and summing per-token log-probabilities.
+
+```bash
+pip install lm-eval
+# wikitext is a `loglikelihood_rolling` task: it reports word_perplexity,
+# byte_perplexity and bits_per_byte, all derived from the same summed NLL.
+lm_eval --model hf \
+        --model_args pretrained=./my-100m-checkpoint,dtype=bfloat16 \
+        --tasks wikitext --batch_size 8
+```
+
+Because the harness divides the summed NLL by the *raw byte count* of the original text rather than by the token count, `bits_per_byte` is directly comparable across tokenizers — which is why it, and not perplexity, is the number to track when you swap your tokenizer or compare against a model with a different vocabulary. Harness internals and how to add your own task are covered in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
+
 ---
 
 ## UL2 and Span Corruption Alternatives
@@ -603,21 +697,21 @@ Input:  "The quick <extra_id_0> over the <extra_id_1> dog."
 Target: "<extra_id_0> brown fox jumps <extra_id_1> lazy <eos>"
 ```
 
-This is more efficient than causal LM in one sense: only the masked-out tokens (typically 15% of the sequence) contribute to the loss, but each contributes a larger gradient signal because they require understanding the surrounding context.
+The trade-off against causal LM runs the other way on token efficiency: only the masked-out tokens (typically 15% of the sequence) carry loss, so a span-corruption model extracts roughly an order of magnitude fewer supervised predictions per token of corpus. What it buys is that each prediction is conditioned *bidirectionally* — the encoder sees text on both sides of the span — which historically produced stronger representations for classification and extraction at the same parameter count.
 
 ### The UL2 Family
 
 **UL2** (Tay et al., 2022, "Unifying Language Learning Paradigms") showed that a single model pretrained on a **mixture** of different denoising objectives can match or outperform models trained on any single objective, while gaining versatility.
 
-UL2 defines three classes of denoising modes, labeled with special tokens:
+UL2 defines three classes of denoising modes, each selected at inference by a **mode token** prepended to the input:
 
-| Mode | Sentinel | Description | Use case |
-|------|----------|-------------|----------|
-| **R-denoising** (Regular) | `[S2S]` | Short contiguous spans masked (~15%), low corruption | Recall-heavy tasks |
-| **X-denoising** (Extreme) | `[S2S]` | Long spans masked (50–70%), high corruption | Strong generation |
-| **S-denoising** (Sequential) | `[NLG]` | Causal prefix LM: attend to prefix, predict suffix | Causal/generative tasks |
+| Mode | Mode token | Description | Use case |
+|------|------------|-------------|----------|
+| **R-denoising** (Regular) | `[NLU]` | Short contiguous spans (mean length ~3–8), low corruption (~15%) — the T5 recipe | Recall-heavy, understanding tasks |
+| **X-denoising** (Extreme) | `[NLG]` | Long spans (mean length up to ~64) and/or high corruption (up to ~50%) | Long-form generation |
+| **S-denoising** (Sequential) | `[S2S]` | Causal prefix LM: attend bidirectionally over a prefix, predict the suffix | Causal/generative, prompting |
 
-During pretraining, the model sees all three modes with different sampling probabilities. At inference, users prefix their input with the appropriate sentinel to select the mode. **UL2 20B** (2022) achieved state-of-the-art on zero-shot generation benchmarks while retaining strong performance on classification, outperforming both T5 (span corruption only) and GPT-3 (causal LM only) at similar parameter counts.
+During pretraining the model sees a mixture of all three modes with different sampling probabilities — this "mixture-of-denoisers" is the whole idea, and it is orthogonal to the architecture. **UL2 20B** (2022) reported outperforming T5-XXL (span corruption only) across most of its evaluation suite while matching or exceeding GPT-3 175B on several zero-shot benchmarks despite being far smaller — evidence that the objective mixture, not just scale, was doing work.
 
 **Flan-UL2** (2023) further instruction-tuned the UL2 checkpoint and was released publicly.
 
@@ -628,6 +722,37 @@ During pretraining, the model sees all three modes with different sampling proba
 A middle ground between masked LM and causal LM is the **prefix LM** (or **non-causal prefix** model): the input portion attends bidirectionally (full attention), while the output portion attends causally. This is the architecture of GLM (General Language Model, Du et al.) and PaLM's initial pretraining variant. The loss is computed only on the output (continuation) portion.
 
 Architecture variants and their relationship to these objectives are covered in depth in [Architecture Variants: Encoder-Decoder, Decoder-Only & Prefix-LM](../02-transformer/08-architecture-variants.html).
+
+### Two Variants That Survived Into 2026: FIM and Multi-Token Prediction
+
+Span corruption and UL2 largely lost to plain causal LM for decoder-only frontier models, but two modifications of next-token prediction are standard in 2026 base models, and both are *data or head* changes rather than new losses.
+
+**Fill-in-the-middle (FIM).** A left-to-right model cannot natively condition on text that comes *after* the cursor — precisely what code completion in an editor requires. Bavarian et al. (2022) showed you can buy that ability essentially for free by rearranging a fraction of pretraining documents: split a document into prefix/middle/suffix, then train on `prefix + suffix + middle` with sentinel tokens marking the pieces. The loss is still ordinary next-token cross-entropy — only the token order changed. Trained at a FIM rate around 0.5–0.9, the model retains its left-to-right quality (the "FIM-for-free" property) while gaining infilling. Every serious code-capable base model — StarCoder, DeepSeek-Coder, the Qwen-Coder line — is trained this way.
+
+```python
+import random
+
+def fim_transform(doc_ids, fim_rate=0.5, sentinels=(50281, 50282, 50283), rng=random):
+    """Rearrange a document into PSM (prefix-suffix-middle) FIM order with probability
+    fim_rate; otherwise return it unchanged. sentinels = (<fim_prefix>, <fim_suffix>,
+    <fim_middle>) — three IDs you must reserve in the tokenizer BEFORE pretraining.
+    The training target is still just `tokens[1:]`: FIM is a data transform, not a loss."""
+    if len(doc_ids) < 3 or rng.random() > fim_rate:
+        return list(doc_ids)
+    i, j = sorted(rng.sample(range(1, len(doc_ids)), 2))   # two cut points
+    prefix, middle, suffix = doc_ids[:i], doc_ids[i:j], doc_ids[j:]
+    pre, suf, mid = sentinels
+    # At inference you feed everything up to and including <fim_middle> and decode.
+    return [pre] + prefix + [suf] + suffix + [mid] + middle
+
+
+demo = list(range(20))
+out = fim_transform(demo, fim_rate=1.0, rng=random.Random(0))
+print(out[:3], "...", len(out))   # 3 sentinels + 20 original tokens = 23
+assert len(out) == len(demo) + 3
+```
+
+**Multi-token prediction (MTP).** Instead of one head predicting $x_{t+1}$, attach $n$ heads (or $n$ lightweight modules) on the shared trunk and predict $x_{t+1}, \ldots, x_{t+n}$, summing the cross-entropies. Gloeckle et al. (2024) showed this improves downstream generation and coding at scale; DeepSeek-V3 adopted an MTP objective as an auxiliary loss with a small weight, and — the practical kicker — reused the trained extra head as a **draft head for speculative decoding** at inference, so an objective change bought a decoding speedup for free (see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)). Note that MTP multiplies the loss-head memory discussed above by $n$, which is another reason chunked cross-entropy is not optional at scale.
 
 ---
 
@@ -711,12 +836,12 @@ Training stability issues and how loss diagnostics help debug them are covered i
 
 !!! key "Key Takeaways"
     - The pretraining objective is **next-token prediction**: minimize $-\log \hat{p}(x_t \mid x_{<t})$ averaged over all tokens. This is exactly cross-entropy / NLL, and minimizing it is equivalent to minimizing KL divergence from the model to the data distribution.
-    - **Teacher forcing** feeds ground-truth tokens as input, enabling fully parallel training across all sequence positions via the **causal (lower-triangular) attention mask**.
-    - The label vector is the **input sequence shifted left by one**: inputs $= x_{0:T-1}$, targets $= x_{1:T}$.
+    - **Teacher forcing** feeds ground-truth tokens as input, enabling fully parallel training across all sequence positions via the **causal (lower-triangular) attention mask**; the label vector is simply the input shifted left by one (inputs $= x_{0:T-1}$, targets $= x_{1:T}$).
+    - The `(B·T, V)` **logit tensor is the largest allocation in a training step** and is untouched by activation checkpointing; use chunked/fused linear cross-entropy (Liger Kernel, Cut Cross-Entropy, or a `torch.compile`d chunk loop; `vocab_parallel_cross_entropy` under tensor parallelism) to make peak loss-head memory independent of batch size.
     - **Loss masking** (setting targets to ignore_index=-100) is essential for padding, prompt regions (SFT), and cross-document boundaries in packed sequences. Always normalize by active token count, not total sequence length.
-    - **Document packing** concatenates short documents end-to-end to maximize compute utilization, but requires boundary masking to avoid cross-document contamination.
+    - **Document packing** concatenates short documents end-to-end to maximize compute utilization; handle the resulting cross-document contamination with boundary loss masking or, better, block-diagonal attention via varlen FlashAttention or PyTorch FlexAttention — and remember to reset position IDs at each boundary.
     - **Bits-per-byte (BPB)** normalizes the loss by the bytes represented per token, making it a tokenizer-agnostic quality metric; use it for fair cross-model comparisons.
-    - **UL2** showed that mixing causal (S-denoising), span-corruption (R- and X-denoising) objectives in a single model is both feasible and beneficial; the dominant architecture is still causal LM, but mixture objectives remain relevant for encoder-decoder systems.
+    - **UL2** showed that mixing causal (S-denoising) and span-corruption (R- and X-denoising) objectives in a single model is both feasible and beneficial, but plain causal LM won for decoder-only models. The two variants that did survive into 2026 are **fill-in-the-middle** (a pure data rearrangement that buys infilling for free, standard in every code model) and **multi-token prediction** (extra heads whose auxiliary loss also yields a speculative-decoding draft head).
     - **Z-loss** ($\alpha \cdot \log^2 Z$) is a practical add-on to penalize large logit norms and reduce loss spikes during large-scale training.
     - The pretraining loss is the single most important health metric for a training run: stable descent, predictable scaling with compute, and alignment between train and validation loss are the primary diagnostic signals.
 
@@ -738,10 +863,15 @@ Training stability issues and how loss diagnostics help debug them are covered i
     - [Grattafiori et al., *The Llama 3 Herd of Models* (Meta, 2024)](https://arxiv.org/abs/2407.21783) — details how a state-of-the-art open model is pretrained with standard next-token prediction at scale (15T tokens, 405B params), including packing and BPB evaluation.
     - [Wijmans et al., *Cut Your Losses in Large-Vocabulary Language Models* (2024; ICLR 2025)](https://arxiv.org/abs/2411.09009) — proposes Cut Cross-Entropy (CCE), a fused kernel that computes cross-entropy without materializing the full logit matrix, reducing loss-layer memory from 24 GB to 1 MB for a 2B (Gemma 2) model; increasingly adopted as the memory-efficient loss path in modern training stacks.
     - [Chowdhery et al., *PaLM: Scaling Language Modeling with Pathways* (2022)](https://arxiv.org/abs/2204.02311) — documents z-loss and other engineering stabilizations for cross-entropy at 540B-parameter scale.
+    - [Bavarian et al., *Efficient Training of Language Models to Fill in the Middle* (OpenAI, 2022)](https://arxiv.org/abs/2207.14255) — the FIM document rearrangement and the "FIM-for-free" result; the reason every modern code model can infill.
+    - [Gloeckle et al., *Better & Faster Large Language Models via Multi-token Prediction* (Meta, 2024)](https://arxiv.org/abs/2404.19737) — $n$ prediction heads on a shared trunk; the objective DeepSeek-V3 later adopted as an auxiliary loss and reused as a speculative-decoding draft head.
 
     **Open-source & tools**
 
     - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — ~300-line clean implementation of causal LM pretraining loss, teacher forcing, and the full training loop; the clearest code companion to this chapter.
+    - [linkedin/Liger-Kernel](https://github.com/linkedin/Liger-Kernel) — Triton kernels for LLM training; `LigerFusedLinearCrossEntropyLoss` is the drop-in fused head+loss that removes the `(B·T, V)` logit tensor, and is exposed as a one-flag option in TRL and Axolotl.
+    - [apple/ml-cross-entropy](https://github.com/apple/ml-cross-entropy) — reference implementation of Cut Cross-Entropy (`linear_cross_entropy`).
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the standard way to report `bits_per_byte` / `byte_perplexity` / `word_perplexity` for a checkpoint, via its rolling-loglikelihood tasks.
     - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (Chinchilla, 2022)](https://arxiv.org/abs/2203.15556) — uses per-token cross-entropy as the primary dependent variable to derive compute-optimal scaling laws; essential companion to the loss-as-health-metric theme.
 
     **Go deeper**
@@ -894,3 +1024,22 @@ Compute the bits-per-byte for each (use $\log_2 e \approx 1.4427$) and state whi
     ```
 
     Why they differ: with $2$ active tokens in sequence 0 and $8$ in sequence 1, token-normalization sums all $10$ per-token losses and divides by $10$ — sequence 1 contributes $8/10$ of the weight. Sequence-normalization gives each sequence's *mean* equal weight ($1/2$ each), so sequence 0's two tokens now carry $1/2$ of the total influence instead of $2/10$. Unless the two per-sequence means happen to coincide, the printed numbers differ, concretely demonstrating the chapter's warning that sequence-normalization over-weights short sequences. (If you set the masks so both sequences have the same active count, the two values become equal.)
+
+**6.** Budgeting the loss head. You are training a 100M-parameter model with $d_{\text{model}} = 512$ and $V = 32768$, using a micro-batch of $B \times T = 32 \times 2048$ tokens on a 40 GB GPU. (a) Compute the peak bytes of the naive path: bf16 logits, their fp32 upcast, and the fp32 `log_softmax` saved for backward. (b) Compute the peak logit memory of the chunked path with `chunk = 8192` (fp32 logits plus their gradient). (c) Compute the extra FLOPs the chunked path spends recomputing the `lm_head` matmul in backward, as a fraction of the $6ND$ step cost. (d) Why does activation checkpointing on the transformer blocks not help with (a)?
+
+??? note "Solution"
+    (a) $B \cdot T = 65{,}536$ rows of $V = 32{,}768$ logits.
+    $$
+    \text{bf16 logits} = 65{,}536 \times 32{,}768 \times 2 \approx 4.29 \text{ GB}
+    $$
+    The fp32 upcast is twice that ($8.59$ GB) and the saved `log_softmax` output another $8.59$ GB, for a peak of roughly $\mathbf{21.5}$ **GB** — over half the GPU, before a single transformer activation is counted.
+
+    (b) One chunk of fp32 logits is $8192 \times 32{,}768 \times 4 \approx 1.07$ GB; during backward one chunk's logits plus their gradient are live, so peak $\approx \mathbf{2.1}$ **GB** — a ~10× reduction, and crucially *independent of $B \cdot T$*, so raising the micro-batch no longer moves this term at all.
+
+    (c) The recomputed output projection costs $2 B T d V = 2 \times 65{,}536 \times 512 \times 32{,}768 \approx 2.20$ TFLOP. The step itself costs about $6ND = 6 \times 10^{8} \times 65{,}536 \approx 39.3$ TFLOP, so the overhead is
+    $$
+    \frac{2.20}{39.3} \approx 5.6\%,
+    $$
+    independent of the chunk size. A truly fused kernel (Cut Cross-Entropy, Liger) avoids most even of this.
+
+    (d) Activation checkpointing frees activations *inside* the checkpointed transformer blocks and recomputes them in backward. The logits are produced by the `lm_head` after the final norm — outside every block — so they are never covered by that policy. The loss head needs its own remedy, which is exactly chunking/fusion.

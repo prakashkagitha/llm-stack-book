@@ -4,7 +4,7 @@ Training a frontier LLM is one of the longest-running computational jobs in exis
 
 We build from the basics of what state must be saved, through sharded and asynchronous checkpointing for distributed training, to the mathematics of expected loss from hardware failures, elastic training, and deterministic reproducibility.
 
-For the distributed training infrastructure that checkpointing sits on top of, see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html). For the optimizer state that must be saved, see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html). Memory-efficient techniques that reduce checkpoint sizes are covered in [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html).
+For the distributed training infrastructure that checkpointing sits on top of, see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html). For the optimizer state that must be saved, see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html). Memory-efficient techniques that reduce checkpoint sizes are covered in [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html). For the single-GPU specialisation of everything in this chapter — an atomic `torch.save`/`os.replace` checkpoint carrying weights, both optimizers, step, token cursor and RNG for the ~100M-parameter Stack-100M run — see [Chapter 14.7](../14-capstone/07-pretraining-run.html).
 
 ---
 
@@ -223,10 +223,16 @@ def load_checkpoint(
         )
         optimizer.load_state_dict(optim_state)
 
-    # 2. Restore per-rank RNG state
+    # 2. Restore per-rank RNG state.
+    #    weights_only=False is required here: since PyTorch 2.6 `torch.load`
+    #    defaults to weights_only=True, whose restricted unpickler rejects the
+    #    numpy ndarray hidden inside np.random.get_state()'s tuple. Only ever
+    #    pass weights_only=False for files you produced yourself.
     rng_path = ckpt_path / f"rng_state_rank{rank}.pt"
     if rng_path.exists():
-        restore_rng_state(torch.load(rng_path, map_location="cpu"))
+        restore_rng_state(
+            torch.load(rng_path, map_location="cpu", weights_only=False)
+        )
 
     # 3. Load shared metadata (every rank reads it for the scheduler / step)
     with open(ckpt_path / "metadata.json") as f:
@@ -274,7 +280,93 @@ class CheckpointManager:
         return None
 ```
 
-The `COMPLETE` sentinel file pattern is critical: it prevents a partially written checkpoint from being mistakenly loaded after a crash mid-save.
+The `COMPLETE` sentinel file pattern is critical: it prevents a partially written checkpoint from being mistakenly loaded after a crash mid-save. For a single file (rather than a directory of shards) the stronger idiom is to `torch.save` to `path + ".tmp"` and then `os.replace(tmp, path)`: rename is atomic on POSIX filesystems, so readers see either the old complete checkpoint or the new one, never a half-written mixture.
+
+!!! warning "`torch.load` defaults changed: `weights_only=True` since PyTorch 2.6"
+    PyTorch 2.6 flipped `torch.load`'s `weights_only` default to `True`. Its restricted unpickler accepts tensors and plain containers but rejects arbitrary objects — including the numpy `ndarray` buried inside the tuple returned by `np.random.get_state()`. A naively written RNG blob therefore raises `UnpicklingError` on your *first resume*, i.e. mid-run on GPUs you are paying for. Two honest fixes: pass `weights_only=False` for files you produced yourself (you are executing pickled code — never do this for a downloaded checkpoint), or store RNG state as tensors and plain Python types so the safe loader works unmodified. [Chapter 14.7](../14-capstone/07-pretraining-run.html) shows the plain-types version. `torch.serialization.add_safe_globals` is the middle path: allowlist exactly the types you need.
+
+### The Modern DCP API: `Stateful`, `get_state_dict` and `async_save`
+
+The harness above uses the FSDP1 `state_dict_type` context manager, which is the API most existing training code is written against and which you will still meet in the wild. Current PyTorch offers a cleaner, parallelism-agnostic surface that you should prefer for new code, and that FSDP2 (`fully_shard`) requires — FSDP2 parameters are `DTensor`s, which DCP consumes natively with no context manager at all:
+
+- `torch.distributed.checkpoint.state_dict.get_state_dict(model, optimizers)` returns a matched `(model_state_dict, optimizer_state_dict)` pair that is correct under DDP, FSDP1, FSDP2 or plain single-GPU, and `set_state_dict(...)` writes them back.
+- The `torch.distributed.checkpoint.stateful.Stateful` protocol (any object with `state_dict()` / `load_state_dict()`) lets you drop schedulers, data loaders and step counters into the *same* DCP save alongside the model, instead of maintaining a side-channel `metadata.json`.
+- `dcp.save(...)` / `dcp.load(...)` take a `checkpoint_id` (a path or URI) instead of an explicit writer, and `dcp.async_save(...)` returns a future — the production-grade version of the hand-rolled background thread we build in the next section.
+
+```python
+"""
+dcp_modern.py — The parallelism-agnostic PyTorch DCP idiom (PyTorch >= 2.4).
+Works unchanged for single-GPU, DDP, FSDP1 and FSDP2 (`fully_shard`).
+"""
+
+import torch.distributed.checkpoint as dcp
+from torch.distributed.checkpoint.state_dict import (
+    get_state_dict, set_state_dict,
+)
+from torch.distributed.checkpoint.stateful import Stateful
+
+
+class TrainState(Stateful):
+    """Bundles everything that must resume together into one DCP entry.
+
+    Because it implements the Stateful protocol, DCP calls .state_dict() at
+    save time and .load_state_dict() at load time — so the model, optimizer,
+    LR schedule, step counter and data cursor are written as ONE consistent
+    checkpoint, with no separate metadata file to fall out of sync.
+    """
+
+    def __init__(self, model, optimizer, scheduler, dataloader):
+        self.model, self.optimizer = model, optimizer
+        self.scheduler, self.dataloader = scheduler, dataloader
+        self.step = 0
+
+    def state_dict(self) -> dict:
+        # get_state_dict() returns *sharded* DTensors under FSDP and plain
+        # tensors otherwise; DCP handles both without special-casing.
+        model_sd, optim_sd = get_state_dict(self.model, self.optimizer)
+        return {
+            "model": model_sd,
+            "optim": optim_sd,
+            "sched": self.scheduler.state_dict(),
+            "data": self.dataloader.state_dict(),   # StatefulDataLoader
+            "step": self.step,
+        }
+
+    def load_state_dict(self, sd: dict) -> None:
+        # set_state_dict() reshards the loaded tensors onto the CURRENT
+        # topology — this is what makes a 512-GPU checkpoint loadable on 256.
+        set_state_dict(
+            self.model, self.optimizer,
+            model_state_dict=sd["model"], optim_state_dict=sd["optim"],
+        )
+        self.scheduler.load_state_dict(sd["sched"])
+        self.dataloader.load_state_dict(sd["data"])
+        self.step = sd["step"]
+
+
+def save(train_state, step: int, root: str, blocking: bool = False):
+    """Synchronous or asynchronous save. Returns a future when async."""
+    app_state = {"app": train_state}          # key must match on load
+    ckpt_id = f"{root}/step_{step:08d}"
+    if blocking:
+        dcp.save(app_state, checkpoint_id=ckpt_id)
+        return None
+    # async_save stages tensors to CPU, then writes from a background
+    # process; await the returned future before the NEXT async_save.
+    return dcp.async_save(app_state, checkpoint_id=ckpt_id)
+
+
+def restore(train_state, ckpt_id: str) -> None:
+    """In-place load. The dict must be pre-populated with the same keys so
+    DCP knows the destination shapes/shardings to resolve chunks into."""
+    app_state = {"app": train_state}
+    dcp.load(app_state, checkpoint_id=ckpt_id)
+```
+
+This is essentially what `torchtitan` — PyTorch's reference LLM pretraining stack — does in production, and it is the version to copy if you are starting fresh. Note the asymmetry that trips people up on their first DCP load: `dcp.load` fills a state dict *in place*, so you must construct the model and optimizer first and pass their (empty-valued but correctly shaped) state dict in. DCP never tells you what shapes to build.
+
+!!! tip "At Stack-100M scale, none of this machinery is needed"
+    A ~100M-parameter model in bf16 with fp32 AdamW state is on the order of a gigabyte of checkpoint, saved from one process in a couple of seconds. Plain `torch.save` to a temp file plus `os.replace`, keeping the last handful of steps, is entirely adequate — see [Chapter 14.7](../14-capstone/07-pretraining-run.html). Reach for DCP when the checkpoint no longer fits comfortably in one rank's host RAM, or when you need to resume on a different number of GPUs.
 
 ---
 
@@ -333,19 +425,38 @@ class AsyncCheckpointer:
             if self._pending_error is not None:
                 raise self._pending_error
 
+    @staticmethod
+    def _to_cpu(obj):
+        """Recursively copy every tensor in a nested state dict to CPU."""
+        if torch.is_tensor(obj):
+            return obj.detach().to("cpu", copy=True)
+        if isinstance(obj, dict):
+            return {k: AsyncCheckpointer._to_cpu(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [AsyncCheckpointer._to_cpu(v) for v in obj]
+        if isinstance(obj, tuple):
+            return tuple(AsyncCheckpointer._to_cpu(v) for v in obj)
+        return deepcopy(obj)
+
     def _snapshot_to_cpu(self, model, optimizer) -> tuple[dict, dict]:
         """
-        Move all tensors to pinned CPU RAM.
-        This is the only step that blocks training.
-        Fast because it's a device-to-host copy, not a disk write.
+        Copy all tensors out to CPU RAM. This is the only step that blocks
+        training, and it is fast because it is a device-to-host copy, not a
+        disk write.
+
+        Caveat: `.to("cpu")` allocates *pageable* memory. Production stagers
+        (PyTorch DCP, DeepSpeed) copy into a pre-allocated *pinned* buffer,
+        which both doubles achievable PCIe bandwidth and lets the copy run
+        on a side CUDA stream, overlapping the next forward pass.
         """
-        # model.state_dict() returns CPU copies when called with
-        # FSDP + SHARDED_STATE_DICT + offload_to_cpu=True
-        model_state = {
-            k: v.cpu().clone()  # .clone() ensures no shared memory
-            for k, v in model.state_dict().items()
-        }
-        optim_state = deepcopy(optimizer.state_dict())
+        # model.state_dict() already returns CPU copies under
+        # FSDP + SHARDED_STATE_DICT + offload_to_cpu=True; _to_cpu() makes
+        # that unconditional so this class also works without that config.
+        model_state = self._to_cpu(model.state_dict())
+        # The optimizer state must ALSO leave the GPU. A plain
+        # deepcopy(optimizer.state_dict()) clones Adam's moments *on device*,
+        # transiently doubling optimizer VRAM at the worst possible moment.
+        optim_state = self._to_cpu(optimizer.state_dict())
         return model_state, optim_state
 
     def _background_save(self, model_state, optim_state, step, metadata):
@@ -399,7 +510,9 @@ class AsyncCheckpointer:
         self._check_for_errors()
 ```
 
-Modern training frameworks (PyTorch's `AsyncCheckpointing` in `torch.distributed.checkpoint`, DeepSpeed's `async_checkpoint_engine`) implement variations of this pattern. As of 2025, PyTorch DCP defaults its async path to a *separate process* rather than a background thread (`AsyncCheckpointerType.PROCESS`), which removes the Python GIL contention that otherwise slows the training steps overlapping the write. The `dist.barrier()` inside the snapshot step ensures all ranks have finished their CPU copy before training resumes, which is critical — you cannot have rank 0 already on step $N+1$ while rank 3 is still copying rank-$N$ tensors.
+We wrote this out longhand because the mechanism is worth owning, but in real code you call `dcp.async_save(state, checkpoint_id=...)` from the previous section and get all of it — staging, background write, future — in one line. Modern training frameworks (PyTorch's async DCP path, DeepSpeed's `async_checkpoint_engine`) implement variations of this pattern. PyTorch DCP can run the write in a *separate process* rather than a background thread (`AsyncCheckpointerType.PROCESS`), which removes the Python GIL contention that otherwise slows the training steps overlapping the write. The `dist.barrier()` inside the snapshot step ensures all ranks have finished their CPU copy before training resumes, which is critical — you cannot have rank 0 already on step $N+1$ while rank 3 is still copying rank-$N$ tensors.
+
+Two correctness rules govern any async checkpointer, hand-rolled or not. First, **do not mutate the staged tensors**: the snapshot must be a copy, because `optimizer.step()` on step $N+1$ writes in place over the very moment buffers the background thread is serialising. Second, **join the previous save before starting the next one** (as `save_if_due` does), or two writers race for the same directory and you can end up with a `COMPLETE` sentinel over a mixture of two steps' bytes.
 
 ### In-Memory Checkpointing
 
@@ -510,6 +623,8 @@ $$
 
     This motivates more frequent checkpoints and faster (async) saves.
 
+    Read that 92% as a red flag rather than a precise figure: the linear approximation assumes at most one failure per interval and is only accurate when $T_{\text{ckpt}} \ll T_{\text{MTBF}}$. Here $T_{\text{ckpt}}$ *exceeds* the MTBF, so the run frequently dies before reaching its next checkpoint, restarts from the same one, and — in the limit — never makes progress at all. The formula's job is to tell you the configuration is untenable, which it does.
+
 {{fig:ckpt-failure-waste-and-daly}}
 
 The optimal checkpoint interval $T^*$ that minimises expected wasted compute can be derived (Young 1974, commonly called "Daly's formula" in HPC):
@@ -593,6 +708,41 @@ class ShardedTextDataset(IterableDataset):
             self.start_offset = 0  # only use start_offset for first shard
 ```
 
+This hand-rolled cursor is honest but incomplete in one important way: with `num_workers > 0`, PyTorch's `DataLoader` forks worker processes that each hold their *own* copy of the dataset object and prefetch several batches ahead. The cursor you read on the main process is therefore stale by up to `num_workers × prefetch_factor` batches, and `dataset.get_state()` in the parent may not even reflect a live iterator at all.
+
+The library that solves this is **`torchdata`**: `torchdata.stateful_dataloader.StatefulDataLoader` is a drop-in replacement for `torch.utils.data.DataLoader` that adds `state_dict()` / `load_state_dict()` and correctly aggregates the state of every worker, including in-flight prefetched batches. It works with map-style datasets (it records sampler position) and with iterable datasets that themselves expose `state_dict()`/`load_state_dict()`. It is what `torchtitan` uses for resumable pretraining data, and it satisfies the `Stateful` protocol, so it slots straight into the DCP `TrainState` above.
+
+```python
+"""
+stateful_loader_usage.py — Resumable data loading with torchdata.
+`pip install torchdata`
+"""
+
+from torchdata.stateful_dataloader import StatefulDataLoader
+
+
+class ResumableTokenStream(ShardedTextDataset):
+    """Add the Stateful hooks StatefulDataLoader looks for on the dataset."""
+
+    def state_dict(self) -> dict:
+        return self.get_state()
+
+    def load_state_dict(self, sd: dict) -> None:
+        self.start_shard = sd["current_shard"]
+        self.start_offset = sd["current_offset"]
+
+
+def build_loader(shard_paths, seq_len, batch_size, num_workers=4):
+    ds = ResumableTokenStream(shard_paths, seq_len)
+    # Identical signature to torch.utils.data.DataLoader.
+    return StatefulDataLoader(ds, batch_size=batch_size,
+                              num_workers=num_workers)
+
+
+# At checkpoint time: loader.state_dict() -> goes into the checkpoint.
+# At resume time:     loader.load_state_dict(saved) BEFORE iterating.
+```
+
 ### Resuming Across Different Topologies
 
 A practical need: a run crashes on 512 GPUs and is restarted on 256 GPUs because some nodes are under repair. This is called **elastic training**.
@@ -628,6 +778,8 @@ Truly elastic training — dynamically adding or removing nodes mid-run without 
 1. **Rendezvous**: nodes join and leave a rendezvous barrier; membership changes trigger a re-initialisation of process groups.
 2. **Checkpoint-on-membership-change**: a micro-checkpoint is taken whenever the membership changes, ensuring no work is lost.
 3. **Rebalancing**: the optimizer state sharding is updated to reflect the new world size.
+
+The frontier of this line of work is **`torchft`** (`meta-pytorch/torchft`), which pushes fault tolerance below the restart granularity entirely: a central *Lighthouse* coordinator tracks live replica groups, and when one dies the survivors continue the *current* step rather than tearing down and restarting from a checkpoint. It pairs with semi-synchronous algorithms — LocalSGD and DiLoCo, where replica groups train independently for $H$ inner steps and synchronise only occasionally — so that losing a replica group costs at most $H$ steps of its work instead of stalling the whole job. Checkpointing does not go away under this model; it becomes the slower backstop underneath a fast in-band recovery path.
 
 ---
 
@@ -753,6 +905,41 @@ def verify_checksums(ckpt_dir: Path) -> bool:
     return True
 ```
 
+### From Training Checkpoint to Releasable Weights
+
+A DCP directory of `.distcp` shards is a *training* artifact: it is topology-agnostic, but it is not something `transformers`, vLLM or llama.cpp can open. Converting it is the last mile of a pretraining run and a step people are surprised to find is not automatic.
+
+```bash
+# 1. Consolidate the sharded DCP directory into a single torch.save file.
+#    (torch.distributed.checkpoint.format_utils also exposes the inverse,
+#     torch_save_to_dcp, for importing a legacy single-file checkpoint.)
+python -c "
+from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
+dcp_to_torch_save('ckpt/step_00050000/model_optim', 'ckpt/consolidated.pt')
+"
+
+# 2. Strip optimizer state (~89% of the bytes) and re-serialise the weights
+#    as safetensors — the format the HF ecosystem loads by default. It is a
+#    zero-copy mmap-able layout with no pickle, so loading it cannot execute
+#    code, and it is what you publish.
+mkdir -p release && python export_safetensors.py
+```
+
+```python
+# export_safetensors.py — weights only, in the format the ecosystem expects.
+import torch
+from safetensors.torch import save_file
+
+sd = torch.load("ckpt/consolidated.pt", map_location="cpu",
+                weights_only=True)["model"]
+# safetensors requires contiguous, non-shared storage per tensor.
+sd = {k: v.contiguous().clone() for k, v in sd.items()}
+save_file(sd, "release/model.safetensors",
+          metadata={"format": "pt"})   # HF loaders check this key
+```
+
+Keep the full training checkpoint too: an inference-only export cannot be resumed from, and continued pretraining ([Continual & Domain-Adaptive Pretraining](../03-pretraining/16-continual-pretraining.html)) or a long-context extension phase ([Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html)) needs the optimizer state back.
+
 ### Rotation and Retention Strategy
 
 Keeping every checkpoint for a months-long run is prohibitively expensive. A typical rotation policy:
@@ -824,6 +1011,19 @@ class TrainingHeartbeat:
             )
 ```
 
+A heartbeat tells you the job hung; it does not tell you *which rank* hung or *where*. For that, PyTorch ships the **NCCL Flight Recorder**: a ring buffer of recently enqueued collectives (op name, sizes, sequence number, start/completion state) that is dumped to disk when a collective watchdog times out. The dump makes the diagnosis mechanical — the ranks that logged sequence number $k$ but never completed it are the stragglers, and a rank whose buffer *lacks* an all-reduce every peer recorded is the one that took a divergent code path (a classic cause: a `if rank == 0:` branch that skips a collective).
+
+```bash
+# Enable the flight recorder on every rank before launching torchrun.
+export TORCH_NCCL_TRACE_BUFFER_SIZE=2000     # entries retained per rank
+export TORCH_NCCL_DUMP_ON_TIMEOUT=1          # dump the ring buffer on hang
+export TORCH_NCCL_DEBUG_INFO_TEMP_FILE=/mnt/logs/nccl_trace_rank
+# Fail fast instead of hanging forever on a dead peer:
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+```
+
+Pair this with a collective timeout short enough that a hang becomes a *crash* — `dist.init_process_group(..., timeout=timedelta(minutes=10))` — because your watchdog and auto-restart loop can only recover from processes that actually exit. A job that hangs silently for six hours costs more than one that dies in ten minutes.
+
 ---
 
 ## 3.12.9 Connecting the Pieces: A Complete Training Loop
@@ -842,6 +1042,7 @@ import os
 import torch
 import torch.distributed as dist
 from pathlib import Path
+from torchdata.stateful_dataloader import StatefulDataLoader
 
 
 def main():
@@ -877,18 +1078,20 @@ def main():
         start_step = metadata["step"] + 1
         scheduler.load_state_dict(metadata["lr_scheduler"])
         # Restore data loader cursor
-        data_loader_state = metadata.get("data_loader", {})
+        data_loader_state = metadata.get("data_loader")
     else:
-        data_loader_state = {"current_shard": 0, "current_offset": 0}
+        data_loader_state = None
 
     # --- Data loader ---
-    dataset = ShardedTextDataset(
-        shard_paths=get_shard_paths(),
-        seq_len=2048,
-        start_shard=data_loader_state.get("current_shard", 0),
-        start_offset=data_loader_state.get("current_offset", 0),
-    )
-    loader = iter(DataLoader(dataset, batch_size=4, num_workers=4))
+    # StatefulDataLoader (torchdata) rather than DataLoader: with
+    # num_workers > 0 only it can aggregate the per-worker cursors and the
+    # in-flight prefetched batches. ResumableTokenStream is the Stateful
+    # subclass from Section 3.12.6.
+    dataset = ResumableTokenStream(shard_paths=get_shard_paths(), seq_len=2048)
+    dl = StatefulDataLoader(dataset, batch_size=4, num_workers=4)
+    if data_loader_state is not None:
+        dl.load_state_dict(data_loader_state)   # must precede iteration
+    loader = iter(dl)
 
     # --- Training loop ---
     model.train()
@@ -918,7 +1121,7 @@ def main():
         if step % 1000 == 0:
             ckpt_manager.save(
                 model, optimizer, step, scheduler,
-                dataset.get_state(), rank
+                dl.state_dict(), rank
             )
 
     # Ensure final async checkpoint write completes
@@ -949,11 +1152,11 @@ if __name__ == "__main__":
 ---
 
 !!! key "Key Takeaways"
-    - A complete checkpoint contains four components: model weights, optimizer state (including moments), per-rank RNG states, and training metadata (step, scheduler, data cursor). Omitting any one causes silent divergence or incorrect resumption.
+    - A complete checkpoint contains four components: model weights, optimizer state (including moments), per-rank RNG states, and training metadata (step, scheduler, data cursor). Omitting any one causes silent divergence or incorrect resumption. Use `torchdata`'s `StatefulDataLoader` for the cursor — a hand-rolled one is stale by `num_workers × prefetch_factor` batches.
     - At scale (1000+ GPUs), expect a hardware failure somewhere in the cluster every hour or less. Fault tolerance is not optional.
     - Daly's formula gives the optimal checkpoint interval: $T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}}$. More frequent, faster checkpoints reduce wasted work better than infrequent saves.
     - Async checkpointing decouples the GPU-to-CPU snapshot (fast, ~seconds) from the CPU-to-disk write (slow, minutes), dramatically reducing dead compute time.
-    - PyTorch Distributed Checkpoint (DCP) uses a topology-agnostic sharded format, enabling resume with a different number of GPUs without manual resharding.
+    - PyTorch Distributed Checkpoint (DCP) uses a topology-agnostic sharded format, enabling resume with a different number of GPUs without manual resharding. The modern idiom is `get_state_dict`/`set_state_dict` plus a `Stateful` object handed to `dcp.save` / `dcp.async_save` — not the legacy FSDP1 `state_dict_type` context manager. Export to safetensors (via `dcp_to_torch_save`) only at release time.
     - Write a COMPLETE sentinel file last; never load a checkpoint that lacks it. Verify files with checksums.
     - Strict bit-for-bit CUDA determinism costs 10–30% performance; production runs typically opt for soft determinism (save RNG, allow non-deterministic kernels) and rely on statistical reproducibility instead.
     - Elastic training (TorchElastic, `torchrun --nnodes=MIN:MAX`) enables dynamic cluster resize; the global token offset is the currency for recalculating each rank's data cursor after a topology change.
@@ -994,7 +1197,8 @@ if __name__ == "__main__":
 - **Rajbhandari et al. (2020)** — "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models." *SC'20*. Covers ZeRO optimizer state sharding, which directly informs checkpoint design in DeepSpeed.
 - **DeepSpeed `checkpoint_engine`** — DeepSpeed's async checkpoint engine and its `AsyncTensorSwapper` are described in the DeepSpeed GitHub repository and blog posts.
 - **Wang et al. (2023)** — "GEMINI: Fast Failure Recovery in Distributed Training with In-Memory Checkpoints." *SOSP 2023*. A landmark systems paper on in-memory checkpointing with neighbor-replica redundancy.
-- **Eisenbud et al. (2022)** — "Pathways: Asynchronous Distributed Dataflow for ML." Describes Google's approach to fault tolerance in large-scale ML infrastructure.
+- **Barham et al. (2022)** — "Pathways: Asynchronous Distributed Dataflow for ML." *MLSys 2022*. Describes Google's approach to fault tolerance in large-scale ML infrastructure.
+- **`torchdata.stateful_dataloader`** — PyTorch's `StatefulDataLoader`, the drop-in `DataLoader` replacement with worker-aware `state_dict()`/`load_state_dict()`; the correct answer to "how do I resume my data pipeline?"
 
 ---
 

@@ -3,55 +3,64 @@ Runs the CPU-runnable Python code blocks from:
     content/03-pretraining/12-checkpointing-fault-tolerance.md
 
 Tested blocks:
-    - Block #3 (line ~537, 57 lines) -- stateful_dataloader.py: the
+    - Block #4 (line ~652, 57 lines) -- stateful_dataloader.py: the
       `ShardedTextDataset` IterableDataset that saves/restores its cursor
       position within a sharded, pre-tokenised dataset. Copied verbatim.
       Exercised by building two tiny on-disk shard files (.pt tensors),
       instantiating the dataset, iterating all (x, y) batches from it, and
       calling `get_state()` afterward exactly as the chapter's training loop
       does (`dataset.get_state()` after each batch/save).
-    - Block #7 (line ~717, 37 lines) -- checkpoint integrity verification:
+    - Block #9 (line ~869, 37 lines) -- checkpoint integrity verification:
       `sha256_file`, `write_checksums`, `verify_checksums`. Copied verbatim.
       Exercised against a tiny on-disk directory of files: checksums are
       written, then verified (True), then a file is corrupted and verified
       again (False) -- covering both branches of `verify_checksums`.
 
-Skipped blocks (heuristically CPU-runnable list said only #3 and #7; the
+Skipped blocks (heuristically CPU-runnable list said only the two above; the
 rest need a GPU / distributed process group / are fragments, confirmed by
 reading the chapter):
     - #0 (line ~74)  checkpoint.py -- FSDP + torch.distributed.checkpoint
       save/load harness. Needs a real (or mocked-beyond-honesty) distributed
       process group, CUDA, and FSDP-wrapped model. SKIP(needs-gpu/dist).
-    - #1 (line ~293) async_checkpoint.py -- AsyncCheckpointer. Its
+    - #1 (line ~296) dcp_modern.py -- the parallelism-agnostic DCP idiom
+      (Stateful/get_state_dict/dcp.async_save). Needs a real process group
+      and a live model/optimizer. SKIP(needs-gpu/dist).
+    - #2 (line ~385) async_checkpoint.py -- AsyncCheckpointer. Its
       `save_if_due` calls `dist.barrier()` unconditionally, which requires
       an initialised process group (CUDA/NCCL or even gloo init would still
       need `dist.init_process_group`, which is disproportionate distributed
       scaffolding for a "CPU-runnable" unit and not what the block
       demonstrates). SKIP(needs-gpu/dist).
-    - #2 (line ~412) in_memory_storage.py -- implements
+    - #3 (line ~525) in_memory_storage.py -- implements
       `torch.distributed.checkpoint.storage.StorageWriter/StorageReader`,
       only usable through a real DCP save/load pipeline. SKIP(needs-gpu/dist).
-    - #4 (line ~602) compute_rank_start_offset -- SKIP per task brief
+    - #5 (line ~715) stateful_loader_usage.py -- requires the optional
+      `torchdata` package (not in requirements-test.txt). SKIP(optional-dep).
+    - #6 (line ~752) compute_rank_start_offset -- SKIP per task brief
       (fragment); NOTE: this is actually a small pure function with no
       external deps, see "opportunistic bonus" below where we exercise it
       anyway since it is trivially CPU-safe and costs nothing.
-    - #5 (line ~651) determinism_setup.py -- configure_determinism("strict")
+    - #7 (line ~803) determinism_setup.py -- configure_determinism("strict")
       references `torch.backends.cudnn`, `torch.use_deterministic_algorithms`,
       and CUDA-related env vars; the "strict" path is meaningless without
       CUDA. SKIP(needs-gpu) for the strict path; see bonus note below, we
       exercise the "soft" branch since it's honestly CPU-safe.
-    - #6 (line ~690) seed_everything -- SKIP per task brief (needs-gpu,
+    - #8 (line ~841) seed_everything -- SKIP per task brief (needs-gpu,
       calls `torch.cuda.manual_seed_all`); NOTE: trivially adapted with a
       CUDA-availability guard and exercised as a bonus below since the
       book's own logic (seed derivation) is CPU-only.
-    - #8 (line ~768) watchdog_launch.sh -- shell script. SKIP(shell).
-    - #9 (line ~811) TrainingHeartbeat -- SKIP per task brief (fragment):
+    - #10/#12/#14 (bash) -- DCP->safetensors export commands,
+      watchdog_launch.sh, and the NCCL Flight Recorder env vars.
+      SKIP(shell).
+    - #11 (line ~929) export_safetensors.py -- needs the optional
+      `safetensors` package and a real checkpoint file. SKIP(optional-dep).
+    - #13 (line ~999) TrainingHeartbeat -- SKIP per task brief (fragment):
       uses a bare `Path`/`time`/`json` with no shown imports in the block
       itself (they come from earlier blocks in the chapter's *prose*, not
       code, e.g. `time` is never imported in any Python block of this
       chapter). NOTE: exercised as a bonus below with the necessary imports
       supplied as honest glue (only imports, no logic change).
-    - #10 (line ~833) train_loop.py -- full FSDP/NCCL training loop sketch
+    - #15 (line ~1034) train_loop.py -- full FSDP/NCCL training loop sketch
       (`dist.init_process_group("nccl")`, `build_fsdp_model`,
       `get_cosine_schedule`, `DataLoader(..., num_workers=4)` iterated with
       `next(loader)` outside a `for` -- itself not directly runnable without
@@ -83,9 +92,9 @@ def _section(name: str) -> None:
 
 
 # ============================================================================
-# Block #3 (line ~537) -- stateful_dataloader.py: ShardedTextDataset
+# Block #4 (line ~652) -- stateful_dataloader.py: ShardedTextDataset
 # ============================================================================
-_section("Block #3: ShardedTextDataset (stateful data loader cursor)")
+_section("Block #4: ShardedTextDataset (stateful data loader cursor)")
 
 
 class ShardedTextDataset(IterableDataset):
@@ -190,9 +199,9 @@ print("ShardedTextDataset: resume-from-cursor behavior verified.")
 
 
 # ============================================================================
-# Block #7 (line ~717) -- checksum integrity verification
+# Block #9 (line ~869) -- checksum integrity verification
 # ============================================================================
-_section("Block #7: sha256_file / write_checksums / verify_checksums")
+_section("Block #9: sha256_file / write_checksums / verify_checksums")
 
 
 def sha256_file(path: Path) -> str:
@@ -261,7 +270,7 @@ print("verify_checksums() correctly detects a corrupted file.")
 # ============================================================================
 # Bonus (not in the assigned CPU-runnable set, exercised for extra coverage
 # since it is trivially CPU-safe with no distributed/GPU dependency):
-# Block #4 (line ~602) -- compute_rank_start_offset
+# Block #6 (line ~752) -- compute_rank_start_offset
 # ============================================================================
 _section("Bonus: compute_rank_start_offset (elastic-training offset math)")
 
@@ -299,7 +308,7 @@ print(f"compute_rank_start_offset: rank0={off_rank0}, rank1={off_rank1}")
 
 
 # ============================================================================
-# Bonus: Block #9 (line ~811) -- TrainingHeartbeat (fragment, CPU-safe glue)
+# Bonus: Block #13 (line ~999) -- TrainingHeartbeat (fragment, CPU-safe glue)
 # ============================================================================
 _section("Bonus: TrainingHeartbeat")
 

@@ -13,6 +13,7 @@ A floating-point number is `sign × mantissa × 2^exponent`. The split between e
 | Format | Bits | Exp / Mant | Max finite | Smallest normal | Rel. precision (ulp) |
 |---|---|---|---|---|---|
 | FP32 | 32 | 8 / 23 | ~3.4e38 | ~1.2e-38 | ~1.2e-7 |
+| TF32 (tensor-core mode) | 32 stored / 19 used | 8 / 10 | ~3.4e38 | ~1.2e-38 | ~9.8e-4 |
 | FP16 (IEEE half) | 16 | 5 / 10 | 65504 | ~6.1e-5 | ~9.8e-4 |
 | BF16 (bfloat16) | 16 | 8 / 7 | ~3.4e38 | ~1.2e-38 | ~7.8e-3 |
 | FP8 E4M3 | 8 | 4 / 3 | 448 | ~1.5e-2 (subnormal smaller) | ~0.125 |
@@ -24,6 +25,14 @@ Read this table as the key to everything that follows. The two 16-bit formats ha
 
 - **FP16** keeps 10 mantissa bits (good precision) but only 5 exponent bits, so its maximum value is **65504** and its smallest normal is ~6e-5. Gradients in a transformer routinely live below 6e-5, so they **underflow to zero in fp16**. This is why fp16 *requires loss scaling* (we cover it below).
 - **BF16** is simply "FP32 with the bottom 16 mantissa bits chopped off." It keeps all 8 exponent bits, so it has the **same dynamic range as fp32** — it will never overflow or underflow where fp32 wouldn't. The price is only 7 mantissa bits, i.e. ~2-3 decimal digits of precision. For training, *range matters more than precision*, which is why bf16 has become the default and **bf16 needs no loss scaling.**
+
+**TF32** deserves a note because it is the one row that is not a storage format. TensorFloat-32 is a tensor-core *compute mode* on Ampere and later: your tensors stay fp32 in memory and the API still says `float32`, but the multiplier internally rounds each input mantissa to 10 bits (fp32's exponent, fp16's precision) and accumulates in fp32. It is nearly free accuracy-wise and several times faster than a true fp32 CUDA-core matmul (on the order of 8× at peak on A100/H100), and PyTorch leaves it **off by default for matmuls** — so an "fp32 baseline" you did not configure is needlessly slow, and any bf16-vs-fp32 speedup you measure against it is inflated. Turn it on with one line before you benchmark anything:
+
+```python
+import torch
+torch.set_float32_matmul_precision("high")   # use TF32 tensor cores for fp32 matmuls
+# equivalently, the older knob: torch.backends.cuda.matmul.allow_tf32 = True
+```
 
 The conversion between bf16 and fp32 is so simple it is worth seeing explicitly — it is just a truncation (or round-to-nearest) of the low 16 bits:
 
@@ -53,6 +62,8 @@ Notice the bf16 value `3.140625` differs from π in the third decimal — that i
 
 A critical, often-missed detail: when a tensor core multiplies two bf16 (or fp16, or fp8) matrices, it does **not** accumulate the dot product in the input precision. It multiplies pairs in low precision and **accumulates the partial sums in fp32** inside the hardware. So a `[4096 × 4096] @ [4096 × 4096]` bf16 matmul sums 4096 products in fp32 and only rounds the final result back to bf16. This is why low-precision matmul is numerically tolerable at all: the long error-accumulating reduction happens in 32 bits. Keep this picture — *narrow inputs, wide accumulator* — in mind; it is the same trick FP8 uses, just more aggressively.
 
+One caveat to file away for the FP8 section: "accumulates in fp32" is a promise about the *bf16/fp16* paths. On the FP8 path the hardware accumulator is not necessarily a full-precision fp32 adder — DeepSeek measured Hopper's FP8 tensor-core accumulation as retaining only ~14 mantissa bits, which is fine for bf16-scale inputs but not for a 7000-element FP8 reduction. Their fix is software promotion, described below.
+
 {{fig:fp8mp-tensorcore-accumulate}}
 
 ## Why naive fp16 breaks: range, underflow, and the update problem
@@ -79,7 +90,7 @@ The second problem is **range**. The fp16 max is 65504. Attention logits, the ou
 **Automatic Mixed Precision (AMP)** is the framework that automates "wide where it matters, narrow where it's safe." In PyTorch it has two halves:
 
 - `torch.autocast`: a context manager that, for ops inside it, automatically chooses a precision. Matmuls, convolutions, and linear layers run in the low precision (bf16/fp16); reductions that need range — softmax, layer norm, loss, `exp`, `sum` — are kept in fp32. It maintains an internal **op allow/deny list** so you don't have to annotate every layer.
-- `torch.cuda.amp.GradScaler` (or `torch.amp.GradScaler`): implements **loss scaling**, needed only for fp16.
+- `torch.amp.GradScaler`: implements **loss scaling**, needed only for fp16. (The older `torch.cuda.amp.GradScaler` / `torch.cuda.amp.autocast` spellings still work but are deprecated in favour of the device-generic `torch.amp.*` API.)
 
 ### The loss-scaling trick
 
@@ -200,7 +211,7 @@ The five non-obvious correctness points, in order:
 
 In the loop above the model's own `nn.Parameter`s are fp32 — they *are* the master copy. `autocast` casts them to bf16/fp16 *on the fly* for each matmul and discards the cast; the fp32 originals are what AdamW updates. This is the standard PyTorch AMP pattern and the simplest mental model: **parameters fp32, compute low-precision, optimizer touches fp32.**
 
-A second pattern, common in large-scale frameworks (DeepSpeed, Megatron, FSDP with `MixedPrecision`), stores the *parameters themselves* in bf16 to halve parameter memory and communication, and keeps a **separate fp32 master copy plus fp32 optimizer state** (momentum, variance). The optimizer steps in fp32, then copies the result back into the bf16 parameter. This is what people mean by the canonical "mixed precision" recipe from Micikevicius et al.'s *Mixed Precision Training* (2017). The memory accounting (per parameter): 2 bytes bf16 weight + 4 bytes fp32 master + 4 + 4 bytes Adam states = **14 bytes/param**, versus 16 bytes for the all-fp32 recipe — and crucially the *communication* (all-reduce of gradients, all-gather of weights) moves in 2-byte bf16, halving network traffic. See [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) for how ZeRO shards exactly these fp32 states.
+A second pattern, common in large-scale frameworks (DeepSpeed, Megatron, FSDP with `MixedPrecision`), stores the *parameters themselves* in bf16 to halve parameter memory and communication, and keeps a **separate fp32 master copy plus fp32 optimizer state** (momentum, variance). The optimizer steps in fp32, then copies the result back into the bf16 parameter. This is what people mean by the canonical "mixed precision" recipe from Micikevicius et al.'s *Mixed Precision Training* (2017). The memory accounting (per parameter): 2 bytes bf16 weight + 4 bytes fp32 master + 4 + 4 bytes Adam states = **14 bytes/param**, versus 16 bytes for the all-fp32 recipe — and crucially the *communication* (all-reduce of gradients, all-gather of weights) moves in 2-byte bf16, halving network traffic. One subtlety there: summing bf16 gradients across hundreds of ranks is itself a long reduction in an 8-mantissa-bit format, so frameworks expose a separate *reduction* dtype — FSDP's `MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)` gathers weights in bf16 but reduce-scatters gradients in fp32, which costs a little bandwidth and removes a real source of drift. See [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) for how ZeRO shards exactly these fp32 states.
 
 !!! example "Worked example: memory and the cost of master weights"
 
@@ -262,13 +273,15 @@ class DelayedScale:
         return x_fp8, scale
 ```
 
-A full FP8 linear layer then does: cast `X` and `W` to E4M3 with their scales $s_X, s_W$; run the FP8 tensor-core matmul (which accumulates in fp32 internally); and de-scale the fp32 output by $1/(s_X s_W)$. Three matmuls per linear layer get FP8'd — the forward ($Y = XW$), and the two backward matmuls ($\nabla X = \nabla Y\, W^\top$ and $\nabla W = X^\top \nabla Y$), the latter two using E5M2 for the gradient operand.
+A full FP8 linear layer then does: cast `X` and `W` to E4M3 with their scales $s_X, s_W$; run the FP8 tensor-core matmul (which accumulates in wider precision internally); and de-scale the fp32 output by $1/(s_X s_W)$. Three matmuls per linear layer get FP8'd — the forward ($Y = XW$), and the two backward matmuls ($\nabla X = \nabla Y\, W^\top$ and $\nabla W = X^\top \nabla Y$), the latter two using E5M2 for the gradient operand.
+
+**Delayed scaling has since fallen out of favour, and it is worth knowing why.** The amax history is *mutable state per tensor*: it must be saved and restored in checkpoints, kept consistent across data-parallel ranks, and warmed up at the start of training, and it turns the cast into an operation with side effects that `torch.compile` and CUDA graphs handle awkwardly. Meanwhile the thing it was avoiding — one `abs().amax()` reduction — is cheap when fused into the cast kernel, since that kernel is memory-bound and already reading every element. So the 2025–2026 stacks default to **current scaling** (also called just-in-time or dynamic scaling): compute this tensor's amax right now, scale, cast, matmul. It is stateless, exact, and about as fast. Transformer Engine added current-scaling and block-scaling recipes alongside `DelayedScaling`, and PyTorch's `torchao.float8` (below) uses current scaling as its default. Blackwell's hardware microscaling takes the idea one step further by folding a per-block scale into the instruction itself.
 
 ### Blockwise / fine-grained scaling: the DeepSeek refinement
 
 Per-tensor scaling has a weakness: a single **outlier** value blows up the amax, forcing a small scale that crushes all the *normal* values into the bottom few FP8 codes, where the 3-bit mantissa quantizes them coarsely. Transformers are notorious for activation outliers in specific channels (the same phenomenon that motivates SmoothQuant in [Quantization I: Post-Training Quantization (GPTQ, AWQ, SmoothQuant)](../04-kernels-efficiency/07-quantization-ptq.html)).
 
-The fix is **finer-grained scaling**: instead of one scale per tensor, use one scale per **block**. DeepSeek-V3's recipe uses **per-token-group (1×128) tile scaling for activations and 128×128 block scaling for weights**. Each block gets its own amax and scale, so an outlier in one block no longer poisons the quantization of every other block. The cost is bookkeeping — you carry many small scale factors and must apply them correctly through the matmul — but the numerical robustness is what made full-FP8 training of a 671B model feasible. DeepSeek also kept certain sensitive components (embeddings, the output head, normalization, and the attention softmax) in higher precision (bf16/fp32), and crucially **accumulated the FP8 matmul partial sums into fp32 with periodic promotion** rather than trusting the tensor core's native accumulation alone, because at FP8 input scale even the accumulator precision starts to matter.
+The fix is **finer-grained scaling**: instead of one scale per tensor, use one scale per **block**. DeepSeek-V3's recipe uses **per-token-group (1×128) tile scaling for activations and 128×128 block scaling for weights**. Each block gets its own amax and scale, so an outlier in one block no longer poisons the quantization of every other block. The cost is bookkeeping — you carry many small scale factors and must apply them correctly through the matmul — but the numerical robustness is what made full-FP8 training of a 671B model feasible. DeepSeek also kept certain sensitive components (embeddings, the output head, normalization, and the attention softmax) in higher precision (bf16/fp32), and crucially **promoted the FP8 matmul partial sums into fp32 periodically** rather than trusting the tensor core's native accumulation alone. Concretely: every ~128 elements along the contraction (K) dimension, they copy the tensor-core partial sum out into fp32 registers on the CUDA cores and add it there, so the *long* reduction is genuinely fp32 while the inner 128-element chunks stay on the fast tensor-core path. This is the ~14-bit accumulator caveat from earlier, paid off in software.
 
 
 {{fig:fp8mp-pertensor-vs-blockwise-scaling}}
@@ -304,6 +317,39 @@ The mental model: **FP8 is for the GEMMs only.** The element-wise glue of a tran
 
     Empirically the input embedding, the final LM head (the big $d_\text{model} \times \text{vocab}$ projection), the LayerNorm/RMSNorm, and the attention softmax are the most precision-sensitive parts of a transformer. Almost every successful FP8 recipe (DeepSeek-V3, NVIDIA's) keeps these in bf16/fp32 and FP8s only the bulk feed-forward and projection GEMMs. The throughput you give up is small; the stability you buy is large. Start conservative, then expand the FP8 surface as you confirm the loss curve matches a bf16 baseline.
 
+### The PyTorch-native path: `torchao.float8`
+
+Transformer Engine is NVIDIA's stack and it expects you to build your model out of TE modules. If your model is plain `nn.Linear`s — which yours is, if you followed [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html) — the PyTorch-native route is **`torchao.float8`**, the FP8 training path used by **torchtitan** (PyTorch's reference pretraining stack). It works by *module swapping*: every selected `nn.Linear` is replaced with a `Float8Linear` that casts its operands just-in-time and issues the FP8 GEMM via `torch._scaled_mm`.
+
+```python
+# pip install torchao   (PyTorch-native FP8 training; no Transformer Engine needed)
+import torch
+from torchao.float8 import convert_to_float8_training
+
+model = build_transformer().cuda()
+
+def fp8_filter(mod: torch.nn.Module, fqn: str) -> bool:
+    """Choose which Linears go to FP8. Two independent reasons to say no."""
+    if "lm_head" in fqn:
+        return False                       # precision-sensitive: keep in bf16
+    # The FP8 GEMM needs both dims aligned to 16; unaligned shapes fall back
+    # to a slow path (or error), so filter them out explicitly.
+    return mod.in_features % 16 == 0 and mod.out_features % 16 == 0
+
+# In-place swap of nn.Linear -> Float8Linear for every module passing the filter.
+convert_to_float8_training(model, module_filter_fn=fp8_filter)
+
+# NOT optional: without compile, the cast/scale kernels are separate memory-bound
+# passes and can eat the entire GEMM saving. Fusing them is what makes FP8 a win.
+model = torch.compile(model)
+
+# The training loop is unchanged — still bf16 autocast, still no GradScaler.
+```
+
+Three things to know before you reach for it. First, the default recipe is **tensorwise current scaling**; recent releases add finer-grained recipes (rowwise, and MX block scaling on Blackwell) selected through `Float8LinearConfig` — check the constructor names against your installed version rather than assuming, since this API is still moving. Second, it composes with **FSDP2**: parameters shard and all-gather in bf16 and the FP8 cast happens per-rank afterwards, so you get FP8 GEMMs without giving up the sharding described in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html). Third, it only touches `nn.Linear` — attention's $QK^\top$ and $PV$ matmuls are inside the attention kernel and need a separate FP8 implementation.
+
+**When is FP8 actually worth turning on?** The 2× peak-FLOP ratio is a ceiling you never reach: you still pay bf16 for norms, activations, residuals, and all the collectives, and you add cast/amax kernels. Reported end-to-end pretraining speedups sit well under that ceiling — on the order of 1.2–1.5× on large models — and they only materialize when the GEMMs are large enough that the tensor cores, not memory bandwidth, are the bottleneck — roughly $d_\text{model} \gtrsim 4096$ and fat batch-times-sequence tiles. At the ~100M scale of the book's capstone the GEMMs are far too small for FP8 to pay for its own overhead and numerical risk, which is why [The Pretraining Run](../14-capstone/07-pretraining-run.html) trains Stack-100M in plain bf16 autocast with fp32 masters and no scaler, and [Retrospective & Scale-Up](../14-capstone/12-retrospective-and-scaleup.html) files FP8 as a lever you pull at 1B+ parameters. Prove the bf16 loss curve first; FP8 is an optimization, never a starting point.
+
 ### The next rung: FP4 and hardware microscaling
 
 The narrow-inputs/wide-accumulator logic extends below 8 bits. Blackwell tensor cores add native **microscaling** formats — MXFP8, MXFP4, and NVIDIA's **NVFP4** — where the block scale factor is applied *in hardware* over small (e.g. 16- or 32-element) blocks, generalizing the software blockwise scaling above and making the delayed-scaling amax bookkeeping largely unnecessary. In 2025 NVIDIA reported the first long-horizon 4-bit run: a 12B-parameter model trained on 10T tokens in **NVFP4** matched an FP8 baseline's loss and downstream accuracy, using Random Hadamard transforms to spread outliers, 2D block scaling, stochastic rounding on the gradients, and keeping a small fraction of sensitive layers in higher precision. FP4 is still delicate and not yet a default, but it is where the throughput race is now headed.
@@ -334,6 +380,8 @@ loss matches bf16 then diverges FP8 amax spike overflows E4M3         shorter hi
 slightly worse final loss vs    head/embeddings/softmax in FP8        exclude sensitive layers from FP8
    bf16 baseline                                                      
 grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ before clip_grad_norm_
+FP8 run no faster than bf16     cast/amax kernels unfused, or the     torch.compile the model; check
+                                GEMMs too small to be compute-bound   d_model / tokens-per-batch
 ```
 
 **A note on determinism.** Low-precision tensor-core matmuls are not bit-for-bit deterministic across runs unless you force it, because fp32 accumulation order can vary with the kernel's tiling. This rarely matters for training quality but matters for debugging "did my change move the loss?" — pin seeds and accept small nondeterminism, or use deterministic kernels for an A/B and pay the speed cost.
@@ -351,12 +399,13 @@ grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ b
     - **Master weights in fp32** solve the update-swamping (stagnation) problem: small low-precision updates are otherwise lost when added to a large weight. The optimizer steps in fp32; compute runs low-precision.
     - Tensor cores take **narrow inputs but accumulate in fp32** — this is what makes any low-precision matmul numerically survivable.
     - **AMP loop order matters:** scale the loss → backward → **unscale before clipping** → step (with inf-skip) → update scale. Cast logits to fp32 before cross-entropy.
-    - **FP8 doubles throughput again** using E4M3 (forward) and E5M2 (gradients), but its 3-bit mantissa demands **per-tensor or blockwise scaling** to map each tensor into the tiny representable window; Transformer Engine's **delayed scaling** hides the amax reduction.
+    - **FP8 doubles peak throughput again** using E4M3 (forward) and E5M2 (gradients), but its 3-bit mantissa demands **per-tensor or blockwise scaling** to map each tensor into the tiny representable window. Transformer Engine's **delayed scaling** hid the amax reduction behind a history buffer; 2026 stacks prefer stateless **current scaling** (`torchao.float8`, torchtitan) plus Blackwell hardware microscaling. Realized speedups are far below the 2× ceiling and only appear on fat GEMMs — not a lever worth pulling below ~1B params.
+    - **TF32 is free speed you must opt into.** PyTorch runs fp32 matmuls on CUDA cores unless you call `torch.set_float32_matmul_precision("high")`; an unconfigured fp32 baseline makes every low-precision speedup look better than it is.
     - **DeepSeek-V3-style fine-grained (128×128) blockwise scaling** tames activation outliers that would wreck per-tensor scaling, and keeps embeddings/head/softmax/norms out of FP8.
     - Keep **softmax, norms, loss, and optimizer state in fp32**; the rule of thumb is "any large-range reduction or division by a small number wants fp32."
 
 !!! sota "State of the Art & Resources (2026)"
-    Mixed-precision training is now standard practice for all large-scale LLM runs: bf16 with fp32 optimizer states is the default baseline, and FP8 (E4M3/E5M2 with per-tensor or blockwise scaling) is now standard production practice on Hopper and Blackwell, with Blackwell adding hardware **microscaling** (MXFP8/MXFP4/NVFP4). The 2026 frontier is **4-bit (FP4) training**: NVIDIA's NVFP4 recipe has trained a 12B model on 10T tokens at parity with an FP8 baseline, and the open challenges are stabilizing 4-bit training at larger scale and extending fine-grained scaling to attention and MoE routing layers.
+    Mixed-precision training is now standard practice for all large-scale LLM runs: bf16 with fp32 optimizer states is the default baseline, and FP8 (E4M3/E5M2 with per-tensor or blockwise scaling) is now standard production practice on Hopper and Blackwell, with Blackwell adding hardware **microscaling** (MXFP8/MXFP4/NVFP4). The software has converged on stateless **current scaling** over Transformer Engine's original delayed-scaling history buffer, and FP8 training is available outside NVIDIA's stack through `torchao.float8` (used by torchtitan) as a drop-in `nn.Linear` swap. The 2026 frontier is **4-bit (FP4) training**: NVIDIA's NVFP4 recipe has trained a 12B model on 10T tokens at parity with an FP8 baseline, and the open challenges are stabilizing 4-bit training at larger scale and extending fine-grained scaling to attention and MoE routing layers.
 
     **Foundational work**
 
@@ -373,7 +422,9 @@ grad norm ~65000 every step     clipping a *scaled* gradient          unscale_ b
 
     **Open-source & tools**
 
-    - [NVIDIA/TransformerEngine](https://github.com/NVIDIA/TransformerEngine) — the reference library for FP8-aware layers, `fp8_autocast`, delayed scaling, and the E4M3/E5M2 HYBRID recipe on Hopper/Ada/Blackwell.
+    - [NVIDIA/TransformerEngine](https://github.com/NVIDIA/TransformerEngine) — the reference library for FP8-aware layers, `fp8_autocast`, delayed/current/block scaling recipes, and the E4M3/E5M2 HYBRID recipe on Hopper/Ada/Blackwell.
+    - [pytorch/ao (`torchao.float8`)](https://github.com/pytorch/ao) — the PyTorch-native FP8 training path: `convert_to_float8_training` swaps `nn.Linear` for `Float8Linear`, uses stateless current scaling, and composes with `torch.compile` and FSDP2.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch's reference pretraining stack; shows FP8 via torchao wired together with FSDP2, tensor/pipeline parallelism, and `torch.compile` in a config-driven loop.
 
     **Go deeper**
 

@@ -8,7 +8,8 @@ predict_log_loss, fit_once, minimize, ...) defined by earlier blocks, exactly
 as the chapter's prose says they do ("continues the fitting-block variables").
 
 Tested blocks:  #1 (chinchilla_optimal), #3 (parametric fit), #4 (bootstrap
-                 identifiability check), #5 (IsoFLOP method), #6 (sweep
+                 identifiability check), #5 (IsoFLOP method), #5b (envelope
+                 method / Chinchilla Approach 1), #6 (sweep
                  design), #7 (held-out extrapolation check), #8
                  (lifetime_optimal / inference-aware over-training), #9
                  (emergent-abilities-as-metric-artifact demo).
@@ -343,6 +344,30 @@ assert abs(a_iso - 0.447) < 0.01
 assert abs(a_iso - _true_alloc_exp) < 0.01
 
 print("Block #5 OK")
+
+
+# ============================================================================
+# Block #5b -- The envelope method (Chinchilla Approach 1)
+# Reuses TRUE / true_loss from Block #5, exactly as the chapter's comment says.
+# ============================================================================
+_section("Block #5b: envelope method")
+
+Ns_env = np.logspace(6.5, 9.5, 13)      # 13 model sizes spanning ~3 decades
+C_grid = np.logspace(17, 20, 25)        # compute values to read the envelope at
+best_N = []
+for C in C_grid:
+    D_at_C = C / (6.0 * Ns_env)         # tokens each model has seen at budget C
+    best_N.append(Ns_env[np.argmin(true_loss(Ns_env, D_at_C))])   # envelope toucher
+a_env, _ = np.polyfit(np.log(C_grid), np.log(best_N), 1)
+print(f"envelope exponent a = {a_env:.3f}  "
+      f"(analytic {TRUE['beta']/(TRUE['alpha']+TRUE['beta']):.3f})")
+
+# The chapter prints 0.458 against the analytic 0.452; the envelope estimate is
+# quantized to the ladder's model sizes, hence the small (but bounded) offset.
+assert abs(a_env - 0.458) < 0.005
+assert abs(a_env - _true_alloc_exp) < 0.02
+
+print("Block #5b OK")
 
 
 # ============================================================================

@@ -4,7 +4,7 @@ Two teams are handed the same compute budget, the same architecture, and access 
 
 That gap is the subject of this chapter. Once you have cleaned and deduplicated your corpus (see [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html)) and decided how big a model your budget supports (see [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)), you still face a deceptively deep optimization: the **data mixture**. What proportion of each domain do you sample? Do you upsample a small high-quality source or just deduplicate harder? Do you keep the mixture fixed, or change it over training — easy-to-hard curricula, context-window ramps, a high-quality "annealing" phase near the end? These choices routinely move benchmark scores by amounts that would otherwise cost you a 2x model-size increase.
 
-We will develop the topic in four movements: (1) the **mixing problem** itself — what a mixture is, why it matters, and the upsampling-vs-dedup trade-off; (2) **how to choose weights** — manual ablations, and the proxy-model methods DoReMi and Group-DRO that learn weights automatically; (3) a **from-scratch DoReMi-style reweighting toy** you can run; and (4) **scheduling over time** — curriculum, context-length ramps, and mid-training annealing. The data pipeline that produces these domains is covered in [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html); here we assume the domains exist and ask how to *blend* them.
+We will develop the topic in four movements: (1) the **mixing problem** itself — what a mixture is, why it matters, and the upsampling-vs-dedup trade-off; (2) **how to choose weights** — manual ablations, and the proxy-model methods (DoReMi/Group-DRO, RegMix) that learn weights automatically; (3) a **from-scratch DoReMi-style reweighting toy** you can run, plus how a mixture is actually realized in a dataloader (and which libraries do it for you); and (4) **scheduling over time** — curriculum, context-length ramps, and mid-training annealing. The data pipeline that produces these domains is covered in [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html); here we assume the domains exist and ask how to *blend* them.
 
 ---
 
@@ -87,7 +87,7 @@ Before any fancy method, the industry standard is **mixture ablation at small sc
 1. **Fix a proxy scale** small enough to run dozens of configs cheaply but large enough to be predictive (a few hundred million parameters is typical).
 2. **Define a small set of candidate mixtures** — e.g., a grid or a few hand-designed points: "web-heavy," "code-heavy," "balanced," "math-upsampled."
 3. **Train one proxy per mixture** for a fixed token budget.
-4. **Evaluate** each on per-domain held-out loss and on a basket of downstream tasks.
+4. **Evaluate** each on per-domain held-out loss and on a basket of downstream tasks — in practice EleutherAI's `lm-evaluation-harness` run over a fixed task list, so every candidate mixture is scored by identical prompts and metrics (see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)). At proxy scale, per-domain held-out loss is usually the more sensitive signal: few-shot accuracies on a 300 M model are noisy and often near chance.
 5. **Pick** the mixture optimizing your target metric, then **scale**, ideally re-checking the ranking at one intermediate scale.
 
 This works and is robust, but it is expensive (cost grows linearly in the number of mixtures tried) and it explores only the handful of points you thought to try. It also bakes in the scale-transfer assumption. The methods in the next section automate the search and, in DoReMi's case, find the weights with a *single* extra proxy run instead of a grid.
@@ -112,7 +112,7 @@ This works and is robust, but it is expensive (cost grows linearly in the number
 
 ---
 
-## Choosing the Weights II: Proxy-Model Methods (DoReMi & Group-DRO)
+## Choosing the Weights II: Proxy-Model Methods (DoReMi, Group-DRO & RegMix)
 
 Manual ablation searches a few points. **DoReMi** (Domain Reweighting with Minimax Optimization; Xie et al., 2023) instead *learns* a mixture in one shot, using a small **reference model** and a small **proxy model**, then transfers the learned weights to the large target run. It is built on **Group Distributionally Robust Optimization (Group-DRO)**, so we develop that first.
 
@@ -157,6 +157,14 @@ where the renormalization keeps $w^{(t+1)}$ on the simplex and the small **smoot
 {{fig:doremi-reference-proxy-loop}}
 
 The payoff: DoReMi reports faster convergence to a given loss and better downstream performance than the natural mixture, found with one small reference + one small proxy run — far cheaper than a grid of full-size ablations. The reported weights also transfer across an order of magnitude of scale reasonably well, though, as noted, transfer is not perfect and is the method's main caveat.
+
+The reference implementation is [`sangmichaelxie/doremi`](https://github.com/sangmichaelxie/doremi): a PyTorch/HF-Trainer codebase whose main additions are a domain-annotated streaming dataloader and a `DoReMiTrainer` that maintains the per-domain weight vector and reweights the per-token loss each step. The practical work in adopting it is almost entirely upstream of the algorithm — you must be able to tag every training example with its domain id and to draw batches at arbitrary domain proportions, which is the dataloader machinery we build in the next section.
+
+### Regression-based search: RegMix
+
+DoReMi spends its budget on *one* reference plus *one* adaptive proxy run. **RegMix** (Liu et al., 2024) makes the opposite bet: train *many* tiny models — the paper uses hundreds of ~1 M-parameter models on ~1 B tokens each — on mixtures drawn randomly from the simplex (a Dirichlet prior over $w$), then fit a **regression surrogate** (the paper uses gradient-boosted trees, LightGBM) that predicts held-out loss on a target domain from the mixture vector $w$. Because evaluating the surrogate is free, you can then search over millions of candidate mixtures and take the predicted argmin as your weights.
+
+Three things make this attractive in practice. The proxy runs are embarrassingly parallel and individually trivial, so wall-clock is bounded by your cluster width rather than by a sequential schedule. The surrogate is *reusable*: re-optimize it for a different target domain, ask "what if I halve code?", or read off which domains it treats as most influential, all without training anything new. And it is an explicit model of the mixture→loss map, which is exactly the object you want when you later ask whether that map is stable across scale. The cost is that you need many runs and a target metric the surrogate can regress on; RegMix reports matching or beating DoReMi at roughly a tenth of the compute. In 2026, RegMix-style surrogate search and DoReMi-style excess-loss reweighting are the two standard automated options, with manual ablation still the right tool when you only have three or four candidate mixtures in mind.
 
 ### Online / adaptive mixing during the real run
 
@@ -274,6 +282,86 @@ Two experiments to build intuition (left as exercises you can run in seconds):
 
 ---
 
+## Implementing a Mixture: The Dataloader and the Libraries That Ship It
+
+A mixture is a number on a slide until the dataloader realizes it. Three implementation decisions turn $w$ into actual batches, and getting them wrong quietly changes the mixture you think you are training on.
+
+**Sample at the sequence level, not the token level.** Weights are defined over tokens, but you draw *sequences*. The standard construction is: for each sequence slot in the batch, draw a domain $i \sim w$, then take that domain's next context-length window. Because every packed sequence has exactly `seq_len` tokens, sequence-level multinomial sampling gives token proportions equal to $w$ in expectation, with $O(1/\sqrt{\text{batch} \times \text{steps}})$ noise. (A "stratified" alternative — fixing exactly $w_i \cdot B$ sequences of each domain per batch — removes that noise but requires $w_i B$ to be near-integral, and is worth it only for very small $B$ or very small weights.)
+
+**Pack within a domain, mix across sequences.** Packing (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)) concatenates documents to fill the context window. If you pack *across* domains, a single sequence contains web text followed by math, which corrupts per-domain loss accounting (you can no longer attribute a token's loss to a domain) and — unless you use intra-document attention masking — lets tokens attend across a domain boundary that carries no real dependency. Build packed shards **per domain**, then mix at the sequence level. This also makes DoReMi/online-mixing feasible at all: you need per-domain loss, which requires per-domain sequences.
+
+**Make the draw resumable and audited.** Seed the domain sampler from the *global step*, not once at run start, so a job that dies at step 40,000 and resumes draws the same domains it would have; and checkpoint each domain's read position alongside the model (see [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html)). Log realized weights and realized epochs continuously — a source that runs dry, a shard that fails to mount, or a filter that rejects harder in one domain will silently move you off the intended mixture.
+
+```python
+import numpy as np
+
+class DomainStream:
+    """One domain's pre-tokenized, pre-PACKED token stream (e.g. a np.memmap over
+    a .bin shard). Hands out fixed-length windows and cycles forever, tracking
+    epochs so the realized epoch budget is a measurement, not an assumption."""
+    def __init__(self, tokens, seq_len):
+        self.tokens, self.seq_len = tokens, seq_len
+        self.pos, self.epochs = 0, 0.0
+
+    def next_seq(self):
+        if self.pos + self.seq_len > len(self.tokens):
+            self.pos = 0                      # wrapped: we are re-reading this domain
+        seq = self.tokens[self.pos:self.pos + self.seq_len]
+        self.pos += self.seq_len
+        self.epochs += self.seq_len / len(self.tokens)
+        return seq
+
+    def state(self):                          # persist alongside the model checkpoint
+        return {"pos": self.pos, "epochs": self.epochs}
+
+
+def mixture_batches(streams, w, batch_size, steps, seed=1337, start_step=0):
+    """Yield (step, batch, domain_ids). One domain draw PER SEQUENCE, so token
+    proportions equal w in expectation when all sequences have equal length."""
+    w = np.asarray(w, dtype=np.float64)
+    w = w / w.sum()                           # defensive: must lie on the simplex
+    for step in range(start_step, steps):
+        # Seed per step, not once per run: restarting at step t reproduces the
+        # exact same domain draws, so a resumed run sees the intended mixture.
+        rng = np.random.default_rng([seed, step])
+        ids = rng.choice(len(streams), size=batch_size, p=w)
+        batch = np.stack([streams[i].next_seq() for i in ids])
+        yield step, batch, ids
+
+
+# --- demo: five fake domains sized like the worked example (unique tokens) ----
+if __name__ == "__main__":
+    SEQ_LEN, BATCH, STEPS = 1024, 32, 200
+    names = ["web", "code", "math", "books", "multi"]
+    sizes = [3_000_000, 250_000, 30_000, 80_000, 400_000]   # scaled-down pools
+    w     = [0.456, 0.228, 0.073, 0.097, 0.146]             # from the worked example
+
+    streams = [DomainStream(np.zeros(n, dtype=np.uint16), SEQ_LEN) for n in sizes]
+    counts  = np.zeros(len(names))
+    for step, batch, ids in mixture_batches(streams, w, BATCH, STEPS):
+        counts += np.bincount(ids, minlength=len(names))
+        assert batch.shape == (BATCH, SEQ_LEN)
+
+    print("target   :", np.round(w, 3))
+    print("realized :", np.round(counts / counts.sum(), 3))
+    print("epochs   :", {n: round(s.epochs, 3) for n, s in zip(names, streams)})
+```
+
+The realized weights land within a fraction of a percent of the targets after only 6,400 sequences. The epoch line is the interesting output: with pools shrunk by $10^6$ for the demo, `math` wraps roughly sixteen times in 200 steps. That is precisely the alarm this counter exists to raise — in a real run the same print tells you, at step 40,000 rather than at the post-mortem, that your best small domain has quietly crossed the repetition danger zone. The `domain_ids` the loop yields are also what you scatter losses into to compute the per-domain $\ell_i$ that DoReMi and online mixing consume.
+
+### The libraries that do this for you
+
+You will rarely ship the loop above, but every production stack has its equivalent, and knowing which knob is the mixture is the point:
+
+- **Hugging Face `datasets`** — `interleave_datasets([...], probabilities=w, seed=..., stopping_strategy=...)` mixes streaming `IterableDataset`s document-by-document. The critical argument is `stopping_strategy`: the default `"first_exhausted"` halts the whole mix as soon as *any* source drains (a 5% math source over a small math corpus will truncate your run early), while `"all_exhausted"` re-cycles drained sources — i.e. it silently upsamples them. Neither is "the epoch budget you chose"; pick deliberately. Worked end to end in [Capstone 14.2: Data — Sourcing, Filtering, Dedup, Tokenize & Pack](../14-capstone/02-data-pipeline.html).
+- **Megatron-LM / Megatron-Core** — `--data-path` takes alternating weight/prefix pairs (`--data-path 0.456 /data/web_text_document 0.228 /data/code_text_document ...`); Megatron normalizes the weights and builds a *blended index map* over the per-domain binary datasets, so the blend is materialized as a deterministic sample-index array rather than sampled online. Because the blend is precomputed, the builder can tell you up front how many times each constituent dataset will be consumed — surface that number, it is your epoch audit for free. See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
+- **MosaicML `streaming`** — `StreamingDataset(streams=[Stream(remote=..., proportion=0.456), ...])` mixes shards from object storage, with `proportion` (relative sampling weight), `repeat` (explicit epochs over a source), or `choose` (an absolute sample count) as three equivalent ways to say the same thing. Deterministic resumption mid-epoch is a first-class feature, which is exactly the resumability property the loop above hand-rolls.
+- **`datatrove` (Hugging Face)** — not a mixer, but the pipeline that produces the per-domain, deduplicated, tokenized shards these mixers consume ([Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html)).
+
+Whichever you use, the discipline is identical: express the mixture as weights in *one* config file, and emit realized-weight and realized-epoch metrics from the loader so target and reality can be compared at any point in the run.
+
+---
+
 ## Scheduling Over Time: Curriculum, Context Ramps & Annealing
 
 So far $w$ has been a single fixed vector. But the *order* in which a model sees data, and *when* it sees the best data, matters too. We now let the mixture be a function of training progress, $w(t)$, and consider three orthogonal scheduling axes: difficulty (curriculum), sequence length (context ramp), and quality (annealing/mid-training).
@@ -303,7 +391,7 @@ The single most impactful scheduling idea in modern pretraining is the **high-qu
 1. Train the vast majority of tokens on a broad, web-heavy mixture with a roughly constant (or slowly decaying) learning rate.
 2. In the **final fraction** of training (often the last ~10–20% of tokens), simultaneously **(a) decay the learning rate sharply toward zero** and **(b) shift the data mixture toward the highest-quality, most target-relevant data** — curated math, code, textbooks, instruction-formatted and reasoning-heavy data.
 
-The interaction between the two is the whole point. **Data seen while the learning rate is high and falling fastest has the largest, most lasting effect on the final weights**, because those late steps with a decaying LR are where the model settles into its final basin. Putting your best, most capability-dense data exactly there — when each gradient step still moves the weights but the model is no longer being yanked around — imprints those capabilities most strongly. The MiniCPM "Warmup-Stable-Decay" (WSD) schedule makes this explicit: a long stable-LR phase on the broad mixture, then a short decay phase on upweighted high-quality data. It also has a delicious practical benefit: because the stable phase uses a constant LR, you can *branch* multiple annealing experiments from a single stable checkpoint and try different final mixtures cheaply, instead of re-running from scratch.
+The interaction between the two is the whole point. **Data seen while the learning rate is high and falling fastest has the largest, most lasting effect on the final weights**, because those late steps with a decaying LR are where the model settles into its final basin. Putting your best, most capability-dense data exactly there — when each gradient step still moves the weights but the model is no longer being yanked around — imprints those capabilities most strongly. The MiniCPM "Warmup-Stable-Decay" (WSD) schedule makes this explicit: a long stable-LR phase on the broad mixture, then a short decay phase on upweighted high-quality data. It also has a delicious practical benefit: because the stable phase uses a constant LR, you can *branch* multiple annealing experiments from a single stable checkpoint and try different final mixtures cheaply, instead of re-running from scratch. This is exactly how the book's capstone model is built: Stack-100M runs ~18 B tokens on a broad web/code/math mix at constant LR, then branches a short decay phase on an upweighted high-quality mix — see [Capstone 14.8: Mid-Training — Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html), with the mixture weights themselves set in [Capstone 14.2](../14-capstone/02-data-pipeline.html).
 
 {{fig:mixing-wsd-anneal-schedule}}
 
@@ -335,7 +423,7 @@ The decisions in this chapter compose into a repeatable workflow:
 
 1. **Partition and deduplicate.** Define domains; deduplicate *within* each so "one epoch" is honest ([Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html)).
 2. **Set a target distribution** $p^{\star}$ reflecting what you care about downstream — not what you happen to have.
-3. **Find base weights.** Either run manual mixture ablations at a proxy scale, or run a DoReMi-style reference+proxy pass to get $\bar{w}$ via excess-loss Group-DRO.
+3. **Find base weights.** Either run manual mixture ablations at a proxy scale, run a DoReMi-style reference+proxy pass to get $\bar{w}$ via excess-loss Group-DRO, or fit a RegMix-style regression surrogate over many tiny proxy runs and optimize it.
 4. **Convert to an epoch budget** and check no domain exceeds the repetition danger zone (~4–6 epochs); upsample small high-value domains, downsample abundant low-value ones.
 5. **Validate at one intermediate scale** before committing the full run.
 6. **Design the schedule** $w(t)$: broad stable phase, optional online velocity-based nudges, a long-context phase that upweights long documents, and a final annealing phase that concentrates the highest-quality data as the LR decays.
@@ -345,10 +433,10 @@ Get these right and you buy capability gains that would otherwise cost a substan
 
 !!! key "Key Takeaways"
 
-    - A **mixture** is a sampling distribution $w$ over domains; the natural (proportional) mixture is almost never optimal because you care about a *target* distribution of downstream uses, not raw token counts.
+    - A **mixture** is a sampling distribution $w$ over domains; the natural (proportional) mixture is almost never optimal because you care about a *target* distribution $p^{\star}$ of downstream uses, not raw token counts — and $w$ is a separate object from $p^{\star}$: setting $w = p^{\star}$ is usually suboptimal because domains differ in difficulty and in how much they transfer.
     - Mixing is fundamentally an **epoch-budget** decision: $e_i = w_i D / n_i$. **Deduplicate first** (to make epochs honest), **then upsample deliberately** (small high-value domains to ~2–4 epochs; beyond ~4–6, returns to repeated data decay and memorization rises).
-    - The **training** mixture $w$ is a separate object from the **target** weights $p^{\star}$; setting $w=p^{\star}$ is usually suboptimal because domains differ in difficulty and transfer.
-    - **Manual ablations** at a proxy scale are the robust workhorse; **DoReMi** automates this with a reference + proxy run using **Group-DRO on excess loss** (closeable loss, not raw loss) to avoid over-investing in intrinsically hard domains.
+    - A mixture is only real when the **dataloader** realizes it: pack *within* domains, draw a domain per sequence, seed the draw from the global step so resumption is exact, and log realized weights and epochs. In practice this is `interleave_datasets(probabilities=...)` (HF `datasets`), weighted `--data-path` blends (Megatron-Core), or `Stream(proportion=...)` (MosaicML `streaming`).
+    - **Manual ablations** at a proxy scale are the robust workhorse; **DoReMi** automates this with a reference + proxy run using **Group-DRO on excess loss** (closeable loss, not raw loss) to avoid over-investing in intrinsically hard domains, while **RegMix** fits a regression surrogate over many tiny proxy runs and optimizes it over the simplex.
     - **Online/adaptive mixing** uses loss *velocity* ("ride what's improving") rather than DoReMi's excess-loss *level* ("fix what's broken"); both use multiplicative-weights updates with smoothing to avoid starving any domain.
     - The optimal mixture **drifts with model scale and with training progress** — always validate proxy-derived weights at an intermediate scale before the full run.
     - **Annealing / mid-training** is the highest-impact schedule trick: in the final ~10–20% of tokens, decay the LR sharply *and* shift the mixture to the best, most target-relevant data — late, low-LR steps imprint capabilities most strongly (the WSD recipe).
@@ -377,6 +465,9 @@ Get these right and you buy capability gains that would otherwise cost a substan
     - [sangmichaelxie/doremi](https://github.com/sangmichaelxie/doremi) — official PyTorch DoReMi implementation with HuggingFace Trainer integration and a fast domain-weighted dataloader.
     - [sail-sg/regmix](https://github.com/sail-sg/regmix) — RegMix code for generating mixture configs, training proxy models, and fitting the regression predictor.
     - [huggingface/datablations](https://github.com/huggingface/datablations) — code and experiments from "Scaling Data-Constrained Language Models"; useful for studying epoch-repetition tradeoffs.
+    - [huggingface/datasets](https://github.com/huggingface/datasets) — `interleave_datasets(probabilities=..., stopping_strategy=...)`: the simplest production-grade domain mixer for streaming corpora.
+    - [mosaicml/streaming](https://github.com/mosaicml/streaming) — `StreamingDataset` / `Stream(proportion=|repeat=|choose=)`: shard-level mixing from object storage with deterministic mid-epoch resumption.
+    - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — weighted `--data-path` blends built into a deterministic blended index map by Megatron-Core's dataset builder, which also logs per-dataset epoch counts.
 
     **Go deeper**
 
@@ -387,6 +478,7 @@ Get these right and you buy capability gains that would otherwise cost a substan
 - Xie, Pham, Dong, et al., *DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining* (2023) — the reference/proxy excess-loss Group-DRO method central to this chapter.
 - Sagawa, Koh, Hashimoto, Liang, *Distributionally Robust Neural Networks for Group Shifts* (Group-DRO, 2020) — the optimization framework DoReMi builds on.
 - Muennighoff, Rush, et al., *Scaling Data-Constrained Language Models* (2023) — the value of repeated tokens and the limits of upsampling.
+- Liu et al., *RegMix: Data Mixture as Regression for Language Model Pre-training* (2024) — regression surrogate over many tiny proxy runs, optimized over the simplex.
 - Albalak et al., *Online Data Mixing for Language Model Pre-training* — bandit-style adaptive mixing during the real run.
 - Hu et al. (MiniCPM), *MiniCPM: Unveiling the Potential of Small Language Models* — the Warmup-Stable-Decay schedule and the high-quality annealing phase.
 - Bengio, Louradour, Collobert, Weston, *Curriculum Learning* (2009) — the original easy-to-hard framing.
@@ -538,3 +630,13 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
     Key changes vs the excess-loss toy: (1) no reference model / no `ref_loss` is computed; (2) the signal is `prev_loss - cur_loss` (a *derivative*) instead of `proxy_loss - ref_loss` (a *level*); (3) the step size is enlarged because velocities are small.
 
     Qualitative difference in behavior: velocity says "ride what's working," excess loss says "fix what's broken." Under a power-law learning curve, a domain's velocity is largest early (when tokens are cheapest to convert into loss reduction) and *decays toward zero as the domain plateaus* — even if that domain is still far above its achievable floor. So velocity-based mixing will **pull weight out of a domain once it plateaus, even when large closeable loss (excess) remains**, whereas DoReMi's excess-loss signal would keep investing there until the gap to the reference is closed. The chapter's warning applies: a domain can have high excess loss yet near-zero velocity (stuck), and the two methods disagree precisely in that case.
+
+**7.** You implement the mixture from Exercise 2 ($D = 1500$ B; math has $n_{\text{math}} = 25$ B unique tokens at $w_{\text{math}} = 0.10$) with Hugging Face `interleave_datasets(streams, probabilities=w, stopping_strategy="first_exhausted")`. Roughly how many tokens does your run actually produce, and why? What changes if you switch to `"all_exhausted"`? What must the loader report for you to know whether either behaviour matches your intended epoch budget?
+
+??? note "Solution"
+
+    **`"first_exhausted"` (the default) truncates the run.** Interleaving halts the moment *any* source drains. Math is drawn at 10% of sequences and holds 25 B unique tokens, so it drains after roughly $25 / 0.10 = 250$ B total mixed tokens — the run stops at about **250 B of the intended 1500 B**, one-sixth of the budget, with every other domain cut off mid-stream. Worse, this failure is silent unless you are watching token counts: the loader simply stops yielding.
+
+    **`"all_exhausted"` recycles drained sources instead**, so math is re-read until every source has been consumed once. Math then receives $0.10 \times 1500 = 150$ B tokens against 25 B unique — $e_{\text{math}} = 6.0$ epochs, exactly the value Exercise 2 flagged as sitting at the top of the ~4–6 epoch danger zone. The flag did not choose that repetition for you; it just made it happen quietly.
+
+    Neither strategy *is* an epoch budget — each is a default that produces one. To know which you got, the loader must emit (a) **realized weights** (fraction of sequences drawn per domain, versus target $w$) and (b) **realized epochs** per domain (cumulative tokens consumed divided by unique pool size), both logged continuously rather than computed post hoc. Given those two series, the fix is the usual one: lower $w_{\text{math}}$ toward 3–4 epochs, enlarge the *unique* math pool with synthetic generation, or accept 6 epochs deliberately while watching for memorization — and remember to include any annealing-phase math in the same count.

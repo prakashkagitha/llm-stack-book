@@ -4,7 +4,7 @@ Pretraining a large language model is one of the most expensive experiments a hu
 
 This chapter is the field manual for that experience. We cover the mechanisms behind instability, the mitigations built into modern architectures and training pipelines, the monitoring infrastructure that surfaces problems before they become catastrophes, and the decision-making playbook you need when things go wrong at 3 AM.
 
-Related context that we assume you have read or will read alongside this chapter: [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for floating-point root causes, [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) for optimizer dynamics, [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html) for schedule interactions, and [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html) for recovery mechanics.
+Related context that we assume you have read or will read alongside this chapter: [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for floating-point root causes, [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) for optimizer dynamics, [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html) for schedule interactions, and [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html) for recovery mechanics. Everything here is exercised concretely in Part XIV: [The Pretraining Run](../14-capstone/07-pretraining-run.html) wires gradient clipping, a non-finite-loss skip, a fused CE + z-loss and a periodic QK-clip into the single-GPU loop that trains Stack-100M, and [Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html) derives the clip threshold it uses.
 
 ---
 
@@ -164,11 +164,11 @@ def should_skip_batch(input_ids: torch.Tensor, threshold: float = 0.35) -> bool:
 
 An LR too high produces large gradients on every batch, not just anomalous ones. The tell-tale sign: the loss is healthy during warmup but explodes as soon as the LR reaches its peak value. A too-short warmup (reaching full LR before the Adam moments have stabilized) has the same symptom. See [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html) for schedule mechanics.
 
-**Rule of thumb for initial LR selection:** For AdamW with global batch size $B$ tokens and a cosine schedule, a reasonable starting LR scales as $\alpha \approx C / \sqrt{d_\text{model}}$ where $C$ is typically around $3 \times 10^{-3}$ to $6 \times 10^{-3}$. This is loosely justified by the maximal update parametrization (μP) analysis of Yang et al. — the key insight being that you want the *feature learning* scale to be approximately 1 regardless of model width.
+**Rule of thumb for initial LR selection:** For AdamW, a reasonable *peak* LR scales with width as $\alpha \approx C / \sqrt{d_\text{model}}$, with $C$ landing empirically in the range $6\times10^{-3}$ to $2\times10^{-2}$ across published GPT-3-, Llama- and OLMo-class configurations. Sanity-check both ends: at $d_\text{model} = 4096$, $C = 2\times10^{-2}$ gives $\alpha \approx 3\times10^{-4}$ — the value 7B-class runs typically publish; at $d_\text{model} = 12\,288$, $C = 6\times10^{-3}$ gives $\alpha \approx 5\times10^{-5}$, the order of GPT-3 175B's published peak. Two caveats. This is a *width* rule only — batch size is governed by the separate $\alpha \propto \sqrt{B}$ heuristic below the critical batch size (see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)). And it is the standard-parametrization compromise: the maximal update parametrization (μP) of Yang et al. prescribes the sharper $\alpha \propto 1/\text{fan-in}$ for matrix-like parameters, which is what makes LR genuinely transferable across widths. Treat $C/\sqrt{d_\text{model}}$ as the centre of a sweep, not a final answer.
 
 ### Floating-point issues
 
-At bf16, the representable range is roughly $\pm 3.4 \times 10^{38}$ (same exponent bits as fp32), but precision is limited to ~3 decimal digits of mantissa. Overflow is rare but not impossible; underflow to zero is more common and more insidious.
+At bf16, the representable range is roughly $\pm 3.4 \times 10^{38}$ (same 8 exponent bits as fp32), but the significand is only 8 bits — about 2–3 significant decimal digits. Overflow is rare but not impossible; underflow to zero is more common and more insidious.
 
 At fp16, overflow occurs above $65\,504$, and activations can silently become inf or NaN during the forward pass if any intermediate value — typically in the attention softmax or MLP feedforward — exceeds this. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full picture.
 
@@ -194,7 +194,9 @@ $$
 \text{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{\operatorname{RMSNorm}(Q) \cdot \operatorname{RMSNorm}(K)^\top}{\sqrt{d_k}}\right) V
 $$
 
-This ensures the logit magnitudes grow at most as $O(\sqrt{d_k})$ regardless of the raw activations. Introduced in normalized attention variants and used in production by Gemma, Qwen2.5, and others, it is now a standard recommendation for fp16 training at large scale.
+This ensures the logit magnitudes grow at most as $O(\sqrt{d_k})$ regardless of the raw activations. Popularised at scale by Dehghani et al.'s ViT-22B and now used in production by Gemma 3, Qwen3 (which explicitly replaced Qwen2's QKV bias with QK-norm) and OLMo 2, it is a default recommendation — and not only for fp16. bf16's wider exponent range postpones *overflow*, but it does nothing to prevent softmax saturation into a one-hot with vanishing gradients, so QK-norm earns its keep in bf16 runs too. In HuggingFace `transformers` you can read the real implementations directly: the Qwen3 and Gemma-3 attention modules instantiate `self.q_norm` / `self.k_norm` RMSNorms over the head dimension and apply them to the reshaped Q and K, exactly as below.
+
+One caveat the bound above hides: the learnable RMSNorm gains $\gamma_q, \gamma_k$ are unconstrained, so the guarantee is $O(\sqrt{d_k}) \cdot \lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ — structural, but not fixed. Log $\max|\gamma|$ per layer alongside the max-logit monitor; slow upward drift is the precursor of the failure QK-clip (next subsection) exists to catch.
 
 ```python
 import torch
@@ -252,12 +254,54 @@ class QKNormAttention(nn.Module):
 
 {{fig:attention-logit-overflow-qknorm}}
 
+### QK-Clip (MuonClip)
+
+QK-norm prevents logit runaway *by construction*. The alternative is to let the projections be, measure the damage, and correct it after each optimizer step. This is **QK-clip**, the active ingredient of **MuonClip**, introduced by the Kimi K2 technical report (Moonshot AI, 2025) to keep the Muon optimizer stable at trillion-parameter scale.
+
+The motivation is optimizer-specific. Orthogonalizing optimizers such as Muon (see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html)) push with equal magnitude along *every* singular direction of a weight matrix, so $\lVert W_Q \rVert$ and $\lVert W_K \rVert$ can drift upward together in a way AdamW's per-coordinate normalization tends to hide. Once $\max_{ij} q_i^\top k_j / \sqrt{d_k}$ climbs into the hundreds, the softmax saturates, gradients through it vanish, and you get a spike or an outright NaN.
+
+The fix exploits the fact that the logit is **bilinear** in $W_Q$ and $W_K$. If the observed per-head maximum logit is $S_{\max} > \tau$, scaling *both* matrices by $\gamma = \sqrt{\tau / S_{\max}}$ multiplies every logit in that head by exactly $\gamma^2 = \tau / S_{\max}$, so the post-clip maximum is exactly $\tau$:
+
+$$
+W_Q \leftarrow \gamma W_Q, \quad W_K \leftarrow \gamma W_K, \quad \gamma = \sqrt{\tau / S_{\max}}
+$$
+
+```python
+@torch.no_grad()
+def qk_clip_(attn: nn.Module, max_logit: float, tau: float = 100.0) -> bool:
+    """QK-clip -- the active ingredient of MuonClip (Kimi K2, Moonshot 2025).
+
+    Call AFTER optimizer.step(). `max_logit` is the largest pre-softmax
+    attention logit observed for this module on a recent forward pass.
+    Returns True if the clip fired (log this: it is the single most
+    informative stability signal a Muon run produces).
+    """
+    if not (max_logit > tau):        # also covers NaN: NaN > tau is False
+        return False
+    gamma = (tau / max_logit) ** 0.5
+    if getattr(attn, "q_norm", None) is not None:
+        # QK-norm is ON: W_Q / W_K are pre-normalized, so rescaling them is a
+        # NO-OP. The free knob is the learnable RMSNorm gain -- clip that.
+        attn.q_norm.weight.mul_(gamma)
+        attn.k_norm.weight.mul_(gamma)
+    else:
+        attn.W_q.weight.mul_(gamma)  # original Kimi K2 configuration
+        attn.W_k.weight.mul_(gamma)
+    return True
+```
+
+Two practical points that most summaries skip.
+
+**QK-norm and QK-clip are alternatives on the same knob, not layers that stack.** Kimi K2 needed the clip on $W_Q, W_K$ *precisely because* it does not QK-norm. If you do normalize, rescaling $W_Q$ changes nothing — RMSNorm divides it right back out — so the clip must target the learnable gains instead, as the branch above does.
+
+**Measuring $S_{\max}$ is not free.** The fast attention path is `F.scaled_dot_product_attention`, which dispatches to a FlashAttention-style kernel whose entire point is that it *never materializes* the $(B, H, T, T)$ score matrix (see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)). There is no `.amax()` to take. Either keep a cheap eager-attention probe path, or — since attention-logit drift moves at the speed of one decayed LR per step — take the reading every few hundred steps on a single small probe batch with post-step weights. [Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html) implements exactly this for Stack-100M, including the GQA-aware per-head variant and the choice of $\tau$ (Kimi's $\tau = 100$ as an inert backstop; $\tau \approx 30$ when you want the trigger count as an early-warning sensor).
+
 ### Z-loss
 
 The z-loss is a small auxiliary penalty on the log-partition function of the softmax:
 
 $$
-\mathcal{L}_z = \frac{\beta_z}{|B|} \sum_{i \in B} \bigl(\log \sum_v e^{z_{i,v}}\big)^2
+\mathcal{L}_z = \frac{\beta_z}{|B|} \sum_{i \in B} \bigl(\log \sum_v e^{z_{i,v}}\bigr)^2
 $$
 
 where $z_{i,v}$ are the pre-softmax logits for position $i$ and vocabulary token $v$. If the logits grow large, the log-partition function grows, and the z-loss penalizes this. This is especially useful for Mixture-of-Experts models (see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html)) where the router softmax is a common source of collapse. A typical $\beta_z = 10^{-4}$ adds negligible loss overhead but provides a gradient pressure that keeps logit norms bounded.
@@ -282,6 +326,9 @@ def z_loss(logits: torch.Tensor, beta: float = 1e-4) -> torch.Tensor:
 # total_loss = lm_loss + aux_loss
 ```
 
+!!! tip "Fuse the z-loss into the cross-entropy, and chunk it"
+    Written naively as above you traverse the `(B, T, V)` logit tensor twice and, because both the CE and the `logsumexp` want fp32 for numerical safety, you materialize an fp32 copy of it. At $B \cdot T = 16\,384$ and $V = 32\,768$ that copy alone is $16\,384 \times 32\,768 \times 4\ \text{bytes} \approx 2.1$ GB — on a small model it is *larger than the weights, gradients and optimizer state combined*, and it is the single tensor that most often blows up a from-scratch training loop. The fix is one function that walks the hidden states in row-chunks (say 8 192 rows at a time), computes `logsumexp` once per chunk, and returns `CE + beta * logsumexp**2` — CE is itself `logsumexp - z_target`, so the quantity you need for the penalty is already on hand and the second pass disappears. [The Pretraining Run](../14-capstone/07-pretraining-run.html) ships exactly this as `fused_ce_z_loss(..., loss_chunk=8192)`; `torch.compile` will fuse the chunk body for you, and Liger-Kernel and `cut-cross-entropy` provide off-the-shelf Triton implementations of the same idea.
+
 ### Careful initialization
 
 The variance of activations through the network is set by initialization. The classical analysis by He et al. and the subsequent improvements (μP, Transformers specific scaling) give concrete recipes:
@@ -291,7 +338,7 @@ The variance of activations through the network is set by initialization. The cl
 - **QKV projections:** Initialize so that the expected logit variance is $\approx 1$. With head dimension $d_k$, this means $\sigma_{QK} = d_k^{-0.25}$ (so that $QK^\top / \sqrt{d_k}$ has variance 1).
 
 ```python
-import math
+import torch.nn as nn
 
 def init_transformer_weights(model: nn.Module, n_layers: int, d_model: int):
     """
@@ -356,18 +403,29 @@ $$
 and we rescale all gradients by $\min(1, \tau / \|g\|_2)$ where $\tau$ is the clip threshold. This prevents large gradients from causing large parameter updates but preserves their *direction*. The standard value is $\tau = 1.0$; some works use $\tau = 0.5$ for extra stability at the cost of slightly slower early learning.
 
 !!! warning "Gradient clipping with distributed training"
-    With data parallelism (DDP, ZeRO), each rank holds a shard of the gradients. You must compute the *global* gradient norm across all ranks before clipping — otherwise each rank clips to its local norm, which may differ wildly. PyTorch's `torch.nn.utils.clip_grad_norm_` handles this automatically if called after `loss.backward()` and before `optimizer.step()`, but only if gradients are synchronized. With ZeRO-3, gradients are sharded, so you need DeepSpeed's `clip_grad_norm_` or Fully Sharded Data Parallel (FSDP)'s equivalent.
+    You must clip on the *global* gradient norm across all ranks — otherwise each rank clips to its own local norm, the rescale factors differ, and the averaged update no longer points along the true gradient direction. Who computes that global norm depends on your stack, and getting it wrong is silent:
+
+    - **DDP:** gradients are all-reduced during `backward()`, so every rank already holds the full gradient. Plain `torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)` after `backward()` and before `optimizer.step()` is correct.
+    - **FSDP1 (`FullyShardedDataParallel`):** parameters and gradients are flat-sharded, so the module exposes its own collective-aware `fsdp_model.clip_grad_norm_(1.0)`. Calling the free function instead clips on a per-rank shard norm — wrong, and it will not error.
+    - **FSDP2 (`torch.distributed.fsdp.fully_shard`, the current PyTorch API):** parameters are `DTensor`s, and `torch.nn.utils.clip_grad_norm_` is `DTensor`-aware — it performs the cross-rank reduction itself and returns a global norm. This is what `torchtitan`, PyTorch's reference large-scale pretraining codebase, does.
+    - **DeepSpeed ZeRO:** set `gradient_clipping` in the DeepSpeed JSON config and let the engine do it inside `engine.step()`; do not clip yourself.
+    - **Megatron-LM:** pass `--clip-grad 1.0`; Megatron computes the norm across the data-, tensor- and pipeline-parallel groups, which no generic helper can do for you.
+
+    See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html) for how these engines are wired.
 
 ### Skip-batch logic
 
 When a batch produces an anomalous gradient — detected either by norm threshold or by explicit batch quality scoring — you can skip the optimizer step for that batch. This is conservative: you still do the forward and backward pass (wasting compute), but you do not update the model state. The Adam moments are also not updated.
 
 ```python
+import math
+
 def training_step(
     model,
     optimizer,
     batch: dict,
-    scaler,  # GradScaler for mixed precision
+    scaler=None,      # torch.amp.GradScaler -- REQUIRED for fp16, must be None for bf16
+    amp_dtype=torch.bfloat16,
     grad_clip: float = 1.0,
     grad_skip_threshold: float = 5.0,  # skip if norm > 5x clip threshold
     anomaly_threshold: float = 0.35,
@@ -376,6 +434,10 @@ def training_step(
     One training step with skip-batch and gradient norm monitoring.
     Returns a metrics dict for logging.
     """
+    assert not (scaler is not None and amp_dtype is torch.bfloat16), (
+        "bf16 has fp32's exponent range, so loss scaling is unnecessary and "
+        "GradScaler's inf-detection logic is not what you want. Pass scaler=None."
+    )
     # --- Optional: skip anomalous batch early (before forward pass) ---
     if should_skip_batch(batch['input_ids'], threshold=anomaly_threshold):
         return {'loss': float('nan'), 'skipped': True, 'reason': 'bad_data'}
@@ -383,7 +445,7 @@ def training_step(
     optimizer.zero_grad()
 
     # Forward pass under autocast
-    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+    with torch.autocast(device_type='cuda', dtype=amp_dtype):
         logits = model(batch['input_ids'])
         loss = F.cross_entropy(
             logits.view(-1, logits.size(-1)),
@@ -391,33 +453,41 @@ def training_step(
             ignore_index=-100,
         )
 
-    # Backward pass
-    scaler.scale(loss).backward()
+    # Backward pass. Loss scaling exists only to keep fp16 gradients out of
+    # the subnormal range; under bf16 we go straight to .backward().
+    if scaler is not None:
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)   # must unscale before clipping/inspection
+    else:
+        loss.backward()
 
-    # Unscale gradients before clipping
-    scaler.unscale_(optimizer)
-
-    # Compute global gradient norm BEFORE clipping (for monitoring)
+    # clip_grad_norm_ returns the PRE-clip global norm -- exactly what we log.
     grad_norm = torch.nn.utils.clip_grad_norm_(
         model.parameters(),
         max_norm=grad_clip,
     ).item()
 
-    # --- Skip-step logic: if norm is astronomically large, skip optimizer ---
-    if grad_norm > grad_skip_threshold * grad_clip:
-        # Reset gradients so they don't corrupt the next step
-        optimizer.zero_grad()
-        scaler.update()
+    # --- Skip-step logic: skip on a huge norm OR a non-finite one. ---
+    # The isfinite() check is not optional: `float('nan') > x` is False in
+    # Python, so a NaN gradient would sail past a bare threshold comparison
+    # and be applied to the weights, corrupting every parameter at once.
+    if not math.isfinite(grad_norm) or grad_norm > grad_skip_threshold * grad_clip:
+        optimizer.zero_grad(set_to_none=True)
+        if scaler is not None:
+            scaler.update()          # let the scaler back off its scale factor
         return {
             'loss': loss.item(),
             'grad_norm': grad_norm,
             'skipped': True,
-            'reason': 'grad_spike',
+            'reason': 'grad_spike' if math.isfinite(grad_norm) else 'nonfinite',
         }
 
     # Normal step
-    scaler.step(optimizer)
-    scaler.update()
+    if scaler is not None:
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        optimizer.step()
 
     return {
         'loss': loss.item(),
@@ -461,8 +531,9 @@ You cannot debug what you cannot see. A production pretraining run should log at
 ### Essential metrics
 
 ```python
+import math
 import torch
-import wandb  # or any logging framework
+import wandb  # Weights & Biases; swap for mlflow / torch.utils.tensorboard
 
 class TrainingMonitor:
     """
@@ -539,6 +610,7 @@ class TrainingMonitor:
 | Attention logit max (sampled) | fp16 overflow risk | > 50 000 in fp16 → add QK norm |
 | MLP pre-activation RMS | Activation explosion | > 100 → add norm before MLP |
 | LM head output logit std | Logit scale | > 30 → add z-loss |
+| QK-clip trigger count per interval | Attention-logit drift (see above) | any sustained rise → LR too high |
 | `skipped_batches` fraction | Data quality / grad instability | > 2% → audit dataset |
 
 ### Distributed monitoring considerations
@@ -548,6 +620,7 @@ In a multi-node run across hundreds of GPUs (see [Distributed Training I: Data P
 - Log metrics only from rank 0 to avoid redundant writes.
 - But compute gradient norms globally (all-reduce) before logging, since rank-0's local norm may not represent the global norm.
 - Alert on NaN/Inf using `torch.isnan(loss).any()` — in ZeRO-3, a NaN on any rank will propagate during the gradient all-reduce, so catching it early saves wasted compute.
+- Reach for the stack's own instrumentation before writing your own: `torchtitan` and `Megatron-LM` both log grad norm, loss scale and MFU out of the box; `TORCH_DISTRIBUTED_DEBUG=DETAIL` surfaces mismatched collectives and desynchronized ranks; `NCCL_DEBUG=WARN` catches the flaky-link class of hang; and `torch.autograd.set_detect_anomaly(True)` pinpoints the exact op that first produced a NaN (at a 2–5× slowdown, so enable it only on a replay, never on the real run).
 
 ```python
 def check_for_nan_distributed(loss: torch.Tensor, grad_norm: float) -> bool:
@@ -587,7 +660,7 @@ In a 13B model trained in fp16 (not bf16), at step 42 000 the loss becomes NaN. 
 
 ### Story 4: The zombie GPU
 
-During a 256-GPU training run, GPU #183 silently corrupts its computation starting at step 15 000 (the gradient it contributes is numerically wrong but finite). Because the corrupt gradient is averaged in during the DDP all-reduce, the model trains fine for another 20 000 steps — just slightly worse than it should. Discovered only when the team compared two runs that should have been identical under different partitioning and found a large discrepancy. Fix: implement periodic determinism checks (run a single fixed micro-batch through each GPU independently and compare; see also chapter [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html)).
+During a 256-GPU training run, GPU #183 silently corrupts its computation starting at step 15 000 (the gradient it contributes is numerically wrong but finite). Because the corrupt gradient is averaged in during the DDP all-reduce, the model trains fine for another 20 000 steps — just slightly worse than it should. Discovered only when the team compared two runs that should have been identical under different partitioning and found a large discrepancy. Fix: implement periodic determinism checks (run a single fixed micro-batch through each GPU independently and compare; see also chapter [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html)). This class of fault is exactly what NVIDIA's DCGM is for — `dcgmi diag -r 3` runs the long hardware/ECC/memory-bandwidth diagnostic, and a DCGM exporter scraping XID errors and uncorrectable ECC counts per node will usually name the sick GPU before your loss curve does.
 
 ---
 
@@ -760,6 +833,7 @@ Before starting a large, expensive pretraining run, validate every item on this 
 
 ARCHITECTURE
   [ ] QK-Norm applied to all attention layers
+      (if not: QK-clip / MuonClip enabled -- mandatory under Muon)
   [ ] Residual output projections initialized with 1/sqrt(2L) scaling
   [ ] Embedding init std ≤ 1/sqrt(d_model)
   [ ] Z-loss enabled (beta ≈ 1e-5 for LM head, 1e-4 for MoE router)
@@ -767,7 +841,10 @@ ARCHITECTURE
 
 OPTIMIZER
   [ ] Gradient clipping at 1.0 (or 0.5 for extra stability)
-  [ ] Adam epsilon = 1e-8 (not 1e-6; smaller epsilon = more stability)
+  [ ] Adam epsilon: 1e-8 is the usual default, but INCREASE it (1e-6..1e-5)
+      if you see spikes -- a larger eps floors the denominator, so a
+      collapsed v_hat can no longer produce an unbounded effective LR
+      (Molybog et al., 2023, recommend exactly this)
   [ ] Warmup ≥ 1% of total steps (for 1T-token run: ≥ 1B tokens)
   [ ] Weight decay ≠ 0 (0.1 is standard; reduces weight growth)
   [ ] No weight decay on embeddings / normalization parameters
@@ -797,7 +874,7 @@ MONITORING
 
 !!! key "Key Takeaways"
     - Loss spikes are caused by large gradients (from bad data, high LR, or floating-point issues) amplified by Adam's first-moment-to-second-moment ratio. Understanding this mechanism guides every mitigation.
-    - **QK-Norm** and **z-loss** are inexpensive architectural additions that prevent the two most common sources of catastrophic instability: attention logit overflow and logit explosion. Add them by default.
+    - **QK-Norm** and **z-loss** are inexpensive architectural additions that prevent the two most common sources of catastrophic instability: attention logit overflow and logit explosion. Add them by default. **QK-clip (MuonClip)** is the post-hoc alternative on the same knob — the one you need if you do *not* QK-norm, and effectively mandatory under Muon.
     - **Gradient clipping** (norm threshold 1.0) and **skip-batch logic** (skip optimizer steps when gradient norm exceeds 5×clip) form the first line of operational defense during training.
     - **Careful initialization** — depth-scaled residual projections, small embedding init, well-tuned QK init — keeps the model in a stable regime from step 0, reducing the number of spikes encountered in the first few thousand steps.
     - **Monitoring is not optional.** Track gradient norms, activation statistics, per-domain eval loss, and an explicit spike delta at every 10–50 steps. You cannot recover from what you cannot see.
@@ -809,7 +886,7 @@ MONITORING
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Training stability for large-scale LLMs is now a well-mapped engineering discipline: the core failure modes (Adam logit amplification, fp16 overflow, bad-data spikes) are understood analytically, and a standard toolkit of QK-norm, z-loss, gradient clipping, and skip-batch logic has been validated at scales from 7B to 400B+ parameters. Active research focuses on optimizer-level spike detection, adaptive clipping, and principled hyperparameter transfer across scales.
+    Training stability for large-scale LLMs is now a well-mapped engineering discipline: the core failure modes (Adam logit amplification, fp16 overflow, bad-data spikes) are understood analytically, and a standard toolkit of QK-norm (or QK-clip), z-loss, gradient clipping, and skip-batch logic has been validated at scales from 7B to trillion-parameter models. Active research focuses on optimizer-level spike detection, adaptive clipping, and principled hyperparameter transfer across scales.
 
     **Foundational work**
 
@@ -823,6 +900,7 @@ MONITORING
     - [Molybog et al., *A Theory on Adam Instability in Large-Scale Machine Learning* (2023)](https://arxiv.org/abs/2304.09871) — Analytical theory showing how Adam enters a regime where updates are large and uncorrelated with the loss gradient; validated on 7B–546B models.
     - [Rybakov et al., *Methods of Improving LLM Training Stability* (2024)](https://arxiv.org/abs/2410.16682) — Systematic study of per-layer norm placement (QK, Proj, FC2); shows combined QK-norm + softmax capping allows 1.5× higher LR without divergence.
     - [Huang et al., *SPAM: Spike-Aware Adam with Momentum Reset for Stable LLM Training* (2025)](https://arxiv.org/abs/2501.06842) — Optimizer extension that detects gradient spikes and resets momentum at the spike step, eliminating manual rollback for many spike events; ICLR 2025.
+    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — Introduces **MuonClip**, whose QK-clip component rescales $W_Q, W_K$ post-step to cap the maximum attention logit; the fix that made Muon usable at trillion-parameter scale.
     - [OLMo Team, *2 OLMo 2 Furious* (2025)](https://arxiv.org/abs/2501.00656) — Fully open pretraining run detailing practical stability choices (RMSNorm reordering, QK-norm, z-loss, data filtering) at 7B–32B scale with all training artifacts released.
     - [Grattafiori et al., *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — Meta's candid technical report on instabilities encountered during Llama 3 pretraining and the mitigations applied in production.
 
@@ -830,6 +908,8 @@ MONITORING
 
     - [microsoft/mup](https://github.com/microsoft/mup) — PyTorch implementation of maximal update parametrization (μP) for stable, scale-transferable LR and init.
     - [allenai/OLMo](https://github.com/allenai/OLMo) — Fully open pretraining codebase with QK-norm, z-loss, and monitoring baked in; the most transparent reference implementation of production stability practices.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch's official large-scale pretraining reference: FSDP2 + tensor/pipeline parallelism with `DTensor`-aware global gradient clipping, loss/grad-norm/MFU logging and selective activation checkpointing already wired, so you can read the *correct* distributed clipping and monitoring code rather than reinvent it.
+    - [huggingface/nanotron](https://github.com/huggingface/nanotron) — Compact 3D-parallel pretraining library; a readable middle ground between nanoGPT and Megatron-LM for studying how stability hooks sit inside a real trainer.
 
 ## Further Reading
 
@@ -838,7 +918,8 @@ MONITORING
 - **Yang et al., "Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer" (2022)** — The μP framework that underpins principled LR and init scaling, explaining why $\alpha \propto 1/\sqrt{d}$ keeps training stable across widths.
 - **Grattafiori et al., "The Llama 3 Herd of Models" (Meta AI, 2024)** — The technical report contains candid discussion of training instabilities encountered during Llama 3 pretraining and the mitigations applied.
 - **Anil et al., "PaLM 2 Technical Report" (Google, 2023)** — Documents the training stability experience for a series of large models including the use of bf16, careful init, and monitoring infrastructure.
-- **Molybog et al., "A Theory of Loss Landscape and Training Stability" (2023)** — Theoretical treatment connecting loss landscape curvature to spike behavior, providing analytical backing for the Adam amplification model described in this chapter.
+- **Molybog et al., "A Theory on Adam Instability in Large-Scale Machine Learning" (Meta AI, 2023)** — Analytical backing for the Adam amplification model described in this chapter, including the argument that *increasing* Adam's epsilon damps the instability.
+- **Kimi Team, "Kimi K2: Open Agentic Intelligence" (Moonshot AI, 2025)** — The technical report that introduced MuonClip/QK-clip and documents a trillion-parameter run kept spike-free with it.
 - **nanoGPT (Andrej Karpathy, GitHub)** — The canonical minimal GPT implementation. The `train.py` file is a useful starting point for understanding gradient clipping, skip-batch, and monitoring in a single-file, readable codebase.
 
 ---

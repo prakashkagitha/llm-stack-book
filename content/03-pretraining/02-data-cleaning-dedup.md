@@ -2,7 +2,7 @@
 
 Raw internet crawl data is not a dataset — it is a chaos of HTML artifacts, boilerplate menus, foreign-language text, spam, near-duplicate paragraphs, personally identifiable information (PII), toxic content, and accidental benchmark answers embedded in forum threads. The gap between a raw CommonCrawl snapshot and the clean, diverse, high-signal corpus that produces a capable language model is where most of the unreported work in pretraining happens. This chapter is a precise guide to every step in that gap.
 
-We begin with the upstream work described in [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html), then hand off to [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) downstream. Quality of data directly governs sample efficiency: as [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) shows, the optimal token budget depends critically on the token distribution being worth training on.
+We begin with the upstream work described in [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html), then hand off to [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) downstream. Everything here is applied end to end, on a real single-GPU budget, in [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) — the capstone chapter that builds the corpus for this book's ~100M-parameter model. Quality of data directly governs sample efficiency: as [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) shows, the optimal token budget depends critically on the token distribution being worth training on.
 
 ## Language Identification
 
@@ -51,13 +51,15 @@ def detect_language(model, text: str, threshold: float = 0.65):
 
 **Filtering strategy.** For English-centric corpora, retain documents where `lang == "en"` and `confidence >= 0.65`. For multilingual corpora (e.g., training a model like mT5 or BLOOM), keep all languages above threshold and track per-language token counts to enable upsampling of low-resource languages later.
 
+**What the libraries use.** You rarely call `fasttext` directly in a production pipeline: HuggingFace's `datatrove` wraps exactly this model in a `LanguageFilter` block (with a `languages=` allow-list and a `language_threshold`), and AI2's `dolma` toolkit exposes it as a `ft_lang_id_*` tagger. Note that `lid.176.bin` is the *old* workhorse — it covers 176 languages and is weakest precisely where you need it most, on low-resource scripts. The modern replacements are **OpenLID** (higher-quality, curated training data over roughly 200 languages) and **GlotLID** (far broader, on the order of 1,600+ language-script labels) — both distributed in fastText's binary format, so the `model.predict` call above is unchanged. HuggingFace's multilingual FineWeb2 release adopted GlotLID for exactly this coverage reason. Swap the model file, keep the code.
+
 ## Heuristic Quality Filters
 
 Heuristic filters are fast rule-based tests applied before any classifier. They remove the most obvious garbage — empty pages, boilerplate, machine-generated spam — at near-zero cost.
 
 ### Document-Level Heuristics
 
-The following table lists standard heuristics used in production pipelines (inspired by C4, RefinedWeb, and Dolma):
+The following table lists standard heuristics used in production pipelines (inspired by C4, Gopher/MassiveText (Rae et al., 2021), RefinedWeb, and Dolma). These rule sets are not folklore — they ship as reusable blocks: `datatrove` provides `GopherQualityFilter`, `GopherRepetitionFilter`, `C4QualityFilter`, and `FineWebQualityFilter`, and `dolma` provides the equivalent `gopher_v1` / `c4_v1` taggers. Reimplementing them below is how you learn what those blocks actually compute (and how to tune their thresholds for a domain they were not designed for, such as code or math).
 
 | Filter | Rule | Typical threshold |
 |---|---|---|
@@ -163,7 +165,7 @@ A lower perplexity means the document resembles Wikipedia-quality text, so CCNet
 
 For speed at billion-document scale, fastText classifiers (with TF-IDF or hashing bag-of-words features) are common. They run in microseconds per document, enabling an entire CommonCrawl WET dump (on the order of a billion URLs, several hundred GB) to be classified in hours on a single machine.
 
-The `CCNet` pipeline and its successors train a per-language classifier using Wikipedia as the positive signal, then keep documents above a chosen percentile threshold (e.g., keep the top 30% by score). The ROOTS corpus (used for BLOOM) went further, adding domain experts to annotate quality labels.
+Be precise about which recipe is which, because the two are often conflated. **CCNet** does not train a discriminative classifier at all: it fits a *per-language KenLM 5-gram model on Wikipedia* and bins each document by perplexity into head/middle/tail thirds, keeping the head (and optionally the middle). The **Wikipedia-vs-crawl fastText classifier** — positives from Wikipedia/Books/WebText-linked pages, negatives from raw crawl, keep the top percentile by predicted score — is the GPT-3 recipe. Which positives you choose matters more than the model class: DCLM (Li et al., 2024) found that a plain fastText classifier trained with *instruction-style* positives (OpenHermes-2.5 plus highly-upvoted ELI5 posts) rather than Wikipedia produced a markedly stronger filter, and that filter is what defines DCLM-baseline. The ROOTS corpus (used for BLOOM) went in another direction, adding domain experts to annotate quality labels.
 
 Here is a compact but complete trainable classifier: Wikipedia paragraphs are the positive class, raw CommonCrawl paragraphs the negative class, and we keep the top percentile by predicted quality on a held-out split (the CCNet recipe). It uses `HashingVectorizer` so there is no vocabulary to store -- fixed memory regardless of corpus size -- with a `LogisticRegression` head; the commented block shows the faster `fasttext.train_supervised` alternative used at billion-document scale.
 
@@ -214,7 +216,7 @@ Training on toxic or private content is both an alignment risk and a legal risk.
 
 ### Toxicity Filtering
 
-Toxicity classifiers (Perspective API, Jigsaw's models, or custom fastText classifiers trained on annotated hate speech datasets) assign a probability that text is harmful, harassing, or offensive. The typical approach:
+Toxicity classifiers assign a probability that text is harmful, harassing, or offensive. At pretraining scale you want something that runs in microseconds per document, so the practical options are: fastText classifiers trained on the Jigsaw toxic-comment datasets (this is what Dolma ships as its `jigsaw_hatespeech_*` and `jigsaw_nsfw_*` taggers, and it is the only tier cheap enough for a full crawl), a small transformer such as `unitary/toxic-bert` on HuggingFace for a second pass over borderline documents, and Google's hosted Perspective API for spot-audits and calibration (it is rate-limited, so it is not a corpus-scale tool). The typical approach:
 
 1. Score each document with a lightweight classifier.
 2. Drop documents above a threshold (e.g., toxicity probability > 0.5).
@@ -266,7 +268,23 @@ def redact_pii(text: str) -> str:
 # -> "Contact me at EMAIL_ADDRESS or PHONE_NUMBER."
 ```
 
-Regex handles structured PII well. Unstructured PII (names, addresses, partial account numbers) requires an NER model. The Dolma pipeline uses a combination of regex rules and a fine-tuned `mBERT`-based NER model. Bigram blocking (maintaining a blocklist of known high-frequency real names scraped from public records and blocking documents with many hits) is a cheaper complement.
+Regex handles structured PII well. Unstructured PII (names, addresses, partial account numbers) requires an NER model. The Dolma pipeline uses a combination of regex rules and a model-based tagger, and exposes the whole thing as a `pii_*` tagger you can run over a corpus; `datatrove` ships the equivalent as a `PIIFormatter` block that rewrites emails and IP addresses in place rather than dropping the document. For anything beyond email/phone/IP, the mature open-source tool is **Microsoft Presidio** (`presidio-analyzer` + `presidio-anonymizer`), which combines regex recognizers, checksum validators (so a 16-digit string is only flagged as a credit card if it passes the Luhn check), context words, and a spaCy/transformers NER backend, and lets you register custom recognizers:
+
+```python
+# pip install presidio-analyzer presidio-anonymizer && python -m spacy download en_core_web_lg
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+analyzer, anonymizer = AnalyzerEngine(), AnonymizerEngine()
+text = "Dr. Alice Chen (alice@example.com) called from 555-867-5309."
+results = analyzer.analyze(text=text, language="en")       # spans + entity types + scores
+print(anonymizer.anonymize(text=text, analyzer_results=results).text)
+# -> "Dr. <PERSON> (<EMAIL_ADDRESS>) called from <PHONE_NUMBER>."
+```
+
+Presidio is far slower than regex (it runs an NER model), so the production pattern is: regex-redact everything cheaply in the main pass, then run Presidio only on the documents a cheap detector flagged as PII-dense, or on a sampled audit slice to estimate the recall of your regex tier. Bigram blocking (maintaining a blocklist of known high-frequency real names scraped from public records and blocking documents with many hits) is a cheaper complement.
+
+Two policy decisions are easy to get wrong. First, **redact rather than drop**: deleting every document containing an email address would strip out most of the genuinely useful technical web. Second, **replace with a stable placeholder token, not with a random fake value** — a fake but plausible phone number is indistinguishable from real PII downstream, and a stable placeholder is something the model can learn to treat as a class rather than memorize.
 
 ## Exact Deduplication
 
@@ -720,6 +738,8 @@ def is_contaminated(
     return False
 ```
 
+Three decisions turn this sketch into a usable stage. **(a) Index size.** Twenty benchmarks is on the order of $10^{6}$–$10^{7}$ distinct 13-grams, which fits in a Python `dict`; if you decontaminate against hundreds of task variants, reuse the `BloomFilter` from earlier in this chapter as the index — an $O(1)$-memory membership test with no false negatives is exactly the right structure here, and a false positive merely deletes one extra training document. **(b) Drop the document or the span?** Dropping whole documents is the safe default and what most open corpora do; GPT-3 instead removed only a window around each match, which preserves more tokens but leaves the surrounding context of a leaked question in the corpus. **(c) What counts as a match?** Exact 13-gram overlap on whitespace tokens catches verbatim copies and nothing else — it will not catch a paraphrased MMLU question, a reformatted GSM8K problem, or a translated benchmark. This is why 2025–2026 practice supplements n-gram matching with embedding-nearest-neighbour or LLM-judged similarity checks on the top candidates, and why "we decontaminated with 13-grams" is a floor, not a proof. Finally, decontaminate your *post-training* data too: an SFT or RLVR mixture scraped from the same web is at least as likely to leak test items as the pretraining corpus (see [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html)).
+
 ### How Much Contamination Exists?
 
 Researchers studying C4, The Pile, and RedPajama consistently find that a non-trivial fraction of popular benchmark test sets appears verbatim in CommonCrawl-derived corpora. Removing contamination typically lowers reported benchmark numbers slightly, reflecting more honest evaluation. The important lesson: always report whether decontamination was performed and against which benchmarks.
@@ -875,7 +895,7 @@ def run_ablation(raw_docs, clean_docs, heldout_docs, mc_examples,
 
 ## Putting It All Together: A Production Pipeline
 
-A production data-cleaning pipeline for pretraining typically runs in several distributed stages. The following pseudocode shows the logical order and the typical tool choices:
+A production data-cleaning pipeline for pretraining runs in several distributed stages. The schematic below fixes the *logical order* — which is the part that matters and the part people get wrong (dedup before quality scoring, so you do not pay classifier compute on documents you are about to delete; decontamination last, so it sees the final corpus). Treat `data_pipeline/*.py` here as placeholders for your own driver scripts; the next subsection shows the same pipeline written in a real library.
 
 ```bash
 # Stage 0: Download WET files from CommonCrawl S3
@@ -895,7 +915,10 @@ spark-submit data_pipeline/02_exact_dedup.py \
   --output ./exact_dedup/
 
 # Stage 3: MinHash fuzzy deduplication
-# The deduplicate-text-datasets tool (Lee et al.) is the reference implementation.
+# `text-dedup` (github.com/ChenghaoMou/text-dedup) is a convenient single-box
+# implementation; datatrove's Minhash* blocks are the distributed one. (The
+# separate `deduplicate-text-datasets` tool from Lee et al. does suffix-array
+# exact-substring dedup, which is Stage 3b, not this.)
 python -m text_dedup.minhash \
   --path ./exact_dedup/ \
   --output ./fuzzy_dedup/ \
@@ -935,18 +958,67 @@ The total wall-clock time for this pipeline on one full CommonCrawl snapshot (ro
 
 For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, arXiv, etc.), each source runs through its own adapted pipeline (e.g., GitHub needs a different toxicity model and no stop-word heuristics), and then cross-source deduplication removes documents that appear in multiple sources before merging.
 
+### The same pipeline in `datatrove`
+
+You should not actually write those seven driver scripts. HuggingFace's [`datatrove`](https://github.com/huggingface/datatrove) — the library FineWeb itself was built with — expresses a corpus build as a *list of pipeline blocks* handed to an executor, and every stage of this chapter exists as a block. Stages 0–5 collapse into one file:
+
+```python
+# pip install "datatrove[all]"
+from datatrove.executor.local import LocalPipelineExecutor
+from datatrove.pipeline.readers import WarcReader
+from datatrove.pipeline.extractors import Trafilatura
+from datatrove.pipeline.filters import (
+    URLFilter,                # domain/URL blocklist (adult, spam) -- cheapest gate first
+    LanguageFilter,           # fastText LangID (the "Language Identification" section)
+    GopherRepetitionFilter,   # duplicate line/paragraph/n-gram fractions
+    GopherQualityFilter,      # length, mean word length, symbol/bullet/ellipsis ratios
+    C4QualityFilter,          # terminal punctuation, "javascript"/"lorem ipsum" lines
+    FineWebQualityFilter,     # FineWeb's added line-level rules
+)
+from datatrove.pipeline.formatters import PIIFormatter   # email/IP redaction
+from datatrove.pipeline.writers.jsonl import JsonlWriter
+
+CRAWL = "CC-MAIN-2024-10"
+
+pipeline = [
+    WarcReader(f"s3://commoncrawl/crawl-data/{CRAWL}/segments/",
+               glob_pattern="*/warc/*"),
+    URLFilter(),
+    Trafilatura(favour_precision=True),          # HTML -> text (see Ch. 3.1)
+    LanguageFilter(languages=["en"], language_threshold=0.65),
+    GopherRepetitionFilter(),
+    GopherQualityFilter(),
+    # FineWeb disables C4's terminal-punctuation rule: it is very aggressive.
+    C4QualityFilter(filter_no_terminal_punct=False),
+    FineWebQualityFilter(),
+    PIIFormatter(),
+    JsonlWriter(f"./filtered/{CRAWL}"),
+]
+
+if __name__ == "__main__":
+    # tasks = independent shards of work; each writes its own output file + log.
+    # Swap LocalPipelineExecutor -> SlurmPipelineExecutor (same `pipeline=`)
+    # to run the identical job across a cluster.
+    LocalPipelineExecutor(pipeline=pipeline, tasks=64, workers=16,
+                          logging_dir=f"./logs/{CRAWL}").run()
+```
+
+Stage 3 (MinHash) is then a separate four-executor DAG — `MinhashDedupSignature` → `MinhashDedupBuckets` → `MinhashDedupCluster` → `MinhashDedupFilter` — because signatures must be written to disk and regrouped by band before clustering can be global. That DAG, with the sizing arithmetic that justifies each stage, is written out in full in [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html), which applies this chapter's machinery to build the actual pretraining corpus for the book's ~100M-parameter capstone model.
+
+Three things this buys you over hand-rolled scripts, and they are the reasons the from-scratch code above does not simply scale up: **per-task checkpointing** (a crash costs one shard, not the run), **statistics for free** (every filter block records how many documents it dropped, so you get the yield funnel of the worked example below without instrumenting anything), and an **`exclusion_writer=`** argument on every filter that dumps the rejected documents to disk so you can actually read what your thresholds threw away. Block names and keyword arguments do move between releases — check the version you install. The alternatives worth knowing are AI2's [`dolma`](https://github.com/allenai/dolma) toolkit (Rust core, tagger/dedup/mixer CLI, used for OLMo) and **NVIDIA NeMo Curator** (GPU-accelerated fuzzy dedup and classifier filtering, worth it if you have idle GPUs and a CPU-bound pipeline).
+
 !!! tip "Practitioner tip"
     Run the full pipeline on a 1% sample first. Check the yield at each stage, the language distribution, the quality score distribution, and spot-check 50–100 random documents from the final output. A bug in the heuristic filter (e.g., an off-by-one in the digit fraction check) can silently drop 30% of your corpus before you notice.
 
 !!! key "Key Takeaways"
-    - Language identification (fastText lid.176.bin) is the first gate; apply per-language heuristics only after LangID.
+    - Language identification is the first gate (fastText `lid.176.bin`, or GlotLID/OpenLID for broad multilingual coverage); apply per-language heuristics only after LangID.
     - Heuristic filters (word length, digit fraction, stop-word coverage, repeated bigram ratio) cheaply remove the worst-quality 50–70% of a raw crawl.
     - Quality classifiers (KenLM perplexity, fastText trained on Wikipedia vs. crawl, or LLM-rated educational value) further improve data quality at the cost of compute.
-    - Exact deduplication via SHA-256 hashing is trivial but removes only ~10% of duplicates; fuzzy dedup with MinHash + LSH is essential to catch the other 25–35%.
-    - MinHash signatures estimate Jaccard similarity in $O(k)$ time; LSH reduces candidate pairs from $O(N^2)$ to near-linear by organizing signatures into bands.
+    - Exact dedup (SHA-256, or a Bloom filter at ~9x less memory) removes only ~10% of duplicates; fuzzy dedup is essential for the other 25–35%. MinHash signatures estimate Jaccard in $O(k)$ time, and LSH banding cuts candidate pairs from $O(N^2)$ to near-linear — with $(b, r)$ as the recall-vs-verification-cost knob.
     - Suffix array substring dedup (Lee et al., 2022) finds repeated spans across documents and is the most aggressive deduplication strategy.
     - Benchmark decontamination via 13-gram fingerprinting is a mandatory step for honest evaluation; contamination in CommonCrawl-based corpora is non-trivial.
     - Deduplication improves model quality beyond just storage savings: it reduces memorization, improves downstream task performance, and makes calibration better.
+    - Write the from-scratch versions to understand the mechanisms, then run the real thing: `datatrove` (Gopher/C4/FineWeb filter blocks, `LanguageFilter`, the four-stage `Minhash*` DAG), `dolma` (Rust Bloom-filter dedup and taggers), `text-dedup`, and Presidio for PII.
     - Always run the pipeline on a sample first and audit yield, language distribution, and spot-checked documents before committing to a full run.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -971,7 +1043,9 @@ For multi-source corpora (combining CommonCrawl with Books, GitHub, Wikipedia, a
 
     - [google-research/deduplicate-text-datasets](https://github.com/google-research/deduplicate-text-datasets) — reference Rust + Python implementation of suffix-array exact-substring dedup from Lee et al.
     - [allenai/dolma](https://github.com/allenai/dolma) — production-grade data curation toolkit (Bloom-filter dedup, Gopher/C4 taggers, PII removal) used to build the OLMo pretraining corpus.
-    - [huggingface/datatrove](https://github.com/huggingface/datatrove) — modular pipeline library (filtering, MinHash dedup, extraction) that runs locally or on SLURM/Ray; used to build FineWeb.
+    - [huggingface/datatrove](https://github.com/huggingface/datatrove) — modular pipeline library (filtering, MinHash dedup, extraction) that runs locally or on SLURM/Ray; used to build FineWeb. Its `GopherQualityFilter` / `C4QualityFilter` / `LanguageFilter` blocks are the production form of this chapter's heuristics.
+    - [ChenghaoMou/text-dedup](https://github.com/ChenghaoMou/text-dedup) — single-box collection of MinHash, SimHash, SuffixArray and exact-hash dedup implementations, useful for corpora that fit on one machine.
+    - [microsoft/presidio](https://github.com/microsoft/presidio) — PII detection and anonymization (regex recognizers, checksum validators, NER backends, custom recognizers) for the redaction stage.
 
 {{fig:data-cleaning-cascade-funnel}}
 

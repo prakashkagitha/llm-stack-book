@@ -468,8 +468,9 @@ def main():
     ) -> float:
         """
         Scale learning rate when changing effective batch size.
-        Use 'linear' when target_batch / base_batch <= 8x.
-        Use 'sqrt' for more aggressive batch scaling.
+        Use 'sqrt' for AdamW/Muon (the SDE-derived rule for adaptive and
+        normalized-update optimizers) -- this is the LLM-pretraining default.
+        Use 'linear' only for SGD-with-momentum, and only well below B*.
         """
         ratio = target_batch / base_batch
         if rule == "linear":
@@ -479,27 +480,66 @@ def main():
         else:
             raise ValueError(f"Unknown rule: {rule}")
 
-    # Example: scale 1M-token/step config to 4M tokens/step (book's own example)
+    # Example: scale 1M-token/step config to 4M tokens/step under AdamW
+    # (book's own example -- sqrt is the LLM default).
     base_cfg = PretrainingHParams(peak_lr=3e-4)
     new_lr = scale_lr_for_batch_size(
         base_lr=base_cfg.peak_lr,
         base_batch=1_000_000,
         target_batch=4_000_000,
-        rule="linear",
+        rule="sqrt",
     )
-    print(f"Scaled LR: {new_lr:.2e}")  # 1.20e-03
-    assert abs(new_lr - 1.2e-3) < 1e-9
+    print(f"Scaled LR (sqrt): {new_lr:.2e}")  # 6.00e-04
+    assert abs(new_lr - 6e-4) < 1e-9
 
-    # Also exercise the dataclass helper methods and the "sqrt" rule branch.
+    # Also exercise the dataclass helper methods and the "linear" (SGD) branch.
     assert base_cfg.effective_batch_tokens(world_size=8) == 4 * 2048 * 1 * 8
     assert base_cfg.total_tokens(world_size=8) == base_cfg.effective_batch_tokens(8) * base_cfg.total_steps
-    sqrt_lr = scale_lr_for_batch_size(
-        base_lr=base_cfg.peak_lr, base_batch=1_000_000, target_batch=4_000_000, rule="sqrt"
+    linear_lr = scale_lr_for_batch_size(
+        base_lr=base_cfg.peak_lr, base_batch=1_000_000, target_batch=4_000_000, rule="linear"
     )
-    assert abs(sqrt_lr - 3e-4 * math.sqrt(4)) < 1e-9
-    print(f"[OK] block #7 PretrainingHParams + scale_lr_for_batch_size: linear={new_lr:.2e}, sqrt={sqrt_lr:.2e}")
+    assert abs(linear_lr - 1.2e-3) < 1e-9
+    print(f"[OK] block #7 PretrainingHParams + scale_lr_for_batch_size: sqrt={new_lr:.2e}, linear={linear_lr:.2e}")
 
-    print("\nAll tested blocks (#0, #3, #4, #5, #6, #7) executed successfully.")
+    # ========================================================================
+    # Block: gradient_noise_scale (critical-batch-size estimator, McCandlish)
+    # ========================================================================
+    @torch.no_grad()
+    def _sq_grad_norm(model) -> float:
+        return float(sum((p.grad.detach() ** 2).sum() for p in model.parameters()
+                         if p.grad is not None))
+
+    def gradient_noise_scale(model, loss_fn, batch, b_small: int, b_big: int) -> float:
+        model.zero_grad(set_to_none=True)
+        loss_fn(model, batch[:b_small]).backward()
+        g_small = _sq_grad_norm(model)
+
+        model.zero_grad(set_to_none=True)
+        loss_fn(model, batch[:b_big]).backward()
+        g_big = _sq_grad_norm(model)
+
+        g_norm_sq = (b_big * g_big - b_small * g_small) / (b_big - b_small)
+        trace_sigma = (g_small - g_big) / (1.0 / b_small - 1.0 / b_big)
+        return trace_sigma / max(g_norm_sq, 1e-12)
+
+    torch.manual_seed(0)
+    noise_model = torch.nn.Linear(32, 4)
+    noise_data = torch.randn(256, 32)
+    noise_targets = torch.randint(0, 4, (256,))
+
+    def noise_loss_fn(m, idx_slice):
+        n = idx_slice.shape[0]
+        return nn.functional.cross_entropy(m(noise_data[:n]), noise_targets[:n])
+
+    est = sum(
+        gradient_noise_scale(noise_model, noise_loss_fn, noise_data, 8, 128)
+        for _ in range(20)
+    ) / 20
+    print(f"B_noise estimate: {est:.1f} examples")
+    assert est > 0.0, "noise scale must be positive"
+    print(f"[OK] block gradient_noise_scale: B_noise={est:.1f}")
+
+    print("\nAll tested blocks (#0, #3, #4, #5, #6, #7, noise-scale) executed successfully.")
 
 
 if __name__ == "__main__":

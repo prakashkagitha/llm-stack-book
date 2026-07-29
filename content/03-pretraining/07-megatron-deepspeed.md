@@ -105,11 +105,13 @@ The three ZeRO stages correspond to increasingly aggressive sharding across DP r
 
 {{fig:zero-stages}}
 
-| Stage | What is sharded | Peak memory saving (DP=64) | Communication overhead |
+| Stage | What is sharded | Peak memory saving (DP=64) | Communication volume per step |
 |-------|----------------|---------------------------|------------------------|
-| ZeRO-1 | Optimizer states (momentum, variance) | ~4× for Adam | Minimal: reduce-scatter on gradients |
-| ZeRO-2 | + Gradients | ~8× | Same as ZeRO-1 |
-| ZeRO-3 | + Parameters | ~64× | All-gather on forward, reduce-scatter on backward |
+| ZeRO-1 | Optimizer states (momentum, variance) | ~4× for Adam | $2P$ — reduce-scatter grads + all-gather updated params; identical to DDP's all-reduce |
+| ZeRO-2 | + Gradients | ~8× | $2P$ — same as ZeRO-1 (only memory changes) |
+| ZeRO-3 | + Parameters | ~64× | $3P$ — adds a param all-gather in *both* forward and backward; ~1.5× DDP |
+
+That last row is the whole trade: ZeRO-3 buys a DP-fold reduction in model-state memory at 1.5× the communication of DDP, and unlike ZeRO-1/2 the extra all-gather sits on the critical path of the forward pass, so it must be prefetched (`stage3_prefetch_bucket_size`) to be hidden.
 
 For a model with $P$ parameters stored in fp16 (2 bytes) and Adam optimizer states in fp32:
 
@@ -202,13 +204,23 @@ model_engine, optimizer, _, _ = deepspeed.initialize(
     config="ds_config_zero3.json",
 )
 
-# Training step — identical to vanilla PyTorch
-for batch in dataloader:
+# Training step — identical to vanilla PyTorch apart from backward()/step()
+# being called on the engine rather than on the loss and the optimizer.
+import torch.nn.functional as F
+
+for batch in dataloader:                       # yields (inputs, labels) on the right device
     inputs, labels = batch
-    loss = model_engine(inputs)
-    model_engine.backward(loss)    # handles gradient sharding internally
+    hidden = model_engine(inputs)              # (B, S, d_model)
+    logits = lm_head(hidden)                   # your untied/tied output projection
+    loss = F.cross_entropy(
+        logits.view(-1, logits.size(-1)).float(),
+        labels.view(-1),
+    )
+    model_engine.backward(loss)    # gradient reduce-scatter, accumulation-aware
     model_engine.step()            # triggers all-gather, optimizer step, re-shard
 ```
+
+Note that `model_engine.backward()` and `.step()` are gradient-accumulation aware: DeepSpeed reads `gradient_accumulation_steps` from the config and only fires the reduce-scatter and the optimizer update on boundary micro-steps, so your loop never calls `zero_grad()` or counts micro-batches itself.
 
 ## The 4-D Parallelism Space: Adding Expert Parallelism
 
@@ -220,9 +232,15 @@ $$
 
 **Expert parallelism (EP)** shards the experts across EP ranks. Within a single MoE layer, tokens are dispatched to experts on different GPUs via all-to-all collectives. EP communicates *token activations* rather than parameters, so the all-to-all volume is proportional to sequence length and hidden size, not parameter count.
 
-Megatron-Core's `MoELayer` handles the EP dimension natively. The key constraint: each EP group must see enough tokens to keep all experts loaded. An expert that processes very few tokens is wasted capacity — the *load imbalance* problem that auxiliary loss terms (introduced by Switch Transformer, Fedus et al.) address.
+Megatron-Core's `MoELayer` handles the EP dimension natively (`--expert-model-parallel-size`, with `--moe-token-dispatcher-type alltoall`). The key constraint: each EP group must see enough tokens to keep all experts loaded. An expert that processes very few tokens is wasted capacity — the *load imbalance* problem that auxiliary loss terms (introduced by Switch Transformer, Fedus et al.) address.
 
 {{fig:megatron-4d-moe-collectives}}
+
+### The Fifth Axis: Context Parallelism
+
+For long-context runs there is one more independent axis. **Context parallelism (CP)** shards the *sequence* across CP ranks and computes attention with a ring exchange of K/V blocks (Ring Attention), so activation memory and attention FLOPs per GPU both fall by CP× while the model weights stay replicated across the CP group. Megatron-Core exposes it as `--context-parallel-size`, and the full grid becomes $N = \text{DP} \times \text{TP} \times \text{PP} \times \text{CP} \times \text{EP}$.
+
+Do not confuse CP with the *sequence parallelism* described above: Megatron's SP is a memory optimization strictly *inside* a TP group (it shards the norm/dropout regions along sequence and is free, so it is always on whenever TP > 1), whereas CP is a genuine extra dimension of the GPU grid that you spend GPUs on. The rule of thumb is to leave CP=1 until sequence length pushes activation memory past what recomputation can absorb — typically 32K tokens and beyond — then raise CP before raising TP, because the ring exchange is point-to-point and overlappable while the TP all-reduce is not. The mechanism is developed in [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html) and [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html).
 
 ## Choosing Parallelism Degrees: A Systematic Approach
 
@@ -297,6 +315,12 @@ $$
 
 {{fig:parallelism-degree-decision-funnel}}
 
+### Running the Funnel at 100M: the Answer Is Usually DP-Only
+
+Apply the same five steps to the capstone's ~100M-parameter model and every model-parallel degree collapses to 1. Step 1: $16P = 16 \times 10^8 \approx 1.6$ GB of model state — it fits on a 16 GB T4 with room to spare, so nothing *must* be sharded. Step 2: TP exists only to make a model fit or to cut per-GPU activation memory; with 1.6 GB of state there is nothing to split, and TP=2 would add an all-reduce per layer to a model whose GEMMs ($d_{\text{model}}=512$) are too small to amortize it. Step 3: PP has the same answer, plus a bubble you cannot pay for. Steps 4–5: DP = number of GPUs, and you spend the whole global-batch budget on gradient accumulation.
+
+The practical consequence is worth stating plainly, because it saves readers weeks: **you do not need Megatron-LM or DeepSpeed to train a 100M model.** Plain `DistributedDataParallel` — or FSDP2 if you want the optimizer-state saving for free — over `torchrun --nproc_per_node=8` is the correct tool, and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) shows that even one GPU suffices for the whole capstone. What *does* transfer directly from this chapter at 100M scale is the measurement discipline: the $6P$ FLOPs/token rule, the MFU calculation, and the Nsight-before-you-tune habit. Small models typically land at *lower* MFU than 70B ones (they are launch-latency- and memory-bandwidth-bound rather than GEMM-bound), so calibrate expectations against similar-sized runs, not against the 40–55% frontier-scale band. The techniques here become mandatory somewhere around 7B–13B, the transition described in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html).
+
 ## MFU and HFU: Measuring Real Hardware Utilization
 
 You have launched the run. Now you want to know if you are getting good value from your hardware. Two metrics matter.
@@ -311,7 +335,7 @@ $$
 \text{FLOPs/token} \approx 6P + 12 \cdot n_\text{layers} \cdot d_\text{model} \cdot S
 $$
 
-where the $6P$ term comes from $\sim 2P$ for the forward pass (each parameter participates in roughly 2 multiply-adds) times 3 for the full backward pass, and the second term is the attention quadratic cost (often secondary for moderate sequence lengths).
+where the $6P$ term comes from $\sim 2P$ for the forward pass (each parameter participates in roughly 2 multiply-adds) times 3 for the full backward pass, and the second term is the attention quadratic cost (often secondary for moderate sequence lengths). Following the PaLM/Megatron convention, the attention term counts the full $S \times S$ score matrix even though causal masking means a FlashAttention kernel actually computes only half of it — MFU is deliberately a *model*-FLOP metric, so everyone must count the same nominal FLOPs for the numbers to be comparable across papers.
 
 For practical purposes, practitioners often use the simplified rule:
 
@@ -520,11 +544,11 @@ torchrun \
   --clip-grad $CLIP_GRAD \
   --bf16 \
   --use-flash-attn \
-  --recompute-activations \        # selective recompute: attention only
+  --recompute-activations \
   --recompute-granularity selective \
-  --use-distributed-optimizer \    # ZeRO-1 style optimizer sharding
-  --overlap-grad-reduce \          # overlap DP gradient reduce with backward
-  --overlap-param-gather \         # overlap ZeRO-3 param gather with forward
+  --use-distributed-optimizer \
+  --overlap-grad-reduce \
+  --overlap-param-gather \
   --use-rope-scaling \
   --normalization RMSNorm \
   --swiglu \
@@ -538,6 +562,12 @@ torchrun \
   --tensorboard-dir $CHECKPOINT_PATH/tb \
   --wandb-project llm-stack-70b
 ```
+
+The four performance flags are the ones worth memorizing. `--recompute-activations` selects the *selective* recomputation policy of Korthikanti et al. (attention softmax/dropout only); `--use-distributed-optimizer` turns on Megatron's own optimizer-state sharding across the DP group — that is ZeRO-1, implemented natively inside Megatron-Core; `--overlap-grad-reduce` hides the DP reduce-scatter behind the backward pass; and `--overlap-param-gather` hides the distributed optimizer's parameter all-gather behind the forward pass. Add `--tp-comm-overlap` (which requires Transformer Engine's userbuffers) to additionally overlap the TP all-gather/reduce-scatter with the GEMMs they bracket.
+
+!!! note "Do you still need DeepSpeed?"
+
+    Increasingly, no. The historical Megatron-DeepSpeed fork existed because Megatron had no optimizer sharding of its own, so DeepSpeed supplied ZeRO. Modern Megatron-Core ships `--use-distributed-optimizer` (ZeRO-1) plus `--overlap-param-gather`, and can shard further with FSDP-style options, so a pure Megatron-Core run needs no DeepSpeed at all. DeepSpeed remains the right choice when you want ZeRO-2/3 semantics, CPU/NVMe offload, ZeRO++ quantized collectives, or DeepSpeed-MoE — or when you are driving training from HuggingFace `Trainer`/`accelerate`, which speak DeepSpeed configs natively. The JSON below is shown for the DeepSpeed-driven variant of the same run; you would use it *instead of* `--use-distributed-optimizer`, not alongside it.
 
 ### DeepSpeed config for this run
 
@@ -623,9 +653,23 @@ For large models, `selective` is the sweet spot — it eliminates the expensive-
 
 PyTorch's Fully Sharded Data Parallel ([Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)) covers a similar use case to ZeRO-3. Rule of thumb:
 
-- **Megatron-Core + ZeRO-1** for runs with dedicated clusters and TP/PP requirements (>30B parameters).
+- **Megatron-Core (+ optionally DeepSpeed)** for runs on dedicated clusters with real TP/PP requirements (>30B parameters), and wherever Transformer Engine's FP8 and TP-comm-overlap kernels matter.
 - **FSDP2** for runs up to ~30B parameters where single-framework PyTorch is preferred and TP is unnecessary.
-- **FSDP + TP (Tensor Parallelism via DTensor)** is the PyTorch-native path for very large models without Megatron dependency.
+- **FSDP2 + TP/PP/CP via DTensor** is the PyTorch-native path for very large models without a Megatron dependency.
+
+You rarely wire that last option by hand. The reference implementation is **[`pytorch/torchtitan`](https://github.com/pytorch/torchtitan)**, PyTorch's own pretraining platform, which composes FSDP2, DTensor tensor parallelism, pipeline parallelism (`torch.distributed.pipelining`), context parallelism, `torch.compile`, Float8 training via `torchao`, and Distributed Checkpoint behind a single TOML config — the PyTorch-native answer to Megatron-LM. Its ND-parallel mesh is built with `init_device_mesh`, the same primitive you would use yourself:
+
+```python
+from torch.distributed.device_mesh import init_device_mesh
+
+# 512 GPUs as DP=8 x PP=8 x TP=8 — the direct analogue of Megatron's
+# parallel_state.initialize_model_parallel(), but as a first-class PyTorch object.
+mesh = init_device_mesh("cuda", (8, 8, 8), mesh_dim_names=("dp", "pp", "tp"))
+tp_group = mesh["tp"].get_group()      # what get_tensor_model_parallel_group() returns
+dp_mesh = mesh["dp"]                   # pass straight to fully_shard(module, mesh=dp_mesh)
+```
+
+The other stacks you will meet in the wild: **NVIDIA NeMo** (a full framework built on Megatron-Core, adding data/recipe management and multimodal), **HuggingFace `nanotron`** (a compact, readable 3D-parallel pretrainer), **`allenai/OLMo-core`** (the fully open OLMo training stack), and HuggingFace `accelerate`, which is not a parallelism engine itself but a launcher that plugs a `Trainer`-style loop into DeepSpeed or FSDP configs.
 
 For mixed-precision choices and the role of bf16 vs fp8 in these runs, see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
@@ -663,7 +707,7 @@ This halves the bubble at the cost of sending twice as many pipeline messages pe
 
     **Q:** You are given a 256-GPU cluster (8 GPUs/node, NVLink intra-node, InfiniBand inter-node) and asked to train a 70B dense model. Walk through how you would choose TP, PP, and DP, and justify each choice.
 
-    **A:** Start with TP=8 — one full node — because all tensor-parallel all-reduces then stay on NVLink (fast) and never touch InfiniBand (slow). With TP=8 and 8 nodes remaining in the config, we choose PP=4 which gives 8/8=1 set of 4-stage pipelines per TP group and leaves DP=256/(8×4)=8. Verify memory: 70B params × 16 bytes / (8×4 TP×PP sharding) ≈ 35 GB model state per GPU, plus ~5-10 GB activations with selective recompute → comfortably fits 80 GB. For MFU, PP=4 with interleaved schedule (v=2) and 32+ micro-batches gives a bubble below 10%. If we needed more DP, we would scale the cluster rather than reducing TP/PP. If DP gradient communication becomes the bottleneck, we switch from ZeRO-1 to ZeRO-2 to reduce that traffic.
+    **A:** Start with TP=8 — one full node — because all tensor-parallel all-reduces then stay on NVLink (fast) and never touch InfiniBand (slow). With TP=8 and 8 nodes remaining in the config, we choose PP=4 which gives 8/8=1 set of 4-stage pipelines per TP group and leaves DP=256/(8×4)=8. Verify memory: 70B params × 16 bytes / (8×4 TP×PP sharding) ≈ 35 GB model state per GPU, plus ~5-10 GB activations with selective recompute → comfortably fits 80 GB. For MFU, PP=4 with interleaved schedule (v=2) and 32+ micro-batches gives a bubble below 10%. If we needed more DP, we would scale the cluster rather than reducing TP/PP. If DP gradient communication shows up as exposed time in the profile, note that moving ZeRO-1 → ZeRO-2 would *not* help — both move the same reduce-scatter + all-gather volume, ZeRO-2 only saves gradient memory. The real levers are overlap (`--overlap-grad-reduce`, `--overlap-param-gather`), larger reduce buckets, and, if the DP group spans many nodes, ZeRO++-style hierarchical or quantized collectives.
 
 ## Combining Megatron-Core with External Libraries
 
@@ -674,6 +718,12 @@ Megatron-Core is designed to be embedded. The typical NeMo or Databricks Mosaic 
 from megatron.core import parallel_state
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.gpt.gpt_model import GPTModel
+# Layer "specs" say which implementation backs each sublayer. The Transformer
+# Engine spec uses TE's fused kernels (and is required for FP8); there is also a
+# pure-PyTorch `get_gpt_layer_local_spec()` for debugging without TE installed.
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_with_transformer_engine_spec,
+)
 
 # 1. Initialize distributed environment
 import torch.distributed as dist
@@ -700,12 +750,14 @@ config = TransformerConfig(
 
 model = GPTModel(
     config=config,
-    transformer_layer_spec=get_gpt_layer_spec(),  # from megatron.core.models.gpt
+    transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
     vocab_size=128256,
     max_sequence_length=8192,
+    position_embedding_type="rope",
 )
 
-# 4. Wrap with DeepSpeed for ZeRO-1
+# 4. Optimizer-state sharding. Either Megatron's own distributed optimizer
+#    (config.use_distributed_optimizer = True, ZeRO-1) or DeepSpeed — not both.
 import deepspeed
 model_engine, _, _, _ = deepspeed.initialize(model=model, config="ds_config_zero1.json")
 ```
@@ -715,7 +767,7 @@ This pattern — Megatron-Core for the TP/PP topology, DeepSpeed for the optimiz
 For inference serving after training, the parallelism story shifts toward pure TP (no PP, since autoregressive decode cannot pipeline) and often requires weight resharding from the training checkpoint format. See [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html) for the inference-side parallelism story.
 
 !!! sota "State of the Art & Resources (2026)"
-    As of 2026, the 3D + ZeRO pattern (Megatron-Core for tensor/pipeline parallelism, DeepSpeed for optimizer sharding) remains the dominant approach for frontier pretraining runs, with recent additions of context parallelism (CP) expanding the space to 4D or even 5D parallelism for long-sequence models. Production clusters regularly achieve 40–55% MFU on H100/H200 hardware, and increasingly on NVIDIA Blackwell (B200 / GB200 NVL72) systems — now the frontier training platform — using these frameworks.
+    As of 2026, the 3D + ZeRO pattern (Megatron-Core for tensor/pipeline parallelism plus optimizer-state sharding, whether from Megatron's own distributed optimizer or from DeepSpeed) remains the dominant approach for frontier pretraining runs, with context parallelism (CP) and expert parallelism (EP) expanding the space to 4D or 5D for long-sequence and MoE models. The credible PyTorch-native alternative is torchtitan's FSDP2 + DTensor composition, which now covers the same axes without a Megatron dependency. Production clusters regularly achieve 40–55% MFU on H100/H200 hardware, and increasingly on NVIDIA Blackwell (B200 / GB200 NVL72) systems — now the frontier training platform — using these frameworks.
 
     **Foundational work**
 
@@ -734,6 +786,8 @@ For inference serving after training, the parallelism story shifts toward pure T
 
     - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — the reference implementation of Megatron-Core; includes TP, PP, CP, EP, and the distributed optimizer; actively maintained with H100/Blackwell support.
     - [deepspeedai/DeepSpeed](https://github.com/deepspeedai/DeepSpeed) — ZeRO stages 1–3, ZeRO-Infinity, ZeRO++, and DeepSpeed-MoE; integrates directly with Megatron-Core or HuggingFace Trainer.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch's own reference pretraining platform: FSDP2 + DTensor TP + PP + CP composed over a `DeviceMesh`, with `torch.compile`, `torchao` Float8, and Distributed Checkpoint, all config-driven. The PyTorch-native alternative to the Megatron/DeepSpeed pairing.
+    - [huggingface/nanotron](https://github.com/huggingface/nanotron) and [allenai/OLMo-core](https://github.com/allenai/OLMo-core) — compact, readable 3D-parallel pretrainers; good sources to read end to end when Megatron-Core's abstraction layers are more than you need.
 
     **Go deeper**
 
@@ -749,7 +803,8 @@ For inference serving after training, the parallelism story shifts toward pure T
 - Rajbhandari, et al. **"ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning"** (SC 2021). ZeRO-Offload and NVMe offloading.
 - Ren, et al. **"ZeRO-Offload: Democratizing Billion-Scale Model Training"** (USENIX ATC 2021).
 - NVIDIA Megatron-Core GitHub: `NVIDIA/Megatron-LM` — the canonical reference implementation.
-- Microsoft DeepSpeed GitHub: `microsoft/DeepSpeed` — ZeRO implementation and tutorials.
+- DeepSpeed GitHub: `deepspeedai/DeepSpeed` (formerly `microsoft/DeepSpeed`) — ZeRO implementation and tutorials.
+- PyTorch torchtitan GitHub: `pytorch/torchtitan` — the PyTorch-native ND-parallel pretraining reference stack.
 - Chowdhery, et al. **"PaLM: Scaling Language Modeling with Pathways"** (2022). Describes the 4D parallelism and MFU analysis methodology used at Google.
 
 !!! key "Key Takeaways"
@@ -761,8 +816,9 @@ For inference serving after training, the parallelism story shifts toward pure T
     - MFU measures what fraction of peak cluster FLOP/s is consumed by model arithmetic. Use $\text{FLOPs/token} \approx 6P$ for a quick estimate. Target 40–55% MFU for dense models; values below 25% indicate a misconfiguration.
     - Pipeline bubble fraction $\approx (PP-1)/(PP-1+m)$. Keep it below 5–10% by increasing micro-batch count $m$ or using interleaved (virtual PP) schedules.
     - Always profile before tuning. Nsight Systems traces quickly reveal whether the bottleneck is NCCL communication, pipeline bubbles, or kernel-launch overhead.
-    - The 3D + ZeRO pattern (Megatron-Core for TP/PP + DeepSpeed for ZeRO optimizer) is the dominant approach for frontier pretraining runs; pure FSDP2 is the PyTorch-native alternative for runs that do not require TP.
-    - Expert parallelism (EP) adds a fourth dimension for MoE models, communicating token activations (not parameters) via all-to-all across EP ranks.
+    - The 3D + ZeRO pattern is the dominant approach for frontier pretraining runs, though modern Megatron-Core's own `--use-distributed-optimizer` is ZeRO-1 and often removes the need for DeepSpeed; `pytorch/torchtitan` (FSDP2 + DTensor TP/PP/CP over a `DeviceMesh`) is the PyTorch-native alternative.
+    - Expert parallelism (EP) adds a fourth dimension for MoE models, communicating token activations (not parameters) via all-to-all; context parallelism (CP) adds a fifth for long sequences, sharding the sequence itself with a ring K/V exchange.
+    - Every degree above 1 must be *forced* by memory or bandwidth. At ~100M parameters the funnel returns TP=PP=CP=EP=1 and DP-only — plain DDP or FSDP2, no Megatron or DeepSpeed required.
 
 ## Exercises
 

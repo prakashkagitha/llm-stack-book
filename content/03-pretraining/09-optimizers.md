@@ -68,7 +68,7 @@ $$
 \mathbb{E}[v_t] = \mathbb{E}[g_t^2]\,(1-\beta_2)\sum_{i=1}^{t}\beta_2^{\,t-i} = \mathbb{E}[g_t^2]\,(1 - \beta_2^{\,t}).
 $$
 
-The factor $(1-\beta_2^{\,t})$ is the bias: at $t=1$ with $\beta_2=0.999$, $v_1$ is only $0.1\%$ of the true second moment, so an *uncorrected* step would be roughly $\sqrt{1000}\approx 31\times$ too large. Adam divides it out:
+The factor $(1-\beta_2^{\,t})$ is the bias: at $t=1$ with $\beta_2=0.999$, $v_1$ is only $0.1\%$ of the true second moment, so $\sqrt{v_1}$ is $\approx\sqrt{1000}\approx 31\times$ too *small*. The first moment is biased too ($m_1 = (1-\beta_1)g = 0.1\,g$), and the two biases partially cancel — an update with *neither* correction is inflated by $(1-\beta_1)/\sqrt{1-\beta_2} = 0.1/0.0316 \approx 3.2\times$ at $t=1$, still enough to wreck a freshly initialized model. Crucially the two biases decay at *different* rates ($\beta_1^t$ vs $\beta_2^t$), so the mismatch persists for hundreds of steps and must be removed from each moment separately:
 
 $$
 \hat{m}_t = \frac{m_t}{1-\beta_1^{\,t}}, \qquad \hat{v}_t = \frac{v_t}{1-\beta_2^{\,t}}.
@@ -161,6 +161,55 @@ A few implementation notes that separate a toy from a production optimizer. The 
 
 !!! warning "Common pitfall: $\beta_2$ and loss spikes"
     The default $\beta_2 = 0.999$ averages the second moment over $\sim 1/(1-\beta_2) = 1000$ steps. If a single batch produces a large gradient (a "bad" document, a tokenization artifact), $v_t$ reacts slowly, so $\sqrt{\hat v_t}$ stays small and the update explodes — a classic loss spike. Lowering to $\beta_2 = 0.95$ (a $\sim 20$-step window) makes the denominator respond faster and is standard for large LLM pretraining. See [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
+
+### Parameter groups and the libraries you actually call
+
+In a real run you never hand `model.parameters()` to the optimizer as one blob — the decay/no-decay split from above has to be expressed as **parameter groups**, and the optimizer itself comes from a library. This is the whole "optimizer layer" of a training script:
+
+```python
+import torch
+
+model = torch.nn.Sequential(              # stand-in for your transformer
+    torch.nn.Embedding(1000, 64), torch.nn.LayerNorm(64), torch.nn.Linear(64, 64)
+)
+
+def param_groups(model, weight_decay=0.1):
+    """Two groups: 2-D matmul weights decay, 1-D params (norms, biases) do not."""
+    decay, no_decay = [], []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        # nanoGPT/GPT-3 convention: everything with ndim >= 2 decays, including
+        # the embedding and LM head. Some recipes exclude those by name — be
+        # explicit either way, and never let norm gains or biases into `decay`.
+        (decay if p.ndim >= 2 else no_decay).append(p)
+    return [{"params": decay, "weight_decay": weight_decay},
+            {"params": no_decay, "weight_decay": 0.0}]
+
+# The 99% case: PyTorch's fused AdamW. `fused=True` runs the whole elementwise
+# update as one multi-tensor CUDA kernel (params must be CUDA + floating point);
+# the default `foreach=True` path is the CPU/other-backend fallback.
+opt = torch.optim.AdamW(param_groups(model), lr=3e-4, betas=(0.9, 0.95),
+                        eps=1e-8, fused=torch.cuda.is_available())
+
+# Memory-bound instead? bitsandbytes is a drop-in replacement, same signature:
+#   import bitsandbytes as bnb
+#   opt = bnb.optim.AdamW8bit(param_groups(model), lr=3e-4, betas=(0.9, 0.95))
+# (bitsandbytes' GlobalOptimManager lets you force the embedding table back to
+#  32-bit optimizer state, which is the usual stability precaution.)
+```
+
+The same layer looks different inside the big training frameworks, and it is worth knowing which knob is which: **DeepSpeed** swaps in `deepspeed.ops.adam.FusedAdam` automatically, and `DeepSpeedCPUAdam` when you enable ZeRO-Offload so the optimizer step runs on CPU; **Megatron-LM** shards optimizer state ZeRO-1-style behind `--use-distributed-optimizer`; **PyTorch FSDP** shards it as a consequence of sharding the parameters themselves (see [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html)). In every case the *math* is the AdamW you just wrote — only the sharding and the kernel change.
+
+### Large-batch training: LARS, LAMB and the trust ratio
+
+When you scale the global batch to tens of thousands of sequences to keep more GPUs busy, a single global learning rate becomes the bottleneck again — this time *across layers*. The ratio $\lVert\Delta\theta\rVert / \lVert\theta\rVert$ varies by orders of magnitude between layers, and the layer with the largest ratio diverges first. **LARS** (You et al., 2017) and its Adam-based successor **LAMB** (You et al., *Large Batch Optimization for Deep Learning: Training BERT in 76 Minutes*, 2020) fix this with a per-layer **trust ratio**. Writing $u_t$ for the layer's raw update — for LAMB, the AdamW update $\hat m_t/(\sqrt{\hat v_t}+\epsilon) + \lambda\theta_{t-1}$ — the step becomes
+
+$$
+\theta_t = \theta_{t-1} - \eta\,\frac{\lVert\theta_{t-1}\rVert}{\lVert u_t\rVert}\, u_t,
+$$
+
+with the ratio clamped to 1 when either norm is zero. Every layer now moves by a fixed *fraction of its own weight norm* per step, which is what let BERT pretrain at batch size 32k. For LLM pretraining today, tuned AdamW with warmup and muP-style width scaling (see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)) has largely displaced LAMB — but the *diagnostic* is permanent: log $\lVert\Delta\theta\rVert/\lVert\theta\rVert$ per layer during training. A common rule of thumb is that healthy training sits on the order of $10^{-3}$; a layer sitting orders of magnitude above the rest is where your next loss spike will come from.
 
 ## The Memory Cost of Optimizer States
 
@@ -344,6 +393,8 @@ def newton_schulz5(G, steps=5, eps=1e-7):
 def muon_step(W, G, momentum_buf, lr=0.02, mu=0.95, ns_steps=5):
     """One Muon update for a 2D weight W. Only ONE state buffer (momentum)."""
     momentum_buf.mul_(mu).add_(G)               # standard heavy-ball momentum
+    # Reference implementations default to Nesterov here, i.e. orthogonalize
+    # (G + mu * momentum_buf) instead of the buffer itself.
     update = newton_schulz5(momentum_buf, steps=ns_steps)  # orthogonalize
     # Scale by sqrt(max(rows,cols)) so RMS of update ~ 1, matching AdamW's scale
     scale = (max(W.shape) ** 0.5)
@@ -364,6 +415,38 @@ The mechanism connects cleanly to Shampoo: orthogonalizing $M = U\Sigma V^\top$ 
 !!! note "Aside: why the embeddings get AdamW"
     Embedding and unembedding (LM head) parameters have rows indexed by token, with extremely sparse and uneven gradients — a rare token's row is updated only when that token appears. Orthogonalizing across the vocabulary dimension mixes unrelated tokens and behaves poorly, and these layers benefit from Adam's per-coordinate magnitude adaptation. Hence the hybrid Muon+AdamW recipe rather than Muon everywhere. The same logic explains why 1-D norm/bias parameters stay on AdamW.
 
+### Wiring the hybrid recipe
+
+"Hybrid" means two optimizer objects over two disjoint parameter sets, both stepped every iteration. That is all there is to it:
+
+```python
+import torch
+
+model = torch.nn.Sequential(              # stand-in for your transformer
+    torch.nn.Embedding(1000, 64), torch.nn.LayerNorm(64), torch.nn.Linear(64, 64)
+)
+
+# Muon for the 2-D hidden weights; AdamW for embeddings, LM head, norms, biases.
+hidden, others = [], []
+for name, p in model.named_parameters():
+    is_hidden_matrix = p.ndim == 2 and not any(k in name
+                                               for k in ("embed", "lm_head"))
+    (hidden if is_hidden_matrix else others).append(p)
+
+adamw = torch.optim.AdamW(others, lr=3e-4, betas=(0.9, 0.95), weight_decay=0.0)
+bufs = {p: torch.zeros_like(p) for p in hidden}   # one momentum buffer per matrix
+
+def hybrid_step(lr_muon=0.02):
+    for p in hidden:                              # muon_step defined above
+        muon_step(p.data, p.grad, bufs[p], lr=lr_muon)
+    adamw.step()
+    adamw.zero_grad(set_to_none=True)
+    for p in hidden:
+        p.grad = None
+```
+
+One systems caveat that bites as soon as you leave a single GPU: Newton-Schulz needs the **whole 2-D matrix** on one device, but ZeRO/FSDP shard parameters and gradients flat across ranks. A distributed Muon therefore has to gather each matrix's gradient (or replicate the orthogonalization) before it can iterate — that engineering, on top of ZeRO-1-style optimizer sharding, is exactly what Moonshot's open-source Moonlight implementation contributes. Reference implementations live in `KellerJordan/modded-nanogpt` (single-node) and `MoonshotAI/Moonlight` (distributed). We use this hybrid — Muon on hidden matrices, AdamW on the rest, with a QK-clip for attention stability — to train the capstone model in [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html), where every constant is pinned to a real 100M-parameter run.
+
 ## Choosing an Optimizer: A Practical Comparison
 
 The table below summarizes the state per parameter (the memory tax) and the character of each method. "Buffers/param" counts the optimizer-specific state tensors beyond weights and gradients.
@@ -374,6 +457,7 @@ The table below summarizes the state per parameter (the memory tax) and the char
 | SGD+momentum | 1 ($v$) | 4 | velocity | vision models, great generalization |
 | AdamW | 2 ($m,v$) | 8 | per-coord adaptive | **LLM default**; robust, well-understood |
 | 8-bit AdamW | 2 (quantized) | ~2 | same as AdamW | AdamW quality, $4\times$ less state |
+| LAMB | 2 ($m,v$) | 8 | AdamW × layer trust ratio | very large batches (32k+) |
 | Adafactor | factored | ~$O(n{+}m)$ | factored 2nd moment | memory-bound fine-tuning, T5-scale |
 | Lion | 1 ($m$) | 4 | sign of momentum | half AdamW memory; needs big batches |
 | Shampoo | 2 factors | $O(n^2{+}m^2)$ | Kronecker 2nd-order | fewest steps; heavy compute/eng |
@@ -402,6 +486,7 @@ A pragmatic decision procedure for a new pretraining run:
     - **Optimizer state is the memory hog:** AdamW costs ~12 bytes/param ($m$, $v$, fp32 master) — 3× the bf16 weights, ~84 GB for a 7B model. This forces ZeRO/FSDP sharding and motivates frugal optimizers.
     - **Adafactor** factors the second moment into row×column vectors ($O(n{+}m)$ memory) and can drop momentum — sublinear optimizer memory, at some stability cost. **8-bit Adam** quantizes $m,v$ for a $4\times$ cut with little quality loss.
     - **Lion** stores one buffer and steps by the *sign* of momentum (uniform $\pm\eta$); half AdamW memory, needs a smaller LR, larger decay, and bigger batches.
+    - **LARS/LAMB** rescale each layer's update by a **trust ratio** $\lVert\theta\rVert/\lVert u\rVert$ so every layer moves a fixed fraction of its own norm — the key to 32k-batch training, and the origin of the per-layer update-to-weight ratio ($\sim 10^{-3}$) you should be logging.
     - **Shampoo** is a tractable second-order method via Kronecker-factored preconditioners ($L^{-1/4}GR^{-1/4}$); fewest steps, but heavy compute and engineering.
     - **Muon** orthogonalizes the momentum of 2-D weights via a matmul-only Newton-Schulz iteration (singular values → 1), the matrix analogue of Lion's sign. One buffer per param, hybrid with AdamW for embeddings/head; a fast, memory-light, newsmaking AdamW alternative.
 
@@ -425,6 +510,7 @@ A pragmatic decision procedure for a new pretraining run:
 
     - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — drop-in 8-bit AdamW (and other optimizers) via block-wise quantization; cuts optimizer-state memory 4× with negligible quality loss.
     - [MoonshotAI/Moonlight](https://github.com/MoonshotAI/Moonlight) — open-source distributed Muon implementation used to train the 16B Moonlight MoE on 5.7T tokens; includes pretrained checkpoints.
+    - [KellerJordan/modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — the Muon reference implementation inside the nanoGPT speedrun that made it famous; the place to read the Newton-Schulz kernel and the hybrid Muon+AdamW param split.
     - [lucidrains/lion-pytorch](https://github.com/lucidrains/lion-pytorch) — clean PyTorch implementation of Lion with optional Triton fused kernels.
 
     **Go deeper**
@@ -438,6 +524,7 @@ A pragmatic decision procedure for a new pretraining run:
 - Loshchilov & Hutter, *Decoupled Weight Decay Regularization* (2019) — AdamW and why decoupling matters.
 - Shazeer & Stern, *Adafactor: Adaptive Learning Rates with Sublinear Memory Cost* (2018) — factored second moments.
 - Chen et al., *Symbolic Discovery of Optimization Algorithms* (2023) — the Lion optimizer.
+- You et al., *Large Batch Optimization for Deep Learning: Training BERT in 76 Minutes* (2020) — LARS/LAMB and the layer-wise trust ratio.
 - Gupta, Koren & Singer, *Shampoo: Preconditioned Stochastic Tensor Optimization* (2018); Anil et al., *Scalable Second Order Optimization for Deep Learning* (Distributed Shampoo).
 - Jordan et al., *Muon* (2024) — orthogonalized momentum via Newton-Schulz; see also the nanoGPT speedrun writeups.
 - Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020) — the optimizer-state memory analysis and sharding.
@@ -473,7 +560,7 @@ A pragmatic decision procedure for a new pretraining run:
 
     (c) Increasing momentum lengthens the effective step along consistent directions by $1/(1-\mu)$, so you must lower the learning rate proportionally to avoid overshooting.
 
-**3.** *(Bias correction, by hand.)* The chapter notes that with $\beta_2 = 0.999$, the uncorrected second-moment estimate at $t=1$ is only $0.1\%$ of the true value, making the raw step about $\sqrt{1000}\approx 31\times$ too large. (a) Redo this for the LLM-standard $\beta_2 = 0.95$: compute the bias factor $(1-\beta_2^{\,t})$ at $t=1$ and $t=3$, and the resulting "too-large" factor $1/\sqrt{1-\beta_2^{\,t}}$ on the step. Comment on why $\beta_2=0.95$ needs far less protection than $\beta_2=0.999$. (b) Now show that *with full bias correction*, a constant gradient $g$ produces a bias-corrected Adam step of exactly $\eta\,\mathrm{sign}(g)$ at every $t$ (take $\epsilon\to 0$), independent of $\beta_1,\beta_2,t$. This is the scale-invariance property.
+**3.** *(Bias correction, by hand.)* The chapter notes that with $\beta_2 = 0.999$, the uncorrected second-moment estimate at $t=1$ is only $0.1\%$ of the true value, so the $v$-side of the raw step is about $\sqrt{1000}\approx 31\times$ too large (partly offset by the first moment's own bias). (a) Redo this for the LLM-standard $\beta_2 = 0.95$: compute the bias factor $(1-\beta_2^{\,t})$ at $t=1$ and $t=3$, and the resulting "too-large" factor $1/\sqrt{1-\beta_2^{\,t}}$ on the step. Comment on why $\beta_2=0.95$ needs far less protection than $\beta_2=0.999$. (b) Now show that *with full bias correction*, a constant gradient $g$ produces a bias-corrected Adam step of exactly $\eta\,\mathrm{sign}(g)$ at every $t$ (take $\epsilon\to 0$), independent of $\beta_1,\beta_2,t$. This is the scale-invariance property.
 
 ??? note "Solution"
     (a) The bias factor is $(1-\beta_2^{\,t})$ and the step inflation from an *uncorrected* $\sqrt{v_t}$ is $1/\sqrt{1-\beta_2^{\,t}}$.
@@ -481,7 +568,9 @@ A pragmatic decision procedure for a new pretraining run:
     - $t=1$: $1-0.95 = 0.05$, so the inflation is $1/\sqrt{0.05} = \sqrt{20} \approx 4.47\times$.
     - $t=3$: $1-0.95^3 = 1 - 0.857375 = 0.142625$, so the inflation is $1/\sqrt{0.142625} \approx 2.65\times$.
 
-    With $\beta_2=0.95$ the second moment averages over only $\sim 1/(1-\beta_2)=20$ steps, so $v_t$ fills in quickly and the early bias is mild (a $\sim 4.5\times$ effect at $t=1$, gone within a handful of steps). With $\beta_2=0.999$ the window is $\sim 1000$ steps, so $v_1$ captures almost none of the true second moment and the uncorrected step is $\sim 31\times$ too large — a far larger correction, over many more steps.
+    With $\beta_2=0.95$ the second moment averages over only $\sim 1/(1-\beta_2)=20$ steps, so $v_t$ fills in quickly and the early bias is mild (a $\sim 4.5\times$ effect at $t=1$, gone within a handful of steps). With $\beta_2=0.999$ the window is $\sim 1000$ steps, so $v_1$ captures almost none of the true second moment and the $v$-side inflation is $\sim 31\times$ — a far larger correction, over many more steps.
+
+    Worth noting: the *first* moment is biased in the opposite direction, so the two partly cancel. With no correction at all the net step inflation at $t=1$ is $(1-\beta_1)/\sqrt{1-\beta_2}$: with $\beta_2=0.999$ that is $0.1/0.0316\approx 3.2\times$ (too large), but with $\beta_2=0.95$ it is $0.1/\sqrt{0.05}\approx 0.45\times$ (too *small*). The sign of the mismatch flips with $\beta_2$, and it decays at a different rate for each moment — which is exactly why Adam corrects $m$ and $v$ separately rather than applying one lumped factor.
 
     (b) For a constant gradient $g$ with $m_0 = v_0 = 0$, the EMAs of a constant are $m_t = (1-\beta_1^{\,t})\,g$ and $v_t = (1-\beta_2^{\,t})\,g^2$ (same unrolling as part 2a with the $(1-\beta)$ weighting). Bias correction divides each by its own $(1-\beta^t)$:
 

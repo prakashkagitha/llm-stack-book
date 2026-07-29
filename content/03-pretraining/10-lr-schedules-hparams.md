@@ -4,7 +4,7 @@ Hyperparameter tuning is one of the most impactful — and most under-documented
 
 This chapter makes that implicit knowledge explicit. We cover the full pipeline: why warmup is mandatory at scale, the major schedule families and when to use each, how batch size interacts with learning rate and what the *critical batch size* tells you about compute efficiency, and finally how muP (maximal-update parameterization) lets you tune hyperparameters on a small model and transfer them to a large one. Every section includes runnable code and concrete numbers.
 
-Related chapters you should read in tandem: [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) covers the adaptive optimizer mechanics that schedules ride on top of; [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html) covers what happens when you get the schedule wrong; [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) gives the big picture that informs budget allocation decisions.
+Related chapters you should read in tandem: [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html) covers the adaptive optimizer mechanics that schedules ride on top of; [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html) covers what happens when you get the schedule wrong; [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) gives the big picture that informs budget allocation decisions. For every number in this chapter pinned down for one concrete run, see the capstone's [Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html), which sets the peak LR, warmup, and WSD phase lengths for the ~100M-parameter Stack-100M model by measurement rather than by folklore.
 
 ## Why Schedules and Warmup Exist
 
@@ -13,6 +13,8 @@ Deep learning optimizers like Adam carry two moving-average estimates: first mom
 For large models, this cold-start instability is catastrophic. At step 1 of a run with 1 billion parameters and a 4096-token context, the weight matrices are random; the gradient norms are large and wildly variable across layers. Applying the full target learning rate immediately produces parameter updates large enough to push weights into regions where softmax logits saturate, norms explode, or residual magnitudes collapse — none of which recover easily. Empirically, runs without warmup frequently spike or diverge within the first thousand steps.
 
 Warmup solves this by linearly ramping the effective learning rate from near-zero to the target value over a set number of steps, giving the optimizer time to calibrate its momentum estimates and giving the network time to find a reasonable initialization basin before the full update magnitude kicks in.
+
+There is a second, complementary mechanism worth holding in your head, because it explains why warmup helps even for optimizers with no bias-correction problem. What actually matters for stability is the *relative* update size $\lVert \Delta\theta \rVert / \lVert \theta \rVert$ per layer. Adam's update has a roughly fixed per-element magnitude of about $\eta$ (the $\sqrt{v_t}$ denominator normalizes the gradient scale away), while the weight norm $\lVert \theta \rVert$ at initialization is small and only grows as training proceeds. So at step 0 a full-magnitude LR is an enormous *fractional* change to every layer; a few thousand steps later the same LR is a modest one. Warmup is the schedule that keeps that ratio bounded while the weights are still small — an analysis developed carefully by Kosson et al. (*Why Warmup the Learning Rate?*, 2024). This framing also predicts the practical corollary you will meet below: anything that resets the weight/optimizer scale relationship (a fresh optimizer state, a sudden batch-size jump) calls for re-warming.
 
 {{fig:lrsched-why-warmup}}
 
@@ -70,7 +72,15 @@ $$
 \end{cases}
 $$
 
-where $f$ is a cosine or linear decay function. The insight driving WSD is that most of the loss reduction happens in the stable phase, and the decay phase mainly "polishes" the model. This decoupling is practically valuable: you can train in the stable phase for as long as resources allow, then trigger the decay when you're ready to finalize — without having committed to a specific total step count at the start.
+where $f$ is a decay function. Cosine and linear both work; MiniCPM reported that a $1-\sqrt{\cdot}$ shape (fast at first, flattening at the end) beats linear, and unlike cosine pretraining practice the WSD decay usually goes all the way to (near) zero rather than stopping at $\eta_{\max}/10$ — the last bit of decay is where the characteristic extra loss drop lives. A common budget is $T_d \approx 10\%$ of total steps.
+
+The insight driving WSD is that most of the loss reduction happens in the stable phase, and the decay phase mainly "polishes" the model. This decoupling buys three things:
+
+- **Late binding of the run length.** You can train in the stable phase for as long as resources allow, then trigger the decay when you're ready to finalize — no commitment to a total step count at the start.
+- **Branching.** One stable checkpoint can seed several independent decay runs (different data mixes, different decay lengths) that you compare head-to-head for a fraction of a full run's cost. A *decayed* checkpoint, by contrast, is spent: resuming high-LR training from it throws away the polish.
+- **A natural seam for a data-mixture switch.** Because the highest-value tokens are the ones seen at the lowest LR, the decay window is exactly where you swap the broad web mix for premium data. This is the whole idea behind mid-training/annealing ([Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html)), and the capstone does precisely this: the WSD decay phase *is* the mid-training phase ([Mid-Training](../14-capstone/08-mid-training.html)).
+
+Hägele et al. (*Scaling Laws and Compute-Optimal Training Beyond Fixed Training Durations*, 2024) ran the careful comparison and found that constant-LR-plus-cooldown matches cosine's final loss at equal compute while producing a whole family of usable checkpoints along the way — which is why WSD is now a first-class choice rather than a curiosity.
 
 {{fig:lrsched-wsd-shape}}
 
@@ -174,6 +184,108 @@ if __name__ == "__main__":
     # Output: Peak LR: 3.00e-04, Final LR: 3.00e-05
 ```
 
+### The Library Equivalents
+
+You should write the above once to own the mechanics; in a real run you will usually call a library. Every schedule in this chapter already exists in the standard stack, and knowing the exact knob name in each framework is most of the practical battle.
+
+```python
+import torch
+
+model = torch.nn.Linear(16, 16)
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95))
+
+# --- HuggingFace transformers: the most-used scheduler factory in the ecosystem ---
+# (requires `pip install transformers`; get_wsd_schedule needs a recent version)
+from transformers import (
+    get_linear_schedule_with_warmup,
+    get_cosine_schedule_with_warmup,
+    get_constant_schedule_with_warmup,
+    get_inverse_sqrt_schedule,   # the rsqrt schedule from Vaswani et al.
+    get_wsd_schedule,            # Warmup-Stable-Decay
+)
+
+sched = get_cosine_schedule_with_warmup(
+    optimizer, num_warmup_steps=2000, num_training_steps=100_000
+)
+# NOTE: get_cosine_schedule_with_warmup decays to ZERO, not to a 10% floor.
+# For a floor, pass a min-LR argument if your version exposes one, or use the
+# from-scratch LambdaLR above. Check the signature for the version you pinned —
+# get_wsd_schedule's phase arguments in particular have changed across releases.
+
+# Via the Trainer, the same thing is one string:
+#   TrainingArguments(lr_scheduler_type="cosine", warmup_ratio=0.02,
+#                     learning_rate=3e-4, max_grad_norm=1.0, weight_decay=0.1)
+
+# --- Pure PyTorch: compose warmup and decay with SequentialLR ---
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+
+warmup = LinearLR(optimizer, start_factor=1e-8, end_factor=1.0, total_iters=2000)
+decay = CosineAnnealingLR(optimizer, T_max=100_000 - 2000, eta_min=3e-5)
+sched = SequentialLR(optimizer, schedulers=[warmup, decay], milestones=[2000])
+```
+
+Framework-level trainers expose the same schedules as config rather than code:
+
+```yaml
+# DeepSpeed config (ds_config.json): warmup + linear decay, no Python needed.
+scheduler:
+  type: WarmupDecayLR
+  params:
+    warmup_min_lr: 0.0
+    warmup_max_lr: 3.0e-4
+    warmup_num_steps: 2000
+    total_num_steps: 100000
+```
+
+```bash
+# Megatron-LM: the schedule is entirely CLI flags on pretrain_gpt.py.
+# --lr-decay-style accepts constant | linear | cosine | inverse-square-root;
+# recent versions also ship a WSD style with its own decay-length flags.
+# Use --lr-warmup-fraction 0.02 instead of --lr-warmup-iters to express warmup
+# as a fraction of --lr-decay-iters.
+SCHEDULE_ARGS=(
+  --lr 3.0e-4
+  --min-lr 3.0e-5
+  --lr-decay-style cosine
+  --lr-warmup-iters 2000
+  --lr-decay-iters 100000
+  --clip-grad 1.0
+  --weight-decay 0.1
+  --adam-beta1 0.9
+  --adam-beta2 0.95
+)
+echo "${SCHEDULE_ARGS[@]}"   # torchrun ... pretrain_gpt.py "${SCHEDULE_ARGS[@]}"
+```
+
+PyTorch's `torchtitan` reference stack similarly exposes warmup/stable/decay phase lengths and a decay type in its TOML job config, and TRL/Axolotl fine-tuning configs forward `lr_scheduler_type` straight through to the `transformers` factories above. See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html) for the surrounding launch machinery.
+
+### Making the Schedule Restart-Safe
+
+Long pretraining runs get preempted, and the schedule must survive the restart exactly. There is a footgun here: `LambdaLR.state_dict()` cannot serialize a plain-function `lr_lambda` (it is skipped, with a warning), so a naive `torch.save(scheduler.state_dict())` round-trip can silently restore only `last_epoch` — and if you rebuild the scheduler with different `num_training_steps` on resume, you get a *different curve* with no error.
+
+The robust pattern used by most production trainers, including the capstone's `wsd_lr`, is to make the schedule a **pure function of the global step** and set the LR by hand each iteration. There is no hidden state to checkpoint beyond the step counter you were already saving:
+
+```python
+import math
+
+def lr_at_step(step: int, peak_lr: float, warmup: int, total: int,
+               min_lr_fraction: float = 0.1) -> float:
+    """Stateless cosine-with-warmup: the ONLY input is the global step."""
+    if step < warmup:
+        return peak_lr * (step + 1) / warmup
+    progress = min(1.0, (step - warmup) / max(1, total - warmup))
+    cos = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return peak_lr * (min_lr_fraction + (1.0 - min_lr_fraction) * cos)
+
+
+# In the training loop, before optimizer.step():
+#   lr = lr_at_step(global_step, 3e-4, 2000, 100_000)
+#   for g in optimizer.param_groups:
+#       g["lr"] = lr * g.get("lr_scale", 1.0)   # lr_scale carries muP / per-group ratios
+```
+
+The `lr_scale` multiplier in that last line matters whenever different parameter groups run at different peak LRs — muP's per-layer width factors, or a Muon/AdamW hybrid where the two groups sit at a fixed ratio to each other. Writing one scalar LR into *every* group collapses the ratio and is a classic silent bug; see [Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html) for the concrete Muon-plus-AdamW case. Checkpointing more broadly is covered in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
+
 ## Learning Rate vs. Batch Size Scaling
 
 ### The Linear Scaling Rule
@@ -184,17 +296,21 @@ $$
 \eta' = k \cdot \eta \quad \text{(linear scaling rule, Goyal et al., 2017)}
 $$
 
-This rule works well for small-to-moderate batch size changes (say, 256 to 4096) with SGD and has been observed to hold approximately for Adam as well. The intuition: with $k\times$ larger batches, each step is $k\times$ more expensive in wall time (same flops per sample), but covers $k\times$ more data, so to move at the same "rate through the data manifold," the step size should scale linearly.
+This rule was derived and validated for **SGD with momentum**, for small-to-moderate batch changes (say, 256 to 4096). The intuition: with $k\times$ larger batches, each step is $k\times$ more expensive in wall time (same flops per sample), but covers $k\times$ more data, so to move at the same "rate through the data manifold," the step size should scale linearly.
 
 ### The Square-Root Scaling Rule
-
-For very large batch sizes, linear scaling breaks down — the gradient variance no longer falls as $1/B$ because you start hitting the intrinsic noise floor of the data distribution, not just sampling noise. The square-root rule offers a more conservative alternative:
 
 $$
 \eta' = \sqrt{k} \cdot \eta
 $$
 
-In practice, OpenAI GPT-3 and similar runs used variants of this rule when scaling from thousands to millions of tokens per batch.
+Two independent arguments land on the square root, and for LLM pretraining they are the ones that matter.
+
+**It is the correct rule for adaptive optimizers.** This is the point most treatments of the linear rule get wrong. Adam's update divides the gradient by $\sqrt{v_t}$, an estimate of the gradient's *second* moment — so the noise that averaging removes appears inside a square root, and the noise-preserving scaling becomes $\eta \propto \sqrt{k}$ rather than $\eta \propto k$. Malladi et al. (*On the SDEs and Scaling Rules for Adaptive Gradient Algorithms*, 2022) derive this from the stochastic-differential-equation limit of Adam and RMSProp and verify it empirically. Since essentially all LLM pretraining uses AdamW (or a normalized-update optimizer like Muon, whose update magnitude is fixed by construction and so behaves similarly), **square-root scaling should be your default when changing batch size, and linear scaling the special case you reach for only with SGD.**
+
+**It is also the conservative choice near saturation.** Independently of the optimizer, at very large batch the gradient variance stops falling as $1/B$ — you hit the intrinsic noise floor of the data distribution rather than sampling noise — so any rule that keeps growing the LR with $B$ eventually over-scales. The square root degrades gracefully where linear does not.
+
+The capstone uses exactly this rule to move a peak LR measured on a small probe batch (65,536 tokens/step) to the real run's 524,288 tokens/step: $\times\sqrt{8} \approx 2.83$ ([Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html)).
 
 ### Critical Batch Size
 
@@ -206,9 +322,67 @@ $$
 
 where $\Sigma$ is the covariance of the per-sample gradient and $G$ is the mean gradient. When $B \ll B_{\text{noise}}$, batches are too small to average out noise — increasing batch size linearly reduces steps needed. When $B \gg B_{\text{noise}}$, you are in the *saturated* regime where more data per step doesn't help; gradient noise is already small and increasing $B$ wastes compute.
 
-The practical takeaway: there is an optimal batch size for a given compute budget. Doubling the batch size beyond $B^*$ halves your throughput efficiency. For typical LLM pretraining, $B^*$ for cross-entropy loss on language is on the order of a few million tokens — consistent with the token batches used in Chinchilla-optimal runs.
+The practical takeaway: there is an optimal batch size for a given compute budget. Doubling the batch size beyond $B^*$ halves your throughput efficiency. For typical LLM pretraining, $B^*$ for cross-entropy loss on language is on the order of a few million tokens — consistent with the token batches used in Chinchilla-optimal runs — while for a ~100M model it sits closer to a few hundred thousand tokens, which is why the capstone lands on 524,288 tokens/step.
+
+An important 2024–2025 refinement: the critical batch size scales primarily with the **amount of data trained on**, not with parameter count. Zhang et al. (*How Does Critical Batch Size Scale in Pre-training?*, 2024) hold one of the two fixed at a time and find $B^*$ grows with tokens seen and is close to flat in model size once data is controlled. The practical consequence is that a long over-trained run of a small model can tolerate a surprisingly large batch, and that $B^*$ *increases as your run proceeds* — a reason ramping batch size over training (see the practitioner tip at the end of this chapter) is principled rather than folklore.
 
 {{fig:lrsched-critical-batch-size}}
+
+You do not have to take $B^*$ on faith: the noise scale is directly measurable from two batch sizes. McCandlish et al. give unbiased estimators for $\lVert G\rVert^2$ and $\operatorname{tr}(\Sigma)$ from the squared gradient norms at a small and a large batch, and the ratio is $B_{\text{noise}}$. Run this for a few hundred steps on your actual model and data before you pick a batch size.
+
+```python
+import torch
+
+
+@torch.no_grad()
+def _sq_grad_norm(model) -> float:
+    """Squared global L2 norm of the current .grad tensors."""
+    return float(sum((p.grad.detach() ** 2).sum() for p in model.parameters()
+                     if p.grad is not None))
+
+
+def gradient_noise_scale(model, loss_fn, batch, b_small: int, b_big: int) -> float:
+    """
+    Estimate B_noise = tr(Sigma) / ||G||^2 (McCandlish et al., 2018) from one
+    large batch and its first `b_small` examples.
+
+    The estimators exploit E[||g_B||^2] = ||G||^2 + tr(Sigma)/B, evaluated at two
+    batch sizes and solved as a 2x2 linear system:
+        ||G||^2   ~ (b_big*||g_big||^2 - b_small*||g_small||^2) / (b_big - b_small)
+        tr(Sigma) ~ (||g_small||^2 - ||g_big||^2) / (1/b_small - 1/b_big)
+    Both are noisy per-step; average them over ~100 steps before dividing.
+    """
+    model.zero_grad(set_to_none=True)
+    loss_fn(model, batch[:b_small]).backward()
+    g_small = _sq_grad_norm(model)
+
+    model.zero_grad(set_to_none=True)
+    loss_fn(model, batch[:b_big]).backward()
+    g_big = _sq_grad_norm(model)
+
+    g_norm_sq = (b_big * g_big - b_small * g_small) / (b_big - b_small)
+    trace_sigma = (g_small - g_big) / (1.0 / b_small - 1.0 / b_big)
+    return trace_sigma / max(g_norm_sq, 1e-12)
+
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    model = torch.nn.Linear(32, 4)
+    data = torch.randn(256, 32)
+    targets = torch.randint(0, 4, (256,))
+
+    def loss_fn(m, idx_slice):
+        n = idx_slice.shape[0]
+        return torch.nn.functional.cross_entropy(m(data[:n]), targets[:n])
+
+    # Average the two moments over several draws, then divide (never average ratios).
+    est = sum(gradient_noise_scale(model, loss_fn, data, 8, 128) for _ in range(20)) / 20
+    print(f"B_noise estimate: {est:.1f} examples")
+    # In a real run: repeat every few hundred steps and watch B_noise GROW as
+    # the gradient shrinks -- that growth is the signal to ramp the batch size.
+```
+
+In a distributed run the same estimate falls out for free: compare the per-rank gradient norm (small batch) with the post-all-reduce global gradient norm (large batch), which is what production monitoring typically logs. See [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html).
 
 !!! example "Worked Example: Batch-LR Pair for a 7B Pretraining Run"
 
@@ -217,13 +391,13 @@ The practical takeaway: there is an optimal batch size for a given compute budge
 
     You want to scale to $B' = 2048$ samples × 2048 tokens = ~4M tokens/step, a factor $k = 4$.
 
-    **Linear scaling rule:** $\eta' = 4 \times 3\text{e-}4 = 1.2\text{e-}3$.
+    **Square-root rule (the AdamW default):** $\eta' = \sqrt{4} \times 3\text{e-}4 = 6\text{e-}4$.
 
-    At 4M tokens/step, you'll also converge in roughly $1/4$ the steps for the same total token count. If original run had 100K steps, new run has 25K steps. With cosine schedule, the peak LR and total steps both halve/quarter.
+    At 4M tokens/step, you'll also converge in roughly $1/4$ the steps for the same total token count. If original run had 100K steps, new run has 25K steps — so with a cosine schedule you must also divide `num_training_steps` by 4, or the decay will never reach the floor.
 
-    **Check: does 1.2e-3 violate any rule of thumb?** Under standard parameterization the optimal global LR shrinks as width grows (roughly $1/d$ for hidden matrices); for a 7B model with hidden dim $d = 4096$, published peak LRs fall in the range $1\text{e-}4$ to $3\text{e-}3$. (Under muP the *base* LR you tune is width-invariant instead — the $1/d$ factor lives in the per-layer LR multiplier, not in the number you sweep.) So 1.2e-3 is well within range.
+    **Check: does 6e-4 violate any rule of thumb?** Under standard parameterization the optimal global LR shrinks as width grows (roughly $1/d$ for hidden matrices); for a 7B model with hidden dim $d = 4096$, published peak LRs fall in the range $1\text{e-}4$ to $3\text{e-}3$. (Under muP the *base* LR you tune is width-invariant instead — the $1/d$ factor lives in the per-layer LR multiplier, not in the number you sweep.) So 6e-4 sits comfortably mid-range.
 
-    **Square-root rule (conservative):** $\eta' = 2 \times 3\text{e-}4 = 6\text{e-}4$. This is safer if you're uncertain whether you've exceeded the critical batch size.
+    **Linear rule (SGD-style, aggressive here):** $\eta' = 4 \times 3\text{e-}4 = 1.2\text{e-}3$. Still inside the published band, so it will not blow up on step one — but with AdamW it over-scales, and at 4M tokens/step you are already near the critical batch size where the extra factor buys nothing. Prefer the square root unless a probe run says otherwise.
 
 ## Gradient Accumulation
 
@@ -320,6 +494,13 @@ $$
 $$
 
 The decay is applied to the raw parameter values, not the gradient estimate, which prevents the adaptive scaling of Adam from interfering with regularization. Typical values: $\lambda = 0.1$ for pretraining (used in GPT-3, Llama, and most modern runs). Embeddings and bias terms are usually excluded from decay since they have a different scale and semantics.
+
+Notice what the update equation implies: the shrinkage per step is $\lambda\eta$, **not** $\lambda$. Weight decay and the learning rate are therefore not independent knobs — they multiply. Two consequences follow, and both bite in practice:
+
+- **Your schedule decays your regularization too.** As $\eta$ falls along a cosine or a WSD decay phase, the effective pull toward zero falls with it. The characteristic timescale over which a weight is forgotten is roughly $\tau \approx 1/(\lambda\eta)$ steps; at $\lambda=0.1,\ \eta=3\text{e-}4$ that is about 33,000 steps — comparable to a whole run, which is why weight decay in LLM pretraining is a slow, global effect rather than a per-batch one.
+- **If you change the peak LR, you have changed the regularization strength.** When comparing two LR settings on equal footing, either hold $\lambda\eta$ fixed or report that you did not.
+
+This coupling is also why weight decay works at all in a regime with essentially no overfitting: for one-epoch LLM pretraining, decay is not primarily preventing memorization of a re-seen training set. Andriushchenko et al. (*Why Do We Need Weight Decay in Modern Deep Learning?*, 2023) argue its main role there is to keep weight norms — and hence the *effective* per-step learning rate seen by each layer — in a favorable range, i.e. it is an optimization-shaping term more than a classical regularizer. Practically: keep $\lambda = 0.1$, exclude 1D parameters, and treat $\lambda$ and $\eta$ as one joint decision.
 
 ```python
 def get_optimizer_with_decay(
@@ -651,7 +832,34 @@ If your muP column is not flat, the bug is almost always in the init std, the pe
 
 ### Practical muP Workflow
 
-The Microsoft `mup` library (github.com/microsoft/mup) provides a plug-and-play implementation. The typical workflow is:
+The Microsoft `mup` library (github.com/microsoft/mup) provides a plug-and-play implementation. Its central concept is that you never describe a model in absolute terms — you give it a *base* model and a *delta* model differing only in the widths you intend to scale, and it infers which dimensions are "infinite" and rewrites init and per-parameter LR accordingly:
+
+```python
+# Sketch of the mup API (pip install mup). Requires MuReadout on the output head.
+import torch.nn as nn
+import mup
+
+def MyTransformer(d_model):                      # stand-in for your real model
+    return nn.Sequential(nn.Linear(64, d_model), nn.ReLU(),
+                         mup.MuReadout(d_model, 64))
+
+base_lr = 1e-2                                   # tuned at the base width
+base = MyTransformer(d_model=256)                # base shapes
+delta = MyTransformer(d_model=512)               # differs ONLY in scaled dims
+model = MyTransformer(d_model=4096)              # the model you will train
+
+mup.set_base_shapes(model, base, delta=delta)    # MUST come before init + optimizer
+for p in model.parameters():
+    if p.ndim >= 2:
+        mup.init.normal_(p, mean=0.0, std=0.02)  # mup-aware init, reads base shapes
+
+optimizer = mup.MuAdam(model.parameters(), lr=base_lr)   # or MuAdamW / MuSGD
+# mup.coord_check.get_coord_data(...) produces the coordinate-check plot above.
+```
+
+Two ordering rules cause most `mup` bugs: `set_base_shapes` must run *before* you initialize weights and *before* you construct the optimizer, and the readout layer must be `mup.MuReadout` (or hand-scaled by $1/d$) or the width invariance silently fails.
+
+The typical workflow is:
 
 1. **Define a base config** with a small proxy width (e.g., 256 hidden dim).
 2. **Run a dense HP sweep** over LR, initialization std, and possibly weight decay — this is cheap at small width.
@@ -660,6 +868,8 @@ The Microsoft `mup` library (github.com/microsoft/mup) provides a plug-and-play 
 5. **Validate on a medium model** (e.g., 1B) before launching the full run.
 
 The evidence that this works is now substantial: Microsoft's Phi models, various internal runs at other labs, and controlled ablations in the *Tensor Programs V* paper all show that muP-transferred LRs closely match the empirically optimal LRs found by grid search at the large scale — saving orders-of-magnitude in tuning compute.
+
+Two notes on how this looks in 2026 practice. First, many teams no longer depend on the `mup` package: because the prescription reduces to a handful of rules (init std $\propto 1/\sqrt{\text{fan\_in}}$, readout scaled by $1/d$, per-matrix LR $\propto 1/\text{fan\_in}$, attention logits divided by $d_k$ rather than $\sqrt{d_k}$), it is often written directly into the model definition — which is also what makes it survive `torch.compile` and FSDP wrapping without surprises. Second, **normalized-update optimizers get part of this for free.** Muon's orthogonalized update has a fixed per-element RMS by construction, independent of gradient scale and largely of width, so its peak LR transfers across width far better than Adam's — which is why the capstone can carry a peak LR measured on a 43M proxy up to full width with only a short confirmation run instead of a full muP apparatus ([Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html)). muP and normalized optimizers are attacking the same problem — making the update magnitude scale-invariant — from opposite ends.
 
 !!! warning "What muP Transfers - and What It Does Not"
 
@@ -678,13 +888,14 @@ Consolidating the above into a reference table for common pretraining scales:
 
 | Model scale | Peak LR | Warmup steps | Batch (tokens) | Grad clip | Weight decay | $\beta_1, \beta_2$ |
 |---|---|---|---|---|---|---|
+| ~100M | $6\text{e-}4$ | 1000–2000 | ~0.5M | 1.0 | 0.1 | 0.9, 0.95 |
 | 125M | $6\text{e-}4$ | 2000 | ~0.5M | 1.0 | 0.1 | 0.9, 0.95 |
 | 1B | $3\text{e-}4$ | 2000 | ~2M | 1.0 | 0.1 | 0.9, 0.95 |
 | 7B | $3\text{e-}4$ | 2000 | ~4M | 1.0 | 0.1 | 0.9, 0.95 |
 | 70B | $1.5\text{e-}4$ | 4000 | ~8M | 1.0 | 0.1 | 0.9, 0.95 |
 | 400B+ | $\sim 1\text{e-}4$ | 4000–8000 | ~16M | 1.0 | 0.1 | 0.9, 0.95 |
 
-These are starting points synthesized from published literature (GPT-3, Llama 1/2/3, Mistral, Falcon, OLMo) — treat them as reasonable defaults, not ground truth. The right value for any specific run depends on architecture choices (RMSNorm vs LayerNorm, activation function, depth/width ratio) and the data mixture.
+These are starting points synthesized from published literature (GPT-3, Llama 1/2/3, Mistral, Falcon, OLMo) — treat them as reasonable defaults, not ground truth. The right value for any specific run depends on architecture choices (RMSNorm vs LayerNorm, activation function, depth/width ratio), the optimizer, and the data mixture. The peak-LR column assumes **AdamW on every parameter**; a Muon/AdamW hybrid runs the 2D matrices an order of magnitude higher (the capstone's ~100M model uses Muon at $0.02$ with AdamW at $3\text{e-}3$ for embeddings and norms), because Muon's orthogonalized update has a fixed per-element magnitude rather than a gradient-scaled one. See [Optimizers](../03-pretraining/09-optimizers.html) and, for the full worked recipe at this scale, [Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html).
 
 ```python
 from dataclasses import dataclass, field
@@ -742,8 +953,9 @@ def scale_lr_for_batch_size(
 ) -> float:
     """
     Scale learning rate when changing effective batch size.
-    Use 'linear' when target_batch / base_batch <= 8x.
-    Use 'sqrt' for more aggressive batch scaling.
+    Use 'sqrt' for AdamW/Muon (the SDE-derived rule for adaptive and
+    normalized-update optimizers) -- this is the LLM-pretraining default.
+    Use 'linear' only for SGD-with-momentum, and only well below B*.
     """
     ratio = target_batch / base_batch
     if rule == "linear":
@@ -754,22 +966,27 @@ def scale_lr_for_batch_size(
         raise ValueError(f"Unknown rule: {rule}")
 
 
-# Example: scale 1M-token/step config to 4M tokens/step
+# Example: scale 1M-token/step config to 4M tokens/step under AdamW
 base_cfg = PretrainingHParams(peak_lr=3e-4)
 new_lr = scale_lr_for_batch_size(
     base_lr=base_cfg.peak_lr,
     base_batch=1_000_000,
     target_batch=4_000_000,
-    rule="linear",
+    rule="sqrt",
 )
-print(f"Scaled LR: {new_lr:.2e}")  # 1.20e-03
+print(f"Scaled LR (sqrt): {new_lr:.2e}")  # 6.00e-04
+# The SGD-style linear rule would give 1.20e-03 -- 2x higher, and near B* that
+# is exactly the over-scaling that shows up as a loss spike a few thousand
+# steps in rather than as an immediate divergence.
 ```
 
 ### Warmup Duration Heuristics
 
 A useful rule of thumb: warm up for at least $T_w = \max(1000, 0.02 \times T_{\text{total}})$ steps — that is, at least 1000 steps or 2% of the total budget, whichever is larger. Shorter warmups are fine for fine-tuning (where the model is already initialized near a good basin) but dangerous for pretraining from scratch.
 
-For continues pretraining (e.g., domain adaptation starting from a released checkpoint), a short warmup of 100–500 steps is usually sufficient — the parameters are already in a well-behaved regime.
+State it in **tokens** when you compare across runs, since that is the quantity that is actually invariant: 2% of a 38,147-step run at 524,288 tokens/step is ~1B warmup tokens, which is squarely the ~0.5–2B band used by open pretraining recipes at every scale from 100M to 70B ([The Pretraining Run](../14-capstone/07-pretraining-run.html) uses exactly 2,000 steps ≈ 1.05B tokens). Warmup is cheap insurance: over-warming costs you a fraction of a percent of final loss, while under-warming can cost you the run. When a run diverges early, **lengthen warmup before you lower the peak LR** — it preserves the peak you tuned.
+
+For continued pretraining (e.g., domain adaptation starting from a released checkpoint), a short warmup of 100–500 steps is usually sufficient — the parameters are already in a well-behaved regime. See [Continual & Domain-Adaptive Pretraining](../03-pretraining/16-continual-pretraining.html).
 
 !!! warning "Common Pitfall: Forgetting to Warm Up After a Checkpoint Restart"
 
@@ -794,7 +1011,7 @@ Hyperparameter Launch Checklist
 [ ] Warmup steps >= max(1000, 2% of total) for full pretraining
 [ ] Batch size chosen: effective tokens/step in range [0.5M, 16M]
     depending on model scale; check against critical batch size estimate
-[ ] LR scaled for batch size if changed from reference run (linear or sqrt)
+[ ] LR scaled for batch size if changed from reference run (sqrt for AdamW/Muon)
 [ ] Cosine or WSD schedule: total_steps (cosine) or stable_steps set
 [ ] Min LR floor = 10% of peak LR
 [ ] Weight decay = 0.1 (decoupled, excluded from embeddings/norms/biases)
@@ -802,19 +1019,24 @@ Hyperparameter Launch Checklist
 [ ] beta2 = 0.95 (not 0.999 default)
 [ ] Gradient accumulation: effective_batch = micro_batch * accum_steps * world_size
 [ ] DDP: model.no_sync() used on non-final accumulation steps
-[ ] Optimizer state saved in checkpoint; LR scheduler state saved separately
+[ ] Optimizer state saved in checkpoint; schedule reproducible from global_step
+    alone (prefer a stateless lr_at_step over a pickled LambdaLR)
+[ ] Per-group LR ratios (muP multipliers / Muon-vs-AdamW) preserved on resume
 [ ] Monitoring: log {lr, grad_norm, loss, step} every step
 ```
 
 !!! tip "Practitioner Tip: Curriculum for Batch Size"
 
-    Some teams ramp the batch size up alongside the learning rate during warmup — starting with a small batch (say 128K tokens/step) and linearly increasing to the full target batch over the first 2000 steps. This provides a stronger implicit regularization signal early in training (small batches have higher gradient noise, which acts like data augmentation) and can improve final evaluation loss slightly. The learning rate warmup and batch warmup interact: keep them synchronized so the effective LR-per-sample stays roughly constant during the warmup phase.
+    Some teams ramp the batch size up alongside the learning rate during warmup — starting with a small batch (say 128K tokens/step) and linearly increasing to the full target batch over the first 2000 steps. GPT-3 did this, and the critical-batch-size picture explains why it is principled rather than a trick: early in training the gradient is large and $B_{\text{noise}} = \operatorname{tr}(\Sigma)/\lVert G\rVert^2$ is *small*, so a big batch is genuinely wasted compute; as the gradient shrinks, $B_{\text{noise}}$ grows and the large batch starts paying for itself. Logging the noise-scale estimator above every few hundred steps turns this from a schedule you guess into one you read off a curve.
+
+    Two implementation notes. The learning rate warmup and batch warmup interact — keep them synchronized so the update magnitude per token stays roughly constant. And ramping batch by raising `grad_accumulation_steps` (rather than `micro_batch_size`) keeps the memory footprint fixed, which is what you want on a fixed cluster allocation.
 
 !!! key "Key Takeaways"
 
     - Warmup is mandatory at large scale because Adam's momentum estimates are cold-started at zero; ramping LR over 1000–4000 steps prevents early instability.
     - Cosine annealing is the dominant pretraining schedule; Warmup-Stable-Decay (WSD) is increasingly popular because it decouples training length from schedule shape.
-    - Linearly scale LR with batch size for moderate scaling ($k \leq 8\times$); use sqrt scaling for larger changes. Beyond the critical batch size, increasing batch size no longer reduces the step count proportionally.
+    - Scale LR with batch size as $\sqrt{k}$ under AdamW (the SDE-derived rule for adaptive optimizers); the linear rule is the SGD-with-momentum special case. Beyond the critical batch size, increasing batch size no longer reduces the step count proportionally — and $B^*$ is measurable from the gradient noise scale, and grows with tokens seen.
+    - Weight decay and LR multiply: the per-step shrinkage is $\lambda\eta$, so changing the peak LR silently changes the regularization strength.
     - Gradient accumulation simulates large batches; always divide loss by accumulation steps and use `model.no_sync()` on intermediate steps in DDP.
     - Use `AdamW` with $(\beta_1, \beta_2) = (0.9, 0.95)$, weight decay 0.1 (decoupled, excluding 1D params), and gradient clip norm 1.0 as the default pretraining recipe.
     - muP (maximal-update parameterization) makes hyperparameters — especially peak LR — invariant to model width, enabling HP transfer from small proxy models to billion-parameter runs.
@@ -835,12 +1057,20 @@ Hyperparameter Launch Checklist
     **Recent advances (2023–2026)**
 
     - [Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024)](https://arxiv.org/abs/2404.06395) — popularized the Warmup-Stable-Decay (WSD) schedule, demonstrating that decoupling training length from schedule shape enables flexible, efficient pretraining.
+    - [Malladi et al., *On the SDEs and Scaling Rules for Adaptive Gradient Algorithms* (2022)](https://arxiv.org/abs/2205.10287) — derives the **square-root** LR scaling rule for Adam/RMSProp from their SDE limits; the reason LLM practice does not use Goyal's linear rule.
+    - [Andriushchenko et al., *Why Do We Need Weight Decay in Modern Deep Learning?* (2023)](https://arxiv.org/abs/2310.04415) — argues that in one-epoch LLM pretraining weight decay is an optimization-shaping term (controlling the effective LR via weight norm) rather than a classical regularizer.
+    - [Hägele et al., *Scaling Laws and Compute-Optimal Training Beyond Fixed Training Durations* (2024)](https://arxiv.org/abs/2405.18392) — careful head-to-head showing constant-LR-plus-cooldown matches cosine at equal compute while yielding a family of usable checkpoints; the empirical case for WSD.
+    - [Kosson et al., *Why Warmup the Learning Rate? Underlying Mechanisms and Improvements* (2024)](https://arxiv.org/abs/2406.09405) — explains warmup as bounding the *relative* per-step update size while weight norms are still small at initialization.
     - [Wen et al., *Understanding Warmup-Stable-Decay Learning Rates: A River Valley Loss Landscape Perspective* (2024)](https://arxiv.org/abs/2410.05192) — theoretical explanation of WSD via the "river valley" loss landscape; explains why large LR oscillations during the stable phase are benign.
+    - [Zhang et al., *How Does Critical Batch Size Scale in Pre-training?* (2024)](https://arxiv.org/abs/2410.21676) — controlled study finding that critical batch size scales with data seen rather than parameter count.
     - [Li et al., *Optimal Learning-Rate Schedules under Functional Scaling Laws: Power Decay and Warmup-Stable-Decay* (2026)](https://arxiv.org/abs/2602.06797) — rigorous theory showing a phase transition between power-decay and WSD as optimal schedules depending on task difficulty.
 
     **Open-source & tools**
 
     - [microsoft/mup](https://github.com/microsoft/mup) — reference PyTorch implementation of muP with MuAdam/MuSGD optimizers, coordinate-check utilities, and Transformer examples; the standard starting point for HP transfer workflows.
+    - **HuggingFace `transformers`** — `get_{linear,cosine,constant}_schedule_with_warmup`, `get_inverse_sqrt_schedule`, and `get_wsd_schedule`; the same schedules are reachable from `TrainingArguments(lr_scheduler_type=..., warmup_ratio=...)` and are what TRL and Axolotl forward to under the hood.
+    - **PyTorch** — `torch.optim.lr_scheduler` (`LambdaLR`, `LinearLR`, `CosineAnnealingLR`, `SequentialLR`) and `torch.nn.utils.clip_grad_norm_`; `torchtitan` exposes warmup/stable/decay phases as job config.
+    - **Megatron-LM / DeepSpeed** — `--lr-decay-style` plus `--lr-warmup-iters`/`--lr-warmup-fraction` on the Megatron side, and the `WarmupDecayLR`/`WarmupLR` scheduler blocks in a DeepSpeed JSON config; both are how these schedules are actually configured on large clusters.
 
     **Go deeper**
 
@@ -850,7 +1080,9 @@ Hyperparameter Launch Checklist
 
 - Yang, G. et al. "Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer." NeurIPS 2022. (The muP paper; defines maximal-update parameterization and the theoretical framework behind HP transfer.)
 - McCandlish, S. et al. "An Empirical Model of Large-Batch Training." arXiv, 2018. (Introduces the gradient noise scale and critical batch size.)
-- Goyal, P. et al. "Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour." arXiv, 2017. (The linear scaling rule for batch size.)
+- Goyal, P. et al. "Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour." arXiv, 2017. (The linear scaling rule for batch size — derived for SGD with momentum.)
+- Malladi, S. et al. "On the SDEs and Scaling Rules for Adaptive Gradient Algorithms." NeurIPS 2022. (The square-root scaling rule for Adam/RMSProp; the correct default for LLM pretraining.)
+- Hägele, A. et al. "Scaling Laws and Compute-Optimal Training Beyond Fixed Training Durations." NeurIPS 2024. (Constant LR plus cooldown matches cosine; the empirical case for WSD.)
 - Loshchilov, I. & Hutter, F. "Decoupled Weight Decay Regularization." ICLR 2019. (Defines AdamW and decoupled weight decay.)
 - Loshchilov, I. & Hutter, F. "SGDR: Stochastic Gradient Descent with Warm Restarts." ICLR 2017. (Cosine annealing with warm restarts.)
 - Hu, S. et al. "MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies." arXiv, 2024. (Popularizes the WSD schedule and demonstrates its practical advantages.)
@@ -893,7 +1125,7 @@ Hyperparameter Launch Checklist
     (a) **Linear rule:** $\eta' = k \cdot \eta = 8 \times 3\text{e-}4 = 2.4\text{e-}3$.
     **Square-root rule:** $\eta' = \sqrt{k}\cdot \eta = \sqrt{8}\times 3\text{e-}4 \approx 2.828 \times 3\text{e-}4 \approx 8.49\text{e-}4$.
 
-    (b) The target batch of $4\text{M}$ tokens is right around the stated critical batch size $B^*$ (a few million tokens). Near or beyond $B^*$ you are leaving the small-batch regime where linear scaling holds and entering the saturated regime where gradient variance no longer falls as $1/B$; linear scaling then over-scales the LR and risks instability. So the **square-root value, $\approx 8.49\text{e-}4$**, is the safer, more conservative choice — the chapter explicitly recommends sqrt scaling "if you're uncertain whether you've exceeded the critical batch size." (For reference, both candidates still sit within the published $1\text{e-}4$ to $3\text{e-}3$ peak-LR band for a 7B model, so neither is absurd — but sqrt is the prudent pick this close to $B^*$.)
+    (b) Two independent reasons both point at the **square-root value, $\approx 8.49\text{e-}4$**. First, the optimizer: pretraining runs on AdamW, and the SDE analysis of adaptive methods (Malladi et al., 2022) gives $\eta \propto \sqrt{B}$, not $\eta \propto B$ — the linear rule was derived for SGD with momentum. Second, the regime: $4\text{M}$ tokens is right around the stated critical batch size $B^*$ (a few million tokens), and near or beyond $B^*$ gradient variance no longer falls as $1/B$, so any rule that keeps growing the LR with $B$ over-scales. (For reference, both candidates still sit within the published $1\text{e-}4$ to $3\text{e-}3$ peak-LR band for a 7B model, so neither is absurd — but sqrt is both the principled and the prudent pick here.)
 
     (c) With the total token budget fixed, steps $=$ total tokens / tokens-per-step, so multiplying tokens/step by 8 divides the step count by **8** (e.g., 200K steps becomes 25K steps). If you keep a cosine schedule, `num_training_steps` must be updated to this new, smaller value so the decay still lands correctly at the end.
 

@@ -71,6 +71,16 @@ Buckets are assigned in (roughly) **reverse order of the forward pass**, so that
 
 The win is large: in the ideal case, the only exposed (non-overlapped) communication is the *last* bucket's all-reduce, which has no remaining backward compute to hide behind. Everything else is free.
 
+!!! example "Worked example: how much local batch does data parallelism need to stay efficient?"
+
+    Overlap can only hide communication if there is enough compute to hide it *behind* — and the communication per optimizer step is **fixed**. DDP exchanges one gradient's worth of bytes per step regardless of batch size: a ring all-reduce moves $2\frac{N-1}{N}\cdot 2\Psi \approx 4\Psi$ bytes per GPU for bf16 gradients. Compute, meanwhile, scales with the tokens each GPU processes: roughly $6\Psi T_{\text{local}}$ FLOPs for a forward+backward over $T_{\text{local}}$ tokens. With achieved compute $\eta C$ FLOP/s and effective interconnect bandwidth $\beta$ B/s, the ratio is
+
+    $$
+    \frac{T_{\text{comm}}}{T_{\text{compute}}} \approx \frac{4\Psi/\beta}{6\Psi T_{\text{local}}/(\eta C)} = \frac{2}{3}\cdot\frac{\eta C}{\beta\, T_{\text{local}}}
+    $$
+
+    and $\Psi$ **cancels**. Data-parallel scaling efficiency does not depend on model size at all — only on *tokens per GPU per optimizer step* relative to the machine's compute-to-bandwidth ratio $\eta C/\beta$. For an order-of-magnitude feel, take an H100 node with an achieved $\eta C \approx 4\times10^{14}$ FLOP/s and an effective all-reduce bandwidth of order $\beta \approx 2.5\times10^{11}$ B/s: then $\eta C/\beta \approx 1600$ FLOPs per byte, and holding communication under 10% of compute needs $T_{\text{local}} \gtrsim \frac{2}{3}\cdot\frac{1600}{0.1} \approx 10^4$ tokens per GPU per step. A local batch of 8 sequences × 1024 tokens is 8192 — right at the edge; two gradient-accumulation micro-steps under `no_sync()` double the compute per communication and put you comfortably clear. This is the systems reason large runs use large global batches (the statistical reasons are in [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)), and the reason a slow inter-node link hurts small-batch jobs most.
+
 ### A From-Scratch DDP Wrapper
 
 Here is a minimal but faithful reimplementation of DDP's core mechanics — broadcast-on-init, per-parameter hooks, bucketing, and async all-reduce overlap. It is runnable and heavily commented so you can see every moving part.
@@ -705,9 +715,127 @@ A few load-bearing details in that script:
 
 The newer **FSDP2** redesigns sharding around per-parameter `DTensor` (distributed tensor) representations instead of the monolithic FlatParameter. Each parameter is individually a sharded `DTensor`, which composes cleanly with tensor parallelism (you can have a parameter that is both TP-sharded along one mesh dimension and FSDP-sharded along another), removes FlatParameter's awkward edge cases around mixed dtypes and frozen parameters, and integrates better with `torch.compile`. The mental model — all-gather a unit's params before compute, free after, reduce-scatter grads — is unchanged; FSDP2 mostly makes the *composition* with other parallelism dimensions (the "$N$-D parallelism" of Chapter 3.6 and 3.7) far cleaner via a unified `DeviceMesh`. As of 2026 `fully_shard` (FSDP2) is the API PyTorch recommends for new code, and PyTorch ships an FSDP1→FSDP2 migration guide; the `FullyShardedDataParallel` (FSDP1) wrapper used in the runnable examples above still works, but new development has moved to FSDP2.
 
+The API is a *function you call on modules*, not a wrapper class — you shard the leaves (each transformer block) and then the root, and the module tree keeps its original structure and parameter names:
+
+```python
+# fsdp2_train.py — the same ZeRO-3 recipe with the FSDP2 (`fully_shard`) API.
+# Run: torchrun --nproc_per_node=4 fsdp2_train.py
+import os
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy
+from torch.distributed.checkpoint.state_dict import (
+    get_model_state_dict, StateDictOptions,
+)
+from fsdp_train import ToyTransformer          # the model defined above
+
+dist.init_process_group(backend="nccl")
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+torch.cuda.set_device(local_rank)
+
+# A 1-D mesh over all ranks == FULL_SHARD. For HYBRID_SHARD (HSDP) use a 2-D mesh
+#   init_device_mesh("cuda", (n_nodes, gpus_per_node),
+#                    mesh_dim_names=("replicate", "shard"))
+# and pass that mesh instead — FSDP2 reads the shard/replicate roles off the mesh.
+mesh = init_device_mesh("cuda", (dist.get_world_size(),))
+mp = MixedPrecisionPolicy(param_dtype=torch.bfloat16,   # gather/compute in bf16
+                          reduce_dtype=torch.float32)   # reduce grads in fp32
+
+model = ToyTransformer().cuda()
+for blk in model.blocks:                        # one call per FSDP2 unit ...
+    fully_shard(blk, mesh=mesh, mp_policy=mp)
+fully_shard(model, mesh=mesh, mp_policy=mp)     # ... then the root: shards emb+head
+
+opt = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95))
+GRAD_ACCUM = 2
+for step in range(20):
+    opt.zero_grad(set_to_none=True)
+    for micro in range(GRAD_ACCUM):
+        last = micro == GRAD_ACCUM - 1
+        # FSDP2's no_sync(): skip the gradient reduce-scatter until the last
+        # micro-batch (grads accumulate unsharded on each rank until then).
+        model.set_requires_gradient_sync(last)
+        idx = torch.randint(0, 50_000, (8, 512), device="cuda")
+        loss = nn.functional.cross_entropy(
+            model(idx).flatten(0, 1), idx.flatten()) / GRAD_ACCUM
+        loss.backward()
+    # Params and grads are DTensors, so the STOCK clip is already shard-aware:
+    # it reduces the squared norm across the mesh. No FSDP-specific call needed
+    # (contrast FSDP1, which requires model.clip_grad_norm_).
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()
+
+# Checkpointing goes through torch.distributed.checkpoint's state-dict helpers,
+# which understand DTensor. full_state_dict=True gathers to rank 0 (small models);
+# drop it to get each rank's shard for torch.distributed.checkpoint.save (big ones).
+sd = get_model_state_dict(model, options=StateDictOptions(
+    full_state_dict=True, cpu_offload=True))
+if dist.get_rank() == 0:
+    torch.save(sd, "ckpt_fsdp2.pt")
+dist.destroy_process_group()
+```
+
+Three things to notice. `fully_shard` replaces both the auto-wrap policy (you choose units by *where you call it*) and `ShardingStrategy` (sharding vs. replication is read off the `DeviceMesh`, so HSDP is just a 2-D mesh). `reshard_after_forward=False` on the last few blocks is the FSDP2 knob for trading memory back for fewer backward all-gathers. And because every parameter is a `DTensor`, generic PyTorch utilities — `clip_grad_norm_`, optimizer state dicts, `torch.compile` — work without FSDP-specific variants, which is precisely the composability that made FlatParameter awkward.
+
+### Launching It For Real: `torchrun`, Accelerate & DeepSpeed Configs
+
+Almost nobody writes `dist.init_process_group` by hand twice. In practice three launch surfaces cover the ecosystem, and they are worth being fluent in because they are what job scripts and finetuning repos actually contain.
+
+**`torchrun`** is the base layer (used by every script in this chapter): it spawns one process per GPU, sets `RANK`/`LOCAL_RANK`/`WORLD_SIZE`, and handles multi-node rendezvous via `--rdzv_endpoint`. Everything else is built on it.
+
+**HuggingFace Accelerate** wraps DDP/FSDP/DeepSpeed behind one `Accelerator` object and a YAML config, and is what HF `Trainer`, TRL, and most open finetuning repos use underneath. You write a single-GPU loop, and the config decides the parallelism:
+
+```yaml
+# accelerate_fsdp.yaml — launch with: accelerate launch --config_file accelerate_fsdp.yaml train.py
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+mixed_precision: bf16
+num_processes: 8                          # GPUs on this node
+fsdp_config:
+  fsdp_version: 2                         # select FSDP2 (recent Accelerate versions;
+                                          # older ones expose fsdp_sharding_strategy instead)
+  fsdp_reshard_after_forward: true        # ZeRO-3 semantics (false => ZeRO-2-ish)
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  fsdp_transformer_layer_cls_to_wrap: Block
+  fsdp_activation_checkpointing: true
+```
+
+In the loop you then call `model, opt, loader = accelerator.prepare(model, opt, loader)`, `accelerator.backward(loss)`, and wrap micro-batches in `with accelerator.accumulate(model):` — which is the portable version of the `no_sync()` dance. `accelerate config` generates this YAML interactively.
+
+**DeepSpeed** is configured by a JSON file passed to `deepspeed.initialize` (or to HF `Trainer(..., deepspeed="ds_config.json")`), and remains the reference implementation of ZeRO stages 1–3 plus offload:
+
+```json
+{
+  "train_micro_batch_size_per_gpu": 8,
+  "gradient_accumulation_steps": 4,
+  "bf16": { "enabled": true },
+  "gradient_clipping": 1.0,
+  "zero_optimization": {
+    "stage": 3,
+    "overlap_comm": true,
+    "contiguous_gradients": true,
+    "offload_optimizer": { "device": "cpu", "pin_memory": true }
+  }
+}
+```
+
+```python
+import deepspeed
+engine, opt, _, _ = deepspeed.initialize(
+    model=model, model_parameters=model.parameters(), config="ds_config.json")
+for x, y in loader:                    # engine handles accumulation + clipping
+    loss = nn.functional.cross_entropy(engine(x).flatten(0, 1), y.flatten())
+    engine.backward(loss)              # NOT loss.backward()
+    engine.step()                      # NOT opt.step(); also steps the LR schedule
+```
+
+Flip `"stage"` between 1, 2, and 3 to walk the ladder from the previous section; add `"offload_param"` for ZeRO-Infinity-style spill. The configuration surface and the Megatron-DeepSpeed integration are developed in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
+
 ### Putting It Together: A Runnable Distributed `train.py`
 
-The pieces so far live in separate scripts — the DDP mechanics, the FSDP wrap, the checkpoint dance. A real pretraining run wires them into one file that `torchrun` launches identically on 1 GPU, an 8-GPU node, or many nodes. Here is that file: a compact causal GPT, a shard-aware dataloader over pre-tokenized `uint16` `.bin` files (the nanoGPT-style format produced in [Training an LLM From Scratch: The End-to-End Recipe](../03-pretraining/17-end-to-end-pretrain-recipe.html)), AdamW, a cosine schedule with warmup, gradient clipping, a `--parallel {ddp,fsdp}` switch, and periodic full-state-dict checkpointing. It is the 8-GPU path made buildable without hand-integrating five chapters.
+The pieces so far live in separate scripts — the DDP mechanics, the FSDP wrap, the checkpoint dance. A real pretraining run wires them into one file that `torchrun` launches identically on 1 GPU, an 8-GPU node, or many nodes. Here is that file: a compact causal GPT, a shard-aware dataloader over pre-tokenized `uint16` `.bin` files (the nanoGPT-style format produced in [Training an LLM From Scratch: The End-to-End Recipe](../03-pretraining/17-end-to-end-pretrain-recipe.html)), AdamW, a cosine schedule with warmup, gradient clipping, a `--parallel {ddp,fsdp}` switch, and periodic full-state-dict checkpointing. It is the 8-GPU path made buildable without hand-integrating five chapters. It is also the scale-out path for the capstone: Stack-100M is deliberately sized to train on *one* GPU, and the wrapper switch below is the only change needed to run its loop on eight — see [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
 
 ```python
 # train.py -- one torchrun-launchable pretraining loop.
@@ -906,7 +1034,7 @@ The right choice is a function of how the model and its state fit relative to on
 | Even sharded params exceed aggregate GPU memory | **ZeRO-Infinity** (NVMe offload) or add tensor/pipeline parallelism | Spill to CPU/NVMe, or shard *compute* too |
 | Inter-node network is the bottleneck | **HYBRID_SHARD** | Shard within node, replicate across nodes |
 
-The general principle: **use the least sharding that fits.** Each step from DDP toward ZeRO-3 trades communication for memory. If DDP fits, sharding only adds overhead. The moment it doesn't fit, climb the ladder exactly as far as needed.
+The general principle: **use the least sharding that fits.** Each step from DDP toward ZeRO-3 trades communication for memory. If DDP fits, sharding only adds overhead. The moment it doesn't fit, climb the ladder exactly as far as needed. Run the arithmetic before reaching for FSDP: a ~100M-parameter model like the capstone's Stack-100M has $16\Psi \approx 1.6$ GB of model state, so it fits many times over on any modern GPU and **DDP is the correct answer** — sharding it would buy nothing and cost an extra all-gather per layer ([The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html)).
 
 {{fig:hybrid-shard-device-mesh}}
 
@@ -942,7 +1070,9 @@ For the largest models, data parallelism alone is insufficient and is combined w
     - **DDP** makes DP fast via **gradient bucketing** (coalesce many tiny tensors into ~25 MB buffers to amortize latency) and **autograd-hook-driven overlap** (all-reduce a bucket as soon as it fills, while the backward pass keeps computing). Use `no_sync()` for gradient accumulation.
     - The memory problem: mixed-precision Adam costs **~16 bytes/param** (2 bf16 params + 2 bf16 grads + 4 fp32 master + 4+4 Adam moments). Plain DDP replicates all 16 on every GPU; 12 of them are idle except at `optimizer.step()`.
     - **ZeRO** shards the redundant state across the DP group: **Stage 1** shards optimizer states ($16 \to 4 + 12/N$ B/param), **Stage 2** also shards gradients ($2 + 14/N$), **Stage 3** also shards parameters ($16/N$). Stages 1–2 cost the *same* communication as DDP; stage 3 adds an all-gather (~1.5× comm).
-    - **FSDP** is PyTorch-native ZeRO-3: it shards a per-unit **FlatParameter**, all-gathers each unit's params just-in-time for forward/backward, frees them after, and reduce-scatters gradients to their owner. `FULL_SHARD`=ZeRO-3, `SHARD_GRAD_OP`=ZeRO-2, `NO_SHARD`=DDP, `HYBRID_SHARD`=shard-in-node/replicate-across.
+    - **FSDP** is PyTorch-native ZeRO-3: it shards a per-unit **FlatParameter**, all-gathers each unit's params just-in-time for forward/backward, frees them after, and reduce-scatters gradients to their owner. `FULL_SHARD`=ZeRO-3, `SHARD_GRAD_OP`=ZeRO-2, `NO_SHARD`=DDP, `HYBRID_SHARD`=shard-in-node/replicate-across. **FSDP2** (`fully_shard`) is the 2026 API: per-parameter `DTensor` instead of FlatParameter, units chosen by *where you call it*, sharding-vs-replication read off a `DeviceMesh`, and stock `clip_grad_norm_`/state-dict/`torch.compile` all just work.
+    - DP communication per step is **fixed** ($\approx 4\Psi$ bytes for a bf16 ring all-reduce) while compute scales with tokens per GPU, so $\Psi$ cancels: scaling efficiency is set by *tokens per GPU per optimizer step* versus the machine's $\eta C/\beta$ ratio — order $10^4$ tokens/GPU/step on an H100 node to keep comm under 10%.
+    - In practice you rarely hand-roll the launch: `torchrun` underneath, **HF Accelerate** (`accelerate launch` + an `fsdp_config` YAML, `accelerator.accumulate`) or **DeepSpeed** (`ds_config.json` with `zero_optimization.stage`) on top.
     - ZeRO/FSDP shard *storage*, not *compute* — they are still data parallelism, orthogonal to (and combinable with) tensor and pipeline parallelism. They do **not** reduce activation memory; pair them with activation checkpointing.
     - **Choose the least sharding that fits.** Each rung from DDP to ZeRO-3 trades communication for memory; on slow inter-node networks, `HYBRID_SHARD` keeps the heavy all-gathers on fast intra-node links.
     - Sharding changes auxiliary operations: use FSDP-aware **gradient clipping** (global norm across shards) and **sharded checkpoints** (each rank writes its slice) rather than their single-GPU equivalents.
@@ -966,6 +1096,7 @@ For the largest models, data parallelism alone is insufficient and is combined w
 
     - [deepspeedai/DeepSpeed](https://github.com/deepspeedai/DeepSpeed) — the production reference implementation of ZeRO stages 1–3, ZeRO-Infinity (NVMe offload), and ZeRO++ communication compression.
     - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch-native training platform using FSDP2, DTensor, and torch.compile; the canonical example of composing all parallelism axes cleanly.
+    - [huggingface/accelerate](https://github.com/huggingface/accelerate) — the config-driven launcher that puts DDP, FSDP/FSDP2, and DeepSpeed behind one `Accelerator` API; the layer HF `Trainer` and TRL sit on.
 
     **Go deeper**
 
@@ -979,7 +1110,8 @@ For the largest models, data parallelism alone is insufficient and is combined w
 - **Li et al. (2020):** "PyTorch Distributed: Experiences on Accelerating Data Parallel Training" — the design of DDP, including bucketing, gradient hooks, and the overlap strategy reconstructed in this chapter.
 - **Zhao et al. (2023):** "PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel" — the FSDP design paper covering FlatParameter sharding, prefetching, hybrid sharding, and mixed precision.
 - **PyTorch documentation:** `torch.distributed.fsdp` and the FSDP2 / `DTensor` / `DeviceMesh` tutorials — the authoritative, version-current reference for the APIs used in this chapter.
-- **DeepSpeed documentation and repository** (github.com/microsoft/DeepSpeed) — the production reference implementation of ZeRO stages 1–3, offload, and their configuration.
+- **DeepSpeed documentation and repository** (github.com/deepspeedai/DeepSpeed) — the production reference implementation of ZeRO stages 1–3, offload, and their `ds_config.json` configuration surface.
+- **HuggingFace Accelerate documentation** — the FSDP and DeepSpeed integration guides, which are the fastest route from a single-GPU loop to a sharded multi-node one.
 
 ## Exercises
 

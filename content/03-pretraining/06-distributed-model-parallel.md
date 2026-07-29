@@ -30,7 +30,7 @@ For training, every parameter carries a **memory multiplier**. With mixed-precis
 | fp32 master weights | fp32 | 4 |
 | **Total** | | **~16** |
 
-So a model needs on the order of $16N$ bytes of *static* state, plus activations. For a 70B model that is $\approx 1.1$ TB — which **ZeRO/FSDP can sharded across the DP group**. But ZeRO does *not* reduce the activation memory of a single microbatch, and it does *not* reduce the size of the largest single tensor you must materialize. When a single layer's activations, or a single forward pass, are too big for one device, sharding optimizer state is not enough. That is where the model-parallel axes come in.
+So a model needs on the order of $16N$ bytes of *static* state, plus activations. For a 70B model that is $\approx 1.1$ TB — which **ZeRO/FSDP can shard across the DP group**. But ZeRO does *not* reduce the activation memory of a single microbatch, and it does *not* reduce the size of the largest single tensor you must materialize. When a single layer's activations, or a single forward pass, are too big for one device, sharding optimizer state is not enough. That is where the model-parallel axes come in.
 
 The mental model: **DP/ZeRO splits state across replicas of the whole model; model parallelism splits the computation graph itself.** They are orthogonal and combine multiplicatively.
 
@@ -160,9 +160,9 @@ class ParallelMLP(nn.Module):
 
 ### The Communication Cost of TP
 
-The all-reduce in each block moves a tensor of shape $s \times h$. With ring all-reduce over $t$ devices, each device sends and receives $\approx 2 \cdot \frac{t-1}{t} \cdot (s \cdot h \cdot 2\text{ bytes})$ per all-reduce. Two all-reduces forward + two backward = **four all-reduces per layer per step**. This is *a lot* of traffic, and it sits squarely on the critical path: the GPUs cannot proceed past the all-reduce until it completes.
+The all-reduce in each block moves a tensor of shape $s \times h$. With ring all-reduce over $t$ devices, each device sends and receives $\approx 2 \cdot \frac{t-1}{t} \cdot (s \cdot h \cdot 2\text{ bytes})$ per all-reduce. Two all-reduces forward + two backward = **four all-reduces per layer per step**. This is *a lot* of traffic, and it sits squarely on the critical path: the GPUs cannot proceed past the all-reduce until it completes. Frameworks claw some of it back by *overlapping* each collective with the GEMM that feeds it: Megatron-LM's `--tp-comm-overlap` (built on Transformer Engine's "userbuffers") chunks the all-gather/reduce-scatter and pipelines the chunks against the matmul, and PyTorch's *async tensor parallel* does the same on top of `torch.distributed._symmetric_memory`. Overlap hides exposed latency; it does **not** reduce the volume, so the placement rule below still binds.
 
-This is the defining constraint of tensor parallelism: **it must run over the fastest interconnect you have.** On a DGX/HGX node that is NVLink/NVSwitch (hundreds of GB/s, sometimes ~900 GB/s aggregate). Cross *more than* the NVLink domain — e.g. over InfiniBand between nodes — and TP collapses your throughput because the per-layer all-reduces serialize behind a 10–25× slower link. **Rule of thumb: keep the TP group inside one node, $t \le 8$ (or whatever your NVLink domain is).**
+This is the defining constraint of tensor parallelism: **it must run over the fastest interconnect you have.** On a DGX/HGX node that is NVLink/NVSwitch (hundreds of GB/s, sometimes ~900 GB/s aggregate). Cross *more than* the NVLink domain — e.g. over InfiniBand between nodes — and TP collapses your throughput because the per-layer all-reduces serialize behind a 10–25× slower link. **Rule of thumb: keep the TP group inside one node, $t \le 8$ (or whatever your NVLink domain is).** The real rule is "TP must not leave the NVLink domain," and 8 is merely that domain's most common size: on rack-scale NVLink systems (GB200/GB300 NVL72, where dozens of GPUs share one NVLink fabric) the ceiling rises accordingly, which is exactly why 2026-era frontier configs can afford larger TP (and larger EP) groups than an 8-GPU box allows.
 
 !!! warning "GQA/MQA changes the K/V sharding"
     With Grouped-Query Attention or Multi-Query Attention (see [MHA, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)) there are fewer K/V heads than Q heads. If the number of KV heads is smaller than the TP degree $t$, you cannot give each rank a distinct KV head. Megatron handles this by *replicating* KV heads across the ranks that share them, or by requiring $t \le$ (number of KV groups). Forgetting this produces silent wrong results or shape errors — check your KV-head-to-TP divisibility before launching.
@@ -235,6 +235,62 @@ Megatron-LM implements exactly these primitives as `megatron.core.tensor_paralle
 Look again at the Megatron block: between the two TP regions sit the **LayerNorm/RMSNorm and the dropout/residual-add**, which Megatron *replicates* (every TP rank does the same redundant work on the full $s \times h$ tensor). That replication wastes both compute and, more importantly, **activation memory**: each rank stores the full LayerNorm activations.
 
 **Sequence parallelism (SP)** — in this Megatron sense (Korthikanti et al., 2022) — splits those replicated regions along the *sequence* dimension instead. The norm and residual are now done on $s/t \times h$ shards. The catch: the boundaries between an SP region (sharded on sequence) and a TP region (sharded on hidden/features) require a conversion. Megatron shows that the *same* all-reduce of the TP region can be **decomposed into a reduce-scatter + all-gather** that achieves the layout conversion *for the same total communication volume*. So Megatron-style SP is essentially free communication-wise and meaningfully cuts activation memory — it is now standard and always-on in Megatron. (Note: this "sequence parallelism" is a memory optimization *within* a TP group, and is distinct from **context parallelism / Ring Attention**, covered later, which is a true sequence split for long context.)
+
+One correctness detail this split forces, easy to miss when hand-rolling TP: **dropout needs two different RNG regimes.** Dropout applied inside a TP region acts on a *distinct feature shard* per rank, so each rank must draw a *different* mask — using the same seed everywhere would correlate the masks and effectively reduce the dropout rate. Dropout applied to a replicated tensor (e.g. on the residual stream before SP shards it) must use the *same* seed on all ranks, or the replicas silently diverge. Megatron keeps both states in a seed tracker (`model_parallel_cuda_manual_seed` / `get_cuda_rng_tracker` in `megatron/core/tensor_parallel/random.py`) and switches between them at region boundaries; PyTorch's DTensor path handles the equivalent bookkeeping through its `OffsetBasedRNGTracker`. If your architecture has no dropout (as most 2026 pretraining recipes do not), this problem disappears — which is one small extra reason the modern default is dropout-free pretraining.
+
+### The Library: PyTorch-Native TP with DTensor
+
+Everything above is what Megatron-LM implements by hand — and what you should implement once, to know it. In day-to-day work you would reach for PyTorch's built-in tensor parallelism instead, which expresses exactly the same algebra declaratively. The abstraction is **DTensor**: a tensor carrying a *placement* — `Shard(dim)` or `Replicate()` — over a `DeviceMesh`. You write a *plan* saying how each submodule is sharded; the runtime inserts the $f$/$g$ collectives, the SP reduce-scatter/all-gather boundary conversions, and the backward counterparts for you.
+
+```python
+# Assumes a Llama-style `model` whose blocks expose the submodule names below,
+# and parallelism degrees (dp, tp) with dp * tp == world_size.
+import torch, torch.nn.functional as F
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import Shard, Replicate
+from torch.distributed.tensor.parallel import (
+    parallelize_module, ColwiseParallel, RowwiseParallel,
+    SequenceParallel, PrepareModuleInput, loss_parallel,
+)
+
+# One mesh, two axes: FSDP2 across the "dp" axis, TP inside the node on "tp".
+mesh = init_device_mesh("cuda", (dp, tp), mesh_dim_names=("dp", "tp"))
+tp_mesh = mesh["tp"]
+
+for block in model.layers:
+    parallelize_module(block, tp_mesh, {
+        # Norms + residual run sequence-parallel (Korthikanti-style SP).
+        "attn_norm": SequenceParallel(),
+        "mlp_norm":  SequenceParallel(),
+        # Boundary conversion Shard(1) [sequence] -> Replicate(): this IS the
+        # all-gather half of the reduce-scatter/all-gather decomposition.
+        "attn": PrepareModuleInput(input_layouts=(Shard(1),),
+                                   desired_input_layouts=(Replicate(),)),
+        "attn.wq": ColwiseParallel(),          # Q/K/V: column-parallel by head
+        "attn.wk": ColwiseParallel(),
+        "attn.wv": ColwiseParallel(),
+        "attn.wo": RowwiseParallel(output_layouts=Shard(1)),   # g, then re-shard on seq
+        "mlp": PrepareModuleInput(input_layouts=(Shard(1),),
+                                  desired_input_layouts=(Replicate(),)),
+        "mlp.w_gate": ColwiseParallel(),       # SwiGLU gate + up are column-parallel
+        "mlp.w_up":   ColwiseParallel(),
+        "mlp.w_down": RowwiseParallel(output_layouts=Shard(1)),  # row-parallel down-proj
+    })
+
+# Embedding sharded on vocab rows; LM head column-parallel, output left vocab-sharded.
+parallelize_module(model, tp_mesh, {
+    "tok_emb":   RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
+    "final_norm": SequenceParallel(),
+    "lm_head":   ColwiseParallel(output_layouts=Shard(-1), use_local_output=False),
+})
+
+logits = model(input_ids)                  # DTensor, still sharded on the vocab dim
+with loss_parallel():                      # == our vocab_parallel_cross_entropy
+    loss = F.cross_entropy(logits.flatten(0, 1), targets.flatten(0, 1))
+    loss.backward()
+```
+
+Read that plan against the hand-written code above and every line maps: `ColwiseParallel`/`RowwiseParallel` are `ColumnParallelLinear`/`RowParallelLinear`, `PrepareModuleInput` is the SP↔TP layout conversion, and `loss_parallel()` is precisely the max-then-sum parallel softmax — it consumes vocab-sharded logits and never materializes the full `[N, V]` tensor. This DTensor path is how **torchtitan**, PyTorch's reference pretraining codebase, composes TP with FSDP2, PP, and CP on a single `DeviceMesh`; it is the practical alternative to adopting Megatron wholesale, and the trade-off between the two stacks is weighed in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
 
 ## Pipeline Parallelism: Splitting Across Layers
 
@@ -323,7 +379,32 @@ at the price of more boundary send/recv ops.
 
 ### Zero-Bubble and the Frontier
 
-The bubble is fundamentally about the *forward → backward dependency*. **Zero-Bubble Pipeline (Qi et al., 2023)** observes that the backward pass actually splits into two pieces: the gradient w.r.t. the *input* (needed to keep the pipeline flowing upstream) and the gradient w.r.t. the *weights* (needed only before the optimizer step, and *not* on the critical path). By scheduling the weight-gradient computation into the bubbles, the bubble can be driven to near zero. DeepSeek-V3's "DualPipe" pushes this further by overlapping forward and backward across a *bidirectional* pipeline and hiding communication. These are the current frontier — but plain interleaved 1F1B remains the workhorse you should reach for first.
+The bubble is fundamentally about the *forward → backward dependency*. **Zero-Bubble Pipeline (Qi et al., 2024)** observes that the backward pass actually splits into two pieces: the gradient w.r.t. the *input* (needed to keep the pipeline flowing upstream) and the gradient w.r.t. the *weights* (needed only before the optimizer step, and *not* on the critical path). By scheduling the weight-gradient computation into the bubbles, the bubble can be driven to near zero. DeepSeek-V3's "DualPipe" pushes this further by overlapping forward and backward across a *bidirectional* pipeline and hiding communication. These are the current frontier — but plain interleaved 1F1B remains the workhorse you should reach for first.
+
+### The Library: `torch.distributed.pipelining`
+
+You do not have to hand-roll the driver above either. PyTorch ships the whole schedule taxonomy as classes: give each rank its own `nn.Module` holding that stage's layers, wrap it in a `PipelineStage`, hand that to a schedule object, and call `step()` once per global batch.
+
+```python
+import torch, torch.nn.functional as F
+from torch.distributed.pipelining import PipelineStage, Schedule1F1B
+
+# `stage_mod` = this rank's contiguous block of layers, already .to(dev).
+# `pp_group` = the process group spanning the p pipeline ranks.
+stage = PipelineStage(stage_mod, stage_index=rank, num_stages=p,
+                      device=dev, group=pp_group)
+sched = Schedule1F1B(stage, n_microbatches=m, loss_fn=F.cross_entropy)
+
+losses = []
+if rank == 0:
+    sched.step(x)                          # first stage supplies the inputs
+elif rank == p - 1:
+    sched.step(target=y, losses=losses)    # last stage supplies targets, collects losses
+else:
+    sched.step()                           # middle stages just relay activations/grads
+```
+
+The microbatch splitting, the send/recv pairs, and the warmup / steady-state / cooldown bookkeeping we wrote out by hand are all internal. Swapping schedules is a one-word change: `ScheduleGPipe` (all-forward-then-all-backward), `Schedule1F1B`, `ScheduleInterleaved1F1B` (pass a *list* of stages per rank for $v > 1$), `ScheduleInterleavedZeroBubble` / `ScheduleZBVZeroBubble` for the split-backward zero-bubble family, and `ScheduleDualPipeV` for the DeepSeek-style bidirectional schedule. Megatron-Core's equivalent knobs are `--pipeline-model-parallel-size` and `--num-layers-per-virtual-pipeline-stage`; DeepSpeed's is `PipelineModule` with `LayerSpec`.
 
 !!! warning "Pipeline parallelism needs load-balanced stages"
     The pipeline runs at the speed of its *slowest* stage. The embedding layer (huge vocab matmul) and the final LM head + loss are unusually heavy. If you naively put $L/p$ layers per stage, stage 0 (with embeddings) and stage $p-1$ (with the LM head and cross-entropy over the full vocab) become stragglers and stall everyone. Megatron rebalances by giving the first/last stages *fewer* transformer layers, and sometimes splits the loss computation. Always profile per-stage time, not just per-stage layer count.
@@ -372,6 +453,8 @@ def ring_attention(q, k, v, cp_group_size, head_dim):
 ```
 
 The communication per step is one $K$ and one $V$ block ($\approx 2 \cdot \frac{s}{c} \cdot h \cdot 2$ bytes), and there are $c$ steps — so total volume per device is $O(s \cdot h)$, independent of $c$, and it overlaps with the $O(s^2/c)$ local compute. As $s$ grows, compute dominates communication and Ring Attention scales to arbitrarily long sequences as long as you add devices.
+
+In production you rarely write that loop yourself. PyTorch exposes it as `torch.distributed.tensor.experimental.context_parallel`, a context manager that shards the Q/K/V buffers over a CP mesh dimension and swaps in a ring-communicating SDPA implementation for the duration of the block; Megatron-Core exposes `--context-parallel-size` (fused with its FlashAttention kernels and the balanced token reordering below); and the community `ring-flash-attention` package wraps the real FlashAttention CUDA kernels in the same ring so you keep kernel-level IO-awareness *and* the sequence split.
 
 !!! warning "Causal masking unbalances the ring"
     With a causal mask, early query blocks attend to fewer keys than late ones, so a naive Ring Attention has devices doing wildly different amounts of work (some K/V blocks are entirely masked out for a given Q block). Production implementations (e.g. **Striped/Zig-Zag Ring Attention**, and Megatron-CP) renumber or interleave the token assignment so each device gets a balanced mix of early and late positions. Ignore this and your "8-way CP" runs at the speed of the busiest rank.
@@ -452,7 +535,7 @@ def moe_forward(x, gate, experts_local, E, e, ep_group, k=1):
     return out
 ```
 
-The exchanged-counts-then-variable-split-size handling above is the actual hard part of expert parallelism — it is exactly what Megatron's token dispatcher (`megatron.core.transformer.moe`) and DeepSpeed/Tutel implement, since a naive fixed-size recv buffer is only correct when every rank happens to receive the same number of tokens, which routing essentially never guarantees.
+The exchanged-counts-then-variable-split-size handling above is the actual hard part of expert parallelism — it is exactly what Megatron's token dispatcher (`megatron.core.transformer.moe`) and DeepSpeed/Tutel implement, since a naive fixed-size recv buffer is only correct when every rank happens to receive the same number of tokens, which routing essentially never guarantees. Two open-source libraries are worth knowing at this layer: **DeepEP** (DeepSeek's expert-parallel communication library) supplies NVLink- and RDMA-tuned dispatch/combine kernels, including a low-latency path for MoE *inference*; and **MegaBlocks** reformulates the expert FFNs as block-sparse GEMMs, giving *dropless* MoE — no capacity factor, no dropped tokens — at the cost of variable-shaped kernels.
 
 The deciding factor for EP performance is **load balance**. If the router sends most tokens to a few popular experts, those devices become stragglers while others idle, and the all-to-all is dominated by the heaviest bucket. This is why MoE training relies on an **auxiliary load-balancing loss** (or DeepSeek-style auxiliary-loss-free bias correction) to spread tokens evenly, and on **expert capacity** limits that drop or reroute overflow tokens. EP is almost always combined with TP and DP, and the all-to-all collectives are extremely bandwidth-sensitive — keep the EP group on fast links, and overlap dispatch/combine with the attention compute of the next layer where possible.
 
@@ -497,6 +580,8 @@ A useful way to think about it: **TP and PP both reduce per-device memory and le
 !!! tip "Practitioner tip"
     Don't reach for model parallelism prematurely. The decision ladder is: (1) plain DDP if it fits; (2) ZeRO/FSDP to shard optimizer/grad/param state — this alone handles surprisingly large models with *no* model-parallel complexity (see [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)); (3) add TP once a single replica won't fit even sharded, keeping it intra-node; (4) add PP to cross node boundaries; (5) add CP only when context length (not parameters) is the binding constraint; (6) EP only for MoE. Every axis you add multiplies the debugging surface — add the *fewest* that make the run fit and run efficiently.
 
+    A scale calibration for this book's capstone: **Stack-100M**, the ~100M-parameter model trained in [The Pretraining Run](../14-capstone/07-pretraining-run.html), needs *none* of the axes in this chapter. Its full bf16+Adam state is a couple of GB, so it trains on one GPU, and DDP/FSDP there is a pure speed-up rather than a requirement. In practice teams only reach for TP once a single replica stops fitting even after ZeRO/FSDP sharding — somewhere around the 10B-parameter mark on 80 GB devices, or much earlier if the context length is extreme. Read this chapter to understand what the frontier does and to answer for it in interviews; do not import its complexity into a 100M run.
+
 !!! note "Verify before you scale"
     Before scaling any of these axes to hundreds of GPUs, verify that the parallel implementation reproduces the single-GPU result — up to floating-point reduction-order differences. Fix every seed (`torch.manual_seed` on every rank, plus `torch.use_deterministic_algorithms(True)`), build a *tiny* model that fits on one GPU (e.g. $h=256$, $L=4$, $a=8$, vocab $=1024$, $s=128$), run one forward on a fixed input to get reference logits/loss at TP=1, then run the *same* input and weights at TP=2 (and separately PP=2, CP=2) on 2 GPUs and assert they match:
 
@@ -535,6 +620,7 @@ Notice the frequency column. TP and EP pay *per layer*, so they demand the faste
     - **Place axes by communication intensity:** TP and EP (per-layer collectives) on the fastest links; PP and DP (boundary/per-step) on slower fabric. This single placement principle drives most real configs.
     - **Climb the ladder, don't leap:** DDP → ZeRO/FSDP → +TP (intra-node) → +PP (inter-node) → +CP (for context) → +EP (for MoE). Add the fewest axes that make the run fit and run efficiently — each one multiplies the debugging surface.
     - **Activation memory, not parameters, is often what OOMs you** at scale; TP+sequence-parallel, CP, 1F1B, and recomputation are your levers against it.
+    - **Know the library for each axis, not just the math:** Megatron-Core (TP/PP/SP/CP/EP flags) and, PyTorch-natively, `torch.distributed.tensor.parallel` (`parallelize_module` + `Colwise`/`Rowwise`/`SequenceParallel` + `loss_parallel`), `torch.distributed.pipelining` (`PipelineStage` + the GPipe/1F1B/interleaved/zero-bubble schedules), `context_parallel`, and DeepEP/MegaBlocks for MoE — all composed on one `DeviceMesh`, as torchtitan demonstrates.
 
 !!! sota "State of the Art & Resources (2026)"
     Tensor, pipeline, sequence, and expert parallelism are now mature, production-proven techniques: every frontier training run — dense giants like Llama 3 405B and large sparse MoE systems like DeepSeek-V3 (671B total, 256 experts) — uses some combination of all four axes, and MoE-at-scale has become the dominant frontier architecture. Active research is pushing toward zero-bubble schedules, compute-communication overlap (DualPipe), and smarter MoE load balancing — squeezing the last few percent of MFU out of clusters of tens of thousands of GPUs.
@@ -555,7 +641,11 @@ Notice the frequency column. TP and EP pay *per layer*, so they demand the faste
     **Open-source & tools**
 
     - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) — the reference implementation of TP, PP, SP, CP, and EP; most large public training runs are based on or validated against it.
+    - **PyTorch native**: `torch.distributed.tensor.parallel` (`parallelize_module`, `ColwiseParallel`, `RowwiseParallel`, `SequenceParallel`, `loss_parallel`), `torch.distributed.pipelining` (`PipelineStage` plus the GPipe/1F1B/interleaved/zero-bubble/DualPipeV schedules), and `torch.distributed.tensor.experimental.context_parallel` — every axis in this chapter, as a supported API on one `DeviceMesh`.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch's reference pretraining codebase; the clearest worked example of composing FSDP2 + TP + PP + CP via DTensor, and the easiest 4D-parallel code to read end to end.
     - [deepseek-ai/DualPipe](https://github.com/deepseek-ai/DualPipe) — standalone PyTorch implementation of the DualPipe bidirectional pipeline algorithm from DeepSeek-V3/R1 training.
+    - [deepseek-ai/DeepEP](https://github.com/deepseek-ai/DeepEP) — expert-parallel dispatch/combine communication kernels for MoE (NVLink + RDMA, with a low-latency inference path).
+    - [databricks/megablocks](https://github.com/databricks/megablocks) — dropless MoE via block-sparse GEMMs, removing the capacity factor and its dropped tokens.
 
     **Go deeper**
 
@@ -569,7 +659,7 @@ Notice the frequency column. TP and EP pay *per layer*, so they demand the faste
 - Korthikanti, Casper, Lym, et al., *Reducing Activation Recomputation in Large Transformer Models* (2022) — Megatron sequence parallelism and selective recomputation.
 - Huang, Cheng, Bapna, et al., *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism* (2019).
 - Narayanan, Harlap, Phanishayee, et al., *PipeDream: Generalized Pipeline Parallelism for DNN Training* (2019) — the 1F1B schedule.
-- Qi, Wan, Huang, et al., *Zero Bubble Pipeline Parallelism* (2023).
+- Qi, Wan, Huang, et al., *Zero Bubble Pipeline Parallelism* (2024).
 - Liu, Zaharia, Abbeel, *Ring Attention with Blockwise Transformers for Near-Infinite Context* (2023).
 - Lepikhin, Lee, Xu, et al., *GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding* (2020) — expert parallelism and all-to-all dispatch/combine.
 - Rajbhandari, Rasley, Ruwase, He, *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020) — the DP-side counterpart to this chapter.

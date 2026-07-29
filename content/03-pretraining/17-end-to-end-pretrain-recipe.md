@@ -46,12 +46,23 @@ Here is the stage-to-deep-chapter map you'll use throughout:
 - **Evaluation** — [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)
 - **Sampling** — [Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html)
 
+This chapter is deliberately generic: one `train.py`, four scales, GPT-2-shaped defaults. Part XIV takes the *opposite* stance and pins every constant of one real model — **Stack-100M**, a ~100M-parameter model trained end to end on a single GPU with a modern (RoPE/GQA/SwiGLU/RMSNorm) block, its own byte-level BPE, Muon+AdamW, and a warmup-stable-decay schedule. Read this chapter for the shape of the pipeline and the four-scale ladder; read [The Capstone: Building Stack-100M](../14-capstone/01-overview-and-landscape.html) for one instantiation with nothing left to taste.
+
 ## Stage 0: Environment, Running Example & Repo Layout
 
 Install the handful of packages this whole chapter depends on:
 
 ```bash
-pip install torch numpy tiktoken datasets lm-eval
+pip install torch numpy tiktoken datasets transformers lm-eval matplotlib
+# torch      -- model, autograd, DDP/FSDP, torchrun launcher
+# tiktoken   -- the reused GPT-2 byte-level BPE (Stage 1)
+# datasets   -- streaming corpus reader for prepare.py (Stage 2)
+# transformers -- only for the checkpoint -> HF export that lm-eval consumes (Stage 8)
+# lm-eval    -- EleutherAI's lm-evaluation-harness CLI (`lm_eval`), Stage 8
+# matplotlib -- the loss-curve plot in Stage 6
+# Optional: `pip install wandb` (or use torch.utils.tensorboard, already in torch)
+# for live metric logging instead of scraping a text log.
+#
 # bf16 autocast/FSDP MixedPrecision need a reasonably recent torch (2.1+).
 # torch.compile (optional but recommended for the GPU scales) needs 2.0+
 # and a matching CUDA toolkit; it is a no-op fallback on CPU/MPS.
@@ -69,7 +80,9 @@ We lay the project out exactly the way `train.py` (from chapter 3.5) expects to 
 |-- train.py             # Stage 5: the reusable training loop (from 3.5)
 |-- sample.py            # Stage 9: load a checkpoint, generate text
 |-- eval_ppl.py          # Stage 8: held-out perplexity
-`-- ckpt/                # step_*.pt checkpoints written by train.py
+|-- export_hf.py         # Stage 8: step_*.pt -> a HuggingFace dir lm_eval can load
+|-- ckpt/                # step_*.pt checkpoints written by train.py
+`-- ckpt_hf/             # exported HF-format model + tokenizer
 ```
 
 **The one running example, carried through every scale.** For the laptop toy we use **TinyStories** (Eldan & Li) — a corpus of short, simple children's stories deliberately small in vocabulary and complexity, so a ~10M-parameter model can learn *something coherent* in an afternoon on a CPU. For every GPU-scale run we switch to the **FineWeb-Edu `sample-10BT`** subset (Penedo et al., via the HuggingFace `datasets` library) — a deduplicated, quality-filtered, education-focused slice of the web, small enough to stream comfortably but large enough to feel like real pretraining. We deliberately do **not** re-derive where such a corpus comes from or how it was cleaned and deduplicated here — that is the full subject of [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) and [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html). This chapter assumes that work is done and starts from a `datasets.load_dataset(..., streaming=True)` call.
@@ -101,7 +114,7 @@ print("EOT token id:", enc.eot_token)   # 50256 -- the document/sequence separat
 
 **Why 50304 and not 50257.** `tiktoken`'s `gpt2` encoding has exactly 50257 entries (256 byte tokens + 50,000 BPE merges + 1 special `<|endoftext|>` token). But 50257 is an awkward number for a GPU matmul — it is not a multiple of 64 (or 128, the tile size on newer tensor cores), so the final `lm_head` matmul and the softmax over it fall off the fast tensor-core path. The standard fix, and the one chapter 3.5's `train.py` bakes in as its default (`vocab=50304`), is to **pad the embedding table and output head up to the next multiple of 64** — 50304 — and simply never train the extra 47 rows (they start near-zero and stay there, or you can mask them out of the loss). This is a pure efficiency trick with zero effect on model quality; it is exactly why every config in this chapter uses `vocab=50304` rather than `50257`.
 
-If you *do* need your own tokenizer — a smaller vocabulary for the TinyStories toy scale (roughly 8k merges is a reasonable choice for such a narrow, simple corpus), a non-English corpus, or a code-specific vocabulary — the from-scratch BPE trainer, complete with the pre-tokenization regex and merge-selection algorithm, lives in [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html). Everything downstream in this chapter is agnostic to which tokenizer produced the integer IDs; only the `vocab_size` argument to `GPT` changes.
+If you *do* need your own tokenizer — a smaller vocabulary for the TinyStories toy scale (roughly 8k merges is a reasonable choice for such a narrow, simple corpus), a non-English corpus, or a code-specific vocabulary — the from-scratch BPE trainer, complete with the pre-tokenization regex and merge-selection algorithm, lives in [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html). In production you would train it with HuggingFace **`tokenizers`** (the Rust-backed library behind `transformers`): a `models.BPE` model, `pre_tokenizers.ByteLevel` + `decoders.ByteLevel` for the lossless byte alphabet, and `trainers.BpeTrainer(vocab_size=..., special_tokens=["<|endoftext|>"])` fed by `train_from_iterator` over your corpus, then `tokenizer.save("tokenizer.json")` — a file `tiktoken`, `transformers`, and `llama.cpp`'s GGUF converter can all consume. The capstone trains exactly such a tokenizer from scratch and then exports it to all three formats in [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html). Everything downstream in this chapter is agnostic to which tokenizer produced the integer IDs; only the `vocab_size` argument to `GPT` changes.
 
 Once you have integer token IDs, the next step is turning them into vectors — the embedding table lookup that opens [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html).
 
@@ -197,6 +210,8 @@ total: 9,842,113,207 tokens, 19.68 GB on disk (uint16)
 
 The `val_*.bin` shard is a small, held-out slice used only for the perplexity computation in Stage 8 — it never appears in a training batch. Production pipelines hold out entire documents or domains chosen deliberately (not a stream prefix, which can correlate with crawl order); see [Pretraining Data](../03-pretraining/01-pretraining-data.html) for the real-world version of this split.
 
+**Scaling `prepare.py` past one process.** The loop above is single-threaded and tokenizer-bound: `encode_ordinary` on one core runs on the order of a few MB/s, so a 10B-token corpus is an overnight job. Two standard fixes, in increasing order of effort. (a) Keep this script and parallelize the encode with a `multiprocessing.Pool` over batches of documents, writing shards from the parent — `tiktoken`'s `encode_ordinary_batch(texts, num_threads=N)` already releases the GIL and gets you most of the way with a one-line change. (b) Use **`datatrove`** (HuggingFace), the pipeline framework FineWeb itself was built with: its `DocumentTokenizer` block does exactly this stage — shuffled, sharded, `uint16`/`uint32` `.ds` output with a `.index` of document boundaries — and runs the same pipeline definition locally or on a Slurm cluster. HuggingFace's `nanotron` trainer is designed to consume that output directly. We hand-roll here because the 60 lines above make the format contract legible; reach for `datatrove` the moment tokenization is your bottleneck. The capstone's full version of this stage — streaming four sources at fixed mixture weights, MinHash dedup, document-aware packing with `seq_ids` — is [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html).
+
 {{fig:pretrain-shard-contract-window}}
 
 ## Stage 3: The Model — One `GPTConfig`, Four Sizes
@@ -256,11 +271,25 @@ $$
 
 Targeting a Chinchilla-ish 3B-token run: $3\times10^9 / 0.33\times10^6 \approx 9{,}100$ steps. That number — roughly 9k steps — is what you should see in the `--steps` flag for the single-GPU command in Stage 5 (paired with `--grad-accum 40`), and it is the total against which the cosine schedule and warmup fraction above are computed. The per-step body in Stage 5 implements this accumulation directly: it runs `grad_accum` micro-batches, each scaled by `1/grad_accum`, before a single `opt.step()`, and under DDP wraps all but the last micro-step in `model.no_sync()` to skip the redundant all-reduce — exactly the pattern described in [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html). Set `grad_accum=1` on the laptop toy (its batch already fits); raise it on the GPU tiers to hit the effective batch each row's token budget assumes.
 
+**From token budget to wall clock (and to a dollar figure).** Once you have a parameter count $N$, a token budget $D$, and a target MFU, the run's duration is fully determined — you never have to guess. Total training compute is the $6ND$ rule (2 FLOPs per parameter for the forward multiply-accumulate, 4 for the backward), and dividing by the *achieved* FLOP/s gives seconds:
+
+$$
+T_{\text{wall}} = \frac{6 N D}{\text{MFU} \times G \times P_{\text{peak}}}
+$$
+
+with $G$ GPUs each at bf16 dense peak $P_{\text{peak}}$. For the single-GPU 124M row — $N = 1.24\times10^8$, $D = 3\times10^9$, one A100 at $P_{\text{peak}} = 312$ TFLOP/s and 40% MFU:
+
+$$
+T_{\text{wall}} = \frac{6 \times 1.24{\times}10^{8} \times 3{\times}10^{9}}{0.40 \times 312{\times}10^{12}} = \frac{2.23{\times}10^{18}}{1.25{\times}10^{14}} \approx 1.8{\times}10^{4}\,\text{s} \approx 5\ \text{hours.}
+$$
+
+Cross-check it against the throughput route: $3\times10^9$ tokens at the 170k tokens/s measured in Stage 6 is $1.76\times10^4$ s — the same answer, because MFU and tokens/s are two views of one number. On a consumer 4090 (bf16 dense on the order of 165 TFLOP/s) at a more realistic 35% MFU the same run is roughly 11 hours. Multiply by your cloud's hourly rate and you have the budget before you launch; do this arithmetic *first*, because it is also how you discover that a config you were about to run costs a month. The capstone does exactly this accounting for its ~20 GPU-hour run in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html), including the correction terms where $6ND$ under-counts (attention's $O(T^2)$ work, and the `lm_head` matmul that dominates a small model's FLOPs).
+
 For the deeper theory of warmup's role in taming Adam's early-training variance, the critical-batch-size regime where larger batches stop helping, and $\mu$P (maximal-update parameterization) for transferring a small model's tuned hyperparameters to a larger one without re-sweeping, see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
 
 ## Stage 5: The Training Loop — `torchrun` at Four Scales
 
-The training loop is not reprinted in full here — it is the single `train.py` built end-to-end in "Putting It Together: A Runnable Distributed `train.py`" in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html). That file bundles the compact `GPT`, the `ShardedTokenLoader` (reading the `uint16` shards from Stage 2), `lr_at`, `save_checkpoint`, and a `--parallel {ddp,fsdp}` switch into one `torchrun`-launchable script. For orientation, here is just the per-step body — the part that actually touches loss, gradients, and the optimizer:
+The training loop is not reprinted in full here — it is the single `train.py` built end-to-end in "Putting It Together: A Runnable Distributed `train.py`" in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html). That file bundles the compact `GPT`, the `ShardedTokenLoader` (reading the `uint16` shards from Stage 2), `lr_at`, `save_checkpoint`, and a `--parallel {ddp,fsdp}` switch into one `torchrun`-launchable script. (For a production-hardened single-GPU version of the same loop — chunked cross-entropy so the `lm_head` logits stop dominating memory, a non-finite-loss skip, atomic resumable checkpoints carrying optimizer state and the data cursor, and an MFU meter — see [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).) For orientation, here is just the per-step body — the part that actually touches loss, gradients, and the optimizer:
 
 ```python
 # (contextlib is imported at the top of train.py)
@@ -308,6 +337,8 @@ torchrun --nnodes=2 --node_rank=$RANK --nproc_per_node=8 \
 
 `--parallel {ddp,fsdp}` is the entire switch between "replicate the model" and "shard it." Under `fsdp`, `ShardingStrategy.FULL_SHARD` gives you ZeRO-3 semantics (parameters, gradients, and optimizer state all sharded across the group), and bf16 arrives via FSDP's `MixedPrecision` config rather than a separate autocast call — see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for why bf16, not fp16, is the default here (its wider dynamic range avoids the overflow failure mode in Stage 7 below).
 
+**`torch.compile`, the one flag not in the launch line.** The MFU figures quoted below assume the model has been compiled. Adding it is one statement — `model = torch.compile(model)` on the raw `GPT` *before* the DDP/FSDP wrap — and it typically buys a substantial throughput improvement at these scales by fusing the pointwise chains around LayerNorm, GELU and the residual adds into far fewer kernel launches. Three things to know: the first step pays a one-time compilation cost of tens of seconds (do not include it in your ms/step average); every distinct input shape triggers a fresh compile, so keep `local_bsz` and `ctx` fixed for the whole run (a ragged last batch will silently recompile); and compilation composes with FSDP only when the wrapper is constructed with `use_orig_params=True`, which 3.5's `train.py` already does. If a compile error blocks you, `torch.compile(model, mode="default", fullgraph=False)` lets Dynamo fall back to eager on the graph breaks it cannot handle. The mechanics — Dynamo's graph capture, Inductor's fusion and Triton codegen, CUDA graphs — are [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html).
+
 **Resuming.** `--ckpt-dir` and `--ckpt-every` control a full (unsharded) state-dict checkpoint, gathered onto rank 0 and written every `ckpt-every` steps — simple, and correct at the 8-GPU scale, but it pays a memory spike on rank 0 and does not save optimizer state. For a real multi-day run you want a *sharded* checkpoint (each rank writes only its slice, no single-host memory spike) that also captures the AdamW moment buffers and the data-loader's RNG position, so a restart is bit-continuous rather than restarting the LR schedule and optimizer momentum from cold — that machinery, built with `torch.distributed.checkpoint` and `FSDP.optim_state_dict`, is the subject of [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
 {{fig:pretrain-four-scale-ladder}}
@@ -346,7 +377,7 @@ A **healthy-run** mini-table to keep next to your terminal:
 
 These thresholds, and the diagnostic playbook for when they're violated, are developed in full in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html). MFU is **not** a meaningful number on the CPU toy — there is no "peak FLOP/s" denominator worth computing for a laptop CPU in this context, so skip it there and watch loss and wall-clock only.
 
-A tiny snippet to turn the printed log lines into a plot, assuming lines of the form `step  123 | loss 3.4521 | lr 3.21e-04 | 210 ms/step`:
+**Where those numbers should go.** Printing to stdout and grepping it back is fine for the laptop toy and terrible for anything longer than an afternoon. The real tooling at this layer is an experiment tracker: **Weights & Biases** (`import wandb; wandb.init(project=...); wandb.log({"loss": l, "gnorm": g, "lr": lr, "mfu": u}, step=step)`), **TensorBoard** (`from torch.utils.tensorboard import SummaryWriter`, already shipped with torch, no account needed), **MLflow**, or HuggingFace's lightweight **`trackio`**. Whichever you pick, guard the call with `if rank == 0:` so eight ranks do not write eight duplicate runs, and log the *config* alongside the curve (model dims, LR, batch, git commit, corpus hash) — six months later the curve is worthless if you cannot tell which config produced it. [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html) shows the full metrics dict a large run logs; the capstone ties the config hash to the loss curve in [Retrospective](../14-capstone/12-retrospective-and-scaleup.html). The regex-scraping fallback below is for when you have a log file and no tracker:
 
 ```python
 import re
@@ -455,11 +486,103 @@ if __name__ == "__main__":
 
 `ppl = exp(mean_ce)` is the standard definition — the effective branching factor of the model's next-token distribution. Because perplexity is tokenizer-dependent (a coarser vocabulary reports a lower perplexity for the same underlying predictive power), the tokenizer-agnostic **bits-per-byte** normalization is the fairer number for cross-tokenizer comparisons; its conversion from nats/token is covered in [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html). Expected perplexity, reading straight off the scale table at the end of this chapter: on the order of **~4** for the TinyStories toy, **~22** for the single-GPU 124M model, and **~14** for the 8-GPU 1.3B model — lower is better, and the trend (bigger model + more tokens = lower perplexity) is the entire content of scaling laws made concrete.
 
-Then the quick benchmark — an *extrinsic* check that the model can do something beyond predicting the next token well. `train.py` saves a raw `{'model': state_dict}` checkpoint, **not** a HuggingFace-`transformers` directory, so `lm-eval`'s `hf` adapter cannot load `./ckpt` directly. Two bridges, both built in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html): export the state dict into a `GPT2LMHeadModel` (whose config matches this GPT-2-shaped model almost exactly) and point `lm_eval` at that directory, or — simpler here — wrap the compact `GPT` in the thin custom `LM` subclass from 11.3 and score it directly. Once exported, the run is:
+Then the quick benchmark — an *extrinsic* check that the model can do something beyond predicting the next token well. The standard tool here is EleutherAI's **lm-evaluation-harness** (`lm_eval`), the same harness behind the Open LLM Leaderboard, built up in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). But `train.py` saves a raw `{'model': state_dict}` checkpoint, **not** a HuggingFace-`transformers` directory, so `lm_eval`'s `hf` adapter cannot load `./ckpt` directly. Two bridges: wrap the compact `GPT` in the thin custom `LM` subclass from 11.3 and score it in-process, or — better, because the same artifact then feeds `transformers`, vLLM, and llama.cpp's GGUF converter — export the state dict once into a `GPT2LMHeadModel`, whose architecture is bit-for-bit the same computation as our compact `GPT`. That export is not quite a rename, so here it is in full:
+
+```python
+# export_hf.py -- convert a train.py checkpoint into a HuggingFace GPT-2 directory.
+# Run: python export_hf.py --ckpt ckpt/step_9000.pt --out ./ckpt_hf
+import argparse
+
+import torch
+from transformers import GPT2Config, GPT2LMHeadModel, GPT2TokenizerFast
+
+from train import GPT   # the same compact model class used everywhere in this chapter
+
+
+def convert(sd, n_layer):
+    """Remap our compact GPT's keys onto HF GPT-2's. Two subtleties, and they are
+    the only two places this conversion can silently go wrong:
+      (1) HF GPT-2 uses `Conv1D`, which stores its weight TRANSPOSED relative to
+          nn.Linear -- every weight below needs a `.T`, every bias does not.
+      (2) nn.MultiheadAttention packs Q,K,V into one `in_proj_weight` of shape
+          (3d, d), stacked in exactly the Q,K,V order HF's `c_attn` expects."""
+    out = {
+        "transformer.wte.weight": sd["tok.weight"],
+        "transformer.wpe.weight": sd["pos.weight"],
+        "transformer.ln_f.weight": sd["lnf.weight"],
+        "transformer.ln_f.bias": sd["lnf.bias"],
+        "lm_head.weight": sd["tok.weight"],        # weight tying: same tensor on both sides
+    }
+    for i in range(n_layer):
+        s, d = f"blocks.{i}.", f"transformer.h.{i}."
+        out[d + "ln_1.weight"] = sd[s + "ln1.weight"]
+        out[d + "ln_1.bias"] = sd[s + "ln1.bias"]
+        out[d + "ln_2.weight"] = sd[s + "ln2.weight"]
+        out[d + "ln_2.bias"] = sd[s + "ln2.bias"]
+        out[d + "attn.c_attn.weight"] = sd[s + "attn.in_proj_weight"].T    # (3d,d) -> (d,3d)
+        out[d + "attn.c_attn.bias"] = sd[s + "attn.in_proj_bias"]
+        out[d + "attn.c_proj.weight"] = sd[s + "attn.out_proj.weight"].T   # (d,d)  -> (d,d)
+        out[d + "attn.c_proj.bias"] = sd[s + "attn.out_proj.bias"]
+        out[d + "mlp.c_fc.weight"] = sd[s + "mlp.0.weight"].T              # (4d,d) -> (d,4d)
+        out[d + "mlp.c_fc.bias"] = sd[s + "mlp.0.bias"]
+        out[d + "mlp.c_proj.weight"] = sd[s + "mlp.2.weight"].T            # (d,4d) -> (4d,d)
+        out[d + "mlp.c_proj.bias"] = sd[s + "mlp.2.bias"]
+    return {k: v.contiguous() for k, v in out.items()}   # .T returns a view; HF wants contiguous
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ckpt", required=True)
+    ap.add_argument("--out", default="./ckpt_hf")
+    ap.add_argument("--d", type=int, default=768)
+    ap.add_argument("--h", type=int, default=12)
+    ap.add_argument("--n-layers", type=int, default=12)
+    ap.add_argument("--ctx", type=int, default=1024)
+    args = ap.parse_args()
+
+    sd = torch.load(args.ckpt, map_location="cpu", weights_only=True)["model"]
+
+    cfg = GPT2Config(vocab_size=50304, n_positions=args.ctx, n_embd=args.d,
+                     n_layer=args.n_layers, n_head=args.h,
+                     activation_function="gelu",   # exact erf GELU, matching nn.GELU();
+                                                    # HF's DEFAULT is "gelu_new" (tanh approx),
+                                                    # which would be a small silent mismatch
+                     resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0,
+                     bos_token_id=50256, eos_token_id=50256)   # tiktoken's <|endoftext|>
+    hf = GPT2LMHeadModel(cfg)
+    missing, unexpected = hf.load_state_dict(convert(sd, args.n_layers), strict=False)
+    assert not unexpected, f"keys we produced that HF does not want: {unexpected}"
+    # `missing` legitimately contains HF's non-persistent causal-mask buffers only.
+
+    # The check that makes the export trustworthy: run both models on the same
+    # input and compare logits. Skip this and a missed .T becomes a bad benchmark
+    # number you will spend a day misinterpreting.
+    ours = GPT(vocab=50304, d=args.d, h=args.h, n_layers=args.n_layers, ctx=args.ctx)
+    ours.load_state_dict(sd)
+    ours.eval(); hf.eval()
+    x = torch.randint(0, 50257, (2, 64))
+    with torch.no_grad():
+        delta = (ours(x) - hf(x).logits).abs().max().item()
+    print(f"max |logit difference| = {delta:.2e}")   # fp32: expect ~1e-4 or smaller
+    assert delta < 1e-2, "conversion mismatch -- a missed transpose moves logits by O(1)"
+
+    hf.save_pretrained(args.out)
+    GPT2TokenizerFast.from_pretrained("gpt2").save_pretrained(args.out)   # same BPE as tiktoken
+    print(f"wrote {args.out}/ -- loadable by transformers, lm_eval, and vLLM")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Once exported, the benchmark run is one command:
 
 ```bash
-lm_eval --model hf --model_args pretrained=./ckpt_hf --tasks hellaswag --num_fewshot 0
-``` Set honest expectations before you run this: HellaSwag is a 4-way multiple-choice task, so random guessing scores ~25%, and **both the TinyStories toy and the 124M single-GPU model will score at or barely above that random floor.** This is not a bug — it is the expected, correct outcome of a model this small trained on this few tokens; benchmark performance on tasks like HellaSwag, MMLU, or GSM8K only starts to separate meaningfully from random around the 1B-parameter-and-tens-of-billions-of-tokens range, which is exactly why the intrinsic perplexity number is the more useful signal at the two smallest scales in this chapter. Also note the harness reports both `acc` (raw argmax over answer choices) and `acc_norm` (length-normalized) as separate metrics — they can disagree by a few points, and comparing your number to a third-party leaderboard entry requires knowing which one they reported. For the landscape of *why* benchmark scores are noisy, contaminated, and hard to compare across papers, see [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html).
+lm_eval --model hf --model_args pretrained=./ckpt_hf,dtype=bfloat16 \
+    --tasks hellaswag --num_fewshot 0 --batch_size 16
+```
+
+Set honest expectations before you run this: HellaSwag is a 4-way multiple-choice task, so random guessing scores ~25%, and **both the TinyStories toy and the 124M single-GPU model will score at or barely above that random floor.** This is not a bug — it is the expected, correct outcome of a model this small trained on this few tokens; benchmark performance on tasks like HellaSwag, MMLU, or GSM8K only starts to separate meaningfully from random around the 1B-parameter-and-tens-of-billions-of-tokens range, which is exactly why the intrinsic perplexity number is the more useful signal at the two smallest scales in this chapter. Also note the harness reports both `acc` (raw argmax over answer choices) and `acc_norm` (length-normalized) as separate metrics — they can disagree by a few points, and comparing your number to a third-party leaderboard entry requires knowing which one they reported. For the landscape of *why* benchmark scores are noisy, contaminated, and hard to compare across papers, see [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-landscape.html); for what an honest eval report for a model at *this* scale actually looks like — hand-built capability probes alongside the standard tasks, because the standard tasks are near the floor — see [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
 
 ## Stage 9: Inference and Sampling
 
@@ -539,6 +662,8 @@ What to expect, per scale: the **TinyStories toy** (a few thousand steps on ~10-
 
 Everything past this point — KV-cache management, continuous batching, multi-request serving — is production **inference serving**, not sampling theory, and is explicitly out of scope here; it begins in [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html). The theory behind the sampling knobs themselves — temperature, top-k, top-p/nucleus, min-p, and beam search, with the entropy and calibration arguments for when to use which — is developed in full in [Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html).
 
+**What this checkpoint is not.** What you have at the end of Stage 9 is a *base* model: a next-token predictor over web text. It will happily continue your prompt and just as happily ignore an instruction, because nothing in this pipeline ever showed it that instructions exist. Three further stages turn it into something usable, and each is its own chapter: **mid-training** (a final annealing phase on a premium data mix plus long-context extension — [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html), [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html), instantiated in [Mid-Training](../14-capstone/08-mid-training.html)); **post-training** (SFT on chat-formatted data, then preference optimization or RLVR — [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html), [Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html), [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html), instantiated in [Post-Training](../14-capstone/09-post-training.html)); and finally wiring the result into a tool-using system ([Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html), instantiated in [A Narrow Agentic System](../14-capstone/10-agentic-narrow.html)). Part XIV runs that whole chain on one ~100M model, so if your goal is "a small model that does something," treat this chapter as its first third.
+
 ## The Four-Scale Recipe Table
 
 The one artifact worth keeping open in a pinned tab — every config, launch command, and expectation for all four scales in one place:
@@ -546,7 +671,7 @@ The one artifact worth keeping open in a pinned tab — every config, launch com
 | Scale | Hardware | Model (config) | Params | Tokens | Wall-clock (ballpark) | Final val loss / ppl | MFU | Launch |
 |---|---|---|---|---|---|---|---|---|
 | Laptop / CPU toy | 1 laptop CPU (or MPS / 1 small GPU) | n_layer=6, d_model=256, n_head=8, ctx=256, TinyStories | ~10M | ~10-20M (~1 short epoch) | ~30-90 min CPU; ~5-15 min MPS/GPU | loss ~1.2-1.5 / ppl ~3.5-4.5 | not meaningful on CPU | `python train.py --data ./data --parallel ddp --ctx 256` |
-| Single GPU | 1x A100/H100 (or 4090) | GPT-2 small: n_layer=12, d_model=768, n_head=12, ctx=1024 | 124M | 2-3B (FineWeb-Edu) | ~0.5-1 day on 1 A100 | loss ~3.0-3.3 / ppl ~20-28 | ~35-45% (bf16 + torch.compile) | `torchrun --nproc_per_node=1 train.py --parallel ddp` |
+| Single GPU | 1x A100/H100 (or 4090) | GPT-2 small: n_layer=12, d_model=768, n_head=12, ctx=1024 | 124M | 2-3B (FineWeb-Edu) | ~5-6 h on 1 A100, ~11 h on a 4090 (from the $6ND$ arithmetic in Stage 4) | loss ~3.0-3.3 / ppl ~20-28 | ~35-45% (bf16 + torch.compile) | `torchrun --nproc_per_node=1 train.py --parallel ddp` |
 | 8-GPU node | 8x H100/A100 (NVLink) | n_layer=24, d_model=2048, n_head=16, ctx=1024-2048 | ~1.3B | ~25-40B | ~1-2 days | loss ~2.5-2.8 / ppl ~12-16 | ~40-50% (FSDP FULL_SHARD) | `torchrun --nproc_per_node=8 train.py --parallel fsdp` |
 | Multi-node | 2-8 nodes x 8 GPU (16-64 GPUs, InfiniBand) | Llama-style 7B (RoPE/GQA/SwiGLU/RMSNorm), ctx=4096 | ~7B | 140B (Chinchilla) to 1T+ | days to weeks | loss ~1.9-2.2 / ppl ~7-9 | ~40-50% (HYBRID_SHARD, or FSDP+TP) | `torchrun --nnodes=N --node_rank=$RANK --nproc_per_node=8 --rdzv_endpoint=$HEAD:29500 train.py --parallel fsdp` |
 
@@ -570,6 +695,7 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
     - One `train.py`, one `--parallel {ddp,fsdp}` flag, scales from a single CPU process to a multi-node cluster — the model, loss, and schedule code never change; only the launch command and the sharding strategy do.
     - "Use the least sharding that fits": DDP if the model and its Adam state fit on one GPU; climb ZeRO-1 -> ZeRO-2 -> ZeRO-3/FSDP `FULL_SHARD` only as far as memory forces you, then `HYBRID_SHARD` when the inter-node network becomes the bottleneck.
     - bf16 (not fp16) plus a global gradient-norm clip of 1.0 is the standing defense against the two dominant instability mechanisms: floating-point overflow and Adam's amplification of anomalous-batch gradients.
+    - The run's duration is arithmetic, not a guess: $T_{\text{wall}} = 6ND / (\text{MFU} \times G \times P_{\text{peak}})$ — a 124M model on 3B tokens at 40% MFU is about 5 hours on one A100. Compute it (and the resulting cloud bill) before you launch, not after.
     - Target MFU of roughly 40-55% on GPU scales as your north-star efficiency number; below ~30% with idle-looking GPUs points at a dataloader, kernel, or communication bottleneck, not a model problem.
     - Compute held-out **perplexity before** reaching for a standard benchmark at small scale — benchmark scores near the random floor at 124M and below are the expected, correct outcome, not a sign anything is broken.
     - The laptop-scale run (TinyStories, ~10M params) exercises every piece of this chapter's glue in an afternoon; treat it as the cheapest possible integration test before spending a GPU-day on anything larger.
@@ -581,10 +707,12 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 - **Hoffmann et al. — "Training Compute-Optimal Large Language Models" (Chinchilla), 2022** — the tokens-vs-parameters tradeoff behind this chapter's per-scale token budgets.
 - **Penedo et al. — "The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale," 2024** — the corpus (and its `sample-10BT` subset) used for every GPU-scale run in this chapter.
 - **EleutherAI — lm-evaluation-harness** (GitHub) — the benchmark harness behind Stage 8's `lm_eval` command.
+- **HuggingFace — `datatrove` and `tokenizers`** (GitHub) — the production versions of Stage 2's sharding/tokenization loop and Stage 1's BPE trainer, respectively; `datatrove` is the pipeline FineWeb itself was built with.
 
 ## End-to-End Checklist
 
-- [ ] Environment installed (`torch`, `numpy`, `tiktoken`, `datasets`, `lm-eval`); seeds fixed (`torch.manual_seed(0)`, loader seed `1234`).
+- [ ] Environment installed (`torch`, `numpy`, `tiktoken`, `datasets`, `transformers`, `lm-eval`); seeds fixed (`torch.manual_seed(0)`, loader seed `1234`).
+- [ ] Wall-clock and cost estimated *before* launching, from $T_{\text{wall}} = 6ND / (\text{MFU} \times G \times P_{\text{peak}})$.
 - [ ] `prepare.py` run to completion; `train_*.bin` and `val_*.bin` exist under `./data`, and their dtype (`uint16`) matches `ShardedTokenLoader`'s `np.memmap` dtype.
 - [ ] `GPTConfig` chosen from the four-scale table; vocab fixed at 50304 (or your custom tokenizer's padded vocab).
 - [ ] `torch.manual_seed(0)` set before model construction so every rank initializes identically.
@@ -592,6 +720,7 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 - [ ] First logged loss lands near $\ln(\text{vocab\_size})$; if not, stop and debug the data pipeline before training further.
 - [ ] Live monitoring shows loss falling, pre-clip grad norm steady, zero NaNs, and (on GPU) MFU in a healthy range.
 - [ ] `eval_ppl.py` run against the held-out `val_*.bin` shard; perplexity in the right order of magnitude for your scale.
+- [ ] `export_hf.py` run and its logit-difference assertion passed, so `./ckpt_hf` is a faithful HuggingFace copy of the trained model.
 - [ ] (Optional, larger scales) `lm_eval` run on a standard task with honest expectations about small-model scores.
 - [ ] `sample.py` run against the latest checkpoint; output read by a human, not just its loss number.
 

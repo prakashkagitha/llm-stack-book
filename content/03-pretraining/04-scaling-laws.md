@@ -6,7 +6,7 @@ Remarkably, this is not guesswork. The relationship between compute, model size,
 
 This chapter develops scaling laws from first principles. We will derive the power-law form, contrast the original **Kaplan et al.** prescription with the corrected **Chinchilla** prescription (and the famous "~20 tokens per parameter" rule), work through real budget-planning arithmetic, write code that *fits* a scaling law from synthetic data, and then confront the messier frontier: inference-aware over-training, the emergent-abilities debate, and where these laws break down. Scaling laws are an interview favorite at every level — by the end you should be able to derive the compute-optimal allocation on a whiteboard.
 
-This chapter builds directly on [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) (what "loss" means here) and [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) (where the tokens come from). The compute estimates lean on the FLOP accounting from [GPU Architecture & The Memory Hierarchy](../01-foundations/08-gpu-architecture.html).
+This chapter builds directly on [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) (what "loss" means here) and [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) (where the tokens come from). The compute estimates lean on the FLOP accounting from [GPU Architecture & The Memory Hierarchy](../01-foundations/08-gpu-architecture.html). And everything here is exercised end to end at a scale you can actually afford in [Mini Scaling Laws: Fit Your Own Law Before Spending the Budget](../14-capstone/05-mini-scaling-laws.html), where the capstone trains a four-rung ladder of tiny models, fits $L(N,D)$ on its *own* corpus and tokenizer, and uses the fit to predict Stack-100M's loss before committing the budget.
 
 ---
 
@@ -111,6 +111,47 @@ $$
 $$
 
 A well-tuned large pretraining run lands somewhere in the 0.3–0.55 MFU range on modern accelerators. You need MFU to convert a FLOP budget into a *time* and *dollar* budget. We return to this in the worked example.
+
+### Counting FLOPs for real, not analytically
+
+You should never *only* trust $6ND$. PyTorch ships a FLOP counter — `torch.utils.flop_counter.FlopCounterMode` (PyTorch ≥ 2.1) — which intercepts every dispatched op via `__torch_dispatch__` and tallies the matmul/conv/attention FLOPs of an actual forward-plus-backward step. Run it once on your real model at your real sequence length and compare against the analytic rule:
+
+```python
+import math, torch, torch.nn as nn
+from torch.utils.flop_counter import FlopCounterMode
+
+class Block(nn.Module):
+    """Toy block with EXPLICIT attention matmuls so every FLOP is visible to the
+    counter. (Fused SDPA kernels are also counted on CUDA, but writing the
+    matmuls out keeps this snippet backend-independent.)"""
+    def __init__(self, d=256, ff=1024, heads=4):
+        super().__init__()
+        self.h = heads
+        self.qkv, self.o = nn.Linear(d, 3 * d), nn.Linear(d, d)
+        self.fc1, self.fc2 = nn.Linear(d, ff), nn.Linear(ff, d)
+
+    def forward(self, x):
+        B, T, d = x.shape
+        q, k, v = (t.view(B, T, self.h, d // self.h).transpose(1, 2)
+                   for t in self.qkv(x).chunk(3, dim=-1))
+        att = (q @ k.transpose(-2, -1)) / math.sqrt(d // self.h)
+        att = att.masked_fill(torch.ones(T, T, dtype=torch.bool).triu(1), float("-inf"))
+        y = (att.softmax(-1) @ v).transpose(1, 2).reshape(B, T, d)
+        x = x + self.o(y)
+        return x + self.fc2(torch.nn.functional.gelu(self.fc1(x)))
+
+model = nn.Sequential(*[Block() for _ in range(4)])
+N = sum(p.numel() for p in model.parameters())      # non-embedding params here
+print(f"N = {N:,} non-embedding params")
+for T in (512, 2048, 8192):
+    with FlopCounterMode(display=False) as ctr:     # counts fwd + bwd
+        model(torch.randn(1, T, 256)).sum().backward()
+    measured = ctr.get_total_flops()
+    print(f"  T={T:5d}  measured={measured:.3e}  6ND={6*N*T:.3e}  "
+          f"ratio={measured/(6*N*T):.2f}")
+```
+
+This prints ratios of about `1.31`, `2.31`, `6.29` at $T = 512, 2048, 8192$: the analytic rule *undercounts*, and worse as context grows, exactly as the caveat above predicts. Do not read those specific numbers as universal — this toy is deliberately narrow ($d=256$), so the $O(T^2)$ attention term overtakes the matmuls at absurdly short contexts; a production-width model at the same $T$ sits much closer to 1. The lesson is the *method*: measure the ratio once for your own config and carry it as a correction factor, because your FLOP budget, your MFU, and every scaling-law fit downstream inherit that error. At ~100M scale the correction is large enough to matter — the embedding and `lm_head` matmuls alone are a big fraction of a small model's work, which is why [the capstone re-derives the full FLOP model rather than using $6ND$](../14-capstone/05-mini-scaling-laws.html). Alternatives if you want per-module attribution: DeepSpeed's `FlopsProfiler` (`deepspeed.profiling.flops_profiler`), or nanoGPT's hand-rolled `estimate_mfu()`, which adds the $12 \cdot L \cdot T \cdot d$ attention term to $6N$ by hand.
 
 ---
 
@@ -419,6 +460,26 @@ print(f'parametric beta/(alpha+beta)      = {TRUE["beta"]/(TRUE["alpha"]+TRUE["b
 
 The recovered exponent prints $a \approx 0.447$, agreeing to within about 0.005 of the analytic $\beta/(\alpha+\beta) = 0.452$ that the parametric fit targets — two independent methods landing on the same allocation slope. A caution: the extracted $N_{\text{opt}}$ is only as good as the parabola fit through it — too few points, or points sitting all on one arm of the valley, and the vertex estimate is badly biased, which is why you want at least 6 points bracketing the minimum in every slice.
 
+### The Envelope Method (Chinchilla Approach 1)
+
+For completeness, Chinchilla's **Approach 1** is the cheapest of the three and the one most people reach for first. Train each model size *once* to a large token budget and log its loss against cumulative compute $C = 6 N D_{\text{seen}}$. Overlay all the curves on loss-vs-compute axes: each is a descending trace that eventually flattens as that model saturates, and small models peel away from the pack early. The **lower envelope** of the family — the pointwise minimum over model sizes at each compute value — is the compute-optimal frontier, and the model size *touching* the envelope at budget $C$ is $N_{\text{opt}}(C)$. Fit a power law through those touching points and you get the allocation exponent $a$ directly, with no parabola and no parametric form:
+
+```python
+# (continues the IsoFLOP block above: reuses TRUE and true_loss)
+Ns_env = np.logspace(6.5, 9.5, 13)      # 13 model sizes spanning ~3 decades
+C_grid = np.logspace(17, 20, 25)        # compute values to read the envelope at
+best_N = []
+for C in C_grid:
+    D_at_C = C / (6.0 * Ns_env)         # tokens each model has seen at budget C
+    best_N.append(Ns_env[np.argmin(true_loss(Ns_env, D_at_C))])   # envelope toucher
+a_env, _ = np.polyfit(np.log(C_grid), np.log(best_N), 1)
+print(f"envelope exponent a = {a_env:.3f}  "
+      f"(analytic {TRUE['beta']/(TRUE['alpha']+TRUE['beta']):.3f})")
+# prints: envelope exponent a = 0.458  (analytic 0.452)
+```
+
+Cheap, yes — but Approach 1 is also **the method that Kaplan's confound attacks most directly**, because it reads intermediate points off a single long run. A checkpoint halfway through a cosine schedule tuned for the *full* budget has a learning rate that is still too high; its loss is meaningfully worse than a run that was actually *sized* for that many tokens and decayed properly. Those inflated intermediate losses push the envelope up unevenly and bias $a$. The modern fix is a schedule that makes intermediate checkpoints legitimate: train with a constant-LR (warmup–stable–decay, WSD) trunk and fork a short decay branch at every point where you want to read the envelope — see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html). That turns one training run into many properly-annealed data points, which is why WSD has largely replaced cosine for scaling ladders. The other limitation is resolution: your envelope estimate is quantized to the model sizes you actually trained, so use a dense ladder (the 13 sizes above), not four.
+
 ---
 
 ## Designing the Sweep Under a Budget
@@ -448,7 +509,7 @@ for r in rows[:6]:
 
 4 slices $\times$ 6 models = 24 runs. Every run inside a slice costs exactly that slice's budget $C$ (because $D = C/6N$ keeps $6ND = C$ fixed), so the whole sweep costs $6\sum_{\text{slices}} C_s = 2.64\times10^{19}$ FLOPs — 1.32% of the $2\times10^{21}$ target, comfortably inside the 1–2% envelope, and you verify it is by construction rather than by hoping. The $N$ grid spans tokens/param from roughly 200 down to 2 within each slice, deliberately bracketing the ~20 optimum so the IsoFLOP parabola has points on both arms of the valley.
 
-A per-run hyperparameter note: tune learning rate and batch size *once*, at the smallest width in the sweep, and transfer with $\mu$P (maximal-update parameterization makes the optimal peak LR approximately scale-invariant, so you can read it straight off the cheapest run) — or, failing that, fall back to the empirical rules from [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html): peak LR shrinking roughly as $1/\text{width}$, batch size set from the critical-batch-size heuristic and growing as the loss falls. Crucially, every run's cosine schedule must decay to *its own* token endpoint $D$, never a shared long schedule — that is the exact Kaplan confound from earlier, now a checklist item rather than a war story.
+A per-run hyperparameter note: tune learning rate and batch size *once*, at the smallest width in the sweep, and transfer with $\mu$P (maximal-update parameterization makes the optimal peak LR approximately scale-invariant, so you can read it straight off the cheapest run). Microsoft's `mup` package implements this mechanically: swap the output head for `mup.MuReadout`, build a tiny *base* model and a *delta* model that differ only in width, call `set_base_shapes(model, base, delta=delta)` so every parameter is tagged with its width-scaling class, then optimize with `mup.MuAdam` instead of `torch.optim.Adam` — it rescales each layer's LR by the inferred width ratio, which is what makes the tuned peak LR transfer. Failing that, fall back to the empirical rules from [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html): peak LR shrinking roughly as $1/\text{width}$, batch size set from the critical-batch-size heuristic and growing as the loss falls. Crucially, every run's cosine schedule must decay to *its own* token endpoint $D$, never a shared long schedule — that is the exact Kaplan confound from earlier, now a checklist item rather than a war story.
 
 **Designing your sweep — checklist:**
 
@@ -626,7 +687,7 @@ for N in Ns:
 The synthesis most researchers now hold: **emergence is real as a phenomenon of how we measure and use models** (a model genuinely *can* suddenly do a multi-step task once its per-step reliability crosses a threshold), but it is **not a discontinuity in the underlying learning** — the loss was improving smoothly the whole time. For *planning*, the takeaway is reassuring: you can predict loss reliably from scaling laws, but you **cannot** reliably predict the exact scale at which a specific downstream capability will "click," because that depends on the metric's threshold and the task's token-length. Predict loss; treat capability thresholds as uncertain.
 
 !!! warning "Don't over-extrapolate a single benchmark"
-    Because downstream metrics are noisy and threshold-sensitive, never plan a multi-million-dollar run around the promise that "ability X emerges at scale Y." Loss extrapolates; capabilities are lumpy. Validate capability claims with smooth proxy metrics (per-token accuracy, Brier score, log-likelihood of correct answers) and several seeds before betting the budget.
+    Because downstream metrics are noisy and threshold-sensitive, never plan a multi-million-dollar run around the promise that "ability X emerges at scale Y." Loss extrapolates; capabilities are lumpy. Validate capability claims with smooth proxy metrics (per-token accuracy, Brier score, log-likelihood of correct answers) and several seeds before betting the budget. In practice you get these for free from EleutherAI's [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness), the de-facto standard runner for scaling ladders: its multiple-choice tasks are graded by computing the log-likelihood of every candidate continuation, so `--log_samples` gives you the *continuous* margin between the correct and best-wrong choice at every rung, not just the thresholded `acc` that produced the cliff. See [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
 
 ---
 
@@ -658,7 +719,7 @@ The grand picture: scaling laws turned LLM development from alchemy into enginee
 
 !!! key "Key Takeaways"
     - Language-model loss follows clean **power laws** in parameters and data: $L(N,D) = E + A N^{-\alpha} + B D^{-\beta}$, with a small irreducible floor $E$ (the entropy of text) and small exponents, so returns diminish but never vanish.
-    - Training compute for a dense transformer is **$C \approx 6ND$** (2 forward + 4 backward FLOPs per parameter per token); inference is $\approx 2ND$. Convert to wall-clock/dollars via **MFU** (typically 0.3–0.55).
+    - Training compute for a dense transformer is **$C \approx 6ND$** (2 forward + 4 backward FLOPs per parameter per token); inference is $\approx 2ND$. Convert to wall-clock/dollars via **MFU** (typically 0.3–0.55) — and verify the rule against a real measurement with `torch.utils.flop_counter.FlopCounterMode`, since $6ND$ undercounts attention and small-model embedding matmuls.
     - **Kaplan (2020)** concluded "grow the model fast" ($N \propto C^{0.73}$); **Chinchilla (2022)** corrected a learning-rate-schedule confound and found you should **scale $N$ and $D$ together** ($a \approx b \approx 0.5$).
     - The famous heuristic is **$\approx 20$ tokens per parameter** at the compute-optimal point — it falls out of $\alpha \approx \beta$ in the Lagrange-multiplier optimization, and Chinchilla beat the 4×-larger Gopher to prove it.
     - **Fit scaling laws in log space with a robust (Huber) loss**, exclude under-converged runs, and validate by *extrapolating* to a held-out large run — not just interpolating.
@@ -687,6 +748,12 @@ The grand picture: scaling laws turned LLM development from alchemy into enginee
     **Go deeper**
 
     - [Austin et al., *How to Scale Your Model* (Google DeepMind, 2025)](https://jax-ml.github.io/scaling-book/) — practical systems guide to scaling transformers on TPUs/GPUs, covering hardware, parallelism, and the engineering side of capacity planning.
+
+    **Tooling for running your own ladder**
+
+    - [`mup`](https://github.com/microsoft/mup) — reference implementation of maximal-update parameterization (`MuReadout`, `set_base_shapes`, `MuAdam`), so one LR sweep at the smallest rung transfers across the whole ladder.
+    - `torch.utils.flop_counter.FlopCounterMode` (PyTorch) and `deepspeed.profiling.flops_profiler` — measure the FLOPs your model actually issues instead of trusting $6ND$; pair with wall-clock timing to get MFU.
+    - [`lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) — run identical downstream evals at every rung of a ladder, with per-sample log-likelihoods for smooth capability proxies.
 
 ## Further Reading
 

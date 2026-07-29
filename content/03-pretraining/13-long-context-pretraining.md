@@ -88,7 +88,13 @@ $$
 
 where $\lambda_i = 2\pi / \theta_i$ is the wavelength and $s = T_{\text{target}} / T_{\text{train}}$ is the scale factor.
 
-2. **Attention temperature correction.** Extended positions produce larger dot products because the effective $d_k$ changes. YaRN multiplies the softmax logits by a temperature $t \approx 0.1 \ln s + 1$ to compensate.
+2. **Attention temperature correction.** Spreading the same probability mass over $s\times$ more keys raises the entropy of the softmax, flattening the attention distribution. YaRN counteracts this by multiplying the pre-softmax logits by $1/t$, using the empirically fitted rule
+
+$$
+\sqrt{1/t} = 0.1 \ln s + 1
+$$
+
+At $s = 8$ this gives $\sqrt{1/t} \approx 1.21$, i.e. logits sharpened by $\approx 1.46\times$. Because the factor is a *constant*, it is free at runtime: implementations (including HuggingFace's `rope_scaling={"rope_type": "yarn", ...}`) fold $\sqrt{1/t}$ into the cached `cos`/`sin` tables, which scales both $q$ and $k$ and therefore each logit by exactly $1/t$ — no change to the attention kernel is needed.
 
 YaRN requires only a small amount of continued training (around 400 steps in the original work) and often outperforms PI at the same training budget. It is widely adopted: Mistral, Qwen, and Deepseek use variants of YaRN.
 
@@ -143,6 +149,15 @@ def build_yarn_freqs(
     freqs = torch.outer(t, blended_inv_freq)
     return freqs  # (target_max_seq_len, dim // 2)
 
+def yarn_attention_factor(orig_max_seq_len: int, target_max_seq_len: int) -> float:
+    """
+    YaRN's constant logit sharpening: sqrt(1/t) = 0.1 * ln(s) + 1.
+    Multiply the cached cos/sin by this factor -- it scales q and k, hence
+    each logit by 1/t -- instead of touching the attention kernel.
+    """
+    scale = target_max_seq_len / orig_max_seq_len
+    return 0.1 * math.log(scale) + 1.0
+
 # --- demo ---
 # GPT-style model: dim=128, base=10000, trained at 4096, extending to 32768
 orig_freqs  = build_rope_freqs(128, 10000, 4096)
@@ -150,6 +165,7 @@ yarn_freqs  = build_yarn_freqs(128, 10000, 4096, 32768)
 
 print(f"Original freq range at pos 4096: [{orig_freqs[-1].min():.4f}, {orig_freqs[-1].max():.4f}]")
 print(f"YaRN freq range at pos 32768:    [{yarn_freqs[-1].min():.4f}, {yarn_freqs[-1].max():.4f}]")
+print(f"YaRN attention factor sqrt(1/t): {yarn_attention_factor(4096, 32768):.4f}")  # ~1.2079
 # YaRN keeps high-freq dims in known territory; low-freq dims gently scaled.
 ```
 
@@ -181,13 +197,18 @@ RoPE scaling patches the positional encoding but does not teach the model new at
 
 The key challenge is obtaining sufficiently long training documents. The pretraining corpus — described in [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) — mostly consists of web paragraphs shorter than the target context. Long-context continued pretraining typically draws from:
 
-- **Books** (Project Gutenberg, Books3): naturally multi-thousand-word.
-- **Scientific papers** (arXiv full PDFs, Semantic Scholar): 6–20 K tokens each.
-- **Code repositories** (The Stack, GitHub): single files or whole-repo concatenations.
+- **Books** (Project Gutenberg / PG-19, and the books subsets of open corpora such as AI2's Dolma): naturally tens of thousands of tokens. Note that Books3, ubiquitous in 2022–2023 papers, was withdrawn over copyright claims and should not be used in new work.
+- **Scientific papers** (arXiv LaTeX source, peS2o from Semantic Scholar): 6–20 K tokens each.
+- **Code repositories** (The Stack v2, GitHub): single files are short — the length comes from *repo-level* concatenation, ordering files by import/dependency so the concatenation is semantically coherent.
 - **Legal and financial documents**: contracts, 10-K filings.
 - **Long web articles**: Wikipedia pages, journalism.
 
-A useful rule of thumb from community experimentation: 5–20 billion tokens of continued pretraining at the target context length is often sufficient to unlock the new length. The ratio of long-to-short documents matters — too many short documents and the model never practices long-range attention.
+Filtering and deduplicating these follows the same machinery as the base corpus ([Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html)); in practice you run the same `datatrove` pipeline with an extra length filter (`doc_len >= target_len / 2`) and re-pack the shards at the *new* sequence length.
+
+A useful rule of thumb from community experimentation: 5–20 billion tokens of continued pretraining at the target context length is often sufficient to unlock the new length. The ratio of long-to-short documents matters — too many short documents and the model never practices long-range attention. Two refinements from frontier recipes:
+
+- **Extend in stages, not one jump.** The Llama 3 report describes raising the window from 8 K to 128 K in *six* successive stages over a large token budget (on the order of hundreds of billions of tokens), advancing to the next stage only once short-context evals had recovered and needle retrieval at the current length was solved. Staging keeps each RoPE rescale small, so less has to be repaired by training.
+- **Keep a short-context anchor in the mix.** A mix that is 100% long documents reliably regresses short-context benchmarks; the 60/40 long/original-mix split in the recipe below exists for exactly that reason.
 
 ### Learning Rate and Scheduler Strategy
 
@@ -283,7 +304,13 @@ out = flash_attn_varlen_func(
 # out.shape == (total_tokens, heads, d_head)
 ```
 
-The varlen interface ensures that attention computations never cross document boundaries, at zero mask-storage cost.
+The varlen interface ensures that attention computations never cross document boundaries, at zero mask-storage cost. In HuggingFace `transformers` the same effect is available without calling `flash_attn` directly: pass `position_ids` that restart at 0 per document and the FlashAttention-2 path unpads and builds `cu_seqlens` for you (TRL exposes this as `padding_free=True` in `SFTConfig`).
+
+### Position IDs Must Reset Too
+
+Masking is only half of document-aware packing. If the second document in a packed window still receives positions $5000, 5001, \ldots$, then RoPE encodes it as though it began five thousand tokens into a document — and worse, a packed window at 32 K exercises positions up to 32 K *only if some single document is that long*. With per-document position resets, the largest position the model ever sees is the length of the longest **document**, not the length of the packed window. This is the single most common way a context-extension run silently trains nothing: you rescale RoPE for 32 K, spend 10 B tokens, and every position the model saw was below 4 K. Always assert on your repacked shards that `position_ids.max()` actually reaches into the newly extended range before launching.
+
+The two conventions therefore pair up: reset positions per document *and* mask attention per document (what varlen does), or keep global positions *and* allow cross-document attention (the naive scheme). Mixing them — global positions with document masking — wastes the long-range positions you paid to train.
 
 ### Loss Masking
 
@@ -353,7 +380,20 @@ def evaluate_niah(
     return results
 ```
 
-NIAH is a necessary but not sufficient evaluation: a model can pass NIAH yet still fail at multi-hop reasoning over long contexts because NIAH only requires retrieval of a single salient fact. More challenging variants scatter multiple needles or require combining information from two distant locations.
+NIAH is a necessary but not sufficient evaluation: a model can pass NIAH yet still fail at multi-hop reasoning over long contexts because NIAH only requires retrieval of a single salient fact. More challenging variants scatter multiple needles or require combining information from two distant locations. The original public implementation is `gkamradt/LLMTest_NeedleInAHaystack`; the heatmap above is its signature output.
+
+### Beyond NIAH: Effective Context Length
+
+The benchmark that superseded plain NIAH is **RULER** (Hsieh et al., NVIDIA, 2024; repo `NVIDIA/RULER`). RULER *synthesises* tasks at any configurable length, so there is no test-set contamination and no length ceiling, and it goes well past retrieval:
+
+- multi-key / multi-value / multi-query needle retrieval (distractor needles present),
+- **variable tracking** (follow a chain of `X = Y` assignments scattered through the context),
+- **frequent-word extraction** (aggregation, not retrieval — the answer is not any single span),
+- long-context QA over injected paragraphs.
+
+RULER's key contribution is the notion of **effective context length**: the longest input length at which a model still clears a fixed quality bar (set by a strong short-context baseline). Its headline result is uncomfortable and still holds — most models advertising 32 K–128 K windows have effective lengths well below their claimed window, because aggregation and tracking degrade long before single-needle retrieval does. Report your model's effective length, not its config's `max_position_embeddings`.
+
+Complements worth running: **LongBench v2** (realistic bilingual tasks, multiple-choice so it is cheap to score), **HELMET** (a 2024–2025 suite that argues synthetic retrieval correlates poorly with downstream long-context ability and spans RAG, summarisation, and many-shot ICL), and simple **per-position perplexity** — plot loss as a function of token index within the window. A healthy extended model shows loss still *decreasing* with position out to the target length; a flat or rising tail past the old window means the extension did not take. That last check needs no benchmark at all and should be the first thing you run.
 
 ---
 
@@ -483,6 +523,19 @@ def ring_attention_forward(
 
 Verifying correctness: run this ring implementation on a toy problem (e.g. `world_size=4`, `T_local=8`, `H=2`, `D=16`, random `q`/`k`/`v` in fp32) under `torchrun --nproc_per_node=4`, gather the per-rank `output_acc` back into a full `(T, H, D)` tensor in rank order, and compare it against a single-device reference over the un-sharded sequence: `torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)`. The two should agree to within ~1e-5 in fp32 (~1e-2 in bf16). This is also the fastest way to catch the causal-masking bug: without the `fully_future` skip, rank 0 -- whose queries may attend only to their own block -- still receives every other rank's future KV chunk, softmaxes an all -inf row into NaN, and returns NaN for its entire output, so the reference comparison fails immediately with `nan`.
 
+### The Libraries That Implement This
+
+Nobody ships the loop above by hand. In practice you pick one of four stacks:
+
+| Stack | How you use it |
+|---|---|
+| `ring-flash-attn` (`zhuzilin/ring-flash-attention`) | pip-installable; drop-in replacements `ring_flash_attn_func`, `zigzag_ring_flash_attn_func`, and `..._varlen_func` that wrap the FlashAttention kernels with NCCL rotation. You shard the sequence across a process group and swap the attention call — the rest of your model is unchanged. |
+| PyTorch native context parallel | `torch.distributed.tensor.experimental` exposes a context-parallel API (still marked experimental in recent releases) that shards inputs on the sequence dim and intercepts `scaled_dot_product_attention`. **torchtitan** is the reference training stack that composes it with FSDP2, TP and PP. |
+| Megatron-LM | `--context-parallel-size N`, composing with `--tensor-model-parallel-size` / `--pipeline-model-parallel-size`. Uses a zigzag block assignment so causal masking does not leave rank 0 idle. |
+| DeepSpeed-Ulysses | A *different* algorithm (see below), enabled through the DeepSpeed config rather than a custom kernel. |
+
+**Ring vs Ulysses.** DeepSpeed-Ulysses attacks the same problem from the other side: instead of rotating KV around a ring, it performs an **all-to-all** just before attention that converts a sequence-sharded tensor into a head-sharded one, runs *ordinary* full-sequence attention on a subset of heads, then all-to-alls back. Its advantages are that it needs no custom attention kernel (any FlashAttention build works unmodified) and its communication per layer is $\mathcal{O}(T d)$ regardless of world size. Its constraint is severe: the parallel degree must divide the number of **KV** heads, which with GQA (often 8) caps you at 8 devices. Ring attention has no head constraint and scales to arbitrary sequence length, at the cost of $N-1$ communication rounds that must be overlapped with compute. Hybrid 2D schemes that put Ulysses inside a node and ring across nodes — "unified sequence parallelism", implemented in libraries such as `yunchang` — get the best of both and are what large 1M-token runs typically use.
+
 ### Sequence Parallelism in Megatron-LM
 
 Megatron-LM (see [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html)) has a separate "sequence parallelism" mode that shards the LayerNorm and Dropout computations along the sequence dimension while using tensor parallelism for the attention projections. This is distinct from ring attention: it reduces activation memory for non-attention operations by splitting the sequence across tensor-parallel ranks, using `all-gather` and `reduce-scatter` at the sequence axis.
@@ -544,31 +597,45 @@ For chunked prefill — processing a 128 K context in chunks rather than all at 
 
 Putting the above together, here is a concrete recipe to extend a pretrained 7 B RoPE model from 4 K to 32 K:
 
+!!! note "At Stack-100M scale"
+
+    None of this needs a cluster to practice. The capstone extends Stack-100M from 2 048 to 8 192 tokens during mid-training with a plain NTK base rescale (10 000 → ~42 000, since we are continue-training anyway), **no** ring attention — 8 K activations fit on one GPU at 100 M parameters — and roughly 0.6 B tokens of continued training at ~5% of peak LR. It also cashes out the two failure modes above: repacking shards at the new `seq_len`, and asserting the repacked shards actually contain documents longer than the *old* window, without which the rescale trains nothing. See [Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html).
+
 ```bash
-# 1. Curate a long-context fine-tuning dataset
-# Mix: 60% books/papers/code >16 K tokens, 40% original pretraining mix (short docs)
-# Target total: ~10 B tokens
+# 1. Curate a long-context continued-pretraining dataset.
+#    Mix: 60% books/papers/repo-concatenated code >16K tokens,
+#         40% original pretraining mix (short docs) to prevent regression.
+#    Target total: ~10B tokens, RE-PACKED at seq_len = 32768 with
+#    per-document position_ids and a document attention mask.
 
-# 2. Modify model config to use YaRN
-# In HuggingFace config.json:
-#   "rope_scaling": {"type": "yarn", "factor": 8.0,
-#                    "original_max_position_embeddings": 4096}
+# 2. Declare the RoPE scaling in the model config (HuggingFace transformers).
+#    In config.json:
+#      "rope_scaling": {"rope_type": "yarn", "factor": 8.0,
+#                       "original_max_position_embeddings": 4096},
+#      "max_position_embeddings": 32768
+#    ("rope_type" is the current key; older configs use "type". Other accepted
+#     values: "linear" (= PI), "dynamic" (NTK), "longrope", "llama3".)
 
-# 3. Launch continued pretraining with reduced LR
+# 3. Launch continued pretraining with a reduced LR.
+#    learning_rate 2e-5 is ~2% of a typical ~1e-3 pretraining peak LR.
+#    Packing and the per-document loss mask live in your collator (see the
+#    "Document Packing" section); they are not Trainer flags.
 torchrun --nproc_per_node=8 train.py \
   --model_name_or_path meta-llama/Llama-2-7b-hf \
   --max_seq_length 32768 \
   --per_device_train_batch_size 1 \
   --gradient_accumulation_steps 4 \
-  --learning_rate 2e-5 \           # ~2% of original peak LR
+  --learning_rate 2e-5 \
   --lr_scheduler_type cosine \
   --num_train_epochs 1 \
   --warmup_steps 20 \
   --bf16 \
   --gradient_checkpointing \
-  --attn_implementation flash_attention_2 \
-  --dataloader_packing True \
-  --packing_loss_mask True          # mask first token of each document
+  --attn_implementation flash_attention_2
+
+# Beyond ~32K, add a context-parallel degree rather than shrinking the batch
+# further -- e.g. under Megatron-LM:
+#   --context-parallel-size 4 --tensor-model-parallel-size 2
 ```
 
 ```python
@@ -618,15 +685,15 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
     - Standard RoPE extrapolates poorly. Position Interpolation (PI) divides positions by the extension ratio; NTK-aware scaling raises the RoPE base; YaRN blends per-frequency to protect both local and global dependencies.
     - YaRN is the current practical default: it requires only hundreds of continued pretraining steps and often works zero-shot for modest (~4x) extension.
     - Continued pretraining on long documents (5–20 B tokens, LR ~1–5% of peak) teaches genuine long-range attention patterns that positional scaling alone cannot provide.
-    - Document-aware packing with FlashAttention's varlen API prevents cross-document attention contamination and is critical at long context lengths.
-    - Ring attention (context parallelism) shards the sequence across GPUs in a ring, overlapping communication with the tiled attention compute to make 128 K+ contexts tractable on multi-GPU clusters.
-    - Needle-in-haystack is a necessary evaluation sanity check but tests only retrieval, not multi-hop reasoning. Always supplement with longer-context benchmarks.
+    - Document-aware packing with FlashAttention's varlen API prevents cross-document attention contamination — and it must be paired with per-document `position_ids`, which means the longest *document* (not the packed window) bounds the positions your model ever trains on.
+    - Ring attention (context parallelism, via `ring-flash-attn`, torchtitan, or Megatron's `--context-parallel-size`) shards the sequence across GPUs and overlaps KV rotation with tiled attention compute; DeepSpeed-Ulysses trades an all-to-all for the ring but caps the parallel degree at the KV-head count.
+    - Needle-in-haystack tests only single-fact retrieval. RULER's *effective context length* — the longest input at which quality still clears a fixed bar — is the honest number, and it is usually far below the advertised window.
     - Every positional encoding decision made during training propagates directly to the inference KV cache: base, scaling factor, and max length must be consistent end-to-end.
 
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    Long-context pretraining has progressed rapidly: production models routinely support 128K–1M token windows — Gemini 2.5 Pro ships a 1M-token window and Llama 4 Scout advertises 10M — using a combination of RoPE-based position extension, continued pretraining on long documents, and ring/context parallelism. The core techniques (PI, NTK-aware scaling, YaRN) are now standard ingredients in every major open-weight recipe, and non-uniform search methods (LongRoPE) have demonstrated windows beyond 2M tokens.
+    Long-context pretraining has progressed rapidly: production models routinely support 128K–1M token windows — Gemini 2.5 Pro ships a 1M-token window and Llama 4 Scout advertises 10M — using a combination of RoPE-based position extension, continued pretraining on long documents, and ring/context parallelism. The core techniques (PI, NTK-aware scaling, YaRN) are now standard ingredients in every major open-weight recipe, and non-uniform search methods (LongRoPE) have demonstrated windows beyond 2M tokens. The countervailing lesson of the same period is that advertised windows overstate usable ones: RULER-style *effective context length* measurements consistently land well below the configured maximum, so treat a headline context number as a memory-allocation parameter, not a capability claim.
 
     **Foundational work**
 
@@ -645,6 +712,9 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
     - [jquesnelle/yarn](https://github.com/jquesnelle/yarn) — reference YaRN implementation with fine-tuned checkpoints for LLaMA 2, Mistral, and SOLAR at 32K–128K.
     - [lhao499/llm_large_context](https://github.com/lhao499/llm_large_context) — official Ring Attention JAX implementation; pip-installable as `ringattention`.
+    - [zhuzilin/ring-flash-attention](https://github.com/zhuzilin/ring-flash-attention) — the PyTorch ring-attention library most people actually use: `ring_flash_attn_func`, the load-balanced `zigzag_*` variants, and varlen versions that compose with document packing.
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch-native reference trainer composing FSDP2, tensor parallel, pipeline parallel and the experimental context-parallel API; the cleanest place to read how 4D parallelism is wired.
+    - [NVIDIA/RULER](https://github.com/NVIDIA/RULER) — synthetic long-context benchmark (multi-needle retrieval, variable tracking, aggregation) that defines and measures *effective* context length.
 
     **Go deeper**
 
@@ -659,7 +729,10 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 - **Liu et al., "Ring Attention with Blockwise Transformers for Near-Infinite Context" (2023)** — ring attention paper; the foundational sequence-parallelism approach.
 - **Dao et al., "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning" (2023)** — the varlen API for document packing is documented here.
 - **Anthropic, "Claude's Long Context" (technical reports, 2024)** — high-level discussion of training recipes for very long contexts (100 K+).
-- **LongBench (Bai et al., 2023)** — a comprehensive long-context evaluation benchmark covering summarisation, QA, few-shot learning, and code; more demanding than needle-in-haystack alone.
+- **LongBench (Bai et al., 2023) and LongBench v2 (2024)** — comprehensive long-context evaluation benchmarks covering summarisation, QA, few-shot learning, and code; more demanding than needle-in-haystack alone.
+- **Hsieh et al., "RULER: What's the Real Context Size of Your Long-Context Language Models?" (NVIDIA, 2024)** — synthetic, contamination-free, length-configurable tasks; introduces effective context length.
+- **HELMET (Princeton, 2024–2025)** — argues synthetic retrieval correlates poorly with downstream long-context ability; evaluates RAG, many-shot ICL, summarisation and citation tasks instead.
+- **Jacobs et al., "DeepSpeed-Ulysses" (2023)** — all-to-all sequence parallelism, the main alternative to ring attention.
 - **LLaMA-3 technical report (Meta, 2024)** — describes the multi-stage context extension recipe used in a public large model, including data mix and positional encoding choices.
 
 ---

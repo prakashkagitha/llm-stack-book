@@ -2,7 +2,7 @@
 
 Every capability an LLM has — from grammar to reasoning to coding — is first learned from data. Before a single gradient step is taken, a research or engineering team must answer a deceptively difficult question: *what text should the model read, and in what proportions?* Get this wrong and no optimizer, no architecture change, and no amount of compute will fix it.
 
-This chapter is the engineering foundation for Part III. We examine every layer of the data stack: where the text comes from, how it travels from a raw crawl to a packed training shard, and how teams at the frontier have made (and published) their data choices. The adjacent chapter, [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html), covers the transformation step in detail; here we focus on *sourcing, acquisition, and pipeline architecture*.
+This chapter is the engineering foundation for Part III. We examine every layer of the data stack: where the text comes from, how it travels from a raw crawl to a packed training shard, and how teams at the frontier have made (and published) their data choices. The adjacent chapter, [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html), covers the transformation step in detail; here we focus on *sourcing, acquisition, and pipeline architecture*. If you want to see all of it instantiated at a scale you can actually run, [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) builds the real corpus behind this book's from-scratch ~100M-parameter model, `Stack-100M`.
 
 ---
 
@@ -52,9 +52,58 @@ The quick brown fox jumps over the lazy dog. Lorem ipsum ...
 
 ### Crawl Anatomy
 
-Common Crawl uses Apache Nutch and Heritrix to discover pages. The crawler follows links breadth-first from a seed list of highly-linked root domains. Because it respects `robots.txt` and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is *not* a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and large static-content sites (PDFs, images) are excluded.
+Common Crawl's crawler is built on Apache Nutch, seeded from the previous crawl's link graph and a set of highly-linked root domains, and expanded breadth-first. Because it respects `robots.txt` and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is *not* a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and large static-content sites (PDFs, images) are excluded.
 
 This non-uniformity is both a feature and a bug. English Wikipedia is crawled in its entirety every month. Some low-resource languages appear only in a handful of documents. Any downstream model will inherit these imbalances unless they are explicitly corrected through domain up/down-weighting.
+
+### Getting the Bytes: How You Actually Download a Crawl
+
+Papers rarely say this out loud, so here it is concretely. Every Common Crawl release is identified by a dump name of the form `CC-MAIN-<year>-<week>` (e.g. `CC-MAIN-2024-18`), and each release publishes three gzipped *path manifests* — one line per file — that you fan out over:
+
+```bash
+# 1. List the releases and pick one (each row is a CC-MAIN-<year>-<week> dump).
+curl -sL https://index.commoncrawl.org/collinfo.json | head -40
+
+DUMP=CC-MAIN-2024-18
+
+# 2. Fetch the manifest of every WARC file in that dump (~90k lines).
+#    Swap warc.paths.gz for wet.paths.gz / wat.paths.gz for the other formats.
+curl -sL "https://data.commoncrawl.org/crawl-data/${DUMP}/warc.paths.gz" \
+  | gunzip > warc.paths
+wc -l warc.paths
+head -1 warc.paths
+# crawl-data/CC-MAIN-2024-18/segments/.../warc/CC-MAIN-...-00000.warc.gz
+
+# 3. Download ONE file (~1 GB) to develop against. Never start with all of them.
+curl -sL "https://data.commoncrawl.org/$(head -1 warc.paths)" -o sample.warc.gz
+
+# The same objects are in a public S3 bucket, which is what cluster jobs use:
+#   aws s3 cp s3://commoncrawl/$(head -1 warc.paths) .
+```
+
+That manifest *is* your work queue: at scale, each of the ~90k lines becomes one task, and the "embarrassing parallelism" described later in this chapter is nothing more than a pool of workers popping lines off it.
+
+**You usually should not start from raw crawl.** Unless your research question is curation itself, the sane 2026 default is to stream an already-curated corpus from the HuggingFace Hub and spend your budget on training instead:
+
+```python
+# pip install datasets
+from datasets import load_dataset
+
+# streaming=True: no download, no local disk — records arrive over HTTP.
+# FineWeb-Edu publishes pre-sized subsets so you can take exactly what you need.
+ds = load_dataset(
+    "HuggingFaceFW/fineweb-edu",   # or "HuggingFaceFW/fineweb", "allenai/dolma"
+    name="sample-10BT",            # ~10B-token slice of the full corpus
+    split="train",
+    streaming=True,
+)
+for doc in ds.take(3):
+    # Fields include the text plus curation metadata kept for provenance.
+    print(doc["url"], doc["token_count"], round(doc["score"], 2))
+    print(doc["text"][:200], "...\n")
+```
+
+This is exactly the acquisition path the capstone takes: [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) streams FineWeb-Edu plus code and math sources through `datasets` rather than re-deriving a corpus from WARC. Build the WARC path when you need control over extraction and filtering; stream the Hub when you need tokens.
 
 ### Extracting Text from WARC
 
@@ -136,7 +185,7 @@ Web text alone produces capable but uneven models. Practitioners supplement it w
 
 **Books3** (part of The Pile, EleutherAI, 2020) contains roughly 197,000 full-length books scraped from a shadow library. It offers multi-chapter long-form coherent text that web pages rarely provide — an important signal for long-range narrative reasoning. However, Books3 has faced significant copyright challenges, leading many subsequent projects to omit it or replace it with licensed alternatives.
 
-**Project Gutenberg** provides around 60,000 public-domain books. Smaller in scale but legally unambiguous.
+**Project Gutenberg** provides more than 70,000 public-domain books. Smaller in scale but legally unambiguous. It is the base of **PG-19** (Rae et al., 2019), the standard long-form language-modeling benchmark corpus, and of the public-domain book portions of the openly licensed corpora — such as PleIAs' **Common Corpus** — that teams now reach for instead of Books3.
 
 **OpenLibrary / Internet Archive Book Scans** offer scanned OCR text from millions of physical books, though quality is variable and OCR noise requires careful cleaning.
 
@@ -146,7 +195,7 @@ Web text alone produces capable but uneven models. Practitioners supplement it w
 
 **PubMed Central** (PMC) provides open-access biomedical literature. This domain is valuable for medical reasoning but requires understanding the distinction between the structured abstract and the full paper.
 
-**GitHub code**: Code is now a standard pretraining ingredient. The Stack (BigCode, 2022) assembled 358 GB of permissively licensed code across 86 programming languages by filtering GitHub by license type. Code is valuable not only for coding tasks but also for teaching formal reasoning patterns — many researchers believe that code-heavy pretraining substantially improves mathematical performance.
+**GitHub code**: Code is now a standard pretraining ingredient. **The Stack** (BigCode, Kocetkov et al., 2022) assembled roughly 3 TB of permissively licensed source code by filtering GitHub on detected license — 30 languages at v1.0, extended to 358 languages in v1.1 — and it powered the StarCoder models. Its successor **The Stack v2** (BigCode, 2024), built from the Software Heritage archive for StarCoder2, is roughly an order of magnitude larger and spans 600+ languages. Both ship a "Am I in The Stack?" opt-out tool, an early example of the consent infrastructure discussed later in this chapter. Code is valuable not only for coding tasks but also for teaching formal reasoning patterns — many researchers believe that code-heavy pretraining substantially improves mathematical performance.
 
 ### Wikipedia and Reference Content
 
@@ -156,7 +205,7 @@ Wikipedia is the single highest-quality per-token training signal in most data m
 
 ### Multilingual Sources
 
-**CC-100** (Conneau et al., 2020) extracted 100 language-specific corpora from Common Crawl using language identification. **mC4** (Raffel et al., T5 paper follow-up) is the multilingual variant of C4. **CulturaX** (Nguyen et al., 2023) provides a deduplicated, filtered multilingual corpus spanning 167 languages built from mC4 and the Oscar corpus.
+**CC-100** (Conneau et al., 2020) extracted 100 language-specific corpora from Common Crawl using language identification, via the `cc_net` pipeline. **mC4** (Xue et al., *mT5*, 2021) is the multilingual variant of C4. **CulturaX** (Nguyen et al., 2023) provides a deduplicated, filtered multilingual corpus spanning 167 languages built from mC4 and the OSCAR corpus. As of 2026 the strongest open multilingual web corpus is **FineWeb-2** (2025), which re-runs the FineWeb pipeline — with per-language filter thresholds rather than one global setting — across 1,000+ languages.
 
 ---
 
@@ -272,7 +321,7 @@ The standard architecture uses a distributed compute layer (Apache Spark, or cus
   S3 / GCS (training shards, ready to stream)
 ```
 
-The key design principle is **embarrassing parallelism**: each WET file (typically 400–700 MB compressed) is an independent processing unit. Workers download, decompress, and process one file at a time, emitting filtered documents to an output bucket. No inter-worker coordination is needed until the deduplication stage.
+The key design principle is **embarrassing parallelism**: each file listed in the crawl manifest is an independent processing unit — roughly 100–150 MB gzipped for a WET file, roughly 1 GB for the corresponding WARC (~90k files per monthly dump either way). Workers download, decompress, and process one file at a time, emitting filtered documents to an output bucket. No inter-worker coordination is needed until the deduplication stage.
 
 {{fig:pretraining-data-funnel}}
 
@@ -596,6 +645,8 @@ class ShardedTokenDataset(IterableDataset):
 
     Write shards with `context_len + 1` tokens per row so that every fetch yields a complete `(input, label)` pair with no off-by-one indexing at read time. This eliminates a common source of subtle bugs when labels wrap across rows.
 
+    Also pick the narrowest dtype your vocabulary allows. `int32` is safe for any vocab, but if `vocab_size < 65536` (true for a 32k or 50k BPE vocab) `uint16` stores the same tokens in **half the bytes** — a 20B-token corpus drops from 80 GB to 40 GB, which halves both your storage bill and the page-cache pressure during training. Record the dtype in a `manifest.json` next to the shards; a silent dtype mismatch between writer and reader produces garbage token IDs that still train, just to nonsense. The capstone does exactly this — see [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html).
+
 {{fig:token-packing-shard-rows}}
 
 ### Verifying the Pipeline
@@ -675,6 +726,68 @@ if __name__ == "__main__":
 
 With a real tokenizer you can add one more round-trip check: take any written row, and confirm `tokenizer.decode(row[:-1].tolist())` reproduces readable text from your corpus — the fastest way to catch a dtype or endianness mismatch in the shard format.
 
+### The Library You Would Actually Use: `datatrove`
+
+Everything above exists so that the pipeline is not a black box. In production you do not maintain a hand-rolled WET scanner — you use **[`datatrove`](https://github.com/huggingface/datatrove)**, HuggingFace's text-processing library and the tool FineWeb itself was built with. Its model is exactly the ASCII diagram above: a corpus build is a **list of pipeline blocks** handed to an **executor**, and every stage in our diagram has a ready-made block.
+
+| Diagram stage | `datatrove` block |
+|---|---|
+| Read raw crawl | `WarcReader` (WET files are WARC records too) — also `JsonlReader`, `ParquetReader`, `HuggingFaceDatasetReader` |
+| URL blocklist | `URLFilter` |
+| Text extraction | `Trafilatura` (wraps `trafilatura` on the WARC HTML) |
+| Language ID | `LanguageFilter` (fastText `lid` model, with a probability threshold) |
+| Quality heuristics | `GopherQualityFilter`, `GopherRepetitionFilter`, `C4QualityFilter`, `FineWebQualityFilter` |
+| Deduplication | the `datatrove.pipeline.dedup` family — MinHash-LSH, sentence-level, exact-substring, and Bloom-filter blocks (see the [next chapter](../03-pretraining/02-data-cleaning-dedup.html)) |
+| Tokenize + shard | `DocumentTokenizer` (HF `tokenizers` under the hood) |
+| Write | `JsonlWriter`, `ParquetWriter` |
+
+```python
+"""
+FineWeb-style base pipeline: one Common Crawl dump -> filtered JSONL.
+    pip install "datatrove[all]"
+Blocks run in order; each yields Documents to the next. Filters can route
+rejects to an `exclusion_writer`, which is how you audit a filter's damage
+instead of guessing at it.
+"""
+from datatrove.executor.local import LocalPipelineExecutor
+from datatrove.pipeline.extractors import Trafilatura
+from datatrove.pipeline.filters import (
+    C4QualityFilter, FineWebQualityFilter, GopherQualityFilter,
+    GopherRepetitionFilter, LanguageFilter, URLFilter,
+)
+from datatrove.pipeline.readers import WarcReader
+from datatrove.pipeline.writers.jsonl import JsonlWriter
+
+DUMP = "CC-MAIN-2024-18"
+OUT = f"/scratch/base_processing/{DUMP}"
+
+pipeline = [
+    WarcReader(f"s3://commoncrawl/crawl-data/{DUMP}/segments/",
+               glob_pattern="*/warc/*",             # one task per WARC file
+               default_metadata={"dump": DUMP}),    # provenance, carried downstream
+    URLFilter(),                                     # blocklist BEFORE extraction: cheapest reject wins
+    Trafilatura(),                                   # WARC HTML -> main content
+    LanguageFilter(),                                # fastText language ID (default: keep English)
+    GopherRepetitionFilter(),                        # duplicate lines/paragraphs/n-grams
+    GopherQualityFilter(),                           # length, symbol ratio, bullet/ellipsis ratio
+    C4QualityFilter(filter_no_terminal_punct=False), # C4 line heuristics, minus the harshest one
+    FineWebQualityFilter(),                          # FineWeb's own additions on top of the above
+    JsonlWriter(f"{OUT}/output"),
+]
+
+# One box: `tasks` = units of work (one WARC file each), `workers` = concurrency.
+executor = LocalPipelineExecutor(
+    pipeline=pipeline, tasks=8000, workers=64, logging_dir=f"{OUT}/logs",
+)
+
+if __name__ == "__main__":
+    print(executor.run())   # prints per-block doc counts, drop rates, and timings
+```
+
+Three properties are why this replaces our script rather than merely wrapping it. **Stats for free**: every block reports how many documents it saw and dropped, so the retention rate we printed by hand becomes a per-filter audit trail. **Resumability**: completed tasks are marked in `logging_dir`, so a re-run skips them instead of redoing a day of work. **Portability**: swapping `LocalPipelineExecutor` for `SlurmPipelineExecutor(..., partition="cpu", time="24:00:00", cpus_per_task=8)` is the *only* change needed to move the identical pipeline from a laptop to a cluster.
+
+The credible alternatives at this layer: AI2's **[`dolma` toolkit](https://github.com/allenai/dolma)** (Rust-backed taggers and Bloom-filter dedup, driven by YAML config), **NVIDIA NeMo Curator** (GPU-accelerated fuzzy dedup and classifier filtering), and **[`mlfoundations/dclm`](https://github.com/mlfoundations/dclm)** if you want a benchmark harness around your curation choices rather than just a pipeline. Use the from-scratch code above to understand what these do; use them to build your corpus.
+
 ---
 
 ## Domain Mixing Strategies and Curriculum
@@ -711,7 +824,18 @@ Most frontier training corpora rely heavily on Tier 3–4 material, betting on f
 
 ### C2PA and Data Consent Infrastructure
 
-The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `ai-disallow` token in robots.txt, as proposed by several working groups) are nascent infrastructure for consent signaling. The AI2 Dolma team introduced the concept of **domain-level opt-out lists** — documents from sites that have explicitly opted out of AI training are tagged and excluded. This is currently voluntary, but is likely to become a legal requirement in multiple jurisdictions.
+Consent signalling today works at two levels. The deployed mechanism is plain `robots.txt`, addressed to named AI crawlers — publishers block `CCBot` (Common Crawl), `GPTBot`, `ClaudeBot`, `Google-Extended` and others individually:
+
+```text
+# https://example.com/robots.txt — the deployed, per-agent opt-out
+User-agent: CCBot
+Disallow: /
+
+User-agent: GPTBot
+Disallow: /
+```
+
+The obvious weakness is that this is a per-crawler allow/deny list with no way to say *what* the data may be used for, and it cannot retroactively remove pages from crawls already published. That gap is what standardization efforts are aimed at: the IETF's **AI Preferences (AIPREF)** working group, chartered in 2025, is defining a common vocabulary for expressing training/inference/search preferences, and Cloudflare's 2025 **Content Signals Policy** adds machine-readable usage signals to `robots.txt` for the sites it fronts. On the asset side, the **Content Credentials (C2PA)** standard attaches cryptographically signed provenance metadata to media. The AI2 Dolma team's contribution was **domain-level opt-out lists** applied at curation time — documents from sites that have opted out are tagged and excluded from the released corpus even though they exist in the underlying crawl. All of this is voluntary today; the EU AI Act's copyright provisions already require providers to identify and respect machine-readable reservations of rights, so treat honoring these signals as a design requirement, not a courtesy.
 
 !!! warning "Common pitfall"
 
@@ -727,9 +851,9 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
 
     **A:** I would structure the work in four phases:
 
-    1. **Source selection and acquisition**: Start with a recent Common Crawl WET snapshot (~9 TB compressed). Add curated high-quality corpora: Wikipedia (up-weight heavily), deduplicated GitHub code filtered for permissive licenses, arXiv LaTeX source, and a cleaned books corpus. Each source is tracked with a provenance record (URL, license tier, crawl date).
+    1. **Source selection and acquisition**: Pull the `warc.paths.gz` manifests for several recent Common Crawl dumps (~90k files, ~90 TB compressed each) and re-extract main content with `trafilatura`/`resiliparse` rather than trusting the ready-made WET text — that extraction gap is worth real downstream points. Add curated high-quality corpora: Wikipedia (up-weight heavily), deduplicated GitHub code filtered for permissive licenses, arXiv LaTeX source, and a cleaned books corpus. Each source is tracked with a provenance record (URL, license tier, crawl date). If the goal is a model rather than a curation result, I would say so explicitly and stream FineWeb-Edu or Dolma from the Hub instead.
 
-    2. **Per-document filtering**: Stream each WET file through (a) language ID (fastText; keep only desired languages), (b) Gopher heuristics (word count, symbol ratio, line-ending punctuation, repetition rate), and (c) an optional perplexity filter against a small reference LM. Expect to retain roughly 30–50% of raw Common Crawl by document count but higher by quality-adjusted token value.
+    2. **Per-document filtering**: Stream each WARC file through (a) a URL blocklist first, since it is the cheapest reject, (b) language ID (fastText; keep only desired languages), (c) Gopher/C4 heuristics (word count, symbol ratio, line-ending punctuation, repetition rate), and (d) an optional perplexity filter or an educational-quality classifier à la FineWeb-Edu. Expect to retain roughly 30–50% of raw Common Crawl by document count but higher by quality-adjusted token value. I would implement this with `datatrove` rather than by hand — its `URLFilter`/`Trafilatura`/`LanguageFilter`/`GopherQualityFilter` blocks are the reference implementations, and its executors give resumability and per-filter drop statistics for free.
 
     3. **Deduplication**: Apply MinHash LSH at 13-gram shingle level to remove near-duplicate documents across the full corpus. This is the most computationally intensive step — covered in the [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) chapter. Expect 15–30% additional token reduction.
 
@@ -743,8 +867,10 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
 
 !!! key "Key Takeaways"
 
-    - Common Crawl WET files are the raw material for most open LLM training corpora; the monthly snapshots total hundreds of terabytes and require industrial-strength streaming pipelines to process.
-    - No one trains on raw crawl data. Every serious corpus applies at minimum: language filtering, Gopher-style quality heuristics, and MinHash deduplication.
+    - Common Crawl is the raw material for most open LLM training corpora: each monthly dump ships `warc/wet/wat.paths.gz` manifests over ~90k files, and that manifest *is* the work queue for an embarrassingly parallel pipeline.
+    - The top pipelines (RefinedWeb, FineWeb, Dolma) do *not* train on the ready-made WET text — they re-extract main content from raw WARC HTML with `trafilatura`/`resiliparse`, because WET keeps nav bars, footers, and cookie banners.
+    - No one trains on raw crawl data. Every serious corpus applies at minimum: URL blocklisting, language filtering, Gopher/C4-style quality heuristics, and MinHash deduplication.
+    - Learn the mechanism from scratch, then use the library: `datatrove` (the pipeline FineWeb was built with), the Dolma toolkit, and NeMo Curator implement every stage of that funnel with resumability, per-filter statistics, and a one-line local→SLURM switch.
     - The data recipe — the mixture weights across domains — matters as much as total token count. Up-weighting Wikipedia, code, and curated scientific text is standard practice even though they are a tiny fraction of raw volume.
     - Epoch counts are a first-class design parameter: Wikipedia at high weight may be seen 10–20 times in a trillion-token run; repeating data beyond ~4 epochs degrades generalization.
     - FineWeb demonstrated that aggressive quality filtering of Common Crawl alone can match carefully hand-curated mixes; FineWeb-Edu showed that educational quality classifiers further improve knowledge benchmarks.
@@ -777,6 +903,8 @@ The Content Credentials (C2PA) standard and emerging "robots.txt for AI" (the `a
     - [allenai/dolma](https://github.com/allenai/dolma) — production-ready data curation toolkit with Rust Bloom-filter dedup, parallel taggers, and S3 support; backs the OLMo training corpus.
     - [mlfoundations/dclm](https://github.com/mlfoundations/dclm) — DCLM benchmark framework; 240T-token Common Crawl pool, 53-task evaluation suite, and OpenLM pretraining recipes across 411M–7B scales.
     - [togethercomputer/RedPajama-Data](https://github.com/togethercomputer/RedPajama-Data) — open replication of the LLaMA data recipe; v2 adds 40+ pre-computed quality signals to 30T tokens across five languages.
+    - [huggingface/datasets](https://github.com/huggingface/datasets) — the acquisition layer: `load_dataset(..., streaming=True)` reads FineWeb/FineWeb-Edu/Dolma record-by-record over HTTP with no local download, and `interleave_datasets` applies mixture weights at sampling time.
+    - [warcio](https://github.com/webrecorder/warcio) / [fastwarc + resiliparse](https://github.com/chatnoir-eu/chatnoir-resiliparse) / [trafilatura](https://github.com/adbar/trafilatura) — the WARC reading and main-content extraction stack that every web pipeline sits on; `fastwarc`/`resiliparse` are the C-backed versions for cluster-scale runs.
 
     **Go deeper**
 

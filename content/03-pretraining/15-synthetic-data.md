@@ -4,9 +4,9 @@ For most of deep learning's history, "data" meant something you *found*: ImageNe
 
 Synthetic data is the response. Instead of (or in addition to) scraping tokens, we *generate* them with a model — rephrasing messy web text into clean prose, writing textbook-style explanations of concepts, manufacturing instruction–answer pairs, or distilling the step-by-step reasoning of a strong teacher into a smaller student. Done well, this is one of the highest-leverage techniques in the modern stack: it converts *compute* (cheap, scalable) into *high-quality tokens* (scarce), and it lets you target exactly the distribution you want. Done badly, it is a slow-motion catastrophe — **model collapse**, where models trained on their own outputs progressively forget the tails of the distribution and converge to bland, narrowed mush.
 
-This chapter is about doing it well. We will cover the four dominant recipes — web rephrasing (WRAP), textbook-style generation (Phi, Cosmopedia, FineWeb-Edu), instruction-augmented pretraining, and reasoning-trace distillation for post-training. We will derive when mixing synthetic with natural data helps versus hurts, build the math of model collapse from first principles, write runnable generation-and-verification pipelines, and catalog the failure modes — contamination, distributional narrowing, fact drift — that separate a useful synthetic corpus from a poisoned one.
+This chapter is about doing it well. We will cover the five dominant recipes — web rephrasing (WRAP), textbook-style generation (Phi, Cosmopedia, FineWeb-Edu), instruction-augmented pretraining, reasoning-trace distillation, and instruction/preference synthesis for post-training — and the open-source stack that implements them (vLLM for generation, `distilabel` for orchestration, `datatrove` for filtering and decontamination, `math-verify` and sandboxes for verification). We will derive when mixing synthetic with natural data helps versus hurts, build the math of model collapse from first principles, write runnable generation-and-verification pipelines, and catalog the failure modes — contamination, distributional narrowing, fact drift — that separate a useful synthetic corpus from a poisoned one.
 
-This chapter builds on [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) (where natural tokens come from), [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) (the filters synthetic data must also pass), and [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html) (how to weight a natural/synthetic blend). The post-training half connects to [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html), [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html), and [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html).
+This chapter builds on [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) (where natural tokens come from), [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) (the filters synthetic data must also pass), and [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html) (how to weight a natural/synthetic blend). The post-training half connects to [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html), [Distillation, Model Compression & Knowledge Transfer](../05-posttraining-alignment/12-distillation-compression.html), and [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html). Both halves are exercised concretely in the capstone: synthetic textbooks are 15% of `Stack-100M`'s pretraining mix ([Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html)), and its SFT/DPO/RLVR data is synthesized ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO)](../14-capstone/09-post-training.html)).
 
 ---
 
@@ -49,9 +49,53 @@ WRAP uses a small set of rewrite styles, for example:
 
 The reported result is striking: pretraining on a *mix* of original web text plus its rephrasings reaches a target perplexity with roughly **3× fewer tokens** than web text alone, and improves downstream zero-shot accuracy — without needing any human-written corpus beyond the original web. Crucially, you **keep the original document too**; the rephrasing augments rather than replaces, which preserves the factual grounding and the natural diversity of the source.
 
+The recipe has since been validated at production scale. NVIDIA's **Nemotron-CC** (2024) rebuilt Common Crawl by *rephrasing* borderline documents into cleaner form instead of discarding them — the explicit shift from "filter away 90% of the crawl" to "rewrite what you would have thrown out" — and reports retaining several times more unique high-quality tokens than pure filtering at equal quality (see [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html)). If you only ever adopt one recipe from this chapter, adopt this one: it is the cheapest, the most grounded, and the best-evidenced.
+
+### The generator: vLLM in offline-batch mode
+
+Every recipe in this chapter is, mechanically, *offline batch inference over a corpus*. The standard open-source engine for that job is **vLLM** (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)): its `LLM` class runs continuous batching and PagedAttention over an arbitrarily long list of prompts with no server in the loop. SGLang's `Engine` and TensorRT-LLM's Python runtime are drop-in alternatives; the economics matter because you are running inference over *billions* of tokens, so throughput — not latency — is the objective.
+
+```python
+"""
+The generator behind every recipe in this chapter. One vLLM engine, batched
+offline. `pip install vllm`; needs a GPU.
+"""
+from vllm import LLM, SamplingParams
+
+class BatchGenerator:
+    """Thin adapter so the recipes below can pass sampling params as a dict."""
+    def __init__(self, model="meta-llama/Llama-3.2-3B-Instruct",
+                 tensor_parallel_size=1, quantization=None):
+        self.llm = LLM(
+            model=model,                       # any 1-8B instruct model will do
+            tensor_parallel_size=tensor_parallel_size,
+            quantization=quantization,         # e.g. "fp8" / "awq" -> ~2x throughput
+            gpu_memory_utilization=0.90,       # leave headroom for the KV cache
+            max_model_len=8192,
+        )
+        self.tokenizer = self.llm.get_tokenizer()
+
+    def generate(self, prompts, sampling_params):
+        # vLLM's real signature takes a SamplingParams object; accept a dict too.
+        sp = (SamplingParams(**sampling_params)
+              if isinstance(sampling_params, dict) else sampling_params)
+        return self.llm.generate(prompts, sp)   # -> [RequestOutput]; .outputs[0].text
+
+    def chat_prompt(self, user_msg: str) -> str:
+        """Render the model's chat template -- instruct models need it."""
+        return self.tokenizer.apply_chat_template(
+            [{"role": "user", "content": user_msg}],
+            tokenize=False, add_generation_prompt=True)
+
+# llm = BatchGenerator()   # every `llm` below is this object
+```
+
+!!! tip "Practitioner tip: do not hand-roll the pipeline"
+    Do not hand-roll the orchestration around this loop if you can avoid it. **`distilabel`** (Argilla/HuggingFace) is the open-source framework for exactly this layer: you declare a `Pipeline` of steps (`LoadDataFromHub` → a task like `TextGeneration`, `SelfInstruct`, `EvolInstruct`, or `UltraFeedback` → `KeepColumns`), point it at a vLLM or API backend, and it handles batching, caching, retries, and pushing the resulting `Distiset` to the Hub. (Import paths moved in 1.5: LLM classes live under `distilabel.models`, earlier releases used `distilabel.llms` — check the version you install.) At web scale, HuggingFace's **`llm-swarm`** (used to build Cosmopedia) and NVIDIA's **NeMo-Curator** manage fleets of generation workers on SLURM/Ray.
+
 ### A runnable WRAP pipeline
 
-Here is the core loop, using a vLLM-style batched generator (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)). The economics matter — you are running inference over *trillions* of tokens, so batching and a small generator are essential.
+With that generator in hand, here is the core loop.
 
 ```python
 """
@@ -115,6 +159,17 @@ If you trained *only* on rephrasings, you would inherit every quirk of the rewri
 !!! tip "Practitioner tip"
     Use the *smallest* rewriter that produces clean output. The rewrite task is easy relative to open-ended generation, so a 1–8B instruction model is often plenty, and at trillion-token scale the difference between a 7B and a 70B rewriter is the difference between a feasible and an infeasible budget. Quantize the rewriter (see [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html)) and serve it with continuous batching.
 
+!!! example "Worked example: what does generating a synthetic slice actually cost?"
+    Our capstone model, `Stack-100M`, trains on 20B tokens of which **15% (3.0B tokens) is synthetic** ([Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html)). Suppose we generated that slice ourselves rather than downloading Cosmopedia v2.
+
+    A 3B-parameter rewriter served by vLLM on one data-center GPU, batched hard, sustains *order* $10^3$–$10^4$ output tokens/second depending on sequence length and quantization; take $3\times10^3$ tok/s as a conservative working number. Then
+
+    $$
+    \frac{3.0\times 10^{9}\ \text{tokens}}{3\times 10^{3}\ \text{tok/s}} \approx 10^{6}\ \text{s} \approx 280\ \text{GPU-hours.}
+    $$
+
+    The *entire* Stack-100M pretraining run over all 20B tokens is a ~20 GPU-hour job on one A100 ([The Pretraining Run](../14-capstone/07-pretraining-run.html)). So **generating the synthetic 15% would cost roughly an order of magnitude more than training the model on the whole mix** — and that is with a small rewriter; a 70B generator would be another 10–20×. Two consequences: (1) at small scale, *download* an existing synthetic corpus (Cosmopedia v2, Nemotron-CC) rather than regenerating it; (2) when you do generate, amortize — a synthetic corpus is reusable across every model you will ever train, so the cost is paid once, not per run. This asymmetry is why synthetic data is a *frontier-lab* lever at pretraining scale and a *download-and-mix* decision for everyone else.
+
 ---
 
 ## Recipe 2 — Textbook-Style Generation (Phi, Cosmopedia, FineWeb-Edu)
@@ -124,7 +179,7 @@ The second recipe goes further: generate *new* expository content rather than re
 There are two ways to get textbook-quality tokens:
 
 1. **Filter the web for them** (FineWeb-Edu). Train a lightweight classifier to score how "educational" a web page is, then keep only the high-scoring pages. This is *selection*, not generation — but it is the natural-data analogue of textbook generation and pairs with it. See [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html).
-2. **Generate them** (Cosmopedia, the open reproduction of Phi's synthetic data). Prompt a strong model with a *seed* (a topic, an audience, a format) and have it write the passage. The art is in the *prompt diversity* — without it, you generate the same fifty essays a million times.
+2. **Generate them** (Cosmopedia, the open reproduction of Phi's synthetic data). Prompt a strong model with a *seed* (a topic, an audience, a format) and have it write the passage. The art is in the *prompt diversity* — without it, you generate the same fifty essays a million times. Cosmopedia v2 (the regeneration SmolLM2 actually trained on, published under `HuggingFaceTB/smollm-corpus`) is exactly the 15% synthetic slice of our capstone's pretraining mix — see [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html).
 
 ### The FineWeb-Edu educational classifier
 
@@ -166,6 +221,8 @@ def keep_mask(head: Ridge, embeds: np.ndarray, threshold: float = 3.0):
 ```
 
 A threshold around 3/5 typically keeps a small single-digit percentage of the web but yields a corpus on which models learn dramatically faster per token. The lesson generalizes: **a cheap classifier distilled from expensive LLM labels is one of the best dollar-for-dollar quality levers in pretraining.**
+
+You do not have to build this from scratch. The real artifact is on the Hub as `HuggingFaceFW/fineweb-edu-classifier` — a regression head over a frozen sentence-embedding backbone, trained on a few hundred thousand pages annotated 0–5 by a large instruct model with essentially the rubric above — and it loads with `transformers`' `AutoModelForSequenceClassification` like any other model. The scoring pass itself belongs in a sharded data pipeline: **`datatrove`** (the library that built FineWeb) and NVIDIA's **NeMo-Curator** both ship classifier-filter stages that run the same logic over thousands of shards on SLURM or Ray.
 
 ### Cosmopedia-style generation with prompt diversity
 
@@ -349,9 +406,100 @@ Three design points are doing the heavy lifting:
 - **Cap per problem.** Easy problems get solved every time and would dominate the dataset; capping enforces balance, a curriculum concern shared with [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html).
 - **Keep diverse correct traces, not just one.** Multiple valid solution paths teach the student that reasoning is a search, not a single memorized script.
 
+The one line above that you should *not* ship as written is `verify`. Normalized string equality marks `0.5` wrong against `1/2` and `(x+1)^2` wrong against `x^2+2x+1`, silently discarding correct traces and teaching the student to avoid whole answer formats. Use HuggingFace's **`math-verify`** (`parse` the prediction and the gold, then `verify` them with a SymPy-backed equivalence check) for math, and a real sandboxed executor for code — see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html). Downstream, the resulting `{"question", "trace"}` records are just an SFT dataset: format them with the student's chat template and hand them to **TRL**'s `SFTTrainer` ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)). **`huggingface/open-r1`** is the fully open reference implementation of this exact loop — generation with vLLM, verification, filtering, then SFT and GRPO — and is the best code to read before building your own. Our capstone runs a miniature version of it in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO)](../14-capstone/09-post-training.html).
+
 ### Distillation vs. RL: where synthetic SFT stops
 
 Rejection-sampling distillation is **off-policy SFT on filtered samples**. It is cheap, stable, and gets you most of the way. But it has a ceiling: the student can only imitate traces the teacher already produces, and SFT on someone else's tokens can teach *style* without *competence* (the student parrots "Let me think step by step" without the underlying search). When you want the student to *exceed* its imitation ceiling, you move to RL with verifiable rewards, where the student generates its *own* traces and is rewarded for correctness — see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html) and [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html). A common modern pipeline is: rejection-sampling SFT to bootstrap, *then* RLVR to push past the teacher. The landmark demonstration is DeepSeek-R1 (2025): the reasoning traces of an RL-trained frontier model were distilled by plain SFT into small dense students that inherited much of the teacher's reasoning — the clearest evidence to date that this recipe transfers frontier capability into compact models.
+
+---
+
+## Recipe 5 — Synthesizing Instructions and Preferences
+
+Recipe 4 assumed you already had a bank of *problems with known answers*. For general assistant behavior you have neither the problems nor a verifier, and the **instructions themselves** must be manufactured. Three generations of technique, each removing more human input than the last:
+
+- **Self-Instruct** (Wang et al., 2022). Start from ~175 hand-written seed tasks; few-shot the generator to invent new instructions; generate responses; drop any new instruction too similar (by ROUGE overlap) to one already in the pool. Alpaca's 52k dataset is the canonical output, and this is the ancestor of nearly every open instruction set.
+- **Evol-Instruct** (WizardLM, Xu et al.). Take an existing instruction and *evolve* it with a rewrite prompt: "add one more constraint," "make the reasoning deeper," "replace a general requirement with a specific one" (**in-depth** evolution), or "generate a new instruction in a rarer domain" (**in-breadth** evolution). Iterating builds a difficulty ladder from a tiny seed set — the cheapest way to get *hard* prompts, which is what SFT mixes are usually starved of.
+- **Magpie** (Xu et al., 2024). The cleverest and cheapest. Prompt an *already-aligned* chat model with only the chat template's user-turn prefix and nothing after it. The model is now sitting at a position where a user message belongs, so it writes one. Feed that instruction back as a normal prompt to get the response. No seeds, no prompt engineering, and the instruction distribution comes straight out of the model's own post-training distribution rather than out of your imagination.
+
+```python
+"""
+Magpie-style instruction synthesis: two batched passes over the same engine.
+Pass 1 gives the model ONLY the user-turn prefix, so it completes the USER's
+message -> a synthetic instruction. Pass 2 answers it normally.
+"""
+def user_turn_prefix(tokenizer) -> str:
+    """Everything the chat template emits BEFORE the user's content starts.
+    Rendering a sentinel and splitting on it is template-agnostic."""
+    rendered = tokenizer.apply_chat_template(
+        [{"role": "user", "content": "\x00"}],
+        tokenize=False, add_generation_prompt=False)
+    return rendered.split("\x00")[0]        # e.g. "<|im_start|>user\n"
+
+def magpie_pairs(llm, n=1024):
+    tok = llm.tokenizer
+    prefix = user_turn_prefix(tok)
+    # The end-of-turn marker closes the synthetic user message. It is the EOS
+    # for most chat templates; add the literal token if your template differs.
+    stop = [s for s in [tok.eos_token] if s]
+    # n copies of the SAME prompt: sampling entropy is what makes them differ.
+    outs = llm.generate([prefix] * n, sampling_params=dict(
+        temperature=1.0, top_p=0.95, max_tokens=256, stop=stop))
+    instrs = [o.outputs[0].text.strip() for o in outs]
+    # Yield is well under 100%: drop empties, fragments, and runaway lengths.
+    instrs = [i for i in instrs if 8 <= len(i) <= 2000]
+
+    prompts = [llm.chat_prompt(i) for i in instrs]
+    outs = llm.generate(prompts, sampling_params=dict(
+        temperature=0.7, max_tokens=1024))
+    return [{"instruction": i, "response": o.outputs[0].text.strip()}
+            for i, o in zip(instrs, outs)]
+```
+
+Magpie only works on a model that has *been* aligned — a base model given the same prefix will produce web text, not an instruction. That is the point: you are extracting a distilled shadow of somebody's post-training data. Check the generator's license before shipping the result.
+
+### Synthetic preference pairs for DPO
+
+Preference tuning needs `(prompt, chosen, rejected)` triples, and those can be synthesized too. Three constructions, in increasing order of usefulness:
+
+1. **Cross-model pairs** (UltraFeedback-style): sample responses to the same prompt from several models of differing strength, score each with a judge or reward model on helpfulness/honesty/etc., and pair the best against the worst.
+2. **Best-of-$N$ from one model**: sample $N$ responses from a *single* policy and pair the judge's top against its bottom.
+3. **On-policy best-of-$N$**: do (2) using *the very model you are about to DPO*.
+
+Construction 3 is the one that works. DPO's gradient raises $\log \pi_\theta(y_w) - \log \pi_\theta(y_l)$; if the rejected response is something your model would never have produced, the loss spends its capacity on a contrast the model has already learned, and you get style transfer instead of improvement. On-policy pairs put the contrast exactly where the policy's own failure mass lives ([Direct Preference Optimization & Its Variants](../05-posttraining-alignment/07-dpo-and-variants.html), and the DPO stage of [Post-Training: SFT, DPO, and Narrow RLVR (GRPO)](../14-capstone/09-post-training.html)).
+
+```python
+"""
+On-policy synthetic preference pairs: sample N responses from the SFT model we
+are about to DPO, score with a judge, pair best vs worst. Skip near-ties -- a
+pair whose members the judge cannot separate is label noise, not signal.
+"""
+def synth_preference_pairs(prompts, policy_llm, judge_score, N=4, min_gap=2.0):
+    """judge_score(prompt, response) -> float (a judge LLM or a reward model)."""
+    batch, owners = [], []
+    for i, p in enumerate(prompts):
+        cp = policy_llm.chat_prompt(p)
+        batch += [cp] * N; owners += [i] * N
+
+    outs = policy_llm.generate(batch, sampling_params=dict(
+        temperature=1.0, top_p=0.95, max_tokens=1024))  # entropy -> real spread
+
+    cands = {}
+    for owner, o in zip(owners, outs):
+        cands.setdefault(owner, []).append(o.outputs[0].text.strip())
+
+    pairs = []
+    for i, responses in cands.items():
+        scored = sorted(((judge_score(prompts[i], r), r) for r in responses),
+                        key=lambda t: t[0])
+        (lo, worst), (hi, best) = scored[0], scored[-1]
+        if hi - lo >= min_gap:            # discard uninformative near-ties
+            pairs.append({"prompt": prompts[i],
+                          "chosen": best, "rejected": worst})
+    return pairs
+```
+
+Both loops above are exactly what **`distilabel`** packages as first-class tasks (`SelfInstruct`, `EvolInstruct`, `Magpie`, `UltraFeedback`), so in production you usually declare the pipeline rather than write these functions — but you should understand what the task is doing before you trust its output.
 
 ---
 
@@ -532,6 +680,8 @@ def decontaminate(records, eval_index, n=13, max_overlap=0):
     return clean
 ```
 
+At corpus scale the loop above becomes a distributed set-intersection, and you should not write it yourself: **`datatrove`** ships n-gram decontamination and MinHash-LSH stages that run sharded on SLURM or Ray, the **Dolma toolkit** provides Bloom-filter-backed equivalents, and **`lm-evaluation-harness`** exposes the exact n-gram sets for the benchmarks you are about to report — which is the right source for `eval_items`, because a decontamination pass run against a *different* rendering of the benchmark than your evaluator uses will silently miss the leaks.
+
 !!! warning "Common pitfall: trusting synthetic benchmark scores"
     If you generate training data with model X and then report results on benchmark B, you *must* assume X may have seen B. Always (1) decontaminate the synthetic corpus against B's n-grams, (2) report on at least one *held-out, freshly authored* eval the generator could not have seen, and (3) be suspicious of any benchmark where the synthetic-trained model jumps far more than its general capability did. Contamination produces exactly that signature: a spike on the measured benchmark with no transfer.
 
@@ -591,13 +741,15 @@ Stitching the recipes into one decision procedure:
 | Inject clean pedagogy | Cosmopedia gen + FineWeb-Edu filter | Seed snippet (gen); real (filter) | Quality, dedup, judge | Cap synth ≤ ~1/3 |
 | Head-start instruction following | QA-augmented pretrain | Passage | Grounding check | Small fraction |
 | Distill reasoning into a student | Rejection-sampling SFT | Verified answer | Exec/verify (hard) | Mostly synth (verified) |
+| Manufacture SFT / preference data | Self-Instruct → Evol-Instruct → Magpie; on-policy best-of-$N$ | Generator's own alignment | Judge / reward model, dedup | All synth (post-training) |
 | Exceed the teacher | RLVR (not SFT) | Verifiable reward | Reward = verifier | On-policy |
 
-The throughline across all five: **synthetic data converts compute into targeted, high-quality tokens, and its safety is governed by grounding, verification, and the refusal to ever recursively replace real data.** Generation is the easy 10%; the verification ladder, decontamination, and diversity monitoring are the 90% that decides whether your synthetic corpus is a moat or a landmine.
+The throughline across all six: **synthetic data converts compute into targeted, high-quality tokens, and its safety is governed by grounding, verification, and the refusal to ever recursively replace real data.** Generation is the easy 10%; the verification ladder, decontamination, and diversity monitoring are the 90% that decides whether your synthetic corpus is a moat or a landmine.
 
 !!! key "Key Takeaways"
     - The **data wall** is real: high-quality human text is finite, and synthetic data trades cheap compute for scarce high-quality tokens — but only if generated and filtered carefully.
-    - Four recipes, by increasing risk: **WRAP rephrasing** (source-grounded, ~3× token efficiency), **textbook generation** (Phi/Cosmopedia, highest quality density, highest hallucination risk), **instruction/QA augmentation** (grounded, gives base models a head start), and **reasoning-trace distillation** (verified, the post-training workhorse).
+    - Five recipes, by increasing risk: **WRAP rephrasing** (source-grounded, ~3× token efficiency, validated at scale by Nemotron-CC), **textbook generation** (Phi/Cosmopedia, highest quality density, highest hallucination risk), **instruction/QA augmentation** (grounded, gives base models a head start), **reasoning-trace distillation** (verified, the post-training workhorse), and **instruction/preference synthesis** (Self-Instruct → Evol-Instruct → Magpie; on-policy best-of-$N$ pairs for DPO).
+    - The tooling is real and you should use it: **vLLM** for offline batch generation, **`distilabel`** to declare the pipeline, **`llm-swarm`/NeMo-Curator** for fleet-scale generation, **`datatrove`**/Dolma for sharded dedup and decontamination, **`math-verify`** and sandboxed executors for verification, **TRL** to consume the resulting dataset.
     - **Model collapse is caused by recursive *replacement*, not by synthetic data itself.** Keeping the real data and *accumulating* synthetic on top largely prevents it; the toy Gaussian shows variance decaying like $(1-1/n)^t$ only in the replace regime.
     - **Verification breaks the collapse dynamic.** For math/code you can keep only objectively-correct traces, which is why post-training datasets can be almost fully synthetic while pretraining mixes cannot.
     - **Over-generate, filter hard.** Sample $K$ candidates, keep the verified-correct ones; with the verification asymmetry, an unreliable generator still yields a high-precision dataset.
@@ -623,11 +775,16 @@ The throughline across all five: **synthetic data converts compute into targeted
     - [Cheng et al., *Instruction Pre-Training* (2024)](https://arxiv.org/abs/2406.14491) — injecting 200M synthesized instruction-response pairs during pretraining; enables Llama3-8B to match 70B on downstream tasks.
     - [*Phi-4 Technical Report* (Microsoft, 2024)](https://arxiv.org/abs/2412.08905) — a 14B model whose recipe makes synthetic data a central pillar of pretraining; phi-4 surpasses its own teacher on STEM QA, showing generation goes beyond distillation.
     - [DeepSeek-AI, *DeepSeek-R1* (2025)](https://arxiv.org/abs/2501.12948) — reasoning distilled by plain SFT on verified traces from an RL-trained frontier model into small dense students; the landmark demonstration of Recipe 4 at scale.
+    - [Su et al., *Nemotron-CC* (2024)](https://arxiv.org/abs/2412.02595) — WRAP-style rephrasing applied to the whole of Common Crawl: rewriting borderline documents instead of discarding them retains far more unique high-quality tokens than filtering alone.
+    - [Xu et al., *Magpie* (2024)](https://arxiv.org/abs/2406.08464) — alignment data synthesized from *nothing* by prompting an aligned model with only its chat-template prefix; the cheapest known route to instruction data.
 
     **Open-source & tools**
 
     - [huggingface/cosmopedia](https://github.com/huggingface/cosmopedia) — fully open pipeline (prompt generation, llm-swarm inference, deduplication, decontamination) that produced 25B tokens of synthetic textbooks.
-    - [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) — 1.3T-token educational web corpus (arxiv: 2406.17557); the classifier distillation approach is a reusable quality-filtering recipe.
+    - [HuggingFaceFW/fineweb-edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) — 1.3T-token educational web corpus (arxiv: 2406.17557); the classifier distillation approach is a reusable quality-filtering recipe, and the trained head ships as `HuggingFaceFW/fineweb-edu-classifier`.
+    - [argilla-io/distilabel](https://github.com/argilla-io/distilabel) — the synthetic-data framework for this layer: declarative pipelines over vLLM/API backends with `SelfInstruct`, `EvolInstruct`, `Magpie`, and `UltraFeedback` as built-in tasks, plus caching and Hub export.
+    - [huggingface/open-r1](https://github.com/huggingface/open-r1) — open reproduction of the R1 distillation loop end to end (vLLM generation → `math-verify` filtering → TRL SFT/GRPO); the best code to read before building your own.
+    - [huggingface/datatrove](https://github.com/huggingface/datatrove) and [allenai/dolma](https://github.com/allenai/dolma) — sharded filtering, MinHash dedup, and n-gram decontamination for synthetic corpora at scale; [NVIDIA/NeMo-Curator](https://github.com/NVIDIA/NeMo-Curator) is the GPU-accelerated alternative.
 
 ## Further reading
 
@@ -639,6 +796,8 @@ The throughline across all five: **synthetic data converts compute into targeted
 - Zelikman et al., *STaR: Bootstrapping Reasoning with Reasoning*; and rejection-sampling fine-tuning as used in the **Llama** and **DeepSeek-R1** post-training reports.
 - Muennighoff et al., *Scaling Data-Constrained Language Models* (how many epochs of real data are worth fresh tokens).
 - Cheng et al., *Instruction Pre-Training: Language Models Are Supervised Multitask Learners*.
+- Wang et al., *Self-Instruct*; Xu et al., *WizardLM* (Evol-Instruct); Xu et al., *Magpie*; Cui et al., *UltraFeedback* — the instruction- and preference-synthesis lineage of Recipe 5.
+- The **distilabel** and **open-r1** repositories (HuggingFace/Argilla) — production implementations of every generation loop in this chapter.
 
 ---
 
