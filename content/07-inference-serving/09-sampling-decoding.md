@@ -470,6 +470,8 @@ def beam_search(
 
 **Diverse beam search** (Vijayakumar et al., 2018) adds a dissimilarity penalty between beams, encouraging them to explore different branches — useful when you want $N$-best diverse outputs.
 
+{{tool:decoding-tree}}
+
 ## Contrastive Decoding and DoLa
 
 Two recent methods depart from purely probability-based selection.

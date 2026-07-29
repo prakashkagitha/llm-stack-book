@@ -1,0 +1,348 @@
+<div class="viz-tool" id="tool-softmax-temperature">
+  <div class="vt-title">Softmax &amp; temperature: from logits to a distribution</div>
+  <div class="vt-hint">Edit the six logits (or use a preset) and drag the temperature slider. The top chart is the raw logit vector <var>z</var>; the bottom chart is <var>p</var> = softmax(<var>z</var>/T), recomputed live with the max-subtraction trick for numerical stability. Under each probability bar is that token's surprisal &minus;log&#8322;<var>p</var>, the quantity entropy averages.</div>
+
+  <div class="vt-grid vt-logit-grid" id="softmax-temperature-logit-grid"></div>
+
+  <div class="vt-temp-row">
+    <label class="vt-temp-label" for="softmax-temperature-traw">
+      Temperature <span class="vt-val" id="softmax-temperature-Tval">T = 1.00</span>
+    </label>
+    <div class="vt-temp-slider-wrap">
+      <span class="vt-limit-tag">T&rarr;0: one-hot</span>
+      <input id="softmax-temperature-traw" type="range" min="0" max="1000" step="1" value="677"
+             aria-label="Temperature, logarithmic scale from 0.1 to 3.0" aria-valuetext="T = 1.00">
+      <span class="vt-limit-tag">T&rarr;&infin;: uniform</span>
+    </div>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn" id="softmax-temperature-btn-peaked" type="button">Peaked logits</button>
+    <button class="vt-btn" id="softmax-temperature-btn-uniform" type="button">Flat logits</button>
+    <button class="vt-btn" id="softmax-temperature-btn-random" type="button">Random (seeded)</button>
+    <button class="vt-btn" id="softmax-temperature-btn-shift" type="button">Shift all logits &plusmn;1 (p unchanged)</button>
+    <button class="vt-btn" id="softmax-temperature-btn-reset" type="button">Reset</button>
+  </div>
+
+  <div class="vt-chart-block">
+    <div class="vt-chart-caption">Logits <var>z</var> (editable above) &mdash; bar length is relative; the axis gutter prints the scale</div>
+    <div class="vt-svg-wrap">
+      <svg id="softmax-temperature-svg-logits" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Bar chart of the six logit values around a zero baseline"></svg>
+    </div>
+  </div>
+
+  <div class="vt-chart-block">
+    <div class="vt-chart-caption">Probabilities <var>p</var> = softmax(<var>z</var>/T), true 0&ndash;1 scale</div>
+    <div class="vt-svg-wrap">
+      <svg id="softmax-temperature-svg-probs" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Bar chart of the softmax output probabilities with a dashed uniform reference line"></svg>
+    </div>
+  </div>
+
+  <div class="vt-readout" id="softmax-temperature-readout">
+    <div class="vt-stat"><div class="vt-stat-label">Entropy H (nats)</div><div class="vt-stat-value" id="softmax-temperature-Hnats">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">Entropy H (bits)</div><div class="vt-stat-value" id="softmax-temperature-Hbits">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">Perplexity e^H</div><div class="vt-stat-value" id="softmax-temperature-ppl">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">Top-1/top-2 odds</div><div class="vt-stat-value" id="softmax-temperature-odds">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">argmax</div><div class="vt-stat-value" id="softmax-temperature-argmax">-</div></div>
+  </div>
+
+  <div class="vt-note" id="softmax-temperature-caption"></div>
+
+  <style>
+    #tool-softmax-temperature{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); color:var(--ink,#211f1b); font-family:var(--sans,sans-serif); }
+    #tool-softmax-temperature .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-softmax-temperature .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.5; }
+    #tool-softmax-temperature var{ font-style:normal; font-family:var(--mono,monospace); }
+
+    #tool-softmax-temperature .vt-grid{ display:grid; gap:10px 14px; }
+    #tool-softmax-temperature .vt-logit-grid{ grid-template-columns:repeat(auto-fit,minmax(84px,1fr)); margin-bottom:14px; }
+    #tool-softmax-temperature .vt-logit-cell{ display:flex; flex-direction:column; gap:4px; font-size:.78rem; color:var(--muted,#6d675d); }
+    #tool-softmax-temperature .vt-logit-cell input[type="number"]{
+      font:inherit; font-variant-numeric:tabular-nums; font-family:var(--mono,monospace);
+      width:100%; min-width:0; box-sizing:border-box; padding:6px 7px; border:1px solid var(--border,#e7e1d4); border-radius:6px;
+      background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b);
+    }
+    #tool-softmax-temperature .vt-logit-cell input[type="number"]:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:1px; }
+
+    #tool-softmax-temperature .vt-temp-row{ margin-bottom:6px; }
+    #tool-softmax-temperature .vt-temp-label{ display:block; font-size:.82rem; color:var(--muted,#6d675d); margin-bottom:6px; }
+    #tool-softmax-temperature .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; font-family:var(--mono,monospace); }
+    #tool-softmax-temperature .vt-temp-slider-wrap{ display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; }
+    #tool-softmax-temperature input[type="range"]{ flex:1 1 180px; min-width:0; width:auto; accent-color:var(--accent,#c15b39); }
+    #tool-softmax-temperature input[type="range"]:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:3px; }
+    #tool-softmax-temperature .vt-limit-tag{ font-size:.7rem; color:var(--muted,#6d675d); white-space:nowrap; flex:0 0 auto; }
+
+    #tool-softmax-temperature .vt-actions{ margin:12px 0; display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-softmax-temperature .vt-btn{ font:inherit; font-family:var(--sans,sans-serif); font-size:.78rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-softmax-temperature .vt-btn:hover{ background:var(--surface-3,#ece7da); }
+    #tool-softmax-temperature .vt-btn:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:1px; }
+
+    #tool-softmax-temperature .vt-chart-block{ margin-top:14px; }
+    #tool-softmax-temperature .vt-chart-caption{ font-size:.78rem; color:var(--muted,#6d675d); margin-bottom:4px; }
+    #tool-softmax-temperature .vt-svg-wrap{ width:100%; overflow-x:auto; }
+    #tool-softmax-temperature svg{ width:100%; height:auto; min-width:320px; display:block; }
+    #tool-softmax-temperature .vt-bar{ fill:var(--accent,#c15b39); opacity:.72; }
+    #tool-softmax-temperature .vt-bar.is-neg{ fill:var(--muted,#6d675d); opacity:.55; }
+    #tool-softmax-temperature .vt-bar.is-top{ opacity:1; stroke:var(--ink,#211f1b); stroke-width:1.5; }
+    #tool-softmax-temperature .vt-axis-line{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-softmax-temperature .vt-ref-line{ stroke:var(--muted,#6d675d); stroke-width:1; stroke-dasharray:4 3; opacity:.7; }
+    #tool-softmax-temperature .vt-bar-value{ fill:var(--ink,#211f1b); font-size:11px; font-family:var(--mono,monospace); text-anchor:middle; }
+    #tool-softmax-temperature .vt-bar-token{ fill:var(--ink-soft,#45413a); font-size:11px; font-family:var(--mono,monospace); text-anchor:middle; }
+    #tool-softmax-temperature .vt-bar-sub{ fill:var(--muted,#6d675d); font-size:9.5px; font-family:var(--mono,monospace); text-anchor:middle; }
+    #tool-softmax-temperature .vt-tick{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--mono,monospace); text-anchor:end; }
+
+    #tool-softmax-temperature .vt-readout{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:10px; }
+    #tool-softmax-temperature .vt-stat{ border:1px solid var(--border,#e7e1d4); border-radius:8px; padding:8px 10px; background:var(--surface-2,#f3efe6); }
+    #tool-softmax-temperature .vt-stat-label{ font-size:.7rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; margin-bottom:3px; }
+    #tool-softmax-temperature .vt-stat-value{ font-size:.95rem; font-weight:700; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-family:var(--mono,monospace); }
+
+    #tool-softmax-temperature .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+  </style>
+
+  <script>(function(){
+    var NS='http://www.w3.org/2000/svg';
+    var root=document.getElementById('tool-softmax-temperature');
+    if(!root) return;
+
+    var n=6;
+    var labels=['z1','z2','z3','z4','z5','z6'];
+    var defaults=[2.0,1.5,0.5,0.0,-1.0,-2.5];
+    var ZLIM=50;                       // logits are clamped to +/-ZLIM so z/T can never overflow to Infinity
+    var TMIN=0.1, TMAX=3.0;
+    var LOGR=Math.log(TMAX/TMIN);
+
+    // --- seeded PRNG (mulberry32): the "Random" sequence is identical on every page load ---
+    function mulberry32(seed){
+      return function(){
+        seed|=0; seed=(seed+0x6D2B79F5)|0;
+        var t=Math.imul(seed^(seed>>>15),1|seed);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+    var rng=mulberry32(1337);
+
+    // --- build the six logit inputs ---
+    var gridEl=root.querySelector('#softmax-temperature-logit-grid');
+    var zInputs=labels.map(function(lab,i){
+      var cell=document.createElement('div'); cell.className='vt-logit-cell';
+      var lbl=document.createElement('label');
+      lbl.setAttribute('for','softmax-temperature-z'+i);
+      lbl.textContent=lab;
+      var inp=document.createElement('input');
+      inp.type='number'; inp.step='0.1'; inp.min=String(-ZLIM); inp.max=String(ZLIM);
+      inp.id='softmax-temperature-z'+i;
+      inp.value=defaults[i].toFixed(1);
+      inp.setAttribute('aria-label','Logit value for '+lab);
+      cell.appendChild(lbl); cell.appendChild(inp);
+      gridEl.appendChild(cell);
+      return inp;
+    });
+
+    var traw=root.querySelector('#softmax-temperature-traw');
+    var Tval=root.querySelector('#softmax-temperature-Tval');
+    var svgLogits=root.querySelector('#softmax-temperature-svg-logits');
+    var svgProbs=root.querySelector('#softmax-temperature-svg-probs');
+    var HnatsEl=root.querySelector('#softmax-temperature-Hnats');
+    var HbitsEl=root.querySelector('#softmax-temperature-Hbits');
+    var pplEl=root.querySelector('#softmax-temperature-ppl');
+    var oddsEl=root.querySelector('#softmax-temperature-odds');
+    var argmaxEl=root.querySelector('#softmax-temperature-argmax');
+    var capEl=root.querySelector('#softmax-temperature-caption');
+
+    function rawToT(raw){ return TMIN*Math.exp(LOGR*(raw/1000)); }
+    function tToRaw(T){ return Math.round(1000*Math.log(T/TMIN)/LOGR); }
+    function clampZ(v){ return v<-ZLIM?-ZLIM:(v>ZLIM?ZLIM:v); }
+
+    function readLogits(){
+      return zInputs.map(function(inp){
+        var v=parseFloat(inp.value);
+        if(!isFinite(v)) v=0;           // empty box, "-", "abc", 1e400 -> treat as 0
+        return clampZ(v);
+      });
+    }
+
+    // exact softmax(z/T) with the max-subtraction trick (shift-invariance makes it free)
+    function softmax(z,T){
+      var s=z.map(function(zi){ return zi/T; });
+      var m=s[0], i;
+      for(i=1;i<n;i++) if(s[i]>m) m=s[i];
+      var e=s.map(function(x){ return Math.exp(x-m); });
+      var Z=0;
+      for(i=0;i<n;i++) Z+=e[i];
+      if(!(Z>0)||!isFinite(Z)) return z.map(function(){ return 1/n; }); // unreachable guard
+      return e.map(function(x){ return x/Z; });
+    }
+
+    function el(tag,attrs){
+      var e=document.createElementNS(NS,tag);
+      for(var k in attrs) if(Object.prototype.hasOwnProperty.call(attrs,k)) e.setAttribute(k,attrs[k]);
+      return e;
+    }
+    function txt(parent,x,y,cls,s,anchor){
+      var t=el('text',{x:(+x).toFixed(1),y:(+y).toFixed(1),'class':cls});
+      if(anchor) t.setAttribute('text-anchor',anchor);
+      t.textContent=s; parent.appendChild(t); return t;
+    }
+    function clear(svg){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
+
+    // shared geometry (viewBox 640 x 220); x in [X0,X1], 40px left gutter for axis ticks
+    var X0=44, X1=624;
+    var slot=(X1-X0)/n, barW=Math.min(56,slot*0.58);
+    function cxOf(i){ return X0+slot*i+slot/2; }
+
+    // axis ticks: 2 decimals when the range is small, 1 when large, so they always fit the gutter
+    function fmtTick(v){ return Math.abs(v)<10 ? v.toFixed(2) : v.toFixed(1); }
+
+    // ---- logits chart: linear axis spanning min(0,z) .. max(0,z), zero line drawn where 0 falls ----
+    var LTOP=30, LBOT=180, LTOKY=206;
+    function renderLogits(z,topSet){
+      clear(svgLogits);
+      var zmax=0, zmin=0, i;
+      for(i=0;i<n;i++){ if(z[i]>zmax) zmax=z[i]; if(z[i]<zmin) zmin=z[i]; }
+      var span=zmax-zmin; if(span<1e-9) span=1;            // all-zero logits: flat chart, no divide-by-zero
+      function yOf(v){ return LBOT-((v-zmin)/span)*(LBOT-LTOP); }
+      var zeroY=yOf(0);
+
+      svgLogits.appendChild(el('line',{x1:X0-4,y1:zeroY.toFixed(1),x2:X1,y2:zeroY.toFixed(1),'class':'vt-axis-line'}));
+      txt(svgLogits,X0-10,zeroY+3.5,'vt-tick','0');
+      // draw the range ticks only when they are far enough from the zero tick to stay legible
+      if(zmax>1e-9 && (zeroY-yOf(zmax))>12) txt(svgLogits,X0-10,yOf(zmax)+3.5,'vt-tick','+'+fmtTick(zmax));
+      if(zmin<-1e-9 && (yOf(zmin)-zeroY)>12) txt(svgLogits,X0-10,yOf(zmin)+3.5,'vt-tick',fmtTick(zmin));
+
+      for(i=0;i<n;i++){
+        var cx=cxOf(i), yv=yOf(z[i]);
+        var top=Math.min(yv,zeroY), h=Math.abs(yv-zeroY);
+        var cls='vt-bar'+(z[i]<0?' is-neg':'')+(topSet[i]?' is-top':'');
+        svgLogits.appendChild(el('rect',{
+          x:(cx-barW/2).toFixed(1), y:top.toFixed(1), width:barW.toFixed(1), height:h.toFixed(1), rx:3, 'class':cls
+        }));
+        txt(svgLogits,cx,(z[i]>=0?top-6:top+h+13),'vt-bar-value',z[i].toFixed(2));
+        txt(svgLogits,cx,LTOKY,'vt-bar-token',labels[i]);
+      }
+    }
+
+    // ---- probability chart: true 0..1 scale, dashed uniform reference at 1/n ----
+    var PBASE=176, PTOP=24, PH=PBASE-PTOP, PTOKY=191, PSUBY=205;
+    function renderProbs(p,topSet){
+      clear(svgProbs);
+      var i;
+      svgProbs.appendChild(el('line',{x1:X0-4,y1:PBASE,x2:X1,y2:PBASE,'class':'vt-axis-line'}));
+      txt(svgProbs,X0-10,PBASE+3.5,'vt-tick','0');
+      txt(svgProbs,X0-10,PTOP+3.5,'vt-tick','1');
+      var uY=PBASE-(1/n)*PH;
+      svgProbs.appendChild(el('line',{x1:X0-4,y1:uY.toFixed(1),x2:X1,y2:uY.toFixed(1),'class':'vt-ref-line'}));
+      txt(svgProbs,X0-10,uY+3.5,'vt-tick','1/n');
+
+      for(i=0;i<n;i++){
+        var cx=cxOf(i), h=p[i]*PH, y=PBASE-h;
+        var cls='vt-bar'+(topSet[i]?' is-top':'');
+        svgProbs.appendChild(el('rect',{
+          x:(cx-barW/2).toFixed(1), y:y.toFixed(1), width:barW.toFixed(1), height:Math.max(0,h).toFixed(1), rx:3, 'class':cls
+        }));
+        txt(svgProbs,cx,y-6,'vt-bar-value',(p[i]*100).toFixed(1)+'%');
+        txt(svgProbs,cx,PTOKY,'vt-bar-token',labels[i]);
+        var sur=p[i]>0 ? (-Math.log(p[i])/Math.LN2).toFixed(2)+' b' : '∞';
+        txt(svgProbs,cx,PSUBY,'vt-bar-sub',sur);
+      }
+    }
+
+    function fmtOdds(r){
+      if(!isFinite(r)) return '> 1e300';
+      if(r>=1e4) return r.toExponential(1).replace('e+','e');
+      if(r>=100) return r.toFixed(0);
+      return r.toFixed(2);
+    }
+
+    function upd(){
+      var i;
+      var z=readLogits();
+      var raw=parseInt(traw.value,10);
+      if(!isFinite(raw)) raw=tToRaw(1.0);
+      var T=rawToT(raw);
+      Tval.textContent='T = '+T.toFixed(2);
+      traw.setAttribute('aria-valuetext','T = '+T.toFixed(2));
+
+      var p=softmax(z,T);
+
+      // argmax of z; dividing by T>0 is order-preserving, so it is also the argmax of p.
+      var zmaxV=z[0];
+      for(i=1;i<n;i++) if(z[i]>zmaxV) zmaxV=z[i];
+      var topSet=[], nTies=0, first=-1;
+      for(i=0;i<n;i++){
+        var isTop=(zmaxV-z[i])<1e-12;
+        topSet[i]=isTop;
+        if(isTop){ nTies++; if(first<0) first=i; }
+      }
+
+      renderLogits(z,topSet);
+      renderProbs(p,topSet);
+
+      var Hnats=0;
+      for(i=0;i<n;i++) if(p[i]>0) Hnats+=-p[i]*Math.log(p[i]);
+      var Hbits=Hnats/Math.LN2;
+      var Hmax=Math.log(n);
+
+      // second-largest logit -> top-1/top-2 odds = exp((z(1)-z(2))/T)
+      var sorted=z.slice().sort(function(a,b){ return b-a; });
+      var gap=sorted[0]-sorted[1];
+
+      HnatsEl.textContent=Hnats.toFixed(3);
+      HbitsEl.textContent=Hbits.toFixed(3);
+      pplEl.textContent=Math.exp(Hnats).toFixed(3);
+      oddsEl.textContent=fmtOdds(Math.exp(gap/T))+'×';
+      argmaxEl.textContent=(nTies>1 ? nTies+'-way tie' : labels[first])+' (p='+(p[first]*100).toFixed(1)+'%)';
+
+      var regime;
+      if(T<=TMIN*1.15){
+        regime='You are near the T→0 limit: almost all mass sits on the argmax and H is close to 0.';
+      } else if(T>=TMAX*0.92){
+        regime='You are near the top of the slider: the distribution is being pushed toward uniform, whose entropy ceiling is log n = '+Hmax.toFixed(3)+' nats = '+(Hmax/Math.LN2).toFixed(3)+' bits.';
+      } else if(Hnats<0.35*Hmax){
+        regime='Sharp regime: H is well under log n, so a single token dominates and sampling behaves almost greedily.';
+      } else if(Hnats>0.85*Hmax){
+        regime='Flat regime: H is close to its ceiling log n = '+Hmax.toFixed(3)+' nats, so mass is spread across most tokens.';
+      } else {
+        regime='Moderate concentration: a few tokens carry most of the mass.';
+      }
+      capEl.textContent='Takeaway: temperature rescales the gaps between logits, never their order. Because p_i ∝ exp(z_i/T), the odds between any two tokens are exp((z_i−z_j)/T) — halving T squares every odds ratio (sharper, greedy-like), doubling T takes its square root (flatter, more diverse), and the argmax is the same token at every T>0. Softmax is also shift-invariant: adding the same constant to every logit leaves p untouched, which is exactly why subtracting max(z) before exponentiating is a free numerical-stability trick. '+regime;
+    }
+
+    function setAll(vals){
+      zInputs.forEach(function(inp,i){ inp.value=clampZ(vals[i]).toFixed(1); });
+      upd();
+    }
+
+    zInputs.forEach(function(inp){ inp.addEventListener('input',upd); inp.addEventListener('change',upd); });
+    traw.addEventListener('input',upd);
+    traw.addEventListener('change',upd);
+
+    root.querySelector('#softmax-temperature-btn-reset').addEventListener('click',function(){
+      traw.value=String(tToRaw(1.0));
+      setAll(defaults);
+    });
+    root.querySelector('#softmax-temperature-btn-peaked').addEventListener('click',function(){
+      setAll([6.0,0.5,0.2,-0.2,-0.8,-1.5]);
+    });
+    root.querySelector('#softmax-temperature-btn-uniform').addEventListener('click',function(){
+      setAll([0,0,0,0,0,0]);
+    });
+    root.querySelector('#softmax-temperature-btn-random').addEventListener('click',function(){
+      // rng is seeded once at load, so the sequence of draws across clicks is reproducible.
+      var v=[]; for(var i=0;i<n;i++) v.push(rng()*8-4);
+      setAll(v);
+    });
+    var shiftDir=1;
+    root.querySelector('#softmax-temperature-btn-shift').addEventListener('click',function(){
+      var z=readLogits(), lo=z[0], hi=z[0], i;
+      for(i=1;i<n;i++){ if(z[i]<lo) lo=z[i]; if(z[i]>hi) hi=z[i]; }
+      if(hi+shiftDir>ZLIM || lo+shiftDir<-ZLIM) shiftDir=-shiftDir;   // bounce off the clamp instead of saturating
+      setAll(z.map(function(v){ return v+shiftDir; }));
+    });
+
+    traw.value=String(tToRaw(1.0));
+    upd();
+  })();</script>
+</div>

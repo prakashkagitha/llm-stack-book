@@ -1,62 +1,550 @@
 <div class="viz-tool" id="tool-tokenizer-playground">
-  <div class="vt-title">Tokenizer playground (heuristic estimate)</div>
-  <label class="vt-ta-label">Paste or type text
-    <textarea id="tp-text" class="vt-ta" rows="5" spellcheck="false">Tokenization turns text into integers. caf&eacute; &#129302; 12345</textarea>
+  <div class="vt-title">Tokenizer playground: train a real byte-level BPE</div>
+  <div class="vt-hint">This trains an <em>actual</em> GPT-style byte-level byte-pair-encoding tokenizer in your browser &mdash; no library, no network. It splits the corpus with the GPT-2 pre-tokenizer regex (so merges never cross word boundaries), starts every piece from its raw UTF-8 bytes, then repeatedly merges the <b>most frequent adjacent pair</b> and records the ordered merge list. Encoding applies those merges greedily in learned-rank order; decoding just concatenates each token's stored bytes.</div>
+
+  <label class="vt-ta-label" for="tokenizer-playground-corpus">Training corpus
+    <textarea id="tokenizer-playground-corpus" class="vt-ta" rows="5" spellcheck="false">Tokenization is the first stage of the LLM pipeline: raw text becomes a sequence of integer token ids. Byte-level BPE starts from the 256 possible byte values and repeatedly merges the most frequent adjacent pair of tokens into a new token, so common substrings like tokenization, tokenizer, tokenizers, tokenize, and tokenizing collapse into single tokens over time. This makes rare or unseen words -- including caf&eacute; or an emoji like &#129302; or digits like 12345 -- still representable, one byte at a time if nothing else matches. The quick brown fox jumps over the lazy dog. The dog barks at the fox, and the fox runs from the dog. A tokenizer trained on English text learns English substrings: the model sees more tokens per sentence in languages the tokenizer never learned to compress. Training a tokenizer is counting, not learning: no gradients, no parameters, no backpropagation. The tokenizer is trained once, frozen forever, and every token id it emits is an index into the embedding table. More merges means fewer tokens per sentence, a shorter sequence, a smaller attention cost, and a smaller inference bill. Fewer merges means longer sequences and more compute per sentence. The tokenizer is the boundary between text and tensors.</textarea>
   </label>
-  <div class="vt-hint">Counts update live as you type.</div>
-  <div class="vt-out" id="tp-out"></div>
-  <div class="vt-breakdown" id="tp-breakdown"></div>
-  <div class="vt-note"><b>This is a rough heuristic estimate</b> using fixed ~4-chars-per-token / ~0.75-words-per-token ratios &mdash; <b>not</b> a real BPE tokenizer. Actual token counts depend on the specific tokenizer (gpt2, cl100k_base, o200k_base, Llama-3, &hellip;) and differ, especially for code, digits, and non-English text. Always count with the model's own tokenizer for real budgeting.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="tokenizer-playground-merges">Number of merges <span class="vt-val" id="tokenizer-playground-mergesval">Target merges: 60 (vocab = 256 + 60 = 316)</span>
+      <input id="tokenizer-playground-merges" type="range" min="0" max="160" step="1" value="60">
+    </label>
+  </div>
+  <div class="vt-actions">
+    <button id="tokenizer-playground-train" class="vt-btn" type="button">Retrain on corpus</button>
+    <span class="tp-traininfo" id="tokenizer-playground-traininfo" aria-live="polite"></span>
+  </div>
+
+  <div class="tp-h tp-h-first">Learned merges &mdash; vocabulary: 256 base bytes + <span id="tokenizer-playground-vocabcount">0</span> merges</div>
+  <div class="tp-table-wrap" tabindex="0" role="group" aria-label="Learned merge list, scrollable">
+    <table class="tp-table">
+      <thead><tr><th>rank</th><th>pair</th><th></th><th>new token</th><th>pair count</th></tr></thead>
+      <tbody id="tokenizer-playground-mergestbody"></tbody>
+    </table>
+  </div>
+
+  <div class="tp-h">Encode</div>
+  <label class="vt-ta-label" for="tokenizer-playground-encode-input">Text to encode
+    <textarea id="tokenizer-playground-encode-input" class="vt-ta" rows="2" spellcheck="false">tokenization turns text into tokens, one token at a time.</textarea>
+  </label>
+  <div class="vt-out" id="tokenizer-playground-stats" aria-live="polite"></div>
+  <div class="tp-chips" id="tokenizer-playground-chips" role="group" aria-label="Encoded tokens"></div>
+  <div class="tp-idswrap">
+    <span class="tp-idslabel">Token ids the model actually sees</span>
+    <code class="tp-ids" id="tokenizer-playground-ids"></code>
+  </div>
+  <div class="tp-decode" id="tokenizer-playground-decode" aria-live="polite"></div>
+
+  <div class="tp-h">Step-through: watch merges apply to one word</div>
+  <div class="vt-grid vt-controls">
+    <label for="tokenizer-playground-animword">Sample word <span class="tp-sub">tip: type a leading space to get the &ldquo;&nbsp;word&rdquo; variant</span>
+      <input id="tokenizer-playground-animword" type="text" value="tokenization">
+    </label>
+  </div>
+  <div class="vt-actions">
+    <button id="tokenizer-playground-animstep" class="vt-reset" type="button">Step</button>
+    <button id="tokenizer-playground-animplay" class="vt-reset" type="button">Play</button>
+    <button id="tokenizer-playground-animreset" class="vt-reset" type="button">Reset</button>
+  </div>
+  <div class="tp-chips" id="tokenizer-playground-animchips" role="group" aria-label="Current token sequence for the sample word"></div>
+  <div class="tp-anim-caption" id="tokenizer-playground-animcaption" aria-live="polite"></div>
+
+  <div class="vt-note"><b>The takeaway:</b> byte-level BPE guarantees every possible input is encodable &mdash; it bottoms out at raw bytes, so there is no <code>&lt;unk&gt;</code> token &mdash; while learned merges compress frequent substrings into single tokens. Push the merge slider and watch <i>bytes / token</i> climb: that ratio <em>is</em> your context-window and inference-cost multiplier. Merges are chosen purely by adjacent-pair frequency in the training corpus, so a tokenizer inherits its corpus's biases (English prose compresses well; unseen scripts fall back toward one token per byte). Decoding is just concatenating each token's stored bytes, which is why encode&nbsp;&rarr;&nbsp;decode reproduces the input's bytes <em>exactly</em>, even though a single merged token's bytes need not be valid UTF-8 on their own.</div>
+
   <style>
-    #tool-tokenizer-playground{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
-    #tool-tokenizer-playground .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
-    #tool-tokenizer-playground .vt-ta-label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); }
-    #tool-tokenizer-playground .vt-ta{ width:100%; min-height:6.5em; resize:vertical; font:inherit; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.88rem; line-height:1.5; padding:10px 12px; border:1px solid var(--border-2,#94a3b8); border-radius:9px; background:var(--surface,#fff); color:var(--ink,#211f1b); box-sizing:border-box; }
-    #tool-tokenizer-playground .vt-ta:focus{ outline:2px solid var(--accent,#c15b39); outline-offset:1px; }
-    #tool-tokenizer-playground .vt-hint{ margin-top:6px; font-size:.74rem; color:var(--muted,#6d675d); }
-    #tool-tokenizer-playground .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
-    #tool-tokenizer-playground .vt-stat{ background:var(--surface-3,#f0ece3); border-radius:9px; padding:11px 13px; }
-    #tool-tokenizer-playground .vt-stat .n{ font-size:1.28rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
-    #tool-tokenizer-playground .vt-stat .l{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:2px; }
-    #tool-tokenizer-playground .vt-breakdown{ margin-top:12px; font-size:.8rem; color:var(--muted,#6d675d); line-height:1.5; }
-    #tool-tokenizer-playground .vt-breakdown b{ color:var(--ink,#211f1b); }
-    #tool-tokenizer-playground .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.5; font-style:italic; border-left:3px solid var(--border-2,#94a3b8); padding:8px 12px; background:var(--surface-3,#f0ece3); border-radius:0 7px 7px 0; }
+    #tool-tokenizer-playground{
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); overflow-x:hidden;
+      --tokpg-good:#217a55; --tokpg-warn:#b0480f;
+      --tokpg-chip-s:70%; --tokpg-chip-l:90%; --tokpg-chip-bs:42%; --tokpg-chip-bl:66%; --tokpg-chip-ink:#141414;
+    }
+    html[data-theme="dark"] #tool-tokenizer-playground{
+      --tokpg-good:#5cc79c; --tokpg-warn:#f0a43c;
+      --tokpg-chip-s:36%; --tokpg-chip-l:25%; --tokpg-chip-bs:34%; --tokpg-chip-bl:46%; --tokpg-chip-ink:#f2efe9;
+    }
+    @media (prefers-color-scheme: dark){
+      :root:not([data-theme]) #tool-tokenizer-playground{
+        --tokpg-good:#5cc79c; --tokpg-warn:#f0a43c;
+        --tokpg-chip-s:36%; --tokpg-chip-l:25%; --tokpg-chip-bs:34%; --tokpg-chip-bl:46%; --tokpg-chip-ink:#f2efe9;
+      }
+    }
+    #tool-tokenizer-playground .vt-title{ font-weight:700; font-size:1rem; margin-bottom:8px; color:var(--ink,#211f1b); }
+    #tool-tokenizer-playground .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.55; }
+    #tool-tokenizer-playground .vt-hint b, #tool-tokenizer-playground .vt-note b{ color:var(--ink-soft,#45413a); }
+    #tool-tokenizer-playground .vt-ta-label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); margin-bottom:12px; }
+    #tool-tokenizer-playground .vt-ta{
+      width:100%; max-width:100%; resize:vertical; font-family:var(--mono,ui-monospace,monospace); font-size:.86rem;
+      line-height:1.5; padding:10px 12px; border:1px solid var(--border-2,#d8d1c0); border-radius:9px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); box-sizing:border-box;
+    }
+    #tool-tokenizer-playground .vt-ta:focus-visible, #tool-tokenizer-playground input:focus-visible,
+    #tool-tokenizer-playground button:focus-visible, #tool-tokenizer-playground .tp-table-wrap:focus-visible{
+      outline:2px solid var(--accent,#c15b39); outline-offset:2px;
+    }
+    #tool-tokenizer-playground .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px 18px; margin-bottom:4px; }
+    #tool-tokenizer-playground .vt-grid label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-tokenizer-playground .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-tokenizer-playground .tp-sub{ font-size:.72rem; color:var(--faint,#908a7e); font-weight:400; }
+    #tool-tokenizer-playground input[type="range"]{ width:100%; max-width:100%; accent-color:var(--accent,#c15b39); }
+    #tool-tokenizer-playground input[type="text"]{
+      font-family:var(--mono,ui-monospace,monospace); font-size:.86rem; padding:7px 10px;
+      border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff);
+      color:var(--ink,#211f1b); box-sizing:border-box; width:100%; max-width:100%;
+    }
+    #tool-tokenizer-playground .vt-actions{ margin:8px 0 16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #tool-tokenizer-playground .vt-btn, #tool-tokenizer-playground .vt-reset{
+      font:inherit; font-size:.8rem; padding:6px 14px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer;
+    }
+    #tool-tokenizer-playground .vt-btn{ background:var(--accent,#c15b39); color:var(--surface,#fff); border-color:var(--accent,#c15b39); font-weight:600; }
+    #tool-tokenizer-playground .vt-btn:hover{ background:var(--accent-2,#b04e2d); border-color:var(--accent-2,#b04e2d); }
+    #tool-tokenizer-playground .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+    #tool-tokenizer-playground .tp-traininfo{ font-size:.76rem; color:var(--muted,#6d675d); line-height:1.4; }
+    #tool-tokenizer-playground .tp-h{
+      font-weight:700; font-size:.86rem; color:var(--ink,#211f1b); margin:18px 0 8px;
+      padding-top:10px; border-top:1px solid var(--border,#e7e1d4);
+    }
+    #tool-tokenizer-playground .tp-h-first{ border-top:none; padding-top:0; }
+    #tool-tokenizer-playground .tp-table-wrap{
+      max-height:260px; overflow:auto; border:1px solid var(--border,#e7e1d4); border-radius:9px;
+      -webkit-overflow-scrolling:touch;
+    }
+    #tool-tokenizer-playground .tp-table{ width:100%; border-collapse:collapse; font-size:.8rem; }
+    #tool-tokenizer-playground .tp-table th{
+      position:sticky; top:0; z-index:1; background:var(--surface-2,#f3efe6); text-align:left; font-weight:600;
+      color:var(--muted,#6d675d); padding:6px 10px; border-bottom:1px solid var(--border,#e7e1d4); white-space:nowrap;
+    }
+    #tool-tokenizer-playground .tp-table td{ padding:5px 10px; border-bottom:1px solid var(--border,#e7e1d4); vertical-align:middle; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    #tool-tokenizer-playground .tp-table tr:last-child td{ border-bottom:none; }
+    #tool-tokenizer-playground .tp-arrow, #tool-tokenizer-playground .tp-plus{ color:var(--muted,#6d675d); }
+    #tool-tokenizer-playground .tp-id{ color:var(--faint,#908a7e); font-size:.75rem; }
+    #tool-tokenizer-playground .tp-empty{ color:var(--muted,#6d675d); font-style:italic; padding:10px; display:block; white-space:normal; }
+    #tool-tokenizer-playground .vt-out{ margin:12px 0; display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:10px; }
+    #tool-tokenizer-playground .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:10px 12px; min-width:0; }
+    #tool-tokenizer-playground .vt-stat .n{ font-size:1.22rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-tokenizer-playground .vt-stat .l{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:2px; line-height:1.3; }
+    #tool-tokenizer-playground .tp-chips{
+      display:flex; flex-wrap:wrap; gap:5px; padding:10px; border:1px solid var(--border,#e7e1d4);
+      border-radius:9px; background:var(--surface-2,#f3efe6); min-height:2.6em; align-items:center;
+      max-height:220px; overflow-y:auto;
+    }
+    #tool-tokenizer-playground .tp-chip{
+      display:inline-block; font-family:var(--mono,ui-monospace,monospace); font-size:.82rem; padding:2px 7px;
+      border-radius:5px; white-space:pre; max-width:100%; overflow-wrap:anywhere;
+      background:hsl(var(--tokpg-hue,210) var(--tokpg-chip-s,70%) var(--tokpg-chip-l,90%));
+      color:var(--tokpg-chip-ink,#141414);
+      border:1px solid hsl(var(--tokpg-hue,210) var(--tokpg-chip-bs,42%) var(--tokpg-chip-bl,66%));
+    }
+    #tool-tokenizer-playground .tp-chip.tp-raw{ border-style:dashed; }
+    #tool-tokenizer-playground .tp-chip.tp-flash{ animation:tokpg-flash 900ms ease-out; }
+    @keyframes tokpg-flash{
+      0%{ box-shadow:0 0 0 3px var(--accent,#c15b39); }
+      100%{ box-shadow:0 0 0 0 transparent; }
+    }
+    @media (prefers-reduced-motion: reduce){
+      #tool-tokenizer-playground .tp-chip.tp-flash{ animation:none; box-shadow:0 0 0 2px var(--accent,#c15b39); }
+    }
+    #tool-tokenizer-playground .tp-idswrap{ margin-top:10px; }
+    #tool-tokenizer-playground .tp-idslabel{ display:block; font-size:.72rem; color:var(--muted,#6d675d); margin-bottom:4px; }
+    #tool-tokenizer-playground .tp-ids{
+      display:block; font-family:var(--mono,ui-monospace,monospace); font-size:.76rem; line-height:1.5;
+      color:var(--ink-soft,#45413a); background:var(--surface-3,#ece7da); border-radius:7px; padding:8px 10px;
+      max-height:110px; overflow:auto; overflow-wrap:anywhere; white-space:pre-wrap;
+    }
+    #tool-tokenizer-playground .tp-decode{ margin-top:10px; font-size:.82rem; color:var(--ink-soft,#45413a); line-height:1.7; }
+    #tool-tokenizer-playground .tp-decoded{
+      font-family:var(--mono,ui-monospace,monospace); background:var(--surface-3,#ece7da); padding:2px 6px;
+      border-radius:5px; white-space:pre-wrap; overflow-wrap:anywhere;
+    }
+    #tool-tokenizer-playground .tp-roundtrip{ margin-left:6px; font-weight:600; white-space:nowrap; }
+    #tool-tokenizer-playground .tp-roundtrip.ok{ color:var(--tokpg-good,#217a55); }
+    #tool-tokenizer-playground .tp-roundtrip.bad{ color:var(--tokpg-warn,#b0480f); }
+    #tool-tokenizer-playground .tp-anim-caption{ margin-top:10px; font-size:.82rem; color:var(--ink-soft,#45413a); line-height:1.7; min-height:1.7em; }
+    #tool-tokenizer-playground .vt-note{
+      margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6;
+      border-left:3px solid var(--accent,#c15b39); padding:9px 12px; background:var(--surface-3,#ece7da);
+      border-radius:0 7px 7px 0;
+    }
+    #tool-tokenizer-playground .vt-note code{ font-family:var(--mono,ui-monospace,monospace); font-size:.95em; }
   </style>
+
   <script>(function(){
     var root=document.getElementById('tool-tokenizer-playground');
-    var ta=root.querySelector('#tp-text');
-    function upd(){
-      var text=ta.value;
-      // 1. Character count = Unicode code points (NOT UTF-16 .length, so emoji count as 1)
-      var C=[...text].length;
-      // 2. UTF-8 byte count
-      var B=new TextEncoder().encode(text).length;
-      // 3. Word count = whitespace-delimited tokens
-      var trimmed=text.trim();
-      var W=trimmed==="" ? 0 : trimmed.split(/\s+/).length;
-      // 4. APPROXIMATE token count via the two heuristics from the chapter.
-      var estFromChars=C/4;          // ~4 chars per token
-      var estFromWords=W/0.75;       // ~0.75 words per token == W * 1.3333...
-      var estTokens = C===0 ? 0 : Math.round((estFromChars+estFromWords)/2);
-      // 5. Chars-per-token ratio (guard divide-by-zero)
-      var charsPerToken = estTokens>0 ? (C/estTokens) : 0;
+    if(!root) return;
+    function $(id){ return root.querySelector('#'+id); }
 
-      var out=[
-        [C, 'Characters', 'Unicode code points'],
-        [B, 'Bytes (UTF-8)', 'UTF-8 bytes'],
-        [W, 'Words', 'whitespace-split'],
-        [estTokens, '~Tokens (est.)', '&asymp; estimate, not real BPE'],
-        [charsPerToken.toFixed(2), 'Chars / token', 'C &divide; est. tokens']
+    var corpusEl=$('tokenizer-playground-corpus');
+    var mergesSlider=$('tokenizer-playground-merges');
+    var mergesVal=$('tokenizer-playground-mergesval');
+    var trainBtn=$('tokenizer-playground-train');
+    var trainInfo=$('tokenizer-playground-traininfo');
+    var vocabCountEl=$('tokenizer-playground-vocabcount');
+    var mergesTbody=$('tokenizer-playground-mergestbody');
+    var encodeInput=$('tokenizer-playground-encode-input');
+    var statsEl=$('tokenizer-playground-stats');
+    var chipsEl=$('tokenizer-playground-chips');
+    var idsEl=$('tokenizer-playground-ids');
+    var decodeEl=$('tokenizer-playground-decode');
+    var animWordInput=$('tokenizer-playground-animword');
+    var animStepBtn=$('tokenizer-playground-animstep');
+    var animPlayBtn=$('tokenizer-playground-animplay');
+    var animResetBtn=$('tokenizer-playground-animreset');
+    var animChipsEl=$('tokenizer-playground-animchips');
+    var animCaptionEl=$('tokenizer-playground-animcaption');
+    if(!corpusEl||!mergesSlider||!mergesTbody||!encodeInput||!animChipsEl) return;
+
+    var MAX_CORPUS_CP=4000;          // corpus cap, counted in Unicode code points
+    var MAX_MERGES=160;              // == slider max; full training runs once to this depth
+    var GOLDEN_ANGLE=137.508;
+    var ENC=new TextEncoder();
+    var DEC_LOOSE=new TextDecoder('utf-8',{fatal:false});
+    var DEC_STRICT=new TextDecoder('utf-8',{fatal:true});
+
+    // GPT-2 style pre-tokenizer regex: partitions ANY string into contraction /
+    // letter-run / number-run / symbol-run / whitespace-run pieces with no gaps and no
+    // overlaps, so merges never cross these boundaries yet concat(pieces) === input.
+    var PRETOK_RE=/'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+
+    function pretokenize(text){
+      if(!text) return [];
+      var m=text.match(PRETOK_RE);
+      return m || [];
+    }
+    function toBytes(s){ return Array.from(ENC.encode(s)); }
+    function bytesEqual(a,b){
+      if(a.length!==b.length) return false;
+      for(var i=0;i<a.length;i++){ if(a[i]!==b[i]) return false; }
+      return true;
+    }
+    // Replace every occurrence of the adjacent pair (a,b) with newId, scanning left to
+    // right and never re-using a consumed token. This is the exact update BPE training
+    // and BPE encoding both perform.
+    function mergePairInSeq(seq,a,b,newId){
+      var out=[], i=0;
+      while(i<seq.length){
+        if(i<seq.length-1 && seq[i]===a && seq[i+1]===b){ out.push(newId); i+=2; }
+        else { out.push(seq[i]); i+=1; }
+      }
+      return out;
+    }
+    function escapeHtml(s){
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    function prettyText(s){
+      return s.replace(/ /g,'␣').replace(/\r/g,'\\r').replace(/\n/g,'\\n').replace(/\t/g,'\\t');
+    }
+    function bytesToDisplay(bytes){
+      try{
+        return { text:DEC_STRICT.decode(new Uint8Array(bytes)), valid:true };
+      }catch(e){
+        return { text:bytes.map(function(b){ return '\\x'+('0'+b.toString(16)).slice(-2); }).join(''), valid:false };
+      }
+    }
+
+    // ---- state ------------------------------------------------------------
+    // `full` is the deepest training run for the current corpus. BPE is greedy and
+    // prefix-consistent: training with target k yields exactly the first k merges of
+    // training with any target K > k. So we train once to MAX_MERGES and the slider
+    // just slices -- identical results, instant response.
+    var full={ merges:[], vocabBytes:{}, pieces:0, unique:0, capped:false, rawLen:0, exhausted:false };
+    var state={ merges:[], rankMap:new Map(), vocabBytes:{},
+                animSeq:[], animStep:0, animStart:0, animPlaying:false, animTimer:null };
+    var baseVocab={};
+    for(var bi=0; bi<256; bi++) baseVocab[bi]=[bi];
+    full.vocabBytes=baseVocab; state.vocabBytes=baseVocab;
+
+    function hueFor(id){ return Math.round((id*GOLDEN_ANGLE)%360); }
+    function chipHTML(id, extraClass){
+      var bytes=state.vocabBytes[id];
+      if(!bytes) bytes=[id & 255];
+      var bd=bytesToDisplay(bytes);
+      var label=bd.valid ? prettyText(bd.text) : bd.text;
+      if(label==='') label='∅';
+      var cls='tp-chip'+(id<256?' tp-raw':'')+(extraClass?' '+extraClass:'');
+      var title='token id '+id+' — '+bytes.length+' byte'+(bytes.length===1?'':'s')+
+                (id<256 ? ' (raw byte)' : '')+(bd.valid ? '' : ' — not valid UTF-8 on its own');
+      return '<span class="'+cls+'" style="--tokpg-hue:'+hueFor(id)+'" title="'+escapeHtml(title)+'">'+
+             escapeHtml(label)+'</span>';
+    }
+
+    // ---- training ---------------------------------------------------------
+    function trainFull(){
+      var raw=corpusEl.value || '';
+      var cps=Array.from(raw);                       // split by code point, never mid-surrogate
+      full.rawLen=cps.length;
+      full.capped=cps.length>MAX_CORPUS_CP;
+      var text=full.capped ? cps.slice(0,MAX_CORPUS_CP).join('') : raw;
+
+      var pieces=pretokenize(text);
+      var wordFreq=new Map();
+      for(var pi=0; pi<pieces.length; pi++){
+        wordFreq.set(pieces[pi], (wordFreq.get(pieces[pi])||0)+1);
+      }
+      var words=[];
+      wordFreq.forEach(function(freq,piece){ words.push({tokens:toBytes(piece), freq:freq}); });
+
+      var vocabBytes={};
+      for(var b0=0; b0<256; b0++) vocabBytes[b0]=[b0];
+      var merges=[], nextId=256, exhausted=false;
+
+      while(merges.length<MAX_MERGES){
+        // Count every adjacent pair, weighted by how often its word-piece occurs.
+        var pairCounts=new Map();
+        for(var wi=0; wi<words.length; wi++){
+          var t=words[wi].tokens, f=words[wi].freq;
+          for(var i=0;i<t.length-1;i++){
+            var key=t[i]+','+t[i+1];
+            pairCounts.set(key, (pairCounts.get(key)||0)+f);
+          }
+        }
+        if(pairCounts.size===0){ exhausted=true; break; }
+        // argmax over count, ties broken on the pair itself (largest id pair wins) —
+        // the same rule as this chapter's reference `max(counts, key=(counts[p], p))`,
+        // which makes training fully deterministic with no PRNG anywhere.
+        var best=null;
+        pairCounts.forEach(function(count,key){
+          var us=key.split(','), a=+us[0], b=+us[1];
+          if(!best || count>best.count ||
+             (count===best.count && (a>best.a || (a===best.a && b>best.b)))){
+            best={count:count, a:a, b:b};
+          }
+        });
+        if(best.count<2){ exhausted=true; break; }   // nothing repeats; stop early
+        var newId=nextId++;
+        vocabBytes[newId]=vocabBytes[best.a].concat(vocabBytes[best.b]);
+        merges.push({rank:merges.length, a:best.a, b:best.b, newId:newId, freq:best.count});
+        for(var wj=0; wj<words.length; wj++){
+          words[wj].tokens=mergePairInSeq(words[wj].tokens, best.a, best.b, newId);
+        }
+      }
+
+      full.merges=merges;
+      full.vocabBytes=vocabBytes;
+      full.pieces=pieces.length;
+      full.unique=wordFreq.size;
+      full.exhausted=exhausted;
+      applyTarget();
+    }
+
+    // Slice the full merge list down to the slider's target and rebuild the encoder.
+    function applyTarget(){
+      var raw=parseInt(mergesSlider.value,10);
+      if(!isFinite(raw) || isNaN(raw)) raw=0;
+      var target=Math.max(0, Math.min(MAX_MERGES, raw));
+
+      var merges=full.merges.slice(0, target);
+      state.merges=merges;
+      state.vocabBytes=full.vocabBytes;    // ids above 255+target are simply never produced
+      state.rankMap=new Map();
+      merges.forEach(function(mg){ state.rankMap.set(mg.a+','+mg.b, {rank:mg.rank, newId:mg.newId}); });
+
+      mergesVal.textContent='Target merges: '+target+' (vocab = 256 + '+merges.length+' = '+(256+merges.length)+')';
+
+      var info='Learned '+merges.length+' merge'+(merges.length===1?'':'s')+' from '+full.pieces+
+               ' word-piece'+(full.pieces===1?'':'s')+' ('+full.unique+' unique)';
+      info+=full.capped
+        ? '; corpus capped to the first '+MAX_CORPUS_CP+' of '+full.rawLen+' characters so training stays instant.'
+        : '.';
+      if(merges.length<target){
+        info+=' Stopped early at '+merges.length+': no adjacent byte-pair repeats in this corpus any more — '+
+              'add more text to earn more merges.';
+      }
+      trainInfo.textContent=info;
+
+      renderMergesTable();
+      resetAnimation();
+      renderEncode();
+    }
+
+    function renderMergesTable(){
+      vocabCountEl.textContent=String(state.merges.length);
+      var rows=state.merges.map(function(mg){
+        return '<tr>'+
+          '<td>'+mg.rank+'</td>'+
+          '<td>'+chipHTML(mg.a)+' <span class="tp-plus">+</span> '+chipHTML(mg.b)+'</td>'+
+          '<td class="tp-arrow">&rarr;</td>'+
+          '<td>'+chipHTML(mg.newId)+' <span class="tp-id">(id '+mg.newId+')</span></td>'+
+          '<td>'+mg.freq+'</td>'+
+        '</tr>';
+      }).join('');
+      mergesTbody.innerHTML=rows ||
+        '<tr><td colspan="5" class="tp-empty">No merges yet &mdash; every token is one raw byte, so the vocabulary is exactly 256 and bytes / token = 1.00.</td></tr>';
+    }
+
+    // ---- encoding ---------------------------------------------------------
+    // Greedy BPE encode: repeatedly find the adjacent pair with the LOWEST merge rank
+    // (i.e. the merge learned earliest) and apply it everywhere, until no learned pair
+    // remains. Every merge strictly shortens the sequence, so this always terminates.
+    function encodeWord(bytes){
+      var seq=bytes.slice();
+      if(seq.length<2) return seq;
+      while(true){
+        var bestRank=Infinity, bestIdx=-1, bestNewId=null;
+        for(var i=0;i<seq.length-1;i++){
+          var info=state.rankMap.get(seq[i]+','+seq[i+1]);
+          if(info && info.rank<bestRank){ bestRank=info.rank; bestIdx=i; bestNewId=info.newId; }
+        }
+        if(bestIdx===-1) break;
+        seq=mergePairInSeq(seq, seq[bestIdx], seq[bestIdx+1], bestNewId);
+      }
+      return seq;
+    }
+    function encodeText(text){
+      var pieces=pretokenize(text);
+      var all=[];
+      for(var i=0;i<pieces.length;i++){
+        var enc=encodeWord(toBytes(pieces[i]));
+        for(var j=0;j<enc.length;j++) all.push(enc[j]);
+      }
+      return all;
+    }
+    function decodeBytes(ids){
+      var bytes=[];
+      for(var i=0;i<ids.length;i++){
+        var b=state.vocabBytes[ids[i]];
+        if(b){ for(var j=0;j<b.length;j++) bytes.push(b[j]); }
+      }
+      return bytes;
+    }
+
+    function renderEncode(){
+      var text=encodeInput.value || '';
+      var inBytes=toBytes(text);
+      var byteLen=inBytes.length;
+      var charLen=Array.from(text).length;
+      var ids=encodeText(text);
+      var n=ids.length;
+
+      var stats=[
+        [String(n), 'Tokens'],
+        [String(charLen), 'Characters'],
+        [String(byteLen), 'UTF-8 bytes'],
+        [n>0 ? (byteLen/n).toFixed(2) : '—', 'Bytes / token'],
+        [String(256+state.merges.length), 'Vocab size']
       ];
-      root.querySelector('#tp-out').innerHTML=out.map(function(o){
-        return '<div class="vt-stat"><div class="n">'+o[0]+'</div><div class="l">'+o[1]+' &mdash; '+o[2]+'</div></div>';
+      statsEl.innerHTML=stats.map(function(s){
+        return '<div class="vt-stat"><div class="n">'+escapeHtml(s[0])+'</div><div class="l">'+s[1]+'</div></div>';
       }).join('');
 
-      root.querySelector('#tp-breakdown').innerHTML=
-        'Estimate = mean of two rules of thumb:&nbsp; ~4 chars/token &rarr; <b>'+Math.round(estFromChars)+'</b>'+
-        '&nbsp;&middot;&nbsp; ~0.75 words/token &rarr; <b>'+Math.round(estFromWords)+'</b>';
+      if(n===0){
+        chipsEl.innerHTML='<span class="tp-empty">(empty input)</span>';
+        idsEl.textContent='[]';
+        decodeEl.innerHTML='';
+        return;
+      }
+      chipsEl.innerHTML=ids.map(function(id){ return chipHTML(id); }).join(' ');
+      idsEl.textContent='['+ids.join(', ')+']';
+
+      var outBytes=decodeBytes(ids);
+      var exact=bytesEqual(outBytes, inBytes);
+      var decoded=DEC_LOOSE.decode(new Uint8Array(outBytes));
+      decodeEl.innerHTML='<b>Decoded:</b> <span class="tp-decoded">'+escapeHtml(decoded)+'</span>'+
+        '<span class="tp-roundtrip '+(exact?'ok':'bad')+'">'+
+        (exact ? '✓ byte-exact round-trip' : '✗ byte mismatch')+'</span>';
     }
-    ta.addEventListener('input',upd);
-    upd();
+
+    // ---- step-through animation ------------------------------------------
+    function currentAnimBaseBytes(){
+      var w=animWordInput ? (animWordInput.value || '') : '';
+      if(w==='') return [];
+      var pieces=pretokenize(w);
+      return toBytes(pieces.length ? pieces[0] : w);
+    }
+    function stopAnimPlay(){
+      state.animPlaying=false;
+      if(state.animTimer){ clearInterval(state.animTimer); state.animTimer=null; }
+      animPlayBtn.textContent='Play';
+    }
+    function resetAnimation(){
+      stopAnimPlay();
+      state.animSeq=currentAnimBaseBytes();
+      state.animStart=state.animSeq.length;
+      state.animStep=0;
+      renderAnim(null);
+    }
+    function animNextMerge(){
+      var bestRank=Infinity, bestIdx=-1, bestNewId=null, bestA=null, bestB=null;
+      for(var i=0;i<state.animSeq.length-1;i++){
+        var a=state.animSeq[i], b=state.animSeq[i+1];
+        var info=state.rankMap.get(a+','+b);
+        if(info && info.rank<bestRank){
+          bestRank=info.rank; bestIdx=i; bestNewId=info.newId; bestA=a; bestB=b;
+        }
+      }
+      if(bestIdx===-1) return null;
+      return {idx:bestIdx, a:bestA, b:bestB, newId:bestNewId, rank:bestRank};
+    }
+    function animStepOnce(){
+      var next=animNextMerge();
+      if(!next){
+        stopAnimPlay();
+        if(state.animSeq.length===0){
+          animCaptionEl.textContent='Type a word above to watch its merges.';
+        } else if(state.animStep===0){
+          animCaptionEl.textContent=state.merges.length===0
+            ? 'No merges learned yet — raise the merge slider.'
+            : 'No learned merge applies to this word: it stays as raw bytes (exactly the byte-level fallback that makes BPE unknown-token-free).';
+        } else {
+          animCaptionEl.textContent='Done — no more learned merges apply. '+state.animStart+
+            ' bytes → '+state.animSeq.length+' token'+(state.animSeq.length===1?'':'s')+
+            ' in '+state.animStep+' merge'+(state.animStep===1?'':'s')+'.';
+        }
+        return false;
+      }
+      state.animSeq=mergePairInSeq(state.animSeq, next.a, next.b, next.newId);
+      state.animStep++;
+      renderAnim(next);
+      return true;
+    }
+    function renderAnim(justApplied){
+      // A merge replaces EVERY occurrence of the pair at once, so flash every chip that
+      // carries the brand-new id (that id cannot have existed in the sequence before).
+      var flashId=justApplied ? justApplied.newId : -1;
+      var html=state.animSeq.map(function(id){
+        return chipHTML(id, id===flashId ? 'tp-flash' : '');
+      }).join(' ');
+      animChipsEl.innerHTML=html || '<span class="tp-empty">(type a word above)</span>';
+      if(justApplied){
+        animCaptionEl.innerHTML='Step '+state.animStep+': merged '+chipHTML(justApplied.a)+
+          ' <span class="tp-plus">+</span> '+chipHTML(justApplied.b)+
+          ' <span class="tp-arrow">&rarr;</span> '+chipHTML(justApplied.newId)+
+          ' (merge rank '+justApplied.rank+') &mdash; now '+state.animSeq.length+' token'+
+          (state.animSeq.length===1?'':'s')+'.';
+      } else if(state.animSeq.length===0){
+        animCaptionEl.textContent='Type a word above to watch its merges.';
+      } else {
+        animCaptionEl.textContent=state.merges.length===0
+          ? 'Starting from '+state.animSeq.length+' raw bytes. Raise the merge slider, then press Step or Play.'
+          : 'Starting from '+state.animSeq.length+' raw bytes — press Step or Play to apply learned merges in rank order.';
+      }
+    }
+    function toggleAnimPlay(){
+      if(state.animPlaying){ stopAnimPlay(); return; }
+      if(!animNextMerge()){ animStepOnce(); return; }
+      state.animPlaying=true;
+      animPlayBtn.textContent='Pause';
+      state.animTimer=setInterval(function(){
+        if(!animStepOnce()) stopAnimPlay();
+      }, 700);
+    }
+
+    // ---- wiring -----------------------------------------------------------
+    var corpusDebounce=null;
+    corpusEl.addEventListener('input', function(){
+      clearTimeout(corpusDebounce);
+      corpusDebounce=setTimeout(trainFull, 250);
+    });
+    mergesSlider.addEventListener('input', applyTarget);   // instant: slices, never retrains
+    mergesSlider.addEventListener('change', applyTarget);
+    if(trainBtn) trainBtn.addEventListener('click', trainFull);
+    encodeInput.addEventListener('input', renderEncode);
+    if(animWordInput) animWordInput.addEventListener('input', resetAnimation);
+    if(animStepBtn) animStepBtn.addEventListener('click', function(){ stopAnimPlay(); animStepOnce(); });
+    if(animPlayBtn) animPlayBtn.addEventListener('click', toggleAnimPlay);
+    if(animResetBtn) animResetBtn.addEventListener('click', resetAnimation);
+
+    trainFull();
   })();</script>
 </div>

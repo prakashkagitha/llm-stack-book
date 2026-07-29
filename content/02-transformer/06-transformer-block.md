@@ -109,6 +109,8 @@ You rarely hand-write a norm in production. PyTorch ≥ 2.4 ships `torch.nn.RMSN
 
 {{fig:tblock-layernorm-vs-rmsnorm}}
 
+{{tool:normalization-explorer}}
+
 ---
 
 ## Pre-Norm vs Post-Norm

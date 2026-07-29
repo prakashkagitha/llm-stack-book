@@ -1,0 +1,445 @@
+<div class="viz-tool" id="tool-gqa-mla-explorer">
+  <div class="vt-title">MHA vs MQA vs GQA vs MLA: KV-head sharing and cache size</div>
+
+  <div class="gme-presets" role="group" aria-label="Preset configurations">
+    <span class="gme-presets-label">Presets</span>
+    <button type="button" class="gme-preset" data-gme-preset="0">Llama-1-7B &middot; MHA</button>
+    <button type="button" class="gme-preset" data-gme-preset="1">Llama-3-8B &middot; GQA 4:1</button>
+    <button type="button" class="gme-preset" data-gme-preset="2">Stack-100M &middot; GQA 4:1</button>
+    <button type="button" class="gme-preset" data-gme-preset="3">DeepSeek-V2-Lite &middot; MLA</button>
+  </div>
+
+  <div class="vt-grid">
+    <label for="gqa-mla-explorer-h-num">Query heads h
+      <span class="gme-in">
+        <input id="gqa-mla-explorer-h-range" type="range" min="1" max="32" step="1" value="8" aria-label="Query heads h, slider">
+        <input id="gqa-mla-explorer-h-num" type="number" min="1" max="32" step="1" value="8" aria-label="Query heads h, number">
+      </span>
+    </label>
+    <label for="gqa-mla-explorer-dh">Head dim d_h
+      <input id="gqa-mla-explorer-dh" type="number" min="8" max="512" step="8" value="128" aria-label="Head dimension d_h">
+    </label>
+    <label for="gqa-mla-explorer-dtype">KV cache dtype
+      <select id="gqa-mla-explorer-dtype" aria-label="KV cache element size in bytes">
+        <option value="2" selected>bf16 / fp16 (2 B)</option>
+        <option value="1">fp8 / int8 (1 B)</option>
+        <option value="4">fp32 (4 B)</option>
+      </select>
+    </label>
+    <label for="gqa-mla-explorer-variant">Variant (diagram)
+      <select id="gqa-mla-explorer-variant" aria-label="Attention variant to diagram">
+        <option value="mha">MHA</option>
+        <option value="mqa">MQA</option>
+        <option value="gqa" selected>GQA</option>
+        <option value="mla">MLA</option>
+      </select>
+    </label>
+    <label for="gqa-mla-explorer-s-range">GQA group size s (queries / KV head)
+      <span class="gme-in">
+        <input id="gqa-mla-explorer-s-range" type="range" min="0" max="3" step="1" value="2" aria-label="GQA group size (snaps to divisors of h)">
+        <input id="gqa-mla-explorer-s-num" type="text" value="4" readonly tabindex="-1" aria-hidden="true">
+      </span>
+    </label>
+    <label for="gqa-mla-explorer-dc-num">MLA latent dim d_c
+      <span class="gme-in">
+        <input id="gqa-mla-explorer-dc-range" type="range" min="8" max="1024" step="8" value="256" aria-label="MLA latent dimension, slider">
+        <input id="gqa-mla-explorer-dc-num" type="number" min="8" max="1024" step="8" value="256" aria-label="MLA latent dimension, number">
+      </span>
+    </label>
+    <label class="gme-check" for="gqa-mla-explorer-rope">
+      <input id="gqa-mla-explorer-rope" type="checkbox">
+      <span>MLA: add decoupled RoPE key (d_r = 64)</span>
+    </label>
+    <label for="gqa-mla-explorer-layers">Layers (for total cache)
+      <input id="gqa-mla-explorer-layers" type="number" min="1" max="200" step="1" value="32" aria-label="Number of transformer layers">
+    </label>
+    <label for="gqa-mla-explorer-seq">Sequence length (for total cache)
+      <input id="gqa-mla-explorer-seq" type="number" min="1" max="1000000" step="1" value="4096" aria-label="Sequence length in tokens">
+    </label>
+  </div>
+
+  <div class="gme-scroll">
+    <svg id="gqa-mla-explorer-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+  <div class="gme-caption" id="gqa-mla-explorer-caption"></div>
+
+  <div class="gme-cmp-heading">KV cache per token, per layer &mdash; bar length and ratio vs MHA</div>
+  <div class="gme-readout" id="gqa-mla-explorer-readout"></div>
+  <div class="gme-cmp" id="gqa-mla-explorer-cmp"></div>
+
+  <div class="vt-note" id="gqa-mla-explorer-note">
+    <b>GQA interpolates between MHA and MQA.</b> Group size s = 1 gives every query its own KV head (MHA: best quality, biggest cache); s = h collapses all queries onto one shared KV head (MQA: smallest cache among the head-sharing schemes, largest quality risk); any divisor of h in between trades quality for cache linearly in the KV-head count g = h / s, since the cache is 2&thinsp;&middot;&thinsp;g&thinsp;&middot;&thinsp;d_h elements per token per layer (the 2 is K and V). <b>MLA takes a different axis</b>: instead of sharing whole KV heads it caches one low-rank <i>latent</i> vector per token (d_c numbers, no factor of 2) and reconstructs full per-head keys/values from it on the fly &ndash; so it can beat GQA's cache while keeping every head distinct. Real MLA also caches a single shared decoupled-RoPE key of d_r = 64 (toggle it above); the text's simplified forward pass is the content-only version. Note the <b>&ldquo;total&rdquo;</b> column: the same number is both the memory one sequence occupies and the bytes that must be streamed from HBM on <i>every</i> decode step &ndash; which is why shrinking the cache speeds up decoding, not just fits more of it.
+  </div>
+
+  <style>
+    #tool-gqa-mla-explorer{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); --gme-good:#17724d; }
+    html[data-theme="dark"] #tool-gqa-mla-explorer{ --gme-good:#5fd0a0; }
+    @media (prefers-color-scheme:dark){ html:not([data-theme="light"]) #tool-gqa-mla-explorer{ --gme-good:#5fd0a0; } }
+
+    #tool-gqa-mla-explorer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-gqa-mla-explorer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-gqa-mla-explorer label{ display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted,#6d675d); }
+    #tool-gqa-mla-explorer input, #tool-gqa-mla-explorer select, #tool-gqa-mla-explorer button{
+      font:inherit; font-size:.88rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-gqa-mla-explorer input[readonly]{ text-align:center; background:var(--surface-2,#f3efe6); color:var(--muted,#6d675d); }
+    #tool-gqa-mla-explorer input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-gqa-mla-explorer input[type="checkbox"]{ accent-color:var(--accent,#c15b39); width:15px; height:15px; padding:0; flex:0 0 auto; }
+    #tool-gqa-mla-explorer :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-gqa-mla-explorer .gme-in{ display:flex; gap:6px; align-items:center; }
+    #tool-gqa-mla-explorer .gme-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-gqa-mla-explorer .gme-in input[type="number"],
+    #tool-gqa-mla-explorer .gme-in input[type="text"]{ flex:1 1 68px; min-width:0; }
+    #tool-gqa-mla-explorer .gme-check{ flex-direction:row; align-items:center; gap:8px; align-self:end; padding-bottom:6px; }
+
+    #tool-gqa-mla-explorer .gme-presets{ display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin-bottom:14px; }
+    #tool-gqa-mla-explorer .gme-presets-label{ font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted,#6d675d); }
+    #tool-gqa-mla-explorer .gme-preset{ font-size:.74rem; padding:4px 9px; border-radius:999px; cursor:pointer;
+      background:var(--surface-2,#f3efe6); color:var(--ink-soft,#45413a); }
+    #tool-gqa-mla-explorer .gme-preset:hover{ border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); }
+
+    #tool-gqa-mla-explorer .gme-scroll{ margin-top:16px; overflow-x:auto; max-width:100%; border-radius:9px; background:var(--surface-2,#f3efe6); }
+    #tool-gqa-mla-explorer .gme-scroll svg{ display:block; margin:0 auto; }
+    #tool-gqa-mla-explorer .gme-caption{ margin-top:8px; font-size:.74rem; letter-spacing:.01em; color:var(--muted,#6d675d); text-align:center; }
+
+    #tool-gqa-mla-explorer .gme-qbox{ fill:var(--surface-3,#ece7da); stroke:var(--border-2,#d8d1c0); stroke-width:1.2; }
+    #tool-gqa-mla-explorer .gme-kvbox{ fill:var(--accent,#c15b39); fill-opacity:.18; stroke:var(--accent,#c15b39); stroke-width:1.4; }
+    #tool-gqa-mla-explorer .gme-reconbox{ fill:none; stroke:var(--muted,#6d675d); stroke-width:1.2; stroke-dasharray:3 3; }
+    #tool-gqa-mla-explorer .gme-band{ fill:var(--accent,#c15b39); fill-opacity:.07; stroke:var(--accent,#c15b39);
+      stroke-opacity:.35; stroke-width:1; stroke-dasharray:3 3; }
+    #tool-gqa-mla-explorer .gme-boxlabel{ font-size:9px; fill:var(--ink,#211f1b); text-anchor:middle; font-family:var(--mono,monospace); }
+    #tool-gqa-mla-explorer .gme-rowlabel{ font-size:10.5px; fill:var(--muted,#6d675d); font-weight:600; }
+    #tool-gqa-mla-explorer .gme-link{ stroke:var(--muted,#6d675d); stroke-width:1; stroke-opacity:.5; fill:none; }
+    #tool-gqa-mla-explorer .gme-link-cached{ stroke:var(--accent,#c15b39); stroke-width:1.2; stroke-opacity:.8; fill:none; }
+    #tool-gqa-mla-explorer .gme-link-dashed{ stroke:var(--accent,#c15b39); stroke-width:1.1; stroke-opacity:.65; stroke-dasharray:2.5 2.5; fill:none; }
+
+    #tool-gqa-mla-explorer .gme-cmp-heading{ margin-top:18px; font-size:.72rem; letter-spacing:.05em; color:var(--muted,#6d675d); text-transform:uppercase; }
+    #tool-gqa-mla-explorer .gme-readout{ margin-top:5px; font-size:.75rem; color:var(--muted,#6d675d); font-variant-numeric:tabular-nums; }
+    #tool-gqa-mla-explorer .gme-readout b{ color:var(--ink-soft,#45413a); }
+    #tool-gqa-mla-explorer .gme-cmp{ margin-top:9px; display:flex; flex-direction:column; gap:8px; }
+    #tool-gqa-mla-explorer .gme-row{ display:grid; grid-template-columns:96px 1fr 150px; gap:10px; align-items:center;
+      padding:8px 10px; border-radius:8px; background:var(--surface-2,#f3efe6); border:1px solid transparent; }
+    #tool-gqa-mla-explorer .gme-row.gme-sel{ border-color:var(--accent,#c15b39); }
+    #tool-gqa-mla-explorer .gme-name{ font-weight:700; font-size:.82rem; color:var(--ink,#211f1b); line-height:1.25; }
+    #tool-gqa-mla-explorer .gme-name span{ display:block; font-weight:400; font-size:.68rem; color:var(--muted,#6d675d);
+      font-variant-numeric:tabular-nums; }
+    #tool-gqa-mla-explorer .gme-bar-wrap{ position:relative; height:22px; background:var(--surface-3,#ece7da); border-radius:5px; overflow:hidden; }
+    #tool-gqa-mla-explorer .gme-bar{ position:absolute; left:0; top:0; height:100%; background:var(--muted,#6d675d); opacity:.22; border-radius:5px; }
+    #tool-gqa-mla-explorer .gme-row.gme-sel .gme-bar{ background:var(--accent,#c15b39); opacity:.35; }
+    #tool-gqa-mla-explorer .gme-bar-label{ position:absolute; left:8px; right:8px; top:0; height:100%; display:flex; align-items:center;
+      font-size:.71rem; font-variant-numeric:tabular-nums; color:var(--ink,#211f1b); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #tool-gqa-mla-explorer .gme-stats{ text-align:right; font-size:.72rem; color:var(--muted,#6d675d); line-height:1.35; font-variant-numeric:tabular-nums; }
+    #tool-gqa-mla-explorer .gme-stats b{ color:var(--ink,#211f1b); font-size:.8rem; }
+    #tool-gqa-mla-explorer .gme-stats b.gme-good{ color:var(--gme-good,#17724d); }
+
+    #tool-gqa-mla-explorer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-gqa-mla-explorer .vt-note b{ color:var(--ink-soft,#45413a); }
+
+    @media (max-width:560px){
+      #tool-gqa-mla-explorer .gme-row{ grid-template-columns:1fr; }
+      #tool-gqa-mla-explorer .gme-stats{ text-align:left; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-gqa-mla-explorer');
+    if (!root) return;
+    function $(id){ return root.querySelector('#gqa-mla-explorer-' + id); }
+
+    var elHRange = $('h-range'),  elHNum  = $('h-num');
+    var elDh     = $('dh'),       elDtype = $('dtype'), elVariant = $('variant');
+    var elSRange = $('s-range'),  elSNum  = $('s-num');
+    var elDcRange= $('dc-range'), elDcNum = $('dc-num'), elRope = $('rope');
+    var elLayers = $('layers'),   elSeq   = $('seq');
+    var elSvg    = $('svg'),      elCaption = $('caption');
+    var elReadout= $('readout'),  elCmp   = $('cmp');
+    if (!elSvg || !elCmp) return;
+
+    var MAXH = 32, D_R = 64;
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, attrs){
+      var e = document.createElementNS(SVGNS, tag);
+      for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+
+    function clampInt(v, lo, hi, fb){
+      v = parseInt(v, 10);
+      if (!isFinite(v)) v = fb;
+      return Math.max(lo, Math.min(hi, v));
+    }
+    // Binary units: the cache is a memory footprint, so KiB/MiB/GiB (1024-based).
+    function fmtB(b){
+      var u = ['B','KiB','MiB','GiB','TiB'], i = 0;
+      while (b >= 1024 && i < u.length - 1){ b /= 1024; i++; }
+      return (i === 0 ? b.toFixed(0) : b.toFixed(2)) + ' ' + u[i];
+    }
+    function divisorsOf(n){
+      var out = [];
+      for (var d = 1; d <= n; d++) if (n % d === 0) out.push(d);
+      return out;
+    }
+    function nearestIdx(divs, target){
+      var best = 0, bd = Infinity;
+      for (var i = 0; i < divs.length; i++){
+        var d = Math.abs(divs[i] - target);
+        if (d < bd){ bd = d; best = i; }
+      }
+      return best;
+    }
+
+    // The group size the user last asked for; re-snapped to a divisor whenever h changes,
+    // so "4 queries per KV head" survives a change of head count.
+    var desiredS = 4;
+
+    function readState(){
+      var h      = clampInt(elHNum.value, 1, MAXH, 8);
+      var dh     = clampInt(elDh.value, 8, 512, 128);
+      var bytes  = clampInt(elDtype.value, 1, 4, 2);
+      var dc     = clampInt(elDcNum.value, 8, 1024, 256);
+      var dr     = elRope.checked ? D_R : 0;
+      var layers = clampInt(elLayers.value, 1, 200, 32);
+      var seq    = clampInt(elSeq.value, 1, 1000000, 4096);
+
+      var divisors = divisorsOf(h);
+      var sIdx = clampInt(elSRange.value, 0, divisors.length - 1, 0);
+      var s = divisors[sIdx];        // query heads per KV head
+      var g = h / s;                 // KV heads under GQA (exact: s divides h)
+
+      return { h:h, dh:dh, bytes:bytes, dc:dc, dr:dr, layers:layers, seq:seq,
+               divisors:divisors, sIdx:sIdx, s:s, g:g, variant:elVariant.value };
+    }
+
+    // ---- exact KV-cache math: BYTES per token, per layer, per sequence (batch = 1) ----
+    // MHA/MQA/GQA store one K vector and one V vector of width d_h for each KV head.
+    // MLA stores only the d_c-wide latent c_KV (+ one shared d_r-wide decoupled RoPE key).
+    function cacheBytes(st){
+      return {
+        mha: 2 * st.h * st.dh * st.bytes,
+        mqa: 2 * 1    * st.dh * st.bytes,
+        gqa: 2 * st.g * st.dh * st.bytes,
+        mla: (st.dc + st.dr) * st.bytes
+      };
+    }
+
+    function setNum(inp, v){
+      // Never fight the user while they are typing in that very field.
+      if (document.activeElement !== inp && inp.value !== String(v)) inp.value = v;
+    }
+    function syncControls(st){
+      elHRange.value = st.h;  setNum(elHNum, st.h);
+      elDcRange.value = st.dc; setNum(elDcNum, st.dc);
+      elSRange.max = st.divisors.length - 1;
+      elSRange.value = st.sIdx;
+      var txt = 's = ' + st.s + '  (g = ' + st.g + ' KV head' + (st.g === 1 ? '' : 's') + ')';
+      elSNum.value = txt;
+      elSRange.setAttribute('aria-valuetext', txt);
+    }
+
+    // ============================ diagram ============================
+    var MARGIN = 22, MAXW = 880, ROWGAP = 46;
+
+    function drawDiagram(st){
+      var h = st.h, variant = st.variant, i;
+      var box = 26, gap = 8;
+      var span = h * box + (h - 1) * gap;
+      if (span > MAXW - 2 * MARGIN){
+        var f = (MAXW - 2 * MARGIN) / span;
+        box = Math.max(10, box * f);
+        gap = Math.max(2.5, gap * f);
+        span = h * box + (h - 1) * gap;
+      }
+      // Row labels are the widest text in the figure: size the canvas so they never
+      // spill outside the viewBox, then centre the head row inside it.
+      var s = variant === 'mha' ? 1 : variant === 'mqa' ? h : st.s;
+      var g = h / s;
+      var rowLabels = variant === 'mla'
+        ? ['Query heads (h = ' + h + ')',
+           'Cached per token: the low-rank latent only' + (st.dr ? ' (+ one shared RoPE key)' : ''),
+           'Not cached: per-head K,V up-projected from the latent on the fly']
+        : ['Query heads (h = ' + h + ')',
+           'KV heads, cached (n_kv = ' + g + ', group size s = ' + s + ')'];
+      var longest = 0;
+      for (i = 0; i < rowLabels.length; i++) longest = Math.max(longest, rowLabels[i].length);
+      var width = Math.max(360, 2 * MARGIN + span, 2 * MARGIN + longest * 5.8);
+      var offset = (width - span) / 2;
+      var showLbl = box >= 19;
+      var qX = [];
+      for (i = 0; i < h; i++) qX.push(offset + i * (box + gap) + box / 2);
+
+      var kids = [], caption = '', height, queryY = 24;
+      function addBox(cx, y, w, hgt, cls, label){
+        kids.push(mk('rect', { x:(cx - w / 2).toFixed(2), y:y.toFixed(2), width:w.toFixed(2), height:hgt.toFixed(2), rx:5, 'class':cls }));
+        if (label){
+          var t = mk('text', { x:cx.toFixed(2), y:(y + hgt / 2 + 3.4).toFixed(2), 'class':'gme-boxlabel' });
+          t.textContent = label;
+          kids.push(t);
+        }
+      }
+      function addLine(x1, y1, x2, y2, cls){
+        kids.push(mk('path', { d:'M' + x1.toFixed(2) + ',' + y1.toFixed(2) + ' L' + x2.toFixed(2) + ',' + y2.toFixed(2), 'class':cls }));
+      }
+      function addRowLabel(y, text){
+        var t = mk('text', { x:MARGIN, y:y, 'class':'gme-rowlabel' });
+        t.textContent = text;
+        kids.push(t);
+      }
+
+      if (variant === 'mla'){
+        var latentY = queryY + box + 40, reconY = latentY + 26 + 40, cx = width / 2;
+        // queries -> their own reconstructed K,V (full per-head diversity is preserved)
+        for (i = 0; i < h; i++) addLine(qX[i], queryY + box, qX[i], reconY, 'gme-link');
+        // cached latent -> every per-head K,V (dashed: computed on the fly, never stored)
+        for (i = 0; i < h; i++) addLine(cx, latentY + 26, qX[i], reconY, 'gme-link-dashed');
+        for (i = 0; i < h; i++) addBox(qX[i], queryY, box, box, 'gme-qbox', showLbl ? 'Q' + i : '');
+        if (st.dr){
+          addBox(cx - 42, latentY, 100, 26, 'gme-kvbox', 'c_KV (d_c=' + st.dc + ')');
+          addBox(cx + 54, latentY, 76, 26, 'gme-kvbox', 'k_R (d_r=' + st.dr + ')');
+        } else {
+          addBox(cx, latentY, 124, 26, 'gme-kvbox', 'c_KV (d_c = ' + st.dc + ')');
+        }
+        for (i = 0; i < h; i++) addBox(qX[i], reconY, box, box, 'gme-reconbox', showLbl ? 'KV' + i : '');
+        addRowLabel(queryY - 8, rowLabels[0]);
+        addRowLabel(latentY - 8, rowLabels[1]);
+        addRowLabel(reconY + box + 14, rowLabels[2]);
+        height = reconY + box + 30;
+        caption = 'Cache = ' + (st.dc + st.dr) + ' numbers/token/layer, independent of h; MHA would need 2 x h x d_h = '
+          + (2 * h * st.dh) + '.';
+      } else {
+        // MHA, MQA and GQA are one picture with three group sizes: s = 1, s = h, s = divisor.
+        var kvY = queryY + box + ROWGAP;
+        var kvW = g === 1 ? Math.max(box, 46) : box;
+        for (var gi = 0; gi < g; gi++){
+          var lo = gi * s, hi = lo + s - 1;
+          var gc = (qX[lo] + qX[hi]) / 2;
+          if (s > 1) kids.push(mk('rect', { x:(qX[lo] - box / 2 - 3).toFixed(2), y:(queryY - 4).toFixed(2),
+            width:(qX[hi] - qX[lo] + box + 6).toFixed(2), height:(box + 8).toFixed(2), rx:6, 'class':'gme-band' }));
+          for (var k = lo; k <= hi; k++) addLine(qX[k], queryY + box, gc, kvY, 'gme-link-cached');
+        }
+        for (i = 0; i < h; i++) addBox(qX[i], queryY, box, box, 'gme-qbox', showLbl ? 'Q' + i : '');
+        for (gi = 0; gi < g; gi++){
+          var c2 = (qX[gi * s] + qX[gi * s + s - 1]) / 2;
+          addBox(c2, kvY, kvW, box, 'gme-kvbox',
+            g === 1 ? 'KV' : box >= 24 ? 'KV' + gi : showLbl ? String(gi) : '');
+        }
+        addRowLabel(queryY - 8, rowLabels[0]);
+        addRowLabel(kvY - 8, rowLabels[1]);
+        height = kvY + box + 20;
+        caption = variant === 'mha'
+          ? 'MHA: every query head owns its K,V head (s = 1) - maximum expressivity, maximum cache.'
+          : variant === 'mqa'
+          ? 'MQA: all h query heads read one shared K,V head (s = h) - cache cut by h, biggest quality risk.'
+          : 'GQA: g = ' + g + ' KV heads, each shared by s = ' + s + ' query heads' +
+            (g === h ? ' - with s = 1 this IS MHA.' : g === 1 ? ' - with s = h this IS MQA.' : ' - strictly between MHA and MQA.');
+      }
+
+      elSvg.setAttribute('viewBox', '0 0 ' + width.toFixed(1) + ' ' + height.toFixed(1));
+      elSvg.setAttribute('width', width.toFixed(0));
+      elSvg.setAttribute('height', height.toFixed(0));
+      elSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      elSvg.setAttribute('aria-label', caption);
+      while (elSvg.firstChild) elSvg.removeChild(elSvg.firstChild);
+      for (i = 0; i < kids.length; i++) elSvg.appendChild(kids[i]);
+      elCaption.textContent = caption;
+    }
+
+    // ==================== comparison (all four variants, always) ====================
+    var VARIANTS = [{ k:'mha', n:'MHA' }, { k:'mqa', n:'MQA' }, { k:'gqa', n:'GQA' }, { k:'mla', n:'MLA' }];
+
+    function drawComparison(st){
+      var b = cacheBytes(st);
+      var maxB = Math.max(b.mha, b.mqa, b.gqa, b.mla, 1);
+      var tokens = st.layers * st.seq;
+
+      elReadout.innerHTML = 'd_model = h &middot; d_h = <b>' + (st.h * st.dh) + '</b> &nbsp;|&nbsp; MHA caches 2 &middot; d_model = <b>'
+        + (2 * st.h * st.dh) + '</b> numbers/token/layer &nbsp;|&nbsp; totals below are for '
+        + st.layers + ' layers &times; ' + st.seq + ' tokens, batch 1 &ndash; also the bytes read from HBM per decode step.';
+
+      var html = '';
+      for (var i = 0; i < VARIANTS.length; i++){
+        var v = VARIANTS[i], bytes = b[v.k];
+        var pct = Math.max(2, (bytes / maxB) * 100);
+        var ratio = bytes / b.mha;
+        var detail = v.k === 'gqa' ? ('n_kv = ' + st.g + ', s = ' + st.s)
+                   : v.k === 'mla' ? ('d_c' + (st.dr ? ' + d_r = ' + (st.dc + st.dr) : ' = ' + st.dc))
+                   : v.k === 'mha' ? ('n_kv = h = ' + st.h)
+                   : 'n_kv = 1';
+        var same = v.k === 'gqa' ? (st.g === st.h ? ' = MHA' : st.g === 1 ? ' = MQA' : '') : '';
+        var base = Math.abs(ratio - 1) < 1e-9;
+        var label = base ? 'baseline (1.00x)' : ratio < 1 ? (1 / ratio).toFixed(2) + 'x smaller' : ratio.toFixed(2) + 'x larger';
+        html += '<div class="gme-row' + (v.k === st.variant ? ' gme-sel' : '') + '">'
+          + '<div class="gme-name">' + v.n + same + '<span>' + detail + '</span></div>'
+          + '<div class="gme-bar-wrap"><div class="gme-bar" style="width:' + pct.toFixed(1) + '%"></div>'
+          + '<div class="gme-bar-label">' + fmtB(bytes) + ' / token / layer</div></div>'
+          + '<div class="gme-stats"><b' + (!base && ratio < 1 ? ' class="gme-good"' : '') + '>' + label + '</b><br>total: '
+          + fmtB(bytes * tokens) + '</div>'
+          + '</div>';
+      }
+      elCmp.innerHTML = html;
+    }
+
+    function render(){
+      var st = readState();
+      syncControls(st);
+      drawDiagram(st);
+      drawComparison(st);
+    }
+
+    // ---------------------------- events ----------------------------
+    function reSnapS(h){
+      var divs = divisorsOf(h);
+      elSRange.max = divs.length - 1;
+      elSRange.value = nearestIdx(divs, desiredS);
+    }
+    function onH(v){ reSnapS(clampInt(v, 1, MAXH, 8)); render(); }
+
+    elHRange.addEventListener('input', function(){ elHNum.value = elHRange.value; onH(elHRange.value); });
+    elHNum.addEventListener('input', function(){ elHRange.value = clampInt(elHNum.value, 1, MAXH, 8); onH(elHNum.value); });
+    elSRange.addEventListener('input', function(){
+      var divs = divisorsOf(clampInt(elHNum.value, 1, MAXH, 8));
+      desiredS = divs[clampInt(elSRange.value, 0, divs.length - 1, 0)];
+      render();
+    });
+    elDcRange.addEventListener('input', function(){ elDcNum.value = elDcRange.value; render(); });
+    elDcNum.addEventListener('input', function(){ elDcRange.value = clampInt(elDcNum.value, 8, 1024, 256); render(); });
+    elDh.addEventListener('input', render);
+    elLayers.addEventListener('input', render);
+    elSeq.addEventListener('input', render);
+    elDtype.addEventListener('change', render);
+    elVariant.addEventListener('change', render);
+    elRope.addEventListener('change', render);
+
+    // Normalise out-of-range / empty typing once the field is left.
+    [[elHNum, 1, MAXH, 8], [elDcNum, 8, 1024, 256], [elDh, 8, 512, 128],
+     [elLayers, 1, 200, 32], [elSeq, 1, 1000000, 4096]].forEach(function(spec){
+      spec[0].addEventListener('change', function(){
+        spec[0].value = clampInt(spec[0].value, spec[1], spec[2], spec[3]);
+        render();
+      });
+    });
+
+    var PRESETS = [
+      // h, d_h, s, d_c, layers, seq, bytes, variant, rope
+      { h:32, dh:128, s:1, dc:256, layers:32, seq:4096, bytes:2, variant:'mha', rope:false },
+      { h:32, dh:128, s:4, dc:256, layers:32, seq:8192, bytes:2, variant:'gqa', rope:false },
+      { h:8,  dh:64,  s:4, dc:128, layers:30, seq:2048, bytes:2, variant:'gqa', rope:false },
+      { h:16, dh:128, s:2, dc:512, layers:27, seq:8192, bytes:2, variant:'mla', rope:true  }
+    ];
+    Array.prototype.forEach.call(root.querySelectorAll('.gme-preset'), function(btn){
+      btn.addEventListener('click', function(){
+        var p = PRESETS[parseInt(btn.getAttribute('data-gme-preset'), 10)];
+        if (!p) return;
+        elHNum.value = p.h; elHRange.value = p.h;
+        elDh.value = p.dh; elDtype.value = String(p.bytes);
+        elDcNum.value = p.dc; elDcRange.value = p.dc;
+        elLayers.value = p.layers; elSeq.value = p.seq;
+        elVariant.value = p.variant; elRope.checked = p.rope;
+        desiredS = p.s; reSnapS(p.h);
+        render();
+      });
+    });
+
+    render();
+  })();</script>
+</div>

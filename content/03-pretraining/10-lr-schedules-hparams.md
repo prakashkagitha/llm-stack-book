@@ -92,6 +92,8 @@ $$
 
 Used in original Transformer training (Vaswani et al., 2017) with the combined formula $\eta(t) = d_{\text{model}}^{-0.5} \cdot \min(t^{-0.5},\; t \cdot T_w^{-1.5})$. The rsqrt schedule never fully plateaus — the LR continues to slowly decrease throughout training. It works well for smaller models and shorter runs but tends to decay too quickly for billion-scale pretraining.
 
+{{tool:lr-schedule-explorer}}
+
 ## Implementing Schedules From Scratch
 
 ```python

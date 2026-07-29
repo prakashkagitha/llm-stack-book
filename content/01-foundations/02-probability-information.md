@@ -141,6 +141,8 @@ Entropy is maximized by the uniform distribution ($H = \log V$ for $V$ outcomes)
 
     The uniform distribution over 4 tokens would give $H = \log_2 4 = 2$ bits. Our distribution has lower entropy because token 0 is more predictable.
 
+{{tool:softmax-temperature}}
+
 ### KL Divergence
 
 The **Kullback-Leibler (KL) divergence** from distribution $q$ to distribution $p$ measures how much information is lost when $q$ is used to approximate $p$:

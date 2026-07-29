@@ -1,0 +1,584 @@
+<div class="viz-tool" id="tool-decoding-tree">
+  <div class="vt-title">Decoding strategies: greedy, beam, temperature, top-k, top-p</div>
+  <div class="vt-hint">A toy vocabulary of 5 tokens (A&ndash;E). Every context has a fixed, seeded conditional distribution, so the same tree gets walked, pruned and sampled differently by each strategy. Each edge is labelled with the probability that actually governs the decision at that node; grey dashed branches are the ones not taken, <code>cut</code> marks tokens that top-k / top-p forced to exactly zero, and in beam mode <code>&Sigma;</code> is the cumulative logP that beam search prunes on.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="decoding-tree-mode">Strategy
+      <select id="decoding-tree-mode">
+        <option value="greedy">Greedy (argmax)</option>
+        <option value="beam" selected>Beam search</option>
+        <option value="temperature">Temperature sampling</option>
+        <option value="topk">Top-k sampling</option>
+        <option value="topp">Top-p (nucleus) sampling</option>
+      </select>
+    </label>
+    <label for="decoding-tree-steps">Steps (depth) <span class="vt-val" id="decoding-tree-steps-val">4</span>
+      <input id="decoding-tree-steps" type="range" min="2" max="6" step="1" value="4">
+    </label>
+    <label data-modes="beam" for="decoding-tree-beam">Beam width B <span class="vt-val" id="decoding-tree-beam-val">3</span>
+      <input id="decoding-tree-beam" type="range" min="1" max="5" step="1" value="3">
+    </label>
+    <label data-modes="temperature,topk,topp" for="decoding-tree-temp">Temperature T <span class="vt-val" id="decoding-tree-temp-val">1.00</span>
+      <input id="decoding-tree-temp" type="range" min="0.1" max="2.5" step="0.1" value="1.0">
+    </label>
+    <label data-modes="topk" for="decoding-tree-k">Top-k <span class="vt-val" id="decoding-tree-k-val">3</span>
+      <input id="decoding-tree-k" type="range" min="1" max="5" step="1" value="3">
+    </label>
+    <label data-modes="topp" for="decoding-tree-p">Top-p <span class="vt-val" id="decoding-tree-p-val">0.90</span>
+      <input id="decoding-tree-p" type="range" min="0.05" max="1" step="0.05" value="0.9">
+    </label>
+    <label for="decoding-tree-seed">Model seed <span class="vt-val" id="decoding-tree-seed-val">7</span>
+      <input id="decoding-tree-seed" type="range" min="1" max="200" step="1" value="7">
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn" id="decoding-tree-resample" data-modes="temperature,topk,topp" type="button">Resample</button>
+    <span class="vt-draw" id="decoding-tree-drawwrap" data-modes="temperature,topk,topp">draw #<span class="vt-val" id="decoding-tree-draw">0</span></span>
+    <button class="vt-btn" id="decoding-tree-reset" type="button">Reset</button>
+  </div>
+
+  <div class="vt-legend">
+    <span class="vt-legend-item"><span class="vt-swatch vt-swatch-chosen"></span>chosen sequence</span>
+    <span class="vt-legend-item"><span class="vt-swatch vt-swatch-kept"></span>kept / still alive</span>
+    <span class="vt-legend-item"><span class="vt-swatch vt-swatch-dead"></span>not taken / pruned</span>
+  </div>
+
+  <div class="vt-svg-wrap" id="decoding-tree-svg-wrap">
+    <svg id="decoding-tree-svg" role="img" aria-label="Tree of next-token candidates across decoding steps"></svg>
+  </div>
+
+  <div class="vt-readout" id="decoding-tree-readout" aria-live="polite">
+    <div class="vt-stat"><div class="vt-stat-label">Chosen sequence</div><div class="vt-stat-value" id="decoding-tree-seq">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">Total logP (T=1 model)</div><div class="vt-stat-value" id="decoding-tree-logp">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">Sequence P</div><div class="vt-stat-value" id="decoding-tree-prob">-</div></div>
+    <div class="vt-stat"><div class="vt-stat-label">Greedy logP (gap)</div><div class="vt-stat-value" id="decoding-tree-cmp">-</div></div>
+  </div>
+
+  <div class="vt-tablewrap" id="decoding-tree-steptwrap" hidden>
+    <div class="vt-tablewrap-title" id="decoding-tree-steptitle">Per-step decision</div>
+    <div class="vt-tablescroll"><table class="vt-table" id="decoding-tree-steptable"></table></div>
+  </div>
+
+  <div class="vt-tablewrap" id="decoding-tree-beamwrap" hidden>
+    <div class="vt-tablewrap-title">Surviving beams, ranked by cumulative logP</div>
+    <div class="vt-tablescroll"><table class="vt-table" id="decoding-tree-beamtable"></table></div>
+  </div>
+
+  <div class="vt-note" id="decoding-tree-note"></div>
+
+  <style>
+    #tool-decoding-tree{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#ffffff); color:var(--ink,#211f1b); font-family:var(--sans,system-ui,sans-serif); }
+    #tool-decoding-tree [hidden]{ display:none !important; }
+    #tool-decoding-tree .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-decoding-tree .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.55; }
+    #tool-decoding-tree .vt-hint code{ font-family:var(--mono,ui-monospace,monospace); font-size:.92em; background:var(--surface-2,#f3efe6); border-radius:4px; padding:0 3px; }
+
+    #tool-decoding-tree .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px 16px; }
+    #tool-decoding-tree label{ display:flex; flex-direction:column; gap:6px; font-size:.8rem; color:var(--muted,#6d675d); transition:opacity .15s ease; }
+    #tool-decoding-tree label.vt-dim{ opacity:.4; }
+    #tool-decoding-tree .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; font-family:var(--mono,ui-monospace,monospace); }
+    #tool-decoding-tree input[type="range"]{ width:100%; accent-color:var(--accent,#c15b39); }
+    #tool-decoding-tree select{ font:inherit; font-size:.82rem; padding:6px 8px; border:1px solid var(--border,#e7e1d4); border-radius:6px; background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); }
+    #tool-decoding-tree select:focus-visible, #tool-decoding-tree input:focus-visible, #tool-decoding-tree button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-decoding-tree .vt-actions{ margin:12px 0; display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+    #tool-decoding-tree .vt-btn{ font:inherit; font-size:.78rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#ffffff); color:var(--ink,#211f1b); cursor:pointer; transition:opacity .15s ease, background .15s ease; }
+    #tool-decoding-tree .vt-btn:hover:not(:disabled){ background:var(--surface-3,#ece7da); }
+    #tool-decoding-tree .vt-btn:disabled{ cursor:default; }
+    #tool-decoding-tree .vt-btn.vt-dim, #tool-decoding-tree .vt-draw.vt-dim{ opacity:.35; }
+    #tool-decoding-tree .vt-draw{ font-size:.75rem; color:var(--muted,#6d675d); font-family:var(--mono,ui-monospace,monospace); }
+
+    #tool-decoding-tree .vt-legend{ display:flex; flex-wrap:wrap; gap:14px; font-size:.75rem; color:var(--muted,#6d675d); margin-bottom:10px; }
+    #tool-decoding-tree .vt-legend-item{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-decoding-tree .vt-swatch{ display:inline-block; width:16px; height:3px; border-radius:2px; }
+    #tool-decoding-tree .vt-swatch-chosen{ background:var(--accent,#c15b39); }
+    #tool-decoding-tree .vt-swatch-kept{ background:var(--accent,#c15b39); opacity:.45; }
+    #tool-decoding-tree .vt-swatch-dead{ background:none; height:0; border-top:2px dashed var(--muted,#6d675d); opacity:.7; }
+
+    #tool-decoding-tree .vt-svg-wrap{ width:100%; overflow:auto; max-height:620px; border:1px solid var(--border,#e7e1d4); border-radius:8px; background:var(--surface-2,#f3efe6); }
+    #tool-decoding-tree svg#decoding-tree-svg{ display:block; max-width:none; }
+    #tool-decoding-tree .dt-edge{ fill:none; stroke:var(--muted,#6d675d); stroke-width:1; stroke-dasharray:3 3; opacity:.5; }
+    #tool-decoding-tree .dt-edge.dt-kept{ stroke:var(--accent,#c15b39); stroke-width:1.6; stroke-dasharray:none; opacity:.5; }
+    #tool-decoding-tree .dt-edge.dt-chosen{ stroke:var(--accent,#c15b39); stroke-width:2.6; stroke-dasharray:none; opacity:1; }
+    #tool-decoding-tree .dt-node{ stroke:var(--border-2,#d8d1c0); stroke-width:1; fill:var(--surface,#ffffff); }
+    #tool-decoding-tree .dt-node.dt-kept{ fill:var(--accent,#c15b39); fill-opacity:.3; stroke:var(--accent,#c15b39); }
+    #tool-decoding-tree .dt-node.dt-chosen{ fill:var(--accent,#c15b39); fill-opacity:1; stroke:var(--accent,#c15b39); }
+    #tool-decoding-tree .dt-node.dt-root{ fill:var(--ink,#211f1b); fill-opacity:.85; stroke:var(--ink,#211f1b); }
+    #tool-decoding-tree .dt-tok{ font-family:var(--mono,ui-monospace,monospace); font-size:10px; text-anchor:middle; dominant-baseline:central; fill:var(--ink,#211f1b); pointer-events:none; }
+    #tool-decoding-tree .dt-tok.dt-tok-chosen{ fill:var(--surface,#ffffff); font-weight:700; }
+    #tool-decoding-tree .dt-tok.dt-tok-root{ fill:var(--surface,#ffffff); }
+    #tool-decoding-tree .dt-elabel{ font-family:var(--mono,ui-monospace,monospace); font-size:8px; text-anchor:middle; fill:var(--muted,#6d675d); pointer-events:none; }
+    #tool-decoding-tree .dt-elabel.dt-elabel-chosen{ fill:var(--accent,#c15b39); font-weight:700; }
+    #tool-decoding-tree .dt-elabel.dt-esub{ font-size:7.5px; opacity:.8; }
+    #tool-decoding-tree .dt-collabel{ font-family:var(--mono,ui-monospace,monospace); font-size:10px; text-anchor:middle; fill:var(--muted,#6d675d); }
+
+    #tool-decoding-tree .vt-readout{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+    #tool-decoding-tree .vt-stat{ border:1px solid var(--border,#e7e1d4); border-radius:8px; padding:8px 10px; background:var(--surface-2,#f3efe6); }
+    #tool-decoding-tree .vt-stat-label{ font-size:.66rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; margin-bottom:3px; }
+    #tool-decoding-tree .vt-stat-value{ font-size:.9rem; font-weight:700; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-family:var(--mono,ui-monospace,monospace); word-break:break-word; }
+
+    #tool-decoding-tree .vt-tablewrap{ margin-top:14px; }
+    #tool-decoding-tree .vt-tablewrap-title{ font-size:.78rem; color:var(--muted,#6d675d); margin-bottom:6px; }
+    #tool-decoding-tree .vt-tablescroll{ width:100%; overflow-x:auto; }
+    #tool-decoding-tree .vt-table{ width:100%; border-collapse:collapse; font-size:.78rem; }
+    #tool-decoding-tree .vt-table th, #tool-decoding-tree .vt-table td{ text-align:left; padding:5px 8px; border-bottom:1px solid var(--border,#e7e1d4); font-family:var(--mono,ui-monospace,monospace); white-space:nowrap; }
+    #tool-decoding-tree .vt-table th{ color:var(--muted,#6d675d); font-weight:600; font-size:.68rem; text-transform:uppercase; letter-spacing:.02em; }
+    #tool-decoding-tree .vt-table tr.dt-best td{ color:var(--accent,#c15b39); font-weight:700; }
+
+    #tool-decoding-tree .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-decoding-tree .vt-note b{ color:var(--ink,#211f1b); }
+  </style>
+
+  <script>(function(){
+    var NS='http://www.w3.org/2000/svg';
+    var root=document.getElementById('tool-decoding-tree');
+    if(!root) return;
+
+    var VOCAB=['A','B','C','D','E'];
+    var V=VOCAB.length;
+    var TINY=1e-300;
+
+    // ---------- deterministic hash + PRNG: every context gets a fixed distribution ----------
+    function fnv1a(str){
+      var h=0x811c9dc5;
+      for(var i=0;i<str.length;i++){ h^=str.charCodeAt(i); h=Math.imul(h,0x01000193); }
+      return h>>>0;
+    }
+    function mulberry32(seed){
+      var s=seed|0;
+      return function(){
+        s=(s+0x6D2B79F5)|0;
+        var t=Math.imul(s^(s>>>15),1|s);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+
+    // Conditional logits for a context (array of token indices). Pure function of
+    // (modelSeed, path, token) -> the toy "model" is fixed and reproducible.
+    function logitsForContext(modelSeed,pathArr){
+      var ctx=pathArr.join(',');
+      var out=[];
+      for(var i=0;i<V;i++){
+        var rng=mulberry32(fnv1a(modelSeed+'|'+ctx+'|'+i));
+        rng(); // discard first draw: mulberry32's first output is weakly correlated across nearby seeds
+        var a=rng(), b=rng();
+        out.push((a*2-1)*3.2+(b-0.5)*0.6); // logit roughly in [-3.5, 3.5]
+      }
+      return out;
+    }
+
+    // softmax(z / T) with the max-subtraction trick (identical result, no overflow)
+    function softmax(z,T){
+      var t=(isFinite(T)&&T>0)?T:1;
+      var s=z.map(function(zi){ return zi/t; });
+      var m=-Infinity;
+      for(var i=0;i<s.length;i++) if(s[i]>m) m=s[i];
+      var e=s.map(function(x){ return Math.exp(x-m); });
+      var Z=0;
+      for(i=0;i<e.length;i++) Z+=e[i];
+      if(!(Z>0)) return e.map(function(){ return 1/e.length; });
+      return e.map(function(x){ return x/Z; });
+    }
+
+    function logSafe(p){ return Math.log(p>TINY?p:TINY); }
+
+    // stable descending argsort (ties keep vocabulary order -> fully deterministic)
+    function argsortDesc(arr){
+      var idx=arr.map(function(_,i){ return i; });
+      idx.sort(function(a,b){ return arr[b]-arr[a] || a-b; });
+      return idx;
+    }
+
+    // inverse-CDF sampling from a normalised probability vector
+    function sampleIndex(probs,u){
+      var c=0, last=-1;
+      for(var i=0;i<probs.length;i++){
+        if(!(probs[i]>0)) continue;
+        last=i; c+=probs[i];
+        if(u<c) return i;
+      }
+      return last>=0?last:0;
+    }
+
+    function fmtLogp(x){ return isFinite(x)?x.toFixed(3):'-inf'; }
+    function fmtPct(p){
+      if(!isFinite(p)) return '-';
+      if(p<=0) return '0%';
+      if(p<0.0001) return (p*100).toExponential(1)+'%';
+      return (p*100).toFixed(1)+'%';
+    }
+    function fmtSeqProb(logp){
+      var p=Math.exp(logp);
+      if(!isFinite(p)||p<=0) return '~0';
+      if(p<1e-4) return p.toExponential(2);
+      return (p*100).toFixed(3)+'%';
+    }
+
+    // ---------------------------- controls ----------------------------
+    function q(id){ return root.querySelector('#'+id); }
+    var modeSel=q('decoding-tree-mode');
+    var stepsIn=q('decoding-tree-steps'), beamIn=q('decoding-tree-beam'), tempIn=q('decoding-tree-temp');
+    var kIn=q('decoding-tree-k'), pIn=q('decoding-tree-p'), seedIn=q('decoding-tree-seed');
+    var stepsVal=q('decoding-tree-steps-val'), beamVal=q('decoding-tree-beam-val'), tempVal=q('decoding-tree-temp-val');
+    var kVal=q('decoding-tree-k-val'), pVal=q('decoding-tree-p-val'), seedVal=q('decoding-tree-seed-val');
+    var drawVal=q('decoding-tree-draw');
+    var resampleBtn=q('decoding-tree-resample'), resetBtn=q('decoding-tree-reset');
+    var svgWrap=q('decoding-tree-svg-wrap'), svg=q('decoding-tree-svg');
+    var seqEl=q('decoding-tree-seq'), logpEl=q('decoding-tree-logp'), probEl=q('decoding-tree-prob'), cmpEl=q('decoding-tree-cmp');
+    var stepWrap=q('decoding-tree-steptwrap'), stepTitle=q('decoding-tree-steptitle'), stepTable=q('decoding-tree-steptable');
+    var beamWrap=q('decoding-tree-beamwrap'), beamTable=q('decoding-tree-beamtable');
+    var noteEl=q('decoding-tree-note');
+    if(!modeSel||!svg||!noteEl) return;
+
+    var sampleDraw=0; // (modelSeed, sampleDraw) fully determines the sampled path
+
+    function num(el,def,min,max,isInt){
+      if(!el) return def;
+      var v=isInt?parseInt(el.value,10):parseFloat(el.value);
+      if(typeof v!=='number'||!isFinite(v)) v=def;
+      return Math.min(max,Math.max(min,v));
+    }
+    function el(tag,attrs){
+      var e=document.createElementNS(NS,tag);
+      for(var k in attrs) if(Object.prototype.hasOwnProperty.call(attrs,k)) e.setAttribute(k,attrs[k]);
+      return e;
+    }
+    function updateControlVisibility(mode){
+      var list=root.querySelectorAll('[data-modes]');
+      for(var j=0;j<list.length;j++){
+        var node=list[j];
+        var relevant=node.getAttribute('data-modes').split(',').indexOf(mode)>=0;
+        node.classList.toggle('vt-dim',!relevant);
+        var inp=(node.tagName==='INPUT'||node.tagName==='BUTTON')?node:node.querySelector('input');
+        if(inp) inp.disabled=!relevant;
+      }
+    }
+
+    // ------------------------- decoding traces -------------------------
+    // node: {id, depth, tokenIdx, path, parentId, decisionProb, baseProb, cut, status, logp}
+    // status in {'root','chosen','kept','dead'}
+    function newRoot(){ return {id:'root',depth:0,tokenIdx:null,path:[],parentId:null,status:'root'}; }
+
+    function greedyReference(modelSeed,D){
+      var path=[], logp=0;
+      for(var d=0;d<D;d++){
+        var probs=softmax(logitsForContext(modelSeed,path),1);
+        var best=0;
+        for(var i=1;i<V;i++) if(probs[i]>probs[best]) best=i;
+        logp+=logSafe(probs[best]);
+        path=path.concat([best]);
+      }
+      return {path:path,logp:logp};
+    }
+
+    function buildGreedy(modelSeed,D){
+      var nodes={root:newRoot()}, parent=nodes.root, logp=0, steps=[];
+      for(var d=1;d<=D;d++){
+        var probs=softmax(logitsForContext(modelSeed,parent.path),1);
+        var order=argsortDesc(probs), best=order[0], second=order[1];
+        for(var i=0;i<V;i++){
+          var id='d'+d+'_'+i;
+          nodes[id]={id:id,depth:d,tokenIdx:i,path:parent.path.concat([i]),parentId:parent.id,
+                     decisionProb:probs[i],baseProb:probs[i],cut:false,
+                     status:(i===best?'chosen':'dead')};
+        }
+        logp+=logSafe(probs[best]);
+        steps.push({step:d,chosen:best,p:probs[best],runner:second,pRunner:probs[second]});
+        parent=nodes['d'+d+'_'+best];
+      }
+      return {nodes:nodes,chosenPath:parent.path,totalLogp:logp,beams:null,steps:steps};
+    }
+
+    function buildBeam(modelSeed,D,B){
+      var nodes={root:newRoot()};
+      var beams=[{id:'root',path:[],logp:0}];
+      for(var d=1;d<=D;d++){
+        var candidates=[];
+        for(var bi=0;bi<beams.length;bi++){
+          var b=beams[bi];
+          var probs=softmax(logitsForContext(modelSeed,b.path),1);
+          for(var i=0;i<V;i++){
+            candidates.push({parentId:b.id,parentRank:bi,tokenIdx:i,path:b.path.concat([i]),
+                             logp:b.logp+logSafe(probs[i]),baseProb:probs[i]});
+          }
+        }
+        // Global top-B over *all* beams' expansions, ranked by cumulative logP.
+        candidates.sort(function(x,y){ return (y.logp-x.logp) || (x.parentRank-y.parentRank) || (x.tokenIdx-y.tokenIdx); });
+        var keepN=Math.min(B,candidates.length);
+        var newBeams=[];
+        candidates.forEach(function(c,ci){
+          var kept=ci<keepN;
+          var id='d'+d+(kept?'_k':'_p')+ci;
+          nodes[id]={id:id,depth:d,tokenIdx:c.tokenIdx,path:c.path,parentId:c.parentId,
+                     decisionProb:c.baseProb,baseProb:c.baseProb,cut:false,
+                     status:kept?'kept':'dead',logp:c.logp};
+          if(kept) newBeams.push({id:id,path:c.path,logp:c.logp});
+        });
+        beams=newBeams;
+      }
+      // mark the whole ancestry of the single best surviving beam
+      var cur=beams[0].id;
+      while(cur&&cur!=='root'){ nodes[cur].status='chosen'; cur=nodes[cur].parentId; }
+      return {nodes:nodes,chosenPath:beams[0].path,totalLogp:beams[0].logp,beams:beams,steps:null};
+    }
+
+    function buildSampling(modelSeed,D,mode,T,k,p,draw){
+      var nodes={root:newRoot()}, parent=nodes.root, logp=0, steps=[];
+      // one PRNG stream per (model, draw): changing T/k/p reuses the *same* uniforms,
+      // so the effect of the knob is visible rather than tangled with fresh randomness.
+      var rng=mulberry32(fnv1a(modelSeed+'|sample|'+draw));
+      for(var d=1;d<=D;d++){
+        var logits=logitsForContext(modelSeed,parent.path);
+        var baseProbs=softmax(logits,1);        // what the model actually assigns
+        var scaled=softmax(logits,T);           // after temperature: softmax(z / T)
+        var keep=[], i;
+        for(i=0;i<V;i++) keep.push(true);
+        if(mode==='topk'){
+          var order=argsortDesc(scaled);
+          for(i=0;i<V;i++) keep[i]=false;
+          var kk=Math.max(1,Math.min(k,V));
+          for(i=0;i<kk;i++) keep[order[i]]=true;
+        } else if(mode==='topp'){
+          order=argsortDesc(scaled);
+          for(i=0;i<V;i++) keep[i]=false;
+          var cum=0;
+          for(i=0;i<V;i++){
+            keep[order[i]]=true;               // smallest prefix whose cumulative mass reaches p
+            cum+=scaled[order[i]];
+            if(cum>=p-1e-12) break;
+          }
+        }
+        var sumKept=0, nKept=0;
+        for(i=0;i<V;i++) if(keep[i]){ sumKept+=scaled[i]; nKept++; }
+        if(!(sumKept>0)){ // degenerate guard: fall back to the argmax of the scaled distribution
+          var mx=argsortDesc(scaled)[0];
+          for(i=0;i<V;i++) keep[i]=(i===mx);
+          sumKept=scaled[mx]>0?scaled[mx]:1; nKept=1;
+        }
+        var finalProbs=scaled.map(function(qv,ix){ return keep[ix]?qv/sumKept:0; });
+        var choice=sampleIndex(finalProbs,rng());
+        for(i=0;i<V;i++){
+          var id='d'+d+'_'+i;
+          nodes[id]={id:id,depth:d,tokenIdx:i,path:parent.path.concat([i]),parentId:parent.id,
+                     decisionProb:finalProbs[i],baseProb:baseProbs[i],scaledProb:scaled[i],
+                     cut:(mode!=='temperature')&&!keep[i],
+                     status:(!keep[i]?'dead':(i===choice?'chosen':'kept'))};
+        }
+        logp+=logSafe(baseProbs[choice]);      // score the realised sequence under the T=1 model
+        steps.push({step:d,chosen:choice,pDec:finalProbs[choice],pBase:baseProbs[choice],
+                    nKept:nKept,cut:Math.max(0,1-sumKept),scaled:scaled});
+        parent=nodes['d'+d+'_'+choice];
+      }
+      return {nodes:nodes,chosenPath:parent.path,totalLogp:logp,beams:null,steps:steps};
+    }
+
+    // ------------------------------ render ------------------------------
+    function render(){
+      var mode=modeSel.value;
+      var D=num(stepsIn,4,2,6,true);
+      var B=num(beamIn,3,1,5,true);
+      var T=num(tempIn,1,0.1,2.5,false);
+      var k=num(kIn,3,1,V,true);
+      var p=num(pIn,0.9,0.05,1,false);
+      var modelSeed=num(seedIn,7,1,200,true);
+
+      if(stepsVal) stepsVal.textContent=String(D);
+      if(beamVal) beamVal.textContent=String(B);
+      if(tempVal) tempVal.textContent=T.toFixed(2);
+      if(kVal) kVal.textContent=String(k);
+      if(pVal) pVal.textContent=p.toFixed(2);
+      if(seedVal) seedVal.textContent=String(modelSeed);
+      if(drawVal) drawVal.textContent=String(sampleDraw);
+      updateControlVisibility(mode);
+
+      var trace;
+      if(mode==='greedy') trace=buildGreedy(modelSeed,D);
+      else if(mode==='beam') trace=buildBeam(modelSeed,D,B);
+      else trace=buildSampling(modelSeed,D,mode,T,k,p,sampleDraw);
+      var ref=greedyReference(modelSeed,D);
+
+      // ---- group nodes by depth, then by parent (a real tree layout, few crossings) ----
+      var byDepth=[[trace.nodes.root]];
+      for(var d=1;d<=D;d++){
+        var arr=[];
+        for(var key in trace.nodes) if(trace.nodes[key].depth===d) arr.push(trace.nodes[key]);
+        var rank={};
+        byDepth[d-1].forEach(function(n,i){ rank[n.id]=i; });
+        arr.sort(function(a,b){
+          var ra=rank[a.parentId], rb=rank[b.parentId];
+          if(ra===undefined) ra=1e9;
+          if(rb===undefined) rb=1e9;
+          if(ra!==rb) return ra-rb;
+          if(mode==='beam') return (b.logp-a.logp)||(a.tokenIdx-b.tokenIdx);
+          return a.tokenIdx-b.tokenIdx;
+        });
+        byDepth.push(arr);
+      }
+
+      // fractional row slots, with a small gap between sibling groups
+      var rowsAt=[], unitsAt=[];
+      byDepth.forEach(function(arr){
+        var rows=[], y=0, prevParent=null;
+        arr.forEach(function(n,i){
+          if(i>0&&n.parentId!==prevParent) y+=0.6;
+          rows.push(y); y+=1; prevParent=n.parentId;
+        });
+        rowsAt.push(rows); unitsAt.push(y);
+      });
+
+      var rowH=(mode==='beam')?28:24, marginX=46, topPad=30, botPad=24;
+      var avail=(svgWrap&&svgWrap.clientWidth)?svgWrap.clientWidth-4:700;
+      var colW=Math.max(88,Math.min(140,Math.floor((avail-2*marginX)/Math.max(1,D))));
+      var maxUnits=Math.max.apply(null,unitsAt);
+      var svgH=Math.max(170,Math.round(maxUnits*rowH+topPad+botPad));
+      var svgW=marginX*2+D*colW;
+
+      var xOf=function(depth){ return marginX+depth*colW; };
+      var pos={};
+      byDepth.forEach(function(arr,di){
+        var off=(svgH-unitsAt[di]*rowH)/2;
+        arr.forEach(function(n,i){ pos[n.id]={x:xOf(di),y:off+rowsAt[di][i]*rowH+rowH/2}; });
+      });
+
+      svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
+      svg.style.width=svgW+'px';
+      svg.style.height=svgH+'px';
+      while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+      for(d=0;d<=D;d++){
+        var t=el('text',{x:xOf(d),y:16,'class':'dt-collabel'});
+        t.textContent=(d===0?'start':'step '+d);
+        svg.appendChild(t);
+      }
+
+      // edges (drawn first so nodes sit on top)
+      for(d=1;d<=D;d++){
+        byDepth[d].forEach(function(node){
+          var pp=pos[node.parentId], cp=pos[node.id];
+          if(!pp||!cp) return;
+          var cls='dt-edge'+(node.status==='chosen'?' dt-chosen':(node.status==='kept'?' dt-kept':''));
+          var mx=(pp.x+cp.x)/2;
+          svg.appendChild(el('path',{d:'M'+pp.x+','+pp.y+' C'+mx+','+pp.y+' '+mx+','+cp.y+' '+cp.x+','+cp.y,'class':cls}));
+          var lx=pp.x+(cp.x-pp.x)*0.68, ly=pp.y+(cp.y-pp.y)*0.68;
+          var chosenCls=(node.status==='chosen'?' dt-elabel-chosen':'');
+          var lab=el('text',{x:lx,y:ly-(mode==='beam'?7:3),'class':'dt-elabel'+chosenCls});
+          // A cut branch reports the (temperature-scaled) mass top-k / top-p threw away;
+          // every other branch reports the probability that actually drove the decision.
+          lab.textContent=node.cut?('cut '+fmtPct(node.scaledProb)):fmtPct(node.decisionProb);
+          svg.appendChild(lab);
+          if(mode==='beam'&&isFinite(node.logp)){
+            // beam search prunes on cumulative logP, not on this edge's probability --
+            // show it, otherwise a fat edge losing to a thin one looks arbitrary.
+            var sub=el('text',{x:lx,y:ly+3,'class':'dt-elabel dt-esub'+chosenCls});
+            sub.textContent='Σ'+node.logp.toFixed(2);
+            svg.appendChild(sub);
+          }
+        });
+      }
+
+      byDepth.forEach(function(arr){
+        arr.forEach(function(node){
+          var xy=pos[node.id], isRoot=node.status==='root';
+          var cls='dt-node'+(node.status==='chosen'?' dt-chosen':(node.status==='kept'?' dt-kept':(isRoot?' dt-root':'')));
+          svg.appendChild(el('circle',{cx:xy.x,cy:xy.y,r:isRoot?7:9,'class':cls}));
+          var tcls='dt-tok'+(node.status==='chosen'?' dt-tok-chosen':(isRoot?' dt-tok-root':''));
+          var txt=el('text',{x:xy.x,y:xy.y,'class':tcls});
+          txt.textContent=isRoot?'*':VOCAB[node.tokenIdx];
+          svg.appendChild(txt);
+        });
+      });
+
+      // ---- readout ----
+      var seqStr=trace.chosenPath.map(function(i){ return VOCAB[i]; }).join(' → ');
+      seqEl.textContent=seqStr||'-';
+      logpEl.textContent=fmtLogp(trace.totalLogp);
+      probEl.textContent=fmtSeqProb(trace.totalLogp);
+      if(mode==='greedy'){
+        cmpEl.textContent=fmtLogp(ref.logp)+' (this is greedy)';
+      } else {
+        var diff=trace.totalLogp-ref.logp;
+        cmpEl.textContent=fmtLogp(ref.logp)+' ('+(diff>=0?'+':'')+diff.toFixed(3)+')';
+      }
+      svg.setAttribute('aria-label','Decoding tree over 5 tokens A to E for '+D+' steps using '+mode+
+        ' decoding; the chosen sequence is '+(seqStr||'empty')+' with total log probability '+fmtLogp(trace.totalLogp)+'.');
+
+      // ---- beam table ----
+      if(mode==='beam'&&trace.beams){
+        beamWrap.hidden=false;
+        var brows=['<tr><th>rank</th><th>sequence</th><th>cumulative logP</th><th>P</th></tr>'];
+        trace.beams.forEach(function(b,i){
+          brows.push('<tr class="'+(i===0?'dt-best':'')+'"><td>'+(i+1)+'</td><td>'+
+            b.path.map(function(ix){ return VOCAB[ix]; }).join(' → ')+'</td><td>'+
+            fmtLogp(b.logp)+'</td><td>'+fmtSeqProb(b.logp)+'</td></tr>');
+        });
+        beamTable.innerHTML=brows.join('');
+      } else {
+        beamWrap.hidden=true; beamTable.innerHTML='';
+      }
+
+      // ---- per-step table ----
+      if(trace.steps&&trace.steps.length){
+        stepWrap.hidden=false;
+        var srows;
+        if(mode==='greedy'){
+          stepTitle.textContent='Per-step decision (argmax vs. runner-up)';
+          srows=['<tr><th>step</th><th>chosen</th><th>P(chosen)</th><th>runner-up</th><th>P(runner-up)</th><th>margin</th></tr>'];
+          trace.steps.forEach(function(s){
+            srows.push('<tr><td>'+s.step+'</td><td>'+VOCAB[s.chosen]+'</td><td>'+fmtPct(s.p)+'</td><td>'+
+              VOCAB[s.runner]+'</td><td>'+fmtPct(s.pRunner)+'</td><td>'+fmtPct(s.p-s.pRunner)+'</td></tr>');
+          });
+        } else {
+          stepTitle.textContent='Per-step decision (base model vs. the distribution you sampled from)';
+          srows=['<tr><th>step</th><th>chosen</th><th>P base (T=1)</th><th>P sampled-from</th><th>tokens kept</th><th>mass cut</th></tr>'];
+          trace.steps.forEach(function(s){
+            srows.push('<tr><td>'+s.step+'</td><td>'+VOCAB[s.chosen]+'</td><td>'+fmtPct(s.pBase)+'</td><td>'+
+              fmtPct(s.pDec)+'</td><td>'+s.nKept+' / '+V+'</td><td>'+fmtPct(s.cut)+'</td></tr>');
+          });
+        }
+        stepTable.innerHTML=srows.join('');
+      } else {
+        stepWrap.hidden=true; stepTable.innerHTML='';
+      }
+
+      // ---- note ----
+      var msgs={
+        greedy:'<b>Greedy</b> takes the single highest-probability token at every step. It is deterministic and cheap, but it is myopic: the margin column shows how thin some of these decisions are, and once a step is taken there is no way back, so a locally-best token can lock in a globally worse sequence.',
+        beam:'<b>Beam search</b> expands all B surviving prefixes, then keeps the top B by <i>cumulative</i> logP pooled across all beams (not B-best per beam) &mdash; which is why the &Sigma; number on each edge, not the edge&rsquo;s own probability, decides what survives: a 40% edge hanging off a weak prefix loses to a 20% edge hanging off a strong one. Set B = 1 and it collapses exactly onto the greedy path. Raise B and the gap against greedy is never negative here but is very often exactly zero: widening the beam buys you nothing unless some prefix that looked second-best early actually pays off later. Note also that beam search remains a heuristic with no optimality guarantee &mdash; a prefix pruned at step d can be the one that would have won at step D. Every hypothesis here has the same length, so the length-normalisation term in the chapter&rsquo;s code would not change this ranking.',
+        temperature:'<b>Temperature</b> divides the logits by T before the softmax: T &lt; 1 sharpens toward the argmax (T &rarr; 0 is greedy), T &gt; 1 flattens toward uniform. Nothing is removed, so no branch is ever cut. The two probability columns diverge as you move T away from 1: you sample from the T-scaled distribution but the sequence is still scored under the T = 1 model, which is why high T reliably costs you logP.',
+        topk:'<b>Top-k</b> keeps the k highest-probability tokens (after temperature), sets the rest to exactly zero, and renormalises the survivors to sum to 1 &mdash; that renormalisation is why P(sampled-from) is larger than P(base). The <i>mass cut</i> column is the probability the truncation discarded; k is fixed, so it cuts almost nothing on a peaked step and a lot on a flat one.',
+        topp:'<b>Top-p (nucleus)</b> sorts by probability and keeps the smallest prefix whose cumulative mass reaches p, then renormalises and samples. Watch the <i>tokens kept</i> column change from step to step: unlike top-k, the nucleus size adapts to how peaked the step is, which is exactly the property that makes it the default in practice.'
+      };
+      noteEl.innerHTML='The 5-token vocabulary and every conditional distribution are generated by a seeded hash of the path so far and passed through an exact max-subtracted softmax &mdash; a fixed, reproducible toy model, not real language. '+
+        (msgs[mode]||'')+' <b>Takeaway:</b> all five strategies read the same distributions; they differ only in which candidates they are allowed to keep and how they break the tie &mdash; and that choice, not the model, decides whether you get the highest-probability text or the most interesting text.';
+    }
+
+    // -------------------------- wiring --------------------------
+    var inputs=root.querySelectorAll('input, select');
+    for(var ii=0;ii<inputs.length;ii++){
+      inputs[ii].addEventListener('input',render);
+      inputs[ii].addEventListener('change',render);
+    }
+    if(resampleBtn) resampleBtn.addEventListener('click',function(){ sampleDraw=(sampleDraw+1)%1000; render(); });
+    if(resetBtn) resetBtn.addEventListener('click',function(){
+      modeSel.value='beam';
+      if(stepsIn) stepsIn.value='4';
+      if(beamIn) beamIn.value='3';
+      if(tempIn) tempIn.value='1';
+      if(kIn) kIn.value='3';
+      if(pIn) pIn.value='0.9';
+      if(seedIn) seedIn.value='7';
+      sampleDraw=0;
+      render();
+    });
+
+    var rt=null;
+    window.addEventListener('resize',function(){
+      if(rt) clearTimeout(rt);
+      rt=setTimeout(render,150);
+    });
+
+    render();
+  })();</script>
+</div>

@@ -1,0 +1,505 @@
+<div class="viz-tool" id="tool-moe-router">
+  <div class="vt-title">Mixture-of-Experts routing, capacity &amp; the aux load-balancing loss</div>
+  <div class="vt-hint">Every token gets a router softmax over <b>E</b> experts from fixed (seeded) gate logits, is dispatched to its <b>top-k</b> experts with renormalized combine weights (Mixtral-style), and is <b>dropped</b> if it arrives at a full capacity buffer. Then drag <b>aux steps T</b>: that runs actual gradient descent on the Switch auxiliary loss (with the hard counts detached) and you watch the collapsed router walk back toward uniform load.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="moe-router-N">Tokens N <span class="vt-val" id="moe-router-Nval">12</span>
+      <input id="moe-router-N" type="range" min="4" max="24" step="1" value="12" aria-label="Number of tokens N">
+    </label>
+    <label for="moe-router-E">Experts E <span class="vt-val" id="moe-router-Eval">4</span>
+      <input id="moe-router-E" type="range" min="2" max="8" step="1" value="4" aria-label="Number of experts E">
+    </label>
+    <label for="moe-router-k">Top-k <span class="vt-val" id="moe-router-kval">2</span>
+      <input id="moe-router-k" type="range" min="1" max="4" step="1" value="2" aria-label="Top-k experts per token">
+    </label>
+    <label for="moe-router-C">Capacity factor C<sub>f</sub> <span class="vt-val" id="moe-router-Cval">1.25</span>
+      <input id="moe-router-C" type="range" min="0.5" max="2" step="0.05" value="1.25" aria-label="Capacity factor">
+    </label>
+    <label for="moe-router-A">Aux coeff. &alpha; <span class="vt-val" id="moe-router-Aval">0.0100</span>
+      <input id="moe-router-A" type="range" min="0" max="0.05" step="0.0025" value="0.01" aria-label="Auxiliary loss coefficient alpha">
+    </label>
+    <label for="moe-router-T">Aux steps T <span class="vt-val" id="moe-router-Tval">0</span>
+      <input id="moe-router-T" type="range" min="0" max="200" step="1" value="0" aria-label="Number of auxiliary-loss gradient steps applied to the router">
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn" id="moe-router-shuffle" type="button">Shuffle gates (re-roll seed)</button>
+    <button class="vt-btn" id="moe-router-reset" type="button">Reset</button>
+    <span class="mr-seed" id="moe-router-seedlabel">seed = 42</span>
+  </div>
+
+  <div class="mr-panels">
+    <div class="mr-panel">
+      <div class="mr-panel-h">Dispatch (token &rarr; expert)</div>
+      <div class="mr-wrap">
+        <svg id="moe-router-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 200"
+             preserveAspectRatio="xMidYMid meet" role="img"
+             aria-label="Bipartite graph of tokens routed to their top-k experts, with dropped edges dashed"></svg>
+      </div>
+      <div class="mr-legend">
+        <span class="mr-sw mr-sw-line"></span> routed edge (width/opacity = combine weight g)
+        <span class="mr-sw mr-sw-drop"></span> dropped (buffer full)
+        <span class="mr-sw mr-sw-ring"></span> token with &ge;1 dropped edge
+      </div>
+    </div>
+
+    <div class="mr-panel">
+      <div class="mr-panel-h">Per-expert load vs capacity</div>
+      <div class="mr-bars" id="moe-router-bars"></div>
+      <div class="mr-panel-h mr-panel-h2">Balance index while the aux loss trains the router</div>
+      <div class="mr-wrap">
+        <svg id="moe-router-spark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 130"
+             preserveAspectRatio="xMidYMid meet" role="img"
+             aria-label="Balance index E times sum of f times P versus auxiliary-loss training step"></svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="mr-formula" id="moe-router-formula"></div>
+  <div class="vt-out" id="moe-router-out" aria-live="polite"></div>
+  <div class="vt-note" id="moe-router-note"></div>
+
+  <style>
+    #tool-moe-router{
+      --mr-accent: var(--accent,#c15b39);
+      --mr-ink: var(--ink,#211f1b);
+      --mr-muted: var(--muted,#6d675d);
+      --mr-warn: #b45309;
+      --mr-line: var(--border-2,#d8d1c0);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff);
+    }
+    html[data-theme="dark"] #tool-moe-router{ --mr-warn:#f0b429; }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-moe-router{ --mr-warn:#f0b429; }
+    }
+    #tool-moe-router .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--mr-ink); }
+    #tool-moe-router .vt-hint{ font-size:.8rem; color:var(--mr-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-moe-router .vt-hint b{ color:var(--ink-soft,#45413a); }
+    #tool-moe-router .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px 18px; }
+    #tool-moe-router label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--mr-muted); }
+    #tool-moe-router .vt-val{ color:var(--mr-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-moe-router input[type="range"]{ width:100%; accent-color:var(--mr-accent); }
+    #tool-moe-router input[type="range"]:focus-visible{ outline:2px solid var(--mr-accent); outline-offset:3px; }
+    #tool-moe-router .vt-actions{ margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #tool-moe-router .vt-btn{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--mr-ink); cursor:pointer; }
+    #tool-moe-router .vt-btn:hover{ background:var(--surface-3,#ece7da); }
+    #tool-moe-router .vt-btn:focus-visible{ outline:2px solid var(--mr-accent); outline-offset:2px; }
+    #tool-moe-router .mr-seed{ font-family:var(--mono,monospace); font-size:.76rem; color:var(--mr-muted); }
+
+    #tool-moe-router .mr-panels{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:20px 26px; }
+    #tool-moe-router .mr-panel{ min-width:0; }
+    #tool-moe-router .mr-panel-h{ font-size:.74rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+      color:var(--mr-muted); margin-bottom:8px; }
+    #tool-moe-router .mr-panel-h2{ margin-top:18px; }
+    #tool-moe-router .mr-wrap{ max-width:100%; }
+    #tool-moe-router svg{ display:block; width:100%; height:auto; }
+    #tool-moe-router #moe-router-svg{ max-width:400px; }
+    #tool-moe-router #moe-router-spark{ max-width:460px; }
+    #tool-moe-router .mr-lab{ font-size:9.5px; fill:var(--mr-muted); font-family:var(--sans,sans-serif); }
+    #tool-moe-router .mr-lab-strong{ font-size:9.5px; fill:var(--mr-ink); font-family:var(--sans,sans-serif); font-weight:600; }
+    #tool-moe-router .mr-lab-warn{ font-size:9.5px; fill:var(--mr-warn); font-family:var(--sans,sans-serif); }
+    #tool-moe-router .mr-axtitle{ font-size:10px; font-weight:600; fill:var(--mr-muted); font-family:var(--sans,sans-serif); }
+    #tool-moe-router .mr-tok{ fill:var(--ink-soft,#45413a); }
+    #tool-moe-router .mr-tok-drop{ fill:var(--ink-soft,#45413a); stroke:var(--mr-warn); stroke-width:2; }
+    #tool-moe-router .mr-exp{ fill:var(--mr-accent); stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-moe-router .mr-exp-over{ stroke:var(--mr-warn); stroke-width:2; }
+    #tool-moe-router .mr-edge{ stroke:var(--mr-accent); fill:none; }
+    #tool-moe-router .mr-edge-drop{ stroke:var(--mr-warn); fill:none; stroke-dasharray:3 2; }
+    #tool-moe-router .mr-grid{ stroke:var(--mr-line); fill:none; }
+    #tool-moe-router .mr-curve{ stroke:var(--mr-accent); fill:none; stroke-width:1.8; }
+    #tool-moe-router .mr-ref{ stroke:var(--mr-line); fill:none; stroke-dasharray:4 3; }
+    #tool-moe-router .mr-mark{ stroke:var(--mr-ink); fill:none; opacity:.5; }
+    #tool-moe-router .mr-dot{ fill:var(--mr-accent); }
+
+    #tool-moe-router .mr-legend{ margin-top:8px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+      font-size:.74rem; color:var(--mr-muted); }
+    #tool-moe-router .mr-sw{ display:inline-block; width:16px; height:2px; margin-right:4px; vertical-align:middle;
+      background:var(--mr-accent); }
+    #tool-moe-router .mr-sw-line{ opacity:.75; }
+    #tool-moe-router .mr-sw-drop{ background:none; border-top:2px dashed var(--mr-warn); height:0; }
+    #tool-moe-router .mr-sw-ring{ width:10px; height:10px; border-radius:50%; background:none; border:2px solid var(--mr-warn); }
+
+    #tool-moe-router .mr-bars{ display:flex; flex-direction:column; gap:7px; }
+    #tool-moe-router .mr-bar-row{ display:grid; grid-template-columns:30px 1fr 118px; align-items:center; gap:9px; font-size:.78rem; }
+    #tool-moe-router .mr-bar-label{ font-family:var(--mono,monospace); color:var(--mr-ink); white-space:nowrap; }
+    #tool-moe-router .mr-bar-track{ position:relative; height:15px; border-radius:5px; background:var(--surface-3,#ece7da); }
+    #tool-moe-router .mr-bar-kept{ position:absolute; top:0; left:0; height:100%; border-radius:5px 0 0 5px;
+      background:var(--mr-accent); opacity:.8; }
+    #tool-moe-router .mr-bar-over{ position:absolute; top:0; height:100%; border-radius:0 5px 5px 0;
+      background:repeating-linear-gradient(45deg, var(--mr-warn), var(--mr-warn) 3px, transparent 3px, transparent 6px); }
+    #tool-moe-router .mr-bar-cap{ position:absolute; top:-2px; height:19px; width:2px; background:var(--mr-ink); opacity:.55; }
+    #tool-moe-router .mr-bar-count{ text-align:right; font-variant-numeric:tabular-nums; color:var(--mr-muted); font-size:.74rem; }
+    #tool-moe-router .mr-bar-row.is-over .mr-bar-count{ color:var(--mr-warn); }
+
+    #tool-moe-router .mr-formula{ margin-top:16px; font-family:var(--mono,monospace); font-size:.73rem; line-height:1.7;
+      color:var(--mr-muted); background:var(--surface-3,#ece7da); border-radius:8px; padding:9px 12px; overflow-x:auto; }
+    #tool-moe-router .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:12px; }
+    #tool-moe-router .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:11px 13px; }
+    #tool-moe-router .vt-stat .n{ font-size:1.2rem; font-weight:700; color:var(--mr-accent); font-variant-numeric:tabular-nums; }
+    #tool-moe-router .vt-stat .l{ font-size:.72rem; color:var(--mr-muted); margin-top:2px; line-height:1.35; }
+    #tool-moe-router .vt-stat.mr-warn .n{ color:var(--mr-warn); }
+    #tool-moe-router .vt-note{ margin-top:14px; font-size:.78rem; color:var(--mr-muted); line-height:1.55; }
+    #tool-moe-router .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-moe-router');
+    if(!root) return;
+    function q(id){ return root.querySelector('#moe-router-' + id); }
+
+    var Nin=q('N'), Ein=q('E'), kin=q('k'), Cin=q('C'), Ain=q('A'), Tin=q('T');
+    var Nval=q('Nval'), Eval=q('Eval'), kval=q('kval'), Cval=q('Cval'), Aval=q('Aval'), Tval=q('Tval');
+    var shuffleBtn=q('shuffle'), resetBtn=q('reset'), seedLabel=q('seedlabel');
+    var svg=q('svg'), spark=q('spark'), barsEl=q('bars'), formulaEl=q('formula'),
+        outEl=q('out'), noteEl=q('note');
+    if(!Nin||!Ein||!kin||!Cin||!Ain||!Tin||!svg||!spark||!barsEl||!outEl||!noteEl) return;
+
+    var MAXT = 200;      // aux-loss steps simulated on every render
+    var ETA  = 60;       // router-only step size (exaggerated: 200 steps stand in for many thousands)
+    var seed = 42;
+
+    // ---------------------------------------------------------- seeded PRNG
+    function mulberry32(a){
+      return function(){
+        a|=0; a=(a+0x6D2B79F5)|0;
+        var t=Math.imul(a^(a>>>15),1|a);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+    function randn(rng){
+      var u=0, v=0;
+      while(u===0) u=rng();
+      while(v===0) v=rng();
+      return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+    }
+    // Deterministic gate logits h (N x E): a per-expert bias (some experts are "hot" purely
+    // by random init -- the rich-get-richer collapse story) plus per-token noise.
+    function genLogits(sd,N,E){
+      var rng=mulberry32(sd), e, i;
+      var bias=new Array(E);
+      for(e=0;e<E;e++) bias[e]=randn(rng)*1.8;
+      var L=new Array(N);
+      for(i=0;i<N;i++){
+        var row=new Array(E);
+        for(e=0;e<E;e++) row[e]=bias[e]+randn(rng)*0.65;
+        L[i]=row;
+      }
+      return L;
+    }
+
+    function softmaxRow(row){
+      var m=row[0], i;
+      for(i=1;i<row.length;i++) if(row[i]>m) m=row[i];
+      var ex=new Array(row.length), Z=0;
+      for(i=0;i<row.length;i++){ ex[i]=Math.exp(row[i]-m); Z+=ex[i]; }
+      for(i=0;i<row.length;i++) ex[i]=ex[i]/Z;
+      return ex;
+    }
+    function topKIdx(row,k){
+      var idx=[], i;
+      for(i=0;i<row.length;i++) idx.push(i);
+      idx.sort(function(a,b){ return row[b]-row[a] || a-b; });   // stable, deterministic ties
+      return idx.slice(0,k);
+    }
+
+    // ------------------------------------------------- one forward pass of the router
+    // p_i = softmax(h_i);  S_i = top-k experts by logit;  g_ie = p_ie / sum_{e' in S_i} p_ie'
+    // f_e = (# dispatch slots to e) / (N*k)   -> sums to 1   (chapter: f / f.sum(), detached)
+    // P_e = mean_i p_ie                        -> sums to 1
+    // balance index  B = E * sum_e f_e P_e     -> 1 when uniform, ~E when collapsed
+    // aux loss       L = alpha * B
+    function forward(logits,N,E,k){
+      var probs=new Array(N), picks=new Array(N), counts=new Array(E), i, j, e;
+      for(e=0;e<E;e++) counts[e]=0;
+      for(i=0;i<N;i++){
+        probs[i]=softmaxRow(logits[i]);
+        var idx=topKIdx(logits[i],k), sel=0;
+        for(j=0;j<idx.length;j++) sel+=probs[i][idx[j]];
+        var row=new Array(idx.length);
+        for(j=0;j<idx.length;j++){
+          e=idx[j];
+          row[j]={e:e, gate: sel>0 ? probs[i][e]/sel : 1/idx.length, dropped:false};
+          counts[e]++;
+        }
+        picks[i]=row;
+      }
+      var slots=N*k;
+      var f=new Array(E), P=new Array(E);
+      for(e=0;e<E;e++){ f[e]=counts[e]/slots; P[e]=0; }
+      for(i=0;i<N;i++) for(e=0;e<E;e++) P[e]+=probs[i][e];
+      for(e=0;e<E;e++) P[e]=P[e]/N;
+      var bal=0;
+      for(e=0;e<E;e++) bal+=f[e]*P[e];
+      bal*=E;
+      var mean=slots/E, sq=0;
+      for(e=0;e<E;e++) sq+=(counts[e]-mean)*(counts[e]-mean);
+      var cv = mean>0 ? Math.sqrt(sq/E)/mean : 0;
+      return {probs:probs, picks:picks, counts:counts, f:f, P:P, bal:bal, cv:cv, mean:mean};
+    }
+
+    // Gradient of L = alpha*E*sum_e f_e P_e w.r.t. the logits, with f DETACHED:
+    //   dL/dh_ij = (alpha*E/N) * p_ij * ( f_j - sum_e f_e p_ie )
+    // i.e. push probability mass off overloaded experts, onto starved ones.
+    function auxStep(logits,st,N,E,alpha,lr){
+      var c=alpha*E/N, i, e;
+      for(i=0;i<N;i++){
+        var p=st.probs[i], dot=0;
+        for(e=0;e<E;e++) dot+=st.f[e]*p[e];
+        for(e=0;e<E;e++) logits[i][e] -= lr*c*p[e]*(st.f[e]-dot);
+      }
+    }
+
+    // Capacity: cap = ceil(C_f * N*k / E). Buffers fill FIFO in token order (GShard/Switch);
+    // slots arriving after the buffer is full are dropped -> that token skips this expert's
+    // FFN and rides the residual (its combine weights are NOT renormalized).
+    function applyCapacity(st,N,E,k,Cf){
+      var cap=Math.max(1, Math.ceil(Cf*N*k/E));
+      var used=new Array(E), i, j, e;
+      for(e=0;e<E;e++) used[e]=0;
+      var dropped=0, dropPerExpert=new Array(E);
+      for(e=0;e<E;e++) dropPerExpert[e]=0;
+      var gateKept=0, gateTotal=0;
+      for(i=0;i<N;i++){
+        for(j=0;j<st.picks[i].length;j++){
+          var pk=st.picks[i][j];
+          gateTotal+=pk.gate;
+          if(used[pk.e] < cap){ used[pk.e]++; gateKept+=pk.gate; }
+          else { pk.dropped=true; dropped++; dropPerExpert[pk.e]++; }
+        }
+      }
+      st.capacity=cap; st.dropped=dropped; st.dropPerExpert=dropPerExpert;
+      st.slots=N*k;
+      st.gateDropFrac = gateTotal>0 ? (gateTotal-gateKept)/gateTotal : 0;
+      return st;
+    }
+
+    function simulate(N,E,k,alpha,T){
+      var h=genLogits(seed,N,E);
+      var hist=new Array(MAXT+1), shown=null, s;
+      for(s=0;s<=MAXT;s++){
+        var st=forward(h,N,E,k);
+        hist[s]={bal:st.bal, cv:st.cv};
+        if(s===T) shown=st;
+        if(s<MAXT) auxStep(h,st,N,E,alpha,ETA);
+      }
+      if(!shown) shown=forward(h,N,E,k);
+      return {hist:hist, st:shown};
+    }
+
+    // ----------------------------------------------------------------- drawing
+    function esc(n){ return String(n); }
+
+    function drawGraph(R){
+      var N=R.N, E=R.E, st=R.st;
+      var unit=19;
+      var gridH=Math.max(130, Math.min(460, N*unit));
+      var tokStep=gridH/N, expStep=gridH/E;
+      var leftX=42, rightX=232, marginR=140, topPad=18, botPad=10;
+      var W=rightX+marginR, H=gridH+topPad+botPad;
+      function tokY(i){ return topPad + i*tokStep + tokStep/2; }
+      function expY(e){ return topPad + e*expStep + expStep/2; }
+
+      var p=[], i, j, e;
+      for(i=0;i<N;i++){
+        var y1=tokY(i);
+        for(j=0;j<st.picks[i].length;j++){
+          var pk=st.picks[i][j], y2=expY(pk.e);
+          if(pk.dropped){
+            p.push('<line class="mr-edge-drop" x1="'+leftX+'" y1="'+y1.toFixed(1)+'" x2="'+rightX+'" y2="'+y2.toFixed(1)+'" stroke-width="1.2" opacity="0.85"></line>');
+          } else {
+            p.push('<line class="mr-edge" x1="'+leftX+'" y1="'+y1.toFixed(1)+'" x2="'+rightX+'" y2="'+y2.toFixed(1)+
+                   '" stroke-width="'+(0.8+1.8*pk.gate).toFixed(2)+'" opacity="'+(0.2+0.65*pk.gate).toFixed(2)+'"></line>');
+          }
+        }
+      }
+      for(i=0;i<N;i++){
+        var anyDrop=false;
+        for(j=0;j<st.picks[i].length;j++) if(st.picks[i][j].dropped) anyDrop=true;
+        p.push('<circle class="'+(anyDrop?'mr-tok-drop':'mr-tok')+'" cx="'+leftX+'" cy="'+tokY(i).toFixed(1)+'" r="3.4"></circle>');
+        if(tokStep>=11 || i===0 || i===N-1){
+          p.push('<text class="mr-lab" x="'+(leftX-8)+'" y="'+(tokY(i)+3.2).toFixed(1)+'" text-anchor="end">t'+i+'</text>');
+        }
+      }
+      for(e=0;e<E;e++){
+        var ye=expY(e);
+        var loadFrac=Math.min(1, st.counts[e]/Math.max(1,st.capacity));
+        var r=6.5+3.5*loadFrac;
+        var over=st.counts[e]>st.capacity;
+        p.push('<circle class="mr-exp'+(over?' mr-exp-over':'')+'" cx="'+rightX+'" cy="'+ye.toFixed(1)+
+               '" r="'+r.toFixed(1)+'" fill-opacity="'+(0.35+0.55*loadFrac).toFixed(2)+'"></circle>');
+        p.push('<text class="mr-lab-strong" x="'+(rightX+14)+'" y="'+(ye-1.5).toFixed(1)+'">E'+e+'</text>');
+        p.push('<text class="'+(over?'mr-lab-warn':'mr-lab')+'" x="'+(rightX+14)+'" y="'+(ye+9.5).toFixed(1)+'">'+
+               st.counts[e]+' / '+st.capacity+(over?' \u2192 '+st.dropPerExpert[e]+' dropped':'')+'</text>');
+      }
+      p.push('<text class="mr-axtitle" x="'+leftX+'" y="11" text-anchor="middle">tokens</text>');
+      p.push('<text class="mr-axtitle" x="'+rightX+'" y="11" text-anchor="middle">experts</text>');
+
+      svg.setAttribute('viewBox','0 0 '+W.toFixed(0)+' '+H.toFixed(0));
+      svg.innerHTML=p.join('');
+    }
+
+    function drawBars(R){
+      var E=R.E, st=R.st, e;
+      var maxCount=0;
+      for(e=0;e<E;e++) if(st.counts[e]>maxCount) maxCount=st.counts[e];
+      var trackMax=Math.max(1, st.capacity*1.35, maxCount*1.05);
+      var rows=[];
+      for(e=0;e<E;e++){
+        var kept=Math.min(st.counts[e],st.capacity);
+        var over=Math.max(0,st.counts[e]-st.capacity);
+        var keptPct=(kept/trackMax*100).toFixed(1);
+        var overPct=(over/trackMax*100).toFixed(1);
+        var capPct=(st.capacity/trackMax*100).toFixed(1);
+        rows.push(
+          '<div class="mr-bar-row'+(over>0?' is-over':'')+'">'+
+            '<div class="mr-bar-label">E'+e+'</div>'+
+            '<div class="mr-bar-track">'+
+              '<div class="mr-bar-kept" style="width:'+keptPct+'%"></div>'+
+              (over>0 ? '<div class="mr-bar-over" style="left:'+keptPct+'%; width:'+overPct+'%"></div>' : '')+
+              '<div class="mr-bar-cap" style="left:'+capPct+'%"></div>'+
+            '</div>'+
+            '<div class="mr-bar-count">'+st.counts[e]+' tok'+(over>0 ? ' \u00b7 '+over+' dropped' : '')+'</div>'+
+          '</div>');
+      }
+      barsEl.innerHTML=rows.join('');
+    }
+
+    function drawSpark(R){
+      var hist=R.hist, E=R.E, T=R.T, W=420, H=130;
+      var padL=34, padR=10, padT=12, padB=22;
+      var lo=1, hi=1.08, s;
+      for(s=0;s<hist.length;s++){
+        if(hist[s].bal<lo) lo=hist[s].bal;
+        if(hist[s].bal>hi) hi=hist[s].bal;
+      }
+      var span=Math.max(0.08, hi-lo);
+      lo-=span*0.10; hi+=span*0.10;
+      function X(i){ return padL + (i/MAXT)*(W-padL-padR); }
+      function Y(v){ return padT + (1-(v-lo)/(hi-lo))*(H-padT-padB); }
+
+      var p=[];
+      p.push('<line class="mr-grid" x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+(H-padB)+'"></line>');
+      p.push('<line class="mr-grid" x1="'+padL+'" y1="'+(H-padB)+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"></line>');
+      if(1>=lo && 1<=hi){
+        p.push('<line class="mr-ref" x1="'+padL+'" y1="'+Y(1).toFixed(1)+'" x2="'+(W-padR)+'" y2="'+Y(1).toFixed(1)+'"></line>');
+        p.push('<text class="mr-lab" x="'+(W-padR)+'" y="'+(Y(1)-4).toFixed(1)+'" text-anchor="end">B = 1 (perfectly uniform)</text>');
+      }
+      var d='';
+      for(s=0;s<hist.length;s++) d+=(s===0?'M':'L')+X(s).toFixed(1)+' '+Y(hist[s].bal).toFixed(1)+' ';
+      p.push('<path class="mr-curve" d="'+d+'"></path>');
+      var cx=X(T), cy=Y(hist[Math.min(T,MAXT)].bal);
+      p.push('<line class="mr-mark" x1="'+cx.toFixed(1)+'" y1="'+padT+'" x2="'+cx.toFixed(1)+'" y2="'+(H-padB)+'"></line>');
+      p.push('<circle class="mr-dot" cx="'+cx.toFixed(1)+'" cy="'+cy.toFixed(1)+'" r="3.2"></circle>');
+      p.push('<text class="mr-lab" x="'+(padL-5)+'" y="'+(padT+4)+'" text-anchor="end">'+hi.toFixed(2)+'</text>');
+      p.push('<text class="mr-lab" x="'+(padL-5)+'" y="'+(H-padB)+'" text-anchor="end">'+lo.toFixed(2)+'</text>');
+      p.push('<text class="mr-lab" x="'+padL+'" y="'+(H-6)+'">0</text>');
+      p.push('<text class="mr-lab" x="'+(W-padR)+'" y="'+(H-6)+'" text-anchor="end">'+MAXT+' aux steps</text>');
+      p.push('<text class="mr-lab-strong" x="'+Math.min(W-padR, cx+6).toFixed(1)+'" y="'+Math.max(padT+9, cy-7).toFixed(1)+'"'+
+             (cx>W*0.72?' text-anchor="end"':'')+'>B('+T+') = '+hist[Math.min(T,MAXT)].bal.toFixed(3)+'</text>');
+      p.push('<text class="mr-axtitle" x="'+padL+'" y="'+(padT-3)+'">balance index B = E&#183;&#8721; f&#8337;P&#8337; (max &#8776; E = '+E+')</text>');
+
+      spark.setAttribute('viewBox','0 0 '+W+' '+H);
+      spark.innerHTML=p.join('');
+    }
+
+    function drawReadout(R){
+      var st=R.st, E=R.E, k=R.k, N=R.N, T=R.T, alpha=R.alpha;
+      var b0=R.hist[0].bal, cv0=R.hist[0].cv;
+      var dropPct = st.slots>0 ? st.dropped/st.slots*100 : 0;
+
+      formulaEl.innerHTML =
+        'p&#7522; = softmax(h&#7522;) &#183; S&#7522; = top-'+k+'(h&#7522;) &#183; g&#7522;&#8337; = p&#7522;&#8337; / &#8721;<sub>e&prime;&#8712;S&#7522;</sub> p&#7522;&#8337;&prime; &nbsp;(renormalized combine weights)<br>'+
+        'capacity = &#8968;C_f &#183; N&#183;k / E&#8969; = &#8968;'+R.Cf.toFixed(2)+' &#183; '+N+'&#183;'+k+' / '+E+'&#8969; = '+st.capacity+' tokens per expert<br>'+
+        '&#8467;_aux = &#945; &#183; E &#183; &#8721;&#8337; f&#8337; P&#8337;, &nbsp; f&#8337; = count&#8337;/(N&#183;k) (detached, &#8721;f = 1), &nbsp; P&#8337; = mean&#7522; p&#7522;&#8337;<br>'+
+        'T = '+T+' steps of plain gradient descent on &#8467;_aux alone (&#951; = '+ETA+', deliberately exaggerated so 200 steps stand in for thousands of real ones)';
+
+      var stats=[
+        ['', (alpha*st.bal).toFixed(4), '&#8467;_aux = &#945;&#183;E&#183;&#8721; f&#8337;P&#8337; &nbsp;(&#945; = '+alpha.toFixed(4)+')'],
+        ['', st.bal.toFixed(3), 'Balance index B (1.00 &#8776; uniform, '+E+' = fully collapsed) &#183; was '+b0.toFixed(3)+' at T=0'],
+        ['', st.cv.toFixed(3), 'Load CV across experts &#183; was '+cv0.toFixed(3)+' at T=0'],
+        [st.dropped>0?'mr-warn':'', st.dropped+' / '+st.slots, 'Dispatch slots dropped ('+dropPct.toFixed(1)+'% of slots, '+(100*st.gateDropFrac).toFixed(1)+'% of combine weight)'],
+        ['', String(st.capacity), 'Capacity per expert (buffer rows); mean load = '+st.mean.toFixed(1)],
+        ['', k+' / '+E, 'Experts active per token &#183; '+(100*k/E).toFixed(0)+'% of expert FLOPs per token']
+      ];
+      outEl.innerHTML = stats.map(function(s){
+        return '<div class="vt-stat '+s[0]+'"><div class="n">'+s[1]+'</div><div class="l">'+s[2]+'</div></div>';
+      }).join('');
+
+      var hot=0, cold=0, e;
+      for(e=1;e<E;e++){
+        if(st.counts[e]>st.counts[hot]) hot=e;
+        if(st.counts[e]<st.counts[cold]) cold=e;
+      }
+      var trained;
+      if(alpha===0){
+        trained='&#945; = 0, so the aux gradient is exactly zero and the T slider does nothing &mdash; the initial imbalance is a <b>fixed point</b>. That is the collapse story: nothing in the LM loss rewards using idle experts.';
+      } else if(T===0){
+        trained='Now drag <b>aux steps T</b>: each step descends &#8467;_aux on the router logits only (hard counts f detached, soft mass P carries the gradient), and B falls from '+b0.toFixed(3)+' toward 1.';
+      } else {
+        var delta=b0-st.bal;
+        trained='After <b>'+T+'</b> aux-loss steps the balance index moved '+b0.toFixed(3)+' &rarr; <b>'+st.bal.toFixed(3)+'</b> ('+(delta>=0?'&minus;':'+')+Math.abs(delta).toFixed(3)+
+                ') and the load CV '+cv0.toFixed(3)+' &rarr; <b>'+st.cv.toFixed(3)+'</b>. The gradient on each logit is &#945;E&#183;p&#7522;&#8337;(f&#8337; &minus; &#8721;&#8337;&prime; f&#8337;&prime;p&#7522;&#8337;&prime;)/N: probability mass is pushed off overloaded experts and onto starved ones.';
+        if(delta<0.05 && st.bal>1.15){
+          trained+=' Notice it has <b>stalled</b>: this router is nearly one-hot, and a saturated softmax has p&#7522;&#8337;(f&#8337;&minus;&#8721;f p) &#8776; 0, so the aux gradient vanishes and a starved expert can stay dead. That vanishing-gradient trap is exactly why ST-MoE adds the <b>router z-loss</b> (penalizing large logits) and why DeepSeek-V3 balances with a per-expert bias instead.';
+        }
+      }
+      noteEl.innerHTML =
+        '<b>Takeaway:</b> only '+k+' of '+E+' experts run per token ('+(100*k/E).toFixed(0)+'% of the FFN FLOPs, 100% of the parameters in memory), '+
+        'so an MoE layer is cheap <i>only if the load is balanced</i>. Right now E'+hot+' holds the most tokens ('+st.counts[hot]+') and E'+cold+' the fewest ('+st.counts[cold]+'); '+
+        (st.dropped>0
+          ? 'C_f = '+R.Cf.toFixed(2)+' gives buffers of '+st.capacity+', so <b>'+st.dropped+'</b> dispatch slot(s) overflow and are <b>dropped</b> &mdash; those tokens skip that expert&rsquo;s FFN and ride the residual. '
+          : 'C_f = '+R.Cf.toFixed(2)+' gives buffers of '+st.capacity+' and nothing overflows &mdash; but the empty rows are <b>padding</b>, i.e. wasted FLOPs. ')+
+        trained+' Raising C_f buys slack against imbalance with padding; raising &#945; buys balance with gradient pressure that fights the LM loss. Neither is free &mdash; that is the whole MoE tuning story.';
+    }
+
+    // ----------------------------------------------------------------- render
+    function iv(el,def,lo,hi){
+      var v=parseInt(el.value,10);
+      if(!isFinite(v)) v=def;
+      return Math.max(lo, Math.min(hi, v));
+    }
+    function fv(el,def,lo,hi){
+      var v=parseFloat(el.value);
+      if(!isFinite(v)) v=def;
+      return Math.max(lo, Math.min(hi, v));
+    }
+
+    function render(){
+      var N=iv(Nin,12,2,64), E=iv(Ein,4,2,16), kRaw=iv(kin,2,1,8);
+      var Cf=fv(Cin,1.25,0.1,8), alpha=fv(Ain,0.01,0,1), T=iv(Tin,0,0,MAXT);
+      var k=Math.max(1, Math.min(kRaw,E));
+
+      Nval.textContent=N; Eval.textContent=E;
+      kval.textContent = (k===kRaw) ? String(k) : (kRaw+' \u2192 '+k+' (\u2264 E)');
+      Cval.textContent=Cf.toFixed(2); Aval.textContent=alpha.toFixed(4); Tval.textContent=T;
+      if(seedLabel) seedLabel.textContent='seed = '+seed;
+
+      var sim=simulate(N,E,k,alpha,T);
+      var st=applyCapacity(sim.st,N,E,k,Cf);
+      var R={N:N,E:E,k:k,Cf:Cf,alpha:alpha,T:T,st:st,hist:sim.hist};
+
+      drawGraph(R); drawBars(R); drawSpark(R); drawReadout(R);
+    }
+
+    var inputs=root.querySelectorAll('input[type="range"]');
+    for(var ii=0; ii<inputs.length; ii++){
+      inputs[ii].addEventListener('input', render);
+      inputs[ii].addEventListener('change', render);
+    }
+    if(shuffleBtn) shuffleBtn.addEventListener('click', function(){
+      seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+      render();
+    });
+    if(resetBtn) resetBtn.addEventListener('click', function(){
+      seed=42;
+      Nin.value=12; Ein.value=4; kin.value=2; Cin.value=1.25; Ain.value=0.01; Tin.value=0;
+      render();
+    });
+
+    render();
+  })();</script>
+</div>

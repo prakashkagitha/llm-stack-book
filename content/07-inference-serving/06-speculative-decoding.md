@@ -599,6 +599,8 @@ Two regimes fall right out of this formula. As the drafter cost $c \to 0$ (e.g.,
 
     Now stress-test the assumption. If the workload is high-entropy chat at temperature 1.0 and acceptance drops to $\alpha = 0.4$, expected tokens per step is $(1 - 0.4^6)/0.6 = 0.9959/0.6 \approx 1.66$, and speedup $\approx 1.66/1.105 \approx 1.5\times$. Same machinery, very different payoff — acceptance rate is everything. And note the sweep on $\gamma$: at $\alpha=0.4$, raising $\gamma$ to 8 barely changes the numerator ($\approx 1.66$, since the geometric tail is tiny) while the denominator grows to $1.17$, so the speedup *falls*. The optimal $\gamma$ is workload-dependent.
 
+{{tool:speculative-decoding-viz}}
+
 A second, system-level caveat the formula hides: **batch size.** All these speedups assume the decode step is memory-bandwidth bound, so the extra verification FLOPs are free. At large batch sizes the GPU becomes **compute-bound** (you've already amortized weight loading across many requests), the verification tokens compete for real FLOPs, and the speedup collapses — speculation can even slow you down. Production engines therefore gate speculation on batch size and turn it off under heavy load. This is the same memory-vs-compute boundary analyzed in [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) and [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
 
 {{fig:specdec-speedup-economics}}

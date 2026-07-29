@@ -85,6 +85,8 @@ print(f"INT4 mean abs error: {err:.4e}  (scale={s:.4e})")
 
 The error introduced by `round` is the **quantization error**. For a uniform grid of step $s$, if the rounding error were uniformly distributed on $[-s/2, s/2]$, its variance would be $s^2/12$ — the classic quantization-noise formula. The take-away: **error is proportional to the step size $s$, which is proportional to the *range* of the tensor.** One giant value in the tensor inflates $\max|x|$, inflates $s$, and corrupts the precision of *every other* value. This single observation drives the entire chapter.
 
+{{tool:quantization-explorer}}
+
 ## Granularity: Per-Tensor, Per-Channel, Per-Group
 
 We do not have to use one scale for an entire matrix. Finer **granularity** = more scales = better fidelity (each scale is fit to a smaller, more homogeneous slice) at the cost of a little more memory and bookkeeping.

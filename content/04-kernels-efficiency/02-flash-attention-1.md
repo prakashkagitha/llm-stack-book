@@ -205,6 +205,8 @@ Now we lift the online softmax from a single row to the full attention matrix. T
 
 The structure is a double loop. The **outer loop** is over blocks of query rows ($B_r$ rows at a time). The **inner loop** is over blocks of key/value rows ($B_c$ columns at a time). For each $(i, j)$ tile we load $Q_i, K_j, V_j$ from HBM into SRAM, compute the small $B_r \times B_c$ score tile, update the running statistics for the $B_r$ rows, and move on. The score tile is born and consumed entirely in SRAM; it is **never written to HBM.** That is the whole game.
 
+{{tool:flash-attention-tiling}}
+
 {{fig:flash1-forward-dataflow}}
 
 Here is a faithful, runnable NumPy implementation of the forward pass. It mirrors the structure of the real CUDA kernel — the same loops, the same statistics, the same rescale — just without the GPU. (Causal masking and the actual SRAM tiling are noted in comments; we will add the mask in the code that follows.)

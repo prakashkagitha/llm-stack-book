@@ -479,6 +479,8 @@ A residual network with skip connections has a better-conditioned loss landscape
 
     With Nesterov (rate $O(1/\sqrt{\kappa})$): $\approx 12$ steps to the same tolerance — $3\times$ faster.
 
+{{tool:gradient-descent-playground}}
+
 ---
 
 ## Full Runnable Code: Gradient Descent on a Toy Loss Surface

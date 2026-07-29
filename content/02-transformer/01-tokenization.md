@@ -8,8 +8,6 @@ This chapter builds tokenization from first principles. We start with *why* subw
 
 ## Why Subwords? The Granularity Problem
 
-{{tool:tokenizer-playground}}
-
 Imagine you must choose the atomic unit of text. There are three obvious candidates, and two of them are traps.
 
 **Words.** Split on whitespace and punctuation, assign each distinct word an integer. This is how classic Natural Language Processing (NLP) worked. It fails badly for modern LLMs:
@@ -265,6 +263,9 @@ The payoff: a byte-level BPE tokenizer can encode *and decode* literally any byt
 !!! note "Aside: pre-tokenization with a regex"
     Before BPE runs, GPT-2/GPT-4 first split text with a hand-tuned regular expression (the "pre-tokenizer") that isolates words, leading spaces, numbers, and punctuation into chunks; BPE merges *only within* a chunk, never across. This prevents merges that span a space-plus-word boundary in unhelpful ways. GPT-2's pattern lets a run of digits merge freely, whereas `cl100k_base` adds a `\p{N}{1,3}` alternation that caps every digit chunk at three characters — which is why GPT-4 tokenizes numbers in groups of at most three. The exact patterns are printed and dissected in the next subsection. The regex matters more than people expect — it is part of why GPT-4 tokenizes numbers and code better than GPT-2.
 
+Everything above — the 256-byte base alphabet, the frequency-ranked merge list, the regex pre-tokenizer, the lossless decode — is small enough to run live. The playground below trains a real byte-level BPE on a corpus you control, then encodes and decodes with the merges it learned:
+
+{{tool:tokenizer-playground}}
 
 ### Putting it together: a complete byte-level BPE tokenizer
 

@@ -61,6 +61,8 @@ FP8   [s|eeee|mmm]  (E4M3)                   8 bits
 
 The key visual: **bf16 is the top 16 bits of fp32**. They share the same 8-bit exponent, so the dynamic range is identical. You can truncate fp32 to bf16 by simply dropping the lower 16 bits of the mantissa — no reformatting, just a shift. This hardware-friendliness is why bf16 won.
 
+{{tool:precision-formats}}
+
 ### Machine epsilon and ULP
 
 **Machine epsilon** ($\varepsilon_{\text{mach}}$) is the smallest value such that $1 + \varepsilon_{\text{mach}} \neq 1$ in the given format. It equals $2^{-p}$ where $p$ is the number of mantissa bits:

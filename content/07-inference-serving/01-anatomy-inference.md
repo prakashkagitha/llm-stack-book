@@ -178,6 +178,8 @@ print(f"{gib:.2f} GiB per 8k-token sequence")   # ~1.0 GiB
 
 The collapse from "weights are the big thing" to "the KV cache is the big thing" is the central surprise of inference engineering. For long contexts and high concurrency, the cache can dwarf the model itself. Managing it well — packing it tightly, paging it, reusing shared prefixes — is the subject of [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html). This chapter just establishes *why* it matters so much.
 
+{{tool:kv-cache-growth}}
+
 ## Why Decode Is Memory-Bound and Prefill Is Compute-Bound
 
 This is the most important concept in the whole of inference serving, so we will derive it carefully using the **arithmetic intensity** lens from the [Roofline Model](../04-kernels-efficiency/01-roofline-performance.html). Arithmetic intensity is the ratio of floating-point operations performed to bytes of memory moved:

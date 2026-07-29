@@ -1,0 +1,755 @@
+<div class="viz-tool" id="tool-gradient-descent-playground">
+  <div class="vt-title">Gradient descent playground: optimizers on an ill-conditioned bowl</div>
+
+  <div class="vt-grid">
+    <label for="gradient-descent-playground-kappa-range">condition number &kappa; = <span id="gradient-descent-playground-kappa-lbl">10.0</span>
+      <span class="vt-in">
+        <input id="gradient-descent-playground-kappa-range" type="range" min="0" max="230" step="1" value="100" aria-label="Condition number kappa, log scale slider">
+        <input id="gradient-descent-playground-kappa-num" type="number" min="1" max="200" step="0.1" value="10" aria-label="Condition number kappa, exact value">
+      </span>
+    </label>
+
+    <label for="gradient-descent-playground-optimizer">optimizer
+      <select id="gradient-descent-playground-optimizer">
+        <option value="sgd" selected>SGD / plain GD</option>
+        <option value="momentum">SGD + momentum</option>
+        <option value="adam">Adam</option>
+      </select>
+    </label>
+
+    <label for="gradient-descent-playground-eta-range">learning rate &eta;
+      <span class="vt-in">
+        <input id="gradient-descent-playground-eta-range" type="range" min="0" max="1000" step="1" value="771" aria-label="Learning rate eta, log scale slider">
+        <input id="gradient-descent-playground-eta-num" type="number" min="0.001" max="3.16" step="0.001" value="0.500" aria-label="Learning rate eta, exact value">
+      </span>
+    </label>
+
+    <label id="gradient-descent-playground-beta-label" for="gradient-descent-playground-beta-range">momentum &beta; / Adam &beta;<sub>1</sub>
+      <span class="vt-in">
+        <input id="gradient-descent-playground-beta-range" type="range" min="0" max="0.99" step="0.01" value="0.9" aria-label="Momentum beta or Adam beta one, slider">
+        <input id="gradient-descent-playground-beta-num" type="number" min="0" max="0.99" step="0.01" value="0.9" aria-label="Momentum beta or Adam beta one, exact value">
+      </span>
+    </label>
+
+    <label for="gradient-descent-playground-sigma-range">gradient noise &sigma;
+      <span class="vt-in">
+        <input id="gradient-descent-playground-sigma-range" type="range" min="0" max="1.5" step="0.05" value="0" aria-label="Gradient noise sigma, slider">
+        <input id="gradient-descent-playground-sigma-num" type="number" min="0" max="1.5" step="0.05" value="0" aria-label="Gradient noise sigma, exact value">
+      </span>
+    </label>
+  </div>
+
+  <div class="gdp-btn-row">
+    <button id="gradient-descent-playground-step-btn" type="button" class="gdp-btn">Step</button>
+    <button id="gradient-descent-playground-run-btn" type="button" class="gdp-btn gdp-btn-primary" aria-pressed="false">&#9654; Run</button>
+    <button id="gradient-descent-playground-reset-btn" type="button" class="gdp-btn">&#8635; Reset</button>
+    <span class="gdp-status" id="gradient-descent-playground-status" aria-live="polite">idle</span>
+  </div>
+
+  <div class="gdp-plots">
+    <div class="gdp-plot-wrap">
+      <div class="gdp-plot-cap">loss surface &mdash; click or drag the ring to move the start point</div>
+      <svg id="gradient-descent-playground-contour-svg" viewBox="0 0 320 320" aria-label="Contour plot of the quadratic loss surface with the optimizer trajectory">
+        <svg x="20" y="20" width="280" height="280" viewBox="20 20 280 280">
+          <g id="gradient-descent-playground-contours-g"></g>
+          <ellipse id="gradient-descent-playground-level" class="gdp-level" cx="160" cy="160" rx="0" ry="0"></ellipse>
+        </svg>
+        <rect class="gdp-frame" x="20" y="20" width="280" height="280"></rect>
+        <line class="gdp-axis" x1="20" y1="160" x2="300" y2="160"></line>
+        <line class="gdp-axis" x1="160" y1="20" x2="160" y2="300"></line>
+        <text class="gdp-axis-lbl" x="296" y="174" text-anchor="end">&theta;<tspan dy="3" font-size="7">1</tspan></text>
+        <text class="gdp-axis-lbl" x="164" y="32">&theta;<tspan dy="3" font-size="7">2</tspan></text>
+        <g id="gradient-descent-playground-traj-g"></g>
+        <g id="gradient-descent-playground-start-g" tabindex="0" role="button" aria-label="Start point. Focus and use the arrow keys to move it; hold shift for larger steps.">
+          <circle class="gdp-start-hit" cx="0" cy="0" r="13"></circle>
+          <circle id="gradient-descent-playground-start-marker" class="gdp-start-marker" cx="0" cy="0" r="7"></circle>
+        </g>
+      </svg>
+    </div>
+
+    <div class="gdp-plot-wrap">
+      <div class="gdp-plot-cap">loss vs. step (log scale)</div>
+      <svg id="gradient-descent-playground-loss-svg" viewBox="0 0 320 180" aria-label="Chart of loss versus optimizer step, logarithmic vertical axis">
+        <g id="gradient-descent-playground-loss-grid-g"></g>
+        <polyline id="gradient-descent-playground-ref-line" class="gdp-ref-line" points=""></polyline>
+        <polyline id="gradient-descent-playground-loss-line" class="gdp-loss-line" points=""></polyline>
+      </svg>
+    </div>
+  </div>
+
+  <div class="vt-out" id="gradient-descent-playground-readout"></div>
+
+  <div class="vt-note">The surface is the exact convex bowl <b>L(&theta;) = &frac12;(&lambda;<sub>1</sub>&theta;<sub>1</sub><sup>2</sup> + &lambda;<sub>2</sub>&theta;<sub>2</sub><sup>2</sup>)</b> with <b>&lambda;<sub>1</sub> = 1/&radic;&kappa;</b> and <b>&lambda;<sub>2</sub> = &radic;&kappa;</b>, so the Hessian is exactly diag(&lambda;<sub>1</sub>, &lambda;<sub>2</sub>), the condition number is &kappa; = &lambda;<sub>2</sub>/&lambda;<sub>1</sub> by construction, and the eigenvalues keep geometric mean 1 for every &kappa;. Each update is the real rule applied to the analytic gradient &nabla;L = (&lambda;<sub>1</sub>&theta;<sub>1</sub>, &lambda;<sub>2</sub>&theta;<sub>2</sub>) plus optional noise &sigma;&middot;N(0,1) per coordinate &mdash; SGD: &theta; &larr; &theta; &minus; &eta;g&#770;; momentum: v &larr; &beta;v &minus; &eta;g&#770;, &theta; &larr; &theta; + v; Adam: bias-corrected first/second moments with &beta;<sub>2</sub> = 0.999, &epsilon; = 1e&minus;8. Three things worth doing. <b>(1)</b> With &sigma; = 0, GD on a quadratic is a linear recursion, so its per-step contraction is exactly &rho; = max<sub>i</sub>|1 &minus; &eta;&lambda;<sub>i</sub>| (heavy ball: the larger root modulus of z<sup>2</sup> &minus; (1+&beta;&minus;&eta;&lambda;)z + &beta;, which is &radic;&beta; whenever the roots are complex). The dashed line on the loss chart is that prediction, L<sub>0</sub>&rho;<sup>2t</sup>, and the measured curve settles onto its slope (with momentum it oscillates around it, because the roots are complex). Divergence is not at &eta; = 1/&lambda;<sub>max</sub> &mdash; that is the guaranteed-descent bound; the real ceiling is &eta; = 2/&lambda;<sub>max</sub> (2(1+&beta;)/&lambda;<sub>max</sub> with momentum), and just below it you get the classic zig-zag rather than an explosion. <b>(2)</b> The gradient ratio |g<sub>2</sub>/g<sub>1</sub>| = &kappa;&middot;|&theta;<sub>2</sub>/&theta;<sub>1</sub>| is enormous, and SGD's step ratio equals it <em>exactly</em> (the step is proportional to the gradient) &mdash; that is the zig-zag. Switch to Adam and the step ratio sits at &asymp;1 no matter how large the gradient ratio: that is what "Adam preconditions the ill-conditioned directions" means in numbers. <b>(3)</b> Raise &sigma;: SGD stops converging and hovers at the stationary noise floor E[L<sub>&infin;</sub>] = &frac12;&sum;<sub>i</sub> &lambda;<sub>i</sub>&eta;<sup>2</sup>&sigma;<sup>2</sup>/(1 &minus; (1&minus;&eta;&lambda;<sub>i</sub>)<sup>2</sup>) &asymp; &eta;&sigma;<sup>2</sup>d/4 for small &eta; &mdash; a floor proportional to &eta;, which is exactly why the learning rate has to decay. The noise draws come from a seeded PRNG, so Reset replays a bit-identical run.</div>
+
+  <style>
+    #tool-gradient-descent-playground{ --gdp-good:var(--v-good,#1f7a55); --gdp-warn:var(--v-warn,#a06a00);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); font-family:var(--sans,system-ui,sans-serif); }
+    html[data-theme="dark"] #tool-gradient-descent-playground{ --gdp-good:var(--v-good,#4dbd8c); --gdp-warn:var(--v-warn,#e0a106); }
+    #tool-gradient-descent-playground *{ box-sizing:border-box; }
+    #tool-gradient-descent-playground .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-gradient-descent-playground .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-gradient-descent-playground label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-gradient-descent-playground select,
+    #tool-gradient-descent-playground input[type="number"]{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-gradient-descent-playground input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-gradient-descent-playground .vt-in{ display:flex; gap:6px; align-items:center; }
+    #tool-gradient-descent-playground .vt-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-gradient-descent-playground .vt-in input[type="number"]{ flex:1 1 72px; min-width:0; }
+    #tool-gradient-descent-playground input:disabled{ opacity:.45; }
+    #tool-gradient-descent-playground .gdp-beta-disabled{ opacity:.5; }
+
+    #tool-gradient-descent-playground .gdp-btn-row{ display:flex; align-items:center; gap:10px; margin-top:14px; flex-wrap:wrap; }
+    #tool-gradient-descent-playground .gdp-btn{ font:inherit; font-size:.85rem; font-weight:600; padding:7px 14px; border-radius:7px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-gradient-descent-playground .gdp-btn:hover{ background:var(--surface-3,#ece7da); }
+    #tool-gradient-descent-playground .gdp-btn-primary{ background:var(--accent-soft,#f6e7df); border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); }
+    #tool-gradient-descent-playground .gdp-btn-primary:hover{ background:var(--accent-soft,#f6e7df); filter:brightness(.97); }
+    #tool-gradient-descent-playground .gdp-status{ font-size:.74rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted,#6d675d); padding:5px 10px; border-radius:6px; background:var(--surface-3,#ece7da); }
+    #tool-gradient-descent-playground .gdp-status.running{ color:var(--accent,#c15b39); }
+    #tool-gradient-descent-playground .gdp-status.converged{ color:var(--gdp-good); }
+    #tool-gradient-descent-playground .gdp-status.diverged{ color:var(--gdp-warn); }
+
+    #tool-gradient-descent-playground .gdp-plots{ display:grid; grid-template-columns:minmax(220px,1.05fr) minmax(200px,1fr); gap:16px; margin-top:14px; align-items:start; }
+    @media (max-width:640px){ #tool-gradient-descent-playground .gdp-plots{ grid-template-columns:1fr; } }
+    #tool-gradient-descent-playground .gdp-plot-wrap{ min-width:0; }
+    #tool-gradient-descent-playground .gdp-plot-cap{ font-size:.72rem; color:var(--muted,#6d675d); margin-bottom:4px; }
+    /* only the two top-level plots stretch; the nested clipping viewport keeps its attributes */
+    #tool-gradient-descent-playground .gdp-plot-wrap > svg{ display:block; width:100%; height:auto; max-width:100%; overflow:hidden; }
+
+    #tool-gradient-descent-playground .gdp-contour{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:1.1; }
+    #tool-gradient-descent-playground .gdp-level{ fill:none; stroke:var(--gdp-good); stroke-width:1.2; stroke-dasharray:4 3; opacity:.85; }
+    #tool-gradient-descent-playground .gdp-frame{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:1; opacity:.8; }
+    #tool-gradient-descent-playground .gdp-axis{ stroke:var(--muted,#6d675d); stroke-width:1; opacity:.45; }
+    #tool-gradient-descent-playground .gdp-axis-lbl{ font-size:11px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+    #tool-gradient-descent-playground .gdp-traj-line{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.4; opacity:.65; }
+    #tool-gradient-descent-playground .gdp-traj-dot{ fill:var(--accent,#c15b39); opacity:.5; }
+    #tool-gradient-descent-playground .gdp-traj-dot.current{ opacity:1; stroke:var(--surface,#fff); stroke-width:1; }
+    #tool-gradient-descent-playground .gdp-traj-dot.clipped{ fill:var(--gdp-warn); opacity:.95; }
+    #tool-gradient-descent-playground .gdp-start-hit{ fill:none; stroke:none; pointer-events:all; cursor:grab; touch-action:none; }
+    #tool-gradient-descent-playground .gdp-start-marker{ fill:none; stroke:var(--gdp-warn); stroke-width:2; stroke-dasharray:3 2; pointer-events:none; }
+    #tool-gradient-descent-playground #gradient-descent-playground-start-g{ touch-action:none; }
+    #tool-gradient-descent-playground #gradient-descent-playground-start-g:focus{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-gradient-descent-playground #gradient-descent-playground-start-g:focus:not(:focus-visible){ outline:none; }
+
+    #tool-gradient-descent-playground .gdp-loss-line{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.6; }
+    #tool-gradient-descent-playground .gdp-ref-line{ fill:none; stroke:var(--gdp-good); stroke-width:1.2; stroke-dasharray:4 3; }
+    #tool-gradient-descent-playground .gdp-grid-line{ stroke:var(--border-2,#d8d1c0); stroke-width:1; opacity:.7; }
+    #tool-gradient-descent-playground .gdp-grid-lbl{ font-size:9.5px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-gradient-descent-playground .gdp-ref-lbl{ font-size:9.5px; fill:var(--gdp-good); font-family:var(--mono,monospace); }
+
+    #tool-gradient-descent-playground .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:10px; }
+    #tool-gradient-descent-playground .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 12px; font-size:.78rem; color:var(--ink-soft,#45413a); font-variant-numeric:tabular-nums; }
+    #tool-gradient-descent-playground .vt-stat b{ color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; }
+    #tool-gradient-descent-playground .vt-stat .gdp-sub{ margin-top:2px; color:var(--muted,#6d675d); font-size:.7rem; line-height:1.35; }
+    #tool-gradient-descent-playground .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-gradient-descent-playground .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    'use strict';
+    var root = document.getElementById('tool-gradient-descent-playground');
+    if (!root) return;
+
+    var DOMAIN = 6;                 // theta1, theta2 both live in [-DOMAIN, DOMAIN]
+    var MARGIN = 20, PLOT = 280;    // plot box inside the 320x320 viewBox
+    var MAX_STEPS = 400;
+    var BETA2 = 0.999, EPS = 1e-8;
+    var SEED = 0x9E3779B9;
+    var TICK_MS = 45;
+
+    function q(id){ return root.querySelector('#gradient-descent-playground-' + id); }
+    var elKappaRange = q('kappa-range'), elKappaNum = q('kappa-num'), elKappaLbl = q('kappa-lbl');
+    var elOptimizer  = q('optimizer');
+    var elEtaRange   = q('eta-range'),   elEtaNum   = q('eta-num');
+    var elBetaRange  = q('beta-range'),  elBetaNum  = q('beta-num'), elBetaLabel = q('beta-label');
+    var elSigmaRange = q('sigma-range'), elSigmaNum = q('sigma-num');
+    var elStepBtn    = q('step-btn'), elRunBtn = q('run-btn'), elResetBtn = q('reset-btn');
+    var elStatus     = q('status');
+    var elContoursG  = q('contours-g'), elLevel = q('level'), elTrajG = q('traj-g');
+    var elStartG     = q('start-g');
+    var elLossLine   = q('loss-line'), elRefLine = q('ref-line'), elLossGridG = q('loss-grid-g');
+    var elReadout    = q('readout');
+    var svgEl        = q('contour-svg');
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function svgNode(tag){ return document.createElementNS(SVGNS, tag); }
+
+    // ---- coordinate transforms (equal aspect: ellipse geometry must stay true) ----
+    function toPx(x, y){
+      return {
+        px: MARGIN + (x + DOMAIN) / (2 * DOMAIN) * PLOT,
+        py: MARGIN + (DOMAIN - y) / (2 * DOMAIN) * PLOT
+      };
+    }
+    function toDomain(px, py){
+      return {
+        x: (px - MARGIN) / PLOT * (2 * DOMAIN) - DOMAIN,
+        y: DOMAIN - (py - MARGIN) / PLOT * (2 * DOMAIN)
+      };
+    }
+    function lenPx(d){ return d / (2 * DOMAIN) * PLOT; }
+    function clampDomain(v){ return Math.max(-DOMAIN, Math.min(DOMAIN, v)); }
+
+    // ---- slider <-> value mappings (log scale for kappa and eta) ----
+    function valToKappa(v){ return Math.pow(10, v / 100); }                 // [0,230] -> [1, ~200]
+    function kappaToVal(k){ return Math.max(0, Math.min(230, Math.round(Math.log10(Math.max(1, k)) * 100))); }
+    var ETA_MIN_EXP = -3, ETA_MAX_EXP = 0.5;                                // [0.001, ~3.16]
+    function valToEta(v){ return Math.pow(10, ETA_MIN_EXP + (v / 1000) * (ETA_MAX_EXP - ETA_MIN_EXP)); }
+    function etaToVal(e){
+      var frac = (Math.log10(Math.max(1e-6, e)) - ETA_MIN_EXP) / (ETA_MAX_EXP - ETA_MIN_EXP);
+      return Math.max(0, Math.min(1000, Math.round(frac * 1000)));
+    }
+
+    // ---- formatting ----
+    function fmtKappa(k){ return k < 10 ? k.toFixed(2) : (k < 100 ? k.toFixed(1) : Math.round(k).toString()); }
+    function fmtEta(e){ return e < 0.001 ? e.toExponential(1) : e.toFixed(e < 0.1 ? 4 : 3); }
+    function fmtG(x){
+      if (typeof x !== 'number' || isNaN(x)) return 'NaN';
+      if (!isFinite(x)) return x > 0 ? '+inf' : '-inf';
+      var a = Math.abs(x);
+      if (a !== 0 && (a < 1e-4 || a >= 1e5)) return x.toExponential(2);
+      return x.toFixed(a < 10 ? 4 : 2);
+    }
+    function fmtRatio(x){
+      if (typeof x !== 'number' || isNaN(x)) return '&mdash;';
+      if (!isFinite(x)) return '&infin;';
+      var a = Math.abs(x);
+      if (a >= 1000) return x.toExponential(1);
+      return x.toFixed(a < 10 ? 3 : 1);
+    }
+
+    // ---- seeded PRNG (mulberry32) + Box-Muller, so every run is reproducible ----
+    function makeRng(seed){
+      var s = seed >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) >>> 0;
+        var t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var rng = makeRng(SEED), gaussSpare = null;
+    function resetRng(){ rng = makeRng(SEED); gaussSpare = null; }
+    function gauss(){
+      if (gaussSpare !== null){ var g = gaussSpare; gaussSpare = null; return g; }
+      var u1 = Math.max(rng(), 1e-12), u2 = rng();
+      var r = Math.sqrt(-2 * Math.log(u1)), th = 2 * Math.PI * u2;
+      gaussSpare = r * Math.sin(th);
+      return r * Math.cos(th);
+    }
+
+    // ---- model state ----
+    var state = {
+      kappa: 10, lam1: 1, lam2: 1,
+      optimizer: 'sgd', eta: 0.5, beta: 0.9, sigma: 0,
+      x0: 5, y0: -4.2
+    };
+    var theta = { x: 0, y: 0 };
+    var vel = { x: 0, y: 0 };
+    var adam = { mx: 0, my: 0, vx: 0, vy: 0, t: 0 };
+    var history = [];                                   // {x, y, loss}
+    var last = { dx: 0, dy: 0, gx: 0, gy: 0 };
+    var stepCount = 0;
+    var running = false, diverged = false, converged = false;
+    var rafId = null, lastTickTime = 0;
+
+    function recomputeEigs(){
+      state.lam1 = 1 / Math.sqrt(state.kappa);          // shallow axis (theta1)
+      state.lam2 = Math.sqrt(state.kappa);              // steep axis   (theta2)
+    }
+    function lossAt(x, y){ return 0.5 * (state.lam1 * x * x + state.lam2 * y * y); }
+
+    // ---- exact linear-system predictions (only valid for sigma = 0) ----
+    function contractionFor(lam){
+      if (state.optimizer === 'adam') return NaN;
+      if (state.optimizer === 'sgd') return Math.abs(1 - state.eta * lam);
+      // heavy ball: theta_{t+1} = (1 + beta - eta*lam) theta_t - beta theta_{t-1}
+      var tr = 1 + state.beta - state.eta * lam;
+      var disc = tr * tr - 4 * state.beta;
+      if (disc < 0) return Math.sqrt(state.beta);       // complex pair: modulus is sqrt(beta)
+      return (Math.abs(tr) + Math.sqrt(disc)) / 2;
+    }
+    function rhoPred(){
+      var r1 = contractionFor(state.lam1), r2 = contractionFor(state.lam2);
+      if (isNaN(r1) || isNaN(r2)) return NaN;
+      return Math.max(r1, r2);
+    }
+    function etaCeiling(){
+      if (state.optimizer === 'sgd') return 2 / state.lam2;
+      if (state.optimizer === 'momentum') return 2 * (1 + state.beta) / state.lam2;
+      return NaN;                                       // Adam: step size is scale-free
+    }
+    function noiseFloor(){                              // stationary E[L] for SGD + iid noise
+      if (state.optimizer !== 'sgd' || state.sigma <= 0) return NaN;
+      var tot = 0;
+      var lams = [state.lam1, state.lam2];
+      for (var i = 0; i < 2; i++){
+        var d = 1 - Math.pow(1 - state.eta * lams[i], 2);
+        if (d <= 0) return Infinity;
+        tot += lams[i] * state.eta * state.eta * state.sigma * state.sigma / d;
+      }
+      return 0.5 * tot;
+    }
+
+    // ---- contours (rebuilt only when kappa changes) ----
+    function rebuildContours(){
+      while (elContoursG.firstChild) elContoursG.removeChild(elContoursG.firstChild);
+      var cMax = lossAt(DOMAIN, DOMAIN);                // level through the corner of the box
+      var N = 8;
+      for (var i = 1; i <= N; i++){
+        var c = cMax * Math.pow(i / N, 2);              // quadratic in c => linear in radius
+        var el = svgNode('ellipse');
+        el.setAttribute('class', 'gdp-contour');
+        el.setAttribute('cx', MARGIN + PLOT / 2);
+        el.setAttribute('cy', MARGIN + PLOT / 2);
+        el.setAttribute('rx', lenPx(Math.sqrt(2 * c / state.lam1)).toFixed(2));
+        el.setAttribute('ry', lenPx(Math.sqrt(2 * c / state.lam2)).toFixed(2));
+        elContoursG.appendChild(el);
+      }
+    }
+    function drawCurrentLevel(){
+      var c = lossAt(theta.x, theta.y);
+      var rx = 0, ry = 0;
+      if (isFinite(c) && c > 0){
+        rx = lenPx(Math.sqrt(2 * c / state.lam1));
+        ry = lenPx(Math.sqrt(2 * c / state.lam2));
+        if (!isFinite(rx) || rx > 4000) rx = 4000;
+        if (!isFinite(ry) || ry > 4000) ry = 4000;
+      }
+      elLevel.setAttribute('rx', rx.toFixed(2));
+      elLevel.setAttribute('ry', ry.toFixed(2));
+    }
+
+    // ---- one optimizer step (the real update rules, on the analytic gradient) ----
+    function doStep(){
+      if (diverged || converged || stepCount >= MAX_STEPS) return;
+      var gx = state.lam1 * theta.x, gy = state.lam2 * theta.y;
+      if (state.sigma > 0){ gx += state.sigma * gauss(); gy += state.sigma * gauss(); }
+      var prevX = theta.x, prevY = theta.y;
+
+      if (state.optimizer === 'sgd'){
+        theta.x = theta.x - state.eta * gx;
+        theta.y = theta.y - state.eta * gy;
+      } else if (state.optimizer === 'momentum'){
+        vel.x = state.beta * vel.x - state.eta * gx;
+        vel.y = state.beta * vel.y - state.eta * gy;
+        theta.x = theta.x + vel.x;
+        theta.y = theta.y + vel.y;
+      } else {                                          // Adam, with full bias correction
+        adam.t += 1;
+        adam.mx = state.beta * adam.mx + (1 - state.beta) * gx;
+        adam.my = state.beta * adam.my + (1 - state.beta) * gy;
+        adam.vx = BETA2 * adam.vx + (1 - BETA2) * gx * gx;
+        adam.vy = BETA2 * adam.vy + (1 - BETA2) * gy * gy;
+        var bc1 = 1 - Math.pow(state.beta, adam.t);
+        var bc2 = 1 - Math.pow(BETA2, adam.t);
+        var mhx = adam.mx / bc1, mhy = adam.my / bc1;
+        var vhx = adam.vx / bc2, vhy = adam.vy / bc2;
+        theta.x = theta.x - state.eta * mhx / (Math.sqrt(vhx) + EPS);
+        theta.y = theta.y - state.eta * mhy / (Math.sqrt(vhy) + EPS);
+      }
+
+      last.dx = theta.x - prevX; last.dy = theta.y - prevY;
+      last.gx = gx; last.gy = gy;
+      stepCount++;
+      var L = lossAt(theta.x, theta.y);
+      history.push({ x: theta.x, y: theta.y, loss: L });
+
+      if (!isFinite(theta.x) || !isFinite(theta.y) || !isFinite(L) ||
+          Math.abs(theta.x) > 1e6 || Math.abs(theta.y) > 1e6){
+        diverged = true; stopRun();
+      } else if (L < 1e-10){
+        converged = true; stopRun();
+      } else if (stepCount >= MAX_STEPS){
+        stopRun();
+      }
+    }
+
+    function doReset(){
+      stopRun();
+      resetRng();
+      theta.x = state.x0; theta.y = state.y0;
+      vel.x = 0; vel.y = 0;
+      adam.mx = 0; adam.my = 0; adam.vx = 0; adam.vy = 0; adam.t = 0;
+      last = { dx: 0, dy: 0, gx: 0, gy: 0 };
+      stepCount = 0;
+      diverged = false; converged = false;
+      history = [{ x: theta.x, y: theta.y, loss: lossAt(theta.x, theta.y) }];
+      render();
+    }
+
+    // ---- run loop ----
+    function terminal(){ return diverged || converged || stepCount >= MAX_STEPS; }
+    function tick(ts){
+      if (!running) return;
+      if (ts - lastTickTime >= TICK_MS){
+        lastTickTime = ts;
+        doStep();
+        render();
+        if (terminal()){ stopRun(); render(); return; }
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+    function startRun(){
+      if (running || terminal()) return;
+      running = true;
+      elRunBtn.setAttribute('aria-pressed', 'true');
+      elRunBtn.innerHTML = '&#10074;&#10074; Pause';
+      lastTickTime = 0;
+      rafId = requestAnimationFrame(tick);
+    }
+    function stopRun(){
+      running = false;
+      elRunBtn.setAttribute('aria-pressed', 'false');
+      elRunBtn.innerHTML = '&#9654; Run';
+      if (rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
+    }
+
+    // ---- rendering: trajectory ----
+    function drawTrajectory(){
+      while (elTrajG.firstChild) elTrajG.removeChild(elTrajG.firstChild);
+      if (history.length === 0) return;
+      var pts = [], polyPts = [];
+      for (var i = 0; i < history.length; i++){
+        var h = history[i];
+        var hx = isFinite(h.x) ? h.x : (h.x > 0 ? DOMAIN : -DOMAIN);
+        var hy = isFinite(h.y) ? h.y : (h.y > 0 ? DOMAIN : -DOMAIN);
+        var clipped = Math.abs(hx) > DOMAIN || Math.abs(hy) > DOMAIN || !isFinite(h.x) || !isFinite(h.y);
+        var p = toPx(clampDomain(hx), clampDomain(hy));
+        pts.push({ px: p.px, py: p.py, clipped: clipped });
+        polyPts.push(p.px.toFixed(1) + ',' + p.py.toFixed(1));
+      }
+      var poly = svgNode('polyline');
+      poly.setAttribute('class', 'gdp-traj-line');
+      poly.setAttribute('points', polyPts.join(' '));
+      elTrajG.appendChild(poly);
+
+      for (var j = 0; j < pts.length; j++){
+        var isLast = (j === pts.length - 1);
+        var dot = svgNode('circle');
+        dot.setAttribute('class', 'gdp-traj-dot' + (isLast ? ' current' : '') + (pts[j].clipped ? ' clipped' : ''));
+        dot.setAttribute('cx', pts[j].px.toFixed(1));
+        dot.setAttribute('cy', pts[j].py.toFixed(1));
+        dot.setAttribute('r', isLast ? 4.2 : 2.1);
+        elTrajG.appendChild(dot);
+      }
+    }
+
+    // ---- rendering: loss curve + theoretical rho^{2t} reference ----
+    var LOG_FLOOR = -12, LOG_CEIL = 30;
+    function logLoss(L){
+      if (typeof L !== 'number' || isNaN(L)) return LOG_CEIL;
+      if (!isFinite(L)) return LOG_CEIL;
+      return Math.max(LOG_FLOOR, Math.min(LOG_CEIL, Math.log10(Math.max(L, 1e-12))));
+    }
+    function drawLossChart(){
+      var W = 320, H = 180, ml = 40, mr = 8, mt = 10, mb = 24;
+      var plotW = W - ml - mr, plotH = H - mt - mb;
+      var n = history.length;
+      var maxStepShown = Math.max(20, n - 1);
+
+      var logs = [];
+      for (var i = 0; i < n; i++) logs.push(logLoss(history[i].loss));
+      var lo = Math.min.apply(null, logs), hi = Math.max.apply(null, logs);
+      if (!isFinite(lo) || !isFinite(hi)){ lo = -1; hi = 1; }
+      if (hi - lo < 1e-6){ lo -= 0.5; hi += 0.5; }
+      var dataLo = lo, dataHi = hi;
+      var pad = (hi - lo) * 0.08;
+      lo -= pad; hi += pad;
+
+      function xPx(i){ return ml + (i / maxStepShown) * plotW; }
+      function yPx(v){ return mt + (1 - (v - lo) / (hi - lo)) * plotH; }
+
+      var poly = [];
+      for (var k = 0; k < n; k++) poly.push(xPx(k).toFixed(1) + ',' + yPx(logs[k]).toFixed(1));
+      elLossLine.setAttribute('points', poly.join(' '));
+
+      while (elLossGridG.firstChild) elLossGridG.removeChild(elLossGridG.firstChild);
+      [dataHi, dataLo].forEach(function(v){
+        var y = yPx(v);
+        var line = svgNode('line');
+        line.setAttribute('class', 'gdp-grid-line');
+        line.setAttribute('x1', ml); line.setAttribute('x2', W - mr);
+        line.setAttribute('y1', y.toFixed(1)); line.setAttribute('y2', y.toFixed(1));
+        elLossGridG.appendChild(line);
+        var txt = svgNode('text');
+        txt.setAttribute('class', 'gdp-grid-lbl');
+        txt.setAttribute('x', 2); txt.setAttribute('y', (y + 3).toFixed(1));
+        txt.textContent = Math.pow(10, v).toExponential(0).replace('e+', 'e');
+        elLossGridG.appendChild(txt);
+      });
+      var xlab = svgNode('text');
+      xlab.setAttribute('class', 'gdp-grid-lbl');
+      xlab.setAttribute('x', ml); xlab.setAttribute('y', H - 7);
+      xlab.textContent = 'step 0 .. ' + maxStepShown;
+      elLossGridG.appendChild(xlab);
+
+      // dashed prediction L0 * rho^{2t} (exact for the noiseless linear recursion)
+      var rho = rhoPred();
+      var refPts = [];
+      if (state.sigma === 0 && isFinite(rho) && rho > 1e-6 && n > 0){
+        var l0 = logs[0];
+        var slope = 2 * Math.log10(rho);
+        for (var t = 0; t <= maxStepShown; t++){
+          var v2 = l0 + slope * t;
+          if (v2 < lo || v2 > hi) break;
+          refPts.push(xPx(t).toFixed(1) + ',' + yPx(v2).toFixed(1));
+        }
+      }
+      elRefLine.setAttribute('points', refPts.join(' '));
+      if (refPts.length > 1){
+        var lbl = svgNode('text');
+        lbl.setAttribute('class', 'gdp-ref-lbl');
+        lbl.setAttribute('x', W - mr); lbl.setAttribute('y', H - 7);
+        lbl.setAttribute('text-anchor', 'end');
+        lbl.textContent = 'prediction L0*rho^(2t)';
+        elLossGridG.appendChild(lbl);
+      }
+    }
+
+    // ---- rendering: numeric readout ----
+    function statTile(main, sub){
+      return '<div class="vt-stat">' + main + '<div class="gdp-sub">' + sub + '</div></div>';
+    }
+    function updateReadout(){
+      var L = lossAt(theta.x, theta.y);
+      var gradRatio = last.gx !== 0 ? Math.abs(last.gy / last.gx) : NaN;
+      var stepRatio = last.dx !== 0 ? Math.abs(last.dy / last.dx) : NaN;
+      var ceil = etaCeiling();
+      var rho = rhoPred();
+      var floor = noiseFloor();
+
+      var statusText, statusCls;
+      if (diverged){ statusText = 'diverged'; statusCls = 'diverged'; }
+      else if (converged){ statusText = 'converged'; statusCls = 'converged'; }
+      else if (running){ statusText = 'running'; statusCls = 'running'; }
+      else if (stepCount >= MAX_STEPS){ statusText = 'step limit'; statusCls = ''; }
+      else { statusText = 'idle'; statusCls = ''; }
+      elStatus.textContent = statusText;
+      elStatus.className = 'gdp-status ' + statusCls;
+
+      var tiles = [];
+      tiles.push(statTile('step <b>' + stepCount + '</b> / ' + MAX_STEPS, 'iterations taken'));
+      tiles.push(statTile('&theta; = (' + fmtG(theta.x) + ', ' + fmtG(theta.y) + ')', 'current parameters'));
+      tiles.push(statTile('L(&theta;) = <b>' + fmtG(L) + '</b>', 'loss &frac12;(&lambda;<sub>1</sub>&theta;<sub>1</sub><sup>2</sup>+&lambda;<sub>2</sub>&theta;<sub>2</sub><sup>2</sup>)'));
+      tiles.push(statTile('&lambda; = (' + state.lam1.toFixed(3) + ', ' + state.lam2.toFixed(3) + ')',
+                          'Hessian eigenvalues; &lambda;<sub>2</sub>/&lambda;<sub>1</sub> = &kappa; = ' + fmtKappa(state.kappa)));
+
+      if (state.optimizer === 'adam'){
+        tiles.push(statTile('&eta; ceiling: n/a', 'Adam&rsquo;s step is &asymp;&eta; per axis regardless of curvature'));
+      } else {
+        var over = state.eta >= ceil;
+        tiles.push(statTile('&eta;<sub>max</sub> = <b>' + fmtEta(ceil) + '</b> (&eta; = ' + fmtEta(state.eta) + ')',
+          (state.optimizer === 'sgd'
+            ? '2/&lambda;<sub>max</sub>: diverges at or above this'
+            : '2(1+&beta;)/&lambda;<sub>max</sub>: diverges at or above this')
+          + (over ? ' &mdash; <b>currently above it</b>' : '')));
+      }
+
+      if (state.sigma > 0 && state.optimizer === 'sgd'){
+        tiles.push(statTile('noise floor E[L<sub>&infin;</sub>] = <b>' + fmtG(floor) + '</b>',
+                            'stationary loss under &sigma; = ' + state.sigma.toFixed(2) + '; scales &propto; &eta;'));
+      } else if (state.optimizer === 'adam'){
+        tiles.push(statTile('&rho; = &mdash;', 'no closed-form linear rate for Adam'));
+      } else {
+        var obs = NaN;
+        if (history.length >= 2){
+          var Lp = history[history.length - 2].loss, Lc = history[history.length - 1].loss;
+          if (isFinite(Lp) && isFinite(Lc) && Lp > 0 && Lc >= 0) obs = Math.sqrt(Lc / Lp);
+        }
+        tiles.push(statTile('&rho; = <b>' + fmtRatio(rho) + '</b>' + (rho >= 1 ? ' &ge; 1' : ''),
+          'predicted per-step contraction' + (isNaN(obs) ? '' : '; last observed &radic;(L<sub>t</sub>/L<sub>t&minus;1</sub>) = ' + fmtRatio(obs))
+          + (state.sigma > 0 ? ' (noiseless theory)' : '')));
+      }
+
+      tiles.push(statTile('|g<sub>2</sub>/g<sub>1</sub>| = <b>' + fmtRatio(gradRatio) + '</b>',
+                          state.sigma > 0
+                            ? 'ratio of the noisy gradient actually used'
+                            : 'gradient ratio = &kappa;&middot;|&theta;<sub>2</sub>/&theta;<sub>1</sub>|'));
+      var stepSub;
+      if (state.optimizer === 'adam') stepSub = 'step ratio &mdash; Adam pins it near 1';
+      else if (state.optimizer === 'momentum') stepSub = 'step ratio &mdash; the step is the velocity, an EMA of past gradients';
+      else stepSub = 'step ratio &mdash; equals the gradient ratio exactly';
+      tiles.push(statTile('|&Delta;&theta;<sub>2</sub>/&Delta;&theta;<sub>1</sub>| = <b>' + fmtRatio(stepRatio) + '</b>', stepSub));
+
+      elReadout.innerHTML = tiles.join('');
+    }
+
+    function positionStartMarker(){
+      var p = toPx(state.x0, state.y0);
+      var kids = elStartG.childNodes;
+      for (var i = 0; i < kids.length; i++){
+        if (kids[i].setAttribute){
+          kids[i].setAttribute('cx', p.px.toFixed(1));
+          kids[i].setAttribute('cy', p.py.toFixed(1));
+        }
+      }
+      elStartG.setAttribute('aria-label',
+        'Start point theta-zero = (' + state.x0.toFixed(2) + ', ' + state.y0.toFixed(2) +
+        '). Use the arrow keys to move it; hold shift for larger steps.');
+    }
+
+    function render(){
+      drawCurrentLevel();
+      drawTrajectory();
+      drawLossChart();
+      updateReadout();
+    }
+
+    // ---- control wiring ----
+    function syncBetaAvailability(){
+      var disabled = (state.optimizer === 'sgd');
+      elBetaRange.disabled = disabled;
+      elBetaNum.disabled = disabled;
+      elBetaLabel.classList.toggle('gdp-beta-disabled', disabled);
+    }
+    function applyKappa(k){
+      state.kappa = Math.max(1, Math.min(200, k));
+      elKappaLbl.textContent = fmtKappa(state.kappa);
+      recomputeEigs();
+      rebuildContours();
+      positionStartMarker();
+      doReset();
+    }
+
+    elKappaRange.addEventListener('input', function(){
+      var v = parseFloat(elKappaRange.value);
+      if (!isFinite(v)) return;
+      applyKappa(valToKappa(v));
+      elKappaNum.value = fmtKappa(state.kappa);
+    });
+    elKappaNum.addEventListener('input', function(){
+      var k = parseFloat(elKappaNum.value);
+      if (!isFinite(k) || k <= 0) return;
+      applyKappa(k);
+      elKappaRange.value = kappaToVal(state.kappa);
+    });
+
+    elOptimizer.addEventListener('change', function(){
+      var v = elOptimizer.value;
+      state.optimizer = (v === 'momentum' || v === 'adam') ? v : 'sgd';
+      syncBetaAvailability();
+      doReset();
+    });
+
+    elEtaRange.addEventListener('input', function(){
+      var v = parseFloat(elEtaRange.value);
+      if (!isFinite(v)) return;
+      state.eta = valToEta(v);
+      elEtaNum.value = fmtEta(state.eta);
+      doReset();
+    });
+    elEtaNum.addEventListener('input', function(){
+      var e = parseFloat(elEtaNum.value);
+      if (!isFinite(e) || e <= 0) return;
+      state.eta = Math.max(0.001, Math.min(Math.pow(10, ETA_MAX_EXP), e));
+      elEtaRange.value = etaToVal(state.eta);
+      doReset();
+    });
+
+    elBetaRange.addEventListener('input', function(){
+      var b = parseFloat(elBetaRange.value);
+      if (!isFinite(b)) return;
+      state.beta = Math.max(0, Math.min(0.99, b));
+      elBetaNum.value = state.beta.toFixed(2);
+      doReset();
+    });
+    elBetaNum.addEventListener('input', function(){
+      var b = parseFloat(elBetaNum.value);
+      if (!isFinite(b)) return;
+      state.beta = Math.max(0, Math.min(0.99, b));
+      elBetaRange.value = state.beta;
+      doReset();
+    });
+
+    elSigmaRange.addEventListener('input', function(){
+      var s = parseFloat(elSigmaRange.value);
+      if (!isFinite(s)) return;
+      state.sigma = Math.max(0, Math.min(1.5, s));
+      elSigmaNum.value = state.sigma.toFixed(2);
+      doReset();
+    });
+    elSigmaNum.addEventListener('input', function(){
+      var s = parseFloat(elSigmaNum.value);
+      if (!isFinite(s) || s < 0) return;
+      state.sigma = Math.max(0, Math.min(1.5, s));
+      elSigmaRange.value = state.sigma;
+      doReset();
+    });
+
+    elStepBtn.addEventListener('click', function(){ stopRun(); doStep(); render(); });
+    elRunBtn.addEventListener('click', function(){
+      if (running){ stopRun(); }
+      else { if (terminal()) doReset(); startRun(); }
+      render();
+    });
+    elResetBtn.addEventListener('click', function(){ doReset(); });
+
+    // ---- pointer / keyboard control of the start point ----
+    var dragging = false, dragMoved = false;
+    function svgPointFromEvent(evt){
+      var rect = svgEl.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      var px = (evt.clientX - rect.left) * (320 / rect.width);
+      var py = (evt.clientY - rect.top) * (320 / rect.height);
+      return toDomain(px, py);
+    }
+    function setStart(x, y){
+      if (!isFinite(x) || !isFinite(y)) return;
+      state.x0 = clampDomain(x);
+      state.y0 = clampDomain(y);
+      positionStartMarker();
+      doReset();
+    }
+    elStartG.addEventListener('pointerdown', function(evt){
+      stopRun();
+      dragging = true; dragMoved = false;
+      try { elStartG.setPointerCapture(evt.pointerId); } catch (e){}
+      evt.preventDefault();
+    });
+    elStartG.addEventListener('pointermove', function(evt){
+      if (!dragging) return;
+      dragMoved = true;
+      var d = svgPointFromEvent(evt);
+      if (d) setStart(d.x, d.y);
+      evt.preventDefault();
+    });
+    function endDrag(evt){
+      if (!dragging) return;
+      dragging = false;
+      try { elStartG.releasePointerCapture(evt.pointerId); } catch (e){}
+    }
+    elStartG.addEventListener('pointerup', endDrag);
+    elStartG.addEventListener('pointercancel', endDrag);
+    // a plain click anywhere on the plot relocates the start point (clicks are
+    // suppressed by the browser after a scroll, so touch scrolling still works)
+    svgEl.addEventListener('click', function(evt){
+      if (dragMoved){ dragMoved = false; return; }
+      var d = svgPointFromEvent(evt);
+      if (d) setStart(d.x, d.y);
+    });
+    elStartG.addEventListener('keydown', function(evt){
+      var s = evt.shiftKey ? 1 : 0.2;
+      var handled = true;
+      if (evt.key === 'ArrowLeft') setStart(state.x0 - s, state.y0);
+      else if (evt.key === 'ArrowRight') setStart(state.x0 + s, state.y0);
+      else if (evt.key === 'ArrowUp') setStart(state.x0, state.y0 + s);
+      else if (evt.key === 'ArrowDown') setStart(state.x0, state.y0 - s);
+      else handled = false;
+      if (handled) evt.preventDefault();
+    });
+
+    // ---- init ----
+    state.kappa = parseFloat(elKappaNum.value) || 10;
+    state.eta = parseFloat(elEtaNum.value) || 0.5;
+    state.beta = parseFloat(elBetaNum.value) || 0.9;
+    state.sigma = parseFloat(elSigmaNum.value) || 0;
+    state.optimizer = elOptimizer.value || 'sgd';
+    recomputeEigs();
+    elKappaLbl.textContent = fmtKappa(state.kappa);
+    syncBetaAvailability();
+    rebuildContours();
+    positionStartMarker();
+    doReset();
+  })();</script>
+</div>

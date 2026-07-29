@@ -1,0 +1,500 @@
+<div class="viz-tool" id="tool-normalization-explorer">
+  <div class="vt-title">LayerNorm vs RMSNorm, live</div>
+  <div class="vt-hint">Drag a bar in the top row (or type in a box below, or focus a bar and press &uarr;/&darr;) to edit an activation. Switch the normalization type and move gain/bias to see exactly what each one does to the vector.</div>
+
+  <div class="vt-grid">
+    <label for="normalization-explorer-mode">Normalization
+      <select id="normalization-explorer-mode">
+        <option value="layernorm">LayerNorm</option>
+        <option value="rmsnorm">RMSNorm</option>
+      </select>
+    </label>
+    <label for="normalization-explorer-gain-range">gain (&gamma;) <span class="vt-val" id="normalization-explorer-gain-val">1.00</span>
+      <span class="vt-in">
+        <input id="normalization-explorer-gain-range" type="range" min="0" max="3" step="0.05" value="1" aria-label="Gain gamma, slider">
+        <input id="normalization-explorer-gain-num" type="number" min="0" max="3" step="0.05" value="1" aria-label="Gain gamma, numeric">
+      </span>
+    </label>
+    <label for="normalization-explorer-bias-range" id="normalization-explorer-bias-label">bias (&beta;) <span class="vt-val" id="normalization-explorer-bias-val">0.00</span>
+      <span class="vt-in">
+        <input id="normalization-explorer-bias-range" type="range" min="-3" max="3" step="0.05" value="0" aria-label="Bias beta, slider">
+        <input id="normalization-explorer-bias-num" type="number" min="-3" max="3" step="0.05" value="0" aria-label="Bias beta, numeric">
+      </span>
+    </label>
+    <span class="normalization-explorer-btn-label">
+      <span class="normalization-explorer-btn-cap">presets</span>
+      <span class="vt-in">
+        <button id="normalization-explorer-randomize" type="button">Randomize x</button>
+        <button id="normalization-explorer-offset" type="button" title="Add a large constant to every dimension">Big offset</button>
+        <button id="normalization-explorer-reset" type="button">Reset</button>
+      </span>
+    </span>
+  </div>
+
+  <div class="normalization-explorer-dims" id="normalization-explorer-dims" role="group" aria-label="Activation vector values, editable"></div>
+
+  <div class="normalization-explorer-legend">
+    <span><i class="normalization-explorer-swatch normalization-explorer-swatch-x"></i>input x</span>
+    <span><i class="normalization-explorer-swatch normalization-explorer-swatch-n"></i>normalized (pre-affine)</span>
+    <span><i class="normalization-explorer-swatch normalization-explorer-swatch-y"></i>output y (after gain &amp; bias)</span>
+  </div>
+
+  <div class="normalization-explorer-scroll">
+    <svg id="normalization-explorer-svg" viewBox="0 0 640 372" role="group" aria-label="Bar charts of the input activations, the normalized values, and the final output"></svg>
+  </div>
+
+  <div class="normalization-explorer-dimline" id="normalization-explorer-dimline" aria-live="polite">Hover or focus a bar to inspect its exact value in all three rows.</div>
+
+  <div class="normalization-explorer-readout" id="normalization-explorer-readout" aria-live="polite"></div>
+
+  <div class="vt-note" id="normalization-explorer-note"></div>
+
+  <style>
+    #tool-normalization-explorer{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); font-family:var(--sans,sans-serif); color:var(--ink,#211f1b); }
+    #tool-normalization-explorer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-normalization-explorer .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.5; }
+    #tool-normalization-explorer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-normalization-explorer label,
+    #tool-normalization-explorer .normalization-explorer-btn-label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-normalization-explorer .normalization-explorer-btn-cap{ visibility:hidden; }
+    #tool-normalization-explorer .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-normalization-explorer select,
+    #tool-normalization-explorer input[type="number"]{ font:inherit; font-size:.85rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-normalization-explorer input[type="range"]{ accent-color:var(--accent,#c15b39); }
+    #tool-normalization-explorer .vt-in{ display:flex; gap:6px; align-items:center; }
+    #tool-normalization-explorer .vt-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-normalization-explorer .vt-in input[type="number"]{ flex:1 1 64px; min-width:0; }
+    #tool-normalization-explorer input:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-normalization-explorer label.is-off{ opacity:.5; }
+    #tool-normalization-explorer .normalization-explorer-btn-label .vt-in{ flex-wrap:wrap; }
+    #tool-normalization-explorer .normalization-explorer-btn-label button{ font:inherit; font-size:.8rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; flex:0 1 auto; white-space:nowrap; }
+    #tool-normalization-explorer .normalization-explorer-btn-label button:hover{ background:var(--surface-3,#ece7da); }
+
+    #tool-normalization-explorer .normalization-explorer-dims{ margin-top:14px; display:flex; flex-wrap:wrap; gap:10px; }
+    #tool-normalization-explorer .normalization-explorer-dim{ display:flex; flex-direction:column; align-items:center; gap:4px; font-size:.68rem; color:var(--muted,#6d675d); }
+    #tool-normalization-explorer .normalization-explorer-dim input{ width:58px; text-align:center; font-variant-numeric:tabular-nums; }
+
+    #tool-normalization-explorer .normalization-explorer-legend{ margin-top:12px; display:flex; flex-wrap:wrap; gap:16px; font-size:.74rem; color:var(--muted,#6d675d); align-items:center; }
+    #tool-normalization-explorer .normalization-explorer-swatch{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+    #tool-normalization-explorer .normalization-explorer-swatch-x{ background:var(--ink-soft,#45413a); }
+    #tool-normalization-explorer .normalization-explorer-swatch-n{ background:var(--v-good,#2f9e6e); }
+    #tool-normalization-explorer .normalization-explorer-swatch-y{ background:var(--accent,#c15b39); }
+
+    #tool-normalization-explorer .normalization-explorer-scroll{ margin-top:6px; overflow-x:auto; max-width:100%; }
+    #tool-normalization-explorer .normalization-explorer-scroll svg{ display:block; min-width:520px; width:100%; height:auto; }
+    /* SVG text sized in px = user units, so it scales with the viewBox instead of the reader's root font size */
+    #tool-normalization-explorer .ne-panel-title{ font-size:10.5px; fill:var(--muted,#6d675d); }
+    #tool-normalization-explorer .ne-zero-line{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-normalization-explorer .ne-ref-line{ stroke:var(--v-good,#2f9e6e); stroke-width:1; stroke-dasharray:3,3; opacity:.65; }
+    #tool-normalization-explorer .ne-ref-label{ font-size:9px; fill:var(--v-good,#2f9e6e); opacity:.85; }
+    #tool-normalization-explorer .ne-dim-label{ font-size:9.5px; fill:var(--muted,#6d675d); text-anchor:middle; }
+    #tool-normalization-explorer .ne-bar{ transition:opacity .1s ease-out; }
+    #tool-normalization-explorer .ne-bar.is-dim{ opacity:.28; }
+    #tool-normalization-explorer .ne-bar.is-hot{ opacity:1; stroke:var(--ink,#211f1b); stroke-width:1; }
+    #tool-normalization-explorer .ne-hit{ fill:transparent; cursor:default; }
+    #tool-normalization-explorer .ne-hit.ne-drag{ cursor:ns-resize; touch-action:none; }
+    #tool-normalization-explorer .ne-hit:focus{ outline:2px solid var(--accent,#c15b39); outline-offset:-2px; }
+
+    #tool-normalization-explorer .normalization-explorer-dimline{ margin-top:10px; font-size:.78rem; color:var(--ink-soft,#45413a); min-height:1.3em; }
+
+    #tool-normalization-explorer .normalization-explorer-readout{ margin-top:10px; display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+    #tool-normalization-explorer .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 12px; font-size:.78rem; line-height:1.6; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    #tool-normalization-explorer .vt-stat .ne-stat-title{ font-weight:700; color:var(--ink,#211f1b); display:block; margin-bottom:2px; }
+    #tool-normalization-explorer .vt-stat .ne-hl{ color:var(--v-good,#2f9e6e); font-weight:700; }
+    #tool-normalization-explorer .vt-stat code{ font-family:var(--mono,monospace); font-size:.95em; background:none; padding:0; }
+
+    #tool-normalization-explorer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+  </style>
+
+  <script>(function(){
+    var root=document.getElementById('tool-normalization-explorer');
+    if(!root) return;
+    var D=8, EPS=1e-5, LIM=8;
+    var DEFAULT_X=[2.0,-1.5,4.5,-3.0,0.5,3.5,-2.5,1.0];
+
+    var elMode=root.querySelector('#normalization-explorer-mode');
+    var elGainR=root.querySelector('#normalization-explorer-gain-range');
+    var elGainN=root.querySelector('#normalization-explorer-gain-num');
+    var elGainV=root.querySelector('#normalization-explorer-gain-val');
+    var elBiasR=root.querySelector('#normalization-explorer-bias-range');
+    var elBiasN=root.querySelector('#normalization-explorer-bias-num');
+    var elBiasV=root.querySelector('#normalization-explorer-bias-val');
+    var elBiasLabel=root.querySelector('#normalization-explorer-bias-label');
+    var elRandomize=root.querySelector('#normalization-explorer-randomize');
+    var elOffset=root.querySelector('#normalization-explorer-offset');
+    var elReset=root.querySelector('#normalization-explorer-reset');
+    var elDims=root.querySelector('#normalization-explorer-dims');
+    var svg=root.querySelector('#normalization-explorer-svg');
+    var elDimline=root.querySelector('#normalization-explorer-dimline');
+    var elReadout=root.querySelector('#normalization-explorer-readout');
+    var elNote=root.querySelector('#normalization-explorer-note');
+
+    var xVals=DEFAULT_X.slice();
+    var hoverDim=null, dragDim=null;
+    var curScale=1;
+
+    // deterministic PRNG (mulberry32) so "Randomize x" is reproducible run-to-run
+    function mulberry32(a){
+      return function(){
+        a|=0; a=a+0x6D2B79F5|0;
+        var t=Math.imul(a^a>>>15, 1|a);
+        t=t+Math.imul(t^t>>>7, 61|t)^t;
+        return ((t^t>>>14)>>>0)/4294967296;
+      };
+    }
+    var rng=mulberry32(20260728);
+
+    function svgEl(tag, attrs){
+      var e=document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for(var k in attrs) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function clamp(v, lo, hi){ return v<lo?lo:(v>hi?hi:v); }
+    function fmt(v, n){
+      if(typeof v!=='number' || !isFinite(v)) return '—';
+      var s=v.toFixed(n);
+      if(/^-0(\.0*)?$/.test(s)) s=s.slice(1); // squash "-0.000"
+      return s;
+    }
+    function readNum(el, fallback, lo, hi){
+      var v=parseFloat(el.value);
+      if(!isFinite(v)) return fallback;
+      return clamp(v, lo, hi);
+    }
+
+    // ---- math -------------------------------------------------------------
+    // LayerNorm : y_i = gamma * (x_i - mu) / sqrt(sigma^2 + eps) + beta,
+    //             mu = mean(x), sigma^2 = mean((x - mu)^2)   [biased, as in PyTorch]
+    // RMSNorm   : y_i = gamma * x_i / sqrt(mean(x^2) + eps)   [no mean subtraction, no bias]
+    function avg(arr){ var s=0; for(var i=0;i<arr.length;i++) s+=arr[i]; return s/arr.length; }
+    function statsOf(arr){
+      var mean=avg(arr);
+      var variance=avg(arr.map(function(v){ return (v-mean)*(v-mean); }));
+      var meanSq=avg(arr.map(function(v){ return v*v; }));
+      return { mean:mean, variance:variance, std:Math.sqrt(variance), rms:Math.sqrt(meanSq) };
+    }
+    function compute(){
+      var mode=(elMode.value==='rmsnorm') ? 'rmsnorm' : 'layernorm';
+      var gain=readNum(elGainN, 1, 0, 3);
+      var bias=readNum(elBiasN, 0, -3, 3);
+      var before=statsOf(xVals);
+      var normed, denom;
+      if(mode==='layernorm'){
+        denom=Math.sqrt(before.variance+EPS);
+        normed=xVals.map(function(v){ return (v-before.mean)/denom; });
+      } else {
+        bias=0; // RMSNorm has no bias term
+        denom=Math.sqrt(before.rms*before.rms+EPS);
+        normed=xVals.map(function(v){ return v/denom; });
+      }
+      var y=normed.map(function(v){ return gain*v + bias; });
+      return { mode:mode, gain:gain, bias:bias, before:before, denom:denom,
+               normed:normed, normedStats:statsOf(normed), y:y, yStats:statsOf(y) };
+    }
+
+    // ---- dimension number inputs (keyboard-accessible editing) -------------
+    var dimInputs=[];
+    (function buildDims(){
+      elDims.innerHTML='';
+      for(var i=0;i<D;i++){
+        (function(i){
+          var wrap=document.createElement('div');
+          wrap.className='normalization-explorer-dim';
+          var lab=document.createElement('label');
+          lab.setAttribute('for','normalization-explorer-x'+i);
+          lab.textContent='x'+(i+1);
+          var inp=document.createElement('input');
+          inp.type='number'; inp.id='normalization-explorer-x'+i;
+          inp.min=String(-LIM); inp.max=String(LIM); inp.step='0.1';
+          inp.value=String(xVals[i]);
+          inp.setAttribute('aria-label','Activation dimension '+(i+1)+' value');
+          inp.addEventListener('input', function(){
+            var v=parseFloat(inp.value);
+            if(!isFinite(v)) return;          // mid-typing ("", "-", "1e") -> keep last good value
+            xVals[i]=clamp(v, -LIM, LIM);
+            render();
+          });
+          inp.addEventListener('change', function(){
+            var v=parseFloat(inp.value);
+            if(!isFinite(v)) v=xVals[i];
+            xVals[i]=clamp(v, -LIM, LIM);
+            inp.value=String(Math.round(xVals[i]*100)/100);
+            render();
+          });
+          wrap.appendChild(lab); wrap.appendChild(inp);
+          elDims.appendChild(wrap);
+          dimInputs.push(inp);
+        })(i);
+      }
+    })();
+    function syncDimInputs(){
+      for(var i=0;i<D;i++){ dimInputs[i].value=String(Math.round(xVals[i]*100)/100); }
+    }
+
+    // ---- SVG geometry -----------------------------------------------------
+    var SVG_W=640;
+    var MARGIN_L=34, MARGIN_R=10;
+    var BAR_GAP=8;
+    var BAR_W=(SVG_W-MARGIN_L-MARGIN_R-(D-1)*BAR_GAP)/D;
+    var TITLE_H=16, PANEL_H=84, PANEL_GAP=14, TOP_MARGIN=8;
+    var BLOCK=TITLE_H+PANEL_H+PANEL_GAP;
+    var panelTop=[TOP_MARGIN, TOP_MARGIN+BLOCK, TOP_MARGIN+2*BLOCK];
+    var baselineY=panelTop.map(function(t){ return t+TITLE_H+PANEL_H/2; });
+    var HALF_H=PANEL_H/2-4;
+    var PANEL_NAME=['input x', 'normalized (pre-affine)', 'output y'];
+
+    var barRects=[[],[],[]], hitRects=[[],[],[]], titleEls=[], refLines=[], refLabels=[];
+    (function buildSvg(){
+      svg.innerHTML='';
+      for(var p=0;p<3;p++){
+        var title=svgEl('text',{class:'ne-panel-title', x:MARGIN_L, y:panelTop[p]+11});
+        svg.appendChild(title);
+        titleEls.push(title);
+
+        var zero=svgEl('line',{class:'ne-zero-line', x1:MARGIN_L, x2:SVG_W-MARGIN_R, y1:baselineY[p], y2:baselineY[p]});
+        svg.appendChild(zero);
+
+        if(p===1){
+          for(var k=0;k<2;k++){
+            var rl=svgEl('line',{class:'ne-ref-line'});
+            svg.appendChild(rl); refLines.push(rl);
+            var rt=svgEl('text',{class:'ne-ref-label', x:2});
+            rt.textContent=(k===0?'+1':'-1');
+            svg.appendChild(rt); refLabels.push(rt);
+          }
+        }
+
+        for(var i=0;i<D;i++){
+          var rect=svgEl('rect',{class:'ne-bar', x:MARGIN_L+i*(BAR_W+BAR_GAP), y:baselineY[p], width:BAR_W, height:0, rx:2});
+          svg.appendChild(rect);
+          barRects[p].push(rect);
+        }
+        for(var j=0;j<D;j++){
+          var hit=svgEl('rect',{class:'ne-hit'+(p===0?' ne-drag':''), x:MARGIN_L+j*(BAR_W+BAR_GAP),
+                                y:panelTop[p]+TITLE_H, width:BAR_W, height:PANEL_H});
+          hit.setAttribute('tabindex', p===0 ? '0' : '-1');
+          if(p===0){
+            hit.setAttribute('role','slider');
+            hit.setAttribute('aria-valuemin', String(-LIM));
+            hit.setAttribute('aria-valuemax', String(LIM));
+          } else {
+            hit.setAttribute('role','img');
+          }
+          svg.appendChild(hit);
+          hitRects[p].push(hit);
+          bindHit(hit, j, p);
+        }
+
+        if(p===2){
+          for(var m=0;m<D;m++){
+            var dl=svgEl('text',{class:'ne-dim-label', x:MARGIN_L+m*(BAR_W+BAR_GAP)+BAR_W/2, y:panelTop[2]+TITLE_H+PANEL_H+16});
+            dl.textContent='x'+(m+1);
+            svg.appendChild(dl);
+          }
+        }
+      }
+    })();
+
+    function bindHit(hit, i, p){
+      hit.addEventListener('mouseenter', function(){ hoverDim=i; render(); });
+      hit.addEventListener('mouseleave', function(){ if(dragDim===null){ hoverDim=null; render(); } });
+      hit.addEventListener('focus', function(){ hoverDim=i; render(); });
+      hit.addEventListener('blur', function(){ if(dragDim===null){ hoverDim=null; render(); } });
+      if(p!==0) return;
+
+      function valueFromEvent(evt){
+        if(typeof svg.createSVGPoint!=='function' || typeof svg.getScreenCTM!=='function') return null;
+        var ctm=svg.getScreenCTM();
+        if(!ctm) return null;
+        var pt=svg.createSVGPoint();
+        pt.x=evt.clientX; pt.y=evt.clientY;
+        var loc=pt.matrixTransform(ctm.inverse());
+        if(!isFinite(loc.y) || !(curScale>0)) return null;
+        return clamp(Math.round(((baselineY[0]-loc.y)/curScale)*10)/10, -LIM, LIM);
+      }
+      hit.addEventListener('pointerdown', function(evt){
+        var v=valueFromEvent(evt);
+        dragDim=i; hoverDim=i;
+        try{ hit.setPointerCapture(evt.pointerId); }catch(e){}
+        if(evt.preventDefault) evt.preventDefault();
+        if(v!==null){ xVals[i]=v; syncDimInputs(); }
+        render();
+      });
+      hit.addEventListener('pointermove', function(evt){
+        if(dragDim!==i) return;
+        var v=valueFromEvent(evt);
+        if(v===null) return;
+        xVals[i]=v; syncDimInputs(); render();
+      });
+      function endDrag(evt){
+        if(dragDim!==i) return;
+        dragDim=null;
+        try{ hit.releasePointerCapture(evt.pointerId); }catch(e){}
+      }
+      hit.addEventListener('pointerup', endDrag);
+      hit.addEventListener('pointercancel', endDrag);
+      hit.addEventListener('keydown', function(evt){
+        var step = evt.shiftKey ? 1.0 : 0.1;
+        var k=evt.key;
+        if(k==='ArrowUp'||k==='ArrowRight'){ xVals[i]=clamp(xVals[i]+step,-LIM,LIM); }
+        else if(k==='ArrowDown'||k==='ArrowLeft'){ xVals[i]=clamp(xVals[i]-step,-LIM,LIM); }
+        else if(k==='Home'){ xVals[i]=0; }
+        else return;
+        xVals[i]=Math.round(xVals[i]*10)/10;
+        syncDimInputs(); render();
+        if(evt.preventDefault) evt.preventDefault();
+      });
+    }
+
+    function statCard(title, s, highlightKey){
+      var html='<span class="ne-stat-title">'+title+'</span>';
+      html+='mean = '+(highlightKey==='mean'?'<span class="ne-hl">'+fmt(s.mean,3)+'</span>':fmt(s.mean,3))+'<br>';
+      html+='variance = '+(highlightKey==='variance'?'<span class="ne-hl">'+fmt(s.variance,3)+'</span>':fmt(s.variance,3))+', std = '+fmt(s.std,3)+'<br>';
+      html+='RMS = '+(highlightKey==='rms'?'<span class="ne-hl">'+fmt(s.rms,3)+'</span>':fmt(s.rms,3));
+      return '<div class="vt-stat">'+html+'</div>';
+    }
+
+    function render(){
+      var r=compute();
+      var isLN=(r.mode==='layernorm');
+
+      elGainV.textContent=fmt(r.gain,2);
+      elBiasV.textContent=isLN ? fmt(r.bias,2) : 'n/a';
+      elBiasR.disabled=!isLN; elBiasN.disabled=!isLN;
+      elBiasLabel.className = isLN ? '' : 'is-off';
+
+      // shared vertical scale across all three panels so magnitude changes are honest
+      var allVals=xVals.concat(r.normed).concat(r.y);
+      var maxAbs=0;
+      for(var i=0;i<allVals.length;i++){
+        var a=Math.abs(allVals[i]);
+        if(isFinite(a) && a>maxAbs) maxAbs=a;
+      }
+      if(!(maxAbs>1)) maxAbs=1;   // keeps the +-1 guides inside the middle panel even for degenerate inputs
+      maxAbs*=1.15;
+      curScale=HALF_H/maxAbs;
+
+      // dashed +-1 guides in the normalized panel (LayerNorm -> std 1; RMSNorm -> RMS 1)
+      var refY=[baselineY[1]-curScale, baselineY[1]+curScale];
+      for(var q=0;q<2;q++){
+        refLines[q].setAttribute('x1',MARGIN_L); refLines[q].setAttribute('x2',SVG_W-MARGIN_R);
+        refLines[q].setAttribute('y1',refY[q]);  refLines[q].setAttribute('y2',refY[q]);
+        refLabels[q].setAttribute('y', refY[q]+(q===0?-2:8));
+      }
+
+      titleEls[0].textContent='input x   \u2014   mean '+fmt(r.before.mean,2)+', std '+fmt(r.before.std,2)+', RMS '+fmt(r.before.rms,2);
+      titleEls[1].textContent= isLN
+        ? 'normalized: n = (x \u2212 \u03bc) / \u221a(\u03c3\u00b2 + \u03b5)   \u2014   \u03bc = '+fmt(r.before.mean,3)+', divisor = '+fmt(r.denom,3)
+        : 'normalized: n = x / \u221a(mean(x\u00b2) + \u03b5)   \u2014   divisor = '+fmt(r.denom,3);
+      titleEls[2].textContent= isLN
+        ? 'output y = \u03b3\u00b7n + \u03b2   \u2014   \u03b3 = '+fmt(r.gain,2)+', \u03b2 = '+fmt(r.bias,2)
+        : 'output y = \u03b3\u00b7n   \u2014   \u03b3 = '+fmt(r.gain,2)+'  (RMSNorm has no \u03b2)';
+
+      var datasets=[xVals, r.normed, r.y];
+      var fills=['var(--ink-soft,#45413a)','var(--v-good,#2f9e6e)','var(--accent,#c15b39)'];
+      for(var p=0;p<3;p++){
+        for(var i2=0;i2<D;i2++){
+          var v=datasets[p][i2];
+          if(!isFinite(v)) v=0;
+          var h=Math.abs(v)*curScale;
+          var rect=barRects[p][i2];
+          rect.setAttribute('y', v>=0 ? baselineY[p]-h : baselineY[p]);
+          rect.setAttribute('height', Math.max(h,0.5));
+          rect.style.fill=fills[p];
+          rect.setAttribute('class', 'ne-bar'+(hoverDim===null?'':(hoverDim===i2?' is-hot':' is-dim')));
+          var hit=hitRects[p][i2];
+          hit.setAttribute('aria-label', PANEL_NAME[p]+', dimension '+(i2+1)+' = '+fmt(v,3));
+          if(p===0){
+            hit.setAttribute('aria-valuenow', fmt(v,2));
+            hit.setAttribute('aria-valuetext', fmt(v,2));
+          }
+        }
+      }
+
+      if(hoverDim!==null){
+        var d=hoverDim;
+        var step = isLN
+          ? '('+fmt(xVals[d],2)+' &minus; '+fmt(r.before.mean,2)+') / '+fmt(r.denom,3)
+          : fmt(xVals[d],2)+' / '+fmt(r.denom,3);
+        elDimline.innerHTML='<b>x'+(d+1)+'</b>: input '+fmt(xVals[d],3)+' &rarr; normalized '+step+' = '+fmt(r.normed[d],3)+
+                            ' &rarr; output y = '+fmt(r.y[d],3);
+      } else {
+        elDimline.textContent='Hover or focus a bar to inspect its exact value in all three rows.';
+      }
+
+      var html='';
+      html+=statCard('before (raw x)', r.before, null);
+      html+=statCard('normalized (pre-affine)', r.normedStats, isLN?'variance':'rms');
+      html+=statCard('output y (final)', r.yStats, null);
+      html+='<div class="vt-stat"><span class="ne-stat-title">what changed</span>'+
+            'mean: '+fmt(r.before.mean,3)+' &rarr; '+fmt(r.yStats.mean,3)+'<br>'+
+            'std: '+fmt(r.before.std,3)+' &rarr; '+fmt(r.yStats.std,3)+'<br>'+
+            'reductions: <span class="ne-hl">'+(isLN?'2 (μ then σ²)':'1 (mean of x²)')+'</span>, '+
+            'params: '+(isLN?'2d (γ, β)':'d (γ)')+'</div>';
+      elReadout.innerHTML=html;
+
+      var noteHtml;
+      if(isLN){
+        noteHtml='<b>LayerNorm</b> subtracts the mean and divides by the &epsilon;-stabilized standard deviation, so the pre-affine row always has mean &approx; 0 and variance &approx; 1 (its bars straddle zero and reach the dashed &plusmn;1 guides) &mdash; it re-centers <em>and</em> rescales. The affine step then moves that clean distribution to mean = &beta;, std &approx; &gamma;. Try <b>Big offset</b>: the whole input shifts, yet the normalized row is unchanged &mdash; LayerNorm is invariant to a constant added to every dimension.';
+      } else {
+        noteHtml='<b>RMSNorm</b> skips the mean subtraction: it only divides by the root-mean-square, so the pre-affine row has RMS &approx; 1 (matching the dashed guides) but its <em>mean is not reset to zero</em> &mdash; the original offset survives, just rescaled. Try <b>Big offset</b>: unlike LayerNorm, the normalized row visibly changes. In exchange RMSNorm needs one reduction instead of two, has no &beta;, and preserves the vector’s direction (it is a pure rescale, x &rarr; x&nbsp;&middot;&nbsp;c). Llama, Gemma, Qwen and Mistral all use it.';
+      }
+      var degenerate = isLN ? (r.before.variance < 1e-3) : (r.before.rms*r.before.rms < 1e-3);
+      if(degenerate){
+        noteHtml+='<br><br><b>&epsilon; is dominating right now:</b> the input has (near-)zero '+(isLN?'variance':'RMS')+
+                  ', so the divisor collapses to &radic;&epsilon; = '+fmt(r.denom,5)+' and the normalized row is driven toward 0 '+
+                  'instead of unit scale. This is exactly the divide-by-zero that &epsilon; exists to prevent.';
+      }
+      noteHtml+='<br><br><b>Takeaway:</b> both norms fix the <em>scale</em> of the vector fed to a sublayer; only LayerNorm also fixes its <em>center</em>. In a pre-norm block this y is not the block output &mdash; it feeds a sublayer F (attention or FFN) and the update is x&prime; = x + F(y), so the unnormalized residual stream always survives via the skip. (&epsilon; = '+EPS.toExponential(0)+' sits inside both square roots, as in PyTorch; &gamma;/&beta; are shown here as scalars but are per-dimension vectors of length d in real code.)';
+      elNote.innerHTML=noteHtml;
+    }
+
+    // ---- controls ---------------------------------------------------------
+    function syncPair(src, dst, lo, hi){
+      var v=parseFloat(src.value);
+      if(!isFinite(v)) return;   // ignore half-typed input; compute() falls back to a safe default
+      dst.value=String(clamp(v, lo, hi));
+    }
+    window.addEventListener('pointerup', function(){ dragDim=null; });
+    function settle(num, rng_, lo, hi, dflt){
+      // on blur/commit, put a legal number back in the box so it can never be left empty or out of range
+      var v=parseFloat(num.value);
+      if(!isFinite(v)) v=dflt;
+      num.value=String(clamp(v, lo, hi));
+      rng_.value=num.value;
+      render();
+    }
+    elMode.addEventListener('change', render);
+    elGainR.addEventListener('input', function(){ syncPair(elGainR, elGainN, 0, 3); render(); });
+    elGainN.addEventListener('input', function(){ syncPair(elGainN, elGainR, 0, 3); render(); });
+    elGainN.addEventListener('change', function(){ settle(elGainN, elGainR, 0, 3, 1); });
+    elBiasR.addEventListener('input', function(){ syncPair(elBiasR, elBiasN, -3, 3); render(); });
+    elBiasN.addEventListener('input', function(){ syncPair(elBiasN, elBiasR, -3, 3); render(); });
+    elBiasN.addEventListener('change', function(){ settle(elBiasN, elBiasR, -3, 3, 0); });
+
+    elRandomize.addEventListener('click', function(){
+      for(var i=0;i<D;i++){ xVals[i]=Math.round((rng()*12-6)*10)/10; }
+      syncDimInputs(); render();
+    });
+    elOffset.addEventListener('click', function(){
+      // add the same constant to every dimension: LayerNorm is invariant to it, RMSNorm is not.
+      // pick a direction that fits inside [-LIM, LIM] so no value clips and the *shape* is preserved.
+      var mx=-Infinity, mn=Infinity, i;
+      for(i=0;i<D;i++){ if(xVals[i]>mx) mx=xVals[i]; if(xVals[i]<mn) mn=xVals[i]; }
+      var shift = (mx+3<=LIM) ? 3 : ((mn-3>=-LIM) ? -3 : 0);
+      if(shift===0) return;
+      for(i=0;i<D;i++){ xVals[i]=Math.round((xVals[i]+shift)*10)/10; }
+      syncDimInputs(); render();
+    });
+    elReset.addEventListener('click', function(){
+      xVals=DEFAULT_X.slice();
+      elMode.value='layernorm';
+      elGainR.value='1'; elGainN.value='1';
+      elBiasR.value='0'; elBiasN.value='0';
+      hoverDim=null; dragDim=null;
+      syncDimInputs(); render();
+    });
+
+    render();
+  })();</script>
+</div>

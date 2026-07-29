@@ -1,0 +1,566 @@
+<div class="viz-tool" id="tool-lr-schedule-explorer">
+  <div class="vt-title">Learning-rate schedules: warmup, cosine, WSD, inverse-sqrt</div>
+
+  <div class="vt-grid">
+    <label for="lr-schedule-explorer-T">Total steps T
+      <input id="lr-schedule-explorer-T" type="number" min="10" max="2000000" step="100" value="100000">
+    </label>
+    <label for="lr-schedule-explorer-Tw-num">Warmup steps T<sub>w</sub>
+      <span class="vt-in">
+        <input id="lr-schedule-explorer-Tw-range" type="range" min="0" max="100000" step="10" value="2000" aria-label="Warmup steps (slider)">
+        <input id="lr-schedule-explorer-Tw-num" type="number" min="0" max="2000000" step="10" value="2000">
+      </span>
+    </label>
+    <label for="lr-schedule-explorer-etamax">Peak LR &eta;<sub>max</sub>
+      <input id="lr-schedule-explorer-etamax" type="number" min="0" step="0.00001" value="0.0003">
+    </label>
+    <label for="lr-schedule-explorer-ratio-num">Min-LR ratio &eta;<sub>min</sub>/&eta;<sub>max</sub>
+      <span class="vt-in">
+        <input id="lr-schedule-explorer-ratio-range" type="range" min="0" max="1" step="0.01" value="0.1" aria-label="Minimum LR ratio (slider)">
+        <input id="lr-schedule-explorer-ratio-num" type="number" min="0" max="1" step="0.01" value="0.1">
+      </span>
+    </label>
+
+    <label for="lr-schedule-explorer-schedA">Schedule A
+      <select id="lr-schedule-explorer-schedA">
+        <option value="cosine" selected>Linear-warmup + cosine</option>
+        <option value="wsd">WSD (warmup-stable-decay)</option>
+        <option value="rsqrt">Inverse-sqrt</option>
+        <option value="constant">Constant (after warmup)</option>
+      </select>
+    </label>
+    <label for="lr-schedule-explorer-schedB">Compare with Schedule B
+      <select id="lr-schedule-explorer-schedB">
+        <option value="none" selected>None (single curve)</option>
+        <option value="cosine">Linear-warmup + cosine</option>
+        <option value="wsd">WSD (warmup-stable-decay)</option>
+        <option value="rsqrt">Inverse-sqrt</option>
+        <option value="constant">Constant (after warmup)</option>
+      </select>
+    </label>
+
+    <label for="lr-schedule-explorer-decayfrac-num">WSD decay fraction T<sub>d</sub>/T (%)
+      <span class="vt-in">
+        <input id="lr-schedule-explorer-decayfrac-range" type="range" min="1" max="90" step="1" value="10" aria-label="WSD decay fraction (slider)">
+        <input id="lr-schedule-explorer-decayfrac-num" type="number" min="1" max="90" step="1" value="10">
+      </span>
+    </label>
+    <label for="lr-schedule-explorer-decayshape">WSD decay shape f(s)
+      <select id="lr-schedule-explorer-decayshape">
+        <option value="sqrt" selected>1 &minus; &radic;s (MiniCPM)</option>
+        <option value="cosine">cosine</option>
+        <option value="linear">linear</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="lrse-plot-wrap">
+    <svg id="lr-schedule-explorer-svg" viewBox="0 0 680 340" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Learning rate versus training step plot">
+      <g id="lr-schedule-explorer-marklayer"></g>
+      <g id="lr-schedule-explorer-gridlayer"></g>
+      <path id="lr-schedule-explorer-curveB" class="lrse-curveB" fill="none"></path>
+      <path id="lr-schedule-explorer-curveA" class="lrse-curveA" fill="none"></path>
+      <g id="lr-schedule-explorer-axislayer"></g>
+      <g id="lr-schedule-explorer-hoverlayer"></g>
+      <rect id="lr-schedule-explorer-capture" x="56" y="14" width="608" height="290" fill="transparent"></rect>
+    </svg>
+  </div>
+
+  <label class="lrse-probe" for="lr-schedule-explorer-probe">Inspect step t (drag, or use arrow keys)
+    <input id="lr-schedule-explorer-probe" type="range" min="0" max="100000" step="100" value="50000">
+  </label>
+
+  <div class="lrse-legend">
+    <span class="lrse-swatch lrse-swA"></span><span id="lr-schedule-explorer-legA">Schedule A</span>
+    <span class="lrse-swatch lrse-swB" id="lr-schedule-explorer-swB"></span><span id="lr-schedule-explorer-legB"></span>
+  </div>
+
+  <div class="vt-out" id="lr-schedule-explorer-out" aria-live="polite"></div>
+
+  <div class="vt-note" id="lr-schedule-explorer-note">
+    Compare <b>cosine</b> against <b>WSD</b> at the same T: the <i>mean LR</i> stat shows WSD spends far more of the budget at full speed (cosine's average is only about &frac12;(&eta;<sub>max</sub>+&eta;<sub>min</sub>), because the cosine is decaying from step T<sub>w</sub> onward), yet H&auml;gele et&nbsp;al. (2024) find they reach the same final loss at equal compute. That is the whole argument for WSD: the long <b>stable</b> phase commits to no total step count, and the short <b>decay</b> leg (shaded; typically ~10% of T) is where the characteristic extra loss drop lives. Set the min-LR ratio to <b>0</b> to reproduce MiniCPM's practice of decaying all the way down. Because the lowest-LR tokens are also the most influential, the decay window is the natural seam for a data-mixture switch &mdash; this is exactly why mid-training/annealing is scheduled inside the WSD decay phase in the capstone build (see <a href="../14-capstone/06-optimizer-and-schedule.html">Optimizer &amp; Schedule: Muon + MuonClip and WSD</a> and <a href="../14-capstone/08-mid-training.html">Mid-Training</a>).
+  </div>
+
+  <style>
+    #tool-lr-schedule-explorer{
+      --lrse-a: var(--accent, #c15b39);
+      --lrse-b: #1f8a5f;
+      --lrse-mk: #a06a00;
+      --lrse-band: var(--accent-soft, #f6e7df);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#ffffff); font-family:var(--sans,sans-serif); max-width:100%;
+    }
+    @media (prefers-color-scheme: dark){
+      #tool-lr-schedule-explorer{ --lrse-b:#5fd0a0; --lrse-mk:#e5b45c; }
+    }
+    html[data-theme="dark"] #tool-lr-schedule-explorer{ --lrse-b:#5fd0a0; --lrse-mk:#e5b45c; }
+    html[data-theme="light"] #tool-lr-schedule-explorer{ --lrse-b:#1f8a5f; --lrse-mk:#a06a00; }
+
+    #tool-lr-schedule-explorer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-lr-schedule-explorer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 18px; }
+    #tool-lr-schedule-explorer label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); }
+    #tool-lr-schedule-explorer input, #tool-lr-schedule-explorer select{
+      font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border,#e7e1d4);
+      border-radius:7px; background:var(--surface,#ffffff); color:var(--ink,#211f1b); max-width:100%;
+    }
+    #tool-lr-schedule-explorer input[type="range"]{ padding:0; accent-color:var(--lrse-a); border:0; background:transparent; }
+    #tool-lr-schedule-explorer input:focus-visible, #tool-lr-schedule-explorer select:focus-visible{
+      outline:2px solid var(--lrse-a); outline-offset:2px;
+    }
+    #tool-lr-schedule-explorer .vt-in{ display:flex; gap:6px; align-items:center; }
+    #tool-lr-schedule-explorer .vt-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-lr-schedule-explorer .vt-in input[type="number"]{ flex:1 1 78px; min-width:0; }
+
+    #tool-lr-schedule-explorer .lrse-plot-wrap{
+      margin-top:16px; overflow-x:auto; max-width:100%; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:8px;
+    }
+    #tool-lr-schedule-explorer svg{ display:block; width:100%; height:auto; min-width:400px; }
+    #tool-lr-schedule-explorer .lrse-curveA{ stroke:var(--lrse-a); stroke-width:2.4; stroke-linejoin:round; }
+    #tool-lr-schedule-explorer .lrse-curveB{ stroke:var(--lrse-b); stroke-width:2.4; stroke-dasharray:7 5; stroke-linejoin:round; }
+    #tool-lr-schedule-explorer .lrse-grid{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-lr-schedule-explorer .lrse-axis{ stroke:var(--muted,#6d675d); stroke-width:1; }
+    #tool-lr-schedule-explorer .lrse-tick{ font-size:9.5px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-lr-schedule-explorer .lrse-axislabel{ font-size:10.5px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); }
+    #tool-lr-schedule-explorer .lrse-band{ fill:var(--lrse-band); }
+    #tool-lr-schedule-explorer .lrse-mark{ stroke:var(--lrse-mk); stroke-width:1.4; stroke-dasharray:4 3; }
+    #tool-lr-schedule-explorer .lrse-marklabel{ font-size:9.5px; fill:var(--lrse-mk); font-family:var(--sans,sans-serif); }
+    #tool-lr-schedule-explorer .lrse-hover{ stroke:var(--ink-soft,#45413a); stroke-width:1; stroke-dasharray:2 2; }
+    #tool-lr-schedule-explorer .lrse-dotA{ fill:var(--lrse-a); }
+    #tool-lr-schedule-explorer .lrse-dotB{ fill:var(--lrse-b); }
+    #tool-lr-schedule-explorer #lr-schedule-explorer-capture{ cursor:crosshair; }
+
+    #tool-lr-schedule-explorer .lrse-probe{ margin-top:12px; font-size:.8rem; }
+    #tool-lr-schedule-explorer .lrse-probe input[type="range"]{ width:100%; }
+
+    #tool-lr-schedule-explorer .lrse-legend{ margin-top:10px; display:flex; align-items:center; gap:8px; font-size:.78rem; color:var(--ink-soft,#45413a); flex-wrap:wrap; }
+    #tool-lr-schedule-explorer .lrse-swatch{ display:inline-block; width:18px; height:3px; border-radius:2px; background:var(--lrse-a); }
+    #tool-lr-schedule-explorer .lrse-swB{ background:var(--lrse-b); margin-left:14px; }
+
+    #tool-lr-schedule-explorer .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+    #tool-lr-schedule-explorer .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 12px; font-size:.8rem; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; }
+    #tool-lr-schedule-explorer .vt-stat b{ color:var(--lrse-a); font-variant-numeric:tabular-nums; }
+    #tool-lr-schedule-explorer .vt-stat .l{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:2px; }
+
+    #tool-lr-schedule-explorer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-lr-schedule-explorer .vt-note a{ color:var(--link,#b4502e); }
+    #tool-lr-schedule-explorer .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-lr-schedule-explorer');
+    if(!root) return;
+
+    function q(id){ return root.querySelector('#lr-schedule-explorer-' + id); }
+
+    var elT         = q('T');
+    var elTwRange   = q('Tw-range');
+    var elTwNum     = q('Tw-num');
+    var elEtaMax    = q('etamax');
+    var elRatioRange= q('ratio-range');
+    var elRatioNum  = q('ratio-num');
+    var elSchedA    = q('schedA');
+    var elSchedB    = q('schedB');
+    var elDecayRange= q('decayfrac-range');
+    var elDecayNum  = q('decayfrac-num');
+    var elDecayShape= q('decayshape');
+    var elProbe     = q('probe');
+
+    var svg       = q('svg');
+    var gridLayer = q('gridlayer');
+    var markLayer = q('marklayer');
+    var axisLayer = q('axislayer');
+    var hoverLayer= q('hoverlayer');
+    var curveA    = q('curveA');
+    var curveB    = q('curveB');
+    var capture   = q('capture');
+    var outBox    = q('out');
+    var legA      = q('legA');
+    var legB      = q('legB');
+    var swB       = q('swB');
+
+    if(!elT || !svg || !outBox) return;
+
+    var NS = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs){
+      var e = document.createElementNS(NS, tag);
+      for(var k in attrs){ if(Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]); }
+      return e;
+    }
+    function clearLayer(layer){ while(layer.firstChild) layer.removeChild(layer.firstChild); }
+
+    // Plot geometry (matches viewBox 0 0 680 340).
+    var VB_W = 680;
+    var PAD_L = 56, PAD_R = 16, PAD_T = 14, PAD_B = 36;
+    var PLOT_W = VB_W - PAD_L - PAD_R;   // 608
+    var PLOT_H = 340 - PAD_T - PAD_B;    // 290
+
+    var SCHED_NAMES = {
+      cosine:   'Linear-warmup + cosine',
+      wsd:      'WSD (warmup-stable-decay)',
+      rsqrt:    'Inverse-sqrt',
+      constant: 'Constant (after warmup)'
+    };
+
+    // ---------------------------------------------------------------- format
+    function fmtLR(x){
+      if(typeof x !== 'number' || !isFinite(x)) return '-';
+      if(x === 0) return '0';
+      return x.toExponential(2);
+    }
+    function fmtStep(x){
+      if(typeof x !== 'number' || !isFinite(x)) return '-';
+      x = Math.round(x);
+      return x.toLocaleString ? x.toLocaleString('en-US') : String(x);
+    }
+    function fmtPct(f){
+      if(typeof f !== 'number' || !isFinite(f)) return '-';
+      return (100 * f).toFixed(1) + '%';
+    }
+
+    // ------------------------------------------------------------ schedule math
+    // Shared linear warmup leg: eta(t) = eta_max * min(t / T_w, 1).
+    function warmupVal(t, Tw, etaMax){
+      if(Tw <= 0) return etaMax;
+      if(t >= Tw) return etaMax;
+      return etaMax * (t / Tw);
+    }
+
+    // eta(t) = eta_min + 1/2 (eta_max - eta_min) (1 + cos(pi (t - Tw)/(T - Tw)))
+    function etaCosine(t, T, Tw, etaMax, etaMin){
+      if(t <= Tw) return warmupVal(t, Tw, etaMax);
+      var denom = T - Tw;
+      if(denom <= 0) return etaMax;
+      var frac = Math.min(Math.max((t - Tw) / denom, 0), 1);
+      return etaMin + 0.5 * (etaMax - etaMin) * (1 + Math.cos(Math.PI * frac));
+    }
+
+    // Phase split: T = Tw + Ts + Td, with Td = round(decayFrac * T) clamped to the
+    // post-warmup budget, so the phases always sum to exactly T.
+    function wsdPhases(T, Tw, decayFrac){
+      var post = Math.max(T - Tw, 0);
+      var Td = Math.round(decayFrac * T);
+      Td = Math.max(0, Math.min(Td, post));
+      return { Td: Td, Ts: post - Td };
+    }
+
+    // Decay leg interpolates eta_max -> eta_min through shape f(s), f(0)=1, f(1)=0.
+    function decayShapeF(s, shape){
+      if(shape === 'linear') return 1 - s;
+      if(shape === 'cosine') return 0.5 * (1 + Math.cos(Math.PI * s));
+      return 1 - Math.sqrt(s); // MiniCPM 1 - sqrt(s)
+    }
+
+    function etaWSD(t, T, Tw, etaMax, etaMin, decayFrac, shape){
+      var ph = wsdPhases(T, Tw, decayFrac);
+      if(t <= Tw) return warmupVal(t, Tw, etaMax);
+      if(t <= Tw + ph.Ts) return etaMax;
+      if(ph.Td <= 0) return etaMax;
+      var s = Math.min(Math.max((t - Tw - ph.Ts) / ph.Td, 0), 1);
+      return etaMin + (etaMax - etaMin) * decayShapeF(s, shape);
+    }
+
+    // eta(t) = eta_max * sqrt(Tw / max(t, Tw)).  With no warmup the formula has no
+    // reference point, so fall back to Tw = 1 step (the usual convention).
+    function etaRSqrt(t, T, Tw, etaMax){
+      if(t <= Tw) return warmupVal(t, Tw, etaMax);
+      var TwSafe = Math.max(Tw, 1);
+      return etaMax * Math.sqrt(TwSafe / Math.max(t, TwSafe));
+    }
+
+    function etaConstant(t, T, Tw, etaMax){
+      if(t <= Tw) return warmupVal(t, Tw, etaMax);
+      return etaMax;
+    }
+
+    function etaOf(kind, t, p){
+      if(kind === 'cosine')   return etaCosine(t, p.T, p.Tw, p.etaMax, p.etaMin);
+      if(kind === 'wsd')      return etaWSD(t, p.T, p.Tw, p.etaMax, p.etaMin, p.decayFrac, p.decayShape);
+      if(kind === 'rsqrt')    return etaRSqrt(t, p.T, p.Tw, p.etaMax);
+      if(kind === 'constant') return etaConstant(t, p.T, p.Tw, p.etaMax);
+      return 0;
+    }
+
+    // Exact breakpoints, so the rendered polyline hits every kink dead-on.
+    function knotsOf(kind, p){
+      var ks = [0, Math.min(p.Tw, p.T), p.T];
+      if(kind === 'wsd'){
+        var ph = wsdPhases(p.T, p.Tw, p.decayFrac);
+        ks.push(Math.min(p.Tw + ph.Ts, p.T));
+      }
+      ks.sort(function(a, b){ return a - b; });
+      var out = [];
+      for(var i = 0; i < ks.length; i++){
+        var v = Math.min(Math.max(ks[i], 0), p.T);
+        if(out.length === 0 || v > out[out.length - 1]) out.push(v);
+      }
+      return out;
+    }
+
+    // --------------------------------------------------------------- inputs
+    function num(elm, fallback){
+      if(!elm) return fallback;
+      var v = parseFloat(elm.value);
+      return isFinite(v) ? v : fallback;
+    }
+
+    function readParams(){
+      var T = num(elT, 100000);
+      T = Math.max(10, Math.min(T, 2000000));
+      var Tw = Math.max(0, Math.min(num(elTwNum, 0), T));
+      var etaMax = Math.max(0, num(elEtaMax, 0));
+      var ratio = Math.max(0, Math.min(1, num(elRatioNum, 0)));
+      var decayFrac = Math.max(0.01, Math.min(0.9, num(elDecayNum, 10) / 100));
+      return {
+        T: T, Tw: Tw, etaMax: etaMax, etaMin: etaMax * ratio, ratio: ratio,
+        decayFrac: decayFrac, decayShape: elDecayShape ? elDecayShape.value : 'sqrt'
+      };
+    }
+
+    // --------------------------------------------------------------- summaries
+    // Midpoint rule on a fixed grid -> deterministic, no RNG anywhere in this tool.
+    var NQ = 2000;
+    function summarize(kind, p){
+      var sum = 0, above = 0, half = 0.5 * p.etaMax;
+      for(var i = 0; i < NQ; i++){
+        var t = p.T * (i + 0.5) / NQ;
+        var e = etaOf(kind, t, p);
+        sum += e;
+        if(e >= half) above++;
+      }
+      return { meanLR: sum / NQ, shareHalf: above / NQ, finalLR: etaOf(kind, p.T, p) };
+    }
+
+    // --------------------------------------------------------------- rendering
+    function sampleCurve(kind, p){
+      var knots = knotsOf(kind, p), pts = [];
+      for(var k = 0; k < knots.length - 1; k++){
+        var a = knots[k], b = knots[k + 1];
+        var span = (b - a) / p.T;
+        var M = Math.max(2, Math.min(400, Math.round(span * 500)));
+        for(var i = 0; i < M; i++){
+          var t = a + (b - a) * (i / M);
+          pts.push({ t: t, eta: etaOf(kind, t, p) });
+        }
+        // Exact left limit at the kink keeps vertical drops (e.g. Td -> 0) honest.
+        pts.push({ t: b, eta: etaOf(kind, b, p) });
+      }
+      return pts;
+    }
+
+    function pathFrom(pts, xScale, yScale){
+      var d = '';
+      for(var i = 0; i < pts.length; i++){
+        d += (i === 0 ? 'M' : 'L') + xScale(pts[i].t).toFixed(2) + ',' + yScale(pts[i].eta).toFixed(2) + ' ';
+      }
+      return d.trim();
+    }
+
+    var hoverLine  = el('line', { class: 'lrse-hover', x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: PAD_T + PLOT_H });
+    var hoverDotA  = el('circle', { class: 'lrse-dotA', r: 3.6, cx: PAD_L, cy: PAD_T + PLOT_H });
+    var hoverDotB  = el('circle', { class: 'lrse-dotB', r: 3.6, cx: PAD_L, cy: PAD_T + PLOT_H });
+    hoverLayer.appendChild(hoverLine);
+    hoverLayer.appendChild(hoverDotA);
+    hoverLayer.appendChild(hoverDotB);
+
+    var S = null; // last rendered state
+
+    function render(){
+      var p = readParams();
+      var kindA = elSchedA.value;
+      var kindB = elSchedB.value;
+      var hasB = kindB !== 'none';
+
+      // Keep every range/number pair consistent without stealing the caret.
+      var act = document.activeElement;
+      if(act !== elTwNum)     elTwNum.value = p.Tw;
+      elTwRange.max = p.T;
+      elTwRange.step = Math.max(1, Math.round(p.T / 1000));
+      if(act !== elTwRange)   elTwRange.value = p.Tw;
+      if(act !== elRatioNum)  elRatioNum.value = p.ratio;
+      if(act !== elRatioRange)elRatioRange.value = p.ratio;
+      if(act !== elDecayNum)  elDecayNum.value = Math.round(p.decayFrac * 100);
+      if(act !== elDecayRange)elDecayRange.value = Math.round(p.decayFrac * 100);
+
+      elProbe.max = p.T;
+      elProbe.step = Math.max(1, Math.round(p.T / 1000));
+      var probeT = Math.max(0, Math.min(num(elProbe, p.T / 2), p.T));
+      if(act !== elProbe) elProbe.value = probeT;
+
+      var yMax = Math.max(p.etaMax * 1.12, 1e-12);
+      function xScale(t){ return PAD_L + (t / p.T) * PLOT_W; }
+      function yScale(eta){ return PAD_T + PLOT_H - (eta / yMax) * PLOT_H; }
+
+      curveA.setAttribute('d', pathFrom(sampleCurve(kindA, p), xScale, yScale));
+      legA.textContent = SCHED_NAMES[kindA] + ' (A)';
+      if(hasB){
+        curveB.setAttribute('d', pathFrom(sampleCurve(kindB, p), xScale, yScale));
+        curveB.style.display = '';
+        swB.style.display = '';
+        legB.style.display = '';
+        legB.textContent = SCHED_NAMES[kindB] + ' (B)';
+      } else {
+        curveB.setAttribute('d', '');
+        curveB.style.display = 'none';
+        swB.style.display = 'none';
+        legB.style.display = 'none';
+        legB.textContent = '';
+      }
+
+      clearLayer(gridLayer); clearLayer(axisLayer); clearLayer(markLayer);
+
+      // Shade the WSD decay window: the seam where mid-training data goes.
+      var showsWSD = (kindA === 'wsd') || (kindB === 'wsd');
+      var decayStart = null;
+      if(showsWSD){
+        var ph = wsdPhases(p.T, p.Tw, p.decayFrac);
+        if(ph.Td > 0){
+          decayStart = p.Tw + ph.Ts;
+          var x0 = xScale(decayStart);
+          markLayer.appendChild(el('rect', {
+            class: 'lrse-band', x: x0, y: PAD_T,
+            width: Math.max(0, (PAD_L + PLOT_W) - x0), height: PLOT_H
+          }));
+        }
+      }
+
+      var NX = 5, NY = 4, i, j;
+      for(i = 0; i <= NX; i++){
+        var tg = (p.T * i) / NX, xg = xScale(tg);
+        gridLayer.appendChild(el('line', { class: 'lrse-grid', x1: xg, y1: PAD_T, x2: xg, y2: PAD_T + PLOT_H }));
+        var tx = el('text', { class: 'lrse-tick', x: xg, y: PAD_T + PLOT_H + 14,
+          'text-anchor': i === NX ? 'end' : (i === 0 ? 'start' : 'middle') });
+        tx.textContent = fmtStep(tg);
+        axisLayer.appendChild(tx);
+      }
+      for(j = 0; j <= NY; j++){
+        var eg = (yMax * j) / NY, yg = yScale(eg);
+        gridLayer.appendChild(el('line', { class: 'lrse-grid', x1: PAD_L, y1: yg, x2: PAD_L + PLOT_W, y2: yg }));
+        var ty = el('text', { class: 'lrse-tick', x: PAD_L - 6, y: yg + 3, 'text-anchor': 'end' });
+        ty.textContent = fmtLR(eg);
+        axisLayer.appendChild(ty);
+      }
+      axisLayer.appendChild(el('line', { class: 'lrse-axis', x1: PAD_L, y1: PAD_T, x2: PAD_L, y2: PAD_T + PLOT_H }));
+      axisLayer.appendChild(el('line', { class: 'lrse-axis', x1: PAD_L, y1: PAD_T + PLOT_H, x2: PAD_L + PLOT_W, y2: PAD_T + PLOT_H }));
+      var xlab = el('text', { class: 'lrse-axislabel', x: PAD_L + PLOT_W / 2, y: 336, 'text-anchor': 'middle' });
+      xlab.textContent = 'training step t';
+      axisLayer.appendChild(xlab);
+      var ycy = PAD_T + PLOT_H / 2;
+      var ylab = el('text', { class: 'lrse-axislabel', x: 13, y: ycy, 'text-anchor': 'middle',
+        transform: 'rotate(-90 13 ' + ycy + ')' });
+      ylab.textContent = 'learning rate η';
+      axisLayer.appendChild(ylab);
+
+      if(p.Tw > 0 && p.Tw < p.T){
+        var xw = xScale(p.Tw);
+        markLayer.appendChild(el('line', { class: 'lrse-mark', x1: xw, y1: PAD_T, x2: xw, y2: PAD_T + PLOT_H }));
+        var wl = el('text', { class: 'lrse-marklabel', x: Math.min(xw + 4, PAD_L + PLOT_W - 60), y: PAD_T + 10 });
+        wl.textContent = 'warmup end';
+        markLayer.appendChild(wl);
+      }
+      if(decayStart !== null && decayStart > p.Tw && decayStart < p.T){
+        var xd = xScale(decayStart);
+        markLayer.appendChild(el('line', { class: 'lrse-mark', x1: xd, y1: PAD_T, x2: xd, y2: PAD_T + PLOT_H }));
+        var dl = el('text', { class: 'lrse-marklabel', x: Math.min(xd + 4, PAD_L + PLOT_W - 62), y: PAD_T + 24 });
+        dl.textContent = 'decay start';
+        markLayer.appendChild(dl);
+      }
+
+      S = { p: p, kindA: kindA, kindB: kindB, hasB: hasB, xScale: xScale, yScale: yScale };
+      updateProbe(probeT);
+    }
+
+    function updateProbe(t){
+      if(!S) return;
+      var p = S.p;
+      t = Math.max(0, Math.min(isFinite(t) ? t : p.T / 2, p.T));
+
+      var x = S.xScale(t);
+      hoverLine.setAttribute('x1', x.toFixed(2));
+      hoverLine.setAttribute('x2', x.toFixed(2));
+      var etaA = etaOf(S.kindA, t, p);
+      hoverDotA.setAttribute('cx', x.toFixed(2));
+      hoverDotA.setAttribute('cy', S.yScale(etaA).toFixed(2));
+      var etaB = null;
+      if(S.hasB){
+        etaB = etaOf(S.kindB, t, p);
+        hoverDotB.setAttribute('cx', x.toFixed(2));
+        hoverDotB.setAttribute('cy', S.yScale(etaB).toFixed(2));
+        hoverDotB.style.display = '';
+      } else {
+        hoverDotB.style.display = 'none';
+      }
+
+      var sumA = summarize(S.kindA, p);
+      var stats = [];
+      stats.push(['&eta;(' + fmtStep(t) + ') = <b>' + fmtLR(etaA) + '</b>', SCHED_NAMES[S.kindA] + ' — A']);
+      if(S.hasB){
+        stats.push(['&eta;(' + fmtStep(t) + ') = <b>' + fmtLR(etaB) + '</b>', SCHED_NAMES[S.kindB] + ' — B']);
+      }
+      stats.push(['<b>' + fmtLR(sumA.meanLR) + '</b>' + (p.etaMax > 0 ? ' (' + (sumA.meanLR / p.etaMax).toFixed(2) + '× &eta;<sub>max</sub>)' : ''),
+        'A: mean LR over the run']);
+      if(S.hasB){
+        var sumB = summarize(S.kindB, p);
+        stats.push(['<b>' + fmtLR(sumB.meanLR) + '</b>' + (p.etaMax > 0 ? ' (' + (sumB.meanLR / p.etaMax).toFixed(2) + '× &eta;<sub>max</sub>)' : ''),
+          'B: mean LR over the run']);
+        stats.push(['A ' + fmtPct(sumA.shareHalf) + ' vs B ' + fmtPct(sumB.shareHalf), 'Share of steps with &eta; ≥ &eta;<sub>max</sub>/2']);
+        stats.push(['A ' + fmtLR(sumA.finalLR) + ' vs B ' + fmtLR(sumB.finalLR), 'Final LR &eta;(T)']);
+      } else {
+        stats.push([fmtPct(sumA.shareHalf), 'Share of steps with &eta; ≥ &eta;<sub>max</sub>/2']);
+        stats.push([fmtLR(sumA.finalLR), 'Final LR &eta;(T)']);
+      }
+      stats.push([fmtStep(p.Tw) + ' steps (' + (100 * p.Tw / p.T).toFixed(1) + '% of T)', 'Warmup length T<sub>w</sub>']);
+      stats.push(['&eta;<sub>max</sub> = ' + fmtLR(p.etaMax) + ', &eta;<sub>min</sub> = ' + fmtLR(p.etaMin), 'Peak / floor LR']);
+      if(S.kindA === 'wsd' || S.kindB === 'wsd'){
+        var ph = wsdPhases(p.T, p.Tw, p.decayFrac);
+        stats.push([fmtStep(ph.Ts) + ' stable + ' + fmtStep(ph.Td) + ' decay', 'WSD phase lengths T<sub>s</sub> / T<sub>d</sub>']);
+      }
+
+      var html = '';
+      for(var i = 0; i < stats.length; i++){
+        html += '<div class="vt-stat">' + stats[i][0] + '<div class="l">' + stats[i][1] + '</div></div>';
+      }
+      outBox.innerHTML = html;
+    }
+
+    // --------------------------------------------------------------- pointer
+    function pointerT(evt){
+      if(!S) return 0;
+      var rect = svg.getBoundingClientRect();
+      if(!rect.width) return 0;
+      var clientX = (evt.touches && evt.touches.length) ? evt.touches[0].clientX : evt.clientX;
+      if(typeof clientX !== 'number') return 0;
+      var xViewBox = ((clientX - rect.left) / rect.width) * VB_W;
+      var t = ((xViewBox - PAD_L) / PLOT_W) * S.p.T;
+      return Math.max(0, Math.min(S.p.T, t));
+    }
+    function onMove(evt){
+      if(!S) return;
+      var t = pointerT(evt);
+      elProbe.value = t;
+      updateProbe(t);
+    }
+    capture.addEventListener('mousemove', onMove);
+    capture.addEventListener('touchmove', function(e){ onMove(e); e.preventDefault(); }, { passive: false });
+    capture.addEventListener('touchstart', function(e){ onMove(e); e.preventDefault(); }, { passive: false });
+
+    // --------------------------------------------------------------- wiring
+    function bindPair(rangeEl, numEl){
+      rangeEl.addEventListener('input', function(){ numEl.value = rangeEl.value; render(); });
+      numEl.addEventListener('input', render);
+      numEl.addEventListener('change', render);
+    }
+    bindPair(elTwRange, elTwNum);
+    bindPair(elRatioRange, elRatioNum);
+    bindPair(elDecayRange, elDecayNum);
+
+    [elT, elEtaMax, elSchedA, elSchedB, elDecayShape].forEach(function(e){
+      e.addEventListener('input', render);
+      e.addEventListener('change', render);
+    });
+
+    elProbe.addEventListener('input', function(){ updateProbe(num(elProbe, 0)); });
+
+    render();
+  })();</script>
+</div>

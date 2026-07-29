@@ -1,0 +1,632 @@
+<div class="viz-tool" id="tool-embedding-similarity">
+  <div class="vt-title">Embeddings &amp; cosine similarity in 2D</div>
+
+  <div class="vt-grid">
+    <label for="embedding-similarity-select-a">Vector A
+      <select id="embedding-similarity-select-a"></select>
+    </label>
+    <label for="embedding-similarity-select-b">Vector B
+      <select id="embedding-similarity-select-b"></select>
+    </label>
+    <label for="embedding-similarity-scale">Scale A by k = <span id="embedding-similarity-scale-val">1.00</span>
+      <input id="embedding-similarity-scale" type="range" min="0.2" max="2.5" step="0.05" value="1">
+    </label>
+    <label class="es-check-label" for="embedding-similarity-geom">
+      <span class="es-check-row">
+        <input id="embedding-similarity-geom" type="checkbox" checked>
+        <span>Show cos(&theta;) construction</span>
+      </span>
+    </label>
+    <label class="es-btn-label">
+      <span class="es-lbl-spacer">&nbsp;</span>
+      <span class="vt-in"><button id="embedding-similarity-analogy-btn" type="button" aria-pressed="false">king &minus; man + woman = ?</button></span>
+    </label>
+    <label class="es-btn-label">
+      <span class="es-lbl-spacer">&nbsp;</span>
+      <span class="vt-in"><button id="embedding-similarity-reset-btn" type="button">Reset positions</button></span>
+    </label>
+  </div>
+
+  <div class="es-layout">
+    <div class="es-svg-wrap">
+      <svg id="embedding-similarity-svg" viewBox="0 0 480 440" role="img" aria-label="Two-dimensional plane with eight draggable word vectors; the selected pair A and B are drawn as arrows from the origin with the angle between them marked">
+        <defs>
+          <marker id="embedding-similarity-arrow-a" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="10" refX="10" refY="5" orient="auto">
+            <path d="M0,0 L11,5 L0,10 Z" class="es-arrowhead-a"></path>
+          </marker>
+          <marker id="embedding-similarity-arrow-b" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="10" refX="10" refY="5" orient="auto">
+            <path d="M0,0 L11,5 L0,10 Z" class="es-arrowhead-b"></path>
+          </marker>
+          <marker id="embedding-similarity-arrow-analogy" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="10" refX="10" refY="5" orient="auto">
+            <path d="M0,0 L11,5 L0,10 Z" class="es-arrowhead-analogy"></path>
+          </marker>
+        </defs>
+        <g id="embedding-similarity-grid"></g>
+        <g id="embedding-similarity-axes"></g>
+        <g id="embedding-similarity-geom-g"></g>
+        <g id="embedding-similarity-analogy-g"></g>
+        <g id="embedding-similarity-angle-g"></g>
+        <g id="embedding-similarity-vectors-g"></g>
+        <g id="embedding-similarity-points-g"></g>
+      </svg>
+      <div class="es-hint">Drag a labelled point, or click it and use the arrow keys (Shift = bigger steps).</div>
+    </div>
+
+    <div class="es-readout" id="embedding-similarity-readout" aria-live="polite"></div>
+  </div>
+
+  <div class="es-analogy-readout" id="embedding-similarity-analogy-readout" hidden></div>
+
+  <div class="vt-note">Each point is a 2-D stand-in for a row of the embedding matrix <b>W<sub>E</sub></b>: a learned direction and magnitude, not a lookup key. <b>Cosine similarity</b> is <b>cos&thinsp;&theta; = (A&middot;B) / (|A|&middot;|B|)</b> &ndash; the dot product with both lengths divided out, so it depends only on the <em>angle</em>. Drag the <em>Scale A by k</em> slider: A slides along its own ray, so A&middot;B and |A&minus;B| both change while cos&thinsp;&theta; does not move at all. That invariance is exactly why embeddings are compared by cosine &ndash; a token whose vector happens to have a large norm (frequent tokens usually do) should not automatically look "more similar" to everything. The construction overlay shows the two unit vectors on the circle |v|&thinsp;=&thinsp;1 (cos&thinsp;&theta; is literally their dot product) and the projection of B onto A, whose signed length is |B|&thinsp;cos&thinsp;&theta;, so that A&middot;B = |A| &times; (|B|&thinsp;cos&thinsp;&theta;). The analogy button draws <em>king &minus; man + woman</em> as vector arithmetic: the offset from man to king transplanted onto woman, with the nearest stored embedding to the landing point highlighted &ndash; and, because the two metrics rank neighbours differently, cosine and Euclidean answers are reported separately.</div>
+
+  <style>
+    #tool-embedding-similarity{
+      --es-col-a: var(--accent,#c15b39);
+      --es-col-b: #1f6f8b;
+      --es-col-c: #276b51;
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif);
+    }
+    html[data-theme="dark"] #tool-embedding-similarity{ --es-col-b:#6fc3dc; --es-col-c:#69c79a; }
+    #tool-embedding-similarity .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-embedding-similarity .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-embedding-similarity label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-embedding-similarity select,
+    #tool-embedding-similarity button{ font:inherit; font-size:.88rem; padding:7px 9px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-embedding-similarity input[type="range"]{ width:100%; accent-color:var(--es-col-a); }
+    #tool-embedding-similarity input[type="checkbox"]{ accent-color:var(--es-col-a); width:15px; height:15px; }
+    #tool-embedding-similarity .vt-in{ display:flex; gap:6px; align-items:center; }
+    #tool-embedding-similarity button{ cursor:pointer; width:100%; font-weight:600; }
+    #tool-embedding-similarity button[aria-pressed="true"]{ background:var(--es-col-a); color:#fff; border-color:var(--es-col-a); }
+    #tool-embedding-similarity select:focus-visible,
+    #tool-embedding-similarity button:focus-visible,
+    #tool-embedding-similarity input:focus-visible{ outline:2px solid var(--es-col-a); outline-offset:2px; }
+    #tool-embedding-similarity .es-btn-label,
+    #tool-embedding-similarity .es-check-label{ justify-content:flex-end; }
+    #tool-embedding-similarity .es-check-row{ display:flex; align-items:center; gap:7px; font-size:.84rem; color:var(--ink,#211f1b); }
+
+    #tool-embedding-similarity .es-layout{ display:flex; flex-wrap:wrap; gap:16px; margin-top:14px; align-items:flex-start; }
+    #tool-embedding-similarity .es-svg-wrap{ flex:2 1 320px; min-width:0; max-width:100%; }
+    #tool-embedding-similarity .es-svg-wrap svg{ display:block; width:100%; height:auto; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); border-radius:10px; touch-action:none; overflow:hidden; }
+    #tool-embedding-similarity .es-hint{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:6px; }
+    #tool-embedding-similarity .es-readout{ flex:1 1 230px; min-width:0; display:flex; flex-direction:column; gap:8px; }
+
+    #tool-embedding-similarity .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 11px; font-size:.78rem;
+      color:var(--ink,#211f1b); line-height:1.55; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    #tool-embedding-similarity .vt-stat b{ color:var(--ink,#211f1b); }
+    #tool-embedding-similarity .vt-stat .es-a{ color:var(--es-col-a); font-weight:700; }
+    #tool-embedding-similarity .vt-stat .es-b{ color:var(--es-col-b); font-weight:700; }
+    #tool-embedding-similarity .vt-stat .es-num{ font-family:var(--mono,monospace); font-weight:700; }
+    #tool-embedding-similarity .vt-stat .es-sub{ display:block; color:var(--muted,#6d675d); font-size:.94em; }
+    #tool-embedding-similarity .es-invariant{ border:1px dashed var(--es-col-c); background:transparent; color:var(--ink-soft,#45413a); }
+    #tool-embedding-similarity .es-invariant b{ color:var(--es-col-c); }
+
+    #tool-embedding-similarity .es-analogy-readout{ margin-top:12px; display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:10px; }
+    #tool-embedding-similarity .es-analogy-readout b{ color:var(--es-col-c); }
+
+    #tool-embedding-similarity .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-embedding-similarity .vt-note b{ color:var(--ink-soft,#45413a); }
+
+    #tool-embedding-similarity .es-grid-line{ stroke:var(--border,#e7e1d4); stroke-width:1; }
+    #tool-embedding-similarity .es-axis-line{ stroke:var(--ink-soft,#45413a); stroke-width:1.3; opacity:.5; }
+    #tool-embedding-similarity .es-axis-tick{ font-size:8.5px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+
+    #tool-embedding-similarity .es-vec-a{ stroke:var(--es-col-a); stroke-width:2.6; fill:none; stroke-linecap:round; }
+    #tool-embedding-similarity .es-vec-b{ stroke:var(--es-col-b); stroke-width:2.6; fill:none; stroke-linecap:round; }
+    #tool-embedding-similarity .es-arrowhead-a{ fill:var(--es-col-a); }
+    #tool-embedding-similarity .es-arrowhead-b{ fill:var(--es-col-b); }
+    #tool-embedding-similarity .es-arrowhead-analogy{ fill:var(--es-col-c); }
+
+    #tool-embedding-similarity .es-angle-arc{ stroke:var(--ink-soft,#45413a); stroke-width:1.3; fill:none; opacity:.85; }
+    #tool-embedding-similarity .es-angle-label{ font-size:11px; fill:var(--ink-soft,#45413a); font-family:var(--mono,monospace); font-weight:700; }
+
+    #tool-embedding-similarity .es-unit-circle{ fill:none; stroke:var(--ink-soft,#45413a); stroke-width:1; stroke-dasharray:3 3; opacity:.5; }
+    #tool-embedding-similarity .es-unit-label{ font-size:8.5px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-embedding-similarity .es-unit-dot-a{ fill:var(--es-col-a); }
+    #tool-embedding-similarity .es-unit-dot-b{ fill:var(--es-col-b); }
+    #tool-embedding-similarity .es-proj-shadow{ stroke:var(--es-col-b); stroke-width:5.5; opacity:.3; stroke-linecap:butt; }
+    #tool-embedding-similarity .es-proj-drop{ stroke:var(--es-col-b); stroke-width:1.2; stroke-dasharray:4 3; fill:none; opacity:.85; }
+    #tool-embedding-similarity .es-proj-label{ font-size:9px; fill:var(--es-col-b); font-family:var(--mono,monospace); font-weight:700; }
+
+    #tool-embedding-similarity .es-analogy-arrow{ stroke:var(--es-col-c); stroke-width:2.2; stroke-dasharray:5 4; fill:none; }
+    #tool-embedding-similarity .es-analogy-target{ fill:var(--es-col-c); stroke:var(--surface-2,#f3efe6); stroke-width:1.5; }
+    #tool-embedding-similarity .es-analogy-target-label{ font-size:9.5px; font-family:var(--mono,monospace); fill:var(--es-col-c); font-weight:700; }
+    #tool-embedding-similarity .es-ring-cos{ fill:none; stroke:var(--es-col-c); stroke-width:2.2; }
+    #tool-embedding-similarity .es-ring-dist{ fill:none; stroke:var(--ink-soft,#45413a); stroke-width:1.6; stroke-dasharray:3 3; opacity:.75; }
+
+    #tool-embedding-similarity .es-point-circle{ fill:var(--surface,#fff); stroke:var(--ink-soft,#45413a); stroke-width:1.5; cursor:grab; }
+    #tool-embedding-similarity .es-point-halo{ fill:none; stroke:var(--es-col-a); stroke-width:2; opacity:0; }
+    #tool-embedding-similarity .es-point-g{ outline:none; }
+    #tool-embedding-similarity .es-point-g:hover .es-point-circle{ stroke-width:2.4; }
+    #tool-embedding-similarity .es-point-g:focus .es-point-halo{ opacity:1; }
+    #tool-embedding-similarity .es-point-g.es-is-a .es-point-circle{ fill:var(--es-col-a); stroke:var(--es-col-a); }
+    #tool-embedding-similarity .es-point-g.es-is-b .es-point-circle{ fill:var(--es-col-b); stroke:var(--es-col-b); }
+    #tool-embedding-similarity .es-point-g.es-dragging .es-point-circle{ cursor:grabbing; }
+    #tool-embedding-similarity .es-point-g.es-operand .es-point-circle{ stroke-dasharray:2.5 2; stroke:var(--es-col-c); stroke-width:2; }
+    #tool-embedding-similarity .es-point-label{ font-size:11px; font-weight:600; fill:var(--ink,#211f1b); font-family:var(--sans,sans-serif); pointer-events:none; }
+    #tool-embedding-similarity .es-point-label-halo{ font-size:11px; font-weight:600; fill:none; stroke:var(--surface-2,#f3efe6); stroke-width:3; stroke-linejoin:round; font-family:var(--sans,sans-serif); pointer-events:none; }
+
+    @media (max-width:520px){
+      #tool-embedding-similarity{ padding:14px 12px; }
+      #tool-embedding-similarity .vt-grid{ grid-template-columns:1fr; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-embedding-similarity');
+    if (!root) return;
+    function q(suffix){ return root.querySelector('#embedding-similarity-' + suffix); }
+
+    var svg          = q('svg');
+    var gGrid        = q('grid');
+    var gAxes        = q('axes');
+    var gGeom        = q('geom-g');
+    var gVectors     = q('vectors-g');
+    var gAngle       = q('angle-g');
+    var gAnalogy     = q('analogy-g');
+    var gPoints      = q('points-g');
+    var selA         = q('select-a');
+    var selB         = q('select-b');
+    var scaleEl      = q('scale');
+    var scaleValEl   = q('scale-val');
+    var geomEl       = q('geom');
+    var analogyBtn   = q('analogy-btn');
+    var resetBtn     = q('reset-btn');
+    var readoutEl    = q('readout');
+    var analogyRdEl  = q('analogy-readout');
+    if (!svg || !gPoints || !gVectors || !gAngle || !gGeom || !gAnalogy || !selA || !selB || !readoutEl || !analogyRdEl) return;
+
+    // ---- plane geometry: origin centred in a 480x440 viewBox, 30 px per unit ----
+    var ORIGIN_X = 240, ORIGIN_Y = 215, SCALE = 30;
+    var CLAMP = 6.4;            // draggable domain, keeps every glyph inside the viewBox
+    var VIEW_W = 480, VIEW_H = 440;
+    var EPS = 1e-9;
+
+    // Deterministic hand-placed layout (no randomness anywhere in this widget):
+    // king - man + woman lands exactly on queen, so the analogy resolves cleanly.
+    var DEFAULTS = [
+      { id:'king',   label:'king',   x: 4, y: 2 },
+      { id:'queen',  label:'queen',  x: 4, y: 4 },
+      { id:'man',    label:'man',    x: 1, y: 1 },
+      { id:'woman',  label:'woman',  x: 1, y: 3 },
+      { id:'dog',    label:'dog',    x:-3, y:-2 },
+      { id:'puppy',  label:'puppy',  x:-3, y: 0 },
+      { id:'cat',    label:'cat',    x:-1, y:-2 },
+      { id:'kitten', label:'kitten', x:-1, y: 0 }
+    ];
+
+    var points = DEFAULTS.map(function(p){ return { id:p.id, label:p.label, x:p.x, y:p.y }; });
+    var byId = {};
+    points.forEach(function(p){ byId[p.id] = p; });
+
+    var analogyOn = false;
+    var dragId = null;
+    var baseA = null;   // position of A when k was last reset to 1 (scaling is measured from here)
+
+    function svgNS(tag){ return document.createElementNS('http://www.w3.org/2000/svg', tag); }
+    function el(parent, tag, attrs){
+      var n = svgNS(tag);
+      for (var k in attrs){ if (Object.prototype.hasOwnProperty.call(attrs, k)) n.setAttribute(k, attrs[k]); }
+      parent.appendChild(n);
+      return n;
+    }
+    function toScreen(x, y){ return { x: ORIGIN_X + SCALE * x, y: ORIGIN_Y - SCALE * y }; }
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+    // ---------------- exact vector math ----------------
+    function dot(a, b){ return a.x * b.x + a.y * b.y; }
+    function norm(a){ return Math.sqrt(a.x * a.x + a.y * a.y); }
+    function cosine(a, b){                       // cos(theta) = (a . b) / (|a| |b|); undefined for a zero vector
+      var na = norm(a), nb = norm(b);
+      if (na < EPS || nb < EPS) return null;
+      return clamp(dot(a, b) / (na * nb), -1, 1);
+    }
+    function eucDist(a, b){
+      var dx = a.x - b.x, dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    function fmt3(n){ return (Math.abs(n) < 5e-4 ? 0 : n).toFixed(3); }
+    function fmt2(n){ return (Math.abs(n) < 5e-3 ? 0 : n).toFixed(2); }
+    function fmt1(n){ return (Math.abs(n) < 5e-2 ? 0 : n).toFixed(1); }
+
+    function currentA(){ return byId[selA.value] || points[0]; }
+    function currentB(){ return byId[selB.value] || points[0]; }
+
+    function getK(){
+      var k = parseFloat(scaleEl && scaleEl.value);
+      if (!isFinite(k) || k <= 0) return 1;
+      return k;
+    }
+    function resetScale(){
+      if (scaleEl) scaleEl.value = '1';
+      if (scaleValEl) scaleValEl.textContent = '1.00';
+    }
+    function captureBase(){
+      var A = currentA();
+      baseA = { x: A.x, y: A.y };
+      resetScale();
+    }
+
+    // Scaling slides A along its own ray (direction preserved), which is precisely the
+    // operation cosine similarity is invariant to. The radial clamp also preserves direction.
+    function applyScale(){
+      var A = currentA();
+      if (!baseA) return;
+      var k = getK();
+      var nx = baseA.x * k, ny = baseA.y * k;
+      var n = Math.sqrt(nx * nx + ny * ny);
+      if (n > CLAMP){ nx *= CLAMP / n; ny *= CLAMP / n; }
+      A.x = nx; A.y = ny;
+      if (scaleValEl) scaleValEl.textContent = k.toFixed(2);
+    }
+
+    // ---------------- static grid + axes ----------------
+    function buildGrid(){
+      gGrid.innerHTML = '';
+      gAxes.innerHTML = '';
+      var i;
+      for (i = -6; i <= 6; i++){
+        var v1 = toScreen(i, -CLAMP), v2 = toScreen(i, CLAMP);
+        el(gGrid, 'line', { 'class':'es-grid-line', x1:v1.x, y1:v1.y, x2:v2.x, y2:v2.y });
+        var h1 = toScreen(-CLAMP, i), h2 = toScreen(CLAMP, i);
+        el(gGrid, 'line', { 'class':'es-grid-line', x1:h1.x, y1:h1.y, x2:h2.x, y2:h2.y });
+      }
+      var xa1 = toScreen(-CLAMP, 0), xa2 = toScreen(CLAMP, 0);
+      el(gAxes, 'line', { 'class':'es-axis-line', x1:xa1.x, y1:xa1.y, x2:xa2.x, y2:xa2.y });
+      var ya1 = toScreen(0, -CLAMP), ya2 = toScreen(0, CLAMP);
+      el(gAxes, 'line', { 'class':'es-axis-line', x1:ya1.x, y1:ya1.y, x2:ya2.x, y2:ya2.y });
+
+      [-6, -4, -2, 2, 4, 6].forEach(function(t){
+        var tx = toScreen(t, 0);
+        el(gAxes, 'text', { 'class':'es-axis-tick', x:tx.x + 2, y:tx.y + 11 }).textContent = String(t);
+        var ty = toScreen(0, t);
+        el(gAxes, 'text', { 'class':'es-axis-tick', x:ty.x + 4, y:ty.y - 3 }).textContent = String(t);
+      });
+      var dim1 = toScreen(CLAMP, 0), dim2 = toScreen(0, CLAMP);
+      el(gAxes, 'text', { 'class':'es-axis-tick', x:dim1.x - 30, y:dim1.y - 8 }).textContent = 'dim 0';
+      el(gAxes, 'text', { 'class':'es-axis-tick', x:dim2.x + 6, y:dim2.y + 10 }).textContent = 'dim 1';
+    }
+
+    // ---------------- draggable points ----------------
+    var pointEls = {};
+
+    function buildPoints(){
+      gPoints.innerHTML = '';
+      pointEls = {};
+      points.forEach(function(p){
+        var g = svgNS('g');
+        g.setAttribute('class', 'es-point-g');
+        g.setAttribute('tabindex', '0');
+        g.setAttribute('role', 'button');
+
+        el(g, 'circle', { 'class':'es-point-halo', r:13 });
+        var circle = el(g, 'circle', { 'class':'es-point-circle', r:8 });
+        var halo = el(g, 'text', { 'class':'es-point-label-halo', 'text-anchor':'middle', y:-13 });
+        halo.textContent = p.label;
+        var label = el(g, 'text', { 'class':'es-point-label', 'text-anchor':'middle', y:-13 });
+        label.textContent = p.label;
+
+        g.addEventListener('pointerdown', function(evt){
+          evt.preventDefault();
+          dragId = p.id;
+          g.classList.add('es-dragging');
+          try { g.setPointerCapture(evt.pointerId); } catch (e) {}
+          try { g.focus(); } catch (e) {}
+        });
+        g.addEventListener('keydown', function(evt){
+          var step = evt.shiftKey ? 1 : 0.2;
+          var handled = true;
+          if (evt.key === 'ArrowLeft')       p.x = clamp(p.x - step, -CLAMP, CLAMP);
+          else if (evt.key === 'ArrowRight') p.x = clamp(p.x + step, -CLAMP, CLAMP);
+          else if (evt.key === 'ArrowUp')    p.y = clamp(p.y + step, -CLAMP, CLAMP);
+          else if (evt.key === 'ArrowDown')  p.y = clamp(p.y - step, -CLAMP, CLAMP);
+          else handled = false;
+          if (handled){
+            evt.preventDefault();
+            if (p.id === selA.value) captureBase();
+            render();
+          }
+        });
+
+        gPoints.appendChild(g);
+        pointEls[p.id] = { g:g, circle:circle, label:label, halo:halo };
+      });
+    }
+
+    function clientToPlane(clientX, clientY){
+      var loc = null;
+      if (svg.createSVGPoint && svg.getScreenCTM){
+        var ctm = svg.getScreenCTM();
+        if (ctm){
+          var pt = svg.createSVGPoint();
+          pt.x = clientX; pt.y = clientY;
+          loc = pt.matrixTransform(ctm.inverse());
+        }
+      }
+      if (!loc){                                  // fallback: viewBox is uniformly scaled to the box
+        var box = svg.getBoundingClientRect();
+        if (!box || !box.width || !box.height) return null;
+        loc = { x:(clientX - box.left) * VIEW_W / box.width, y:(clientY - box.top) * VIEW_H / box.height };
+      }
+      if (!isFinite(loc.x) || !isFinite(loc.y)) return null;
+      return { x:clamp((loc.x - ORIGIN_X) / SCALE, -CLAMP, CLAMP), y:clamp((ORIGIN_Y - loc.y) / SCALE, -CLAMP, CLAMP) };
+    }
+
+    // Pointer move / release are handled on the document so that a fast drag which outruns
+    // the cursor (or a release outside the SVG) can never leave a point stuck to the pointer.
+    document.addEventListener('pointermove', function(evt){
+      if (dragId === null) return;
+      var p = byId[dragId];
+      if (!p) return;
+      var loc = clientToPlane(evt.clientX, evt.clientY);
+      if (!loc) return;
+      p.x = loc.x; p.y = loc.y;
+      if (p.id === selA.value) captureBase();
+      render();
+    });
+    function endDrag(){
+      if (dragId === null) return;
+      var e = pointEls[dragId];
+      if (e) e.g.classList.remove('es-dragging');
+      dragId = null;
+    }
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
+
+    function layoutPoints(){
+      var idA = selA.value, idB = selB.value;
+      points.forEach(function(p){
+        var e = pointEls[p.id];
+        if (!e) return;
+        var s = toScreen(p.x, p.y);
+        e.g.setAttribute('transform', 'translate(' + s.x.toFixed(2) + ',' + s.y.toFixed(2) + ')');
+        e.g.setAttribute('aria-label', p.label + ' vector at (' + fmt2(p.x) + ', ' + fmt2(p.y) +
+          '); drag it, or use the arrow keys to move it');
+        e.g.classList.toggle('es-is-a', p.id === idA);
+        e.g.classList.toggle('es-is-b', p.id === idB && p.id !== idA);
+        e.g.classList.toggle('es-operand', analogyOn && (p.id === 'king' || p.id === 'man' || p.id === 'woman'));
+      });
+    }
+
+    // ---------------- A / B arrows ----------------
+    function drawArrow(group, cls, marker, fromX, fromY, toX, toY, gapPx){
+      var dx = toX - fromX, dy = toY - fromY;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1) return null;
+      var gap = Math.min(gapPx || 0, len - 1);
+      var ex = toX - dx / len * gap, ey = toY - dy / len * gap;
+      var line = el(group, 'line', { 'class':cls, x1:fromX, y1:fromY, x2:ex.toFixed(2), y2:ey.toFixed(2) });
+      if (marker) line.setAttribute('marker-end', 'url(#' + marker + ')');
+      return line;
+    }
+
+    function drawVectors(){
+      gVectors.innerHTML = '';
+      var A = currentA(), B = currentB();
+      var o = toScreen(0, 0);
+      if (norm(A) > EPS){
+        var a = toScreen(A.x, A.y);
+        drawArrow(gVectors, 'es-vec-a', 'embedding-similarity-arrow-a', o.x, o.y, a.x, a.y, 9);
+      }
+      if (norm(B) > EPS && B.id !== A.id){
+        var b = toScreen(B.x, B.y);
+        drawArrow(gVectors, 'es-vec-b', 'embedding-similarity-arrow-b', o.x, o.y, b.x, b.y, 9);
+      }
+    }
+
+    // ---------------- angle arc ----------------
+    function drawAngle(){
+      gAngle.innerHTML = '';
+      var A = currentA(), B = currentB();
+      var na = norm(A), nb = norm(B);
+      if (na < EPS || nb < EPS || A.id === B.id) return;
+
+      var aAng = Math.atan2(A.y, A.x);
+      var bAng = Math.atan2(B.y, B.x);
+      var diff = bAng - aAng;                       // signed, then wrapped into (-pi, pi]
+      while (diff >  Math.PI) diff -= 2 * Math.PI;
+      while (diff <= -Math.PI) diff += 2 * Math.PI;
+
+      var r = Math.min(1.9, na * 0.55, nb * 0.55);
+      if (r < 0.3) return;
+      var s1 = toScreen(r * Math.cos(aAng), r * Math.sin(aAng));
+      var s2 = toScreen(r * Math.cos(bAng), r * Math.sin(bAng));
+      // |diff| <= pi, so the minor arc is always the right one (large-arc-flag = 0).
+      // The plane is drawn with y flipped (screen y grows downward), so a positive
+      // mathematical angle is a *counter-clockwise* screen arc => sweep-flag 0.
+      var sweep = diff >= 0 ? 0 : 1;
+      var rr = (SCALE * r).toFixed(2);
+      el(gAngle, 'path', { 'class':'es-angle-arc',
+        d:'M ' + s1.x.toFixed(2) + ' ' + s1.y.toFixed(2) + ' A ' + rr + ' ' + rr + ' 0 0 ' + sweep + ' ' + s2.x.toFixed(2) + ' ' + s2.y.toFixed(2) });
+
+      var mid = aAng + diff / 2;
+      var lr = r + 0.62;
+      var lp = toScreen(lr * Math.cos(mid), lr * Math.sin(mid));
+      var t = el(gAngle, 'text', { 'class':'es-angle-label', x:clamp(lp.x, 22, VIEW_W - 22).toFixed(2),
+        y:clamp(lp.y, 14, VIEW_H - 8).toFixed(2), 'text-anchor':'middle' });
+      t.textContent = 'θ = ' + fmt1(Math.abs(diff) * 180 / Math.PI) + '°';
+    }
+
+    // ---------------- cos(theta) construction: unit circle + projection ----------------
+    function drawGeom(){
+      gGeom.innerHTML = '';
+      if (!geomEl || !geomEl.checked) return;
+      var A = currentA(), B = currentB();
+      var na = norm(A), nb = norm(B);
+      var o = toScreen(0, 0);
+
+      el(gGeom, 'circle', { 'class':'es-unit-circle', cx:o.x, cy:o.y, r:SCALE });
+      var ul = el(gGeom, 'text', { 'class':'es-unit-label', x:o.x + SCALE + 4, y:o.y - 5 });
+      ul.textContent = '|v| = 1';
+
+      if (na > EPS){                                  // unit vector A / |A| sits on the circle
+        var ua = toScreen(A.x / na, A.y / na);
+        el(gGeom, 'circle', { 'class':'es-unit-dot-a', r:3.2, cx:ua.x.toFixed(2), cy:ua.y.toFixed(2) });
+      }
+      if (nb > EPS && B.id !== A.id){
+        var ub = toScreen(B.x / nb, B.y / nb);
+        el(gGeom, 'circle', { 'class':'es-unit-dot-b', r:3.2, cx:ub.x.toFixed(2), cy:ub.y.toFixed(2) });
+      }
+
+      // projection of B onto the line through A: p = (A.B / |A|^2) A, signed length |B| cos(theta)
+      if (na > EPS && nb > EPS && B.id !== A.id){
+        var t = dot(A, B) / (na * na);
+        var foot = { x:t * A.x, y:t * A.y };
+        var sf = toScreen(foot.x, foot.y), sb = toScreen(B.x, B.y);
+        el(gGeom, 'line', { 'class':'es-proj-shadow', x1:o.x, y1:o.y, x2:sf.x.toFixed(2), y2:sf.y.toFixed(2) });
+        el(gGeom, 'line', { 'class':'es-proj-drop', x1:sb.x.toFixed(2), y1:sb.y.toFixed(2), x2:sf.x.toFixed(2), y2:sf.y.toFixed(2) });
+        var lab = el(gGeom, 'text', { 'class':'es-proj-label', 'text-anchor':'middle',
+          x:clamp((o.x + sf.x) / 2, 40, VIEW_W - 40).toFixed(2),
+          y:clamp((o.y + sf.y) / 2 + 15, 14, VIEW_H - 6).toFixed(2) });
+        lab.textContent = '|B|cosθ = ' + fmt2(nb * (dot(A, B) / (na * nb)));
+      }
+    }
+
+    // ---------------- analogy: king - man + woman ----------------
+    function drawAnalogy(){
+      gAnalogy.innerHTML = '';
+      analogyRdEl.innerHTML = '';
+      analogyRdEl.hidden = !analogyOn;
+      if (!analogyOn) return;
+
+      var king = byId.king, man = byId.man, woman = byId.woman;
+      if (!king || !man || !woman) return;
+      var target = { x:king.x - man.x + woman.x, y:king.y - man.y + woman.y };
+
+      var sMan = toScreen(man.x, man.y), sKing = toScreen(king.x, king.y);
+      drawArrow(gAnalogy, 'es-analogy-arrow', 'embedding-similarity-arrow-analogy', sMan.x, sMan.y, sKing.x, sKing.y, 10);
+      var sWoman = toScreen(woman.x, woman.y), sT = toScreen(target.x, target.y);
+      drawArrow(gAnalogy, 'es-analogy-arrow', 'embedding-similarity-arrow-analogy', sWoman.x, sWoman.y, sT.x, sT.y, 8);
+
+      el(gAnalogy, 'circle', { 'class':'es-analogy-target', cx:sT.x.toFixed(2), cy:sT.y.toFixed(2), r:4.5 });
+      var tl = el(gAnalogy, 'text', { 'class':'es-analogy-target-label',
+        x:clamp(sT.x + 8, 8, VIEW_W - 44).toFixed(2), y:clamp(sT.y + 4, 12, VIEW_H - 4).toFixed(2) });
+      tl.textContent = 'result';
+
+      // nearest neighbour over the stored vocabulary, excluding the three query words
+      // (this exclusion is exactly what the standard word2vec analogy benchmark does)
+      var candidates = points.filter(function(p){ return p.id !== 'king' && p.id !== 'man' && p.id !== 'woman'; });
+      var tNorm = norm(target);
+      var bestCos = null, bestCosVal = -Infinity;
+      var bestDist = null, bestDistVal = Infinity;
+      candidates.forEach(function(c){
+        if (tNorm > EPS){
+          var cs = cosine(target, c);
+          if (cs !== null && cs > bestCosVal){ bestCosVal = cs; bestCos = c; }
+        }
+        var ds = eucDist(target, c);
+        if (ds < bestDistVal){ bestDistVal = ds; bestDist = c; }
+      });
+
+      if (bestCos){
+        var sc = toScreen(bestCos.x, bestCos.y);
+        el(gAnalogy, 'circle', { 'class':'es-ring-cos', cx:sc.x.toFixed(2), cy:sc.y.toFixed(2), r:13 });
+      }
+      if (bestDist){
+        var sd = toScreen(bestDist.x, bestDist.y);
+        el(gAnalogy, 'circle', { 'class':'es-ring-dist', cx:sd.x.toFixed(2), cy:sd.y.toFixed(2), r:17.5 });
+      }
+
+      var html = '';
+      html += '<div class="vt-stat">king &minus; man + woman = <span class="es-num">(' + fmt2(target.x) + ', ' + fmt2(target.y) + ')</span>' +
+              '<span class="es-sub">= (' + fmt2(king.x) + ', ' + fmt2(king.y) + ') &minus; (' + fmt2(man.x) + ', ' + fmt2(man.y) +
+              ') + (' + fmt2(woman.x) + ', ' + fmt2(woman.y) + ')</span></div>';
+      html += '<div class="vt-stat">Nearest by <b>cosine</b>: <b>' + (bestCos ? bestCos.label : '&mdash;') + '</b> ' +
+              (bestCos ? '<span class="es-num">cos&thinsp;&theta; = ' + fmt3(bestCosVal) + '</span>' : '(result is the zero vector, so cosine is undefined)') +
+              '<span class="es-sub">solid ring &middot; 3CosAdd: the three query words are excluded from the search, as in the word2vec benchmark</span></div>';
+      html += '<div class="vt-stat">Nearest by <b>Euclidean</b> distance: <b>' + (bestDist ? bestDist.label : '&mdash;') + '</b> ' +
+              (bestDist ? '<span class="es-num">|r &minus; w| = ' + fmt3(bestDistVal) + '</span>' : '') +
+              '<span class="es-sub">dashed ring</span></div>';
+      if (bestCos && bestDist && bestCos.id !== bestDist.id){
+        html += '<div class="vt-stat es-invariant">The two metrics <b>disagree</b> here: cosine only asks which stored vector points the same way, Euclidean distance also penalises a length mismatch.</div>';
+      }
+      if (Math.abs(target.x) > CLAMP + 0.2 || Math.abs(target.y) > CLAMP + 0.2){
+        html += '<div class="vt-stat es-invariant">The result lands <b>outside the plotted window</b> &ndash; the numbers above are still exact; drag the operands back toward the origin to see it.</div>';
+      }
+      analogyRdEl.innerHTML = html;
+    }
+
+    // ---------------- readout ----------------
+    function updateReadout(){
+      var A = currentA(), B = currentB();
+      var na = norm(A), nb = norm(B);
+      var d = dot(A, B);
+      var cos = cosine(A, B);
+      var dist = eucDist(A, B);
+      var k = getK();
+
+      var html = '';
+      html += '<div class="vt-stat"><span class="es-a">A = ' + A.label + '</span> = <span class="es-num">(' + fmt2(A.x) + ', ' + fmt2(A.y) + ')</span>' +
+              '<span class="es-sub">|A| = ' + fmt3(na) + '</span></div>';
+      html += '<div class="vt-stat"><span class="es-b">B = ' + B.label + '</span> = <span class="es-num">(' + fmt2(B.x) + ', ' + fmt2(B.y) + ')</span>' +
+              '<span class="es-sub">|B| = ' + fmt3(nb) + '</span></div>';
+      html += '<div class="vt-stat">A &middot; B = <span class="es-num">' + fmt3(d) + '</span>' +
+              '<span class="es-sub">= ' + fmt2(A.x) + '&times;' + fmt2(B.x) + ' + ' + fmt2(A.y) + '&times;' + fmt2(B.y) + '</span></div>';
+      if (cos === null){
+        html += '<div class="vt-stat">cos&thinsp;&theta; = <span class="es-num">undefined</span>' +
+                '<span class="es-sub">a zero vector has no direction &ndash; drag it off the origin</span></div>';
+      } else {
+        var thetaDeg = Math.acos(cos) * 180 / Math.PI;
+        html += '<div class="vt-stat">cos&thinsp;&theta; = <span class="es-num">' + fmt3(cos) + '</span>&nbsp; &theta; = <span class="es-num">' + fmt1(thetaDeg) + '&deg;</span>' +
+                '<span class="es-sub">= ' + fmt3(d) + ' / (' + fmt3(na) + ' &times; ' + fmt3(nb) + ')</span></div>';
+      }
+      html += '<div class="vt-stat">|A &minus; B| = <span class="es-num">' + fmt3(dist) + '</span>' +
+              '<span class="es-sub">Euclidean distance &ndash; angle <em>and</em> length</span></div>';
+      if (Math.abs(k - 1) > 1e-6){
+        html += '<div class="vt-stat es-invariant">A is scaled by <b>k = ' + k.toFixed(2) + '</b>: |A|, A&middot;B and |A&minus;B| all moved, ' +
+                '<b>cos&thinsp;&theta; did not</b>. That is the whole reason embeddings are compared by cosine.</div>';
+      }
+      readoutEl.innerHTML = html;
+    }
+
+    function render(){
+      layoutPoints();
+      drawGeom();
+      drawAnalogy();
+      drawAngle();
+      drawVectors();
+      updateReadout();
+    }
+
+    // ---------------- controls ----------------
+    function buildSelect(sel, defaultId){
+      sel.innerHTML = '';
+      points.forEach(function(p){
+        var opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.label;
+        if (p.id === defaultId) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+    buildSelect(selA, 'king');
+    buildSelect(selB, 'queen');
+
+    selA.addEventListener('change', function(){ captureBase(); render(); });
+    selB.addEventListener('change', render);
+
+    if (scaleEl) scaleEl.addEventListener('input', function(){ applyScale(); render(); });
+    if (geomEl) geomEl.addEventListener('change', render);
+
+    if (analogyBtn) analogyBtn.addEventListener('click', function(){
+      analogyOn = !analogyOn;
+      analogyBtn.setAttribute('aria-pressed', analogyOn ? 'true' : 'false');
+      render();
+    });
+
+    if (resetBtn) resetBtn.addEventListener('click', function(){
+      DEFAULTS.forEach(function(d){
+        var p = byId[d.id];
+        if (p){ p.x = d.x; p.y = d.y; }
+      });
+      captureBase();
+      render();
+    });
+
+    buildGrid();
+    buildPoints();
+    captureBase();
+    render();
+  })();</script>
+</div>

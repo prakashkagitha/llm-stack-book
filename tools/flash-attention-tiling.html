@@ -1,0 +1,522 @@
+<div class="viz-tool" id="tool-flash-attention-tiling">
+  <div class="vt-title">FlashAttention tiling &amp; online softmax: stream one B<sub>r</sub>&times;B<sub>c</sub> tile at a time</div>
+
+  <div class="vt-grid">
+    <label for="flash-attention-tiling-S">Sequence length S (<span id="flash-attention-tiling-Sval">8</span>)
+      <input id="flash-attention-tiling-S" type="range" min="4" max="12" step="1" value="8">
+    </label>
+    <label for="flash-attention-tiling-d">Head dim d
+      <select id="flash-attention-tiling-d">
+        <option value="2">2</option>
+        <option value="3" selected>3</option>
+        <option value="4">4</option>
+      </select>
+    </label>
+    <label for="flash-attention-tiling-Br">Query block B<sub>r</sub> (<span id="flash-attention-tiling-Brval">4</span>)
+      <input id="flash-attention-tiling-Br" type="range" min="1" max="12" step="1" value="4">
+    </label>
+    <label for="flash-attention-tiling-Bc">KV block B<sub>c</sub> (<span id="flash-attention-tiling-Bcval">2</span>)
+      <input id="flash-attention-tiling-Bc" type="range" min="1" max="12" step="1" value="2">
+    </label>
+    <label for="flash-attention-tiling-Row">Inspect query row i (<span id="flash-attention-tiling-Rowval">0</span>)
+      <input id="flash-attention-tiling-Row" type="range" min="0" max="7" step="1" value="0">
+    </label>
+  </div>
+
+  <div class="flt-btnrow">
+    <button id="flash-attention-tiling-step" type="button">Step one tile &rarr;</button>
+    <button id="flash-attention-tiling-play" type="button" aria-label="Auto-play through all tiles">Play</button>
+    <button id="flash-attention-tiling-reset" type="button">Reset</button>
+    <span class="flt-status" id="flash-attention-tiling-status" aria-live="polite"></span>
+  </div>
+
+  <div class="flt-qkv-wrap">
+    <div class="flt-mat-block">
+      <div class="flt-mat-title">Q (S&times;d) &mdash; outer loop: one B<sub>r</sub>-row block is held in SRAM</div>
+      <div id="flash-attention-tiling-qmat" class="flt-mat"></div>
+    </div>
+    <div class="flt-mat-block">
+      <div class="flt-mat-title">K (S&times;d) &mdash; inner loop: B<sub>c</sub> rows streamed in</div>
+      <div id="flash-attention-tiling-kmat" class="flt-mat"></div>
+    </div>
+    <div class="flt-mat-block">
+      <div class="flt-mat-title">V (S&times;d) &mdash; same blocking as K</div>
+      <div id="flash-attention-tiling-vmat" class="flt-mat"></div>
+    </div>
+  </div>
+
+  <div class="flt-legend">
+    <span><i class="flt-sw-active"></i> tile just computed</span>
+    <span><i class="flt-sw-next"></i> next tile</span>
+    <span><i class="flt-sw-done"></i> already streamed &amp; discarded</span>
+  </div>
+
+  <div class="flt-tile-wrap">
+    <div class="flt-mat-block">
+      <div class="flt-mat-title">Score tile just computed: s<sub>ij</sub> = q<sub>i</sub>&middot;k<sub>j</sub> / &radic;d, only for i in the query block and j in the KV block (B<sub>r</sub>&times;B<sub>c</sub>)</div>
+      <div id="flash-attention-tiling-tile" class="flt-mat"></div>
+    </div>
+    <div class="flt-mat-block">
+      <div class="flt-mat-title">The full S&times;S score matrix &mdash; never materialized; only one tile is resident at a time</div>
+      <svg id="flash-attention-tiling-ghost" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Grid of the full score matrix showing which tiles have been streamed through"></svg>
+    </div>
+  </div>
+
+  <div class="flt-recur" id="flash-attention-tiling-recur"></div>
+
+  <div class="flt-table-wrap">
+    <table id="flash-attention-tiling-table" class="flt-table"></table>
+  </div>
+
+  <div class="flt-mem" id="flash-attention-tiling-mem"></div>
+
+  <div class="vt-note"><b>The takeaway:</b> FlashAttention never forms the S&times;S score matrix. It walks tiles of it, and for each tile updates only three per-row statistics that live in registers/SRAM: running max <b>m<sub>i</sub></b>, running denominator <b>&#8467;<sub>i</sub></b>, and unnormalized accumulator <b>O<sub>i</sub></b>. Before adding a tile's contribution it rescales the old state by exp(m<sub>old</sub> &minus; m<sub>new</sub>) &mdash; that one multiply re-bases every earlier term onto the new max, so the recurrence is <i>exact</i>, not an approximation: watch the max|diff| column fall to ~1e-16 the moment a row's last KV block lands. The single divide by &#8467;<sub>i</sub> happens once, at the end. Raise B<sub>r</sub>/B<sub>c</sub> and the SRAM tile grows as B<sub>r</sub>B<sub>c</sub>; lower B<sub>c</sub> and K/V get re-read more times (more HBM traffic) &mdash; that tension is the entire kernel-design tradeoff, and the naive path stays stuck at O(S&sup2;) either way.</div>
+
+  <style>
+    #tool-flash-attention-tiling{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-flash-attention-tiling .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-flash-attention-tiling .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px 18px; }
+    #tool-flash-attention-tiling label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); }
+    #tool-flash-attention-tiling input, #tool-flash-attention-tiling select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-flash-attention-tiling input[type=range]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-flash-attention-tiling input:focus-visible, #tool-flash-attention-tiling select:focus-visible, #tool-flash-attention-tiling button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-flash-attention-tiling .flt-btnrow{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    #tool-flash-attention-tiling .flt-btnrow button{ font:inherit; font-size:.85rem; font-weight:600; padding:7px 14px; border-radius:7px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-flash-attention-tiling .flt-btnrow button:hover:not(:disabled){ background:var(--surface-3,#ece7da); }
+    #tool-flash-attention-tiling .flt-btnrow button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-flash-attention-tiling .flt-status{ font-size:.82rem; color:var(--muted,#6d675d); margin-left:4px; }
+
+    #tool-flash-attention-tiling .flt-qkv-wrap, #tool-flash-attention-tiling .flt-tile-wrap{
+      display:flex; flex-wrap:wrap; gap:18px; margin-top:16px; align-items:flex-start;
+    }
+    #tool-flash-attention-tiling .flt-mat-block{ overflow-x:auto; max-width:100%; }
+    #tool-flash-attention-tiling .flt-mat-title{ font-size:.74rem; color:var(--muted,#6d675d); margin-bottom:6px; max-width:330px; line-height:1.35; }
+    #tool-flash-attention-tiling .flt-mat{ display:flex; flex-direction:column; gap:1px; }
+    #tool-flash-attention-tiling .flt-row{ display:flex; gap:1px; }
+    #tool-flash-attention-tiling .flt-idx{ width:22px; flex:0 0 auto; text-align:right; padding:3px 4px; font:11px var(--mono,monospace); color:var(--muted,#6d675d); }
+    #tool-flash-attention-tiling .flt-cell{ min-width:40px; flex:0 0 auto; text-align:center; padding:3px 4px; font:11px var(--mono,monospace); color:var(--ink,#211f1b); background:var(--surface-2,#f3efe6); border-radius:3px; font-variant-numeric:tabular-nums; }
+    #tool-flash-attention-tiling .flt-row.focus .flt-idx{ color:var(--accent,#c15b39); font-weight:700; }
+    #tool-flash-attention-tiling .flt-row.focus .flt-cell{ box-shadow:inset 0 0 0 1.5px var(--accent,#c15b39); }
+    #tool-flash-attention-tiling .flt-row.active .flt-cell{ background:var(--accent-soft,#f6e7df); color:var(--ink,#211f1b); box-shadow:inset 0 0 0 1.5px var(--accent,#c15b39); }
+    #tool-flash-attention-tiling .flt-row.active .flt-idx{ color:var(--accent,#c15b39); font-weight:700; }
+    #tool-flash-attention-tiling .flt-row.next .flt-cell{ box-shadow:inset 0 0 0 1.5px var(--border-2,#d8d1c0); }
+    #tool-flash-attention-tiling .flt-row.done .flt-cell{ background:var(--surface-3,#ece7da); color:var(--faint,#908a7e); }
+    #tool-flash-attention-tiling .flt-row.flt-header .flt-cell{ background:transparent; color:var(--muted,#6d675d); font-weight:700; box-shadow:none; }
+    #tool-flash-attention-tiling .flt-placeholder{ font-size:.8rem; color:var(--muted,#6d675d); padding:8px 2px; max-width:320px; line-height:1.4; }
+
+    #tool-flash-attention-tiling .flt-legend{ display:flex; flex-wrap:wrap; gap:14px; margin-top:10px; font-size:.72rem; color:var(--muted,#6d675d); }
+    #tool-flash-attention-tiling .flt-legend i{ display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px; margin-right:5px; }
+    #tool-flash-attention-tiling .flt-sw-active{ background:var(--accent-soft,#f6e7df); box-shadow:inset 0 0 0 1.5px var(--accent,#c15b39); }
+    #tool-flash-attention-tiling .flt-sw-next{ background:transparent; box-shadow:inset 0 0 0 1.5px var(--border-2,#d8d1c0); }
+    #tool-flash-attention-tiling .flt-sw-done{ background:var(--surface-3,#ece7da); }
+
+    #tool-flash-attention-tiling svg{ display:block; width:100%; max-width:320px; height:auto; }
+    #tool-flash-attention-tiling .flt-ghost-cell{ fill:var(--surface-2,#f3efe6); stroke:var(--border,#e7e1d4); stroke-width:.75; }
+    #tool-flash-attention-tiling .flt-ghost-cell.swept{ fill:var(--surface-3,#ece7da); }
+    #tool-flash-attention-tiling .flt-ghost-cell.live{ fill:var(--accent-soft,#f6e7df); }
+    #tool-flash-attention-tiling .flt-ghost-tile{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.8; }
+    #tool-flash-attention-tiling .flt-ghost-next{ fill:none; stroke:var(--muted,#6d675d); stroke-width:1.2; stroke-dasharray:3 3; }
+    #tool-flash-attention-tiling .flt-ghost-sep{ stroke:var(--border-2,#d8d1c0); stroke-width:.9; }
+    #tool-flash-attention-tiling .flt-ghost-lab{ font-size:8.5px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+
+    #tool-flash-attention-tiling .flt-recur{ margin-top:16px; background:var(--surface-2,#f3efe6); border-radius:9px; padding:11px 14px; font-size:.8rem; color:var(--ink-soft,#45413a); }
+    #tool-flash-attention-tiling .flt-recur-title{ font-weight:700; color:var(--ink,#211f1b); margin-bottom:6px; }
+    #tool-flash-attention-tiling .flt-recur-line{ font:.78rem/1.65 var(--mono,monospace); word-break:break-word; }
+    #tool-flash-attention-tiling .flt-recur-line b{ color:var(--accent-2,#b04e2d); }
+    #tool-flash-attention-tiling .flt-recur-sub{ font-size:.74rem; color:var(--muted,#6d675d); margin-top:6px; line-height:1.45; }
+
+    #tool-flash-attention-tiling .flt-table-wrap{ margin-top:16px; overflow-x:auto; }
+    #tool-flash-attention-tiling table.flt-table{ border-collapse:collapse; font-size:.76rem; width:100%; min-width:600px; }
+    #tool-flash-attention-tiling table.flt-table th, #tool-flash-attention-tiling table.flt-table td{ padding:5px 8px; text-align:left; border-bottom:1px solid var(--border,#e7e1d4); font:.76rem var(--mono,monospace); color:var(--ink,#211f1b); white-space:nowrap; }
+    #tool-flash-attention-tiling table.flt-table th{ color:var(--muted,#6d675d); font-weight:700; font-family:var(--sans,sans-serif); }
+    #tool-flash-attention-tiling table.flt-table tr.flt-focusrow td{ background:var(--surface-3,#ece7da); }
+    #tool-flash-attention-tiling table.flt-table td.flt-exact{ color:var(--accent-2,#b04e2d); font-weight:700; }
+
+    #tool-flash-attention-tiling .flt-mem{ margin-top:16px; display:flex; flex-direction:column; gap:8px; }
+    #tool-flash-attention-tiling .flt-mem-row{ display:flex; flex-direction:column; gap:3px; }
+    #tool-flash-attention-tiling .flt-mem-lab{ font-size:.76rem; color:var(--ink-soft,#45413a); }
+    #tool-flash-attention-tiling .flt-mem-bar{ height:12px; border-radius:6px; background:var(--surface-3,#ece7da); overflow:hidden; }
+    #tool-flash-attention-tiling .flt-mem-fill{ height:100%; border-radius:6px; min-width:2px; }
+    #tool-flash-attention-tiling .flt-mem-fill.naive{ background:var(--warn,#e0a106); }
+    #tool-flash-attention-tiling .flt-mem-fill.flash{ background:var(--good,#2f9e6e); }
+    #tool-flash-attention-tiling .flt-mem-note{ font-size:.72rem; color:var(--muted,#6d675d); line-height:1.5; }
+
+    #tool-flash-attention-tiling .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-flash-attention-tiling .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-flash-attention-tiling');
+    if (!root) return;
+    function $(id){ return root.querySelector('#' + id); }
+
+    var elS = $('flash-attention-tiling-S'), elSval = $('flash-attention-tiling-Sval');
+    var elD = $('flash-attention-tiling-d');
+    var elBr = $('flash-attention-tiling-Br'), elBrval = $('flash-attention-tiling-Brval');
+    var elBc = $('flash-attention-tiling-Bc'), elBcval = $('flash-attention-tiling-Bcval');
+    var elRow = $('flash-attention-tiling-Row'), elRowval = $('flash-attention-tiling-Rowval');
+    var btnStep = $('flash-attention-tiling-step'), btnPlay = $('flash-attention-tiling-play'), btnReset = $('flash-attention-tiling-reset');
+    var elStatus = $('flash-attention-tiling-status');
+    var qmat = $('flash-attention-tiling-qmat'), kmat = $('flash-attention-tiling-kmat'), vmat = $('flash-attention-tiling-vmat');
+    var tileEl = $('flash-attention-tiling-tile');
+    var ghostSvg = $('flash-attention-tiling-ghost');
+    var recurEl = $('flash-attention-tiling-recur');
+    var tableEl = $('flash-attention-tiling-table');
+    var memEl = $('flash-attention-tiling-mem');
+
+    var state = {};
+    var playTimer = null;
+
+    /* ---------- deterministic seeded PRNG (mulberry32) ---------- */
+    function mulberry32(seed){
+      var a = seed >>> 0;
+      return function(){
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function genMatrix(rows, cols, rand){
+      var m = [], r, c, row;
+      for (r = 0; r < rows; r++){
+        row = [];
+        for (c = 0; c < cols; c++) row.push(Math.round((rand() * 2 - 1) * 1.2 * 100) / 100);
+        m.push(row);
+      }
+      return m;
+    }
+
+    function dot(a, b){ var s = 0; for (var k = 0; k < a.length; k++) s += a[k] * b[k]; return s; }
+    function fmt(x){
+      if (x === -Infinity) return '−∞';
+      if (x === Infinity) return '∞';
+      if (typeof x !== 'number' || isNaN(x)) return 'NaN';
+      return x.toFixed(3);
+    }
+    function fmtVec(v){ return '[' + v.map(fmt).join(', ') + ']'; }
+    function fmtBytes(b){ return b >= 1024 ? (b / 1024).toFixed(2) + ' KB' : b.toFixed(0) + ' B'; }
+
+    /* ---------- data + exact reference ---------- */
+    function regenerateData(){
+      var rand = mulberry32(7);                 // fixed seed => fully deterministic
+      state.Q = genMatrix(state.S, state.d, rand);
+      state.K = genMatrix(state.S, state.d, rand);
+      state.V = genMatrix(state.S, state.d, rand);
+      computeReference();
+    }
+
+    // reference: honest two-pass max-stabilized softmax attention, computed independently
+    function computeReference(){
+      var S = state.S, d = state.d, Q = state.Q, K = state.K, V = state.V, sc = Math.sqrt(d);
+      var out = [], i, j, k;
+      for (i = 0; i < S; i++){
+        var scores = [], mx = -Infinity, s;
+        for (j = 0; j < S; j++){ s = dot(Q[i], K[j]) / sc; scores.push(s); if (s > mx) mx = s; }
+        var sum = 0, exps = [], e;
+        for (j = 0; j < S; j++){ e = Math.exp(scores[j] - mx); exps.push(e); sum += e; }
+        var o = new Array(d).fill(0);
+        for (j = 0; j < S; j++){ for (k = 0; k < d; k++) o[k] += exps[j] * V[j][k]; }
+        for (k = 0; k < d; k++) o[k] /= sum;
+        out.push(o);
+      }
+      state.refOut = out;
+    }
+
+    /* ---------- algorithm state ---------- */
+    function resetAlgo(){
+      var S = state.S, d = state.d, i;
+      state.m = new Array(S).fill(-Infinity);   // running row max
+      state.l = new Array(S).fill(0);           // running row denominator
+      state.O = [];                             // running UNNORMALIZED output accumulator
+      for (i = 0; i < S; i++) state.O.push(new Array(d).fill(0));
+      state.nq = Math.ceil(S / state.Br);
+      state.nk = Math.ceil(S / state.Bc);
+      state.nTiles = state.nq * state.nk;
+      state.t = -1;                             // index of last processed tile, -1 = none
+      state.lastTile = null;
+      state.recByRow = new Array(S).fill(null); // most recent recurrence record per row
+      stopPlay();
+    }
+    function stopPlay(){
+      if (playTimer){ clearInterval(playTimer); playTimer = null; }
+      btnPlay.textContent = 'Play';
+      btnPlay.setAttribute('aria-pressed', 'false');
+    }
+    function tileRange(t){
+      if (t < 0 || t >= state.nTiles) return null;
+      var qb = Math.floor(t / state.nk), kb = t % state.nk;
+      return {
+        t: t, qb: qb, kb: kb,
+        qs: qb * state.Br, qe: Math.min(state.S, (qb + 1) * state.Br),
+        ks: kb * state.Bc, ke: Math.min(state.S, (kb + 1) * state.Bc)
+      };
+    }
+
+    // process exactly one Br x Bc tile with the online-softmax recurrence
+    function processTile(){
+      var tr = tileRange(state.t + 1);
+      if (!tr) return false;
+      var d = state.d, Q = state.Q, K = state.K, V = state.V, sc = Math.sqrt(d);
+      var rows = [], i, j, jj, k;
+      for (i = tr.qs; i < tr.qe; i++){
+        var scores = [], tileMax = -Infinity, s;
+        for (j = tr.ks; j < tr.ke; j++){ s = dot(Q[i], K[j]) / sc; scores.push(s); if (s > tileMax) tileMax = s; }
+        var m_old = state.m[i], l_old = state.l[i], O_old = state.O[i].slice();
+        var m_new = Math.max(m_old, tileMax);
+        // first tile for this row: m_old = -Infinity, so exp(-Infinity) === 0 exactly (no NaN)
+        var corr = Math.exp(m_old - m_new);
+        var ps = [], sumP = 0, p;
+        for (jj = 0; jj < scores.length; jj++){ p = Math.exp(scores[jj] - m_new); ps.push(p); sumP += p; }
+        var l_new = l_old * corr + sumP;
+        var O_new = new Array(d);
+        for (k = 0; k < d; k++){
+          var contrib = 0;
+          for (jj = 0; jj < ps.length; jj++) contrib += ps[jj] * V[tr.ks + jj][k];
+          O_new[k] = O_old[k] * corr + contrib;
+        }
+        state.m[i] = m_new; state.l[i] = l_new; state.O[i] = O_new;
+        rows.push({ i: i, scores: scores });
+        state.recByRow[i] = {
+          i: i, t: tr.t, qb: tr.qb, kb: tr.kb, ks: tr.ks, ke: tr.ke,
+          tileMax: tileMax, m_old: m_old, m_new: m_new, corr: corr,
+          sumP: sumP, l_old: l_old, l_new: l_new, O_old: O_old, O_new: O_new,
+          rowDone: tr.kb === state.nk - 1
+        };
+      }
+      state.t = tr.t;
+      state.lastTile = { range: tr, rows: rows };
+      return true;
+    }
+
+    /* ---------- rendering ---------- */
+    function renderMat(container, M, opts){
+      opts = opts || {};
+      var html = '', i, c;
+      for (i = 0; i < M.length; i++){
+        var cls = 'flt-row';
+        if (opts.active && i >= opts.active[0] && i < opts.active[1]) cls += ' active';
+        else if (opts.next && i >= opts.next[0] && i < opts.next[1]) cls += ' next';
+        else if (opts.doneUntil !== undefined && i < opts.doneUntil) cls += ' done';
+        if (opts.focusRow === i) cls += ' focus';
+        html += '<div class="' + cls + '"><span class="flt-idx">' + i + '</span>';
+        for (c = 0; c < M[i].length; c++) html += '<span class="flt-cell">' + M[i][c].toFixed(2) + '</span>';
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    function renderTile(){
+      if (!state.lastTile){
+        tileEl.innerHTML = '<div class="flt-placeholder">Nothing computed yet. Press &ldquo;Step one tile&rdquo; to load Q<sub>0</sub>, K<sub>0</sub>, V<sub>0</sub> into SRAM and form the first B<sub>r</sub>&times;B<sub>c</sub> score tile.</div>';
+        return;
+      }
+      var lt = state.lastTile, tr = lt.range, j, r, k;
+      var html = '<div class="flt-row flt-header"><span class="flt-idx">i\\j</span>';
+      for (j = tr.ks; j < tr.ke; j++) html += '<span class="flt-cell">' + j + '</span>';
+      html += '</div>';
+      for (r = 0; r < lt.rows.length; r++){
+        var row = lt.rows[r];
+        html += '<div class="flt-row' + (row.i === state.inspectRow ? ' focus' : '') + '"><span class="flt-idx">' + row.i + '</span>';
+        for (k = 0; k < row.scores.length; k++) html += '<span class="flt-cell">' + row.scores[k].toFixed(2) + '</span>';
+        html += '</div>';
+      }
+      tileEl.innerHTML = html;
+    }
+
+    function renderGhost(){
+      var S = state.S, Br = state.Br, Bc = state.Bc, nk = state.nk;
+      var cur = tileRange(state.t), nxt = tileRange(state.t + 1);
+      var marginL = 22, marginT = 14, pad = 3;
+      var cell = Math.max(11, Math.min(22, Math.round(200 / S)));
+      var gridW = S * cell, gridH = S * cell;
+      var svgW = marginL + gridW + pad, svgH = marginT + gridH + pad;
+      var parts = [], r, c, x, y, idx;
+      for (r = 0; r < S; r++){
+        for (c = 0; c < S; c++){
+          idx = Math.floor(r / Br) * nk + Math.floor(c / Bc);
+          x = marginL + c * cell; y = marginT + r * cell;
+          var cls = 'flt-ghost-cell' + (idx === state.t ? ' live' : (idx < state.t ? ' swept' : ''));
+          parts.push('<rect class="' + cls + '" x="' + (x + 0.5) + '" y="' + (y + 0.5) + '" width="' + (cell - 1) + '" height="' + (cell - 1) + '"></rect>');
+        }
+      }
+      for (r = Br; r < S; r += Br) parts.push('<line class="flt-ghost-sep" x1="' + marginL + '" y1="' + (marginT + r * cell) + '" x2="' + (marginL + gridW) + '" y2="' + (marginT + r * cell) + '"></line>');
+      for (c = Bc; c < S; c += Bc) parts.push('<line class="flt-ghost-sep" x1="' + (marginL + c * cell) + '" y1="' + marginT + '" x2="' + (marginL + c * cell) + '" y2="' + (marginT + gridH) + '"></line>');
+      if (nxt) parts.push('<rect class="flt-ghost-next" x="' + (marginL + nxt.ks * cell) + '" y="' + (marginT + nxt.qs * cell) + '" width="' + ((nxt.ke - nxt.ks) * cell) + '" height="' + ((nxt.qe - nxt.qs) * cell) + '"></rect>');
+      if (cur) parts.push('<rect class="flt-ghost-tile" x="' + (marginL + cur.ks * cell) + '" y="' + (marginT + cur.qs * cell) + '" width="' + ((cur.ke - cur.ks) * cell) + '" height="' + ((cur.qe - cur.qs) * cell) + '"></rect>');
+      parts.push('<text class="flt-ghost-lab" x="' + marginL + '" y="9">key j →</text>');
+      var cy = marginT + gridH / 2;
+      parts.push('<text class="flt-ghost-lab" x="8" y="' + cy + '" text-anchor="middle" transform="rotate(-90 8 ' + cy + ')">query i →</text>');
+      ghostSvg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + svgH);
+      ghostSvg.setAttribute('preserveAspectRatio', 'xMinYMin meet');
+      ghostSvg.style.maxWidth = svgW + 'px';
+      ghostSvg.setAttribute('aria-label', 'Score matrix grid, ' + S + ' by ' + S + ', tiled into ' + state.nq + ' by ' + state.nk + ' blocks; ' + Math.max(0, state.t + 1) + ' of ' + state.nTiles + ' tiles streamed.');
+      ghostSvg.innerHTML = parts.join('');
+    }
+
+    function renderRecur(){
+      var i = state.inspectRow, r = state.recByRow[i];
+      var qb = Math.floor(i / state.Br);
+      if (!r){
+        recurEl.innerHTML =
+          '<div class="flt-recur-title">Row i=' + i + ' &mdash; untouched so far (it sits in query block ' + qb + ', tiles ' + (qb * state.nk) + '–' + (qb * state.nk + state.nk - 1) + ')</div>' +
+          '<div class="flt-recur-line">m = ' + fmt(state.m[i]) + ',&nbsp; ℓ = ' + fmt(state.l[i]) + ',&nbsp; O = ' + fmtVec(state.O[i]) + '</div>' +
+          '<div class="flt-recur-sub">These are the &ldquo;nothing seen yet&rdquo; initial values: m = −∞ makes the very first correction factor exp(−∞ − m_new) = 0, which is exactly what an empty accumulator deserves.</div>';
+        return;
+      }
+      var L = r.l_new > 0 ? r.m_new + Math.log(r.l_new) : -Infinity;
+      var fresh = (r.t === state.t);
+      recurEl.innerHTML =
+        '<div class="flt-recur-title">Row i=' + r.i + ' · ' + (fresh ? 'updated by the tile just computed' : 'last updated at tile ' + (r.t + 1)) +
+          ' (query block ' + r.qb + ', KV block ' + r.kb + ', keys ' + r.ks + '–' + (r.ke - 1) + ')</div>' +
+        '<div class="flt-recur-line">tile max = max<sub>j∈block</sub> s<sub>ij</sub> = ' + fmt(r.tileMax) + '</div>' +
+        '<div class="flt-recur-line">m_new = max(m_old, tile max) = max(' + fmt(r.m_old) + ', ' + fmt(r.tileMax) + ') = <b>' + fmt(r.m_new) + '</b></div>' +
+        '<div class="flt-recur-line">&alpha; = exp(m_old − m_new) = exp(' + fmt(r.m_old) + ' − ' + fmt(r.m_new) + ') = <b>' + fmt(r.corr) + '</b></div>' +
+        '<div class="flt-recur-line">ℓ_new = ℓ_old·&alpha; + Σ<sub>j</sub> exp(s<sub>ij</sub> − m_new) = ' + fmt(r.l_old) + '·' + fmt(r.corr) + ' + ' + fmt(r.sumP) + ' = <b>' + fmt(r.l_new) + '</b></div>' +
+        '<div class="flt-recur-line">O_old = ' + fmtVec(r.O_old) + '</div>' +
+        '<div class="flt-recur-line">O_new = O_old·&alpha; + Σ<sub>j</sub> exp(s<sub>ij</sub> − m_new)·v<sub>j</sub> = <b>' + fmtVec(r.O_new) + '</b></div>' +
+        '<div class="flt-recur-line">L_i = m + log ℓ = <b>' + fmt(L) + '</b> &nbsp;(the single statistic the backward pass saves instead of P)</div>' +
+        '<div class="flt-recur-sub">' + (r.rowDone
+          ? 'This was row ' + r.i + '’s last KV block, so O/ℓ is now the final, exact attention output for that row.'
+          : 'O is still unnormalized — no divide by ℓ happens until the last KV block. O/ℓ right now is the exact softmax over the keys streamed so far.') + '</div>';
+    }
+
+    function renderTable(){
+      var S = state.S, d = state.d, i, k;
+      var keysSeen = new Array(S).fill(0);
+      for (i = 0; i < S; i++){
+        var qb = Math.floor(i / state.Br);
+        var tilesForRow = Math.max(0, Math.min(state.nk, (state.t + 1) - qb * state.nk));
+        keysSeen[i] = Math.min(S, tilesForRow * state.Bc);
+      }
+      var rows = '';
+      for (i = 0; i < S; i++){
+        var l = state.l[i];
+        var partial = l > 0 ? state.O[i].map(function(x){ return x / l; }) : null;
+        var ref = state.refOut[i];
+        var diff = '—', exact = false;
+        if (partial){
+          var maxd = 0;
+          for (k = 0; k < d; k++){ var dd = Math.abs(partial[k] - ref[k]); if (dd > maxd) maxd = dd; }
+          diff = maxd < 1e-12 ? maxd.toExponential(1) : maxd.toFixed(6);
+          exact = keysSeen[i] >= S;
+        }
+        rows += '<tr' + (i === state.inspectRow ? ' class="flt-focusrow"' : '') + '>' +
+          '<td>' + i + '</td><td>' + keysSeen[i] + '/' + S + '</td><td>' + fmt(state.m[i]) + '</td><td>' + fmt(l) + '</td>' +
+          '<td>' + (partial ? fmtVec(partial) : '—') + '</td><td>' + fmtVec(ref) + '</td>' +
+          '<td' + (exact ? ' class="flt-exact"' : '') + '>' + diff + '</td></tr>';
+      }
+      tableEl.innerHTML =
+        '<thead><tr><th>row i</th><th>keys seen</th><th>m<sub>i</sub></th><th>ℓ<sub>i</sub></th>' +
+        '<th>running O<sub>i</sub>/ℓ<sub>i</sub></th><th>exact softmax out<sub>i</sub></th><th>max|diff|</th></tr></thead><tbody>' + rows + '</tbody>';
+    }
+
+    function renderMem(){
+      var S = state.S, d = state.d, Br = state.Br, Bc = state.Bc;
+      var naive = S * S;
+      var tile = Br * Bc, qTile = Br * d, kvTile = 2 * Bc * d, acc = Br * d + 2 * Br;
+      var flash = tile + qTile + kvTile + acc;
+      var maxV = Math.max(naive, flash, 1);
+      var naiveHBM = 4 * S * S;                 // write S, read S for softmax, write P, read P for PV
+      var flashHBM = 2 * S * d * state.nq + 2 * S * d;  // K,V re-read once per query block, plus Q,O
+      memEl.innerHTML =
+        '<div class="flt-mem-row"><div class="flt-mem-lab">Naive: the materialized S&times;S score matrix = ' + naive + ' floats (' + fmtBytes(naive * 4) + ') &mdash; grows as S&sup2;</div>' +
+          '<div class="flt-mem-bar"><div class="flt-mem-fill naive" style="width:' + (naive / maxV * 100) + '%"></div></div></div>' +
+        '<div class="flt-mem-row"><div class="flt-mem-lab">Flash on-chip working set: B<sub>r</sub>B<sub>c</sub> score tile (' + tile + ') + Q tile (' + qTile + ') + K,V tiles (' + kvTile + ') + O,m,ℓ accumulators (' + acc + ') = ' + flash + ' floats (' + fmtBytes(flash * 4) + ') &mdash; independent of S</div>' +
+          '<div class="flt-mem-bar"><div class="flt-mem-fill flash" style="width:' + (flash / maxV * 100) + '%"></div></div></div>' +
+        '<div class="flt-mem-note">HBM traffic for the scores &mdash; naive: ≈' + naiveHBM + ' floats (write S, read S for the softmax, write P, read P for PV); flash: <b>0</b> (each tile is born and dies in SRAM). ' +
+          'Flash instead re-reads K and V once per query block: ' + state.nq + ' × 2Sd + 2Sd ≈ ' + flashHBM + ' floats. Shrink B<sub>r</sub> and that re-read count climbs — the classic SRAM-capacity vs. HBM-traffic tradeoff.</div>';
+    }
+
+    function renderStatus(){
+      var done = Math.max(0, state.t + 1);
+      var plur = function(n, w){ return n + ' ' + w + (n === 1 ? '' : 's'); };
+      var msg = 'Tile ' + done + ' / ' + state.nTiles + ' (' + plur(state.nq, 'query block') + ' × ' + plur(state.nk, 'KV block') + ')';
+      if (done >= state.nTiles) msg += ' — done: every row divided by ℓ, output exact';
+      elStatus.textContent = msg;
+    }
+
+    function render(){
+      elSval.textContent = state.S;
+      elBrval.textContent = state.Br;
+      elBcval.textContent = state.Bc;
+      elRowval.textContent = state.inspectRow;
+
+      var cur = tileRange(state.t), nxt = tileRange(state.t + 1);
+      renderMat(qmat, state.Q, {
+        focusRow: state.inspectRow,
+        active: cur ? [cur.qs, cur.qe] : null,
+        next: nxt ? [nxt.qs, nxt.qe] : null,
+        doneUntil: Math.min(state.S, Math.floor((state.t + 1) / state.nk) * state.Br)
+      });
+      var kvOpts = {
+        active: cur ? [cur.ks, cur.ke] : null,
+        next: nxt ? [nxt.ks, nxt.ke] : null,
+        doneUntil: cur ? cur.ks : 0
+      };
+      renderMat(kmat, state.K, kvOpts);
+      renderMat(vmat, state.V, kvOpts);
+      renderTile();
+      renderGhost();
+      renderRecur();
+      renderTable();
+      renderMem();
+      renderStatus();
+
+      var finished = state.t >= state.nTiles - 1;
+      btnStep.disabled = finished;
+      btnPlay.disabled = finished;
+      if (finished) stopPlay();
+    }
+
+    /* ---------- controls ---------- */
+    function intVal(el, fallback){
+      var v = parseInt(el.value, 10);
+      return isNaN(v) ? fallback : v;
+    }
+    function clampControls(){
+      state.S = Math.max(4, Math.min(12, intVal(elS, 8)));
+      state.d = Math.max(2, Math.min(4, intVal(elD, 3)));
+      elS.value = state.S;
+      elBr.max = state.S;
+      elBc.max = state.S;
+      state.Br = Math.max(1, Math.min(state.S, intVal(elBr, 4)));
+      state.Bc = Math.max(1, Math.min(state.S, intVal(elBc, 2)));
+      elBr.value = state.Br;
+      elBc.value = state.Bc;
+      elRow.max = state.S - 1;
+      state.inspectRow = Math.max(0, Math.min(state.S - 1, intVal(elRow, 0)));
+      elRow.value = state.inspectRow;
+    }
+    function onStructuralChange(){ clampControls(); regenerateData(); resetAlgo(); render(); }
+    function onBlockChange(){ clampControls(); resetAlgo(); render(); }
+    function onRowChange(){ clampControls(); render(); }
+
+    elS.addEventListener('input', onStructuralChange);
+    elD.addEventListener('change', onStructuralChange);
+    elBr.addEventListener('input', onBlockChange);
+    elBc.addEventListener('input', onBlockChange);
+    elRow.addEventListener('input', onRowChange);
+
+    btnStep.addEventListener('click', function(){ stopPlay(); processTile(); render(); });
+    btnPlay.addEventListener('click', function(){
+      if (playTimer){ stopPlay(); return; }
+      btnPlay.textContent = 'Pause';
+      btnPlay.setAttribute('aria-pressed', 'true');
+      var ms = state.nTiles > 24 ? 260 : 620;
+      playTimer = setInterval(function(){
+        var more = processTile();
+        render();
+        if (!more) stopPlay();
+      }, ms);
+    });
+    btnReset.addEventListener('click', function(){ resetAlgo(); render(); });
+
+    // init
+    clampControls();
+    regenerateData();
+    resetAlgo();
+    render();
+  })();</script>
+</div>

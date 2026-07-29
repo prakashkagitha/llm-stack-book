@@ -455,6 +455,8 @@ How to reason about the choice:
 - **MLA when you control the whole stack and want the Pareto frontier.** MLA pushes the memory–quality frontier beyond GQA, but it demands custom kernels, a different cache layout, and the decoupled-RoPE machinery. It pays off most for very long contexts and at large scale, where the absolute cache savings are enormous — but it is an architectural commitment, not a drop-in.
 - **Quantizing the cache is orthogonal and stacks.** All four schemes can additionally store the cache in fp8 or int8/int4, multiplying the savings (see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)). GQA + fp8 cache is a very common, very effective combination.
 
+{{tool:gqa-mla-explorer}}
+
 !!! tip "Practitioner tip: pick $g$ to match your tensor-parallel degree"
     A neat systems consideration: when you shard attention across $T$ GPUs with tensor parallelism, you want each GPU to own a whole number of KV heads so it can compute its share of attention without cross-GPU KV gather. Choosing $g$ equal to (or a multiple of) your TP degree — e.g. $g=8$ for 8-way TP — makes the sharding clean and avoids replicating KV heads across GPUs. This is part of why $g=8$ is so common: it matches the 8-GPU node. If you instead picked $g=6$ on an 8-GPU node, two GPUs would sit idle on the KV side or you'd replicate, wasting the very memory you were trying to save.
 

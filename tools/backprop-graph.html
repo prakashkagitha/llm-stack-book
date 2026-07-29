@@ -1,0 +1,561 @@
+<div class="viz-tool" id="tool-backprop-graph">
+  <div class="vt-title">Backprop on a computation graph</div>
+  <div class="vt-hint">One neuron, one squared error: <code>p = w&middot;x</code>, <code>s = p + b</code>, <code>h = act(s)</code>, <code>e = h &minus; y</code>, <code>L = e&sup2;</code>. Set the leaves, pick an activation, then walk the gradient backward one edge at a time. Each edge carries a <em>local</em> derivative; the chain rule is just the running product along the path.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="backprop-graph-in-w">w &nbsp;(weight)
+      <input id="backprop-graph-in-w" type="number" step="0.1" value="0.8">
+    </label>
+    <label for="backprop-graph-in-x">x &nbsp;(input)
+      <input id="backprop-graph-in-x" type="number" step="0.1" value="1.5">
+    </label>
+    <label for="backprop-graph-in-b">b &nbsp;(bias)
+      <input id="backprop-graph-in-b" type="number" step="0.1" value="0.3">
+    </label>
+    <label for="backprop-graph-in-y">y &nbsp;(target)
+      <input id="backprop-graph-in-y" type="number" step="0.1" value="0.5">
+    </label>
+    <label for="backprop-graph-act">activation h = act(s)
+      <select id="backprop-graph-act">
+        <option value="identity">identity (linear)</option>
+        <option value="relu" selected>ReLU</option>
+        <option value="tanh">tanh</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button id="backprop-graph-run" type="button">&#9654;&nbsp; Run backprop</button>
+    <button id="backprop-graph-step" type="button">Step one edge layer</button>
+    <button class="vt-reset" id="backprop-graph-reset" type="button">Reset</button>
+  </div>
+
+  <div class="bpg-svg-wrap">
+    <svg id="backprop-graph-svg" viewBox="0 0 1040 500" role="img" aria-label="Computation graph for L equals (act(w times x plus b) minus y) squared, showing forward values on each node, local derivatives on each edge, and accumulated gradients once backprop has run"></svg>
+  </div>
+
+  <div class="bpg-panels">
+    <div class="bpg-panel">
+      <div class="bpg-panel-title">Backward trace &mdash; one multiply per edge</div>
+      <div class="bpg-log" id="backprop-graph-log" aria-live="polite" role="status"></div>
+    </div>
+    <div class="bpg-panel">
+      <div class="bpg-panel-title">Gradient check</div>
+      <div class="bpg-tablewrap" aria-live="polite">
+        <table class="bpg-table">
+          <thead>
+            <tr><th scope="col">leaf</th><th scope="col">closed form</th><th scope="col">value</th><th scope="col">backprop</th><th scope="col">finite diff.</th></tr>
+          </thead>
+          <tbody id="backprop-graph-check"></tbody>
+        </table>
+      </div>
+      <div class="bpg-checknote" id="backprop-graph-checknote"></div>
+    </div>
+  </div>
+
+  <div class="vt-note"><strong>Takeaway.</strong> Backprop never writes down a global formula for <code>dL/dw</code>. It seeds <code>dL/dL = 1</code> at the loss and then, at every edge, multiplies the gradient arriving from downstream by that edge's <em>local</em> derivative &mdash; the only thing each node has to know. Because every leaf here is reached by exactly one path, the products collapse to <code>dL/dw = 2e&thinsp;a&prime;(s)&thinsp;x</code>, <code>dL/dx = 2e&thinsp;a&prime;(s)&thinsp;w</code>, <code>dL/db = 2e&thinsp;a&prime;(s)</code>, <code>dL/dy = &minus;2e</code>; when a node feeds several consumers the arriving gradients are <em>summed</em> instead, which is exactly why PyTorch accumulates into <code>.grad</code> and why you must call <code>zero_grad()</code>. Choose ReLU and push <code>s</code> below zero to watch the gate close: <code>a&prime;(s) = 0</code> annihilates every gradient upstream of it, while <code>dL/dy</code> &mdash; which never crosses that edge &mdash; survives. The finite-difference column is the same check <code>torch.autograd.gradcheck</code> runs.</div>
+
+  <style>
+    #tool-backprop-graph{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); font-family:var(--sans,sans-serif); }
+    #tool-backprop-graph .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-backprop-graph .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.6; }
+    #tool-backprop-graph .vt-hint code, #tool-backprop-graph .vt-note code{ font-family:var(--mono,monospace); font-size:.92em; background:var(--surface-2,#f3efe6); border-radius:4px; padding:0 3px; }
+    #tool-backprop-graph .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px 18px; }
+    #tool-backprop-graph label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-backprop-graph input[type="number"],
+    #tool-backprop-graph select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); width:100%; box-sizing:border-box; }
+    #tool-backprop-graph .vt-actions{ margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; }
+    #tool-backprop-graph button{ font:inherit; font-size:.8rem; padding:7px 14px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-backprop-graph #backprop-graph-run{ background:var(--accent,#c15b39); color:#fff; border-color:var(--accent,#c15b39); font-weight:600; }
+    #tool-backprop-graph #backprop-graph-run:hover:not(:disabled),
+    #tool-backprop-graph #backprop-graph-step:hover:not(:disabled){ opacity:.88; }
+    #tool-backprop-graph button:disabled{ opacity:.5; cursor:default; }
+    #tool-backprop-graph .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+    #tool-backprop-graph :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-backprop-graph .bpg-svg-wrap{ margin-top:16px; overflow-x:auto; max-width:100%; border:1px solid var(--border,#e7e1d4); border-radius:10px; background:var(--surface-2,#f3efe6); }
+    #tool-backprop-graph #backprop-graph-svg{ display:block; width:100%; min-width:660px; height:auto; }
+
+    #tool-backprop-graph .bpg-edge{ stroke:var(--border-2,#d8d1c0); stroke-width:2; fill:none; transition:stroke .2s, stroke-width .2s; }
+    #tool-backprop-graph .bpg-edge.is-active{ stroke:var(--accent,#c15b39); stroke-width:3.2; }
+    #tool-backprop-graph .bpg-edge.is-done{ stroke:var(--accent,#c15b39); stroke-width:2.4; stroke-opacity:.55; }
+    #tool-backprop-graph .bpg-edge.is-cut{ stroke-dasharray:5 5; stroke-opacity:.45; }
+    #tool-backprop-graph .bpg-dot{ fill:var(--accent,#c15b39); opacity:0; }
+    #tool-backprop-graph .bpg-arrowhead{ fill:var(--border-2,#d8d1c0); }
+
+    #tool-backprop-graph .bpg-node-shape{ fill:var(--surface,#fff); stroke:var(--border-2,#d8d1c0); stroke-width:2; transition:stroke .2s, stroke-width .2s; }
+    #tool-backprop-graph .bpg-node-shape.leaf{ fill:var(--surface-3,#ece7da); }
+    #tool-backprop-graph .bpg-node-shape.loss{ stroke-width:3; }
+    #tool-backprop-graph g.bpg-node.is-seed .bpg-node-shape,
+    #tool-backprop-graph g.bpg-node.is-active .bpg-node-shape{ stroke:var(--accent,#c15b39); stroke-width:3.2; }
+
+    #tool-backprop-graph .bpg-label{ font-weight:700; font-size:15px; fill:var(--ink,#211f1b); text-anchor:middle; }
+    #tool-backprop-graph .bpg-symbol{ font-size:12.5px; font-weight:600; fill:var(--muted,#6d675d); text-anchor:middle; }
+    #tool-backprop-graph .bpg-value{ font-family:var(--mono,monospace); font-size:11.5px; fill:var(--ink,#211f1b); text-anchor:middle; }
+    #tool-backprop-graph .bpg-expr{ font-size:10px; fill:var(--muted,#6d675d); text-anchor:middle; }
+    #tool-backprop-graph .bpg-grad{ font-family:var(--mono,monospace); font-size:11.5px; font-weight:700; fill:var(--accent,#c15b39); text-anchor:middle; opacity:0; transition:opacity .2s; }
+    #tool-backprop-graph .bpg-grad.is-shown{ opacity:1; }
+
+    #tool-backprop-graph .bpg-edge-label{ font-family:var(--mono,monospace); font-size:10.5px; fill:var(--ink-soft,#45413a); text-anchor:middle; paint-order:stroke; stroke:var(--surface-2,#f3efe6); stroke-width:4px; stroke-linejoin:round; }
+    #tool-backprop-graph .bpg-edge-label.is-active{ fill:var(--accent,#c15b39); font-weight:700; }
+    #tool-backprop-graph .bpg-edge-label.is-zero{ fill:var(--muted,#6d675d); }
+
+    #tool-backprop-graph .bpg-panels{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+    #tool-backprop-graph .bpg-panel{ background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:10px 12px; min-width:0; }
+    #tool-backprop-graph .bpg-panel-title{ font-size:.7rem; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--muted,#6d675d); margin-bottom:8px; }
+    #tool-backprop-graph .bpg-log{ font-family:var(--mono,monospace); font-size:.74rem; line-height:1.7; color:var(--ink-soft,#45413a); }
+    #tool-backprop-graph .bpg-log div{ margin:1px 0; }
+    #tool-backprop-graph .bpg-log .bpg-seed{ color:var(--accent,#c15b39); font-weight:700; }
+    #tool-backprop-graph .bpg-log .bpg-res{ font-weight:700; color:var(--ink,#211f1b); }
+    #tool-backprop-graph .bpg-log .bpg-idle{ color:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+
+    #tool-backprop-graph .bpg-tablewrap{ overflow-x:auto; max-width:100%; }
+    #tool-backprop-graph .bpg-table{ border-collapse:collapse; width:100%; font-size:.72rem; font-family:var(--mono,monospace); color:var(--ink-soft,#45413a); }
+    #tool-backprop-graph .bpg-table th{ text-align:left; font-weight:700; color:var(--muted,#6d675d); font-family:var(--sans,sans-serif); font-size:.66rem; text-transform:uppercase; letter-spacing:.02em; padding:2px 8px 5px 0; border-bottom:1px solid var(--border-2,#d8d1c0); white-space:nowrap; }
+    #tool-backprop-graph .bpg-table td{ padding:3px 8px 3px 0; border-bottom:1px solid var(--border,#e7e1d4); white-space:nowrap; }
+    #tool-backprop-graph .bpg-table tr:last-child td{ border-bottom:0; }
+    #tool-backprop-graph .bpg-table .bpg-c-graph{ color:var(--accent,#c15b39); font-weight:700; }
+    #tool-backprop-graph .bpg-table .bpg-c-pending{ color:var(--muted,#6d675d); font-weight:400; }
+    #tool-backprop-graph .bpg-checknote{ margin-top:8px; font-size:.72rem; line-height:1.55; color:var(--muted,#6d675d); }
+
+    #tool-backprop-graph .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-backprop-graph .vt-note strong{ color:var(--ink-soft,#45413a); }
+
+    @media (max-width:560px){
+      #tool-backprop-graph{ padding:14px 12px; }
+    }
+  </style>
+
+  <script>(function(){
+    'use strict';
+    var root = document.getElementById('tool-backprop-graph');
+    if(!root) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs){
+      var n = document.createElementNS(SVGNS, tag);
+      if(attrs){ for(var k in attrs){ if(Object.prototype.hasOwnProperty.call(attrs, k)) n.setAttribute(k, attrs[k]); } }
+      return n;
+    }
+    function fmt(v){
+      if(typeof v !== 'number' || isNaN(v)) return 'NaN';
+      if(!isFinite(v)) return v > 0 ? 'inf' : '-inf';
+      var a = Math.abs(v);
+      if(a !== 0 && (a >= 1e5 || a < 1e-4)) return v.toExponential(2);
+      var s = v.toFixed(3);
+      if(s === '-0.000') s = '0.000';
+      return s;
+    }
+    var tanh = Math.tanh || function(z){
+      if(z > 20) return 1; if(z < -20) return -1;
+      var a = Math.exp(2 * z); return (a - 1) / (a + 1);
+    };
+
+    // ---------------------------------------------------------------- model
+    // p = w*x ; s = p + b ; h = act(s) ; e = h - y ; L = e^2
+    var ACTS = {
+      identity: { sym:'identity', expr:'h = s',       formula:'1',      f:function(s){ return s; },      d:function(s,h){ return 1; } },
+      relu:     { sym:'ReLU',     expr:'h = ReLU(s)', formula:'1[s>0]', f:function(s){ return s > 0 ? s : 0; }, d:function(s,h){ return s > 0 ? 1 : 0; } },
+      tanh:     { sym:'tanh',     expr:'h = tanh(s)', formula:'1-h^2',  f:function(s){ return tanh(s); }, d:function(s,h){ return 1 - h * h; } }
+    };
+
+    var NODES = {
+      w:  { cx:72,  cy:66,  kind:'leaf', r:32,             label:'w', gradName:'dL/dw' },
+      x:  { cx:72,  cy:186, kind:'leaf', r:32,             label:'x', gradName:'dL/dx' },
+      p:  { cx:236, cy:126, kind:'op',   rw:50, rh:30, symbol:'\u00d7 multiply', expr:'p = w*x',   gradName:'dL/dp' },
+      b:  { cx:236, cy:312, kind:'leaf', r:32,             label:'b', gradName:'dL/db' },
+      s:  { cx:404, cy:219, kind:'op',   rw:50, rh:30, symbol:'+ add',           expr:'s = p + b', gradName:'dL/ds' },
+      h:  { cx:586, cy:219, kind:'op',   rw:54, rh:30, symbol:'ReLU',            expr:'h = ReLU(s)', gradName:'dL/dh' },
+      yv: { cx:586, cy:424, kind:'leaf', r:32,             label:'y', gradName:'dL/dy' },
+      e:  { cx:768, cy:322, kind:'op',   rw:50, rh:30, symbol:'\u2212 subtract', expr:'e = h - y', gradName:'dL/de' },
+      L:  { cx:946, cy:322, kind:'loss', rw:56, rh:36, symbol:'square',          expr:'L = e^2',   gradName:'dL/dL' }
+    };
+
+    // lox/loy: hand-tuned label offsets from the trimmed-edge midpoint so that
+    // no label lands on top of a node box or another label.
+    var EDGES = [
+      { id:'w-p',  from:'w',  to:'p', name:'dp/dw', formula:'x',      key:'dP_dw', lox:0,  loy:-16 },
+      { id:'x-p',  from:'x',  to:'p', name:'dp/dx', formula:'w',      key:'dP_dx', lox:0,  loy:18  },
+      { id:'p-s',  from:'p',  to:'s', name:'ds/dp', formula:'1',      key:'dS_dp', lox:6,  loy:-20 },
+      { id:'b-s',  from:'b',  to:'s', name:'ds/db', formula:'1',      key:'dS_db', lox:16, loy:10  },
+      { id:'s-h',  from:'s',  to:'h', name:'dh/ds', formula:'1',      key:'dH_ds', lox:0,  loy:-52, dyn:true },
+      { id:'h-e',  from:'h',  to:'e', name:'de/dh', formula:'1',      key:'dE_dh', lox:0,  loy:16  },
+      { id:'yv-e', from:'yv', to:'e', name:'de/dy', formula:'-1',     key:'dE_dy', lox:14, loy:10  },
+      { id:'e-L',  from:'e',  to:'L', name:'d(e^2)/de', formula:'2e', key:'dL_de', lox:0,  loy:-56 }
+    ];
+    var EDGE_BY_ID = {};
+    EDGES.forEach(function(e){ EDGE_BY_ID[e.id] = e; });
+    // reverse topological order, grouped into layers
+    var WAVES = [['e-L'], ['h-e','yv-e'], ['s-h'], ['p-s','b-s'], ['w-p','x-p']];
+
+    function reach(n, ux, uy){
+      if(n.kind === 'leaf') return n.r;
+      var t = Infinity;
+      if(Math.abs(ux) > 1e-9) t = Math.min(t, n.rw / Math.abs(ux));
+      if(Math.abs(uy) > 1e-9) t = Math.min(t, n.rh / Math.abs(uy));
+      return isFinite(t) ? t : Math.max(n.rw, n.rh);
+    }
+
+    // ------------------------------------------------------------ build SVG
+    var svg = root.querySelector('#backprop-graph-svg');
+    if(!svg) return;
+
+    var defs = el('defs');
+    var marker = el('marker', { id:'backprop-graph-arrowhead', viewBox:'0 0 10 10', refX:'9', refY:'5',
+                                markerWidth:'7', markerHeight:'7', orient:'auto-start-reverse' });
+    marker.appendChild(el('path', { 'class':'bpg-arrowhead', d:'M0,0 L10,5 L0,10 z' }));
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    var edgeLayer  = el('g'), labelLayer = el('g'), dotLayer = el('g'), nodeLayer = el('g');
+    svg.appendChild(edgeLayer); svg.appendChild(nodeLayer); svg.appendChild(labelLayer); svg.appendChild(dotLayer);
+
+    var edgeLineEls = {}, edgeLabelEls = {}, dotEls = {};
+    EDGES.forEach(function(edge){
+      var a = NODES[edge.from], c = NODES[edge.to];
+      var dx = c.cx - a.cx, dy = c.cy - a.cy, dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var ux = dx / dist, uy = dy / dist;
+      var p1 = reach(a, ux, uy) + 6, p2 = reach(c, ux, uy) + 11;
+      edge.x1 = a.cx + ux * p1; edge.y1 = a.cy + uy * p1;
+      edge.x2 = c.cx - ux * p2; edge.y2 = c.cy - uy * p2;
+
+      var line = el('line', { 'class':'bpg-edge', x1:edge.x1, y1:edge.y1, x2:edge.x2, y2:edge.y2,
+                              'marker-end':'url(#backprop-graph-arrowhead)' });
+      edgeLayer.appendChild(line);
+      edgeLineEls[edge.id] = line;
+
+      var mx = (edge.x1 + edge.x2) / 2 + edge.lox;
+      var my = (edge.y1 + edge.y2) / 2 + edge.loy;
+      var t1 = el('text', { 'class':'bpg-edge-label', x:mx, y:my });
+      var t2 = el('text', { 'class':'bpg-edge-label', x:mx, y:my + 13 });
+      labelLayer.appendChild(t1); labelLayer.appendChild(t2);
+      edgeLabelEls[edge.id] = { formula:t1, numeric:t2 };
+
+      var dot = el('circle', { 'class':'bpg-dot', r:6, cx:edge.x2, cy:edge.y2 });
+      dotLayer.appendChild(dot);
+      dotEls[edge.id] = dot;
+    });
+
+    var nodeEls = {};
+    Object.keys(NODES).forEach(function(id){
+      var n = NODES[id];
+      var g = el('g', { 'class':'bpg-node' });
+      var refs = { g:g };
+      if(n.kind === 'leaf'){
+        g.appendChild(el('circle', { 'class':'bpg-node-shape leaf', cx:n.cx, cy:n.cy, r:n.r }));
+        var lbl = el('text', { 'class':'bpg-label', x:n.cx, y:n.cy - 5 }); lbl.textContent = n.label;
+        refs.val  = el('text', { 'class':'bpg-value', x:n.cx, y:n.cy + 14 });
+        refs.grad = el('text', { 'class':'bpg-grad',  x:n.cx, y:n.cy + n.r + 18 });
+        g.appendChild(lbl); g.appendChild(refs.val); g.appendChild(refs.grad);
+      } else {
+        g.appendChild(el('rect', { 'class':'bpg-node-shape' + (n.kind === 'loss' ? ' loss' : ''),
+                                   x:n.cx - n.rw, y:n.cy - n.rh, width:n.rw * 2, height:n.rh * 2, rx:13 }));
+        refs.sym  = el('text', { 'class':'bpg-symbol', x:n.cx, y:n.cy - n.rh + 16 });
+        refs.sym.textContent = n.symbol;
+        refs.val  = el('text', { 'class':'bpg-value',  x:n.cx, y:n.cy + 3 });
+        refs.expr = el('text', { 'class':'bpg-expr',   x:n.cx, y:n.cy + n.rh - 8 });
+        refs.expr.textContent = n.expr;
+        refs.grad = el('text', { 'class':'bpg-grad',   x:n.cx, y:n.cy + n.rh + 18 });
+        g.appendChild(refs.sym); g.appendChild(refs.val); g.appendChild(refs.expr); g.appendChild(refs.grad);
+      }
+      nodeLayer.appendChild(g);
+      nodeEls[id] = refs;
+    });
+
+    // ----------------------------------------------------------------- DOM
+    var inW = root.querySelector('#backprop-graph-in-w');
+    var inX = root.querySelector('#backprop-graph-in-x');
+    var inB = root.querySelector('#backprop-graph-in-b');
+    var inY = root.querySelector('#backprop-graph-in-y');
+    var selAct = root.querySelector('#backprop-graph-act');
+    var runBtn = root.querySelector('#backprop-graph-run');
+    var stepBtn = root.querySelector('#backprop-graph-step');
+    var resetBtn = root.querySelector('#backprop-graph-reset');
+    var logEl = root.querySelector('#backprop-graph-log');
+    var checkBody = root.querySelector('#backprop-graph-check');
+    var checkNote = root.querySelector('#backprop-graph-checknote');
+    if(!inW || !inX || !inB || !inY || !selAct || !runBtn || !stepBtn || !resetBtn || !logEl || !checkBody || !checkNote) return;
+    var inputs = [inW, inX, inB, inY];
+
+    var DEFAULTS = { w:0.8, x:1.5, b:0.3, y:0.5, act:'relu' };
+    var reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var ANIM_MS  = reducedMotion ? 0 : 460;
+    var PAUSE_MS = reducedMotion ? 0 : 200;
+
+    var vals = {}, deriv = {}, act = ACTS.relu;
+    var grads = null, waveIdx = 0, running = false, animGen = 0;
+
+    function num(input){
+      var v = parseFloat(input.value);
+      return isFinite(v) ? v : 0;
+    }
+
+    // ------------------------------------------------------------- forward
+    function computeForward(){
+      act = ACTS[selAct.value] || ACTS.identity;
+      vals.w = num(inW); vals.x = num(inX); vals.b = num(inB); vals.yv = num(inY);
+      vals.p = vals.w * vals.x;
+      vals.s = vals.p + vals.b;
+      vals.h = act.f(vals.s);
+      vals.e = vals.h - vals.yv;
+      vals.L = vals.e * vals.e;
+
+      deriv.dP_dw = vals.x;                 // d(w*x)/dw
+      deriv.dP_dx = vals.w;                 // d(w*x)/dx
+      deriv.dS_dp = 1;                      // d(p+b)/dp
+      deriv.dS_db = 1;                      // d(p+b)/db
+      deriv.dH_ds = act.d(vals.s, vals.h);  // a'(s)
+      deriv.dE_dh = 1;                      // d(h-y)/dh
+      deriv.dE_dy = -1;                     // d(h-y)/dy
+      deriv.dL_de = 2 * vals.e;             // d(e^2)/de
+    }
+
+    function lossAt(w, x, b, y){
+      var hh = act.f(w * x + b);
+      var ee = hh - y;
+      return ee * ee;
+    }
+    function fdGrad(which){
+      var v = { w:vals.w, x:vals.x, b:vals.b, y:vals.yv };
+      var step = 1e-4 * Math.max(1, Math.abs(v[which]));
+      var up = { w:v.w, x:v.x, b:v.b, y:v.y }, dn = { w:v.w, x:v.x, b:v.b, y:v.y };
+      up[which] += step; dn[which] -= step;
+      return (lossAt(up.w, up.x, up.b, up.y) - lossAt(dn.w, dn.x, dn.b, dn.y)) / (2 * step);
+    }
+
+    function renderForward(){
+      nodeEls.w.val.textContent  = fmt(vals.w);
+      nodeEls.x.val.textContent  = fmt(vals.x);
+      nodeEls.b.val.textContent  = fmt(vals.b);
+      nodeEls.yv.val.textContent = fmt(vals.yv);
+      nodeEls.p.val.textContent  = '= ' + fmt(vals.p);
+      nodeEls.s.val.textContent  = '= ' + fmt(vals.s);
+      nodeEls.h.val.textContent  = '= ' + fmt(vals.h);
+      nodeEls.e.val.textContent  = '= ' + fmt(vals.e);
+      nodeEls.L.val.textContent  = '= ' + fmt(vals.L);
+      nodeEls.h.sym.textContent  = act.sym;
+      nodeEls.h.expr.textContent = act.expr;
+
+      EDGES.forEach(function(edge){
+        var f = edge.dyn ? act.formula : edge.formula;
+        var d = deriv[edge.key];
+        edgeLabelEls[edge.id].formula.textContent = edge.name + ' = ' + f;
+        edgeLabelEls[edge.id].numeric.textContent = '= ' + fmt(d);
+        var zero = (d === 0);
+        edgeLabelEls[edge.id].numeric.classList.toggle('is-zero', zero);
+        edgeLineEls[edge.id].classList.toggle('is-cut', zero);
+      });
+    }
+
+    // ------------------------------------------------------------ backward
+    function clearBackward(){
+      grads = null; waveIdx = 0;
+      Object.keys(nodeEls).forEach(function(id){
+        nodeEls[id].grad.textContent = '';
+        nodeEls[id].grad.classList.remove('is-shown');
+        nodeEls[id].g.classList.remove('is-active', 'is-seed');
+      });
+      EDGES.forEach(function(edge){
+        edgeLineEls[edge.id].classList.remove('is-active', 'is-done');
+        edgeLabelEls[edge.id].formula.classList.remove('is-active');
+        edgeLabelEls[edge.id].numeric.classList.remove('is-active');
+        dotEls[edge.id].style.opacity = 0;
+      });
+      logEl.innerHTML = '<div class="bpg-idle">Press &ldquo;Run backprop&rdquo; (or step through it) to seed dL/dL = 1 at the loss and push it back to the leaves.</div>';
+    }
+
+    function appendLog(html, cls){
+      var line = document.createElement('div');
+      if(cls) line.className = cls;
+      line.innerHTML = html;
+      logEl.appendChild(line);
+    }
+
+    function seedBackward(){
+      clearBackward();
+      logEl.innerHTML = '';
+      grads = { L:1 };
+      waveIdx = 0;
+      nodeEls.L.grad.textContent = 'dL/dL = 1.000  (seed)';
+      nodeEls.L.grad.classList.add('is-shown');
+      nodeEls.L.g.classList.add('is-seed');
+      appendLog('dL/dL = 1.000 &nbsp;(seed at the loss)', 'bpg-seed');
+    }
+
+    function clearTransient(){
+      Object.keys(nodeEls).forEach(function(id){ nodeEls[id].g.classList.remove('is-active'); });
+      EDGES.forEach(function(edge){
+        edgeLineEls[edge.id].classList.remove('is-active');
+        edgeLabelEls[edge.id].formula.classList.remove('is-active');
+        edgeLabelEls[edge.id].numeric.classList.remove('is-active');
+      });
+    }
+
+    function applyEdge(edge){
+      var upstream = grads[edge.to];
+      var local = deriv[edge.key];
+      var contrib = upstream * local;
+      var had = Object.prototype.hasOwnProperty.call(grads, edge.from);
+      grads[edge.from] = (had ? grads[edge.from] : 0) + contrib;
+
+      edgeLineEls[edge.id].classList.remove('is-active');
+      edgeLineEls[edge.id].classList.add('is-done');
+
+      var fromNode = NODES[edge.from];
+      nodeEls[edge.from].grad.textContent = fromNode.gradName + ' = ' + fmt(grads[edge.from]);
+      nodeEls[edge.from].grad.classList.add('is-shown');
+      nodeEls[edge.from].g.classList.add('is-active');
+
+      appendLog(fromNode.gradName + ' = ' + edge.name + ' &middot; ' + NODES[edge.to].gradName +
+                ' = ' + fmt(local) + ' &middot; ' + fmt(upstream) +
+                ' = <span class="bpg-res">' + fmt(contrib) + '</span>' +
+                (had ? ' &nbsp;(accumulated &rarr; ' + fmt(grads[edge.from]) + ')' : ''));
+    }
+
+    function animateDot(edgeId, duration){
+      return new Promise(function(resolve){
+        var edge = EDGE_BY_ID[edgeId], dot = dotEls[edgeId];
+        if(!duration || reducedMotion || typeof requestAnimationFrame !== 'function'){
+          dot.style.opacity = 0; resolve(); return;
+        }
+        dot.style.opacity = 1;
+        var start = null;
+        function frame(ts){
+          if(start === null) start = ts;
+          var t = Math.min(1, (ts - start) / duration);
+          dot.setAttribute('cx', edge.x2 + (edge.x1 - edge.x2) * t);
+          dot.setAttribute('cy', edge.y2 + (edge.y1 - edge.y2) * t);
+          if(t < 1){ requestAnimationFrame(frame); }
+          else { dot.style.opacity = 0; resolve(); }
+        }
+        requestAnimationFrame(frame);
+      });
+    }
+    function delay(ms){ return new Promise(function(res){ if(ms > 0) setTimeout(res, ms); else res(); }); }
+
+    // Runs wave `waveIdx`; resolves true if a wave was actually applied.
+    function stepWave(myGen){
+      if(myGen !== animGen || !grads || waveIdx >= WAVES.length) return Promise.resolve(false);
+      var edges = WAVES[waveIdx].map(function(id){ return EDGE_BY_ID[id]; });
+      clearTransient();
+      edges.forEach(function(edge){
+        edgeLineEls[edge.id].classList.add('is-active');
+        edgeLabelEls[edge.id].formula.classList.add('is-active');
+        edgeLabelEls[edge.id].numeric.classList.add('is-active');
+        nodeEls[edge.to].g.classList.add('is-active');
+      });
+      return Promise.all(edges.map(function(edge){ return animateDot(edge.id, ANIM_MS); })).then(function(){
+        if(myGen !== animGen) return false;
+        edges.forEach(applyEdge);
+        waveIdx++;
+        if(waveIdx >= WAVES.length) clearTransient();
+        renderCheck();
+        return true;
+      });
+    }
+
+    function setBusy(busy){
+      running = busy;
+      runBtn.disabled = busy;
+      stepBtn.disabled = busy;
+    }
+
+    function runAll(){
+      if(running) return;
+      var myGen = ++animGen;
+      setBusy(true);
+      if(!grads || waveIdx >= WAVES.length) seedBackward();
+      (function loop(){
+        if(myGen !== animGen) return;
+        stepWave(myGen).then(function(applied){
+          if(myGen !== animGen) return;
+          if(applied && waveIdx < WAVES.length){ delay(PAUSE_MS).then(loop); }
+          else { setBusy(false); }
+        });
+      })();
+    }
+
+    function stepOnce(){
+      if(running) return;
+      var myGen = ++animGen;
+      setBusy(true);
+      if(!grads || waveIdx >= WAVES.length) seedBackward();
+      stepWave(myGen).then(function(){
+        if(myGen !== animGen) return;
+        setBusy(false);
+      });
+    }
+
+    function cancelRun(){
+      animGen++;
+      setBusy(false);
+      EDGES.forEach(function(edge){ dotEls[edge.id].style.opacity = 0; });
+    }
+
+    // --------------------------------------------------------- check table
+    var CHECK_ROWS = [
+      { key:'w',  grad:'dL/dw', formula:"2e a'(s) x", node:'w'  },
+      { key:'x',  grad:'dL/dx', formula:"2e a'(s) w", node:'x'  },
+      { key:'b',  grad:'dL/db', formula:"2e a'(s)",   node:'b'  },
+      { key:'y',  grad:'dL/dy', formula:'-2e',        node:'yv' }
+    ];
+    function closedForm(key){
+      var g = 2 * vals.e * deriv.dH_ds;
+      if(key === 'w') return g * vals.x;
+      if(key === 'x') return g * vals.w;
+      if(key === 'b') return g;
+      return -2 * vals.e;
+    }
+
+    function renderCheck(){
+      var html = '', anyMismatch = false;
+      CHECK_ROWS.forEach(function(row){
+        var closed = closedForm(row.key);
+        var fd = fdGrad(row.key);
+        var graphVal = (grads && Object.prototype.hasOwnProperty.call(grads, row.node)) ? grads[row.node] : null;
+        var tol = 1e-5 * Math.max(1, Math.abs(closed));
+        if(Math.abs(fd - closed) > tol) anyMismatch = true;
+        html += '<tr><td>' + row.grad + '</td><td>' + row.formula + '</td><td>' + fmt(closed) + '</td>' +
+                '<td class="' + (graphVal === null ? 'bpg-c-pending' : 'bpg-c-graph') + '">' +
+                (graphVal === null ? '&mdash;' : fmt(graphVal)) + '</td>' +
+                '<td>' + fmt(fd) + '</td></tr>';
+      });
+      checkBody.innerHTML = html;
+
+      var note = 'Finite differences use the central estimate (L(v+h) &minus; L(v&minus;h)) / 2h with h &asymp; 1e-4 &mdash; agreement to ~5 decimals is what <code>gradcheck</code> looks for.';
+      if(selAct.value === 'relu' && Math.abs(vals.s) < 1e-3){
+        note += ' <strong>s &asymp; 0:</strong> ReLU has no derivative at the kink, so the two-sided estimate straddles it and disagrees with the convention a&prime;(0) = 0 that autograd uses.';
+      } else if(anyMismatch){
+        note += ' A mismatch here means the two sides of the step landed on different branches of the function.';
+      }
+      checkNote.innerHTML = note;
+    }
+
+    // ------------------------------------------------------------- wiring
+    function updateAll(){
+      computeForward();
+      renderForward();
+      clearBackward();
+      renderCheck();
+    }
+
+    function onEdit(){
+      cancelRun();
+      updateAll();
+    }
+
+    inputs.forEach(function(i){ i.addEventListener('input', onEdit); });
+    selAct.addEventListener('change', onEdit);
+    runBtn.addEventListener('click', runAll);
+    stepBtn.addEventListener('click', stepOnce);
+    resetBtn.addEventListener('click', function(){
+      cancelRun();
+      inW.value = DEFAULTS.w; inX.value = DEFAULTS.x; inB.value = DEFAULTS.b; inY.value = DEFAULTS.y;
+      selAct.value = DEFAULTS.act;
+      updateAll();
+    });
+
+    selAct.value = DEFAULTS.act;
+    updateAll();
+  })();</script>
+</div>

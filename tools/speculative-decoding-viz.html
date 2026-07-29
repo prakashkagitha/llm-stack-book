@@ -1,0 +1,557 @@
+<div class="viz-tool" id="tool-speculative-decoding-viz">
+  <div class="vt-title">Speculative decoding: draft, verify, accept</div>
+  <div class="vt-hint">A small drafter proposes &gamma; tokens; the big target model verifies all &gamma;+1 positions in <em>one</em> parallel pass; the longest matching prefix is accepted and one bonus/correction token is appended. Move &gamma;, the per-token acceptance rate &alpha; (= 1 &minus; TV(p,q)), and the drafter cost ratio c to see the exact geometric-acceptance math, the marginal-value rule that sets &gamma;*, and a seeded simulation that converges to it.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="speculative-decoding-viz-gamma">Draft length &gamma; <span class="vt-val" id="speculative-decoding-viz-gammaVal">5</span>
+      <input id="speculative-decoding-viz-gamma" type="range" min="1" max="12" step="1" value="5" aria-label="Number of tokens the draft model proposes per step (gamma)">
+    </label>
+    <label for="speculative-decoding-viz-alpha">Acceptance rate &alpha; <span class="vt-val" id="speculative-decoding-viz-alphaVal">0.70</span>
+      <input id="speculative-decoding-viz-alpha" type="range" min="0" max="0.99" step="0.01" value="0.70" aria-label="Per-token acceptance probability alpha, i.e. draft and target agreement">
+    </label>
+    <label for="speculative-decoding-viz-c">Drafter cost ratio c <span class="vt-val" id="speculative-decoding-viz-cVal">0.05</span>
+      <input id="speculative-decoding-viz-c" type="range" min="0" max="1" step="0.01" value="0.05" aria-label="Drafter cost per token as a fraction of one target forward pass">
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-reset" id="speculative-decoding-viz-step" type="button">Draft &amp; verify one step</button>
+    <button class="vt-reset" id="speculative-decoding-viz-run" type="button">Simulate 200 more steps</button>
+    <button class="vt-reset" id="speculative-decoding-viz-resetstats" type="button">Reset simulation (reseed)</button>
+  </div>
+
+  <div class="sdv-stage">
+    <div class="sdv-row-label">Drafter proposes &gamma; tokens (cheap, but strictly sequential: &gamma; small forward passes)</div>
+    <div class="sdv-boxes" id="speculative-decoding-viz-draftrow"></div>
+    <div class="sdv-connector" id="speculative-decoding-viz-connector">&#8595; target verifies ALL &gamma;+1 positions in ONE parallel forward pass &#8595;</div>
+    <div class="sdv-boxes" id="speculative-decoding-viz-outcomerow"></div>
+    <div class="sdv-legend">
+      <span><i class="sdv-swatch sdv-sw-accept"></i>accepted</span>
+      <span><i class="sdv-swatch sdv-sw-reject"></i>first rejection</span>
+      <span><i class="sdv-swatch sdv-sw-unused"></i>discarded (chain already stopped)</span>
+      <span><i class="sdv-swatch sdv-sw-bonus"></i>bonus / correction token</span>
+    </div>
+  </div>
+
+  <div class="sdv-step-readout" id="speculative-decoding-viz-stepreadout" aria-live="polite">Click &ldquo;Draft &amp; verify one step&rdquo; to run the first simulated step.</div>
+
+  <div class="sdv-formula-box" id="speculative-decoding-viz-formulas"></div>
+
+  <div class="sdv-avg" id="speculative-decoding-viz-avg" aria-live="polite"></div>
+
+  <div class="sdv-chart-wrap">
+    <div class="sdv-row-label">Speedup vs plain decoding as a function of &gamma;, at the current &alpha; and c</div>
+    <svg id="speculative-decoding-viz-chart" viewBox="0 0 520 250" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Line chart of speedup versus draft length gamma" aria-describedby="speculative-decoding-viz-chartdesc"></svg>
+    <div class="sdv-axis-note" id="speculative-decoding-viz-chartdesc"></div>
+  </div>
+
+  <div class="vt-note">
+    Verification is <strong>exact, not approximate</strong>: a drafted token x ~ q is accepted with probability min(1, p(x)/q(x)); on rejection the replacement is resampled from the residual (p&minus;q)&#8314;. Summed over both paths a token is emitted with probability min(p,q) + (p&minus;q)&#8314; = p(x) &mdash; the target's own distribution &mdash; no matter how bad the drafter q is. &alpha; changes <em>how many</em> tokens come out per parallel pass, never <em>which distribution</em> they come from. With i.i.d. acceptance, E[tokens per target call] = (1&minus;&alpha;<sup>&gamma;+1</sup>)/(1&minus;&alpha;) and cost = 1+&gamma;c target-equivalent passes, so speedup = E/(1+&gamma;c). The &gamma;-th extra draft slot buys only &alpha;<sup>&gamma;</sup> expected tokens but always costs c, so once &alpha;<sup>&gamma;+1</sup>/c drops below the current speedup, growing &gamma; <em>hurts</em> &mdash; that is the &gamma;* marked on the chart. Caveats this idealization hides: acceptance is not really i.i.d. (it decays along the chain), single-chain drafting is weaker than tree drafting, and at large batch sizes decode is compute-bound so the &ldquo;free&rdquo; verification FLOPs stop being free.
+  </div>
+
+  <style>
+    /* Scoped theme tokens: prefer the site's variables, fall back to theme-correct
+       literals so the widget is readable standalone in light AND dark. */
+    #tool-speculative-decoding-viz{
+      --sdv-surface: var(--surface,#ffffff);
+      --sdv-surface-2: var(--surface-2,#f3efe6);
+      --sdv-surface-3: var(--surface-3,#ece7da);
+      --sdv-ink: var(--ink,#211f1b);
+      --sdv-ink-soft: var(--ink-soft,#45413a);
+      --sdv-muted: var(--muted,#6d675d);
+      --sdv-border: var(--border,#e7e1d4);
+      --sdv-border-2: var(--border-2,#d8d1c0);
+      --sdv-accent: var(--accent,#c15b39);
+      --sdv-good: #1f7a55;
+      --sdv-bad:  #b03a34;
+      --sdv-warn: #8a6206;
+    }
+    @media (prefers-color-scheme: dark){
+      #tool-speculative-decoding-viz{
+        --sdv-surface: var(--surface,#201d1a);
+        --sdv-surface-2: var(--surface-2,#262320);
+        --sdv-surface-3: var(--surface-3,#2f2b27);
+        --sdv-ink: var(--ink,#ece7de);
+        --sdv-ink-soft: var(--ink-soft,#cbc4b8);
+        --sdv-muted: var(--muted,#978f83);
+        --sdv-border: var(--border,#322e29);
+        --sdv-border-2: var(--border-2,#413c35);
+        --sdv-accent: var(--accent,#e1845f);
+        --sdv-good: #5fd3a0;
+        --sdv-bad:  #f08b83;
+        --sdv-warn: #e3b23c;
+      }
+    }
+    html[data-theme="light"] #tool-speculative-decoding-viz{
+      --sdv-surface: var(--surface,#ffffff);
+      --sdv-surface-2: var(--surface-2,#f3efe6);
+      --sdv-surface-3: var(--surface-3,#ece7da);
+      --sdv-ink: var(--ink,#211f1b);
+      --sdv-ink-soft: var(--ink-soft,#45413a);
+      --sdv-muted: var(--muted,#6d675d);
+      --sdv-border: var(--border,#e7e1d4);
+      --sdv-border-2: var(--border-2,#d8d1c0);
+      --sdv-accent: var(--accent,#c15b39);
+      --sdv-good: #1f7a55;
+      --sdv-bad:  #b03a34;
+      --sdv-warn: #8a6206;
+    }
+    html[data-theme="dark"] #tool-speculative-decoding-viz{
+      --sdv-surface: var(--surface,#201d1a);
+      --sdv-surface-2: var(--surface-2,#262320);
+      --sdv-surface-3: var(--surface-3,#2f2b27);
+      --sdv-ink: var(--ink,#ece7de);
+      --sdv-ink-soft: var(--ink-soft,#cbc4b8);
+      --sdv-muted: var(--muted,#978f83);
+      --sdv-border: var(--border,#322e29);
+      --sdv-border-2: var(--border-2,#413c35);
+      --sdv-accent: var(--accent,#e1845f);
+      --sdv-good: #5fd3a0;
+      --sdv-bad:  #f08b83;
+      --sdv-warn: #e3b23c;
+    }
+
+    #tool-speculative-decoding-viz{ border:1px solid var(--sdv-border-2); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--sdv-surface); font-family:var(--sans,sans-serif); max-width:100%; overflow-x:hidden; }
+    #tool-speculative-decoding-viz .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--sdv-ink); }
+    #tool-speculative-decoding-viz .vt-hint{ font-size:.8rem; color:var(--sdv-muted); margin-bottom:14px; line-height:1.5; }
+    #tool-speculative-decoding-viz .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-speculative-decoding-viz label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--sdv-ink-soft); }
+    #tool-speculative-decoding-viz .vt-val{ color:var(--sdv-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-speculative-decoding-viz input[type="range"]{ width:100%; accent-color:var(--sdv-accent); }
+    #tool-speculative-decoding-viz input[type="range"]:focus-visible{ outline:2px solid var(--sdv-accent); outline-offset:3px; }
+    #tool-speculative-decoding-viz .vt-actions{ margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-speculative-decoding-viz .vt-reset{ font:inherit; font-size:.78rem; padding:6px 12px; border:1px solid var(--sdv-border-2); border-radius:7px; background:var(--sdv-surface); color:var(--sdv-ink); cursor:pointer; }
+    #tool-speculative-decoding-viz .vt-reset:hover{ background:var(--sdv-surface-3); }
+    #tool-speculative-decoding-viz .vt-reset:focus-visible{ outline:2px solid var(--sdv-accent); outline-offset:2px; }
+    #tool-speculative-decoding-viz .vt-note{ margin-top:14px; font-size:.78rem; color:var(--sdv-muted); line-height:1.55; }
+
+    #tool-speculative-decoding-viz .sdv-stage{ margin-top:16px; padding:12px; border:1px solid var(--sdv-border); border-radius:10px; background:var(--sdv-surface-2); }
+    #tool-speculative-decoding-viz .sdv-row-label{ font-size:.7rem; color:var(--sdv-muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:6px; }
+    #tool-speculative-decoding-viz .sdv-boxes{ display:grid; gap:6px; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); }
+    #tool-speculative-decoding-viz .sdv-box{ min-width:0; min-height:48px; padding:3px 2px; border-radius:8px; border:1px solid var(--sdv-border-2); background:var(--sdv-surface-3); display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:var(--mono,monospace); font-size:.7rem; color:var(--sdv-ink-soft); line-height:1.25; text-align:center; overflow:hidden; transition:background .18s ease,border-color .18s ease,opacity .18s ease,color .18s ease; }
+    #tool-speculative-decoding-viz .sdv-box .sdv-box-sub{ font-size:.58rem; opacity:.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+    #tool-speculative-decoding-viz .sdv-box.sdv-phantom{ background:transparent; border-style:dashed; color:var(--sdv-muted); opacity:.6; }
+    #tool-speculative-decoding-viz .sdv-box.sdv-accepted{ background:var(--sdv-good); border-color:var(--sdv-good); color:var(--sdv-surface); }
+    #tool-speculative-decoding-viz .sdv-box.sdv-rejected{ background:var(--sdv-bad); border-color:var(--sdv-bad); color:var(--sdv-surface); }
+    #tool-speculative-decoding-viz .sdv-box.sdv-rejected .sdv-box-tok{ text-decoration:line-through; }
+    #tool-speculative-decoding-viz .sdv-box.sdv-unused{ background:var(--sdv-surface-3); color:var(--sdv-muted); opacity:.5; border-style:dashed; }
+    #tool-speculative-decoding-viz .sdv-box.sdv-bonus{ background:var(--sdv-accent); border-color:var(--sdv-accent); color:var(--sdv-surface); }
+    #tool-speculative-decoding-viz .sdv-connector{ text-align:center; font-size:.68rem; color:var(--sdv-muted); margin:8px 0; letter-spacing:.01em; }
+    #tool-speculative-decoding-viz .sdv-legend{ margin-top:10px; display:flex; flex-wrap:wrap; gap:14px; font-size:.72rem; color:var(--sdv-ink-soft); }
+    #tool-speculative-decoding-viz .sdv-legend span{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-speculative-decoding-viz .sdv-swatch{ width:11px; height:11px; border-radius:3px; display:inline-block; flex:none; }
+    #tool-speculative-decoding-viz .sdv-sw-accept{ background:var(--sdv-good); }
+    #tool-speculative-decoding-viz .sdv-sw-reject{ background:var(--sdv-bad); }
+    #tool-speculative-decoding-viz .sdv-sw-unused{ background:var(--sdv-surface-3); border:1px dashed var(--sdv-muted); }
+    #tool-speculative-decoding-viz .sdv-sw-bonus{ background:var(--sdv-accent); }
+
+    #tool-speculative-decoding-viz .sdv-step-readout{ margin-top:12px; font-size:.82rem; color:var(--sdv-ink); line-height:1.5; min-height:1.4em; }
+    #tool-speculative-decoding-viz .sdv-formula-box{ margin-top:12px; padding:10px 12px; border:1px solid var(--sdv-border); border-radius:8px; background:var(--sdv-surface-2); font-family:var(--mono,monospace); font-size:.76rem; line-height:1.8; color:var(--sdv-ink); overflow-x:auto; }
+    #tool-speculative-decoding-viz .sdv-formula-box .sdv-hl{ color:var(--sdv-accent); font-weight:700; }
+    #tool-speculative-decoding-viz .sdv-formula-box .sdv-ok{ color:var(--sdv-good); font-weight:700; }
+    #tool-speculative-decoding-viz .sdv-formula-box .sdv-no{ color:var(--sdv-bad); font-weight:700; }
+    #tool-speculative-decoding-viz .sdv-avg{ margin-top:8px; font-size:.78rem; color:var(--sdv-muted); line-height:1.5; }
+
+    #tool-speculative-decoding-viz .sdv-chart-wrap{ margin-top:16px; }
+    #tool-speculative-decoding-viz svg#speculative-decoding-viz-chart{ width:100%; max-width:520px; height:auto; display:block; }
+    #tool-speculative-decoding-viz .sdv-axis-note{ margin-top:4px; font-size:.72rem; color:var(--sdv-muted); line-height:1.5; }
+    #tool-speculative-decoding-viz .sdv-gridline{ stroke:var(--sdv-border); stroke-width:1; }
+    #tool-speculative-decoding-viz .sdv-axis{ fill:var(--sdv-muted); font-size:9px; font-family:var(--sans,sans-serif); }
+    #tool-speculative-decoding-viz .sdv-line{ fill:none; stroke:var(--sdv-accent); stroke-width:2; }
+    #tool-speculative-decoding-viz .sdv-dot{ fill:var(--sdv-accent); opacity:.5; }
+    #tool-speculative-decoding-viz .sdv-point-cur{ fill:var(--sdv-accent); stroke:var(--sdv-surface); stroke-width:1.5; }
+    #tool-speculative-decoding-viz .sdv-point-label{ fill:var(--sdv-ink); font-size:9px; font-weight:700; font-family:var(--sans,sans-serif); }
+    #tool-speculative-decoding-viz .sdv-optimal-line{ stroke:var(--sdv-good); stroke-width:1.5; stroke-dasharray:4 3; }
+    #tool-speculative-decoding-viz .sdv-optimal-label{ fill:var(--sdv-good); font-size:9px; font-family:var(--sans,sans-serif); font-weight:700; }
+    #tool-speculative-decoding-viz .sdv-breakeven{ stroke:var(--sdv-warn); stroke-width:1; stroke-dasharray:2 2; }
+    #tool-speculative-decoding-viz .sdv-breakeven-label{ fill:var(--sdv-warn); font-size:8px; font-family:var(--sans,sans-serif); }
+    #tool-speculative-decoding-viz .sdv-ceiling{ stroke:var(--sdv-muted); stroke-width:1; stroke-dasharray:6 4; opacity:.7; }
+    #tool-speculative-decoding-viz .sdv-ceiling-label{ fill:var(--sdv-muted); font-size:8px; font-family:var(--sans,sans-serif); }
+
+    @media (max-width: 560px){
+      #tool-speculative-decoding-viz .sdv-boxes{ grid-auto-flow:row; grid-auto-columns:auto; grid-template-columns:repeat(auto-fit,minmax(56px,1fr)); }
+      #tool-speculative-decoding-viz .sdv-box{ font-size:.64rem; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-speculative-decoding-viz');
+    if (!root) return;
+
+    var gammaIn  = root.querySelector('#speculative-decoding-viz-gamma');
+    var alphaIn  = root.querySelector('#speculative-decoding-viz-alpha');
+    var cIn      = root.querySelector('#speculative-decoding-viz-c');
+    var gammaVal = root.querySelector('#speculative-decoding-viz-gammaVal');
+    var alphaVal = root.querySelector('#speculative-decoding-viz-alphaVal');
+    var cVal     = root.querySelector('#speculative-decoding-viz-cVal');
+
+    var stepBtn  = root.querySelector('#speculative-decoding-viz-step');
+    var runBtn   = root.querySelector('#speculative-decoding-viz-run');
+    var resetBtn = root.querySelector('#speculative-decoding-viz-resetstats');
+
+    var draftRow    = root.querySelector('#speculative-decoding-viz-draftrow');
+    var outcomeRow  = root.querySelector('#speculative-decoding-viz-outcomerow');
+    var stepReadout = root.querySelector('#speculative-decoding-viz-stepreadout');
+    var formulaBox  = root.querySelector('#speculative-decoding-viz-formulas');
+    var avgBox      = root.querySelector('#speculative-decoding-viz-avg');
+    var chartSvg    = root.querySelector('#speculative-decoding-viz-chart');
+    var chartNote   = root.querySelector('#speculative-decoding-viz-chartdesc');
+
+    if (!gammaIn || !alphaIn || !cIn || !draftRow || !outcomeRow || !chartSvg) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    var GAMMA_MIN = 1, GAMMA_MAX = 12;
+
+    // ---------- seeded PRNG (mulberry32): identical draws on every page load ----------
+    var SEED = 0x1F2E3D4C;
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var rng = mulberry32(SEED);
+
+    var stats = { steps: 0, tokens: 0 };
+    var lastResult = null;
+
+    // ---------- exact math ----------
+    // Accepted run length L is truncated-geometric on {0..gamma}: P(L>=k) = alpha^k.
+    // E[L] = sum_{k=1..gamma} alpha^k, and every step emits L+1 tokens
+    // (L accepted drafts + 1 correction, or gamma accepted + 1 free bonus).
+    // => E[tokens] = 1 + sum_{k=1..gamma} alpha^k = (1 - alpha^(gamma+1)) / (1 - alpha).
+    function expectedTokensPerStep(alpha, gamma){
+      var d = 1 - alpha;
+      if (d < 1e-9) return gamma + 1;             // limit as alpha -> 1
+      return (1 - Math.pow(alpha, gamma + 1)) / d;
+    }
+    // One target forward pass (verifies all gamma+1 positions at once) + gamma drafter
+    // passes, each costing c target-equivalents.
+    function costPerStep(gamma, c){ return 1 + gamma * c; }
+    function speedupFor(alpha, gamma, c){
+      return expectedTokensPerStep(alpha, gamma) / costPerStep(gamma, c);
+    }
+    // S(g+1) > S(g)  <=>  alpha^(g+1) / c > S(g). Scan far enough that the optimum is
+    // interior, not a search-boundary artifact (it can be in the hundreds for small c).
+    var OPT_SEARCH_MAX = 4000;
+    function findOptimalGamma(alpha, c){
+      if (!(c > 0)) return { gamma: Infinity, speedup: Infinity, capped: true };
+      var bestG = 1, bestS = speedupFor(alpha, 1, c);
+      for (var g = 2; g <= OPT_SEARCH_MAX; g++){
+        var s = speedupFor(alpha, g, c);
+        if (s > bestS + 1e-12){ bestS = s; bestG = g; }
+        else if (g > bestG + 8) break;            // past the peak; S is unimodal here
+      }
+      return { gamma: bestG, speedup: bestS, capped: bestG >= OPT_SEARCH_MAX };
+    }
+
+    // ---------- one simulated speculative step (i.i.d. Bernoulli(alpha) acceptance) ----------
+    function simulateStep(alpha, gamma){
+      var accepted = 0, rejectedAt = null;
+      for (var i = 0; i < gamma; i++){
+        if (rng() < alpha){ accepted++; }
+        else { rejectedAt = i; break; }
+      }
+      return { accepted: accepted, rejectedAt: rejectedAt, gamma: gamma, tokens: accepted + 1 };
+    }
+
+    function fmt(x, n){
+      if (!isFinite(x)) return '∞';
+      return x.toFixed(n === undefined ? 3 : n);
+    }
+
+    // ---------- DOM rows ----------
+    function makeBox(cls, tok, sub){
+      var el = document.createElement('div');
+      el.className = 'sdv-box ' + cls;
+      var t = document.createElement('span');
+      t.className = 'sdv-box-tok';
+      t.innerHTML = tok;
+      var s = document.createElement('span');
+      s.className = 'sdv-box-sub';
+      s.textContent = sub;
+      el.appendChild(t); el.appendChild(s);
+      return el;
+    }
+
+    function buildRows(gamma){
+      draftRow.innerHTML = '';
+      outcomeRow.innerHTML = '';
+      for (var i = 0; i < gamma; i++){
+        draftRow.appendChild(makeBox('sdv-draft', 't<sub>' + (i + 1) + '</sub>', ''));
+        outcomeRow.appendChild(makeBox('sdv-draft', 't<sub>' + (i + 1) + '</sub>', '—'));
+      }
+      // phantom slot keeps the two rows column-aligned: position gamma+1 is verified
+      // by the target but never drafted.
+      draftRow.appendChild(makeBox('sdv-phantom', 't<sub>γ+1</sub>', 'not drafted'));
+      outcomeRow.appendChild(makeBox('sdv-draft', '+1', '—'));
+    }
+
+    // Draft boxes advertise the probability that the chain even reaches -- and accepts --
+    // that slot: P(slot i survives) = alpha^i. This is exactly the marginal token gain
+    // of adding the i-th draft slot, which is why deep slots stop paying for themselves.
+    function updateDraftProbs(alpha, gamma){
+      var kids = draftRow.children;
+      for (var i = 0; i < gamma && i < kids.length; i++){
+        var p = Math.pow(alpha, i + 1);
+        kids[i].querySelector('.sdv-box-sub').textContent = 'α^' + (i + 1) + '=' + p.toFixed(2);
+      }
+    }
+
+    function renderOutcome(result){
+      lastResult = result;
+      var kids = outcomeRow.children;
+      if (kids.length !== result.gamma + 1) return;
+      for (var i = 0; i < result.gamma; i++){
+        var el = kids[i];
+        el.className = 'sdv-box';
+        var sub = el.querySelector('.sdv-box-sub');
+        if (i < result.accepted){
+          el.classList.add('sdv-accepted'); sub.textContent = 'accepted';
+        } else if (i === result.rejectedAt){
+          el.classList.add('sdv-rejected'); sub.textContent = 'rejected';
+        } else {
+          el.classList.add('sdv-unused'); sub.textContent = 'discarded';
+        }
+      }
+      var bonusEl = kids[result.gamma];
+      bonusEl.className = 'sdv-box sdv-bonus';
+      bonusEl.querySelector('.sdv-box-sub').textContent = (result.rejectedAt !== null) ? 'correction' : 'bonus';
+
+      var wasted = result.gamma - result.accepted;
+      var msg;
+      if (result.rejectedAt !== null){
+        msg = 'This step: <strong>' + result.accepted + ' of ' + result.gamma + '</strong> drafted tokens accepted. Token ' +
+          (result.rejectedAt + 1) + ' was rejected and replaced by a fresh sample from the residual (p&minus;q)<sup>+</sup>; ' +
+          'everything after it is thrown away because the chain stopped there. Emitted: <strong>' + result.tokens +
+          '</strong> token' + (result.tokens === 1 ? '' : 's') + ' &middot; wasted drafter passes: ' + wasted + '.';
+      } else {
+        msg = 'This step: <strong>all ' + result.gamma + '</strong> drafted tokens accepted, so the target&rsquo;s logits at position &gamma;+1 ' +
+          '&mdash; already computed in the same parallel pass, hence free &mdash; give one extra <strong>bonus</strong> token. ' +
+          'Emitted: <strong>' + result.tokens + '</strong> tokens &middot; wasted drafter passes: 0.';
+      }
+      stepReadout.innerHTML = msg;
+    }
+
+    function renderAvg(alpha, gamma){
+      if (stats.steps === 0){
+        avgBox.textContent = 'No simulated steps at these settings yet.';
+        return;
+      }
+      var mean = stats.tokens / stats.steps;
+      var theory = expectedTokensPerStep(alpha, gamma);
+      avgBox.textContent = 'Seeded simulation at these settings: ' + stats.steps + ' step' + (stats.steps === 1 ? '' : 's') +
+        ', empirical mean = ' + mean.toFixed(3) + ' tokens/step vs theory ' + theory.toFixed(3) +
+        ' (gap ' + (mean - theory >= 0 ? '+' : '') + (mean - theory).toFixed(3) + '). Click "Simulate 200 more steps" to watch it converge.';
+    }
+
+    function renderFormulas(alpha, gamma, c){
+      var E = expectedTokensPerStep(alpha, gamma);
+      var cost = costPerStep(gamma, c);
+      var speedup = E / cost;
+      var opt = findOptimalGamma(alpha, c);
+      var ceiling = (1 - alpha) < 1e-9 ? Infinity : 1 / (1 - alpha);
+      var marginal = Math.pow(alpha, gamma + 1);
+
+      var html = '';
+      html += 'E[tokens per target call] = (1 &minus; ' + fmt(alpha, 2) + '<sup>' + (gamma + 1) + '</sup>) / (1 &minus; ' + fmt(alpha, 2) +
+              ') = <span class="sdv-hl">' + fmt(E, 3) + '</span><br>';
+      html += 'cost per step = 1 + &gamma;&middot;c = 1 + ' + gamma + '&times;' + fmt(c, 2) +
+              ' = <span class="sdv-hl">' + fmt(cost, 3) + '</span> target-equivalent passes<br>';
+      html += 'speedup = E[tokens] / cost = <span class="sdv-hl">' + fmt(speedup, 3) + '&times;</span>' +
+              (speedup < 1 ? ' <span class="sdv-no">(slower than plain decoding!)</span>' : '') + '<br>';
+
+      if (c > 0){
+        var pays = marginal / c > speedup;
+        html += 'next slot: gain &alpha;<sup>&gamma;+1</sup> = ' + fmt(marginal, 3) + ' tokens for c = ' + fmt(c, 2) +
+                ' &rarr; ratio ' + fmt(marginal / c, 3) + ' vs current speedup ' + fmt(speedup, 3) + ' &rArr; ' +
+                (pays ? '<span class="sdv-ok">&gamma;+1 still helps</span>' : '<span class="sdv-no">&gamma;+1 hurts</span>') + '<br>';
+        html += 'optimal &gamma;* = <span class="sdv-hl">' + opt.gamma + '</span> (speedup ' + fmt(opt.speedup, 3) + '&times;)' +
+                (opt.capped ? ' &mdash; search capped at ' + OPT_SEARCH_MAX : '');
+      } else {
+        html += 'with c = 0 the drafter is free: speedup rises monotonically with &gamma; toward the ceiling ' +
+                '1/(1&minus;&alpha;) = <span class="sdv-hl">' + fmt(ceiling, 2) + '&times;</span> &mdash; no interior optimum';
+      }
+      formulaBox.innerHTML = html;
+      return { speedup: speedup, opt: opt, ceiling: ceiling };
+    }
+
+    // ---------- chart ----------
+    function niceStep(raw){
+      if (!(raw > 0)) return 1;
+      var pow = Math.pow(10, Math.floor(Math.log10(raw)));
+      var f = raw / pow, m;
+      if (f <= 1) m = 1; else if (f <= 2) m = 2; else if (f <= 5) m = 5; else m = 10;
+      return Math.max(1, Math.round(m * pow));
+    }
+
+    function renderChart(alpha, gamma, c, opt, ceiling){
+      while (chartSvg.firstChild) chartSvg.removeChild(chartSvg.firstChild);
+
+      var W = 520, H = 250, mL = 36, mR = 12, mT = 14, mB = 26;
+      var plotW = W - mL - mR, plotH = H - mT - mB;
+
+      // x-range adapts so gamma* is always on screen (it can be far past the slider max).
+      var gMax = Math.max(12, gamma + 3);
+      if (isFinite(opt.gamma)) gMax = Math.max(gMax, Math.min(200, Math.ceil(opt.gamma * 1.6)));
+      gMax = Math.min(200, gMax);
+
+      var pts = [], maxS = 1;
+      for (var g = 1; g <= gMax; g++){
+        var s = speedupFor(alpha, g, c);
+        pts.push({ g: g, s: s });
+        if (s > maxS) maxS = s;
+      }
+      var yMax = Math.max(1.5, maxS * 1.18);
+
+      function xScale(g){ return mL + ((g - 1) / Math.max(1, gMax - 1)) * plotW; }
+      function yScale(s){ return mT + plotH - (Math.max(0, Math.min(s, yMax)) / yMax) * plotH; }
+      function add(tag, attrs, text){
+        var el = document.createElementNS(SVGNS, tag);
+        for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) el.setAttribute(k, attrs[k]);
+        if (text !== undefined) el.textContent = text;
+        chartSvg.appendChild(el);
+        return el;
+      }
+
+      // y gridlines + labels
+      var yTicks = 5, yDec = yMax <= 3 ? 1 : 0;
+      for (var i = 0; i <= yTicks; i++){
+        var val = (yMax / yTicks) * i, y = yScale(val);
+        add('line', { x1: mL, x2: W - mR, y1: y, y2: y, 'class': 'sdv-gridline' });
+        add('text', { x: mL - 5, y: y + 3, 'text-anchor': 'end', 'class': 'sdv-axis' }, val.toFixed(yDec));
+      }
+      add('text', { x: 10, y: mT + plotH / 2, 'text-anchor': 'middle', 'class': 'sdv-axis',
+                    transform: 'rotate(-90 10 ' + (mT + plotH / 2) + ')' }, 'speedup (x)');
+
+      // x ticks
+      var xStep = niceStep(gMax / 8);
+      var drawn = {};
+      function xTick(g){
+        if (g < 1 || g > gMax || drawn[g]) return;
+        drawn[g] = 1;
+        add('text', { x: xScale(g), y: H - mB + 12, 'text-anchor': 'middle', 'class': 'sdv-axis' }, String(g));
+      }
+      xTick(1);
+      for (var gx = xStep; gx <= gMax; gx += xStep) xTick(gx);
+      xTick(gMax);
+      add('text', { x: mL + plotW / 2, y: H - 3, 'text-anchor': 'middle', 'class': 'sdv-axis' }, 'draft length γ');
+
+      // break-even line (speedup = 1)
+      add('line', { x1: mL, x2: W - mR, y1: yScale(1), y2: yScale(1), 'class': 'sdv-breakeven' });
+      add('text', { x: W - mR - 2, y: yScale(1) - 3, 'text-anchor': 'end', 'class': 'sdv-breakeven-label' }, 'break-even 1x');
+
+      // ceiling 1/(1-alpha): the absolute cap on tokens per target call
+      if (isFinite(ceiling) && ceiling <= yMax){
+        add('line', { x1: mL, x2: W - mR, y1: yScale(ceiling), y2: yScale(ceiling), 'class': 'sdv-ceiling' });
+        add('text', { x: mL + 3, y: yScale(ceiling) - 3, 'class': 'sdv-ceiling-label' },
+            'ceiling 1/(1-α) = ' + ceiling.toFixed(2) + 'x');
+      }
+
+      // gamma* marker
+      if (isFinite(opt.gamma) && opt.gamma <= gMax){
+        var ox = xScale(opt.gamma);
+        add('line', { x1: ox, x2: ox, y1: mT, y2: H - mB, 'class': 'sdv-optimal-line' });
+        add('text', { x: Math.min(ox, W - mR - 26), y: mT + 9, 'text-anchor': 'middle', 'class': 'sdv-optimal-label' },
+            'γ* = ' + opt.gamma);
+      }
+
+      // curve
+      var d = '';
+      for (var j = 0; j < pts.length; j++){
+        d += (j === 0 ? 'M' : 'L') + xScale(pts[j].g).toFixed(2) + ',' + yScale(pts[j].s).toFixed(2) + ' ';
+      }
+      add('path', { d: d.trim(), 'class': 'sdv-line' });
+      if (gMax <= 24){
+        for (var k2 = 0; k2 < pts.length; k2++){
+          add('circle', { cx: xScale(pts[k2].g), cy: yScale(pts[k2].s), r: 2, 'class': 'sdv-dot' });
+        }
+      }
+
+      // current gamma
+      var curS = speedupFor(alpha, gamma, c);
+      var cx = xScale(gamma), cy = yScale(curS);
+      add('circle', { cx: cx, cy: cy, r: 4.5, 'class': 'sdv-point-cur' });
+      add('text', { x: Math.min(Math.max(cx, mL + 20), W - mR - 20), y: Math.max(cy - 9, mT + 20),
+                    'text-anchor': 'middle', 'class': 'sdv-point-label' }, curS.toFixed(2) + 'x');
+
+      if (chartNote){
+        chartNote.textContent = isFinite(opt.gamma)
+          ? ('Curve swept over γ = 1…' + gMax + '. Peak speedup ' + opt.speedup.toFixed(2) + 'x at γ* = ' + opt.gamma +
+             '; the slider sits at γ = ' + gamma + ' giving ' + curS.toFixed(2) + 'x.')
+          : ('Curve swept over γ = 1…' + gMax + '. With c = 0 there is no interior optimum: speedup climbs toward 1/(1-α).');
+      }
+    }
+
+    // ---------- glue ----------
+    function readParams(){
+      var alpha = parseFloat(alphaIn.value);
+      var gamma = parseInt(gammaIn.value, 10);
+      var c = parseFloat(cIn.value);
+      if (!isFinite(alpha)) alpha = 0;
+      alpha = Math.min(Math.max(alpha, 0), 0.999);
+      if (!isFinite(gamma)) gamma = GAMMA_MIN;
+      gamma = Math.min(Math.max(Math.round(gamma), GAMMA_MIN), GAMMA_MAX);
+      if (!isFinite(c)) c = 0;
+      c = Math.min(Math.max(c, 0), 1);
+      return { alpha: alpha, gamma: gamma, c: c };
+    }
+
+    function fullRender(runStep){
+      var p = readParams();
+
+      gammaVal.textContent = String(p.gamma);
+      alphaVal.textContent = p.alpha.toFixed(2);
+      cVal.textContent = p.c.toFixed(2);
+
+      if (draftRow.children.length !== p.gamma + 1){
+        buildRows(p.gamma);
+        lastResult = null;
+      }
+      updateDraftProbs(p.alpha, p.gamma);
+
+      if (runStep){
+        var r = simulateStep(p.alpha, p.gamma);
+        stats.steps += 1;
+        stats.tokens += r.tokens;
+        renderOutcome(r);
+      } else if (lastResult && lastResult.gamma === p.gamma){
+        renderOutcome(lastResult);
+      }
+
+      var f = renderFormulas(p.alpha, p.gamma, p.c);
+      renderChart(p.alpha, p.gamma, p.c, f.opt, f.ceiling);
+      renderAvg(p.alpha, p.gamma);
+    }
+
+    function resetStats(){ stats.steps = 0; stats.tokens = 0; }
+
+    // alpha / gamma change the distribution being sampled -> the running average must restart.
+    gammaIn.addEventListener('input', function(){ resetStats(); fullRender(true); });
+    alphaIn.addEventListener('input', function(){ resetStats(); fullRender(true); });
+    // c affects only cost accounting, never the draws -> keep the accumulated samples.
+    cIn.addEventListener('input', function(){ fullRender(false); });
+
+    stepBtn.addEventListener('click', function(){ fullRender(true); });
+    runBtn.addEventListener('click', function(){
+      var p = readParams();
+      var last = null;
+      for (var i = 0; i < 200; i++){
+        last = simulateStep(p.alpha, p.gamma);
+        stats.steps += 1;
+        stats.tokens += last.tokens;
+      }
+      if (last) renderOutcome(last);
+      renderAvg(p.alpha, p.gamma);
+    });
+    resetBtn.addEventListener('click', function(){
+      rng = mulberry32(SEED);
+      resetStats();
+      fullRender(true);
+    });
+
+    fullRender(true);
+  })();</script>
+</div>

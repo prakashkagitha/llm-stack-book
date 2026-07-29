@@ -30,6 +30,8 @@ We have replaced a $V$-dimensional sparse vector with a $d$-dimensional dense on
 
 {{fig:one-hot-vs-embedding-geometry}}
 
+{{tool:embedding-similarity}}
+
 ---
 
 ## The Embedding Matrix in Detail

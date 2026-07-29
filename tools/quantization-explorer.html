@@ -1,0 +1,531 @@
+<div class="viz-tool" id="tool-quantization-explorer">
+  <div class="vt-title">Quantization explorer: FP16 &rarr; INT8 / INT4 / NF4, per-tensor vs per-group</div>
+  <div class="vt-hint">A synthetic weight tensor of N = 4096 standard-normal values (seeded, so every render is reproducible). Pick a format and a <b>scale granularity</b>, then inject a few outliers. The widget runs the real arithmetic from this chapter &mdash; <span class="qe-code">s = max|x| / q<sub>max</sub></span> per group, <span class="qe-code">q = clip(round(x/s), &minus;q<sub>max</sub>, q<sub>max</sub>)</span>, <span class="qe-code">x&#770; = s&middot;q</span> &mdash; and reports the exact error it produces.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="quantization-explorer-format">Format
+      <select id="quantization-explorer-format">
+        <option value="int8">INT8 &mdash; 255 uniform levels</option>
+        <option value="int4" selected>INT4 &mdash; 15 uniform levels</option>
+        <option value="nf4">NF4 &mdash; 16 non-uniform (normal-float) levels</option>
+      </select>
+    </label>
+    <label for="quantization-explorer-group">Scale granularity
+      <select id="quantization-explorer-group">
+        <option value="4096" selected>Per-tensor (1 scale, all 4096)</option>
+        <option value="512">Per-group, G = 512</option>
+        <option value="128">Per-group, G = 128 (GPTQ/AWQ)</option>
+        <option value="64">Per-group, G = 64 (QLoRA/NF4)</option>
+      </select>
+    </label>
+    <label for="quantization-explorer-count">Outliers injected <span class="vt-val" id="quantization-explorer-countval">3</span>
+      <input id="quantization-explorer-count" type="range" min="0" max="20" step="1" value="3">
+    </label>
+    <label for="quantization-explorer-mag">Outlier magnitude <span class="vt-val" id="quantization-explorer-magval">15.0&sigma;</span>
+      <input id="quantization-explorer-mag" type="range" min="2" max="40" step="0.5" value="15">
+    </label>
+  </div>
+  <div class="vt-actions"><button class="vt-reset" id="quantization-explorer-reset" type="button">Reset</button></div>
+
+  <div class="vt-out" id="quantization-explorer-out" aria-live="polite"></div>
+
+  <div class="quantization-explorer-chart-block">
+    <div class="quantization-explorer-chart-title">Weight distribution with the quantization grid overlaid</div>
+    <div class="quantization-explorer-chart-sub" id="quantization-explorer-hist-caption"></div>
+    <div class="quantization-explorer-svg-wrap">
+      <svg id="quantization-explorer-svg-hist" viewBox="0 0 640 236" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Histogram of weight values with vertical quantization grid lines overlaid"></svg>
+    </div>
+    <div class="quantization-explorer-legend" id="quantization-explorer-legend"></div>
+  </div>
+
+  <div class="quantization-explorer-chart-block">
+    <div class="quantization-explorer-chart-title">Dequantization error &nbsp;<span class="qe-code">x&#770; &minus; x</span></div>
+    <div class="quantization-explorer-chart-sub" id="quantization-explorer-err-caption"></div>
+    <div class="quantization-explorer-svg-wrap">
+      <svg id="quantization-explorer-svg-err" viewBox="0 0 640 236" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Histogram of the dequantization error across all 4096 weights"></svg>
+    </div>
+  </div>
+
+  <div class="vt-note" id="quantization-explorer-note"></div>
+
+  <style>
+    #tool-quantization-explorer{
+      --qe-good: var(--good, #2f9e6e);
+      --qe-bad:  var(--bad,  #cc4b3c);
+      --qe-warn: var(--warn, #c2740a);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); font-family:var(--sans,sans-serif);
+    }
+    #tool-quantization-explorer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-quantization-explorer .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.6; }
+    #tool-quantization-explorer .qe-code{ font-family:var(--mono,monospace); font-size:.92em; color:var(--ink-soft,#45413a); white-space:nowrap; }
+
+    #tool-quantization-explorer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px 18px; }
+    #tool-quantization-explorer label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-quantization-explorer .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; font-family:var(--mono,monospace); }
+    #tool-quantization-explorer select{ font:inherit; font-size:.84rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%; }
+    #tool-quantization-explorer input[type="range"]{ width:100%; accent-color:var(--accent,#c15b39); }
+    #tool-quantization-explorer select:focus-visible,
+    #tool-quantization-explorer input:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-quantization-explorer .vt-actions{ margin:12px 0 0; }
+    #tool-quantization-explorer .vt-reset{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-quantization-explorer .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+    #tool-quantization-explorer .vt-reset:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-quantization-explorer .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; }
+    #tool-quantization-explorer .vt-stat{ border:1px solid var(--border,#e7e1d4); border-radius:8px; padding:8px 10px; background:var(--surface-2,#f3efe6); }
+    #tool-quantization-explorer .vt-stat .n{ font-size:1.02rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; font-family:var(--mono,monospace); }
+    #tool-quantization-explorer .vt-stat .l{ font-size:.68rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; margin-top:3px; line-height:1.35; }
+    #tool-quantization-explorer .vt-stat.is-warn .n{ color:var(--qe-warn); }
+    #tool-quantization-explorer .vt-stat.is-good .n{ color:var(--qe-good); }
+
+    #tool-quantization-explorer .quantization-explorer-chart-block{ margin-top:16px; }
+    #tool-quantization-explorer .quantization-explorer-chart-title{ font-size:.82rem; font-weight:600; color:var(--ink,#211f1b); margin-bottom:2px; }
+    #tool-quantization-explorer .quantization-explorer-chart-sub{ font-size:.72rem; color:var(--muted,#6d675d); margin-bottom:5px; line-height:1.5; }
+    #tool-quantization-explorer .quantization-explorer-svg-wrap{ width:100%; overflow-x:auto; }
+    #tool-quantization-explorer svg{ width:100%; height:auto; min-width:300px; display:block; }
+
+    #tool-quantization-explorer .quantization-explorer-legend{ display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:6px; font-size:.71rem; color:var(--muted,#6d675d); }
+    #tool-quantization-explorer .quantization-explorer-legend span{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-quantization-explorer .qe-sw{ width:14px; height:0; border-top-width:2px; border-top-style:solid; display:inline-block; }
+    #tool-quantization-explorer .qe-sw.is-clean{ border-top-color:var(--qe-good); }
+    #tool-quantization-explorer .qe-sw.is-out{ border-top-color:var(--qe-bad); border-top-style:dashed; }
+    #tool-quantization-explorer .qe-sw.is-bar{ border-top-color:var(--accent,#c15b39); border-top-width:8px; }
+
+    #tool-quantization-explorer .qe-axis-line{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-quantization-explorer .qe-zero-line{ stroke:var(--muted,#6d675d); stroke-width:1; stroke-dasharray:3 3; opacity:.7; }
+    #tool-quantization-explorer .qe-bar{ fill:var(--accent,#c15b39); opacity:.78; }
+    #tool-quantization-explorer .qe-bar.is-err{ fill:var(--accent,#c15b39); opacity:.6; }
+    #tool-quantization-explorer .qe-grid-line{ stroke:var(--qe-good); stroke-width:1; opacity:.75; }
+    #tool-quantization-explorer .qe-grid-line.is-out{ stroke:var(--qe-bad); stroke-width:1; opacity:.85; stroke-dasharray:4 3; }
+    #tool-quantization-explorer .qe-grid-band{ fill:var(--qe-good); opacity:.14; }
+    #tool-quantization-explorer .qe-grid-band.is-out{ fill:var(--qe-bad); opacity:.14; }
+    #tool-quantization-explorer .qe-tick-label{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--mono,monospace); }
+    #tool-quantization-explorer .qe-axis-title{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--sans,sans-serif); }
+    #tool-quantization-explorer .qe-offchart{ fill:var(--qe-bad); font-size:10px; font-family:var(--mono,monospace); font-weight:700; }
+
+    #tool-quantization-explorer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-quantization-explorer .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var NS='http://www.w3.org/2000/svg';
+    var root=document.getElementById('tool-quantization-explorer');
+    if(!root) return;
+
+    var N=4096;          // synthetic weight-tensor size
+    var MAX_OUT=20;
+
+    /* ---- seeded PRNG (mulberry32): identical output for identical inputs, every load ---- */
+    function mulberry32(seed){
+      return function(){
+        seed|=0; seed=(seed+0x6D2B79F5)|0;
+        var t=Math.imul(seed^(seed>>>15),1|seed);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+
+    /* ---- NF4 (4-bit NormalFloat) code book: the 16 levels from QLoRA (Dettmers et al., 2023),
+           chosen so each bin is equiprobable under a unit Gaussian. Ascending, includes exact 0. ---- */
+    var NF4_LEVELS=[
+      -1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
+      -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
+      0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224,
+      0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1.0
+    ];
+
+    /* Symmetric integer grids, matching the chapter: q in [-qmax, +qmax] with qmax = 2^(b-1) - 1.
+       (The extra -2^(b-1) code is dropped: with absmax scaling |x/s| <= qmax, so it is unreachable.) */
+    var FORMATS={
+      int8:{ label:'INT8', bits:8, qmax:127, levels:255 },
+      int4:{ label:'INT4', bits:4, qmax:7,   levels:15  },
+      nf4: { label:'NF4',  bits:4, qmax:1,   levels:16, nf:true }
+    };
+
+    /* ---- one quantize -> dequantize round trip, given the group's absmax ---- */
+    function dequantOne(x, absmax, fmt){
+      var cfg=FORMATS[fmt];
+      if(cfg.nf){
+        var a=absmax>1e-12?absmax:1e-12;
+        var xn=x/a; if(xn>1) xn=1; if(xn<-1) xn=-1;
+        var best=0, bd=Infinity;
+        for(var i=0;i<NF4_LEVELS.length;i++){
+          var d=Math.abs(NF4_LEVELS[i]-xn);
+          if(d<bd){ bd=d; best=i; }
+        }
+        return NF4_LEVELS[best]*a;                       // x_hat = level * absmax
+      }
+      var s=absmax/cfg.qmax; if(s<1e-12) s=1e-12;        // scale = absmax / qmax
+      var q=Math.round(x/s);                             // round to nearest code
+      if(q>cfg.qmax) q=cfg.qmax;                         // clip
+      if(q<-cfg.qmax) q=-cfg.qmax;
+      return q*s;                                        // x_hat = s * q
+    }
+
+    /* representable dequantized values for a group with this absmax */
+    function gridFor(absmax, fmt){
+      var cfg=FORMATS[fmt], out=[];
+      if(cfg.nf){
+        for(var i=0;i<NF4_LEVELS.length;i++) out.push(NF4_LEVELS[i]*absmax);
+        return out;
+      }
+      var s=absmax/cfg.qmax; if(s<1e-12) s=1e-12;
+      for(var q=-cfg.qmax;q<=cfg.qmax;q++) out.push(q*s);
+      return out;
+    }
+    /* smallest gap between adjacent representable values (uniform step for INT, near-zero gap for NF4) */
+    function minStep(absmax, fmt){
+      var cfg=FORMATS[fmt];
+      if(!cfg.nf) return absmax/cfg.qmax;
+      var m=Infinity;
+      for(var i=1;i<NF4_LEVELS.length;i++) m=Math.min(m,(NF4_LEVELS[i]-NF4_LEVELS[i-1])*absmax);
+      return m;
+    }
+    function maxStep(absmax, fmt){
+      var cfg=FORMATS[fmt];
+      if(!cfg.nf) return absmax/cfg.qmax;
+      var m=0;
+      for(var i=1;i<NF4_LEVELS.length;i++) m=Math.max(m,(NF4_LEVELS[i]-NF4_LEVELS[i-1])*absmax);
+      return m;
+    }
+
+    /* ---- the bulk tensor is generated once (Box-Muller on the seeded PRNG) and never changes ---- */
+    var BULK=(function(){
+      var rng=mulberry32(0x9E3779B9), v=new Float64Array(N);
+      for(var i=0;i<N;i++){
+        var u=0,w=0;
+        while(u<=1e-12) u=rng();
+        while(w<=1e-12) w=rng();
+        v[i]=Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*w);   // ~ N(0,1)
+      }
+      return v;
+    })();
+
+    function fmtNum(x,d){
+      if(!isFinite(x)) return '--';
+      var ax=Math.abs(x);
+      if(ax!==0 && ax<1e-4) return x.toExponential(2);
+      return x.toFixed(d===undefined?4:d);
+    }
+    function tickFmt(v,dom){
+      if(Math.abs(v)<1e-15) return '0';
+      if(dom>=10) return v.toFixed(0);
+      if(dom>=1)  return v.toFixed(1);
+      if(dom>=0.1) return v.toFixed(2);
+      if(dom>=0.01) return v.toFixed(3);
+      return v.toExponential(1);
+    }
+
+    /* ---- element refs ---- */
+    var formatIn=root.querySelector('#quantization-explorer-format');
+    var groupIn=root.querySelector('#quantization-explorer-group');
+    var countIn=root.querySelector('#quantization-explorer-count');
+    var magIn=root.querySelector('#quantization-explorer-mag');
+    var countVal=root.querySelector('#quantization-explorer-countval');
+    var magVal=root.querySelector('#quantization-explorer-magval');
+    var outEl=root.querySelector('#quantization-explorer-out');
+    var histCap=root.querySelector('#quantization-explorer-hist-caption');
+    var errCap=root.querySelector('#quantization-explorer-err-caption');
+    var legendEl=root.querySelector('#quantization-explorer-legend');
+    var noteEl=root.querySelector('#quantization-explorer-note');
+    var svgHist=root.querySelector('#quantization-explorer-svg-hist');
+    var svgErr=root.querySelector('#quantization-explorer-svg-err');
+    var resetBtn=root.querySelector('#quantization-explorer-reset');
+    if(!formatIn||!groupIn||!countIn||!magIn||!svgHist||!svgErr) return;
+
+    function el(tag,attrs,text){
+      var e=document.createElementNS(NS,tag);
+      for(var k in attrs) if(Object.prototype.hasOwnProperty.call(attrs,k)) e.setAttribute(k,attrs[k]);
+      if(text!==undefined) e.textContent=text;
+      return e;
+    }
+
+    /* shared chart geometry (viewBox units) */
+    var CW=640, CH=236, CL=44, CR=16, CT=16, CB=44;
+    var plotW=CW-CL-CR, plotH=CH-CT-CB;
+
+    function histCounts(data, domain, bins){
+      var counts=new Array(bins), i;
+      for(i=0;i<bins;i++) counts[i]=0;
+      var w=(2*domain)/bins;
+      for(i=0;i<data.length;i++){
+        var v=data[i];
+        if(!isFinite(v) || v<-domain || v>domain) continue;
+        var b=Math.floor((v+domain)/w);
+        if(b<0) b=0;
+        if(b>=bins) b=bins-1;
+        counts[b]++;
+      }
+      return counts;
+    }
+
+    /* opts: {bins, barClass, yPow, grids:[{levels,cls}], offText}; returns {dense:[bool,...]} */
+    function renderChart(svgEl, data, domain, axisTitle, opts){
+      while(svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+      if(!(domain>0)) domain=1;
+      var bins=opts.bins||57;
+      var counts=histCounts(data, domain, bins);
+      var maxC=1, i;
+      for(i=0;i<bins;i++) if(counts[i]>maxC) maxC=counts[i];
+      var barW=plotW/bins;
+      var yPow=opts.yPow||1;
+
+      function xs(v){
+        var t=(v+domain)/(2*domain);
+        if(t<0) t=0; if(t>1) t=1;
+        return CL+t*plotW;
+      }
+
+      /* shaded bands first, then bars, then grid lines on top */
+      var grids=opts.grids||[], gi;
+      for(gi=0;gi<grids.length;gi++){
+        var g=grids[gi];
+        if(!g || !g.levels || !g.levels.length) continue;
+        var lo=g.levels[0], hi=g.levels[g.levels.length-1];
+        var vis=[];
+        for(i=0;i<g.levels.length;i++) if(g.levels[i]>=-domain && g.levels[i]<=domain) vis.push(g.levels[i]);
+        var minGapPx=Infinity;   // stays Infinity if <2 levels are visible -> sparse path
+        for(i=1;i<vis.length;i++) minGapPx=Math.min(minGapPx, xs(vis[i])-xs(vis[i-1]));
+        g._dense=(minGapPx<2.2);
+        if(g._dense){
+          var x0=xs(Math.max(lo,-domain)), x1=xs(Math.min(hi,domain));
+          svgEl.appendChild(el('rect',{ x:x0.toFixed(1), y:CT, width:Math.max(1,x1-x0).toFixed(1), height:plotH, class:'qe-grid-band'+(g.cls?' '+g.cls:'') }));
+        }
+      }
+
+      for(i=0;i<bins;i++){
+        var c=counts[i];
+        if(c<=0) continue;
+        var h=Math.pow(c/maxC, yPow)*plotH;
+        var x=CL+i*barW;
+        svgEl.appendChild(el('rect',{
+          x:(x+0.35).toFixed(1), y:(CT+plotH-h).toFixed(1),
+          width:Math.max(0.4,barW-0.7).toFixed(1), height:Math.max(0.6,h).toFixed(1),
+          class:opts.barClass||'qe-bar'
+        }));
+      }
+
+      if(opts.offText){
+        /* in the top margin, above the plot: clear of both the grid lines and the axis title */
+        svgEl.appendChild(el('text',{ x:(CL+plotW).toFixed(1), y:(CT-5).toFixed(1), class:'qe-offchart', 'text-anchor':'end' }, opts.offText));
+      }
+      var dense=[];
+      for(gi=0;gi<grids.length;gi++){
+        var gg=grids[gi];
+        dense.push(!!(gg && gg._dense));
+        if(!gg || !gg.levels || !gg.levels.length) continue;
+        if(gg._dense){
+          /* too fine to draw line-by-line: show the covered range as a band with edge markers
+             (the caption reports the actual step) */
+          var a=Math.max(gg.levels[0],-domain), b2=Math.min(gg.levels[gg.levels.length-1],domain);
+          svgEl.appendChild(el('line',{ x1:xs(a).toFixed(2), y1:CT, x2:xs(a).toFixed(2), y2:CT+plotH, class:'qe-grid-line'+(gg.cls?' '+gg.cls:'') }));
+          svgEl.appendChild(el('line',{ x1:xs(b2).toFixed(2), y1:CT, x2:xs(b2).toFixed(2), y2:CT+plotH, class:'qe-grid-line'+(gg.cls?' '+gg.cls:'') }));
+        } else {
+          for(i=0;i<gg.levels.length;i++){
+            var v=gg.levels[i];
+            if(v<-domain || v>domain) continue;
+            svgEl.appendChild(el('line',{ x1:xs(v).toFixed(2), y1:CT, x2:xs(v).toFixed(2), y2:CT+plotH, class:'qe-grid-line'+(gg.cls?' '+gg.cls:'') }));
+          }
+        }
+      }
+
+      svgEl.appendChild(el('line',{ x1:CL, y1:CT+plotH, x2:CL+plotW, y2:CT+plotH, class:'qe-axis-line' }));
+      svgEl.appendChild(el('line',{ x1:xs(0).toFixed(2), y1:CT, x2:xs(0).toFixed(2), y2:CT+plotH, class:'qe-zero-line' }));
+
+      var ticks=[-domain,-domain/2,0,domain/2,domain];
+      for(i=0;i<ticks.length;i++){
+        svgEl.appendChild(el('text',{ x:xs(ticks[i]).toFixed(1), y:(CT+plotH+15).toFixed(1), class:'qe-tick-label', 'text-anchor':'middle' }, tickFmt(ticks[i],domain)));
+      }
+      svgEl.appendChild(el('text',{ x:(CL+plotW/2).toFixed(1), y:(CT+plotH+32).toFixed(1), class:'qe-axis-title', 'text-anchor':'middle' }, axisTitle));
+      return { dense:dense };
+    }
+
+    function upd(){
+      /* ---- read + guard every control ---- */
+      var fmt=formatIn.value; if(!FORMATS[fmt]) fmt='int4';
+      var cfg=FORMATS[fmt];
+
+      var G=parseInt(groupIn.value,10);
+      if(!isFinite(G) || G<1 || G>N || (N%G)!==0) G=N;
+
+      var count=parseInt(countIn.value,10);
+      if(!isFinite(count) || count<0) count=0;
+      if(count>MAX_OUT) count=MAX_OUT;
+
+      var mag=parseFloat(magIn.value);
+      if(!isFinite(mag)) mag=15;
+      if(mag<2) mag=2; if(mag>40) mag=40;
+
+      countVal.textContent=String(count);
+      magVal.textContent=mag.toFixed(1)+'σ';
+
+      /* ---- build the tensor: fixed Gaussian bulk + deterministic injected outliers ---- */
+      var vals=new Float64Array(BULK);
+      var isOut=new Uint8Array(N);
+      var i,k;
+      if(count>0){
+        var rng=mulberry32(0x2545F491);
+        for(k=0;k<count;k++){
+          var u=rng(), sgn=(rng()<0.5)?-1:1;
+          var idx=Math.floor((k+0.5)*N/count);
+          if(idx>N-1) idx=N-1;
+          /* one outlier sits exactly at `mag`; the rest are spread over [0.55, 1.0] x mag so
+             isolating them is not trivially exact (a real tensor's outliers differ in size). */
+          vals[idx]=sgn*mag*(k===0?1:(0.55+0.45*u));
+          isOut[idx]=1;
+        }
+      }
+
+      /* ---- per-group absmax -> per-group scale ---- */
+      var nG=N/G;
+      var gAbs=new Float64Array(nG), gHit=new Uint8Array(nG);
+      for(var g=0;g<nG;g++){
+        var a=0, base=g*G;
+        for(i=base;i<base+G;i++){
+          var av=Math.abs(vals[i]);
+          if(av>a) a=av;
+          if(isOut[i]) gHit[g]=1;
+        }
+        gAbs[g]=a;
+      }
+
+      /* ---- quantize -> dequantize -> error ---- */
+      var err=new Float64Array(N);
+      var sseAll=0, sseClean=0, nClean=0, maxAbsErr=0;
+      for(g=0;g<nG;g++){
+        var am=gAbs[g], b0=g*G;
+        for(i=b0;i<b0+G;i++){
+          var e=dequantOne(vals[i],am,fmt)-vals[i];
+          err[i]=e;
+          sseAll+=e*e;
+          if(!gHit[g]){ sseClean+=e*e; nClean++; }
+          var ae=Math.abs(e); if(ae>maxAbsErr) maxAbsErr=ae;
+        }
+      }
+      var rmseAll=Math.sqrt(sseAll/N);
+      var rmseClean=nClean>0?Math.sqrt(sseClean/nClean):NaN;
+
+      /* ---- pick the two grids to draw: a typical clean group, and an outlier-hit group ---- */
+      var cleanIdx=[], hitIdx=[];
+      for(g=0;g<nG;g++){ (gHit[g]?hitIdx:cleanIdx).push(g); }
+      var gClean=-1;
+      if(cleanIdx.length){
+        var sorted=cleanIdx.slice().sort(function(p,q){ return gAbs[p]-gAbs[q]; });
+        gClean=sorted[Math.floor(sorted.length/2)];       // median-absmax clean group
+      }
+      var gHitPick=-1;
+      if(hitIdx.length){
+        gHitPick=hitIdx[0];
+        for(k=0;k<hitIdx.length;k++) if(gAbs[hitIdx[k]]>gAbs[gHitPick]) gHitPick=hitIdx[k];  // widest
+      }
+
+      var absClean=gClean>=0?gAbs[gClean]:0;
+      var absHit=gHitPick>=0?gAbs[gHitPick]:0;
+
+      /* ---- chart 1: weights, x-domain framed on the bulk so the grid is legible ---- */
+      var absAll=0;
+      for(i=0;i<N;i++){ var av2=Math.abs(vals[i]); if(av2>absAll) absAll=av2; }
+      var bulkAbs=0;
+      for(i=0;i<N;i++){ if(!isOut[i]){ var av3=Math.abs(vals[i]); if(av3>bulkAbs) bulkAbs=av3; } }
+      var histDomain=Math.max(4.2, bulkAbs*1.15);
+
+      var grids=[];
+      if(gClean>=0) grids.push({ levels:gridFor(absClean,fmt), cls:'' });
+      if(gHitPick>=0) grids.push({ levels:gridFor(absHit,fmt), cls:'is-out' });
+
+      var offText=(absAll>histDomain*1.001)
+        ? (count+' outlier'+(count===1?'':'s')+' up to '+mag.toFixed(1)+' sigma off-chart ->')
+        : '';
+
+      var histRes=renderChart(svgHist, vals, histDomain, 'weight value (units of sigma)', {
+        bins:57, barClass:'qe-bar', yPow:1, grids:grids, offText:offText
+      });
+      var anyDense=false;
+      for(k=0;k<histRes.dense.length;k++) if(histRes.dense[k]) anyDense=true;
+
+      /* ---- chart 2: error ---- */
+      var errDomain=Math.max(maxAbsErr*1.12, 1e-9);
+      renderChart(svgErr, err, errDomain, 'dequantization error (units of sigma)', {
+        bins:61, barClass:'qe-bar is-err', yPow:0.5
+      });
+
+      /* ---- captions + legend ---- */
+      var stepClean=minStep(absClean,fmt), stepHit=minStep(absHit,fmt);
+      var coarser=(gClean>=0 && gHitPick>=0 && stepClean>0)?(stepHit/stepClean):1;
+
+      var capParts=[];
+      if(G===N){
+        capParts.push('One scale for the whole tensor: absmax = '+fmtNum(absAll,3)+'σ, so the single grid below has step '+fmtNum(minStep(absAll,fmt),4)+'σ.');
+      } else {
+        capParts.push('One scale per group of '+G+' ('+nG+' groups). Shown: a typical outlier-free group (absmax '+fmtNum(absClean,3)+'σ)'+
+          (gHitPick>=0?(' and the worst outlier-hit group (absmax '+fmtNum(absHit,3)+'σ, grid '+coarser.toFixed(1)+'× coarser)'):'')+'.');
+      }
+      if(cfg.nf) capParts.push('NF4 gaps are not uniform: '+fmtNum(minStep(absClean>0?absClean:absAll,fmt),4)+'σ near zero vs '+fmtNum(maxStep(absClean>0?absClean:absAll,fmt),4)+'σ out in the tail.');
+      if(anyDense) capParts.push('At '+cfg.levels+' levels the ticks are closer together than one pixel, so that grid is drawn as a shaded band between its two extreme codes.');
+      histCap.textContent=capParts.join(' ');
+
+      errCap.textContent='Same units. Uniform rounding keeps |error| ≤ half a step, so the spread is a direct readout of the grid step. Bar heights use a √count scale so the rare large errors stay visible.';
+
+      var legHtml='<span><i class="qe-sw is-bar"></i> weight count</span>';
+      if(gClean>=0) legHtml+='<span><i class="qe-sw is-clean"></i> '+(G===N?'the single per-tensor grid':'grid of a typical outlier-free group')+'</span>';
+      if(gHitPick>=0) legHtml+='<span><i class="qe-sw is-out"></i> '+(G===N?'(same grid — inflated by the outliers)':'grid of an outlier-hit group')+'</span>';
+      legendEl.innerHTML=legHtml;
+
+      /* ---- stats ---- */
+      var effBits=cfg.bits+16/G;                 // one FP16 scale per group
+      var vsFp16=16/effBits;
+      var hitW=hitIdx.length*G, hitPct=100*hitW/N;
+
+      var stats=[
+        ['', effBits.toFixed(3)+' b', 'Bits/param, ' + cfg.bits + ' + 16/' + G],
+        ['is-good', vsFp16.toFixed(2)+'×', 'Smaller than FP16'],
+        [hitPct>25?'is-warn':'', hitIdx.length+' / '+nG, 'Outlier-hit groups (' + hitPct.toFixed(1) + '% of weights)'],
+        [(rmseClean===rmseClean && rmseAll>1.5*rmseClean)?'is-warn':'', fmtNum(rmseAll,4), 'RMSE, all ' + N + ' weights'],
+        ['', (nClean>0?fmtNum(rmseClean,4):'--'), 'RMSE, outlier-free groups'],
+        ['', fmtNum(maxAbsErr,4), 'Max |error|']
+      ];
+      outEl.innerHTML=stats.map(function(o){
+        return '<div class="vt-stat '+o[0]+'"><div class="n">'+o[1]+'</div><div class="l">'+o[2]+'</div></div>';
+      }).join('');
+
+      /* ---- takeaway ---- */
+      var lvlDesc=cfg.nf
+        ? '16 non-uniform levels, packed densely near zero'
+        : ('2<sup>'+cfg.bits+'</sup>−1 = '+cfg.levels+' evenly spaced levels (symmetric absmax scaling never reaches the '+(-Math.pow(2,cfg.bits-1))+' code)');
+      var msg='<b>'+cfg.label+'</b> gives '+lvlDesc+'. ';
+
+      if(count>0 && G===N){
+        msg+='With <b>per-tensor</b> scaling, '+count+' outlier'+(count===1?'':'s')+' at up to '+mag.toFixed(1)+'σ set the absmax for all '+N+' weights: the step grows to '+
+             fmtNum(minStep(absAll,fmt),4)+'σ and every well-behaved weight collapses toward the few codes near zero — RMSE = '+fmtNum(rmseAll,4)+
+             '. Switch granularity to G = 128 or 64 and watch the damage get quarantined to the handful of groups that actually contain an outlier.';
+      } else if(count>0){
+        msg+='With <b>G = '+G+'</b>, the same '+count+' outlier'+(count===1?'':'s')+' only inflate '+hitIdx.length+' of '+nG+' scales, so just '+hitPct.toFixed(1)+
+             '% of weights sit on the coarse grid. The other '+nClean+' keep RMSE = '+fmtNum(rmseClean,4)+' while the whole-tensor RMSE is '+fmtNum(rmseAll,4)+
+             '. The price is '+(16/G).toFixed(3)+' extra bits/param for the FP16 scales — '+effBits.toFixed(3)+' b total.';
+      } else {
+        msg+='With no outliers the error is pure bit-width: RMSE = '+fmtNum(rmseAll,4)+', max |error| = '+fmtNum(maxAbsErr,4)+
+             '. For a uniform grid of step s the rounding noise has variance s²/12, i.e. RMSE ≈ s/√12 — halve the range or add a bit and the error halves with it. Now inject an outlier.';
+      }
+      if(cfg.nf){
+        msg+=' NF4 spends its 16 codes where a Gaussian actually puts its mass, so on normally distributed weights it beats uniform INT4 at the same 4 bits (compare the two RMSEs yourself) — but it inherits exactly the same absmax fragility, which is why QLoRA pairs it with 64-wide blocks.';
+      }
+      noteEl.innerHTML=msg;
+    }
+
+    var ctrls=root.querySelectorAll('#quantization-explorer-format,#quantization-explorer-group,#quantization-explorer-count,#quantization-explorer-mag');
+    Array.prototype.forEach.call(ctrls,function(c){
+      c.addEventListener('input',upd);
+      c.addEventListener('change',upd);
+    });
+    if(resetBtn) resetBtn.addEventListener('click',function(){
+      formatIn.value='int4'; groupIn.value='4096'; countIn.value='3'; magIn.value='15';
+      upd();
+    });
+
+    upd();
+  })();</script>
+</div>

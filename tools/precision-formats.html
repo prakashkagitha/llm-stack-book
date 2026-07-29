@@ -1,0 +1,679 @@
+<div class="viz-tool" id="tool-precision-formats">
+  <div class="vt-title">Floating-point formats: fp32, tf32, bf16, fp16, fp8, int8</div>
+  <div class="vt-hint">Pick a format, type any real number, and see its exact bit layout, the nearest value the format can actually represent, the rounding error, and where it lands in the format's dynamic range. Everything below is computed live from the real IEEE-754 (or affine-quantization) rules -- round-to-nearest-even included -- nothing is looked up from a table.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="precision-formats-fmt">Format
+      <select id="precision-formats-fmt">
+        <option value="fp32">fp32 (IEEE binary32)</option>
+        <option value="tf32">tf32 (NVIDIA, 19 effective bits)</option>
+        <option value="bf16" selected>bf16 (bfloat16)</option>
+        <option value="fp16">fp16 (IEEE binary16)</option>
+        <option value="fp8e4m3">fp8 E4M3 (E4M3FN)</option>
+        <option value="fp8e5m2">fp8 E5M2</option>
+        <option value="int8">int8 (affine quantized)</option>
+      </select>
+    </label>
+    <label for="precision-formats-value">Real number to encode
+      <input id="precision-formats-value" type="text" inputmode="decimal" value="3.14159265">
+    </label>
+    <label for="precision-formats-scale-max" id="precision-formats-scale-wrap">Per-tensor calibration: max |x| in tensor
+      <input id="precision-formats-scale-max" type="text" inputmode="decimal" value="4.0">
+    </label>
+  </div>
+
+  <div class="vt-actions" id="precision-formats-presets">
+    <span class="precision-formats-preset-label">Try:</span>
+    <button type="button" class="vt-reset" data-v="0.1">0.1</button>
+    <button type="button" class="vt-reset" data-v="0.333333333333">1/3</button>
+    <button type="button" class="vt-reset" data-v="3.14159265358979">pi</button>
+    <button type="button" class="vt-reset" data-v="70000">70000</button>
+    <button type="button" class="vt-reset" data-v="470">470</button>
+    <button type="button" class="vt-reset" data-v="1e-8">1e-8</button>
+    <button type="button" class="vt-reset" data-v="1e-42">1e-42</button>
+    <button type="button" class="vt-reset" id="precision-formats-reset">Reset</button>
+  </div>
+
+  <div class="precision-formats-bits" id="precision-formats-bits" aria-live="polite"></div>
+
+  <div class="precision-formats-readout" id="precision-formats-readout" aria-live="polite"></div>
+
+  <div class="precision-formats-line-wrap">
+    <div id="precision-formats-line"></div>
+  </div>
+
+  <div class="precision-formats-table-wrap">
+    <table id="precision-formats-table">
+      <caption class="pf-caption">Selected format compared with fp32</caption>
+      <thead><tr><th scope="col">Property</th><th scope="col" id="precision-formats-th-sel">selected</th><th scope="col">fp32</th></tr></thead>
+      <tbody id="precision-formats-table-body"></tbody>
+    </table>
+  </div>
+
+  <div class="vt-note" id="precision-formats-note"></div>
+
+  <style>
+    #tool-precision-formats{
+      --pf-sign:#7c4ea8; --pf-exp:#b0512f; --pf-mant:#1f7a55; --pf-int:#8a6100;
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif);
+    }
+    #tool-precision-formats .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-precision-formats .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.5; }
+    #tool-precision-formats .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-precision-formats label{ display:flex; flex-direction:column; gap:6px; font-size:.8rem; color:var(--muted,#6d675d); }
+    #tool-precision-formats select,
+    #tool-precision-formats input[type="text"]{ font:inherit; font-family:var(--mono,monospace); font-size:.85rem; padding:6px 8px;
+      border:1px solid var(--border,#e7e1d4); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); min-width:0; }
+    #tool-precision-formats select:focus-visible,
+    #tool-precision-formats input:focus-visible,
+    #tool-precision-formats button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-precision-formats #precision-formats-scale-wrap.is-hidden{ display:none; }
+    #tool-precision-formats .vt-actions{ margin-top:12px; display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    #tool-precision-formats .precision-formats-preset-label{ font-size:.76rem; color:var(--muted,#6d675d); margin-right:2px; }
+    #tool-precision-formats .vt-reset{ font:inherit; font-size:.76rem; padding:5px 10px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; font-family:var(--mono,monospace); }
+    #tool-precision-formats .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+    #tool-precision-formats #precision-formats-reset{ font-family:var(--sans,sans-serif); border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); }
+
+    #tool-precision-formats .precision-formats-bits{ margin-top:18px; display:flex; flex-wrap:wrap; gap:4px; align-items:stretch; }
+    #tool-precision-formats .pf-field{ display:flex; flex-direction:column; align-items:stretch; border-radius:8px; overflow:hidden;
+      border:1px solid var(--border-2,#d8d1c0); min-width:3.2em; }
+    #tool-precision-formats .pf-field-hd{ font-size:.68rem; padding:3px 5px; text-align:center; color:#fff; font-weight:700; letter-spacing:.02em; }
+    #tool-precision-formats .pf-field-bits{ display:flex; padding:6px 3px; gap:2px; flex-wrap:wrap; justify-content:center;
+      background:var(--surface-2,#f3efe6); flex:1; align-items:center; }
+    #tool-precision-formats .pf-bit{ font-family:var(--mono,monospace); font-size:.78rem; width:1.15em; text-align:center; color:var(--ink,#211f1b); }
+    #tool-precision-formats .pf-sign .pf-field-hd{ background:var(--pf-sign,#7c4ea8); }
+    #tool-precision-formats .pf-exp  .pf-field-hd{ background:var(--pf-exp,#b0512f); }
+    #tool-precision-formats .pf-mant .pf-field-hd{ background:var(--pf-mant,#1f7a55); }
+    #tool-precision-formats .pf-int  .pf-field-hd{ background:var(--pf-int,#8a6100); }
+
+    #tool-precision-formats .precision-formats-readout{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+    #tool-precision-formats .pf-stat{ border:1px solid var(--border,#e7e1d4); border-radius:9px; padding:8px 10px; background:var(--surface-2,#f3efe6); }
+    #tool-precision-formats .pf-stat-label{ font-size:.7rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; }
+    #tool-precision-formats .pf-stat-value{ font-family:var(--mono,monospace); font-size:.92rem; color:var(--ink,#211f1b); margin-top:2px;
+      overflow-wrap:anywhere; }
+    #tool-precision-formats .pf-stat-value.pf-warn{ color:var(--warn,#a06a00); }
+    #tool-precision-formats .pf-stat-value.pf-good{ color:var(--good,#1f7a55); }
+    #tool-precision-formats .pf-stat-sub{ font-size:.68rem; color:var(--muted,#6d675d); margin-top:2px; overflow-wrap:anywhere; }
+
+    #tool-precision-formats .precision-formats-line-wrap{ margin-top:16px; overflow-x:auto; }
+    #tool-precision-formats #precision-formats-line svg{ display:block; width:100%; height:auto; min-width:460px; }
+    #tool-precision-formats .pf-axis{ stroke:var(--border-2,#d8d1c0); stroke-width:1.5; }
+    #tool-precision-formats .pf-tick{ stroke:var(--muted,#6d675d); stroke-width:1; }
+    #tool-precision-formats .pf-tick-label{ font-family:var(--mono,monospace); font-size:9.5px; fill:var(--muted,#6d675d); }
+    #tool-precision-formats .pf-sec-title{ font-family:var(--sans,sans-serif); font-size:11px; font-weight:700; fill:var(--ink-soft,#45413a); }
+    #tool-precision-formats .pf-region-zero{ fill:var(--surface,#fff); }
+    #tool-precision-formats .pf-region-sub{ fill:var(--surface-3,#ece7da); }
+    #tool-precision-formats .pf-region-norm{ fill:var(--surface-2,#f3efe6); }
+    #tool-precision-formats .pf-region-over{ fill:var(--warn,#a06a00); opacity:.16; }
+    #tool-precision-formats .pf-region-label{ font-family:var(--sans,sans-serif); font-size:9.5px; fill:var(--muted,#6d675d); }
+    #tool-precision-formats .pf-marker-line{ stroke:var(--accent,#c15b39); stroke-width:2; }
+    #tool-precision-formats .pf-marker-tri{ fill:var(--accent,#c15b39); }
+    #tool-precision-formats .pf-marker-label{ font-family:var(--mono,monospace); font-size:11px; fill:var(--ink,#211f1b); font-weight:700; }
+    #tool-precision-formats .pf-flag-label{ font-family:var(--sans,sans-serif); font-size:10.5px; fill:var(--warn,#a06a00); font-weight:700; }
+    #tool-precision-formats .pf-grid-tick{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-precision-formats .pf-node{ fill:var(--surface,#fff); stroke:var(--ink-soft,#45413a); stroke-width:1.3; }
+    #tool-precision-formats .pf-node.is-hit{ fill:var(--good,#1f7a55); stroke:var(--good,#1f7a55); }
+    #tool-precision-formats .pf-q-line{ stroke:var(--good,#1f7a55); stroke-width:2; }
+    #tool-precision-formats .pf-q-label{ font-family:var(--mono,monospace); font-size:10.5px; fill:var(--good,#1f7a55); font-weight:700; }
+    #tool-precision-formats .pf-dim{ stroke:var(--ink-soft,#45413a); stroke-width:1; }
+
+    #tool-precision-formats .precision-formats-table-wrap{ margin-top:18px; overflow-x:auto; }
+    #tool-precision-formats table{ width:100%; border-collapse:collapse; font-size:.8rem; min-width:420px; }
+    #tool-precision-formats caption.pf-caption{ caption-side:top; text-align:left; font-size:.72rem; color:var(--muted,#6d675d);
+      text-transform:uppercase; letter-spacing:.03em; padding-bottom:6px; }
+    #tool-precision-formats th, #tool-precision-formats td{ text-align:left; padding:6px 10px; border-bottom:1px solid var(--border,#e7e1d4); }
+    #tool-precision-formats th{ color:var(--muted,#6d675d); font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.02em; }
+    #tool-precision-formats td{ font-family:var(--mono,monospace); color:var(--ink,#211f1b); }
+    #tool-precision-formats td:first-child{ font-family:var(--sans,sans-serif); color:var(--ink-soft,#45413a); }
+    #tool-precision-formats tr:last-child td{ border-bottom:none; }
+
+    #tool-precision-formats .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55;
+      border-top:1px dashed var(--border,#e7e1d4); padding-top:10px; }
+    #tool-precision-formats .vt-note b{ color:var(--ink-soft,#45413a); }
+    @media (prefers-color-scheme: dark){
+      #tool-precision-formats{ --pf-sign:#9d74c9; --pf-exp:#c96a45; --pf-mant:#2e9469; --pf-int:#a87c14; }
+      #tool-precision-formats .pf-stat-value.pf-warn{ color:var(--warn,#e0a106); }
+      #tool-precision-formats .pf-stat-value.pf-good{ color:var(--good,#4fbf8f); }
+    }
+    html[data-theme="dark"] #tool-precision-formats{ --pf-sign:#9d74c9; --pf-exp:#c96a45; --pf-mant:#2e9469; --pf-int:#a87c14; }
+    html[data-theme="dark"] #tool-precision-formats .pf-stat-value.pf-warn{ color:var(--warn,#e0a106); }
+    html[data-theme="dark"] #tool-precision-formats .pf-stat-value.pf-good{ color:var(--good,#4fbf8f); }
+    html[data-theme="light"] #tool-precision-formats{ --pf-sign:#7c4ea8; --pf-exp:#b0512f; --pf-mant:#1f7a55; --pf-int:#8a6100; }
+    html[data-theme="light"] #tool-precision-formats .pf-stat-value.pf-warn{ color:var(--warn,#a06a00); }
+    html[data-theme="light"] #tool-precision-formats .pf-stat-value.pf-good{ color:var(--good,#1f7a55); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-precision-formats');
+    if(!root) return;
+
+    var fmtSel    = root.querySelector('#precision-formats-fmt');
+    var valInp    = root.querySelector('#precision-formats-value');
+    var scaleWrap = root.querySelector('#precision-formats-scale-wrap');
+    var scaleInp  = root.querySelector('#precision-formats-scale-max');
+    var bitsEl    = root.querySelector('#precision-formats-bits');
+    var readEl    = root.querySelector('#precision-formats-readout');
+    var lineEl    = root.querySelector('#precision-formats-line');
+    var tblBody   = root.querySelector('#precision-formats-table-body');
+    var thSel     = root.querySelector('#precision-formats-th-sel');
+    var noteEl    = root.querySelector('#precision-formats-note');
+    var resetBtn  = root.querySelector('#precision-formats-reset');
+    var presetBtns= root.querySelectorAll('#precision-formats-presets button[data-v]');
+    if(!fmtSel || !valInp || !bitsEl || !readEl || !lineEl || !tblBody || !noteEl) return;
+
+    var DEFAULTS = { fmt:'bf16', value:'3.14159265', scale:'4.0' };
+
+    // -----------------------------------------------------------------
+    // Format table.  bias = 2^(expBits-1) - 1 (the IEEE-754 rule) for
+    // every format here, including both fp8 variants.
+    // allOnesFinite=true only for E4M3FN ("finite"): the all-ones exponent
+    // field carries ordinary finite numbers, and only the single code with
+    // an all-ones mantissa inside it is NaN.  There is no Infinity, and the
+    // largest finite value is 1.110b * 2^8 = 448.
+    // -----------------------------------------------------------------
+    var FORMATS = {
+      fp32:    { label:'fp32',     expBits:8, mantBits:23, bias:127, hasInf:true,  allOnesFinite:false, totalBits:32, effBits:32 },
+      tf32:    { label:'tf32',     expBits:8, mantBits:10, bias:127, hasInf:true,  allOnesFinite:false, totalBits:32, effBits:19 },
+      bf16:    { label:'bf16',     expBits:8, mantBits:7,  bias:127, hasInf:true,  allOnesFinite:false, totalBits:16, effBits:16 },
+      fp16:    { label:'fp16',     expBits:5, mantBits:10, bias:15,  hasInf:true,  allOnesFinite:false, totalBits:16, effBits:16 },
+      fp8e4m3: { label:'fp8 E4M3', expBits:4, mantBits:3,  bias:7,   hasInf:false, allOnesFinite:true,  totalBits:8,  effBits:8  },
+      fp8e5m2: { label:'fp8 E5M2', expBits:5, mantBits:2,  bias:15,  hasInf:true,  allOnesFinite:false, totalBits:8,  effBits:8  }
+    };
+
+    function p2(n){ return Math.pow(2,n); }
+
+    // floor(log2(ax)) computed robustly: Math.log2 can be off by one at
+    // exact powers of two, so verify and nudge.
+    function frexp2(ax){
+      if (!(ax>0) || !isFinite(ax)) return 0;
+      var e = Math.floor(Math.log2(ax));
+      var guard=0;
+      while (p2(e) > ax && guard<8){ e--; guard++; }
+      guard=0;
+      while (p2(e+1) <= ax && guard<8){ e++; guard++; }
+      return e;
+    }
+
+    // Round-half-to-even ("banker's rounding") -- IEEE-754's default mode
+    // and what torch.round() does.  raw must be finite and >= 0.  Every
+    // `raw` fed in here is computed by exact power-of-two scaling, so an
+    // exact === 0.5 test is the right tie predicate (no epsilon fudge).
+    function roundHalfEven(raw){
+      var f = Math.floor(raw);
+      var diff = raw - f;
+      if (diff === 0.5) return (f % 2 === 0) ? f : f+1;
+      return diff > 0.5 ? f+1 : f;
+    }
+
+    // --- derived constants, all computed from the field widths ---------
+    function maxExpField(fmt){ return (fmt.allOnesFinite ? p2(fmt.expBits)-1 : p2(fmt.expBits)-2); }
+    function maxMantInt(fmt){ return (fmt.allOnesFinite ? p2(fmt.mantBits)-2 : p2(fmt.mantBits)-1); }
+    function maxFinite(fmt){ return (1 + maxMantInt(fmt)/p2(fmt.mantBits)) * p2(maxExpField(fmt)-fmt.bias); }
+    function minNormal(fmt){ return p2(1-fmt.bias); }
+    function minSubnormal(fmt){ return p2(1-fmt.bias-fmt.mantBits); }
+    function machEps(fmt){ return p2(-fmt.mantBits); }
+    function decimalDigits(fmt){ return (fmt.mantBits+1)*Math.log10(2); }
+
+    // Integer index of a magnitude code: expField*2^m + mantInt.  Adding 1
+    // gives the next larger representable magnitude, across the
+    // subnormal/normal boundary and across every exponent step -- exactly
+    // how hardware orders IEEE magnitudes.
+    function maxCode(fmt){ return maxExpField(fmt)*p2(fmt.mantBits) + maxMantInt(fmt); }
+    function valueOfCode(fmt, code){
+      var M = p2(fmt.mantBits);
+      var ef = Math.floor(code/M), mi = code - ef*M;
+      if (ef === 0) return mi*p2(1-fmt.bias-fmt.mantBits);
+      return (1 + mi/M)*p2(ef-fmt.bias);
+    }
+
+    // Round |x| into fmt with round-to-nearest-even, returning the decoded
+    // fields.  Normal range: round the 2^m-scaled fraction.  Below the
+    // smallest normal: round on the fixed subnormal grid.  Above the
+    // largest finite: overflow to +/-Infinity, or to NaN for E4M3FN which
+    // has no Infinity encoding.
+    function decomposeFloat(x, fmt){
+      var sign = (x<0) || Object.is(x,-0);
+      var ax = Math.abs(x);
+      var mantBits = fmt.mantBits, bias = fmt.bias;
+      var M = p2(mantBits);
+      if (ax === 0){
+        return {special:'zero', sign:sign, value: sign?-0:0, category:'zero',
+                expField:0, mantInt:0, isSubnormal:false, code:0};
+      }
+      var eMinNormal = 1-bias;
+      var eMaxNormal = maxExpField(fmt)-bias;
+      var e = frexp2(ax);
+      var isSubnormal=false, resultExp, mantInt;
+
+      function overflow(){
+        var isNan = !fmt.hasInf;
+        return {
+          special: isNan?'nan':'inf', sign:sign,
+          value: isNan?NaN:(sign?-Infinity:Infinity),
+          category:'overflow',
+          expField: p2(fmt.expBits)-1,
+          mantInt: isNan ? (M-1) : 0,
+          isSubnormal:false, code: maxCode(fmt)
+        };
+      }
+
+      if (e < eMinNormal){
+        isSubnormal = true;
+        var subUlp = p2(eMinNormal - mantBits);
+        mantInt = roundHalfEven(ax/subUlp);
+        if (mantInt === 0){
+          return {special:'underflow-zero', sign:sign, value: sign?-0:0, category:'underflow',
+                  expField:0, mantInt:0, isSubnormal:true, code:0};
+        }
+        resultExp = eMinNormal;
+        if (mantInt >= M){           // rounded up into the normal range
+          isSubnormal = false;
+          mantInt -= M;
+        }
+      } else {
+        var frac = ax/p2(e) - 1;                 // exact: in [0,1)
+        mantInt = roundHalfEven(frac*M);
+        resultExp = e;
+        if (mantInt >= M){ mantInt = 0; resultExp = e+1; }
+        if (resultExp > eMaxNormal) return overflow();
+        // E4M3FN: expField all ones + mantissa all ones is the NaN code,
+        // so rounding onto it is an overflow, not a finite value.
+        if (fmt.allOnesFinite && resultExp === eMaxNormal && mantInt >= M-1) return overflow();
+      }
+
+      var value = isSubnormal ? mantInt*p2(eMinNormal-mantBits)
+                              : (1 + mantInt/M)*p2(resultExp);
+      if (sign) value = -value;
+      var expField = isSubnormal ? 0 : (resultExp+bias);
+      return {
+        special:null, sign:sign, value:value,
+        category: isSubnormal?'subnormal':'normal',
+        expField:expField, mantInt:mantInt, isSubnormal:isSubnormal,
+        exponentUnbiased: isSubnormal ? eMinNormal : resultExp,
+        code: expField*M + mantInt
+      };
+    }
+
+    // Symmetric per-tensor affine int8 quantization -- the scheme used for
+    // weight tensors in practice: s = max|x| / 127, round-half-to-even on
+    // the magnitude, codes clipped to [-127, 127] (-128 is left unused so
+    // the grid stays symmetric about zero).
+    function quantizeInt8(x, maxAbs){
+      var qmax = 127;
+      var s = maxAbs>0 ? maxAbs/qmax : 1e-12;
+      var raw = x/s;
+      var q = roundHalfEven(Math.abs(raw));
+      if (raw < 0) q = -q;
+      var clipped = q < -qmax || q > qmax;
+      q = Math.max(-qmax, Math.min(qmax, q));
+      var dequant = q*s;
+      return {scale:s, code:q, dequant:dequant, error:dequant-x, clipped:clipped, qmax:qmax};
+    }
+
+    function bin(v, width){
+      v = Math.max(0, Math.round(v));
+      var s = v.toString(2);
+      while (s.length<width) s='0'+s;
+      return s;
+    }
+    function twosComplement8(q){ return bin(q<0 ? 256+q : q, 8); }
+
+    function fmtNum(v, opts){
+      opts = opts||{};
+      if (v===null || v===undefined) return 'n/a';
+      if (typeof v==='number' && isNaN(v)) return 'NaN';
+      if (v===Infinity) return '+Infinity';
+      if (v===-Infinity) return '-Infinity';
+      if (v===0) return Object.is(v,-0) ? '-0' : '0';
+      var av = Math.abs(v);
+      if (av>=1e-4 && av<1e8){
+        var s = v.toPrecision(opts.sig||8);
+        if (s.indexOf('e')===-1 && s.indexOf('.')!==-1) s = s.replace(/0+$/,'').replace(/\.$/,'');
+        return s;
+      }
+      return v.toExponential(opts.esig!==undefined?opts.esig:5);
+    }
+
+    function bitField(cls, label, bits){
+      var wrap = document.createElement('div');
+      wrap.className = 'pf-field '+cls;
+      wrap.style.flex = bits.length+' 1 auto';
+      var hd = document.createElement('div');
+      hd.className='pf-field-hd';
+      hd.textContent = label;
+      var rowEl = document.createElement('div');
+      rowEl.className='pf-field-bits';
+      for (var i=0;i<bits.length;i++){
+        var b = document.createElement('span');
+        b.className='pf-bit';
+        b.textContent = bits[i];
+        rowEl.appendChild(b);
+      }
+      wrap.appendChild(hd); wrap.appendChild(rowEl);
+      return wrap;
+    }
+
+    function svgEl(tag, attrs){
+      var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (var k in attrs){ if(Object.prototype.hasOwnProperty.call(attrs,k)) el.setAttribute(k, attrs[k]); }
+      return el;
+    }
+    function txt(svg, x, y, cls, anchor, s){
+      var t = svgEl('text',{x:x, y:y, class:cls, 'text-anchor':anchor||'middle'});
+      t.textContent = s;
+      svg.appendChild(t);
+      return t;
+    }
+    function marker(svg, x, yTop, yBot, label, labelY){
+      svg.appendChild(svgEl('line',{x1:x, y1:yTop, x2:x, y2:yBot, class:'pf-marker-line'}));
+      svg.appendChild(svgEl('polygon',{points:(x-6)+','+yTop+' '+(x+6)+','+yTop+' '+x+','+(yTop+11), class:'pf-marker-tri'}));
+      if (label) txt(svg, Math.max(46, Math.min(714, x)), labelY, 'pf-marker-label', 'middle', label);
+    }
+
+    var W=760;
+
+    // Panel 1: log-scale dynamic range, with the four regimes a value can
+    // fall into (flush-to-zero / subnormal / normal / overflow).
+    function floatRangePanel(svg, fmt, ax, decomp){
+      var mL=54, mR=56, top=44, baseY=84;
+      var innerW = W-mL-mR;
+      var minSub = minSubnormal(fmt), minNorm = minNormal(fmt), maxF = maxFinite(fmt);
+      var loCore = Math.log10(minSub), hiCore = Math.log10(maxF);
+      var pad = Math.max(0.5, 0.09*(hiCore-loCore));
+      var lo = loCore-pad, hi = hiCore+pad;
+      function xOf(v){
+        var t = (Math.log10(v)-lo)/(hi-lo);
+        if (!isFinite(t)) t = 0;
+        return mL + Math.max(0, Math.min(1,t))*innerW;
+      }
+      txt(svg, 0, 16, 'pf-sec-title', 'start', '1. Dynamic range of '+fmt.label+' (log scale, magnitudes)');
+
+      var xSub = xOf(minSub), xNorm = xOf(minNorm), xMax = xOf(maxF), xR = mL+innerW;
+      svg.appendChild(svgEl('rect',{x:mL, y:top, width:Math.max(0,xSub-mL), height:baseY-top, class:'pf-region-zero'}));
+      svg.appendChild(svgEl('rect',{x:xSub, y:top, width:Math.max(0,xNorm-xSub), height:baseY-top, class:'pf-region-sub'}));
+      svg.appendChild(svgEl('rect',{x:xNorm, y:top, width:Math.max(0,xMax-xNorm), height:baseY-top, class:'pf-region-norm'}));
+      svg.appendChild(svgEl('rect',{x:xMax, y:top, width:Math.max(0,xR-xMax), height:baseY-top, class:'pf-region-over'}));
+      svg.appendChild(svgEl('line',{x1:mL, y1:baseY, x2:xR, y2:baseY, class:'pf-axis'}));
+
+      txt(svg, (mL+xSub)/2, top+14, 'pf-region-label', 'middle', '-> 0');
+      if (xNorm-xSub > 46) txt(svg, (xSub+xNorm)/2, top+14, 'pf-region-label', 'middle', 'subnormal');
+      txt(svg, (xNorm+xMax)/2, top+14, 'pf-region-label', 'middle', 'normal');
+      txt(svg, (xMax+xR)/2, top+14, 'pf-region-label', 'middle', fmt.hasInf ? '-> inf' : '-> NaN');
+
+      [{v:minSub,l:'min subnorm'},{v:minNorm,l:'min normal'},{v:1,l:'1.0'},{v:maxF,l:'max finite'}].forEach(function(lm){
+        var x = xOf(lm.v);
+        svg.appendChild(svgEl('line',{x1:x,y1:top,x2:x,y2:baseY+6, class:'pf-tick'}));
+        txt(svg, x, baseY+18, 'pf-tick-label', 'middle', lm.l);
+        txt(svg, x, baseY+29, 'pf-tick-label', 'middle', fmtNum(lm.v,{sig:3, esig:1}));
+      });
+
+      var mx;
+      if (decomp.category==='zero' || decomp.category==='underflow') mx = mL;
+      else if (decomp.category==='overflow') mx = xR;
+      else mx = xOf(ax);
+      marker(svg, mx, top-12, baseY, '|x| = '+fmtNum(ax,{sig:4}), top-18);
+
+      if (decomp.category==='overflow')
+        txt(svg, W, 16, 'pf-flag-label', 'end',
+            fmt.hasInf ? 'past max finite -> overflows to Infinity'
+                       : 'past max finite -> overflows to NaN (E4M3FN has no Inf)');
+      else if (decomp.category==='underflow')
+        txt(svg, W, 16, 'pf-flag-label', 'end', 'below half the min subnormal -> flushes to zero');
+    }
+
+    // Panel 2: the actual representable grid in a window of +/-4 codes
+    // around the result -- this is where rounding becomes visible.
+    function floatZoomPanel(svg, fmt, ax, decomp, y0){
+      var mL=54, mR=56, axisY=y0+52;
+      var innerW = W-mL-mR;
+      var cMax = maxCode(fmt);
+      var center = Math.max(0, Math.min(cMax, decomp.code));
+      var span = 4;
+      var c0 = Math.max(0, center-span), c1 = Math.min(cMax, center+span);
+      if (c1-c0 < 2*span) { c0 = Math.max(0, c1-2*span); c1 = Math.min(cMax, c0+2*span); }
+      var vLo = valueOfCode(fmt,c0), vHi = valueOfCode(fmt,c1);
+      var denom = (vHi-vLo) || 1;
+      function xOf(v){ return mL + Math.max(0, Math.min(1,(v-vLo)/denom))*innerW; }
+
+      txt(svg, 0, y0-4, 'pf-sec-title', 'start',
+          '2. Every value '+fmt.label+' can represent near your number (linear zoom) -- |x| snaps to the nearest dot');
+      svg.appendChild(svgEl('line',{x1:mL,y1:axisY,x2:mL+innerW,y2:axisY, class:'pf-axis'}));
+
+      var hitCode = decomp.category==='overflow' ? -1 : decomp.code;
+      for (var c=c0; c<=c1; c++){
+        var v = valueOfCode(fmt,c), x = xOf(v);
+        var isHit = (c===hitCode);
+        svg.appendChild(svgEl('circle',{cx:x, cy:axisY, r:isHit?5.5:3.5, class:'pf-node'+(isHit?' is-hit':'')}));
+        if (c===c0 || c===c1 || isHit) txt(svg, x, axisY+18, 'pf-tick-label', 'middle', fmtNum(v,{sig:6, esig:3}));
+      }
+
+      // ULP dimension between the two rightmost dots
+      var va = valueOfCode(fmt,c1-1), vb = valueOfCode(fmt,c1);
+      var xa = xOf(va), xb = xOf(vb);
+      svg.appendChild(svgEl('line',{x1:xa,y1:axisY-16,x2:xb,y2:axisY-16, class:'pf-dim'}));
+      svg.appendChild(svgEl('line',{x1:xa,y1:axisY-20,x2:xa,y2:axisY-12, class:'pf-dim'}));
+      svg.appendChild(svgEl('line',{x1:xb,y1:axisY-20,x2:xb,y2:axisY-12, class:'pf-dim'}));
+      txt(svg, (xa+xb)/2, axisY-24, 'pf-tick-label', 'middle', 'gap = '+fmtNum(vb-va,{sig:3, esig:2}));
+
+      var offLeft = ax < vLo, offRight = ax > vHi;
+      var xm = xOf(ax);
+      marker(svg, xm, axisY-38, axisY, null, 0);
+      var lblX = Math.max(52, Math.min(708, xm));
+      txt(svg, lblX, axisY-44, 'pf-marker-label', 'middle',
+          (offLeft||offRight ? '|x| off-scale ' + (offRight?'->':'<-') + ' ' : '|x| = ')+fmtNum(ax,{sig:6, esig:3}));
+    }
+
+    function renderFloatSvg(fmt, ax, decomp){
+      var H = 250;
+      var svg = svgEl('svg',{viewBox:'0 0 '+W+' '+H, role:'img',
+        'aria-label':'Dynamic range of '+fmt.label+' and the representable grid around the entered value'});
+      floatRangePanel(svg, fmt, ax, decomp);
+      floatZoomPanel(svg, fmt, ax, decomp, 140);
+      return svg;
+    }
+
+    // int8: full symmetric code grid, plus a zoom on the neighbouring codes.
+    function renderInt8Svg(maxAbs, q, x){
+      var H=250, mL=60, mR=60, innerW=W-mL-mR;
+      var svg = svgEl('svg',{viewBox:'0 0 '+W+' '+H, role:'img',
+        'aria-label':'int8 quantization grid and the codes neighbouring the entered value'});
+
+      // ---- panel 1: all 255 codes across the calibrated range ----
+      var top=44, baseY=84;
+      var lo=-maxAbs*1.12, hi=maxAbs*1.12;
+      function xOf(v){ return mL + Math.max(0,Math.min(1,(v-lo)/(hi-lo)))*innerW; }
+      txt(svg, 0, 16, 'pf-sec-title', 'start', '1. All 255 int8 codes across the calibrated range [-max|x|, +max|x|]');
+      svg.appendChild(svgEl('rect',{x:xOf(-maxAbs), y:top, width:xOf(maxAbs)-xOf(-maxAbs), height:baseY-top, class:'pf-region-norm'}));
+      svg.appendChild(svgEl('line',{x1:mL,y1:baseY,x2:mL+innerW,y2:baseY, class:'pf-axis'}));
+      for (var c=-127;c<=127;c++){
+        var xg = xOf(c*q.scale);
+        svg.appendChild(svgEl('line',{x1:xg,y1:baseY-6,x2:xg,y2:baseY+6, class:'pf-grid-tick', opacity:'0.45'}));
+      }
+      [-maxAbs,0,maxAbs].forEach(function(v){
+        var x=xOf(v);
+        svg.appendChild(svgEl('line',{x1:x,y1:top,x2:x,y2:baseY+8, class:'pf-tick'}));
+        txt(svg, x, baseY+20, 'pf-tick-label', 'middle', fmtNum(v,{sig:4, esig:2}));
+      });
+      txt(svg, xOf(-maxAbs), baseY+31, 'pf-tick-label', 'middle', 'code -127');
+      txt(svg, xOf(maxAbs),  baseY+31, 'pf-tick-label', 'middle', 'code +127');
+      marker(svg, xOf(x), top-12, baseY, 'x = '+fmtNum(x,{sig:5}), top-18);
+      if (q.clipped) txt(svg, mL+innerW, 16, 'pf-flag-label', 'end', 'outside calibration range: clipped to +/-127');
+
+      // ---- panel 2: zoom on codes q-4 .. q+4 ----
+      var y0=140, axisY=y0+52;
+      var c0=Math.max(-127,q.code-4), c1=Math.min(127,q.code+4);
+      if (c1-c0 < 8){ if (c0===-127) c1=Math.min(127,c0+8); else c0=Math.max(-127,c1-8); }
+      var vLo=c0*q.scale, vHi=c1*q.scale, denom=(vHi-vLo)||1;
+      function xz(v){ return mL + Math.max(0,Math.min(1,(v-vLo)/denom))*innerW; }
+      txt(svg, 0, y0-4, 'pf-sec-title', 'start',
+          '2. Neighbouring codes (linear zoom) -- the grid is uniform, step = s = max|x|/127');
+      svg.appendChild(svgEl('line',{x1:mL,y1:axisY,x2:mL+innerW,y2:axisY, class:'pf-axis'}));
+      for (var k=c0;k<=c1;k++){
+        var v=k*q.scale, xk=xz(v), hit=(k===q.code);
+        svg.appendChild(svgEl('circle',{cx:xk, cy:axisY, r:hit?5.5:3.5, class:'pf-node'+(hit?' is-hit':'')}));
+        txt(svg, xk, axisY+17, 'pf-tick-label', 'middle', String(k));
+        if (hit) txt(svg, xk, axisY+29, 'pf-q-label', 'middle', fmtNum(v,{sig:5, esig:2}));
+      }
+      var xa=xz(c1*q.scale - q.scale), xb=xz(c1*q.scale);
+      svg.appendChild(svgEl('line',{x1:xa,y1:axisY-16,x2:xb,y2:axisY-16, class:'pf-dim'}));
+      svg.appendChild(svgEl('line',{x1:xa,y1:axisY-20,x2:xa,y2:axisY-12, class:'pf-dim'}));
+      svg.appendChild(svgEl('line',{x1:xb,y1:axisY-20,x2:xb,y2:axisY-12, class:'pf-dim'}));
+      txt(svg, (xa+xb)/2, axisY-24, 'pf-tick-label', 'middle', 's = '+fmtNum(q.scale,{sig:3, esig:2}));
+      var xm=xz(x), off = (x<vLo||x>vHi);
+      marker(svg, xm, axisY-38, axisY, null, 0);
+      txt(svg, Math.max(52,Math.min(708,xm)), axisY-44, 'pf-marker-label', 'middle',
+          (off?'x off-scale ':'x = ')+fmtNum(x,{sig:6, esig:3}));
+      return svg;
+    }
+
+    function stat(label, value, sub, cls){
+      var d = document.createElement('div'); d.className='pf-stat';
+      var l = document.createElement('div'); l.className='pf-stat-label'; l.textContent=label;
+      var v = document.createElement('div'); v.className='pf-stat-value'+(cls?(' '+cls):''); v.textContent=value;
+      d.appendChild(l); d.appendChild(v);
+      if (sub){ var s=document.createElement('div'); s.className='pf-stat-sub'; s.textContent=sub; d.appendChild(s); }
+      return d;
+    }
+    function row(label, selVal, fp32Val){
+      var tr = document.createElement('tr');
+      var a=document.createElement('td'); a.textContent=label;
+      var b=document.createElement('td'); b.textContent=selVal;
+      var c=document.createElement('td'); c.textContent=fp32Val;
+      tr.appendChild(a); tr.appendChild(b); tr.appendChild(c);
+      return tr;
+    }
+
+    var NOTES = {
+      fp32:  '<b>Key point:</b> fp32 is the reference everything else is measured against -- 8 exponent bits buy a ~1e-38..3.4e38 range, 23 mantissa bits buy ~7.2 decimal digits. Notice in panel 2 that even fp32 cannot store 0.1 or 1/3 exactly: binary floating point has a finite grid at every magnitude.',
+      tf32:  '<b>Key point:</b> tf32 keeps fp32\'s full 8-bit exponent (identical dynamic range) but truncates the mantissa to 10 bits, i.e. fp16-level precision. NVIDIA tensor cores read and write fp32 but round inputs to tf32 internally and accumulate in fp32, so it is a nearly free speedup for fp32 matmuls -- at the cost of ~3.3 decimal digits instead of ~7.2.',
+      bf16:  '<b>Key point:</b> bf16 is literally the top 16 bits of fp32 -- same 8-bit exponent, so the dynamic range is identical and gradients almost never overflow -- but only 7 mantissa bits, about 2.4 decimal digits. Panel 2 shows how coarse that grid is; it works because SGD/Adam updates are already noisy, and because the accumulation still happens in fp32.',
+      fp16:  '<b>Key point:</b> fp16 has 10 mantissa bits (finer than bf16) but only a 5-bit exponent, so the largest finite value is 65504 and the smallest normal is 6.1e-5. Try 70000 (overflows to Infinity) and 1e-8 (falls into the subnormal mush or flushes to zero) -- those two failure modes are exactly why fp16 training needs loss scaling.',
+      fp8e4m3: '<b>Key point:</b> with 4 exponent and 3 mantissa bits, E4M3FN spans only +/-448 with ~1.2 decimal digits, and it spends its all-ones exponent on finite numbers (max 448, no Infinity) -- try 470 to see it round straight onto the NaN code. It cannot self-scale to a tensor\'s natural range, so real fp8 always pairs it with a per-tensor or per-block fp16/fp32 scale factor. Switch to int8 above to see the same idea in its purest form.',
+      fp8e5m2: '<b>Key point:</b> E5M2 spends a bit the other way -- fp16\'s 5-bit exponent range (max 57344) with just 2 mantissa bits, so consecutive representable values differ by 25%. That is too coarse for weights or activations, which is why the usual fp8 recipe is E4M3 for the forward pass and E5M2 for gradients, both with per-tensor scales.'
+    };
+
+    function render(){
+      var key = fmtSel.value;
+      var isInt8 = (key === 'int8');
+      var fmt = FORMATS[key] || FORMATS.fp32;
+
+      if (scaleWrap) scaleWrap.classList.toggle('is-hidden', !isInt8);
+      if (thSel) thSel.textContent = isInt8 ? 'int8' : fmt.label;
+
+      bitsEl.innerHTML=''; readEl.innerHTML=''; lineEl.innerHTML=''; tblBody.innerHTML=''; noteEl.innerHTML='';
+
+      var raw = (valInp.value||'').trim();
+      var x = parseFloat(raw);
+      if (raw==='' || !isFinite(x)){
+        noteEl.textContent = 'Enter a finite real number in decimal or scientific notation, e.g. 0.1, -12.5, 6.02e23, 1e-8.';
+        return;
+      }
+
+      if (isInt8){
+        var maxAbsRaw = parseFloat((scaleInp && scaleInp.value || '').trim());
+        var maxAbsValid = isFinite(maxAbsRaw) && maxAbsRaw > 0;
+        var maxAbs = maxAbsValid ? maxAbsRaw : 1;
+        var q = quantizeInt8(x, maxAbs);
+
+        bitsEl.appendChild(bitField('pf-int', "int8 code (8 bits, two's complement)", twosComplement8(q.code)));
+
+        readEl.appendChild(stat('Quantized code', String(q.code),
+          q.clipped ? 'CLIPPED: |x| exceeds max|x|' : 'range [-127, +127]', q.clipped?'pf-warn':null));
+        readEl.appendChild(stat('Scale  s = max|x| / 127', fmtNum(q.scale,{sig:6}),
+          'max|x| = '+fmtNum(maxAbs,{sig:5})+(maxAbsValid?'':'  (invalid input, using 1)')));
+        readEl.appendChild(stat('Dequantized  q * s', fmtNum(q.dequant,{sig:8})));
+        var relErrI = (x!==0) ? Math.abs(q.error/x)*100 : null;
+        readEl.appendChild(stat('Rounding error', q.error===0?'0 (exact)':fmtNum(q.error,{sig:4}),
+          relErrI===null ? 'relative: n/a (x = 0)' : 'relative: '+relErrI.toFixed(3)+'%',
+          q.error===0 ? 'pf-good' : (q.clipped ? 'pf-warn' : null)));
+
+        lineEl.appendChild(renderInt8Svg(maxAbs, q, x));
+
+        tblBody.appendChild(row('Bit layout', "8-bit two's complement integer (no exponent, no mantissa)", '1 sign + 8 exponent + 23 mantissa'));
+        tblBody.appendChild(row('Total bits', '8', '32'));
+        tblBody.appendChild(row('Representable set', '255 evenly spaced values in [-max|x|, +max|x|]', '~4.2e9 values, log-spaced across 2e83 of range'));
+        tblBody.appendChild(row('Spacing', fmtNum(q.scale,{sig:4})+' everywhere (absolute, constant)',
+          fmtNum(machEps(FORMATS.fp32),{sig:3})+' relative (ULP grows with |x|)'));
+        tblBody.appendChild(row('Dynamic range', 'set by calibration: +/-'+fmtNum(maxAbs,{sig:4}), '~+/-3.4e38'));
+        tblBody.appendChild(row('Needs an external scale?', 'yes -- per-tensor / per-channel / per-group fp scale', 'no -- self-scaling'));
+        tblBody.appendChild(row('~decimal digits', (Math.log10(255)).toFixed(1)+' (over the whole tensor)', decimalDigits(FORMATS.fp32).toFixed(1)+' (at every magnitude)'));
+
+        noteEl.innerHTML = '<b>Key point:</b> int8 has no exponent field at all -- it is a plain 8-bit integer code, and the only thing tying it to real numbers is an external floating-point <b>scale</b> s = max|x|/127 calibrated from the tensor. Its grid is <i>uniform</i>, unlike every float above, whose grid stretches with magnitude. That is the whole tradeoff: raise max|x| (say, one activation outlier at 100x the rest) and every other value in the tensor gets a coarser step. Fixing that is precisely what per-channel scales, group-wise quantization, and outlier-aware schemes like LLM.int8() are for.';
+        return;
+      }
+
+      var decomp = decomposeFloat(x, fmt);
+      var ax = Math.abs(x);
+      var M = p2(fmt.mantBits);
+
+      var mantStr = bin(decomp.mantInt, fmt.mantBits);
+      bitsEl.appendChild(bitField('pf-sign','sign (1)', decomp.sign?'1':'0'));
+      bitsEl.appendChild(bitField('pf-exp','exponent ('+fmt.expBits+')', bin(decomp.expField, fmt.expBits)));
+      bitsEl.appendChild(bitField('pf-mant','mantissa ('+fmt.mantBits+')', mantStr));
+
+      var catLabel, catCls;
+      if (decomp.category==='zero'){ catLabel='exact zero'; catCls=null; }
+      else if (decomp.category==='underflow'){ catLabel='underflow -> flushed to 0'; catCls='pf-warn'; }
+      else if (decomp.category==='overflow'){ catLabel = fmt.hasInf ? 'overflow -> +/-Infinity' : 'overflow -> NaN (no Inf)'; catCls='pf-warn'; }
+      else if (decomp.category==='subnormal'){ catLabel='subnormal (denormal)'; catCls='pf-warn'; }
+      else { catLabel='normal'; catCls='pf-good'; }
+      var catSub = (decomp.category==='normal' || decomp.category==='subnormal')
+        ? 'exponent field '+decomp.expField+' - bias '+fmt.bias+' = '+decomp.exponentUnbiased : null;
+      readEl.appendChild(stat('Category', catLabel, catSub, catCls));
+
+      readEl.appendChild(stat('Nearest representable value', fmtNum(decomp.value,{sig:9}),
+        (decomp.category==='normal'||decomp.category==='subnormal')
+          ? ((decomp.sign?'-':'+')+(decomp.isSubnormal?'0.':'1.')+mantStr+'b x 2^'+decomp.exponentUnbiased) : null));
+
+      var exact = isFinite(decomp.value) && decomp.value === x;
+      var absErr = isFinite(decomp.value) ? Math.abs(decomp.value-x) : null;
+      readEl.appendChild(stat('Absolute rounding error',
+        absErr===null ? 'n/a (overflow)' : (exact ? '0 (exact)' : fmtNum(absErr,{sig:4})),
+        null, exact ? 'pf-good' : (absErr===null ? 'pf-warn' : null)));
+
+      var relErr = (x!==0 && isFinite(decomp.value)) ? Math.abs((decomp.value-x)/x)*100 : null;
+      readEl.appendChild(stat('Relative rounding error',
+        relErr===null ? 'n/a' : (exact ? '0 (exact)' : relErr.toFixed(4)+'%'),
+        'half-ULP bound: '+(100*machEps(fmt)/2).toFixed(4)+'% for normals'));
+
+      var ulp = decomp.isSubnormal ? p2(1-fmt.bias-fmt.mantBits)
+              : (decomp.category==='normal' ? p2(decomp.exponentUnbiased-fmt.mantBits) : null);
+      readEl.appendChild(stat('ULP at this magnitude', ulp===null ? 'n/a' : fmtNum(ulp,{sig:4}),
+        ulp===null ? null : 'gap to the next representable value'));
+
+      lineEl.appendChild(renderFloatSvg(fmt, ax, decomp));
+
+      var f32 = FORMATS.fp32;
+      tblBody.appendChild(row('Sign bits', '1', '1'));
+      tblBody.appendChild(row('Exponent bits', String(fmt.expBits), '8'));
+      tblBody.appendChild(row('Mantissa bits', String(fmt.mantBits), '23'));
+      tblBody.appendChild(row('Total bits', fmt.effBits===fmt.totalBits ? String(fmt.totalBits)
+        : (fmt.effBits+' effective ('+fmt.totalBits+' stored)'), '32'));
+      tblBody.appendChild(row('Exponent bias', String(fmt.bias), '127'));
+      tblBody.appendChild(row('Max finite', fmtNum(maxFinite(fmt),{sig:6}), fmtNum(maxFinite(f32),{sig:6})));
+      tblBody.appendChild(row('Min normal', fmtNum(minNormal(fmt),{sig:4}), fmtNum(minNormal(f32),{sig:4})));
+      tblBody.appendChild(row('Min subnormal', fmtNum(minSubnormal(fmt),{sig:4}), fmtNum(minSubnormal(f32),{sig:4})));
+      tblBody.appendChild(row('Machine epsilon (2^-mantissa)', fmtNum(machEps(fmt),{sig:4}), fmtNum(machEps(f32),{sig:4})));
+      tblBody.appendChild(row('~decimal digits of precision', decimalDigits(fmt).toFixed(1), decimalDigits(f32).toFixed(1)));
+      tblBody.appendChild(row('Infinity encoding?', fmt.hasInf ? 'yes (exponent all ones, mantissa 0)' : 'no -- all-ones exponent is finite; only mantissa all-ones is NaN', 'yes'));
+
+      noteEl.innerHTML = NOTES[key] || '';
+    }
+
+    fmtSel.addEventListener('change', render);
+    valInp.addEventListener('input', render);
+    if (scaleInp) scaleInp.addEventListener('input', render);
+    Array.prototype.forEach.call(presetBtns, function(btn){
+      btn.addEventListener('click', function(){ valInp.value = btn.getAttribute('data-v'); render(); });
+    });
+    if (resetBtn) resetBtn.addEventListener('click', function(){
+      fmtSel.value = DEFAULTS.fmt; valInp.value = DEFAULTS.value;
+      if (scaleInp) scaleInp.value = DEFAULTS.scale;
+      render();
+    });
+
+    render();
+  })();</script>
+</div>

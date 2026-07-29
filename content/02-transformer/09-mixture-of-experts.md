@@ -265,6 +265,8 @@ Why does capacity exist at all? Because GPUs want **static, rectangular tensors*
 
 The takeaway in one line: **capacity factor governs the dropping-vs-padding trade-off; the total-to-active ratio governs the capacity-vs-cost trade-off.** Both are knobs you tune, and both show up directly in training loss and serving latency.
 
+{{tool:moe-router}}
+
 ## The Landmark Designs: GShard, Switch, Mixtral, DeepSeek-MoE
 
 The ideas above were not discovered all at once; each landmark model fixed a specific pain point. Knowing the lineage lets you reason about *why* a given model made its choices.

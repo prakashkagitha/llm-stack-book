@@ -104,6 +104,8 @@ Output row $i$ is query $i$'s personalized blend of the values. We have arrived 
 !!! warning "Common pitfall: softmax along the wrong axis"
     The single most common attention bug is applying softmax over the *query* axis instead of the *key* axis. In `S` of shape `(n_queries, n_keys)`, you must normalize over `dim=-1` (keys) so that **each query's** weights sum to 1. Normalizing over `dim=0` (queries) silently produces a model that trains — slowly, badly, and confusingly — to a worse loss. Always assert `A.sum(dim=-1)` is all-ones during development.
 
+{{tool:self-attention-explorer}}
+
 ## Why Divide by $\sqrt{d_k}$? The Variance Argument
 
 The scale factor $1/\sqrt{d_k}$ looks like a footnote. It is not. Get it wrong and softmax saturates, gradients vanish, and the network refuses to learn. Here is the argument from *Attention Is All You Need* (Vaswani et al., 2017), made fully explicit.

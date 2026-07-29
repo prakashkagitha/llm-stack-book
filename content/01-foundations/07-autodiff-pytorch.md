@@ -457,6 +457,8 @@ Two smaller modernizations of the interface are worth knowing. PyTorch 2.x suppo
 
     The numbers match our hand trace exactly. The ReLU gate for the second neuron ($z_1[1] = -1 < 0$) is closed, so no gradient flows through it.
 
+{{tool:backprop-graph}}
+
 ---
 
 ## The PyTorch Dispatcher and ATen
