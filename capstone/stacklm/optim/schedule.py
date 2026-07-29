@@ -6,9 +6,15 @@ import math
 
 
 def wsd_lr(step: int, *, peak_lr: float, warmup_steps: int, total_steps: int,
-           decay_frac: float = 0.2, final_frac: float = 0.0) -> float:
-    """Warmup -> constant "stable" -> sqrt decay to `final_frac * peak_lr`."""
-    decay_steps = int(decay_frac * total_steps)
+           decay_steps: int | None = None, decay_frac: float = 0.2,
+           final_frac: float = 0.0) -> float:
+    """Warmup -> constant "stable" -> 1-sqrt decay to `final_frac * peak_lr`.
+
+    Give EITHER `decay_steps` (absolute, what Ch. 14.7's StackConfig passes) or
+    `decay_frac` (a fraction of `total_steps`). `decay_steps` wins if both appear.
+    """
+    if decay_steps is None:
+        decay_steps = int(decay_frac * total_steps)
     stable_end = total_steps - decay_steps
     if step < warmup_steps:                              # warmup
         return peak_lr * (step + 1) / warmup_steps

@@ -1,34 +1,27 @@
-"""CPU generation (Ch. 14.11). A simple autoregressive sampler that runs on a
-quantized model on a laptop. No KV cache here (kept minimal and correct); the
-chapter discusses the KV-cache optimization separately.
+"""CPU generation (Ch. 14.11). Thin tokenizer-facing wrapper around the model's own
+KV-cached `Stack100M.generate` (Ch. 14.4) -- prefill once, then one cached step per
+token, so decode is O(T) rather than O(T^2). Quantized models keep the same path.
 """
 import torch
 
 
-def _sample(logits: torch.Tensor, temperature: float) -> torch.Tensor:
-    if temperature <= 0.0:
-        return logits.argmax(dim=-1)
-    probs = torch.softmax(logits / temperature, dim=-1)
-    return torch.multinomial(probs, num_samples=1).squeeze(-1)
-
-
 @torch.no_grad()
 def generate(model, tokenizer, prompt: str, max_new_tokens: int = 32,
-             temperature: float = 0.0, stop_id=None) -> str:
+             temperature: float = 0.0, top_p: float = 1.0, stop_id=None,
+             use_cache: bool = True) -> str:
     model.eval()
     ids = torch.tensor([tokenizer.encode(prompt, add_special_tokens=True)], dtype=torch.long)
     if stop_id is None:
         stop_id = tokenizer.eos_id
-    out = []
-    for _ in range(max_new_tokens):
-        logits, _ = model(ids[:, -model.cfg.max_seq_len:])
-        nxt = _sample(logits[:, -1, :].float(), temperature)
-        tok_id = int(nxt)
-        if tok_id == stop_id:
-            break
-        out.append(tok_id)
-        ids = torch.cat([ids, nxt.view(1, 1)], dim=1)
-    return tokenizer.decode(out)
+    # keep the prompt inside the context window, leaving room for the completion
+    budget = model.cfg.max_seq_len - max_new_tokens
+    ids = ids[:, -budget:]
+    out = model.generate(ids, max_new_tokens=max_new_tokens, temperature=temperature,
+                         top_p=top_p, eos_id=stop_id, use_cache=use_cache)
+    new = out[0, ids.shape[1]:].tolist()
+    if stop_id in new:
+        new = new[:new.index(stop_id)]
+    return tokenizer.decode(new)
 
 
 def generate_fn(model, tokenizer, prompt, max_new_tokens=8, temperature=0.0):

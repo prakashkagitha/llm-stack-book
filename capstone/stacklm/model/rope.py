@@ -24,9 +24,13 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
 
 
 def apply_rope(q, k, cos, sin):
-    # q, k: (B, n_heads, T, head_dim); cos, sin: (T, head_dim) -> broadcast over B, heads
-    cos = cos[None, None, :, :]
-    sin = sin[None, None, :, :]
+    """q, k: (B, n_heads, T, head_dim). cos/sin: (T, head_dim) when every batch row
+    shares positions, or (B, T, head_dim) when they do not -- which is the packed-
+    document case, where position ids reset at each document boundary (Ch. 14.2/14.4)."""
+    if cos.dim() == 2:
+        cos, sin = cos[None, None, :, :], sin[None, None, :, :]   # (1,1,T,d_h)
+    else:
+        cos, sin = cos[:, None, :, :], sin[:, None, :, :]         # (B,1,T,d_h)
     q_rot = q * cos + rotate_half(q) * sin
     k_rot = k * cos + rotate_half(k) * sin
     return q_rot, k_rot

@@ -9,6 +9,9 @@ deterministic, no scipy.
 """
 import numpy as np
 
+from .ladder import family
+from .flops import flops_per_token
+
 
 def _linear_fit_for_exponents(N, D, L, alpha, beta):
     """Least-squares E, A, B for fixed exponents; returns (E, A, B, sse)."""
@@ -48,23 +51,30 @@ def predicted_loss(fit: dict, N: float, D: float) -> float:
     return float(fit["E"] + fit["A"] * N ** (-fit["alpha"]) + fit["B"] * D ** (-fit["beta"]))
 
 
-def compute_optimal_allocation(C: float, fit: dict, n_grid: int = 4000) -> dict:
-    """Given a compute budget C = 6ND, find the (N*, D*) that minimizes loss."""
+def compute_optimal_allocation(C: float, fit: dict, use_6nd: bool = False,
+                               d_grid=range(128, 2049, 64)) -> dict:
+    """Min-loss allocation at a fixed compute budget C, searching REAL configs.
+
+    D is forced by the FLOP constraint. By default the constraint uses the full
+    per-token cost (blocks + causal attention + tied head) from `flops.py`, so an
+    "IsoFLOP" slice really is iso-compute. `use_6nd=True` reproduces the naive
+    6ND constraint for contrast (Ch. 14.5, Exercise 5) -- it credits the model
+    with ~1.6x more tokens than it can actually afford at this scale.
+    """
     E, A, B, alpha, beta = fit["E"], fit["A"], fit["B"], fit["alpha"], fit["beta"]
     best = None
-    for N in np.logspace(6, 9, n_grid):
-        D = C / (6.0 * N)                    # forced so 6*N*D == C
+    for d in d_grid:
+        cfg = family(d)
+        N = cfg.nonembed_params()
+        D = C / (6.0 * N) if use_6nd else C / flops_per_token(cfg)["total"]
         Lpred = E + A * N ** (-alpha) + B * D ** (-beta)
         if best is None or Lpred < best["L"]:
-            best = dict(N=float(N), D=float(D), L=float(Lpred), tpp=float(D / N))
+            best = dict(d_model=d, n_layers=cfg.n_layers, N=float(N), D=float(D),
+                        L=float(Lpred), tpp=float(D / N))
     return best
 
 
-def isoflop_points(fit: dict, budgets) -> list:
+def isoflop_points(fit: dict, budgets, **kw) -> list:
     """IsoFLOP profiles (Hoffmann et al., 2022): min-loss (N*, D*) per budget."""
-    return [{"C": float(C), **compute_optimal_allocation(C, fit)} for C in budgets]
-
-
-def training_flops(n_nonembed: int, n_tokens: float) -> float:
-    """The 6ND rule."""
-    return 6.0 * n_nonembed * n_tokens
+    return [{"C": float(C), **compute_optimal_allocation(C, fit, **kw)}
+            for C in budgets]

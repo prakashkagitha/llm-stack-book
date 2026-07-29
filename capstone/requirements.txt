@@ -7,13 +7,24 @@ scikit-learn      # allowed; used by scaling helpers if you extend them
 
 # --- Extras a REAL full run needs (NOT imported by the smoke test / CI) ---
 # Uncomment for an actual Stack-100M run against real data on a GPU.
+# regex             # \p{L} / \p{N} in the Ch. 14.3 pre-tokenizer -- STRONGLY
+#                   #   recommended for a real tokenizer; without it bpe.py falls
+#                   #   back to a documented stdlib approximation (same digit cap)
+# tokenizers        # HF Rust encoder + the tokenizer.json artifact (Ch. 14.3 export)
+# transformers      # PreTrainedTokenizerFast / save_pretrained / apply_chat_template
+# tiktoken          # fast OpenAI-style encoder built from our merge ranks
 # datasets          # streaming FineWeb-Edu / Cosmopedia / StarCoder / FineMath
-# huggingface_hub   # dataset + checkpoint transfer
+# huggingface_hub   # dataset + checkpoint transfer; login() for gated starcoderdata
+# datatrove[all]    # production filtering + MinHash dedup at 20B-token scale
+#                   #   (capstone/scripts/dedup_datatrove.py; Ch. 14.2)
 # safetensors       # checkpoint serialization
 # tqdm              # progress bars
 #
 # Notes:
-#  * The from-scratch byte-BPE tokenizer is pure stdlib -- no `tokenizers`.
+#  * The from-scratch byte-BPE tokenizer runs on pure stdlib. `regex` and the
+#    three HF/OpenAI packages above are OPTIONAL: `stacklm.tokenizer.export`
+#    imports them lazily, and capstone/tests/test_tokenizer_export.py SKIPS the
+#    export-equivalence tests when they are absent.
 #  * The agent teacher is an injected Callable; a real run swaps in an API client
 #    (e.g. `anthropic`) -- deliberately NOT listed here so CI stays offline.
 #  * bf16 autocast + `fused=True` AdamW require a CUDA GPU; the code falls back

@@ -1,8 +1,11 @@
 """Pack tokenized documents into fixed-length sequences with document-aware
-position ids (Ch. 14.2). Every chunk restarts its position clock at 0, so a later
-`cumsum(position_ids == 0)` recovers document boundaries without storing a
-separate doc-id array. `build_intra_doc_causal_mask` turns those position ids into
-a block-diagonal causal mask (no cross-document attention).
+segmentation (Ch. 14.2).
+
+Every packed chunk begins with `<bos>`, so the token array alone carries the
+document boundaries: `cumsum(input_ids == bos_id)` recovers each token's segment
+id and `build_intra_doc_causal_mask` turns that into a block-diagonal causal mask
+(no cross-document attention). Position ids are *derived*, never stored -- see
+`segments_from_bos`.
 """
 from typing import Iterable, Iterator, Protocol
 import numpy as np
@@ -16,12 +19,16 @@ class Tokenizer(Protocol):
 
 
 def pack_documents(docs: Iterable[dict], tokenizer, seq_len: int) -> Iterator[tuple]:
+    """Greedily concatenate `<bos> body <eos>` across documents into fixed-length
+    windows. Yields (input_ids, position_ids) per window; the final partial window
+    is padded so no tokens are silently dropped. A document dict may carry
+    pre-computed `ids` (the corpus builder tokenizes once, for budgeting)."""
     buf_ids: list = []
     buf_pos: list = []
     max_body = seq_len - 2  # room for <bos> and <eos> in every chunk
 
     for doc in docs:
-        raw = tokenizer.encode(doc["text"])
+        raw = doc["ids"] if "ids" in doc else tokenizer.encode(doc["text"])
         chunks = [raw[i:i + max_body] for i in range(0, len(raw), max_body)] or [[]]
         for chunk in chunks:
             toks = [tokenizer.bos_id, *chunk, tokenizer.eos_id]
@@ -39,7 +46,24 @@ def pack_documents(docs: Iterable[dict], tokenizer, seq_len: int) -> Iterator[tu
         yield buf_ids, buf_pos
 
 
+def segments_from_bos(input_ids: np.ndarray, bos_id: int) -> tuple:
+    """Derive (seq_ids, position_ids) from a packed window's tokens alone.
+
+    `seq_ids[i]` is the index of the document token i belongs to (-1 for a
+    leading fragment continued from the previous window); `position_ids[i]` is
+    the offset of token i inside its document. Storing these on disk would double
+    the corpus for information the token array already contains.
+    """
+    starts = input_ids == bos_id
+    seq_ids = np.cumsum(starts) - 1                       # -1 for a leading tail
+    idx = np.arange(input_ids.shape[0])
+    seg_start = np.maximum.accumulate(np.where(starts, idx, -1))
+    return seq_ids, idx - np.maximum(seg_start, 0)
+
+
 def build_intra_doc_causal_mask(position_ids: np.ndarray) -> np.ndarray:
+    """Block-diagonal causal mask from position ids (a reset to 0 starts a new
+    document). `True` means "token i may attend to token j"."""
     seq_len = position_ids.shape[0]
     doc_id = np.cumsum(position_ids == 0)  # monotonically increasing per document
     causal = np.tril(np.ones((seq_len, seq_len), dtype=bool))

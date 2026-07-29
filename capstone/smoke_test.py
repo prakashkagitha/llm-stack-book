@@ -31,7 +31,7 @@ from stacklm.data import (
 from stacklm.model import Stack100M
 from stacklm.scaling import fit_scaling_law, predicted_loss, compute_optimal_allocation
 from stacklm.train import pretrain, evaluate
-from stacklm.mid import mid_train
+from stacklm.mid import mid_train, run_mid_training, SubPhase
 from stacklm.post import (
     Turn, render_conversation, PackedSFTDataset, sft_train,
     dpo_train, grpo_train, shaped_reward,
@@ -130,8 +130,24 @@ def main():
     print(f"fit: E={fit['E']:.3f} alpha={fit['alpha']:.3f} beta={fit['beta']:.3f} "
           f"sse={fit['sse']:.2e}")
     print(f"predicted loss @ (100M, 20B tok) = {pred:.3f};  "
-          f"compute-optimal tpp @ 1.2e19 FLOPs = {opt['tpp']:.1f}")
+          f"compute-optimal @ 1.2e19 FLOPs: d={opt['d_model']} tpp={opt['tpp']:.1f}")
     assert fit["sse"] < 1e-2 and np.isfinite(pred)
+
+    # Ladder / FLOP / sweep arithmetic must reproduce Ch. 14.5's tables exactly.
+    from stacklm.scaling import LADDER, TARGET, flops_per_token, batch_tokens, build_runs
+    assert LADDER[0].nonembed_params() == 3_932_160
+    assert TARGET.nonembed_params() == 84_541_440
+    assert TARGET.total_params() == 101_318_656
+    fpt = flops_per_token(TARGET)
+    assert abs(fpt["total"] - 7.9666e8) / 7.9666e8 < 1e-3          # not 6N = 5.07e8
+    assert abs(fpt["total"] / fpt["blocks"] - 1.571) < 1e-3        # the 6ND error
+    assert batch_tokens(2.0e10) == 2 ** 19                         # the plan's batch
+    runs = build_runs()
+    assert len(runs) == 17 and min(r["steps"] for r in runs) >= 2000
+    print(f"ladder: target {TARGET.nonembed_params():,} non-embed / "
+          f"{TARGET.total_params():,} total; {fpt['total']:.3e} FLOPs/token "
+          f"({fpt['total'] / fpt['blocks']:.2f}x the 6ND rule); "
+          f"{len(runs)} sweep runs, min steps {min(r['steps'] for r in runs)}")
 
     # ------------------------------------------------------------------ #
     # 5. Pretrain a few steps -> loss must be finite and generally drop. #
@@ -154,6 +170,35 @@ def main():
                     grad_accum=2, peak_lr=1.5e-3, extend_to=orig_seq_len * 2)
     assert all(np.isfinite(mid["loss_history"]))
     assert model.cfg.max_seq_len == orig_seq_len * 2, "context should be extended"
+
+    # The three-sub-phase driver: broad -> long -> narrow under ONE decay leg.
+    theta_before = model.cfg.rope_theta
+    phases = [
+        SubPhase("anneal", tokens=0, seq_len=orig_seq_len * 2, steps=2),
+        SubPhase("longctx", tokens=0, seq_len=orig_seq_len * 4, steps=2,
+                 extend_now=True),
+        SubPhase("capability", tokens=0, seq_len=orig_seq_len * 4, steps=2),
+    ]
+
+    def toy_loader(sub, micro_bs):
+        loader = torch.utils.data.DataLoader(ds, batch_size=micro_bs,
+                                             shuffle=True, drop_last=True)
+        while True:
+            for b in loader:
+                yield b
+
+    seen = []
+    run = run_mid_training(model, phases, toy_loader, device=DEVICE,
+                           global_batch_tokens=orig_seq_len * 8,
+                           micro_batch_tokens=orig_seq_len * 4,
+                           muon_lr=2e-3, adamw_lr=1e-3, log_every=1,
+                           checkpoint_fn=lambda n, m, o, s: seen.append((n, s)))
+    print(f"phases: {seen}; theta {theta_before:.0f} -> {model.cfg.rope_theta:.0f}")
+    assert run["mid_steps"] == run["total_decay_steps"] == 6
+    assert [n for n, _ in seen] == ["anneal", "longctx", "capability"]
+    assert model.cfg.max_seq_len == orig_seq_len * 4, "sub-phase B extends context"
+    assert model.cfg.rope_theta > theta_before, "RoPE base must be rescaled up"
+    assert all(np.isfinite(run["loss_history"]))
 
     # ------------------------------------------------------------------ #
     # 7. SFT on the chat template (assistant-masked loss).               #

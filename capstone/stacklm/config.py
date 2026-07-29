@@ -5,7 +5,6 @@ shapes from `StackConfig`. `count_params` reproduces the ~101M param arithmetic
 that Ch. 14.4 asks the reader to be able to do by hand.
 """
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -24,10 +23,11 @@ class StackConfig:
     # --- stability / small-model tricks (Ch. 14.4) ---
     tie_embeddings: bool = True      # input embed == output projection (Press & Wolf, 2017)
     qk_norm: bool = True             # RMSNorm on Q, K before the attention dot product
-    nope_every: int = 4             # every 4th layer skips RoPE entirely (SmolLM3-style)
+    nope_every: int = 4              # every 4th layer skips RoPE entirely (SmolLM3-style)
     norm_eps: float = 1e-5
     z_loss_coef: float = 1e-4        # penalty on logsumexp(logits) for softmax stability
     logit_soft_cap: float = 0.0      # Gemma-2-style tanh soft-cap; 0.0 = off
+    loss_chunk: int = 0              # >0 = chunked fused lm_head+CE (Ch. 14.4)
     attn_soft_cap: float = 0.0       # optional attention-logit soft-cap; 0.0 = off
 
     # --- optional efficiency variants, OFF by default (Ch. 14.4 "DeepSeek's trick") ---
@@ -38,6 +38,12 @@ class StackConfig:
         assert self.n_heads % self.n_kv_heads == 0, "n_heads must be a multiple of n_kv_heads"
         return self.n_heads // self.n_kv_heads
 
+    def uses_rope(self, layer_idx: int) -> bool:
+        """RoPE on every layer except every `nope_every`-th (SmolLM3). 0 disables
+        the interleave entirely, which is what makes the checkpoint exportable as a
+        stock Qwen3 architecture (Ch. 14.4 "ecosystem" section)."""
+        return self.nope_every <= 0 or ((layer_idx + 1) % self.nope_every) != 0
+
 
 def count_params(cfg: StackConfig) -> dict:
     """Analytic parameter accounting -- matches `Stack100M.num_params()` exactly.
@@ -45,6 +51,20 @@ def count_params(cfg: StackConfig) -> dict:
     Reproduces the Ch. 14.4 arithmetic: tied embedding counted once, per-block
     attention (Q/K/V/O with GQA-shrunk K,V), SwiGLU MLP, and the norm gains.
     """
+    # This accounting is exact ONLY for the default (GQA, no-MTP, bias-free) path.
+    # MLA replaces Q/K/V with down/up latent projections and MTP adds a whole extra
+    # block + head -- both change the count, so refuse to report a wrong number.
+    if cfg.use_mla:
+        raise NotImplementedError(
+            "count_params() covers the GQA path only; MLA re-shapes the attention "
+            "projections. Use Stack100M(cfg).num_params() (Ch. 14.4) for MLA."
+        )
+    if cfg.mtp_heads:
+        raise NotImplementedError(
+            "count_params() covers mtp_heads=0 only; each MTP head adds an extra "
+            "transformer block. Use Stack100M(cfg).num_params() (Ch. 14.4)."
+        )
+
     embed = cfg.vocab_size * cfg.d_model
 
     q_width = cfg.n_heads * cfg.head_dim      # = d_model by construction (8*64=512)
@@ -93,7 +113,10 @@ def toy_config() -> StackConfig:
         intermediate=64,
         max_seq_len=64,
         qk_norm=True,
-        nope_every=4,
+        # nope_every=2, NOT 4: with only 2 layers, `(layer_idx+1) % 4 != 0` is true
+        # for BOTH layers, so a nope_every=4 toy would never execute the NoPE branch.
+        # At 2 it does (layer 1 skips RoPE), so CI really covers both code paths.
+        nope_every=2,
     )
     assert cfg.n_heads * cfg.head_dim == cfg.d_model
     return cfg

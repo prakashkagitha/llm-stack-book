@@ -13,9 +13,15 @@ def _fused_ok() -> bool:
 
 
 def build_optimizers(model, muon_lr=0.02, adamw_lr=3e-3,
-                     weight_decay=0.1, betas=(0.9, 0.95)):
+                     weight_decay=0.1, betas=(0.9, 0.95), batched_muon=False):
     """Return (muon, adamw). Muon gets the hidden 2D matrices; AdamW gets the
-    tied embedding, RMSNorm gains, and any 1D params."""
+    tied embedding, RMSNorm gains, and any 1D params.
+
+    The two peaks are NOT equal and NOT a fixed derivation of each other: the
+    capstone freezes muon_lr=0.02 / adamw_lr=3e-3 (Ch. 14.6, Ch. 14.7's
+    TrainConfig). Callers must scale both by the same WSD multiplier, never
+    overwrite both with one shared LR.
+    """
     muon_params, adamw_params = [], []
     embed_ids = {id(model.tok_emb.weight)}
     for _name, p in model.named_parameters():
@@ -29,7 +35,7 @@ def build_optimizers(model, muon_lr=0.02, adamw_lr=3e-3,
             adamw_params.append(p)                 # 1D norms/biases -> AdamW
 
     muon = Muon(muon_params, lr=muon_lr, momentum=0.95, nesterov=True,
-                weight_decay=weight_decay, ns_steps=5)
+                weight_decay=weight_decay, ns_steps=5, batched=batched_muon)
     decay, no_decay = [], []
     for p in adamw_params:
         (decay if p.ndim >= 2 else no_decay).append(p)

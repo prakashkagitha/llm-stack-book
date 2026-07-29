@@ -35,22 +35,35 @@ def _to_device(batch, device):
 
 
 def pretrain(model, dataset, *, device="cpu", steps=10, micro_batch_size=4,
-             grad_accum=2, peak_lr=6e-3, warmup_steps=2, total_steps=None,
+             grad_accum=2, peak_lr=0.02, muon_lr=None, adamw_lr=None,
+             warmup_steps=2, total_steps=None, decay_steps=None, decay_frac=0.2,
              grad_clip=1.0, weight_decay=0.1, qk_clip_every=0, qk_tau=100.0,
              log_every=1, eval_dataset=None, use_seq_ids=True, seed=1337):
     """Run `steps` optimizer steps. Returns a dict with the loss history + MFU.
 
     `dataset` is a `PackedMemmapDataset` (or anything returning the same dict).
     A fresh DataLoader with an infinite sampler feeds micro-batches.
+
+    TWO PEAKS, ONE CURVE (Ch. 14.6). `muon_lr` / `adamw_lr` set the two groups'
+    peaks independently (the flagship uses 0.02 and 3e-3); when omitted they fall
+    back to `peak_lr` and `peak_lr / 2`. `wsd_lr` is then called with
+    `peak_lr=1.0` so it returns a pure MULTIPLIER, which scales each group's own
+    peak. Overwriting both groups with one shared LR is the classic Muon bug.
+
+    `decay_steps` (absolute) or `decay_frac` (fraction of `total_steps`) set the
+    length of the WSD decay leg; the flagship uses decay_frac=0.10.
     """
     torch.manual_seed(seed)
     device = torch.device(device)
     model.to(device).train()
     total_steps = total_steps or steps
+    muon_peak = peak_lr if muon_lr is None else muon_lr
+    adamw_peak = (peak_lr / 2) if adamw_lr is None else adamw_lr
 
-    muon, adamw = build_optimizers(model, muon_lr=peak_lr, adamw_lr=peak_lr / 2,
+    muon, adamw = build_optimizers(model, muon_lr=muon_peak, adamw_lr=adamw_peak,
                                    weight_decay=weight_decay)
     optimizers = [muon, adamw]
+    peaks = {id(muon): muon_peak, id(adamw): adamw_peak}   # two groups, two peaks
 
     loader = torch.utils.data.DataLoader(
         dataset, batch_size=micro_batch_size, shuffle=True, drop_last=True)
@@ -64,11 +77,13 @@ def pretrain(model, dataset, *, device="cpu", steps=10, micro_batch_size=4,
     n_params = model.num_params()
     history = []
     for step in range(steps):
-        lr = wsd_lr(step, peak_lr=peak_lr, warmup_steps=warmup_steps,
-                    total_steps=total_steps)
+        mult = wsd_lr(step, peak_lr=1.0, warmup_steps=warmup_steps,
+                      total_steps=total_steps, decay_steps=decay_steps,
+                      decay_frac=decay_frac)
         for opt in optimizers:
             for g in opt.param_groups:
-                g["lr"] = lr
+                g["lr"] = peaks[id(opt)] * mult
+        lr = peaks[id(muon)] * mult                # logged: the Muon group's LR
 
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
@@ -92,14 +107,16 @@ def pretrain(model, dataset, *, device="cpu", steps=10, micro_batch_size=4,
         for opt in optimizers:
             opt.step()
 
+        qk_fired = 0
         if qk_clip_every and step % qk_clip_every == 0:
-            # `record` was consumed above; recompute a fresh reading if requested.
+            # `record` was consumed above; recompute a fresh reading on a small
+            # PROBE batch (post-step weights) rather than every micro-batch.
             rec = {}
             with torch.no_grad():
                 b = _to_device(next(it), device)
                 model(b["input_ids"], seq_ids=b["seq_ids"] if use_seq_ids else None,
                       record=rec)
-            qk_clip_(model, rec, tau=qk_tau)
+            qk_fired = qk_clip_(model, rec, tau=qk_tau)
 
         dt = time.perf_counter() - t0
         tps = tokens / dt if dt > 0 else 0.0
@@ -107,7 +124,8 @@ def pretrain(model, dataset, *, device="cpu", steps=10, micro_batch_size=4,
         history.append(loss_acc)
         if log_every and step % log_every == 0:
             print(f"  [pretrain] step {step:>3} loss {loss_acc:.4f} lr {lr:.2e} "
-                  f"|g| {float(gnorm):.2f} tok/s {tps:,.0f} mfu {mfu*100:.2f}%")
+                  f"|g| {float(gnorm):.2f} tok/s {tps:,.0f} mfu {mfu*100:.2f}% "
+                  f"qkclip {qk_fired}")
 
     result = {"loss_history": history, "n_params": n_params}
     if eval_dataset is not None:
