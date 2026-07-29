@@ -50,6 +50,7 @@ Below is the full table of contents with the exact link target for every chapter
 - 3.14 **Data Mixing, Domain Weighting & Curriculum** — `[Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html)`
 - 3.15 **Synthetic Data for Pre- and Post-Training** — `[Synthetic Data for Pre- and Post-Training](../03-pretraining/15-synthetic-data.html)`
 - 3.16 **Continual & Domain-Adaptive Pretraining** — `[Continual & Domain-Adaptive Pretraining](../03-pretraining/16-continual-pretraining.html)`
+- 3.17 **Training an LLM From Scratch: The End-to-End Recipe** — `[Training an LLM From Scratch: The End-to-End Recipe](../03-pretraining/17-end-to-end-pretrain-recipe.html)`
 
 ## Part IV — Kernels, Efficiency & Quantization
 - 4.1 **The Roofline Model & Performance Engineering** — `[The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)`
@@ -159,6 +160,20 @@ Below is the full table of contents with the exact link target for every chapter
 - 13.4 **Watermarking, Provenance & AI-Content Detection** — `[Watermarking, Provenance & AI-Content Detection](../13-interp-safety-gov/04-watermarking-provenance.html)`
 - 13.5 **AI Safety: Scalable Oversight, Dangerous-Capability Evals & Frontier Safety** — `[AI Safety: Scalable Oversight, Dangerous-Capability Evals & Frontier Safety](../13-interp-safety-gov/05-ai-safety-oversight.html)`
 - 13.6 **AI Governance, Compliance & Regulation** — `[AI Governance, Compliance & Regulation](../13-interp-safety-gov/06-governance-compliance.html)`
+
+## Part XIV — Capstone: Build a 100M LLM End-to-End
+- 14.1 **The Capstone: Building Stack-100M, and the 2026 Small-Model Landscape** — `[The Capstone: Building Stack-100M, and the 2026 Small-Model Landscape](../14-capstone/01-overview-and-landscape.html)`
+- 14.2 **Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens** — `[Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html)`
+- 14.3 **A Byte-Level BPE Tokenizer From Scratch (and Why Vocab Size Is a Design Lever at 100M)** — `[A Byte-Level BPE Tokenizer From Scratch (and Why Vocab Size Is a Design Lever at 100M)](../14-capstone/03-tokenizer.html)`
+- 14.4 **The Stack-100M Architecture: SOTA Components, Cited and Assembled** — `[The Stack-100M Architecture: SOTA Components, Cited and Assembled](../14-capstone/04-architecture.html)`
+- 14.5 **Mini Scaling Laws: Fit Your Own Law Before Spending the Budget** — `[Mini Scaling Laws: Fit Your Own Law Before Spending the Budget](../14-capstone/05-mini-scaling-laws.html)`
+- 14.6 **Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay** — `[Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay](../14-capstone/06-optimizer-and-schedule.html)`
+- 14.7 **The Pretraining Run: A Complete Single-GPU Training Loop** — `[The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html)`
+- 14.8 **Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection** — `[Mid-Training: Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html)`
+- 14.9 **Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M** — `[Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)`
+- 14.10 **A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation** — `[A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html)`
+- 14.11 **Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop** — `[Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)`
+- 14.12 **Retrospective: Cost Accounting, Reproducibility, and the Path to 1B** — `[Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html)`
 
 ## Appendix
 - **Glossary of Terms** — `[Glossary of Terms](../99-appendix/01-glossary.html)`

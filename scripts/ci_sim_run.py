@@ -7,7 +7,7 @@ without uninstalling anything.
 
 Usage:  python3 scripts/ci_sim_run.py tests/<file>.py
 """
-import sys, builtins
+import sys, builtins, types
 
 # Packages CI does NOT install (test.yml installs only numpy/torch/einops/scikit-learn/pytest,
 # whose transitive deps like scipy/joblib ARE present). A test that imports any of these
@@ -56,8 +56,19 @@ def main():
         pass
     builtins.__import__ = _guarded_import
     src = open(path).read()
-    g = {"__name__": "__main__", "__file__": path}
-    exec(compile(src, path, "exec"), g)
+    # Register the executed file as the REAL sys.modules["__main__"] (a proper
+    # module object, not a bare dict passed to exec()). Some tested code
+    # (torch.compile / torch.nn.attention.flex_attention) uses Dynamo, whose
+    # guards resolve module-level globals via `sys.modules["__main__"].<name>`
+    # -- with a plain exec(..., g) that assumption breaks (g is never linked to
+    # sys.modules), causing a spurious AttributeError that has nothing to do
+    # with the test's own logic and would NOT reproduce under real CI, which
+    # runs `python3 <file>.py` directly (a genuine top-level __main__ module).
+    mod = types.ModuleType("__main__")
+    mod.__dict__["__name__"] = "__main__"
+    mod.__dict__["__file__"] = path
+    sys.modules["__main__"] = mod
+    exec(compile(src, path, "exec"), mod.__dict__)
     return 0
 
 
